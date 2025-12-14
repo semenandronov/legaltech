@@ -17,6 +17,8 @@ const nextConfig = {
     // TypeScript все еще проверяется в IDE и при разработке
     ignoreBuildErrors: false,
   },
+  // Убеждаемся, что все страницы правильно обрабатываются
+  reactStrictMode: true,
 }
 
 module.exports = nextConfig
