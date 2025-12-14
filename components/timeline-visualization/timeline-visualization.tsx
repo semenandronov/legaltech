@@ -50,9 +50,10 @@ export const TimelineVisualization = ({ data }: TimelineVisualizationProps) => {
     const content = `Хронология: ${data.title}\n\n${data.events
       .map((event, index) => {
         const date = format(parseISO(event.date), "dd.MM.yyyy", { locale: ru });
+        const intervalDays = event.intervalDays;
         const interval =
-          event.intervalDays !== null
-            ? `\n   └─ интервал: ${event.intervalDays} ${event.intervalDays === 1 ? "день" : event.intervalDays < 5 ? "дня" : "дней"}`
+          intervalDays !== null && intervalDays !== undefined
+            ? `\n   └─ интервал: ${intervalDays} ${intervalDays === 1 ? "день" : intervalDays < 5 ? "дня" : "дней"}`
             : "";
         return `${date} ● ${event.description}${interval}`;
       })
@@ -117,7 +118,7 @@ export const TimelineVisualization = ({ data }: TimelineVisualizationProps) => {
                         )}
                       </div>
                       <p className="text-base">{event.description}</p>
-                      {event.intervalDays !== null && index > 0 && (
+                      {event.intervalDays !== null && event.intervalDays !== undefined && index > 0 && (
                         <div className="flex items-center gap-2 text-sm text-muted-foreground">
                           <Clock className="h-3 w-3" />
                           <span>
