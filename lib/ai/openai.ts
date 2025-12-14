@@ -1,9 +1,14 @@
 import OpenAI from "openai";
 import type { SummaryLength, SummaryResult, EmbeddingResult, TimelineResult } from "./mocks";
 
-const openai = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY,
-});
+// Ленивая инициализация OpenAI клиента
+const getOpenAI = () => {
+  const apiKey = process.env.OPENAI_API_KEY;
+  if (!apiKey) {
+    throw new Error("OPENAI_API_KEY is not configured");
+  }
+  return new OpenAI({ apiKey });
+};
 
 const MODEL = process.env.OPENAI_MODEL || "gpt-4o";
 
@@ -39,6 +44,7 @@ ${text}
   }
 }`;
 
+  const openai = getOpenAI();
   const response = await openai.chat.completions.create({
     model: MODEL,
     messages: [
@@ -61,6 +67,7 @@ ${text}
 
 // Реальная реализация генерации embeddings
 export const generateEmbeddingWithOpenAI = async (text: string): Promise<EmbeddingResult> => {
+  const openai = getOpenAI();
   const response = await openai.embeddings.create({
     model: "text-embedding-3-small",
     input: text,
@@ -91,6 +98,7 @@ ${text}
 
 События должны быть упорядочены по дате (от старых к новым).`;
 
+  const openai = getOpenAI();
   const response = await openai.chat.completions.create({
     model: MODEL,
     messages: [

@@ -2,9 +2,14 @@ import OpenAI from "openai";
 import { prisma } from "@/lib/db/prisma";
 import { generateEmbedding } from "./index";
 
-const openai = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY,
-});
+// Ленивая инициализация OpenAI клиента
+const getOpenAI = () => {
+  const apiKey = process.env.OPENAI_API_KEY;
+  if (!apiKey) {
+    throw new Error("OPENAI_API_KEY is not configured");
+  }
+  return new OpenAI({ apiKey });
+};
 
 const MODEL = process.env.OPENAI_MODEL || "gpt-4o";
 
@@ -147,6 +152,7 @@ ${documentsContext || "Документы не предоставлены"}`;
   ];
 
   try {
+    const openai = getOpenAI();
     const completion = await openai.chat.completions.create({
       model: MODEL,
       messages,
