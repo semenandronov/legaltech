@@ -351,6 +351,43 @@ export default function TabularPage() {
     return cell;
   };
 
+  // Рендер списка таблиц
+  const renderReviewsList = () => {
+    if (reviews.length === 0) {
+      return (
+        <div className="text-center py-8 text-muted-foreground">
+          <p>У вас пока нет таблиц</p>
+          <p className="text-sm mt-2">Создайте новую таблицу для начала работы</p>
+        </div>
+      );
+    }
+
+    return (
+      <div className="space-y-2">
+        {reviews.map((review) => {
+          const reviewId = review.id;
+          const isSelected = selectedReview?.id === reviewId;
+          return (
+            <div
+              key={reviewId}
+              className={`p-3 rounded-lg border cursor-pointer transition-colors ${
+                isSelected
+                  ? "bg-primary/10 border-primary"
+                  : "hover:bg-muted"
+              }`}
+              onClick={() => loadReview(reviewId)}
+            >
+              <p className="text-sm font-medium">{review.title}</p>
+              <p className="text-xs text-muted-foreground">
+                {review.columns.length} колонок, {review.documentIds.length} документов
+              </p>
+            </div>
+          );
+        })}
+      </div>
+    );
+  };
+
   return (
     <div className="space-y-8">
       <div className="flex items-center justify-between">
@@ -639,34 +676,7 @@ export default function TabularPage() {
               </CardDescription>
             </CardHeader>
             <CardContent>
-              {reviews.length === 0 ? (
-                <div className="text-center py-8 text-muted-foreground">
-                  <p>У вас пока нет таблиц</p>
-                  <p className="text-sm mt-2">Создайте новую таблицу для начала работы</p>
-                </div>
-              ) : (
-                <div className="space-y-2">
-                  {(reviews as TabularReview[]).map((review: TabularReview) => {
-                    const reviewId = review.id;
-                    return (
-                      <div
-                        key={reviewId}
-                        className={`p-3 rounded-lg border cursor-pointer transition-colors ${
-                          selectedReview?.id === reviewId
-                            ? "bg-primary/10 border-primary"
-                            : "hover:bg-muted"
-                        }`}
-                        onClick={() => loadReview(reviewId)}
-                      >
-                        <p className="text-sm font-medium">{review.title}</p>
-                        <p className="text-xs text-muted-foreground">
-                          {review.columns.length} колонок, {review.documentIds.length} документов
-                        </p>
-                      </div>
-                    );
-                  })}
-                </div>
-              )}
+              {renderReviewsList()}
             </CardContent>
           </Card>
           <Card className="lg:col-span-2">
