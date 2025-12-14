@@ -1,0 +1,277 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum UserRole {
+  USER
+  ADMIN
+}
+
+enum SummaryLength {
+  SHORT
+  MEDIUM
+  DETAILED
+}
+
+enum SearchType {
+  KEYWORD
+  SEMANTIC
+  HYBRID
+}
+
+model User {
+  id            String    @id @default(cuid())
+  email         String    @unique
+  name          String?
+  password      String
+  role          UserRole  @default(USER)
+  emailVerified DateTime?
+  image         String?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  documents     Document[]
+  summaries     Summary[]
+  searchQueries SearchQuery[]
+  timelines     Timeline[]
+  chatSessions  ChatSession[]
+  tabularReviews TabularReview[]
+
+  @@map("users")
+}
+
+model Document {
+  id          String   @id @default(cuid())
+  userId      String
+  filename    String
+  originalName String
+  mimeType    String
+  size        Int
+  content     String   @db.Text
+  embedding   Unsupported("vector(1536)")?
+  metadata    Json?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  versions    DocumentVersion[]
+  searchResults SearchResult[]
+  tabularCells TabularCell[]
+
+  @@index([userId])
+  @@index([filename])
+  @@map("documents")
+}
+
+model DocumentVersion {
+  id         String   @id @default(cuid())
+  documentId String
+  content    String   @db.Text
+  version    Int
+  createdAt  DateTime @default(now())
+
+  document   Document @relation(fields: [documentId], references: [id], onDelete: Cascade)
+
+  @@unique([documentId, version])
+  @@map("document_versions")
+}
+
+model Summary {
+  id            String        @id @default(cuid())
+  userId        String
+  documentId    String?
+  originalText  String        @db.Text
+  summary       String        @db.Text
+  length        SummaryLength
+  keyElements   Json
+  createdAt     DateTime      @default(now())
+
+  user          User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([createdAt])
+  @@map("summaries")
+}
+
+model SearchQuery {
+  id          String     @id @default(cuid())
+  userId      String
+  query       String
+  searchType  SearchType
+  filters     Json?
+  createdAt   DateTime   @default(now())
+
+  user        User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  results     SearchResult[]
+
+  @@index([userId])
+  @@index([createdAt])
+  @@map("search_queries")
+}
+
+model SearchResult {
+  id          String      @id @default(cuid())
+  queryId     String
+  documentId  String
+  relevance   Float
+  context     String      @db.Text
+  highlights  Json?
+  createdAt   DateTime    @default(now())
+
+  query       SearchQuery @relation(fields: [queryId], references: [id], onDelete: Cascade)
+  document    Document    @relation(fields: [documentId], references: [id], onDelete: Cascade)
+
+  @@index([queryId])
+  @@index([documentId])
+  @@index([relevance])
+  @@map("search_results")
+}
+
+model Timeline {
+  id          String   @id @default(cuid())
+  userId      String
+  title       String?
+  sourceText  String   @db.Text
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  events      TimelineEvent[]
+
+  @@index([userId])
+  @@index([createdAt])
+  @@map("timelines")
+}
+
+model TimelineEvent {
+  id          String   @id @default(cuid())
+  timelineId  String
+  date        DateTime
+  description String   @db.Text
+  eventType   String?
+  metadata    Json?
+  order       Int
+  intervalDays Int?
+  createdAt   DateTime @default(now())
+
+  timeline    Timeline @relation(fields: [timelineId], references: [id], onDelete: Cascade)
+
+  @@index([timelineId])
+  @@index([date])
+  @@index([order])
+  @@map("timeline_events")
+}
+
+model ChatSession {
+  id          String   @id @default(cuid())
+  userId      String
+  title       String?
+  documentIds String[] // Массив ID документов для контекста
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  messages    ChatMessage[]
+
+  @@index([userId])
+  @@index([createdAt])
+  @@map("chat_sessions")
+}
+
+model ChatMessage {
+  id          String   @id @default(cuid())
+  sessionId   String
+  role        String   // "user" | "assistant"
+  content     String   @db.Text
+  citations   Json?    // Массив цитат с ссылками на документы
+  metadata    Json?
+  createdAt   DateTime @default(now())
+
+  session     ChatSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+
+  @@index([sessionId])
+  @@index([createdAt])
+  @@map("chat_messages")
+}
+
+model ChatPrompt {
+  id          String   @id @default(cuid())
+  userId      String?
+  title       String
+  description String?
+  prompt      String   @db.Text
+  category    String?
+  isPublic    Boolean  @default(false)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([userId])
+  @@index([isPublic])
+  @@map("chat_prompts")
+}
+
+model TabularReview {
+  id          String   @id @default(cuid())
+  userId      String
+  title       String
+  description String?
+  documentIds String[] // Массив ID документов
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  columns     TabularColumn[]
+  cells       TabularCell[]
+
+  @@index([userId])
+  @@index([createdAt])
+  @@map("tabular_reviews")
+}
+
+model TabularColumn {
+  id          String   @id @default(cuid())
+  reviewId    String
+  title       String
+  query       String   @db.Text // Запрос для извлечения данных
+  order       Int
+  dataType    String?  // "text" | "number" | "date" | "boolean"
+  createdAt   DateTime @default(now())
+
+  review      TabularReview @relation(fields: [reviewId], references: [id], onDelete: Cascade)
+  cells       TabularCell[]
+
+  @@index([reviewId])
+  @@index([order])
+  @@map("tabular_columns")
+}
+
+model TabularCell {
+  id          String   @id @default(cuid())
+  reviewId    String
+  columnId    String
+  documentId  String
+  value       String   @db.Text
+  citation    Json?    // Ссылка на источник в документе
+  confidence  Float?   // Уверенность ИИ в извлечении
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  review      TabularReview @relation(fields: [reviewId], references: [id], onDelete: Cascade)
+  column      TabularColumn @relation(fields: [columnId], references: [id], onDelete: Cascade)
+  document    Document      @relation(fields: [documentId], references: [id], onDelete: Cascade)
+
+  @@unique([reviewId, columnId, documentId])
+  @@index([reviewId])
+  @@index([columnId])
+  @@index([documentId])
+  @@map("tabular_cells")
+}
+
