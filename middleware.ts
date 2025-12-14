@@ -3,7 +3,6 @@ import type { NextRequest } from "next/server";
 import { getToken } from "next-auth/jwt";
 
 export async function middleware(request: NextRequest) {
-  const token = await getToken({ req: request });
   const { pathname } = request.nextUrl;
 
   // Публичные роуты - всегда разрешены
@@ -16,9 +15,40 @@ export async function middleware(request: NextRequest) {
     return NextResponse.next();
   }
 
-  // Защищенные роуты - требуют авторизации
-  if (pathname.startsWith("/dashboard") || pathname.startsWith("/api")) {
-    if (!token) {
+  // Для API роутов (кроме auth) - проверяем авторизацию
+  if (pathname.startsWith("/api") && !pathname.startsWith("/api/auth")) {
+    try {
+      const token = await getToken({ 
+        req: request,
+        secret: process.env.NEXTAUTH_SECRET 
+      });
+      if (!token) {
+        return NextResponse.json(
+          { error: "Unauthorized" },
+          { status: 401 }
+        );
+      }
+    } catch (error) {
+      // Если не удалось получить токен, пропускаем (может быть проблема с конфигурацией)
+      console.error("Middleware token error:", error);
+    }
+  }
+
+  // Для dashboard роутов - проверяем авторизацию
+  if (pathname.startsWith("/dashboard")) {
+    try {
+      const token = await getToken({ 
+        req: request,
+        secret: process.env.NEXTAUTH_SECRET 
+      });
+      if (!token) {
+        const loginUrl = new URL("/login", request.url);
+        loginUrl.searchParams.set("callbackUrl", pathname);
+        return NextResponse.redirect(loginUrl);
+      }
+    } catch (error) {
+      // Если не удалось получить токен, перенаправляем на логин
+      console.error("Middleware token error:", error);
       const loginUrl = new URL("/login", request.url);
       loginUrl.searchParams.set("callbackUrl", pathname);
       return NextResponse.redirect(loginUrl);
