@@ -72,15 +72,15 @@ export default function TabularPage() {
     citation?: any;
   } | null>(null);
 
-  if (!session) {
-    router.push("/login");
-    return null;
-  }
-
   useEffect(() => {
+    if (!session) {
+      router.push("/login");
+      return;
+    }
     loadDocuments();
     loadReviews();
-  }, []);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [session]);
 
   const loadReviews = async () => {
     try {
@@ -100,6 +100,10 @@ export default function TabularPage() {
       });
     }
   };
+
+  if (!session) {
+    return null;
+  }
 
   const loadDocuments = async () => {
     try {

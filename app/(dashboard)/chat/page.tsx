@@ -41,13 +41,12 @@ export default function ChatPage() {
   const [loadingSessions, setLoadingSessions] = useState(true);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
-  if (!session) {
-    router.push("/login");
-    return null;
-  }
-
   // Загрузка сессий и документов
   useEffect(() => {
+    if (!session) {
+      router.push("/login");
+      return;
+    }
     const loadData = async () => {
       try {
         const [sessionsRes, documentsRes] = await Promise.all([
@@ -79,8 +78,11 @@ export default function ChatPage() {
       }
     };
 
-    loadData();
-  }, []);
+    if (session) {
+      loadData();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [session]);
 
   const loadSessionMessages = async (id: string) => {
     try {
@@ -102,6 +104,10 @@ export default function ChatPage() {
   useEffect(() => {
     scrollToBottom();
   }, [messages]);
+
+  if (!session) {
+    return null;
+  }
 
   const handleCreateSession = async () => {
     if (selectedDocuments.length === 0) {

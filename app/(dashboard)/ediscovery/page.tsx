@@ -36,27 +36,6 @@ export default function EDiscoveryPage() {
   const [error, setError] = useState<string | null>(null);
   const { toast } = useToast();
 
-  if (!session) {
-    router.push("/login");
-    return null;
-  }
-
-  // Загрузка списка документов
-  useEffect(() => {
-    const fetchDocuments = async () => {
-      try {
-        const response = await fetch("/api/documents");
-        if (response.ok) {
-          const data = await response.json();
-          setDocuments(data.documents || []);
-        }
-      } catch (err) {
-        console.error("Ошибка при загрузке документов:", err);
-      }
-    };
-    fetchDocuments();
-  }, []);
-
   // Загрузка файлов
   const onDrop = async (acceptedFiles: File[]) => {
     if (acceptedFiles.length === 0) return;
@@ -117,6 +96,28 @@ export default function EDiscoveryPage() {
     multiple: true,
   });
 
+  // Загрузка списка документов
+  useEffect(() => {
+    if (!session) {
+      router.push("/login");
+      return;
+    }
+    const fetchDocuments = async () => {
+      try {
+        const response = await fetch("/api/documents");
+        if (response.ok) {
+          const data = await response.json();
+          setDocuments(data.documents || []);
+        }
+      } catch (err) {
+        console.error("Ошибка при загрузке документов:", err);
+      }
+    };
+    if (session) {
+      fetchDocuments();
+    }
+  }, [session, router]);
+
   // Выполнение поиска
   const handleSearch = async () => {
     if (!query.trim()) {
@@ -169,6 +170,10 @@ export default function EDiscoveryPage() {
       setLoading(false);
     }
   };
+
+  if (!session) {
+    return null;
+  }
 
   const toggleDocumentSelection = (documentId: string) => {
     setSelectedDocuments((prev) =>
