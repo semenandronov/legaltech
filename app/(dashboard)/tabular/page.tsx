@@ -646,22 +646,25 @@ export default function TabularPage() {
                 </div>
               ) : (
                 <div className="space-y-2">
-                  {(reviews as TabularReview[]).map((review) => (
-                    <div
-                      key={review.id}
-                      className={`p-3 rounded-lg border cursor-pointer transition-colors ${
-                        selectedReview?.id === review.id
-                          ? "bg-primary/10 border-primary"
-                          : "hover:bg-muted"
-                      }`}
-                      onClick={() => loadReview(review.id)}
-                    >
-                      <p className="text-sm font-medium">{review.title}</p>
-                      <p className="text-xs text-muted-foreground">
-                        {review.columns.length} колонок, {review.documentIds.length} документов
-                      </p>
-                    </div>
-                  ))}
+                  {(reviews as TabularReview[]).map((review: TabularReview) => {
+                    const reviewId = review.id;
+                    return (
+                      <div
+                        key={reviewId}
+                        className={`p-3 rounded-lg border cursor-pointer transition-colors ${
+                          selectedReview?.id === reviewId
+                            ? "bg-primary/10 border-primary"
+                            : "hover:bg-muted"
+                        }`}
+                        onClick={() => loadReview(reviewId)}
+                      >
+                        <p className="text-sm font-medium">{review.title}</p>
+                        <p className="text-xs text-muted-foreground">
+                          {review.columns.length} колонок, {review.documentIds.length} документов
+                        </p>
+                      </div>
+                    );
+                  })}
                 </div>
               )}
             </CardContent>
