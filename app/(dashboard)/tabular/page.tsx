@@ -646,7 +646,7 @@ export default function TabularPage() {
                 </div>
               ) : (
                 <div className="space-y-2">
-                  {reviews.map((review) => (
+                  {reviews.map((review: TabularReview) => (
                     <div
                       key={review.id}
                       className={`p-3 rounded-lg border cursor-pointer transition-colors ${
