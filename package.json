@@ -9,7 +9,9 @@
     "lint": "next lint",
     "postinstall": "prisma generate",
     "repl": "npm run dev",
-    "check": "node check-build.js"
+    "check": "node check-build.js",
+    "db:setup": "node scripts/setup-db.js",
+    "db:migrate": "prisma migrate deploy"
   },
   "dependencies": {
     "next": "^15.0.0",
