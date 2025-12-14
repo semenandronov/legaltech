@@ -91,7 +91,7 @@ export async function POST(request: NextRequest) {
             eventType: event.eventType || null,
             order: index,
             intervalDays: event.intervalDays,
-            metadata: event.eventType ? { type: event.eventType } : null,
+            metadata: event.eventType ? { type: event.eventType } : undefined,
           })),
         },
       },
