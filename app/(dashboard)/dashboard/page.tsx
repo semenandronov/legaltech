@@ -6,6 +6,9 @@ import { FileText, Search, Calendar, MessageSquare, Table } from "lucide-react";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
 
+// Отключаем статическую генерацию для этой страницы
+export const dynamic = 'force-dynamic';
+
 export default function DashboardPage() {
   const { data: session } = useSession();
 
