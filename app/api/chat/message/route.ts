@@ -48,7 +48,9 @@ export async function POST(request: NextRequest) {
           title: message.substring(0, 50),
         },
         include: {
-          messages: [],
+          messages: {
+            orderBy: { createdAt: "asc" },
+          },
         },
       });
     }
