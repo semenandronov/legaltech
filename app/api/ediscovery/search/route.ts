@@ -182,7 +182,7 @@ export async function POST(request: NextRequest) {
         userId: session.user.id,
         query,
         searchType: searchType as any,
-        filters: documentIds ? { documentIds } : null,
+        filters: documentIds ? { documentIds } : undefined,
       },
     });
 
