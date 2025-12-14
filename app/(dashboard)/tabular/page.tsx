@@ -362,13 +362,14 @@ export default function TabularPage() {
       );
     }
 
-    const selectedReviewId = selectedReview?.id ?? null;
+    const selectedReviewId: string | null = selectedReview ? selectedReview.id : null;
+    const reviewsList: TabularReview[] = reviews;
 
     return (
       <div className="space-y-2">
-        {reviews.map((review: TabularReview) => {
-          const reviewId: string = review.id;
-          const isSelected: boolean = selectedReviewId === reviewId;
+        {reviewsList.map((review: TabularReview) => {
+          const reviewId: string = String(review.id);
+          const isSelected: boolean = selectedReviewId !== null && selectedReviewId === reviewId;
           return (
             <div
               key={reviewId}
