@@ -6,9 +6,6 @@ import { FileText, Search, Calendar, MessageSquare, Table } from "lucide-react";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
 
-// Отключаем статическую генерацию для этой страницы
-export const dynamic = 'force-dynamic';
-
 export default function DashboardPage() {
   const { data: session } = useSession();
 
@@ -31,7 +28,7 @@ export default function DashboardPage() {
             </CardDescription>
           </CardHeader>
           <CardContent>
-            <Link href="/dashboard/summarize">
+            <Link href="/dashboard/summarize" prefetch={false}>
               <Button className="w-full">Начать</Button>
             </Link>
           </CardContent>
@@ -46,7 +43,7 @@ export default function DashboardPage() {
             </CardDescription>
           </CardHeader>
           <CardContent>
-            <Link href="/dashboard/ediscovery">
+            <Link href="/dashboard/ediscovery" prefetch={false}>
               <Button className="w-full">Начать</Button>
             </Link>
           </CardContent>
@@ -61,7 +58,7 @@ export default function DashboardPage() {
             </CardDescription>
           </CardHeader>
           <CardContent>
-            <Link href="/dashboard/timeline">
+            <Link href="/dashboard/timeline" prefetch={false}>
               <Button className="w-full">Начать</Button>
             </Link>
           </CardContent>
@@ -76,7 +73,7 @@ export default function DashboardPage() {
             </CardDescription>
           </CardHeader>
           <CardContent>
-            <Link href="/dashboard/chat">
+            <Link href="/dashboard/chat" prefetch={false}>
               <Button className="w-full">Начать</Button>
             </Link>
           </CardContent>
@@ -91,7 +88,7 @@ export default function DashboardPage() {
             </CardDescription>
           </CardHeader>
           <CardContent>
-            <Link href="/dashboard/tabular">
+            <Link href="/dashboard/tabular" prefetch={false}>
               <Button className="w-full">Начать</Button>
             </Link>
           </CardContent>

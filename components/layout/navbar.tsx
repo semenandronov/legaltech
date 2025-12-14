@@ -25,31 +25,31 @@ export const Navbar = () => {
                     Главная
                   </Button>
                 </Link>
-                <Link href="/dashboard/summarize">
+                <Link href="/dashboard/summarize" prefetch={false}>
                   <Button variant="ghost" size="sm">
                     <FileText className="mr-2 h-4 w-4" />
                     Суммирование
                   </Button>
                 </Link>
-                <Link href="/dashboard/ediscovery">
+                <Link href="/dashboard/ediscovery" prefetch={false}>
                   <Button variant="ghost" size="sm">
                     <Search className="mr-2 h-4 w-4" />
                     E-Discovery
                   </Button>
                 </Link>
-                <Link href="/dashboard/timeline">
+                <Link href="/dashboard/timeline" prefetch={false}>
                   <Button variant="ghost" size="sm">
                     <Calendar className="mr-2 h-4 w-4" />
                     Хронология
                   </Button>
                 </Link>
-                <Link href="/dashboard/chat">
+                <Link href="/dashboard/chat" prefetch={false}>
                   <Button variant="ghost" size="sm">
                     <MessageSquare className="mr-2 h-4 w-4" />
                     Чат с ИИ
                   </Button>
                 </Link>
-                <Link href="/dashboard/tabular">
+                <Link href="/dashboard/tabular" prefetch={false}>
                   <Button variant="ghost" size="sm">
                     <Table className="mr-2 h-4 w-4" />
                     Табличный поиск
