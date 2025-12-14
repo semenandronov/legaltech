@@ -8,6 +8,9 @@ const nextConfig = {
   images: {
     domains: [],
   },
+  // Для Replit - используем стандартный output (standalone может вызвать проблемы)
+  // Увеличиваем таймауты для длительных операций
+  serverExternalPackages: ['pdf-parse', 'mammoth'],
 }
 
 module.exports = nextConfig
