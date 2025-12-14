@@ -352,7 +352,7 @@ export default function TabularPage() {
   };
 
   // Рендер списка таблиц
-  const renderReviewsList = () => {
+  const renderReviewsList = (): React.ReactNode => {
     if (reviews.length === 0) {
       return (
         <div className="text-center py-8 text-muted-foreground">
@@ -362,11 +362,13 @@ export default function TabularPage() {
       );
     }
 
+    const selectedReviewId = selectedReview?.id ?? null;
+
     return (
       <div className="space-y-2">
-        {reviews.map((review) => {
-          const reviewId = review.id;
-          const isSelected = selectedReview?.id === reviewId;
+        {reviews.map((review: TabularReview) => {
+          const reviewId: string = review.id;
+          const isSelected: boolean = selectedReviewId === reviewId;
           return (
             <div
               key={reviewId}
