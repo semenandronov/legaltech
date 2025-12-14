@@ -13,7 +13,9 @@ export const parseDOCX = async (buffer: Buffer): Promise<ParseResult> => {
     return {
       text: result.value,
       metadata: {
-        messages: result.messages,
+        messages: result.messages.map((msg) => 
+          typeof msg === 'string' ? msg : msg.message || String(msg)
+        ),
       },
     };
   } catch (error) {
