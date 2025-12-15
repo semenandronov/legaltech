@@ -31,9 +31,14 @@ app.include_router(upload.router, prefix="/api/upload", tags=["upload"])
 app.include_router(chat.router, prefix="/api/chat", tags=["chat"])
 
 # Serve static files from frontend/dist
-frontend_dist = Path(__file__).parent.parent.parent.parent / "frontend" / "dist"
+# Path calculation: backend/app/main.py -> backend -> project root -> frontend/dist
+frontend_dist = Path(__file__).parent.parent.parent / "frontend" / "dist"
+
 if frontend_dist.exists():
-    app.mount("/static", StaticFiles(directory=str(frontend_dist / "assets")), name="static")
+    # Mount static assets
+    assets_dir = frontend_dist / "assets"
+    if assets_dir.exists():
+        app.mount("/assets", StaticFiles(directory=str(assets_dir)), name="assets")
     
     @app.get("/{full_path:path}")
     async def serve_frontend(full_path: str):
@@ -42,6 +47,11 @@ if frontend_dist.exists():
         if full_path.startswith("api/"):
             return {"error": "Not found"}, 404
         
+        # Don't serve assets (already mounted)
+        if full_path.startswith("assets/"):
+            return {"error": "Not found"}, 404
+        
+        # Try to serve the requested file
         file_path = frontend_dist / full_path
         if file_path.exists() and file_path.is_file():
             return FileResponse(str(file_path))
@@ -51,7 +61,21 @@ if frontend_dist.exists():
         if index_path.exists():
             return FileResponse(str(index_path))
         
-        return {"error": "Frontend not built"}, 404
+        return {"error": "Frontend not built. Please run: cd frontend && npm install && npm run build"}, 404
+else:
+    # Frontend not built - show helpful message
+    @app.get("/")
+    async def root():
+        """Root endpoint - frontend not built"""
+        return {
+            "message": "Legal AI Vault API",
+            "note": "Frontend not built. Build it with: cd frontend && npm install && npm run build",
+            "api_endpoints": {
+                "health": "/api/health",
+                "upload": "/api/upload",
+                "chat": "/api/chat"
+            }
+        }
 
 
 @app.get("/api/health")
