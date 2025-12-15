@@ -3,6 +3,10 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.config import config
 from app.routes import upload, chat
+from app.utils.database import init_db
+
+# Initialize database on startup
+init_db()
 
 app = FastAPI(
     title=config.API_TITLE,
@@ -37,5 +41,6 @@ async def health():
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8000, reload=True)
-
+    import os
+    port = int(os.getenv("PORT", 8000))
+    uvicorn.run(app, host="0.0.0.0", port=port, reload=False)

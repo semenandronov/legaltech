@@ -1,0 +1,15 @@
+services:
+  - type: web
+    name: legal-ai-vault-backend
+    runtime: python
+    buildCommand: pip install -r backend/requirements.txt
+    startCommand: cd backend && uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: DATABASE_URL
+        sync: false
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: CORS_ORIGINS
+        value: http://localhost:3000,http://localhost:5173,http://localhost:5174
+    rootDir: backend
+

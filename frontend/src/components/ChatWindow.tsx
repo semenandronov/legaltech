@@ -2,6 +2,8 @@ import { useState, useEffect, useRef } from 'react'
 import axios from 'axios'
 import './ChatWindow.css'
 
+const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000'
+
 interface Message {
   role: 'user' | 'assistant'
   content: string
@@ -34,7 +36,7 @@ const ChatWindow = ({ caseId, fileNames }: ChatWindowProps) => {
 
   const loadHistory = async () => {
     try {
-      const response = await axios.get(`http://localhost:8000/api/chat/${caseId}/history`)
+      const response = await axios.get(`${API_URL}/api/chat/${caseId}/history`)
       if (response.data.messages) {
         setMessages(
           response.data.messages.map((msg: any) => ({
@@ -63,7 +65,7 @@ const ChatWindow = ({ caseId, fileNames }: ChatWindowProps) => {
     setError(null)
 
     try {
-      const response = await axios.post('http://localhost:8000/api/chat', {
+      const response = await axios.post(`${API_URL}/api/chat`, {
         case_id: caseId,
         question: userMessage.content,
       })
