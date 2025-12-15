@@ -11,7 +11,8 @@ import uuid
 router = APIRouter()
 
 
-@router.post("/")
+@router.post("/", include_in_schema=True)
+@router.post("", include_in_schema=False)  # Also handle without trailing slash
 async def upload_files(
     files: List[UploadFile] = File(...),
     db: Session = Depends(get_db)

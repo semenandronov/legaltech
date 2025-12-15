@@ -48,6 +48,7 @@ if frontend_dist.exists():
         app.mount("/assets", StaticFiles(directory=str(assets_dir)), name="assets")
     
     # Serve frontend SPA - MUST be last route to not interfere with API
+    # Only handle GET requests to avoid interfering with POST/PUT/DELETE API calls
     @app.get("/{full_path:path}")
     async def serve_frontend(full_path: str):
         """Serve frontend files, fallback to index.html for SPA routing"""
