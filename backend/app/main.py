@@ -26,7 +26,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Include routers FIRST (before static file serving)
+# API routes - MUST be registered BEFORE any catch-all routes
 app.include_router(upload.router, prefix="/api/upload", tags=["upload"])
 app.include_router(chat.router, prefix="/api/chat", tags=["chat"])
 
@@ -47,12 +47,12 @@ if frontend_dist.exists():
     if assets_dir.exists():
         app.mount("/assets", StaticFiles(directory=str(assets_dir)), name="assets")
     
-    # Serve frontend SPA - MUST be last route to not interfere with API
-    # Only handle GET requests to avoid interfering with POST/PUT/DELETE API calls
+    # Serve frontend SPA - ONLY handles GET requests
+    # POST/PUT/DELETE requests to /api/* will be handled by API routes above
     @app.get("/{full_path:path}")
     async def serve_frontend(full_path: str):
-        """Serve frontend files, fallback to index.html for SPA routing"""
-        # Don't serve API routes (shouldn't reach here, but just in case)
+        """Serve frontend files, fallback to index.html for SPA routing (GET only)"""
+        # Safety check: don't serve API routes (shouldn't reach here for GET, but just in case)
         if full_path.startswith("api/"):
             return {"error": "Not found"}, 404
         
