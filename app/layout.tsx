@@ -9,7 +9,12 @@ export const metadata: Metadata = {
   title: "Legal AI Assistant",
   description: "Веб-приложение для анализа судебных документов с использованием AI",
   icons: {
-    icon: '/favicon.ico',
+    icon: [
+      { url: '/icon.svg', type: 'image/svg+xml' },
+      { url: '/icon.svg', type: 'image/svg+xml', sizes: 'any' },
+    ],
+    shortcut: '/icon.svg',
+    apple: '/icon.svg',
   },
 };
 
