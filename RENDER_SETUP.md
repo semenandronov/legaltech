@@ -2,13 +2,18 @@
 
 ## Backend (Python FastAPI)
 
-### Настройка Web Service на Render:
+### Настройка Web Service на Render (через Dashboard):
 
-1. **Тип сервиса**: Web Service
-2. **Runtime**: Python 3
-3. **Build Command**: `pip install -r backend/requirements.txt`
-4. **Start Command**: `cd backend && uvicorn app.main:app --host 0.0.0.0 --port $PORT`
-5. **Root Directory**: `backend`
+1. Зайдите в Render Dashboard → New → Web Service
+2. Подключите репозиторий: `https://github.com/semenandronov/legaltech`
+3. Настройки:
+   - **Name**: `legal-ai-vault-backend`
+   - **Runtime**: `Python 3`
+   - **Region**: Выберите ближайший регион
+   - **Branch**: `main`
+   - **Root Directory**: `backend`
+   - **Build Command**: `pip install -r requirements.txt`
+   - **Start Command**: `uvicorn app.main:app --host 0.0.0.0 --port $PORT`
 
 ### Environment Variables:
 
@@ -20,11 +25,10 @@ CORS_ORIGINS=https://your-frontend-url.vercel.app,http://localhost:5173
 
 ### После деплоя:
 
-1. Инициализируйте базу данных:
-   - Подключитесь к серверу через SSH или используйте Render Shell
-   - Выполните: `python backend/init_db.py`
+База данных инициализируется автоматически при первом запуске (в `app/main.py` вызывается `init_db()`).
 
-Или создайте отдельный скрипт для автоматической инициализации при первом запуске.
+Если нужно инициализировать вручную:
+- Используйте Render Shell: `python init_db.py`
 
 ## Frontend (React + Vite)
 
