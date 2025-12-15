@@ -10,6 +10,15 @@ services:
       - key: OPENAI_API_KEY
         sync: false
       - key: CORS_ORIGINS
-        value: http://localhost:3000,http://localhost:5173,http://localhost:5174
+        value: http://localhost:3000,http://localhost:5173,http://localhost:5174,https://legal-ai-vault-frontend.onrender.com
     rootDir: backend
 
+  - type: web
+    name: legal-ai-vault-frontend
+    runtime: node
+    buildCommand: cd frontend && npm install && npm run build
+    startCommand: cd frontend && npx serve -s dist -l $PORT
+    envVars:
+      - key: VITE_API_URL
+        value: https://legal-ai-vault-backend.onrender.com
+    rootDir: frontend
