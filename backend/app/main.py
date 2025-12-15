@@ -26,9 +26,16 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Include routers
+# Include routers FIRST (before static file serving)
 app.include_router(upload.router, prefix="/api/upload", tags=["upload"])
 app.include_router(chat.router, prefix="/api/chat", tags=["chat"])
+
+
+@app.get("/api/health")
+async def health():
+    """Health check endpoint"""
+    return {"status": "ok"}
+
 
 # Serve static files from frontend/dist
 # Path calculation: backend/app/main.py -> backend -> project root -> frontend/dist
@@ -40,10 +47,11 @@ if frontend_dist.exists():
     if assets_dir.exists():
         app.mount("/assets", StaticFiles(directory=str(assets_dir)), name="assets")
     
+    # Serve frontend SPA - MUST be last route to not interfere with API
     @app.get("/{full_path:path}")
     async def serve_frontend(full_path: str):
         """Serve frontend files, fallback to index.html for SPA routing"""
-        # Don't serve API routes
+        # Don't serve API routes (shouldn't reach here, but just in case)
         if full_path.startswith("api/"):
             return {"error": "Not found"}, 404
         
@@ -76,12 +84,6 @@ else:
                 "chat": "/api/chat"
             }
         }
-
-
-@app.get("/api/health")
-async def health():
-    """Health check endpoint"""
-    return {"status": "ok"}
 
 
 if __name__ == "__main__":
