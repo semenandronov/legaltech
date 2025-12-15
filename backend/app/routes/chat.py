@@ -11,10 +11,13 @@ import re
 
 router = APIRouter()
 
-# Initialize OpenAI client
+# Initialize OpenRouter client (OpenAI совместимый)
 client = None
-if config.OPENAI_API_KEY:
-    client = OpenAI(api_key=config.OPENAI_API_KEY)
+if config.OPENROUTER_API_KEY:
+    client = OpenAI(
+        api_key=config.OPENROUTER_API_KEY,
+        base_url=config.OPENROUTER_BASE_URL,
+    )
 
 
 class ChatRequest(BaseModel):
@@ -77,7 +80,7 @@ async def chat(
 Если информации нет в документах - скажи честно.
 Не давай юридических советов, только анализ фактов из документов."""
     
-    # Build messages for OpenAI
+    # Build messages for OpenRouter (OpenAI-совместимый протокол)
     messages = [{"role": "system", "content": system_prompt}]
     
     # Add history
@@ -90,13 +93,13 @@ async def chat(
     if not client:
         raise HTTPException(
             status_code=500,
-            detail="OpenAI API ключ не настроен. Проверьте конфигурацию сервера."
+            detail="OpenRouter API ключ не настроен. Проверьте конфигурацию сервера."
         )
     
     try:
-        # Call OpenAI API
+        # Call OpenRouter (OpenAI-совместимый) API
         response = client.chat.completions.create(
-            model=config.OPENAI_MODEL,
+            model=config.OPENROUTER_MODEL,
             messages=messages,
             temperature=0.7,
             max_tokens=1000
@@ -137,17 +140,17 @@ async def chat(
         if "authentication" in error_msg.lower() or "api key" in error_msg.lower():
             raise HTTPException(
                 status_code=500,
-                detail="Ошибка аутентификации OpenAI API. Проверьте API ключ."
+                detail="Ошибка аутентификации OpenRouter API. Проверьте API ключ."
             )
         elif "rate limit" in error_msg.lower():
             raise HTTPException(
                 status_code=500,
-                detail="Превышен лимит запросов к OpenAI API. Попробуйте позже."
+                detail="Превышен лимит запросов к OpenRouter API. Попробуйте позже."
             )
         else:
             raise HTTPException(
                 status_code=500,
-                detail=f"Ошибка при обращении к OpenAI API: {str(e)}"
+                detail=f"Ошибка при обращении к OpenRouter API: {str(e)}"
             )
 
 

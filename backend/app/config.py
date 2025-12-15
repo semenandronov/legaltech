@@ -9,9 +9,12 @@ load_dotenv()
 class Config:
     """Application configuration"""
     
-    # OpenAI
-    OPENAI_API_KEY: str = os.getenv("OPENAI_API_KEY", "")
-    OPENAI_MODEL: str = os.getenv("OPENAI_MODEL", "gpt-3.5-turbo")
+    # OpenRouter (совместим с OpenAI API)
+    OPENROUTER_API_KEY: str = os.getenv("OPENROUTER_API_KEY", "")
+    OPENROUTER_MODEL: str = os.getenv("OPENROUTER_MODEL", "openrouter/auto")
+    OPENROUTER_BASE_URL: str = os.getenv(
+        "OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1"
+    )
     
     # Database
     DATABASE_URL: str = os.getenv(
@@ -32,6 +35,7 @@ class Config:
     # File Upload
     MAX_FILE_SIZE: int = 5 * 1024 * 1024  # 5 MB
     ALLOWED_EXTENSIONS: List[str] = [".pdf", ".docx", ".txt", ".xlsx"]
+    MAX_TOTAL_TEXT_CHARS: int = 2_000_000  # Ограничение суммарного текста
 
 
 config = Config()
