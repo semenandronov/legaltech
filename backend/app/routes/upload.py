@@ -3,15 +3,12 @@ from fastapi import APIRouter, UploadFile, File, HTTPException, Depends
 from typing import List
 from sqlalchemy.orm import Session
 from app.utils.file_parser import parse_file
-from app.utils.database import get_db, init_db
+from app.utils.database import get_db
 from app.models.case import Case
 from app.config import config
 import uuid
 
 router = APIRouter()
-
-# Initialize database on startup
-init_db()
 
 
 @router.post("/")
