@@ -1,19 +1,42 @@
 # Настройка Legal AI Vault на Render
 
+## ⚠️ ВАЖНО: Render все еще использует Node.js runtime
+
+**Проблема**: Render автоматически определяет проект как Node.js из-за наличия frontend/package.json
+
+**Решение**: Нужно вручную изменить настройки в Render Dashboard
+
 ## Backend (Python FastAPI)
 
-### Настройка Web Service на Render (через Dashboard):
+### ШАГ 1: Удалите старый сервис (если есть)
 
-1. Зайдите в Render Dashboard → New → Web Service
+Если у вас уже есть сервис на Render с неправильными настройками:
+1. Зайдите в Render Dashboard
+2. Найдите ваш сервис
+3. Settings → Delete Service
+
+### ШАГ 2: Создайте новый Web Service
+
+1. Зайдите в Render Dashboard → **New → Web Service**
 2. Подключите репозиторий: `https://github.com/semenandronov/legaltech`
-3. Настройки:
+3. **КРИТИЧЕСКИ ВАЖНЫЕ НАСТРОЙКИ**:
    - **Name**: `legal-ai-vault-backend`
-   - **Runtime**: `Python 3`
+   - **Runtime**: **Python 3** (выберите из выпадающего списка!)
    - **Region**: Выберите ближайший регион
    - **Branch**: `main`
-   - **Root Directory**: `backend`
+   - **Root Directory**: `backend` ⚠️
    - **Build Command**: `pip install -r requirements.txt`
    - **Start Command**: `uvicorn app.main:app --host 0.0.0.0 --port $PORT`
+   - **Auto-Deploy**: Yes
+
+### ШАГ 3: Environment Variables
+
+Добавьте в разделе Environment:
+```
+DATABASE_URL=postgresql://user:password@host:5432/dbname
+OPENAI_API_KEY=sk-xxxxx
+CORS_ORIGINS=https://your-frontend-url.vercel.app,http://localhost:5173
+```
 
 ### Environment Variables:
 
