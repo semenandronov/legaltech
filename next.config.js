@@ -13,8 +13,6 @@ const nextConfig = {
     ignoreBuildErrors: false,
   },
   reactStrictMode: true,
-  // Отключаем статическую оптимизацию для всех страниц
-  output: 'standalone',
 }
 
 module.exports = nextConfig
