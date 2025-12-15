@@ -11,7 +11,9 @@ import uuid
 router = APIRouter()
 
 
-@router.post("/")
+# Accept both /api/upload/ and /api/upload (без слеша)
+@router.post("/", include_in_schema=True)
+@router.post("", include_in_schema=False)
 async def upload_files(
     files: List[UploadFile] = File(...),
     db: Session = Depends(get_db)
