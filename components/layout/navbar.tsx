@@ -2,11 +2,13 @@
 
 import Link from "next/link";
 import { useSession, signOut } from "next-auth/react";
+import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { FileText, Search, Calendar, Home, MessageSquare, Table } from "lucide-react";
 
 export const Navbar = () => {
   const { data: session } = useSession();
+  const router = useRouter();
 
   return (
     <nav className="border-b bg-background">
@@ -25,36 +27,46 @@ export const Navbar = () => {
                     Главная
                   </Button>
                 </Link>
-                <Link href="/dashboard/summarize" prefetch={false}>
-                  <Button variant="ghost" size="sm">
-                    <FileText className="mr-2 h-4 w-4" />
-                    Суммирование
-                  </Button>
-                </Link>
-                <Link href="/dashboard/ediscovery" prefetch={false}>
-                  <Button variant="ghost" size="sm">
-                    <Search className="mr-2 h-4 w-4" />
-                    E-Discovery
-                  </Button>
-                </Link>
-                <Link href="/dashboard/timeline" prefetch={false}>
-                  <Button variant="ghost" size="sm">
-                    <Calendar className="mr-2 h-4 w-4" />
-                    Хронология
-                  </Button>
-                </Link>
-                <Link href="/dashboard/chat" prefetch={false}>
-                  <Button variant="ghost" size="sm">
-                    <MessageSquare className="mr-2 h-4 w-4" />
-                    Чат с ИИ
-                  </Button>
-                </Link>
-                <Link href="/dashboard/tabular" prefetch={false}>
-                  <Button variant="ghost" size="sm">
-                    <Table className="mr-2 h-4 w-4" />
-                    Табличный поиск
-                  </Button>
-                </Link>
+                <Button 
+                  variant="ghost" 
+                  size="sm"
+                  onClick={() => router.push("/dashboard/summarize")}
+                >
+                  <FileText className="mr-2 h-4 w-4" />
+                  Суммирование
+                </Button>
+                <Button 
+                  variant="ghost" 
+                  size="sm"
+                  onClick={() => router.push("/dashboard/ediscovery")}
+                >
+                  <Search className="mr-2 h-4 w-4" />
+                  E-Discovery
+                </Button>
+                <Button 
+                  variant="ghost" 
+                  size="sm"
+                  onClick={() => router.push("/dashboard/timeline")}
+                >
+                  <Calendar className="mr-2 h-4 w-4" />
+                  Хронология
+                </Button>
+                <Button 
+                  variant="ghost" 
+                  size="sm"
+                  onClick={() => router.push("/dashboard/chat")}
+                >
+                  <MessageSquare className="mr-2 h-4 w-4" />
+                  Чат с ИИ
+                </Button>
+                <Button 
+                  variant="ghost" 
+                  size="sm"
+                  onClick={() => router.push("/dashboard/tabular")}
+                >
+                  <Table className="mr-2 h-4 w-4" />
+                  Табличный поиск
+                </Button>
               </div>
             )}
           </div>

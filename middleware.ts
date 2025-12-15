@@ -2,8 +2,10 @@ import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
 
 export function middleware(request: NextRequest) {
-  // Временно отключаем проверку авторизации для диагностики
-  // Все роуты пропускаются
+  const { pathname } = request.nextUrl;
+  
+  // Пропускаем все запросы без изменений
+  // Это временно для диагностики проблемы с роутингом
   return NextResponse.next();
 }
 

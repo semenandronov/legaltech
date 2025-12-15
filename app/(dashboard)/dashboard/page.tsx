@@ -1,13 +1,14 @@
 "use client";
 
 import { useSession } from "next-auth/react";
+import { useRouter } from "next/navigation";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { FileText, Search, Calendar, MessageSquare, Table } from "lucide-react";
-import Link from "next/link";
 import { Button } from "@/components/ui/button";
 
 export default function DashboardPage() {
   const { data: session } = useSession();
+  const router = useRouter();
 
   return (
     <div className="space-y-8">
@@ -28,9 +29,12 @@ export default function DashboardPage() {
             </CardDescription>
           </CardHeader>
           <CardContent>
-            <Link href="/dashboard/summarize" prefetch={false}>
-              <Button className="w-full">Начать</Button>
-            </Link>
+            <Button 
+              className="w-full"
+              onClick={() => router.push("/dashboard/summarize")}
+            >
+              Начать
+            </Button>
           </CardContent>
         </Card>
 
@@ -43,9 +47,12 @@ export default function DashboardPage() {
             </CardDescription>
           </CardHeader>
           <CardContent>
-            <Link href="/dashboard/ediscovery" prefetch={false}>
-              <Button className="w-full">Начать</Button>
-            </Link>
+            <Button 
+              className="w-full"
+              onClick={() => router.push("/dashboard/ediscovery")}
+            >
+              Начать
+            </Button>
           </CardContent>
         </Card>
 
@@ -58,9 +65,12 @@ export default function DashboardPage() {
             </CardDescription>
           </CardHeader>
           <CardContent>
-            <Link href="/dashboard/timeline" prefetch={false}>
-              <Button className="w-full">Начать</Button>
-            </Link>
+            <Button 
+              className="w-full"
+              onClick={() => router.push("/dashboard/timeline")}
+            >
+              Начать
+            </Button>
           </CardContent>
         </Card>
 
@@ -73,9 +83,12 @@ export default function DashboardPage() {
             </CardDescription>
           </CardHeader>
           <CardContent>
-            <Link href="/dashboard/chat" prefetch={false}>
-              <Button className="w-full">Начать</Button>
-            </Link>
+            <Button 
+              className="w-full"
+              onClick={() => router.push("/dashboard/chat")}
+            >
+              Начать
+            </Button>
           </CardContent>
         </Card>
 
@@ -88,9 +101,12 @@ export default function DashboardPage() {
             </CardDescription>
           </CardHeader>
           <CardContent>
-            <Link href="/dashboard/tabular" prefetch={false}>
-              <Button className="w-full">Начать</Button>
-            </Link>
+            <Button 
+              className="w-full"
+              onClick={() => router.push("/dashboard/tabular")}
+            >
+              Начать
+            </Button>
           </CardContent>
         </Card>
       </div>
