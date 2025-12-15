@@ -11,8 +11,7 @@ import uuid
 router = APIRouter()
 
 
-@router.post("/", include_in_schema=True)
-@router.post("", include_in_schema=False)  # Also handle without trailing slash
+@router.post("/")
 async def upload_files(
     files: List[UploadFile] = File(...),
     db: Session = Depends(get_db)
@@ -51,6 +50,8 @@ async def upload_files(
         # Parse file
         try:
             text = parse_file(content, file.filename)
+            # Remove NULL bytes (PostgreSQL doesn't allow them in strings)
+            text = text.replace('\x00', '')
             # Add separator with filename
             text_parts.append(f"[{file.filename}]\n{text}")
             file_names.append(file.filename)
@@ -64,6 +65,8 @@ async def upload_files(
     
     # Combine all text
     full_text = "\n\n".join(text_parts)
+    # Remove NULL bytes (PostgreSQL doesn't allow them in strings)
+    full_text = full_text.replace('\x00', '')
     
     # Create case
     case_id = str(uuid.uuid4())
