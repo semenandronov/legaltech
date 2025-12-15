@@ -2,7 +2,8 @@ import { useState, useRef } from 'react'
 import axios from 'axios'
 import './UploadArea.css'
 
-const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000'
+// Используем относительный путь, так как frontend и backend на одном домене
+const API_URL = import.meta.env.VITE_API_URL || ''
 
 interface UploadAreaProps {
   onUpload: (caseId: string, fileNames: string[]) => void
