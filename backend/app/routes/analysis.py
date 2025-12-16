@@ -79,20 +79,39 @@ async def start_analysis(
             analysis_service = AnalysisService(background_db)
             
             try:
-                for analysis_type in request.analysis_types:
-                    logger.info(f"Starting {analysis_type} analysis for case {case_id}")
-                    if analysis_type == "timeline":
-                        analysis_service.extract_timeline(case_id)
-                    elif analysis_type == "discrepancies":
-                        analysis_service.find_discrepancies(case_id)
-                    elif analysis_type == "key_facts":
-                        analysis_service.extract_key_facts(case_id)
-                    elif analysis_type == "summary":
-                        analysis_service.generate_summary(case_id)
-                    elif analysis_type == "risk_analysis":
-                        analysis_service.analyze_risks(case_id)
-                    else:
-                        logger.warning(f"Unknown analysis type: {analysis_type}")
+                # Use agent system if enabled, otherwise use legacy sequential approach
+                if analysis_service.use_agents:
+                    logger.info(f"Using multi-agent system for case {case_id}")
+                    # Map analysis type names
+                    agent_types = []
+                    for at in request.analysis_types:
+                        if at == "discrepancies":
+                            agent_types.append("discrepancy")
+                        elif at == "risk_analysis":
+                            agent_types.append("risk")
+                        else:
+                            agent_types.append(at)
+                    
+                    # Run all analyses through agent coordinator
+                    results = analysis_service.run_agent_analysis(case_id, agent_types)
+                    logger.info(f"Multi-agent analysis completed for case {case_id}, execution time: {results.get('execution_time', 0):.2f}s")
+                else:
+                    # Legacy sequential approach
+                    logger.info(f"Using legacy sequential analysis for case {case_id}")
+                    for analysis_type in request.analysis_types:
+                        logger.info(f"Starting {analysis_type} analysis for case {case_id}")
+                        if analysis_type == "timeline":
+                            analysis_service.extract_timeline(case_id)
+                        elif analysis_type == "discrepancies":
+                            analysis_service.find_discrepancies(case_id)
+                        elif analysis_type == "key_facts":
+                            analysis_service.extract_key_facts(case_id)
+                        elif analysis_type == "summary":
+                            analysis_service.generate_summary(case_id)
+                        elif analysis_type == "risk_analysis":
+                            analysis_service.analyze_risks(case_id)
+                        else:
+                            logger.warning(f"Unknown analysis type: {analysis_type}")
                 
                 # Update case status to completed
                 background_case.status = "completed"

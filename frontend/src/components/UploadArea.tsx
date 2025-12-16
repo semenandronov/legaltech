@@ -19,7 +19,6 @@ const UploadArea = ({ onUpload }: UploadAreaProps) => {
   const [step, setStep] = useState<UploadStep>('files')
   const [files, setFiles] = useState<File[]>([])
   const [caseInfo, setCaseInfo] = useState<CaseInfo | null>(null)
-  const [analysisOptions, setAnalysisOptions] = useState<AnalysisOptionsType | null>(null)
   const [caseId, setCaseId] = useState<string | null>(null)
   const [dragActive, setDragActive] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -72,7 +71,6 @@ const UploadArea = ({ onUpload }: UploadAreaProps) => {
   }
 
   const handleAnalysisSubmit = async (options: AnalysisOptionsType) => {
-    setAnalysisOptions(options)
     setStep('processing')
 
     // Upload files with metadata

@@ -8,9 +8,7 @@ import ReportsPage from './pages/ReportsPage'
 import SettingsPage from './pages/SettingsPage'
 import { useState, useEffect } from 'react'
 import ChatWindow from './components/ChatWindow'
-import CaseSidebar from './components/CaseSidebar'
 import Sidebar from './components/Layout/Sidebar'
-import Header from './components/Layout/Header'
 import { getCase } from './services/api'
 
 function App() {

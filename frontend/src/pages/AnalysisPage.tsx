@@ -14,7 +14,6 @@ const AnalysisPage = () => {
   const { caseId } = useParams<{ caseId: string }>()
   const navigate = useNavigate()
   const [activeTab, setActiveTab] = useState('timeline')
-  const [analysisStatus, setAnalysisStatus] = useState<any>(null)
   const [loading, setLoading] = useState(false)
 
   useEffect(() => {
@@ -30,8 +29,8 @@ const AnalysisPage = () => {
   const loadStatus = async () => {
     if (!caseId) return
     try {
-      const status = await getAnalysisStatus(caseId)
-      setAnalysisStatus(status)
+      await getAnalysisStatus(caseId)
+      // Status loaded, can be used in future
     } catch (error) {
       console.error('Ошибка при загрузке статуса анализа:', error)
     }

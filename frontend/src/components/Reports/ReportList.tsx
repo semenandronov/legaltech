@@ -4,7 +4,7 @@ interface ReportListProps {
   caseId: string
 }
 
-const ReportList = ({ caseId }: ReportListProps) => {
+const ReportList = ({}: ReportListProps) => {
   // In future, this would load saved reports from backend
   const savedReports: any[] = []
 

@@ -1,82 +1,53 @@
-# Настройка Legal AI Vault на Render
+# Настройка переменных окружения для Render
 
-## ⚠️ ВАЖНО: Render все еще использует Node.js runtime
+## Быстрая настройка
 
-**Проблема**: Render автоматически определяет проект как Node.js из-за наличия frontend/package.json
+### 1. Обязательные переменные (установить вручную в Render Dashboard)
 
-**Решение**: Нужно вручную изменить настройки в Render Dashboard
+Перейдите в ваш сервис на Render → Environment → Add Environment Variable:
 
-## Backend (Python FastAPI)
+| Переменная | Описание | Где получить |
+|-----------|----------|--------------|
+| `DATABASE_URL` | URL PostgreSQL базы данных | Render Dashboard → PostgreSQL → Internal Database URL |
+| `OPENROUTER_API_KEY` | API ключ OpenRouter | [openrouter.ai](https://openrouter.ai) → API Keys |
+| `JWT_SECRET_KEY` | Секретный ключ для JWT (минимум 32 символа) | Сгенерировать: `python -c "import secrets; print(secrets.token_urlsafe(32))"` |
 
-### ШАГ 1: Удалите старый сервис (если есть)
+### 2. Автоматически установленные переменные
 
-Если у вас уже есть сервис на Render с неправильными настройками:
-1. Зайдите в Render Dashboard
-2. Найдите ваш сервис
-3. Settings → Delete Service
+Эти переменные уже настроены в `render.yaml` и будут установлены автоматически:
 
-### ШАГ 2: Создайте новый Web Service
+- `OPENROUTER_MODEL` = `openrouter/auto`
+- `OPENROUTER_BASE_URL` = `https://openrouter.ai/api/v1`
+- `JWT_ALGORITHM` = `HS256`
+- `ACCESS_TOKEN_EXPIRE_MINUTES` = `1440`
+- `CORS_ORIGINS` = `*`
+- `AGENT_ENABLED` = `true` ⭐ **Новое для агентной системы**
+- `AGENT_MAX_PARALLEL` = `3` ⭐ **Новое**
+- `AGENT_TIMEOUT` = `300` ⭐ **Новое**
+- `AGENT_RETRY_COUNT` = `2` ⭐ **Новое**
+- `VECTOR_DB_DIR` = `/tmp/vector_db` ⭐ **Новое**
 
-1. Зайдите в Render Dashboard → **New → Web Service**
-2. Подключите репозиторий: `https://github.com/semenandronov/legaltech`
-3. **КРИТИЧЕСКИ ВАЖНЫЕ НАСТРОЙКИ**:
-   - **Name**: `legal-ai-vault-backend`
-   - **Runtime**: **Python 3** (выберите из выпадающего списка!)
-   - **Region**: Выберите ближайший регион
-   - **Branch**: `main`
-   - **Root Directory**: `backend` ⚠️
-   - **Build Command**: `pip install -r requirements.txt`
-   - **Start Command**: `uvicorn app.main:app --host 0.0.0.0 --port $PORT`
-   - **Auto-Deploy**: Yes
+### 3. Опциональные настройки (при необходимости)
 
-### ШАГ 3: Environment Variables
+Если нужно изменить значения по умолчанию, добавьте в Render Dashboard:
 
-Добавьте в разделе Environment:
-```
-DATABASE_URL=postgresql://user:password@host:5432/dbname
-OPENAI_API_KEY=sk-xxxxx
-CORS_ORIGINS=https://your-frontend-url.vercel.app,http://localhost:5173
-```
+- `AGENT_ENABLED` = `false` (если хотите отключить агентную систему)
+- `CORS_ORIGINS` = `https://yourdomain.com` (для production, вместо `*`)
 
-### Environment Variables:
+## Проверка после деплоя
 
-```
-DATABASE_URL=postgresql://user:password@host:5432/dbname
-OPENAI_API_KEY=sk-xxxxx
-CORS_ORIGINS=https://your-frontend-url.vercel.app,http://localhost:5173
-```
+1. Проверьте логи в Render Dashboard на наличие ошибок
+2. Проверьте health endpoint: `https://your-app.onrender.com/api/health`
+3. Если агенты не работают, проверьте что `AGENT_ENABLED=true` и `OPENROUTER_API_KEY` установлен
 
-### После деплоя:
+## Важные замечания
 
-База данных инициализируется автоматически при первом запуске (в `app/main.py` вызывается `init_db()`).
+⚠️ **Безопасность:**
+- `JWT_SECRET_KEY` должен быть уникальным и длинным (минимум 32 символа)
+- В production измените `CORS_ORIGINS` на конкретные домены вместо `*`
 
-Если нужно инициализировать вручную:
-- Используйте Render Shell: `python init_db.py`
+⚠️ **Векторная БД:**
+- `VECTOR_DB_DIR=/tmp/vector_db` - данные будут теряться при перезапуске
+- Для production рассмотрите внешнее хранилище (S3, etc.)
 
-## Frontend (React + Vite)
-
-### Настройка Static Site на Render (или используйте Vercel):
-
-**Вариант 1: Render Static Site**
-
-1. **Тип сервиса**: Static Site
-2. **Build Command**: `cd frontend && npm install && npm run build`
-3. **Publish Directory**: `frontend/dist`
-4. **Root Directory**: `frontend`
-
-**Вариант 2: Vercel (рекомендуется)**
-
-1. Подключите репозиторий к Vercel
-2. Root Directory: `frontend`
-3. Build Command: `npm install && npm run build`
-4. Output Directory: `dist`
-5. Environment Variable: `VITE_API_URL=https://your-backend.onrender.com`
-
-### Обновление API URL в frontend:
-
-После деплоя backend, обновите URL в `frontend/src/components/UploadArea.tsx` и `ChatWindow.tsx`:
-
-```typescript
-const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000'
-```
-
+Подробная документация: см. `backend/RENDER_ENV_VARS.md`

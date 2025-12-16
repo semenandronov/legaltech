@@ -11,7 +11,7 @@ interface Message {
 
 interface ChatWindowProps {
   caseId: string
-  fileNames: string[]
+  fileNames?: string[]  // Optional, not currently used
 }
 
 const MAX_INPUT_CHARS = 5000
@@ -38,7 +38,7 @@ const formatSourceReference = (source: SourceInfo): string => {
   return ref
 }
 
-const ChatWindow = ({ caseId, fileNames }: ChatWindowProps) => {
+const ChatWindow = ({ caseId }: ChatWindowProps) => {
   const [messages, setMessages] = useState<Message[]>([])
   const [inputValue, setInputValue] = useState('')
   const [isLoading, setIsLoading] = useState(false)

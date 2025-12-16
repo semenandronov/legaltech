@@ -7,11 +7,42 @@ services:
       cd frontend && npm install && npm run build
     startCommand: cd backend && uvicorn app.main:app --host 0.0.0.0 --port $PORT
     envVars:
+      # Database
       - key: DATABASE_URL
         sync: false
-      - key: OPENAI_API_KEY
+      
+      # OpenRouter API
+      - key: OPENROUTER_API_KEY
         sync: false
+      - key: OPENROUTER_MODEL
+        value: "openrouter/auto"
+      - key: OPENROUTER_BASE_URL
+        value: "https://openrouter.ai/api/v1"
+      
+      # JWT Authentication
+      - key: JWT_SECRET_KEY
+        sync: false
+      - key: JWT_ALGORITHM
+        value: "HS256"
+      - key: ACCESS_TOKEN_EXPIRE_MINUTES
+        value: "1440"
+      
+      # CORS
       - key: CORS_ORIGINS
         value: "*"
+      
+      # Multi-Agent System
+      - key: AGENT_ENABLED
+        value: "true"
+      - key: AGENT_MAX_PARALLEL
+        value: "3"
+      - key: AGENT_TIMEOUT
+        value: "300"
+      - key: AGENT_RETRY_COUNT
+        value: "2"
+      
+      # Vector Database (optional, для хранения векторных БД)
+      - key: VECTOR_DB_DIR
+        value: "/tmp/vector_db"
     rootDir: .
     plan: free

@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { updateProfile, getProfile } from '../../services/api'
+import { updateProfile } from '../../services/api'
 import './Settings.css'
 
 interface ProfileTabProps {

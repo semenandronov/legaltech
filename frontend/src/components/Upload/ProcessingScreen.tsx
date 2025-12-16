@@ -2,11 +2,11 @@ import { useEffect, useState } from 'react'
 import './Upload.css'
 
 interface ProcessingScreenProps {
-  caseId: string
+  caseId?: string  // Optional, not currently used
   onComplete: () => void
 }
 
-const ProcessingScreen = ({ caseId, onComplete }: ProcessingScreenProps) => {
+const ProcessingScreen = ({ onComplete }: ProcessingScreenProps) => {
   const [currentStep, setCurrentStep] = useState(0)
   const [progress, setProgress] = useState(0)
 

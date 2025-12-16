@@ -3,10 +3,10 @@ import { updatePassword } from '../../services/api'
 import './Settings.css'
 
 interface SecurityTabProps {
-  onUpdate: () => void
+  onUpdate?: () => void  // Optional, not currently used
 }
 
-const SecurityTab = ({ onUpdate }: SecurityTabProps) => {
+const SecurityTab = ({}: SecurityTabProps) => {
   const [currentPassword, setCurrentPassword] = useState('')
   const [newPassword, setNewPassword] = useState('')
   const [confirmPassword, setConfirmPassword] = useState('')
