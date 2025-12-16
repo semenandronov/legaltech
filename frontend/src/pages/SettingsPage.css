@@ -1,0 +1,106 @@
+.settings-page-root {
+  min-height: 100vh;
+  background: #0a0a0a;
+  color: #e5e5e5;
+  display: flex;
+}
+
+.settings-page-content {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 100vh;
+}
+
+.settings-page-main {
+  flex: 1;
+  padding: 40px;
+  overflow-y: auto;
+  background: #0a0a0a;
+}
+
+.settings-page-header {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+  margin-bottom: 32px;
+}
+
+.settings-back-btn {
+  padding: 8px 16px;
+  background: transparent;
+  border: 1px solid #333;
+  border-radius: 6px;
+  color: #e5e5e5;
+  cursor: pointer;
+  font-size: 14px;
+  transition: all 0.2s;
+}
+
+.settings-back-btn:hover {
+  background: #1f1f1f;
+  border-color: #444;
+}
+
+.settings-page-title {
+  font-size: 28px;
+  font-weight: 700;
+  color: #ffffff;
+  margin: 0;
+}
+
+.settings-loading {
+  text-align: center;
+  padding: 60px 20px;
+  color: #a0a0a0;
+}
+
+.settings-page-tabs {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 32px;
+  border-bottom: 1px solid #1f1f1f;
+  padding-bottom: 0;
+}
+
+.settings-tab {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 20px;
+  background: transparent;
+  border: none;
+  border-bottom: 2px solid transparent;
+  color: #a0a0a0;
+  cursor: pointer;
+  font-size: 14px;
+  transition: all 0.2s;
+  margin-bottom: -1px;
+}
+
+.settings-tab:hover {
+  color: #e5e5e5;
+  background: #1f1f1f;
+}
+
+.settings-tab.active {
+  color: #ffffff;
+  border-bottom-color: #667eea;
+  font-weight: 500;
+}
+
+.settings-tab-icon {
+  font-size: 18px;
+}
+
+.settings-tab-label {
+  font-size: 14px;
+}
+
+.settings-page-content-area {
+  background: #111111;
+  border: 1px solid #1f1f1f;
+  border-radius: 12px;
+  padding: 32px;
+  min-height: 400px;
+}

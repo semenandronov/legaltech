@@ -5,17 +5,84 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, JSONResponse
 from pathlib import Path
 import os
+import logging
+import sys
+from datetime import datetime
 from app.config import config
-from app.routes import upload, chat
+from app.routes import upload, chat, auth, cases, dashboard, analysis, reports, settings
 from app.utils.database import init_db
 
+# Configure structured logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - [%(filename)s:%(lineno)d] - %(message)s',
+    datefmt='%Y-%m-%d %H:%M:%S',
+    handlers=[
+        logging.StreamHandler(sys.stdout)
+    ]
+)
+
+logger = logging.getLogger(__name__)
+
 # Initialize database on startup
-init_db()
+logger.info("Initializing database...")
+try:
+    init_db()
+    logger.info("Database initialized successfully")
+except Exception as e:
+    logger.error(f"Failed to initialize database: {e}", exc_info=True)
+    raise
 
 app = FastAPI(
     title=config.API_TITLE,
     version=config.API_VERSION,
 )
+
+# Add request logging middleware
+@app.middleware("http")
+async def log_requests(request: Request, call_next):
+    """Log all HTTP requests"""
+    start_time = datetime.utcnow()
+    
+    # Log request
+    logger.info(
+        f"Request: {request.method} {request.url.path}",
+        extra={
+            "method": request.method,
+            "path": request.url.path,
+            "client": request.client.host if request.client else None,
+        }
+    )
+    
+    try:
+        response = await call_next(request)
+        process_time = (datetime.utcnow() - start_time).total_seconds()
+        
+        # Log response
+        logger.info(
+            f"Response: {request.method} {request.url.path} - {response.status_code} ({process_time:.3f}s)",
+            extra={
+                "method": request.method,
+                "path": request.url.path,
+                "status_code": response.status_code,
+                "process_time": process_time,
+            }
+        )
+        
+        return response
+    except Exception as e:
+        process_time = (datetime.utcnow() - start_time).total_seconds()
+        logger.error(
+            f"Error processing request: {request.method} {request.url.path} - {str(e)} ({process_time:.3f}s)",
+            extra={
+                "method": request.method,
+                "path": request.url.path,
+                "error": str(e),
+                "process_time": process_time,
+            },
+            exc_info=True
+        )
+        raise
 
 # CORS middleware
 app.add_middleware(
@@ -27,6 +94,12 @@ app.add_middleware(
 )
 
 # API routes - MUST be registered BEFORE any catch-all routes
+app.include_router(auth.router, prefix="/api/auth", tags=["auth"])
+app.include_router(dashboard.router, prefix="/api/dashboard", tags=["dashboard"])
+app.include_router(cases.router, prefix="/api/cases", tags=["cases"])
+app.include_router(analysis.router, prefix="/api/analysis", tags=["analysis"])
+app.include_router(reports.router, prefix="/api/reports", tags=["reports"])
+app.include_router(settings.router, prefix="/api/settings", tags=["settings"])
 app.include_router(upload.router, prefix="/api/upload", tags=["upload"])
 app.include_router(chat.router, prefix="/api/chat", tags=["chat"])
 

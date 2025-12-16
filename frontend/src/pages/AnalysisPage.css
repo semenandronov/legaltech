@@ -1,0 +1,128 @@
+.analysis-page-root {
+  min-height: 100vh;
+  background: #0a0a0a;
+  color: #e5e5e5;
+  display: flex;
+}
+
+.analysis-page-content {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 100vh;
+}
+
+.analysis-page-main {
+  flex: 1;
+  padding: 40px;
+  overflow-y: auto;
+}
+
+.analysis-page-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 32px;
+}
+
+.analysis-page-header-left {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+}
+
+.analysis-back-btn {
+  padding: 8px 16px;
+  background: transparent;
+  border: 1px solid #333;
+  border-radius: 6px;
+  color: #e5e5e5;
+  cursor: pointer;
+  font-size: 14px;
+  transition: all 0.2s;
+}
+
+.analysis-back-btn:hover {
+  background: #1f1f1f;
+  border-color: #444;
+}
+
+.analysis-page-title {
+  font-size: 28px;
+  font-weight: 700;
+  color: #ffffff;
+  margin: 0;
+}
+
+.analysis-start-btn {
+  padding: 12px 24px;
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  border: none;
+  border-radius: 8px;
+  color: white;
+  cursor: pointer;
+  font-size: 14px;
+  font-weight: 600;
+  transition: all 0.2s;
+}
+
+.analysis-start-btn:hover:not(:disabled) {
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(102, 126, 234, 0.4);
+}
+
+.analysis-start-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.analysis-page-tabs {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 32px;
+  border-bottom: 1px solid #1f1f1f;
+  padding-bottom: 0;
+}
+
+.analysis-tab {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 20px;
+  background: transparent;
+  border: none;
+  border-bottom: 2px solid transparent;
+  color: #a0a0a0;
+  cursor: pointer;
+  font-size: 14px;
+  transition: all 0.2s;
+  margin-bottom: -1px;
+}
+
+.analysis-tab:hover {
+  color: #e5e5e5;
+  background: #1f1f1f;
+}
+
+.analysis-tab.active {
+  color: #ffffff;
+  border-bottom-color: #667eea;
+  font-weight: 500;
+}
+
+.analysis-tab-icon {
+  font-size: 18px;
+}
+
+.analysis-tab-label {
+  font-size: 14px;
+}
+
+.analysis-page-content-area {
+  background: #111111;
+  border: 1px solid #1f1f1f;
+  border-radius: 12px;
+  padding: 32px;
+  min-height: 400px;
+}
+

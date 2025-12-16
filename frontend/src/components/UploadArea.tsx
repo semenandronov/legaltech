@@ -1,19 +1,30 @@
 import { useState, useRef } from 'react'
-import axios from 'axios'
 import './UploadArea.css'
+import { uploadFiles } from '../services/api'
+import CaseInfoForm, { CaseInfo } from './Upload/CaseInfoForm'
+import AnalysisOptions, { AnalysisOptions as AnalysisOptionsType } from './Upload/AnalysisOptions'
+import ProcessingScreen from './Upload/ProcessingScreen'
+import { useNavigate } from 'react-router-dom'
 
-// Используем относительный путь, так как frontend и backend на одном домене
-const API_URL = import.meta.env.VITE_API_URL || ''
+const MAX_FILE_SIZE_MB = 5
+const MAX_FILE_SIZE_BYTES = MAX_FILE_SIZE_MB * 1024 * 1024
 
 interface UploadAreaProps {
   onUpload: (caseId: string, fileNames: string[]) => void
 }
 
+type UploadStep = 'files' | 'info' | 'analysis' | 'processing' | 'complete'
+
 const UploadArea = ({ onUpload }: UploadAreaProps) => {
-  const [isLoading, setIsLoading] = useState(false)
+  const [step, setStep] = useState<UploadStep>('files')
+  const [files, setFiles] = useState<File[]>([])
+  const [caseInfo, setCaseInfo] = useState<CaseInfo | null>(null)
+  const [analysisOptions, setAnalysisOptions] = useState<AnalysisOptionsType | null>(null)
+  const [caseId, setCaseId] = useState<string | null>(null)
   const [dragActive, setDragActive] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
+  const navigate = useNavigate()
 
   const handleDrag = (e: React.DragEvent) => {
     e.preventDefault()
@@ -41,35 +52,44 @@ const UploadArea = ({ onUpload }: UploadAreaProps) => {
     }
   }
 
-  const handleFiles = async (files: File[]) => {
-    setIsLoading(true)
+  const handleFiles = (selectedFiles: File[]) => {
     setError(null)
 
-    const formData = new FormData()
-    files.forEach((file) => {
-      formData.append('files', file)
-    })
+    // Validate file sizes
+    const tooBig = selectedFiles.find((file) => file.size > MAX_FILE_SIZE_BYTES)
+    if (tooBig) {
+      setError(`Файл '${tooBig.name}' слишком большой. Максимальный размер: ${MAX_FILE_SIZE_MB} МБ.`)
+      return
+    }
 
+    setFiles(selectedFiles)
+    setStep('info')
+  }
+
+  const handleCaseInfoSubmit = (info: CaseInfo) => {
+    setCaseInfo(info)
+    setStep('analysis')
+  }
+
+  const handleAnalysisSubmit = async (options: AnalysisOptionsType) => {
+    setAnalysisOptions(options)
+    setStep('processing')
+
+    // Upload files with metadata
     try {
-      const response = await axios.post(`${API_URL}/api/upload`, formData, {
-        headers: {
-          'Content-Type': 'multipart/form-data',
-        },
-      })
-
-      if (response.data.status === 'success') {
-        onUpload(response.data.case_id, response.data.file_names)
-      } else {
-        setError(response.data.message || 'Ошибка при загрузке файлов')
-      }
+      const result = await uploadFiles(files, caseInfo, options)
+      setCaseId(result.caseId)
+      // onUpload will be called after processing completes
     } catch (err: any) {
-      if (err.response?.data?.detail) {
-        setError(err.response.data.detail)
-      } else {
-        setError('Ошибка при загрузке файлов. Проверьте что backend запущен на http://localhost:8000')
-      }
-    } finally {
-      setIsLoading(false)
+      setError(err.response?.data?.detail || err.message || 'Ошибка при загрузке файлов')
+      setStep('files')
+    }
+  }
+
+  const handleProcessingComplete = () => {
+    if (caseId) {
+      onUpload(caseId, files.map(f => f.name))
+      navigate(`/cases/${caseId}/chat`)
     }
   }
 
@@ -77,9 +97,39 @@ const UploadArea = ({ onUpload }: UploadAreaProps) => {
     fileInputRef.current?.click()
   }
 
+  if (step === 'info') {
+    return (
+      <CaseInfoForm
+        onSubmit={handleCaseInfoSubmit}
+        onCancel={() => {
+          setStep('files')
+          setFiles([])
+        }}
+      />
+    )
+  }
+
+  if (step === 'analysis') {
+    return (
+      <AnalysisOptions
+        onSubmit={handleAnalysisSubmit}
+        onBack={() => setStep('info')}
+      />
+    )
+  }
+
+  if (step === 'processing') {
+    return (
+      <ProcessingScreen
+        caseId={caseId || ''}
+        onComplete={handleProcessingComplete}
+      />
+    )
+  }
+
   return (
     <div
-      className={`upload-area ${dragActive ? 'drag-active' : ''} ${isLoading ? 'loading' : ''}`}
+      className={`upload-area ${dragActive ? 'drag-active' : ''}`}
       onDragEnter={handleDrag}
       onDragLeave={handleDrag}
       onDragOver={handleDrag}
@@ -94,27 +144,15 @@ const UploadArea = ({ onUpload }: UploadAreaProps) => {
         onChange={handleFileInput}
         style={{ display: 'none' }}
       />
-      
-      {isLoading ? (
-        <>
-          <div className="spinner"></div>
-          <p className="upload-text">Загружаем документы...</p>
-        </>
-      ) : (
-        <>
-          <div className="upload-icon">📄 📄 📄</div>
-          <p className="upload-text">Перетащите документы сюда</p>
-          <p className="upload-subtext">или нажмите для выбора файлов</p>
-          <p className="supported">Поддерживаемые форматы: PDF, DOCX, TXT, XLSX</p>
-        </>
-      )}
 
-      {error && (
-        <div className="error-message">{error}</div>
-      )}
+      <div className="upload-icon">📄 📄 📄</div>
+      <p className="upload-text">Перетащите документы сюда</p>
+      <p className="upload-subtext">или нажмите для выбора файлов</p>
+      <p className="supported">Поддерживаемые форматы: PDF, DOCX, TXT, XLSX</p>
+
+      {error && <div className="error-message">{error}</div>}
     </div>
   )
 }
 
 export default UploadArea
-

@@ -41,7 +41,10 @@ pip install -r requirements.txt
 
 4. Создайте файл `.env`:
 ```env
-OPENAI_API_KEY=sk-xxxxx
+OPENROUTER_API_KEY=sk-or-xxxxxxxxxxxxxxxx
+OPENROUTER_MODEL=openrouter/auto
+OPENROUTER_BASE_URL=https://openrouter.ai/api/v1
+
 DATABASE_URL=postgresql://user:password@localhost:5432/legal_ai_vault
 CORS_ORIGINS=http://localhost:3000,http://localhost:5173,http://localhost:5174
 ```
@@ -95,6 +98,6 @@ Frontend будет доступен на `http://localhost:5173`
 
 ## Технологии
 
-- **Backend**: FastAPI, SQLAlchemy, OpenAI API, pypdf, python-docx, openpyxl
+- **Backend**: FastAPI, SQLAlchemy, OpenRouter (через OpenAI-клиент), pypdf, python-docx, openpyxl
 - **Frontend**: React, TypeScript, Vite, Axios
 - **База данных**: PostgreSQL

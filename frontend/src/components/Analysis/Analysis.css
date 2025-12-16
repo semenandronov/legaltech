@@ -1,0 +1,385 @@
+.analysis-tab-loading,
+.analysis-tab-empty {
+  text-align: center;
+  padding: 60px 20px;
+  color: #a0a0a0;
+}
+
+.analysis-tab-empty-icon {
+  font-size: 64px;
+  margin-bottom: 16px;
+}
+
+.analysis-tab-empty h3 {
+  font-size: 20px;
+  color: #e5e5e5;
+  margin: 0 0 8px 0;
+}
+
+.analysis-tab-empty p {
+  font-size: 14px;
+  color: #a0a0a0;
+  margin: 0;
+}
+
+/* Timeline Tab */
+.timeline-tab-header {
+  margin-bottom: 24px;
+}
+
+.timeline-tab-header h2 {
+  font-size: 24px;
+  font-weight: 700;
+  color: #ffffff;
+  margin: 0 0 16px 0;
+}
+
+.timeline-visualization {
+  margin-bottom: 32px;
+  padding: 24px;
+  background: #0a0a0a;
+  border-radius: 8px;
+}
+
+.timeline-visualization h3 {
+  font-size: 18px;
+  color: #e5e5e5;
+  margin: 0 0 16px 0;
+}
+
+.timeline-events-list {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.timeline-event-card {
+  background: #0a0a0a;
+  border: 1px solid #1f1f1f;
+  border-radius: 8px;
+  padding: 20px;
+  display: flex;
+  gap: 20px;
+}
+
+.timeline-event-date {
+  min-width: 150px;
+  font-size: 16px;
+  font-weight: 600;
+  color: #667eea;
+}
+
+.timeline-event-content {
+  flex: 1;
+}
+
+.timeline-event-type {
+  font-size: 14px;
+  font-weight: 500;
+  color: #a0a0a0;
+  margin-bottom: 8px;
+}
+
+.timeline-event-description {
+  font-size: 16px;
+  color: #e5e5e5;
+  margin-bottom: 8px;
+  line-height: 1.5;
+}
+
+.timeline-event-source {
+  font-size: 12px;
+  color: #6b7280;
+}
+
+/* Discrepancies Tab */
+.discrepancies-tab-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  margin-bottom: 24px;
+  gap: 20px;
+}
+
+.discrepancies-tab-header h2 {
+  font-size: 24px;
+  font-weight: 700;
+  color: #ffffff;
+  margin: 0 0 12px 0;
+}
+
+.discrepancies-stats {
+  display: flex;
+  gap: 16px;
+}
+
+.discrepancy-stat {
+  padding: 4px 12px;
+  border-radius: 12px;
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.discrepancy-stat.high {
+  background: #ef444420;
+  color: #ef4444;
+}
+
+.discrepancy-stat.medium {
+  background: #f59e0b20;
+  color: #f59e0b;
+}
+
+.discrepancy-stat.low {
+  background: #10b98120;
+  color: #10b981;
+}
+
+.discrepancies-filters {
+  display: flex;
+  gap: 8px;
+}
+
+.discrepancy-filter {
+  padding: 8px 16px;
+  background: transparent;
+  border: 1px solid #333;
+  border-radius: 6px;
+  color: #a0a0a0;
+  cursor: pointer;
+  font-size: 14px;
+  transition: all 0.2s;
+}
+
+.discrepancy-filter:hover {
+  background: #1f1f1f;
+  border-color: #444;
+}
+
+.discrepancy-filter.active {
+  background: #1f1f1f;
+  border-color: #667eea;
+  color: #667eea;
+}
+
+.discrepancies-list {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.discrepancy-card {
+  background: #0a0a0a;
+  border: 1px solid #1f1f1f;
+  border-radius: 8px;
+  padding: 20px;
+}
+
+.discrepancy-card-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  margin-bottom: 12px;
+  gap: 12px;
+}
+
+.discrepancy-card-type {
+  font-size: 16px;
+  font-weight: 600;
+  color: #ffffff;
+  flex: 1;
+}
+
+.discrepancy-card-severity {
+  padding: 4px 12px;
+  border-radius: 12px;
+  font-size: 12px;
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+.discrepancy-card-description {
+  font-size: 14px;
+  color: #e5e5e5;
+  line-height: 1.6;
+  margin-bottom: 12px;
+}
+
+.discrepancy-card-sources {
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid #1f1f1f;
+}
+
+.discrepancy-card-sources-title {
+  font-size: 12px;
+  font-weight: 500;
+  color: #a0a0a0;
+  margin-bottom: 8px;
+}
+
+.discrepancy-card-sources-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.discrepancy-card-source {
+  font-size: 12px;
+  color: #6b7280;
+  padding: 4px 8px;
+  background: #1f1f1f;
+  border-radius: 4px;
+}
+
+.discrepancy-card-details {
+  margin-top: 12px;
+  padding: 12px;
+  background: #0a0a0a;
+  border-radius: 4px;
+  overflow-x: auto;
+}
+
+.discrepancy-card-details pre {
+  margin: 0;
+  font-size: 12px;
+  color: #a0a0a0;
+  font-family: 'Courier New', monospace;
+}
+
+/* Key Facts Tab */
+.key-facts-tab h2 {
+  font-size: 24px;
+  font-weight: 700;
+  color: #ffffff;
+  margin: 0 0 24px 0;
+}
+
+.key-facts-content {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+}
+
+.key-facts-section {
+  background: #0a0a0a;
+  border: 1px solid #1f1f1f;
+  border-radius: 8px;
+  padding: 20px;
+}
+
+.key-facts-section h3 {
+  font-size: 18px;
+  font-weight: 600;
+  color: #ffffff;
+  margin: 0 0 16px 0;
+}
+
+.key-facts-item {
+  font-size: 14px;
+  color: #e5e5e5;
+  margin-bottom: 12px;
+  line-height: 1.6;
+}
+
+.key-facts-item strong {
+  color: #ffffff;
+  margin-right: 8px;
+}
+
+.key-facts-list {
+  margin: 0;
+  padding-left: 20px;
+  color: #e5e5e5;
+}
+
+.key-facts-list li {
+  margin-bottom: 8px;
+}
+
+/* Summary Tab */
+.summary-tab h2 {
+  font-size: 24px;
+  font-weight: 700;
+  color: #ffffff;
+  margin: 0 0 24px 0;
+}
+
+.summary-content {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+}
+
+.summary-text {
+  font-size: 16px;
+  color: #e5e5e5;
+  line-height: 1.8;
+  white-space: pre-wrap;
+}
+
+.summary-key-facts {
+  background: #0a0a0a;
+  border: 1px solid #1f1f1f;
+  border-radius: 8px;
+  padding: 20px;
+}
+
+.summary-key-facts h3 {
+  font-size: 18px;
+  font-weight: 600;
+  color: #ffffff;
+  margin: 0 0 16px 0;
+}
+
+.summary-key-facts pre {
+  margin: 0;
+  font-size: 12px;
+  color: #a0a0a0;
+  font-family: 'Courier New', monospace;
+  overflow-x: auto;
+}
+
+/* Risk Analysis Tab */
+.risk-analysis-tab h2 {
+  font-size: 24px;
+  font-weight: 700;
+  color: #ffffff;
+  margin: 0 0 24px 0;
+}
+
+.risk-analysis-content {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+}
+
+.risk-analysis-text {
+  font-size: 16px;
+  color: #e5e5e5;
+  line-height: 1.8;
+  white-space: pre-wrap;
+}
+
+.risk-analysis-discrepancies {
+  background: #0a0a0a;
+  border: 1px solid #1f1f1f;
+  border-radius: 8px;
+  padding: 20px;
+}
+
+.risk-analysis-discrepancies h3 {
+  font-size: 18px;
+  font-weight: 600;
+  color: #ffffff;
+  margin: 0 0 16px 0;
+}
+
+.risk-analysis-discrepancies pre {
+  margin: 0;
+  font-size: 12px;
+  color: #a0a0a0;
+  font-family: 'Courier New', monospace;
+  overflow-x: auto;
+}
+

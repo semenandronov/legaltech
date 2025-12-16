@@ -6,6 +6,13 @@ from docx import Document
 import openpyxl
 
 
+def _clean_text(text: str) -> str:
+    """Remove NUL bytes and BOM markers"""
+    if text is None:
+        return ""
+    return text.replace("\x00", "").replace("\ufeff", "")
+
+
 def parse_pdf(file_content: bytes, filename: str) -> str:
     """Extract text from PDF file"""
     try:
@@ -15,7 +22,7 @@ def parse_pdf(file_content: bytes, filename: str) -> str:
         text_parts = []
         for page in reader.pages:
             text_parts.append(page.extract_text())
-        return "\n".join(text_parts)
+        return _clean_text("\n".join(text_parts))
     except Exception as e:
         raise ValueError(f"Ошибка при чтении PDF файла {filename}: {str(e)}")
 
@@ -30,7 +37,7 @@ def parse_docx(file_content: bytes, filename: str) -> str:
         for paragraph in doc.paragraphs:
             if paragraph.text.strip():
                 text_parts.append(paragraph.text)
-        return "\n".join(text_parts)
+        return _clean_text("\n".join(text_parts))
     except Exception as e:
         raise ValueError(f"Ошибка при чтении DOCX файла {filename}: {str(e)}")
 
@@ -39,9 +46,9 @@ def parse_txt(file_content: bytes, filename: str) -> str:
     """Extract text from TXT file"""
     try:
         # Try different encodings
-        for encoding in ['utf-8', 'cp1251', 'latin-1']:
+        for encoding in ['utf-8-sig', 'utf-8', 'cp1251', 'latin-1']:
             try:
-                return file_content.decode(encoding)
+                return _clean_text(file_content.decode(encoding))
             except UnicodeDecodeError:
                 continue
         raise ValueError(f"Не удалось декодировать файл {filename}")
@@ -63,7 +70,7 @@ def parse_xlsx(file_content: bytes, filename: str) -> str:
                 row_text = " | ".join(str(cell) if cell is not None else "" for cell in row)
                 if row_text.strip():
                     text_parts.append(row_text)
-        return "\n".join(text_parts)
+        return _clean_text("\n".join(text_parts))
     except Exception as e:
         raise ValueError(f"Ошибка при чтении XLSX файла {filename}: {str(e)}")
 

@@ -1,19 +1,41 @@
 import { useState, useEffect, useRef } from 'react'
-import axios from 'axios'
 import './ChatWindow.css'
-
-// Используем относительный путь, так как frontend и backend на одном домене
-const API_URL = import.meta.env.VITE_API_URL || ''
+import { fetchHistory, sendMessage, SourceInfo, HistoryMessage } from '../services/api'
+import ReactMarkdown from 'react-markdown'
 
 interface Message {
   role: 'user' | 'assistant'
   content: string
-  sources?: string[]
+  sources?: SourceInfo[]
 }
 
 interface ChatWindowProps {
   caseId: string
   fileNames: string[]
+}
+
+const MAX_INPUT_CHARS = 5000
+
+const RECOMMENDED_QUESTIONS: string[] = [
+  'Сформулируй краткий обзор этого дела.',
+  'Какие ключевые сроки и даты важны в этом деле?',
+  'Есть ли нарушения условий контракта со стороны другой стороны?',
+  'Каковы мои шансы выиграть спор в суде исходя из документов?',
+]
+
+const formatSourceReference = (source: SourceInfo): string => {
+  let ref = `[Документ: ${source.file}`
+  if (source.page) {
+    ref += `, стр. ${source.page}`
+  }
+  if (source.start_line) {
+    ref += `, строки ${source.start_line}`
+    if (source.end_line && source.end_line !== source.start_line) {
+      ref += `-${source.end_line}`
+    }
+  }
+  ref += ']'
+  return ref
 }
 
 const ChatWindow = ({ caseId, fileNames }: ChatWindowProps) => {
@@ -29,35 +51,65 @@ const ChatWindow = ({ caseId, fileNames }: ChatWindowProps) => {
 
   useEffect(() => {
     scrollToBottom()
-  }, [messages])
+  }, [messages, isLoading])
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
   }
 
+  // Type guard to check if source is SourceInfo
+  const isSourceInfo = (source: string | SourceInfo): source is SourceInfo => {
+    return typeof source === 'object' && source !== null && 'file' in source
+  }
+
+  // Type guard to check if sources array contains SourceInfo
+  const hasSourceInfo = (sources: (string | SourceInfo)[] | undefined): sources is SourceInfo[] => {
+    if (!sources || sources.length === 0) return false
+    return sources.every(s => isSourceInfo(s))
+  }
+
+  const normalizeSources = (sources: (string | SourceInfo)[] | undefined): SourceInfo[] => {
+    if (!sources || sources.length === 0) return []
+    
+    // If all sources are already SourceInfo, return as is
+    if (hasSourceInfo(sources)) {
+      return sources
+    }
+    
+    // Convert string sources to SourceInfo
+    return sources.map((s): SourceInfo => {
+      if (isSourceInfo(s)) {
+        return s
+      }
+      // It's a string
+      return { file: s as string }
+    })
+  }
+
   const loadHistory = async () => {
     try {
-      const response = await axios.get(`${API_URL}/api/chat/${caseId}/history`)
-      if (response.data.messages) {
-        setMessages(
-          response.data.messages.map((msg: any) => ({
-            role: msg.role,
-            content: msg.content,
-            sources: msg.sources || [],
-          }))
-        )
-      }
+      const history = await fetchHistory(caseId)
+      setMessages(
+        history.map((msg: HistoryMessage) => ({
+          role: msg.role,
+          content: msg.content,
+          sources: normalizeSources(msg.sources),
+        })),
+      )
     } catch (err) {
       console.error('Ошибка при загрузке истории:', err)
     }
   }
 
   const handleSend = async () => {
-    if (!inputValue.trim() || isLoading) return
+    if (!inputValue.trim() || isLoading) {
+      return
+    }
 
+    const trimmed = inputValue.slice(0, MAX_INPUT_CHARS).trim()
     const userMessage: Message = {
       role: 'user',
-      content: inputValue.trim(),
+      content: trimmed,
     }
 
     setMessages((prev) => [...prev, userMessage])
@@ -66,16 +118,12 @@ const ChatWindow = ({ caseId, fileNames }: ChatWindowProps) => {
     setError(null)
 
     try {
-      const response = await axios.post(`${API_URL}/api/chat`, {
-        case_id: caseId,
-        question: userMessage.content,
-      })
-
-      if (response.data.status === 'success') {
+      const response = await sendMessage(caseId, userMessage.content)
+      if (response.status === 'success') {
         const assistantMessage: Message = {
           role: 'assistant',
-          content: response.data.answer,
-          sources: response.data.sources || [],
+          content: response.answer,
+          sources: response.sources || [],
         }
         setMessages((prev) => [...prev, assistantMessage])
       } else {
@@ -84,33 +132,62 @@ const ChatWindow = ({ caseId, fileNames }: ChatWindowProps) => {
     } catch (err: any) {
       setError(
         err.response?.data?.detail ||
-          'Ошибка при отправке вопроса. Проверьте что backend запущен.'
+          'Ошибка при отправке вопроса. Проверьте, что backend запущен.',
       )
     } finally {
       setIsLoading(false)
     }
   }
 
-  const handleKeyPress = (e: React.KeyboardEvent) => {
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault()
       handleSend()
     }
   }
 
+  const handleTextareaChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
+    setInputValue(e.target.value)
+    // Auto-resize textarea
+    const textarea = e.target
+    textarea.style.height = 'auto'
+    textarea.style.height = `${Math.min(textarea.scrollHeight, 200)}px`
+  }
+
+  const handleRecommendedClick = (question: string) => {
+    setInputValue(question)
+  }
+
+  const remainingChars = MAX_INPUT_CHARS - inputValue.length
+  const isOverLimit = remainingChars < 0
+
+  const hasMessages = messages.length > 0
+
   return (
     <div className="chat-container">
-      <div className="chat-header">
-        <h2>Чат с AI</h2>
-        <p className="chat-subtitle">
-          {fileNames.length} документов загружено: {fileNames.join(', ')}
-        </p>
-      </div>
-
       <div className="chat-messages">
-        {messages.length === 0 && (
+        <div className="chat-messages-wrapper">
+        {!hasMessages && !isLoading && (
           <div className="empty-state">
-            <p>Задайте вопрос о загруженных документах</p>
+              <div className="empty-card">
+                <div className="empty-icon">⚖️</div>
+                <h3 className="empty-title">Legal AI</h3>
+                <p className="empty-subtitle">
+                  Задайте вопрос по загруженным документам. AI проанализирует контракты, переписку и таблицы.
+                </p>
+                <div className="empty-questions-grid">
+                  {RECOMMENDED_QUESTIONS.map((q) => (
+                    <button
+                      key={q}
+                      type="button"
+                      className="empty-question-btn"
+                      onClick={() => handleRecommendedClick(q)}
+                    >
+                      {q}
+                    </button>
+                  ))}
+                </div>
+              </div>
           </div>
         )}
 
@@ -118,16 +195,32 @@ const ChatWindow = ({ caseId, fileNames }: ChatWindowProps) => {
           <div
             key={index}
             className={`message ${message.role === 'user' ? 'message-user' : 'message-assistant'}`}
+            role="article"
+            aria-label={message.role === 'user' ? 'Сообщение пользователя' : 'Ответ ассистента'}
           >
-            <div className={`message-content ${message.role}`}>
-              {message.content}
+            {message.role === 'assistant' && (
+              <div className="message-avatar assistant-avatar">AI</div>
+            )}
+            {message.role === 'user' && (
+              <div className="message-avatar user-avatar">You</div>
+            )}
+            <div className={`message-bubble ${message.role}`}>
+              <div className="message-text">
+                <ReactMarkdown>{message.content}</ReactMarkdown>
+              </div>
               {message.sources && message.sources.length > 0 && (
                 <div className="sources">
-                  {message.sources.map((source, idx) => (
-                    <span key={idx} className="source-tag">
-                      📎 {source}
-                    </span>
-                  ))}
+                  <div className="sources-title">Источники:</div>
+                  <div className="sources-list">
+                    {message.sources.map((source, idx) => {
+                      const sourceRef = formatSourceReference(source)
+                      return (
+                        <div key={idx} className="source-item" title={source.text_preview || sourceRef}>
+                          <span className="source-ref">{sourceRef}</span>
+                        </div>
+                      )
+                    })}
+                  </div>
                 </div>
               )}
             </div>
@@ -135,38 +228,52 @@ const ChatWindow = ({ caseId, fileNames }: ChatWindowProps) => {
         ))}
 
         {isLoading && (
-          <div className="message message-assistant">
-            <div className="message-content assistant">
-              <div className="spinner-small"></div>
-              <span>AI думает...</span>
+          <div className="message message-assistant" role="status" aria-live="polite">
+            <div className="message-avatar assistant-avatar" aria-hidden="true">AI</div>
+            <div className="message-bubble assistant loading-bubble">
+              <div className="typing-indicator" aria-label="Генерация ответа">
+                <div className="typing-dot"></div>
+                <div className="typing-dot"></div>
+                <div className="typing-dot"></div>
+              </div>
             </div>
           </div>
         )}
 
-        {error && (
-          <div className="error-message">{error}</div>
-        )}
+        {error && <div className="error-message">{error}</div>}
 
         <div ref={messagesEndRef} />
+        </div>
       </div>
 
       <div className="chat-input-area">
-        <input
-          type="text"
-          value={inputValue}
-          onChange={(e) => setInputValue(e.target.value)}
-          onKeyPress={handleKeyPress}
-          placeholder="Введите вопрос..."
-          disabled={isLoading}
-          className="chat-input"
-        />
-        <button
-          onClick={handleSend}
-          disabled={isLoading || !inputValue.trim()}
-          className="send-button"
-        >
-          Отправить
-        </button>
+        <div className="chat-input-wrapper">
+          <div className="chat-input-main">
+            <textarea
+              className="chat-input-textarea"
+              placeholder="Сообщение Legal AI..."
+              value={inputValue}
+              onChange={handleTextareaChange}
+              onKeyDown={handleKeyDown}
+              disabled={isLoading}
+              rows={1}
+              aria-label="Введите сообщение"
+              aria-describedby="input-help"
+            />
+            <button
+              type="button"
+              onClick={handleSend}
+              disabled={isLoading || !inputValue.trim() || isOverLimit}
+              className="send-button"
+              title="Отправить (Enter)"
+              aria-label="Отправить сообщение"
+            >
+              <svg width="16" height="16" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
+                <path d="M.5 1.163L1.847.5l13.5 7.5-13.5 7.5L.5 14.837V8.837l8.5-1.674L.5 5.837V1.163z" fill="currentColor"/>
+              </svg>
+            </button>
+          </div>
+        </div>
       </div>
     </div>
   )
