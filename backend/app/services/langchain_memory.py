@@ -8,7 +8,7 @@ from langchain.memory import (
     EntityMemory,
 )
 from langchain_openai import ChatOpenAI
-from langchain.schema import BaseMemory
+from langchain_core.memory import BaseMemory
 from app.config import config
 import logging
 

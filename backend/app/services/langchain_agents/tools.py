@@ -1,7 +1,7 @@
 """Tools for LangChain agents in multi-agent analysis system"""
 from typing import List, Dict, Any, Optional
 from langchain.tools import tool
-from langchain.schema import Document
+from langchain_core.documents import Document
 from app.services.rag_service import RAGService
 from app.services.document_processor import DocumentProcessor
 import logging

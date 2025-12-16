@@ -6,7 +6,7 @@ from langchain.chains.combine_documents.map_reduce import MapReduceDocumentsChai
 from langchain.chains.retrieval_qa.base import RetrievalQA
 from langchain.prompts import PromptTemplate, ChatPromptTemplate
 from langchain_openai import ChatOpenAI
-from langchain.schema import Document
+from langchain_core.documents import Document
 from langchain.chains.question_answering import load_qa_chain
 from app.config import config
 from app.services.document_processor import DocumentProcessor

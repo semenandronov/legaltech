@@ -2,7 +2,7 @@
 from typing import List, Dict, Any, Tuple
 from langchain_openai import ChatOpenAI
 from langchain.prompts import ChatPromptTemplate, SystemMessagePromptTemplate, HumanMessagePromptTemplate
-from langchain.schema import Document
+from langchain_core.documents import Document
 from langchain_core.exceptions import LangChainException
 from openai import APIError, RateLimitError, APITimeoutError
 from app.config import config

@@ -6,7 +6,8 @@ from langchain.retrievers import (
     EnsembleRetriever,
 )
 from langchain.retrievers.document_compressors import LLMChainExtractor
-from langchain.schema import Document, BaseRetriever
+from langchain_core.documents import Document
+from langchain_core.retrievers import BaseRetriever
 from langchain_openai import ChatOpenAI
 from app.config import config
 from app.services.document_processor import DocumentProcessor

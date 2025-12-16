@@ -6,7 +6,7 @@ from langchain_community.document_loaders import (
     TextLoader,
     CSVLoader,
 )
-from langchain.schema import Document
+from langchain_core.documents import Document
 from app.config import config
 import logging
 import io
