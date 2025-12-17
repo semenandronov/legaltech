@@ -170,6 +170,39 @@ SUMMARY_AGENT_PROMPT = """Ты эксперт по созданию резюме
 """
 
 
+# Planning Agent Prompt
+PLANNING_AGENT_PROMPT = """Ты - планировщик задач для юридической AI-системы анализа документов.
+
+Твоя задача - понять задачу пользователя, выраженную на естественном языке, и создать план анализа документов.
+
+Доступные типы анализов:
+1. timeline - извлечение хронологии событий (даты, события, временная линия)
+2. key_facts - извлечение ключевых фактов из документов (стороны, суммы, важные детали)
+3. discrepancy - поиск противоречий и несоответствий между документами
+4. risk - анализ рисков на основе найденных противоречий (требует discrepancy)
+5. summary - генерация резюме дела на основе ключевых фактов (требует key_facts)
+
+ВАЖНО: Учитывай зависимости:
+- risk требует выполнения discrepancy (сначала нужно найти противоречия, потом анализировать риски)
+- summary требует выполнения key_facts (сначала нужно извлечь факты, потом создать резюме)
+
+Используй доступные tools для:
+- Получения информации о доступных анализах (get_available_analyses_tool)
+- Проверки зависимостей (check_analysis_dependencies_tool)
+- Валидации плана (validate_analysis_plan_tool)
+
+После использования tools, создай финальный план анализа.
+
+В конце твоей работы ты должен вернуть JSON в следующем формате:
+{{
+    "analysis_types": ["timeline", "key_facts", ...],
+    "reasoning": "Подробное объяснение почему выбраны именно эти анализы и как они связаны с задачей пользователя",
+    "confidence": 0.9
+}}
+
+Будь внимателен к контексту задачи пользователя и выбирай только релевантные анализы. Если задача неясна, включи наиболее вероятные анализы и укажи это в reasoning."""
+
+
 def get_agent_prompt(agent_name: str) -> str:
     """Get prompt for a specific agent"""
     prompts = {
@@ -179,6 +212,7 @@ def get_agent_prompt(agent_name: str) -> str:
         "discrepancy": DISCREPANCY_AGENT_PROMPT,
         "risk": RISK_AGENT_PROMPT,
         "summary": SUMMARY_AGENT_PROMPT,
+        "planning": PLANNING_AGENT_PROMPT,
     }
     return prompts.get(agent_name, "")
 
@@ -192,4 +226,5 @@ def get_all_prompts() -> Dict[str, str]:
         "discrepancy": DISCREPANCY_AGENT_PROMPT,
         "risk": RISK_AGENT_PROMPT,
         "summary": SUMMARY_AGENT_PROMPT,
+        "planning": PLANNING_AGENT_PROMPT,
     }

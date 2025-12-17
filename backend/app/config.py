@@ -49,6 +49,12 @@ class Config:
     AGENT_TIMEOUT: int = int(os.getenv("AGENT_TIMEOUT", "300"))  # Timeout per agent in seconds
     AGENT_RETRY_COUNT: int = int(os.getenv("AGENT_RETRY_COUNT", "2"))  # Retry count on failure
     
+    # LangSmith Settings (optional, for monitoring and debugging)
+    LANGSMITH_API_KEY: str = os.getenv("LANGSMITH_API_KEY", "")
+    LANGSMITH_PROJECT: str = os.getenv("LANGSMITH_PROJECT", "legal-ai-vault")
+    LANGSMITH_TRACING: bool = os.getenv("LANGCHAIN_TRACING_V2", "false").lower() == "true"
+    LANGSMITH_ENDPOINT: str = os.getenv("LANGCHAIN_ENDPOINT", "https://api.smith.langchain.com")
+    
     # JWT Settings
     JWT_SECRET_KEY: str = os.getenv("JWT_SECRET_KEY", "your-secret-key-change-in-production")
     JWT_ALGORITHM: str = os.getenv("JWT_ALGORITHM", "HS256")
@@ -57,6 +63,22 @@ class Config:
     def __init__(self):
         """Validate configuration on initialization"""
         self._validate()
+        self._setup_langsmith()
+    
+    def _setup_langsmith(self):
+        """Setup LangSmith tracing if enabled"""
+        if self.LANGSMITH_TRACING and self.LANGSMITH_API_KEY:
+            import os
+            os.environ["LANGCHAIN_TRACING_V2"] = "true"
+            os.environ["LANGCHAIN_API_KEY"] = self.LANGSMITH_API_KEY
+            os.environ["LANGCHAIN_PROJECT"] = self.LANGSMITH_PROJECT
+            os.environ["LANGCHAIN_ENDPOINT"] = self.LANGSMITH_ENDPOINT
+            logger.info("✅ LangSmith tracing enabled")
+        elif self.LANGSMITH_TRACING and not self.LANGSMITH_API_KEY:
+            logger.warning(
+                "LANGSMITH_TRACING is enabled but LANGSMITH_API_KEY is not set. "
+                "LangSmith tracing will not work."
+            )
     
     def _validate(self):
         """Validate critical configuration values"""

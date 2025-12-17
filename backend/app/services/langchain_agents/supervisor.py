@@ -1,7 +1,7 @@
 """Supervisor agent for LangGraph multi-agent system"""
 from typing import Dict, Any
 from langchain_openai import ChatOpenAI
-from langgraph.prebuilt import create_react_agent
+from app.services.langchain_agents.agent_factory import create_legal_agent
 from langchain.tools import Tool
 from app.config import config
 from app.services.langchain_agents.state import AnalysisState
@@ -49,7 +49,7 @@ def create_supervisor_agent() -> Any:
     prompt = get_agent_prompt("supervisor")
     
     # Create supervisor agent
-    supervisor = create_react_agent(llm, handoff_tools, messages_modifier=prompt)
+    supervisor = create_legal_agent(llm, handoff_tools, system_prompt=prompt)
     
     return supervisor
 

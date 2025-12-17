@@ -1,7 +1,7 @@
 """Risk analysis agent node for LangGraph"""
 from typing import Dict, Any
 from langchain_openai import ChatOpenAI
-from langgraph.prebuilt import create_react_agent
+from app.services.langchain_agents.agent_factory import create_legal_agent
 from app.config import config
 from app.services.langchain_agents.state import AnalysisState
 from app.services.langchain_agents.tools import get_all_tools, initialize_tools
@@ -68,7 +68,7 @@ def risk_agent_node(
         prompt = get_agent_prompt("risk")
         
         # Create agent
-        agent = create_react_agent(llm, tools, messages_modifier=prompt)
+        agent = create_legal_agent(llm, tools, system_prompt=prompt)
         
         # Get case info
         case_info = ""

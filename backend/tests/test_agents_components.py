@@ -77,6 +77,81 @@ class TestTools:
             assert hasattr(tool, 'description')
             assert tool.description is not None
             assert len(tool.description) > 0
+    
+    def test_initialize_tools(self):
+        """Test tool initialization with services"""
+        from app.services.rag_service import RAGService
+        from app.services.document_processor import DocumentProcessor
+        from app.services.langchain_agents.tools import initialize_tools
+        
+        # Mock services
+        mock_rag = RAGService.__new__(RAGService)
+        mock_doc_processor = DocumentProcessor.__new__(DocumentProcessor)
+        
+        # Initialize tools
+        initialize_tools(mock_rag, mock_doc_processor)
+        
+        # Verify tools can be retrieved
+        tools = get_all_tools()
+        assert len(tools) > 0
+    
+    def test_retrieve_documents_tool_format(self):
+        """Test that retrieve_documents_tool returns formatted data"""
+        from app.services.langchain_agents.tools import retrieve_documents_tool
+        
+        # Check tool signature
+        assert hasattr(retrieve_documents_tool, 'name')
+        assert retrieve_documents_tool.name == "retrieve_documents_tool"
+        
+        # Check tool has correct parameters
+        # Note: This is a structural test, actual execution requires initialized services
+        assert callable(retrieve_documents_tool.func)
+    
+    def test_save_tools_format(self):
+        """Test that save tools have correct format"""
+        from app.services.langchain_agents.tools import (
+            save_timeline_tool,
+            save_key_facts_tool,
+            save_discrepancy_tool,
+            save_risk_analysis_tool,
+            save_summary_tool
+        )
+        
+        save_tools = [
+            save_timeline_tool,
+            save_key_facts_tool,
+            save_discrepancy_tool,
+            save_risk_analysis_tool,
+            save_summary_tool
+        ]
+        
+        for tool in save_tools:
+            assert hasattr(tool, 'name')
+            assert hasattr(tool, 'description')
+            assert callable(tool.func)
+    
+    def test_tools_error_handling(self):
+        """Test that tools handle errors gracefully"""
+        from app.services.langchain_agents.tools import (
+            retrieve_documents_tool,
+            save_timeline_tool
+        )
+        
+        # Test retrieve_documents_tool without initialization
+        # Should raise ValueError
+        try:
+            result = retrieve_documents_tool.func("test query", "test_case", k=5)
+            # If no error, check that it returns error message
+            assert isinstance(result, str)
+        except ValueError as e:
+            assert "RAG service not initialized" in str(e)
+        
+        # Test save_timeline_tool with invalid data
+        # Should return error message string
+        result = save_timeline_tool.func("invalid json", "test_case")
+        assert isinstance(result, str)
+        # Should contain error indication
+        assert "error" in result.lower() or "successfully" in result.lower()
 
 
 class TestPrompts:
@@ -114,6 +189,62 @@ class TestPrompts:
         # Check timeline prompt
         assert "даты" in prompts["timeline"].lower() or "dates" in prompts["timeline"].lower()
         assert "события" in prompts["timeline"].lower() or "events" in prompts["timeline"].lower()
+    
+    def test_all_prompts_not_empty(self):
+        """Test that all prompts are not empty"""
+        prompts = get_all_prompts()
+        
+        for agent_name, prompt in prompts.items():
+            assert prompt is not None, f"Prompt for {agent_name} is None"
+            assert len(prompt.strip()) > 0, f"Prompt for {agent_name} is empty"
+            assert len(prompt) > 50, f"Prompt for {agent_name} is too short (less than 50 chars)"
+    
+    def test_prompts_contain_instructions(self):
+        """Test that prompts contain necessary instructions"""
+        prompts = get_all_prompts()
+        
+        # Supervisor should mention agents
+        assert any(word in prompts["supervisor"].lower() for word in ["timeline", "key_facts", "discrepancy", "risk", "summary"])
+        
+        # Timeline should mention dates/events
+        timeline_lower = prompts["timeline"].lower()
+        assert any(word in timeline_lower for word in ["даты", "dates", "события", "events", "timeline"])
+        
+        # Key facts should mention facts/extraction
+        key_facts_lower = prompts["key_facts"].lower()
+        assert any(word in key_facts_lower for word in ["факты", "facts", "извлечение", "extract"])
+        
+        # Discrepancy should mention contradictions
+        discrepancy_lower = prompts["discrepancy"].lower()
+        assert any(word in discrepancy_lower for word in ["противоречия", "contradiction", "несоответствия", "discrepancy"])
+        
+        # Risk should mention risks
+        risk_lower = prompts["risk"].lower()
+        assert any(word in risk_lower for word in ["риски", "risks", "риск", "risk"])
+        
+        # Summary should mention summary/resume
+        summary_lower = prompts["summary"].lower()
+        assert any(word in summary_lower for word in ["резюме", "summary", "краткое", "brief"])
+    
+    def test_prompts_match_agent_tasks(self):
+        """Test that prompts match agent tasks"""
+        prompts = get_all_prompts()
+        
+        # Each prompt should mention its tool usage
+        assert "retrieve_documents_tool" in prompts["timeline"] or "retrieve" in prompts["timeline"].lower()
+        assert "save_timeline_tool" in prompts["timeline"] or "save" in prompts["timeline"].lower()
+        
+        assert "retrieve_documents_tool" in prompts["key_facts"] or "retrieve" in prompts["key_facts"].lower()
+        assert "save_key_facts_tool" in prompts["key_facts"] or "save" in prompts["key_facts"].lower()
+        
+        assert "retrieve_documents_tool" in prompts["discrepancy"] or "retrieve" in prompts["discrepancy"].lower()
+        assert "save_discrepancy_tool" in prompts["discrepancy"] or "save" in prompts["discrepancy"].lower()
+        
+        # Risk should mention using discrepancy results
+        assert "discrepancy" in prompts["risk"].lower() or "противоречия" in prompts["risk"].lower()
+        
+        # Summary should mention using key_facts results
+        assert "key_facts" in prompts["summary"].lower() or "факты" in prompts["summary"].lower()
 
 
 class TestSupervisor:

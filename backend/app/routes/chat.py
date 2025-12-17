@@ -1,6 +1,6 @@
 """Chat route for Legal AI Vault"""
-from fastapi import APIRouter, HTTPException, Depends
-from pydantic import BaseModel
+from fastapi import APIRouter, HTTPException, Depends, BackgroundTasks
+from pydantic import BaseModel, Field, field_validator
 from sqlalchemy.orm import Session
 from typing import List, Optional, Dict, Any
 from app.utils.database import get_db
@@ -9,7 +9,10 @@ from app.models.case import Case, ChatMessage
 from app.models.user import User
 from app.services.rag_service import RAGService
 from app.services.langchain_memory import MemoryService
+from app.services.langchain_agents import PlanningAgent
+from app.services.analysis_service import AnalysisService
 from app.config import config
+from datetime import datetime
 import re
 import logging
 
@@ -45,6 +48,29 @@ class ChatResponse(BaseModel):
     status: str
 
 
+class TaskRequest(BaseModel):
+    """Request model for natural language task"""
+    case_id: str = Field(..., min_length=1, description="Case identifier")
+    task: str = Field(..., min_length=1, max_length=5000, description="Task in natural language")
+    
+    @field_validator('task')
+    @classmethod
+    def validate_task(cls, v: str) -> str:
+        v = v.strip()
+        if len(v) == 0:
+            raise ValueError('Task cannot be empty')
+        if len(v) > 5000:
+            raise ValueError('Task must be at most 5000 characters')
+        return v
+
+
+class TaskResponse(BaseModel):
+    """Response model for task execution"""
+    plan: Dict[str, Any]  # Analysis plan
+    status: str  # "planned", "executing"
+    message: str
+
+
 def format_source_reference(source: Dict[str, Any]) -> str:
     """Format source reference for display"""
     file = source.get("file", "unknown")
@@ -62,14 +88,61 @@ def format_source_reference(source: Dict[str, Any]) -> str:
     return ref
 
 
+def is_task_request(question: str) -> bool:
+    """
+    Определяет, является ли запрос задачей для выполнения анализов
+    или обычным вопросом
+    
+    Args:
+        question: Текст запроса пользователя
+    
+    Returns:
+        True если это задача, False если вопрос
+    """
+    question_lower = question.lower().strip()
+    
+    # Ключевые слова для задач (команды выполнения)
+    task_keywords = [
+        "проанализируй", "анализируй", "выполни", "найди", "извлеки",
+        "создай", "сделай", "запусти", "проведи", "провести",
+        "проведу", "провести анализ", "сделать анализ",
+        "analyze", "extract", "find", "create", "generate",
+        "run", "perform", "execute"
+    ]
+    
+    # Проверка на команды выполнения
+    for keyword in task_keywords:
+        if keyword in question_lower:
+            return True
+    
+    # Проверка на конкретные типы анализов в запросе
+    analysis_keywords = [
+        "timeline", "хронология", "даты", "события",
+        "key facts", "ключевые факты", "факты",
+        "discrepancy", "противоречия", "несоответствия",
+        "risk", "риски", "анализ рисков",
+        "summary", "резюме", "краткое содержание"
+    ]
+    
+    # Если есть упоминание типов анализов + команда или конструкция задачи
+    has_analysis_keyword = any(keyword in question_lower for keyword in analysis_keywords)
+    has_task_structure = any(word in question_lower for word in ["все", "всех", "всех", "какие", "какие-либо"])
+    
+    if has_analysis_keyword and (has_task_structure or any(cmd in question_lower for cmd in ["нужно", "требуется", "необходимо"])):
+        return True
+    
+    return False
+
+
 @router.post("/", response_model=ChatResponse)
 async def chat(
     request: ChatRequest,
+    background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
     """
-    Send question to ChatGPT based on case documents
+    Send question to ChatGPT based on case documents OR execute task in natural language
     
     Returns: answer, sources, status
     """
@@ -80,6 +153,141 @@ async def chat(
     ).first()
     if not case:
         raise HTTPException(status_code=404, detail="Дело не найдено")
+    
+    # Check if this is a task request
+    if is_task_request(request.question):
+        # This is a task - use Planning Agent
+        try:
+            logger.info(f"Detected task request for case {request.case_id}: {request.question[:100]}...")
+            
+            # Create Planning Agent
+            planning_agent = PlanningAgent()
+            
+            # Create analysis plan
+            plan = planning_agent.plan_analysis(
+                user_task=request.question,
+                case_id=request.case_id
+            )
+            
+            analysis_types = plan["analysis_types"]
+            reasoning = plan.get("reasoning", "План создан на основе задачи")
+            confidence = plan.get("confidence", 0.8)
+            
+            logger.info(
+                f"Planning completed for case {request.case_id}: {analysis_types}, "
+                f"confidence: {confidence:.2f}"
+            )
+            
+            # Map analysis types to API format (discrepancy -> discrepancies, risk -> risk_analysis)
+            api_analysis_types = []
+            for at in analysis_types:
+                if at == "discrepancy":
+                    api_analysis_types.append("discrepancies")
+                elif at == "risk":
+                    api_analysis_types.append("risk_analysis")
+                else:
+                    api_analysis_types.append(at)
+            
+            # Start analysis in background
+            from app.utils.database import SessionLocal
+            
+            # Capture case_id for background task
+            task_case_id = request.case_id
+            
+            def run_planned_analysis():
+                """Run analysis in background based on plan"""
+                background_db = SessionLocal()
+                try:
+                    analysis_service = AnalysisService(background_db)
+                    
+                    if analysis_service.use_agents:
+                        # Map back to agent format
+                        agent_types = []
+                        for at in api_analysis_types:
+                            if at == "discrepancies":
+                                agent_types.append("discrepancy")
+                            elif at == "risk_analysis":
+                                agent_types.append("risk")
+                            else:
+                                agent_types.append(at)
+                        
+                        logger.info(f"Running planned analysis for case {task_case_id}: {agent_types}")
+                        results = analysis_service.run_agent_analysis(task_case_id, agent_types)
+                        logger.info(
+                            f"Planned analysis completed for case {task_case_id}, "
+                            f"execution time: {results.get('execution_time', 0):.2f}s"
+                        )
+                    else:
+                        # Legacy approach
+                        logger.info(f"Using legacy analysis for planned task, case {task_case_id}")
+                        for analysis_type in api_analysis_types:
+                            if analysis_type == "timeline":
+                                analysis_service.extract_timeline(task_case_id)
+                            elif analysis_type == "discrepancies":
+                                analysis_service.find_discrepancies(task_case_id)
+                            elif analysis_type == "key_facts":
+                                analysis_service.extract_key_facts(task_case_id)
+                            elif analysis_type == "summary":
+                                analysis_service.generate_summary(task_case_id)
+                            elif analysis_type == "risk_analysis":
+                                analysis_service.analyze_risks(task_case_id)
+                except Exception as e:
+                    logger.error(f"Error in planned analysis background task: {e}", exc_info=True)
+                finally:
+                    background_db.close()
+            
+            background_tasks.add_task(run_planned_analysis)
+            
+            # Update case status
+            case.status = "processing"
+            if case.metadata is None:
+                case.metadata = {}
+            case.metadata["planned_task"] = request.question
+            case.metadata["planned_analyses"] = api_analysis_types
+            case.metadata["plan_confidence"] = confidence
+            db.commit()
+            
+            # Create response message
+            answer = f"""Я понял вашу задачу и запланировал следующие анализы:
+
+**Планируемые анализы:**
+{', '.join(api_analysis_types)}
+
+**Объяснение:** {reasoning}
+
+**Уверенность:** {confidence:.0%}
+
+Анализ выполняется в фоне. Результаты будут доступны через несколько минут. Вы можете проверить статус анализа в разделе отчетов."""
+            
+            # Save user message
+            user_message = ChatMessage(
+                case_id=request.case_id,
+                role="user",
+                content=request.question
+            )
+            db.add(user_message)
+            
+            # Save assistant message
+            assistant_message = ChatMessage(
+                case_id=request.case_id,
+                role="assistant",
+                content=answer,
+                source_references=[]
+            )
+            db.add(assistant_message)
+            db.commit()
+            
+            return ChatResponse(
+                answer=answer,
+                sources=[],
+                status="task_planned"
+            )
+            
+        except Exception as e:
+            logger.error(f"Error in planning agent: {e}", exc_info=True)
+            # Fallback to regular RAG if planning fails
+            logger.info("Falling back to RAG for task request")
+            # Continue to RAG processing below
     
     # Get chat history
     history_messages = db.query(ChatMessage).filter(
@@ -198,6 +406,130 @@ async def chat(
                 status_code=500,
                 detail=f"Ошибка при генерации ответа: {str(e)}"
             )
+
+
+@router.post("/task", response_model=TaskResponse)
+async def execute_task(
+    request: TaskRequest,
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """
+    Execute task in natural language using planning agent
+    
+    Example: "Проанализируй документы и найди все риски"
+    
+    Returns: plan, status, message
+    """
+    # Verify case ownership
+    case = db.query(Case).filter(
+        Case.id == request.case_id,
+        Case.user_id == current_user.id
+    ).first()
+    if not case:
+        raise HTTPException(status_code=404, detail="Дело не найдено")
+    
+    try:
+        logger.info(f"Task execution request for case {request.case_id}: {request.task[:100]}...")
+        
+        # Create Planning Agent
+        planning_agent = PlanningAgent()
+        
+        # Plan analysis
+        plan = planning_agent.plan_analysis(
+            user_task=request.task,
+            case_id=request.case_id
+        )
+        
+        analysis_types = plan["analysis_types"]
+        reasoning = plan.get("reasoning", "План создан на основе задачи")
+        confidence = plan.get("confidence", 0.8)
+        
+        # Map analysis types to API format
+        api_analysis_types = []
+        for at in analysis_types:
+            if at == "discrepancy":
+                api_analysis_types.append("discrepancies")
+            elif at == "risk":
+                api_analysis_types.append("risk_analysis")
+            else:
+                api_analysis_types.append(at)
+        
+        # Start analysis in background
+        from app.utils.database import SessionLocal
+        
+        # Capture case_id for background task
+        task_case_id = request.case_id
+        
+        def run_planned_analysis():
+            """Run analysis in background based on plan"""
+            background_db = SessionLocal()
+            try:
+                analysis_service = AnalysisService(background_db)
+                
+                if analysis_service.use_agents:
+                    # Map back to agent format
+                    agent_types = []
+                    for at in api_analysis_types:
+                        if at == "discrepancies":
+                            agent_types.append("discrepancy")
+                        elif at == "risk_analysis":
+                            agent_types.append("risk")
+                        else:
+                            agent_types.append(at)
+                    
+                    logger.info(f"Running planned analysis for case {task_case_id}: {agent_types}")
+                    results = analysis_service.run_agent_analysis(task_case_id, agent_types)
+                    logger.info(
+                        f"Planned analysis completed for case {task_case_id}, "
+                        f"execution time: {results.get('execution_time', 0):.2f}s"
+                    )
+                else:
+                    # Legacy approach
+                    for analysis_type in api_analysis_types:
+                        if analysis_type == "timeline":
+                            analysis_service.extract_timeline(task_case_id)
+                        elif analysis_type == "discrepancies":
+                            analysis_service.find_discrepancies(task_case_id)
+                        elif analysis_type == "key_facts":
+                            analysis_service.extract_key_facts(task_case_id)
+                        elif analysis_type == "summary":
+                            analysis_service.generate_summary(task_case_id)
+                        elif analysis_type == "risk_analysis":
+                            analysis_service.analyze_risks(task_case_id)
+            except Exception as e:
+                logger.error(f"Error in planned analysis background task: {e}", exc_info=True)
+            finally:
+                background_db.close()
+        
+        background_tasks.add_task(run_planned_analysis)
+        
+        # Update case status
+        case.status = "processing"
+        if case.metadata is None:
+            case.metadata = {}
+        case.metadata["planned_task"] = request.task
+        case.metadata["planned_analyses"] = api_analysis_types
+        case.metadata["plan_confidence"] = confidence
+        db.commit()
+        
+        return TaskResponse(
+            plan={
+                "analysis_types": api_analysis_types,
+                "reasoning": reasoning,
+                "confidence": confidence
+            },
+            status="executing",
+            message=f"Задача запланирована: {reasoning}"
+        )
+        
+    except Exception as e:
+        logger.error(f"Error in task execution: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=500,
+            detail=f"Ошибка при планировании задачи: {str(e)}"
+        )
 
 
 @router.get("/{case_id}/history")

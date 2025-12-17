@@ -41,6 +41,16 @@ services:
       - key: AGENT_RETRY_COUNT
         value: "2"
       
+      # LangSmith (optional, for monitoring and debugging)
+      - key: LANGSMITH_API_KEY
+        sync: false
+      - key: LANGSMITH_PROJECT
+        value: "legal-ai-vault"
+      - key: LANGCHAIN_TRACING_V2
+        value: "false"  # Set to "true" to enable
+      - key: LANGCHAIN_ENDPOINT
+        value: "https://api.smith.langchain.com"
+      
       # Vector Database (optional, для хранения векторных БД)
       - key: VECTOR_DB_DIR
         value: "/tmp/vector_db"

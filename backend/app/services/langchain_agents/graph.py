@@ -2,6 +2,7 @@
 from langgraph.graph import StateGraph, END, START
 from langgraph.checkpoint.memory import MemorySaver
 from app.services.langchain_agents.state import AnalysisState
+from app.config import config
 from app.services.langchain_agents.supervisor import route_to_agent, create_supervisor_agent
 from app.services.langchain_agents.timeline_node import timeline_agent_node
 from app.services.langchain_agents.key_facts_node import key_facts_agent_node
@@ -89,9 +90,20 @@ def create_analysis_graph(
     graph.add_edge("risk", "supervisor")
     graph.add_edge("summary", "supervisor")
     
-    # Compile graph with memory
-    memory = MemorySaver()
-    compiled_graph = graph.compile(checkpointer=memory)
+    # Compile graph with checkpointer
+    # Try PostgreSQL checkpointer, fallback to MemorySaver
+    try:
+        from langgraph.checkpoint.postgres import PostgresSaver
+        checkpointer = PostgresSaver.from_conn_string(config.DATABASE_URL)
+        logger.info("Using PostgreSQL checkpointer for durable execution")
+    except Exception as e:
+        logger.warning(
+            f"PostgreSQL checkpointer unavailable ({e}), "
+            "using MemorySaver. State will not persist across restarts."
+        )
+        checkpointer = MemorySaver()
+    
+    compiled_graph = graph.compile(checkpointer=checkpointer)
     
     logger.info("Created LangGraph for multi-agent analysis")
     

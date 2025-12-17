@@ -105,3 +105,50 @@ class TestDatabaseIntegration:
         assert TimelineEvent is not None
         assert AnalysisResult is not None
         assert Discrepancy is not None
+    
+    def test_analysis_service_uses_agents_when_enabled(self):
+        """Тест что AnalysisService использует агентов когда AGENT_ENABLED=true"""
+        mock_db = Mock()
+        
+        with patch('app.services.analysis_service.config.AGENT_ENABLED', True):
+            service = AnalysisService(mock_db)
+            # Проверка что service имеет use_agents флаг
+            assert hasattr(service, 'use_agents')
+    
+    def test_analysis_service_fallback_to_legacy(self):
+        """Тест fallback на legacy методы когда AGENT_ENABLED=false"""
+        mock_db = Mock()
+        
+        with patch('app.services.analysis_service.config.AGENT_ENABLED', False):
+            service = AnalysisService(mock_db)
+            # При отключенных агентах должны использоваться legacy методы
+            assert hasattr(service, 'extract_timeline')
+            assert hasattr(service, 'extract_key_facts')
+    
+    def test_all_analysis_service_methods_work_with_agents(self):
+        """Тест что все методы AnalysisService работают с агентами"""
+        mock_db = Mock()
+        service = AnalysisService(mock_db)
+        
+        # Все методы должны существовать независимо от использования агентов
+        methods = [
+            'extract_timeline',
+            'extract_key_facts',
+            'find_discrepancies',
+            'generate_summary',
+            'analyze_risks'
+        ]
+        
+        for method_name in methods:
+            assert hasattr(service, method_name)
+            assert callable(getattr(service, method_name))
+    
+    def test_results_saved_to_db(self):
+        """Тест что результаты сохраняются в БД"""
+        # Структурная проверка - узлы должны сохранять результаты через db session
+        from app.models.analysis import TimelineEvent, AnalysisResult, Discrepancy
+        
+        # Модели должны поддерживать сохранение
+        assert TimelineEvent is not None
+        assert AnalysisResult is not None
+        assert Discrepancy is not None

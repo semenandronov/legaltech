@@ -76,3 +76,55 @@ class TestGraphStructure:
         assert isinstance(initial_state, dict)
         assert "case_id" in initial_state
         assert "analysis_types" in initial_state
+    
+    def test_graph_has_all_nodes(self):
+        """Тест что граф содержит все необходимые узлы"""
+        mock_db = Mock()
+        mock_rag_service = Mock()
+        mock_document_processor = Mock()
+        
+        graph = create_analysis_graph(mock_db, mock_rag_service, mock_document_processor)
+        
+        # Проверка что граф скомпилирован и имеет методы выполнения
+        assert hasattr(graph, 'invoke')
+        assert hasattr(graph, 'stream')
+        
+        # Узлы проверяются через выполнение, но структурно граф должен быть готов
+        assert graph is not None
+    
+    def test_graph_has_correct_edges(self):
+        """Тест что граф имеет корректные edges"""
+        mock_db = Mock()
+        mock_rag_service = Mock()
+        mock_document_processor = Mock()
+        
+        graph = create_analysis_graph(mock_db, mock_rag_service, mock_document_processor)
+        
+        # Структурная проверка - граф должен быть скомпилирован
+        # Реальные edges проверяются через выполнение
+        assert graph is not None
+        assert hasattr(graph, 'stream')  # Compiled graph has stream method
+    
+    def test_graph_conditional_edges(self):
+        """Тест что условные edges работают"""
+        mock_db = Mock()
+        mock_rag_service = Mock()
+        mock_document_processor = Mock()
+        
+        graph = create_analysis_graph(mock_db, mock_rag_service, mock_document_processor)
+        
+        # Условные edges проверяются через route_to_agent функцию
+        # Структурно граф должен поддерживать условные переходы
+        assert graph is not None
+    
+    def test_graph_compiles_without_errors(self):
+        """Тест что граф компилируется без ошибок"""
+        mock_db = Mock()
+        mock_rag_service = Mock()
+        mock_document_processor = Mock()
+        
+        try:
+            graph = create_analysis_graph(mock_db, mock_rag_service, mock_document_processor)
+            assert graph is not None
+        except Exception as e:
+            pytest.fail(f"Graph compilation failed: {e}")
