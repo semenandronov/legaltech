@@ -3,10 +3,21 @@ from typing import List, Dict, Any, Optional
 import logging
 
 from langchain_openai import ChatOpenAI
-from langchain_core.memory import BaseMemory
 from app.config import config
 
 logger = logging.getLogger(__name__)
+
+# Try to import BaseMemory with fallback
+try:
+    from langchain_core.memory import BaseMemory
+except ImportError:
+    try:
+        from langchain.memory import BaseMemory
+    except ImportError:
+        # If BaseMemory is not available, use ABC as fallback
+        from abc import ABC
+        BaseMemory = ABC
+        logger.warning("BaseMemory not available, using ABC as fallback")
 
 # Try to import memory classes with fallback strategies
 ConversationBufferMemory = None
