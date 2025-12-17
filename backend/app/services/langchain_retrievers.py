@@ -1,38 +1,68 @@
 """Advanced LangChain retrievers for Legal AI Vault"""
 from typing import List, Optional
-try:
-    # LangChain 1.x - retrievers moved to langchain_classic
-    from langchain_classic.retrievers import MultiQueryRetriever
-    from langchain_community.retrievers import (
-        ContextualCompressionRetriever,
-        EnsembleRetriever,
-    )
-    from langchain_community.retrievers.document_compressors import LLMChainExtractor
-except ImportError:
-    try:
-        # Try langchain_community for all
-        from langchain_community.retrievers import (
-            MultiQueryRetriever,
-            ContextualCompressionRetriever,
-            EnsembleRetriever,
-        )
-        from langchain_community.retrievers.document_compressors import LLMChainExtractor
-    except ImportError:
-        # If retrievers are not available, we'll use fallback methods
-        logger.warning("Advanced retrievers not available, using fallback methods")
-        MultiQueryRetriever = None
-        ContextualCompressionRetriever = None
-        EnsembleRetriever = None
-        LLMChainExtractor = None
+import logging
+import os
+
 from langchain_core.documents import Document
 from langchain_core.retrievers import BaseRetriever
 from langchain_openai import ChatOpenAI
 from app.config import config
 from app.services.document_processor import DocumentProcessor
-import logging
-import os
 
 logger = logging.getLogger(__name__)
+
+# Try to import advanced retrievers with multiple fallback strategies
+MultiQueryRetriever = None
+ContextualCompressionRetriever = None
+EnsembleRetriever = None
+LLMChainExtractor = None
+
+try:
+    # LangChain 1.x - try langchain_classic first for MultiQueryRetriever
+    from langchain_classic.retrievers import MultiQueryRetriever
+    logger.debug("MultiQueryRetriever imported from langchain_classic")
+except ImportError:
+    try:
+        from langchain.retrievers.multi_query import MultiQueryRetriever
+        logger.debug("MultiQueryRetriever imported from langchain.retrievers.multi_query")
+    except ImportError:
+        logger.warning("MultiQueryRetriever not available")
+
+try:
+    # Try langchain_core.retrievers for compression retriever
+    from langchain_core.retrievers import ContextualCompressionRetriever
+    logger.debug("ContextualCompressionRetriever imported from langchain_core")
+except ImportError:
+    try:
+        from langchain.retrievers import ContextualCompressionRetriever
+        logger.debug("ContextualCompressionRetriever imported from langchain.retrievers")
+    except ImportError:
+        logger.warning("ContextualCompressionRetriever not available")
+
+try:
+    # Try langchain_core.retrievers for ensemble retriever
+    from langchain_core.retrievers import EnsembleRetriever
+    logger.debug("EnsembleRetriever imported from langchain_core")
+except ImportError:
+    try:
+        from langchain.retrievers import EnsembleRetriever
+        logger.debug("EnsembleRetriever imported from langchain.retrievers")
+    except ImportError:
+        logger.warning("EnsembleRetriever not available")
+
+try:
+    # Try to import LLMChainExtractor
+    from langchain_core.retrievers.document_compressors import LLMChainExtractor
+    logger.debug("LLMChainExtractor imported from langchain_core")
+except ImportError:
+    try:
+        from langchain.retrievers.document_compressors import LLMChainExtractor
+        logger.debug("LLMChainExtractor imported from langchain.retrievers")
+    except ImportError:
+        logger.warning("LLMChainExtractor not available")
+
+if not all([MultiQueryRetriever, ContextualCompressionRetriever, EnsembleRetriever, LLMChainExtractor]):
+    logger.info("Some advanced retrievers are not available, fallback methods will be used")
 
 
 class AdvancedRetrieverService:
