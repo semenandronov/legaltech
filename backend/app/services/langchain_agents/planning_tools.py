@@ -1,6 +1,6 @@
 """Planning tools for Planning Agent"""
 from typing import Dict, Any, List
-from langchain.tools import tool
+from langchain_core.tools import tool
 import json
 import logging
 

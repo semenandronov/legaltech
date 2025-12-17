@@ -2,7 +2,7 @@
 from typing import Dict, Any
 from langchain_openai import ChatOpenAI
 from app.services.langchain_agents.agent_factory import create_legal_agent
-from langchain.tools import Tool
+from langchain_core.tools import Tool
 from app.config import config
 from app.services.langchain_agents.state import AnalysisState
 from app.services.langchain_agents.prompts import get_agent_prompt

@@ -4,7 +4,7 @@ from langchain.chains import LLMChain, SequentialChain
 from langchain.chains.combine_documents.stuff import StuffDocumentsChain
 from langchain.chains.combine_documents.map_reduce import MapReduceDocumentsChain
 from langchain.chains.retrieval_qa.base import RetrievalQA
-from langchain.prompts import PromptTemplate, ChatPromptTemplate
+from langchain_core.prompts import PromptTemplate, ChatPromptTemplate
 from langchain_openai import ChatOpenAI
 from langchain_core.documents import Document
 from langchain.chains.question_answering import load_qa_chain

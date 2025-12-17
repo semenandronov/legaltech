@@ -1,7 +1,7 @@
 """LangChain output parsers for Legal AI Vault"""
 from typing import List, Dict, Any, Optional
-from langchain.output_parsers import PydanticOutputParser, StructuredOutputParser, CommaSeparatedListOutputParser
-from langchain.prompts import PromptTemplate
+from langchain_core.output_parsers import PydanticOutputParser, StructuredOutputParser, CommaSeparatedListOutputParser
+from langchain_core.prompts import PromptTemplate
 from pydantic import BaseModel, Field
 from datetime import datetime
 import logging
