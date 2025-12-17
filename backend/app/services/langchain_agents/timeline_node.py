@@ -141,7 +141,7 @@ def timeline_agent_node(
                         source_document=event_model.source_document,
                         source_page=event_model.source_page,
                         source_line=event_model.source_line,
-                        metadata={"parsed_from_agent": True}
+                        event_metadata={"parsed_from_agent": True}
                     )
                     db.add(event)
                     saved_events.append(event)

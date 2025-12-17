@@ -57,9 +57,9 @@ async def start_analysis(
     
     # Update case status
     case.status = "processing"
-    if case.metadata is None:
-        case.metadata = {}
-    case.metadata["analysis_error"] = None
+    if case.case_metadata is None:
+        case.case_metadata = {}
+    case.case_metadata["analysis_error"] = None
     db.commit()
     
     # Start analysis in background
@@ -115,10 +115,10 @@ async def start_analysis(
                 
                 # Update case status to completed
                 background_case.status = "completed"
-                if background_case.metadata is None:
-                    background_case.metadata = {}
-                background_case.metadata["analysis_error"] = None
-                background_case.metadata["analysis_completed_at"] = datetime.utcnow().isoformat()
+                if background_case.case_metadata is None:
+                    background_case.case_metadata = {}
+                background_case.case_metadata["analysis_error"] = None
+                background_case.case_metadata["analysis_completed_at"] = datetime.utcnow().isoformat()
                 background_db.commit()
                 logger.info(f"Analysis completed successfully for case {case_id}")
             except Exception as e:
@@ -127,10 +127,10 @@ async def start_analysis(
                 
                 # Update case status to failed
                 background_case.status = "failed"
-                if background_case.metadata is None:
-                    background_case.metadata = {}
-                background_case.metadata["analysis_error"] = error_msg
-                background_case.metadata["analysis_failed_at"] = datetime.utcnow().isoformat()
+                if background_case.case_metadata is None:
+                    background_case.case_metadata = {}
+                background_case.case_metadata["analysis_error"] = error_msg
+                background_case.case_metadata["analysis_failed_at"] = datetime.utcnow().isoformat()
                 background_db.commit()
         except Exception as e:
             logger.error(f"Critical error in background analysis task for case {case_id}: {e}", exc_info=True)
@@ -210,7 +210,7 @@ async def get_timeline(
                 "source_document": event.source_document,
                 "source_page": event.source_page,
                 "source_line": event.source_line,
-                "metadata": event.metadata
+                "metadata": event.event_metadata
             }
             for event in events
         ],

@@ -183,7 +183,7 @@ async def create_case(
         num_documents=0,
         file_names=[],
         analysis_config=request.analysis_config,
-        metadata=request.metadata
+        case_metadata=request.metadata
     )
     
     db.add(case)
@@ -231,7 +231,7 @@ async def update_case(
     if request.analysis_config is not None:
         case.analysis_config = request.analysis_config
     if request.metadata is not None:
-        case.metadata = request.metadata
+        case.case_metadata = request.metadata
     
     db.commit()
     db.refresh(case)

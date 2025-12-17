@@ -103,7 +103,7 @@ class TimelineExtractor:
                         source_document=event_model.source_document,
                         source_page=event_model.source_page,
                         source_line=event_model.source_line,
-                        metadata={"parsed_from_llm": True}
+                        event_metadata={"parsed_from_llm": True}
                     )
                     self.db.add(event)
                     saved_events.append(event)

@@ -289,7 +289,7 @@ async def upload_files(
                     source_page=chunk_doc.metadata.get("source_page"),
                     source_start_line=chunk_doc.metadata.get("source_start_line"),
                     source_end_line=chunk_doc.metadata.get("source_end_line"),
-                    metadata=chunk_doc.metadata
+                    chunk_metadata=chunk_doc.metadata
                 )
                 db.add(chunk_model)
                 all_documents.append(chunk_doc)

@@ -22,7 +22,7 @@ class Case(Base):
     num_documents = Column(Integer, default=0)
     file_names = Column(JSON, nullable=False)  # List of file names
     analysis_config = Column(JSON, nullable=True)  # Настройки анализа
-    metadata = Column(JSON, nullable=True)  # Дополнительные метаданные
+    case_metadata = Column(JSON, nullable=True)  # Дополнительные метаданные (переименовано из metadata, т.к. metadata зарезервировано SQLAlchemy)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     

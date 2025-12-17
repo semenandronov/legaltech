@@ -240,11 +240,11 @@ async def chat(
             
             # Update case status
             case.status = "processing"
-            if case.metadata is None:
-                case.metadata = {}
-            case.metadata["planned_task"] = request.question
-            case.metadata["planned_analyses"] = api_analysis_types
-            case.metadata["plan_confidence"] = confidence
+            if case.case_metadata is None:
+                case.case_metadata = {}
+            case.case_metadata["planned_task"] = request.question
+            case.case_metadata["planned_analyses"] = api_analysis_types
+            case.case_metadata["plan_confidence"] = confidence
             db.commit()
             
             # Create response message
@@ -507,11 +507,11 @@ async def execute_task(
         
         # Update case status
         case.status = "processing"
-        if case.metadata is None:
-            case.metadata = {}
-        case.metadata["planned_task"] = request.task
-        case.metadata["planned_analyses"] = api_analysis_types
-        case.metadata["plan_confidence"] = confidence
+        if case.case_metadata is None:
+            case.case_metadata = {}
+        case.case_metadata["planned_task"] = request.task
+        case.case_metadata["planned_analyses"] = api_analysis_types
+        case.case_metadata["plan_confidence"] = confidence
         db.commit()
         
         return TaskResponse(

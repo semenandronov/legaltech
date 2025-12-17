@@ -77,7 +77,7 @@ class TestTaskEndpoint:
                             mock_case = Mock()
                             mock_case.id = "test_case"
                             mock_case.user_id = "test_user"
-                            mock_case.metadata = {}
+                            mock_case.case_metadata = {}
                             mock_case.status = "ready"
                             mock_db.query.return_value.filter.return_value.first.return_value = mock_case
                             mock_get_db.return_value = mock_db

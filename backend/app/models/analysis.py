@@ -51,7 +51,7 @@ class TimelineEvent(Base):
     source_document = Column(String(255), nullable=False)  # Имя документа-источника
     source_page = Column(Integer, nullable=True)  # Номер страницы
     source_line = Column(Integer, nullable=True)  # Номер строки или диапазон
-    metadata = Column(JSON, nullable=True)  # Дополнительные метаданные
+    event_metadata = Column(JSON, nullable=True)  # Дополнительные метаданные (переименовано из metadata)
     created_at = Column(DateTime, default=datetime.utcnow)
     
     # Relationship
@@ -72,7 +72,7 @@ class DocumentChunk(Base):
     source_start_line = Column(Integer, nullable=True)  # Начальная строка
     source_end_line = Column(Integer, nullable=True)  # Конечная строка
     embedding = Column(JSON, nullable=True)  # Векторное представление (опционально, если храним в БД)
-    metadata = Column(JSON, nullable=True)  # Дополнительные метаданные
+    chunk_metadata = Column(JSON, nullable=True)  # Дополнительные метаданные (переименовано из metadata)
     created_at = Column(DateTime, default=datetime.utcnow)
     
     # Relationships
