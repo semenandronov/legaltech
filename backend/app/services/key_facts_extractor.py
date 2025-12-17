@@ -43,7 +43,10 @@ class KeyFactsExtractor:
         
         # Create parser for key facts
         parser = ParserService.create_key_facts_parser()
-        format_instructions = parser.get_format_instructions()
+        if parser is not None:
+            format_instructions = parser.get_format_instructions()
+        else:
+            format_instructions = "Верни результат в формате JSON массива объектов с полями: fact_type, value, description, source_document, source_page (опционально), confidence (опционально)."
         
         # Use LLM to extract structured key facts
         system_prompt = f"""Ты эксперт по извлечению ключевых фактов из юридических документов.

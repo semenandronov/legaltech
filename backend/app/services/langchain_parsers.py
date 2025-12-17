@@ -1,12 +1,37 @@
 """LangChain output parsers for Legal AI Vault"""
 from typing import List, Dict, Any, Optional
-from langchain_core.output_parsers import PydanticOutputParser, StructuredOutputParser, CommaSeparatedListOutputParser
+import logging
+
 from langchain_core.prompts import PromptTemplate
 from pydantic import BaseModel, Field
 from datetime import datetime
-import logging
 
 logger = logging.getLogger(__name__)
+
+# Try to import parsers with fallback strategies
+PydanticOutputParser = None
+StructuredOutputParser = None
+CommaSeparatedListOutputParser = None
+
+try:
+    from langchain_core.output_parsers import PydanticOutputParser, CommaSeparatedListOutputParser
+    logger.debug("PydanticOutputParser and CommaSeparatedListOutputParser imported from langchain_core")
+except ImportError:
+    try:
+        from langchain.output_parsers import PydanticOutputParser, CommaSeparatedListOutputParser
+        logger.debug("PydanticOutputParser and CommaSeparatedListOutputParser imported from langchain")
+    except ImportError:
+        logger.warning("PydanticOutputParser and CommaSeparatedListOutputParser not available")
+
+try:
+    from langchain_core.output_parsers import StructuredOutputParser
+    logger.debug("StructuredOutputParser imported from langchain_core")
+except ImportError:
+    try:
+        from langchain.output_parsers import StructuredOutputParser
+        logger.debug("StructuredOutputParser imported from langchain")
+    except ImportError:
+        logger.warning("StructuredOutputParser not available")
 
 
 # Pydantic models for structured outputs
@@ -43,28 +68,43 @@ class ParserService:
     """Service for output parsing"""
     
     @staticmethod
-    def create_timeline_parser() -> PydanticOutputParser:
+    def create_timeline_parser() -> Optional[PydanticOutputParser]:
         """Create parser for timeline events"""
+        if PydanticOutputParser is None:
+            logger.warning("PydanticOutputParser not available")
+            return None
         return PydanticOutputParser(pydantic_object=TimelineEventModel)
     
     @staticmethod
-    def create_discrepancy_parser() -> PydanticOutputParser:
+    def create_discrepancy_parser() -> Optional[PydanticOutputParser]:
         """Create parser for discrepancies"""
+        if PydanticOutputParser is None:
+            logger.warning("PydanticOutputParser not available")
+            return None
         return PydanticOutputParser(pydantic_object=DiscrepancyModel)
     
     @staticmethod
-    def create_key_facts_parser() -> PydanticOutputParser:
+    def create_key_facts_parser() -> Optional[PydanticOutputParser]:
         """Create parser for key facts"""
+        if PydanticOutputParser is None:
+            logger.warning("PydanticOutputParser not available")
+            return None
         return PydanticOutputParser(pydantic_object=KeyFactModel)
     
     @staticmethod
-    def create_list_parser() -> CommaSeparatedListOutputParser:
+    def create_list_parser() -> Optional[CommaSeparatedListOutputParser]:
         """Create parser for comma-separated lists"""
+        if CommaSeparatedListOutputParser is None:
+            logger.warning("CommaSeparatedListOutputParser not available")
+            return None
         return CommaSeparatedListOutputParser()
     
     @staticmethod
-    def create_structured_parser(response_schema: Dict[str, Any]) -> StructuredOutputParser:
+    def create_structured_parser(response_schema: Dict[str, Any]) -> Optional[StructuredOutputParser]:
         """Create structured output parser from schema"""
+        if StructuredOutputParser is None:
+            logger.warning("StructuredOutputParser not available")
+            return None
         return StructuredOutputParser.from_response_schema(response_schema)
     
     @staticmethod
@@ -78,8 +118,6 @@ class ParserService:
         Returns:
             List of TimelineEventModel objects
         """
-        parser = ParserService.create_timeline_parser()
-        
         try:
             # Try to parse as JSON array
             import json
@@ -108,14 +146,17 @@ class ParserService:
             return events
         except Exception as e:
             logger.error(f"Error parsing timeline events: {e}")
-            # Fallback: try to parse with parser
-            try:
-                parsed = parser.parse(text)
-                if isinstance(parsed, list):
-                    return parsed
-                return [parsed]
-            except:
-                return []
+            # Fallback: try to parse with parser if available
+            parser = ParserService.create_timeline_parser()
+            if parser is not None:
+                try:
+                    parsed = parser.parse(text)
+                    if isinstance(parsed, list):
+                        return parsed
+                    return [parsed]
+                except:
+                    pass
+            return []
     
     @staticmethod
     def parse_discrepancies(text: str) -> List[DiscrepancyModel]:
@@ -128,8 +169,6 @@ class ParserService:
         Returns:
             List of DiscrepancyModel objects
         """
-        parser = ParserService.create_discrepancy_parser()
-        
         try:
             import json
             # Extract JSON from text
@@ -154,6 +193,16 @@ class ParserService:
             return discrepancies
         except Exception as e:
             logger.error(f"Error parsing discrepancies: {e}")
+            # Fallback: try to parse with parser if available
+            parser = ParserService.create_discrepancy_parser()
+            if parser is not None:
+                try:
+                    parsed = parser.parse(text)
+                    if isinstance(parsed, list):
+                        return parsed
+                    return [parsed]
+                except:
+                    pass
             return []
     
     @staticmethod
@@ -167,8 +216,6 @@ class ParserService:
         Returns:
             List of KeyFactModel objects
         """
-        parser = ParserService.create_key_facts_parser()
-        
         try:
             import json
             # Extract JSON from text
@@ -193,4 +240,14 @@ class ParserService:
             return facts
         except Exception as e:
             logger.error(f"Error parsing key facts: {e}")
+            # Fallback: try to parse with parser if available
+            parser = ParserService.create_key_facts_parser()
+            if parser is not None:
+                try:
+                    parsed = parser.parse(text)
+                    if isinstance(parsed, list):
+                        return parsed
+                    return [parsed]
+                except:
+                    pass
             return []

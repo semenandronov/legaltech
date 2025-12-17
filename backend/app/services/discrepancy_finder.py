@@ -42,7 +42,10 @@ class DiscrepancyFinder:
         
         # Create parser for discrepancies
         parser = ParserService.create_discrepancy_parser()
-        format_instructions = parser.get_format_instructions()
+        if parser is not None:
+            format_instructions = parser.get_format_instructions()
+        else:
+            format_instructions = "Верни результат в формате JSON массива объектов с полями: type, severity, description, source_documents, details."
         
         # Use LLM to analyze discrepancies
         system_prompt = f"""Ты эксперт по анализу юридических документов.

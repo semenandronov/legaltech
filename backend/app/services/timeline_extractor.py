@@ -44,7 +44,10 @@ class TimelineExtractor:
         
         # Create parser for timeline events
         parser = ParserService.create_timeline_parser()
-        format_instructions = parser.get_format_instructions()
+        if parser is not None:
+            format_instructions = parser.get_format_instructions()
+        else:
+            format_instructions = "Верни результат в формате JSON массива объектов с полями: date, event_type, description, source_document, source_page (опционально), source_line (опционально)."
         
         # Use LLM to extract structured timeline
         system_prompt = f"""Ты эксперт по извлечению временных событий из юридических документов.
