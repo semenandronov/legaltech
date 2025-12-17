@@ -1,19 +1,47 @@
 """LangChain chains for Legal AI Vault"""
 from typing import List, Dict, Any, Optional
-from langchain.chains import LLMChain, SequentialChain
-from langchain.chains.combine_documents.stuff import StuffDocumentsChain
-from langchain.chains.combine_documents.map_reduce import MapReduceDocumentsChain
-from langchain.chains.retrieval_qa.base import RetrievalQA
-from langchain_core.prompts import PromptTemplate, ChatPromptTemplate
-from langchain_openai import ChatOpenAI
-from langchain_core.documents import Document
-from langchain.chains.question_answering import load_qa_chain
-from app.config import config
-from app.services.document_processor import DocumentProcessor
 import logging
 import os
 
+from langchain_core.prompts import PromptTemplate, ChatPromptTemplate
+from langchain_openai import ChatOpenAI
+from langchain_core.documents import Document
+from app.config import config
+from app.services.document_processor import DocumentProcessor
+
 logger = logging.getLogger(__name__)
+
+# Try to import chain classes with multiple fallback strategies
+LLMChain = None
+SequentialChain = None
+StuffDocumentsChain = None
+MapReduceDocumentsChain = None
+RetrievalQA = None
+load_qa_chain = None
+
+try:
+    # Try standard langchain.chains imports
+    from langchain.chains import LLMChain, SequentialChain
+    from langchain.chains.combine_documents.stuff import StuffDocumentsChain
+    from langchain.chains.combine_documents.map_reduce import MapReduceDocumentsChain
+    from langchain.chains.retrieval_qa.base import RetrievalQA
+    from langchain.chains.question_answering import load_qa_chain
+    logger.debug("Chain classes imported from langchain.chains")
+except ImportError:
+    try:
+        # Try alternative import paths for LangChain 1.x
+        from langchain.chains.llm import LLMChain
+        from langchain.chains.sequential import SequentialChain
+        from langchain.chains.combine_documents.stuff import StuffDocumentsChain
+        from langchain.chains.combine_documents.map_reduce import MapReduceDocumentsChain
+        from langchain.chains import RetrievalQA
+        from langchain.chains.question_answering import load_qa_chain
+        logger.debug("Chain classes imported from alternative paths")
+    except ImportError:
+        logger.warning(
+            "Chain classes are not available. ChainService functionality will be limited. "
+            "Please ensure langchain is properly installed."
+        )
 
 
 class ChainService:
@@ -40,6 +68,12 @@ class ChainService:
         Returns:
             RetrievalQA instance
         """
+        if RetrievalQA is None or load_qa_chain is None:
+            raise ImportError(
+                "RetrievalQA and load_qa_chain are not available. "
+                "Please ensure langchain is properly installed."
+            )
+        
         # Load vector store
         if case_id not in self.document_processor.vector_stores:
             persist_directory = self.document_processor._get_persist_directory(case_id)
@@ -91,6 +125,12 @@ class ChainService:
         Returns:
             SequentialChain instance
         """
+        if LLMChain is None or SequentialChain is None:
+            raise ImportError(
+                "LLMChain and SequentialChain are not available. "
+                "Please ensure langchain is properly installed."
+            )
+        
         # Step 1: Extract facts
         facts_template = """Извлеки ключевые факты из следующего текста:
 {text}
@@ -152,6 +192,12 @@ class ChainService:
         Returns:
             MapReduceDocumentsChain instance
         """
+        if LLMChain is None or StuffDocumentsChain is None or MapReduceDocumentsChain is None:
+            raise ImportError(
+                "LLMChain, StuffDocumentsChain, and MapReduceDocumentsChain are not available. "
+                "Please ensure langchain is properly installed."
+            )
+        
         # Map step: analyze each chunk
         map_template = """Проанализируй следующий фрагмент документа и извлеки ключевую информацию:
 

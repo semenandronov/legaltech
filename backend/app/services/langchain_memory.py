@@ -1,5 +1,20 @@
 """LangChain memory components for Legal AI Vault"""
 from typing import List, Dict, Any, Optional
+import logging
+
+from langchain_openai import ChatOpenAI
+from langchain_core.memory import BaseMemory
+from app.config import config
+
+logger = logging.getLogger(__name__)
+
+# Try to import memory classes with fallback strategies
+ConversationBufferMemory = None
+ConversationSummaryMemory = None
+ConversationBufferWindowMemory = None
+ConversationKGMemory = None
+EntityMemory = None
+
 try:
     # LangChain 1.x - try langchain_community first
     from langchain_community.memory import (
@@ -9,6 +24,7 @@ try:
         ConversationKGMemory,
         EntityMemory,
     )
+    logger.debug("Memory classes imported from langchain_community")
 except ImportError:
     try:
         # Fallback to langchain.memory
@@ -19,21 +35,10 @@ except ImportError:
             ConversationKGMemory,
             EntityMemory,
         )
+        logger.debug("Memory classes imported from langchain.memory")
     except ImportError:
         # If memory classes are not available, set to None
-        logger.warning("Memory classes not available")
-        ConversationBufferMemory = None
-        ConversationSummaryMemory = None
-        ConversationBufferWindowMemory = None
-        ConversationKGMemory = None
-        EntityMemory = None
-
-from langchain_openai import ChatOpenAI
-from langchain_core.memory import BaseMemory
-from app.config import config
-import logging
-
-logger = logging.getLogger(__name__)
+        logger.warning("Memory classes not available, using fallback methods")
 
 
 class MemoryService:
@@ -71,30 +76,45 @@ class MemoryService:
             self.memories[case_id] = {}
         
         if memory_type not in self.memories[case_id]:
+            if ConversationBufferMemory is None:
+                raise ImportError(
+                    "Memory classes are not available. Please ensure langchain-community or langchain is installed."
+                )
+            
             if memory_type == "buffer":
+                if ConversationBufferMemory is None:
+                    raise ValueError("ConversationBufferMemory is not available")
                 memory = ConversationBufferMemory(
                     return_messages=True,
                     memory_key="chat_history"
                 )
             elif memory_type == "summary":
+                if ConversationSummaryMemory is None:
+                    raise ValueError("ConversationSummaryMemory is not available")
                 memory = ConversationSummaryMemory(
                     llm=self.llm,
                     return_messages=True,
                     memory_key="chat_history"
                 )
             elif memory_type == "window":
+                if ConversationBufferWindowMemory is None:
+                    raise ValueError("ConversationBufferWindowMemory is not available")
                 memory = ConversationBufferWindowMemory(
                     k=10,  # Last 10 messages
                     return_messages=True,
                     memory_key="chat_history"
                 )
             elif memory_type == "kg":
+                if ConversationKGMemory is None:
+                    raise ValueError("ConversationKGMemory is not available")
                 memory = ConversationKGMemory(
                     llm=self.llm,
                     return_messages=True,
                     memory_key="chat_history"
                 )
             elif memory_type == "entity":
+                if EntityMemory is None:
+                    raise ValueError("EntityMemory is not available")
                 memory = EntityMemory(
                     llm=self.llm,
                     return_messages=True,
