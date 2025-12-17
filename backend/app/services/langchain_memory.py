@@ -1,12 +1,33 @@
 """LangChain memory components for Legal AI Vault"""
 from typing import List, Dict, Any, Optional
-from langchain.memory import (
-    ConversationBufferMemory,
-    ConversationSummaryMemory,
-    ConversationBufferWindowMemory,
-    ConversationKGMemory,
-    EntityMemory,
-)
+try:
+    # LangChain 1.x - try langchain_community first
+    from langchain_community.memory import (
+        ConversationBufferMemory,
+        ConversationSummaryMemory,
+        ConversationBufferWindowMemory,
+        ConversationKGMemory,
+        EntityMemory,
+    )
+except ImportError:
+    try:
+        # Fallback to langchain.memory
+        from langchain.memory import (
+            ConversationBufferMemory,
+            ConversationSummaryMemory,
+            ConversationBufferWindowMemory,
+            ConversationKGMemory,
+            EntityMemory,
+        )
+    except ImportError:
+        # If memory classes are not available, set to None
+        logger.warning("Memory classes not available")
+        ConversationBufferMemory = None
+        ConversationSummaryMemory = None
+        ConversationBufferWindowMemory = None
+        ConversationKGMemory = None
+        EntityMemory = None
+
 from langchain_openai import ChatOpenAI
 from langchain_core.memory import BaseMemory
 from app.config import config

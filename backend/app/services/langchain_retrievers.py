@@ -1,11 +1,29 @@
 """Advanced LangChain retrievers for Legal AI Vault"""
 from typing import List, Optional
-from langchain.retrievers import (
-    MultiQueryRetriever,
-    ContextualCompressionRetriever,
-    EnsembleRetriever,
-)
-from langchain.retrievers.document_compressors import LLMChainExtractor
+try:
+    # LangChain 1.x - retrievers moved to langchain_classic
+    from langchain_classic.retrievers import MultiQueryRetriever
+    from langchain_community.retrievers import (
+        ContextualCompressionRetriever,
+        EnsembleRetriever,
+    )
+    from langchain_community.retrievers.document_compressors import LLMChainExtractor
+except ImportError:
+    try:
+        # Try langchain_community for all
+        from langchain_community.retrievers import (
+            MultiQueryRetriever,
+            ContextualCompressionRetriever,
+            EnsembleRetriever,
+        )
+        from langchain_community.retrievers.document_compressors import LLMChainExtractor
+    except ImportError:
+        # If retrievers are not available, we'll use fallback methods
+        logger.warning("Advanced retrievers not available, using fallback methods")
+        MultiQueryRetriever = None
+        ContextualCompressionRetriever = None
+        EnsembleRetriever = None
+        LLMChainExtractor = None
 from langchain_core.documents import Document
 from langchain_core.retrievers import BaseRetriever
 from langchain_openai import ChatOpenAI
@@ -78,6 +96,10 @@ class AdvancedRetrieverService:
         Returns:
             List of relevant documents
         """
+        if MultiQueryRetriever is None:
+            logger.warning("MultiQueryRetriever not available, using fallback")
+            return self.document_processor.retrieve_relevant_chunks(case_id, query, k=k)
+        
         try:
             base_retriever = self._get_base_retriever(case_id, k=k)
             
@@ -116,6 +138,10 @@ class AdvancedRetrieverService:
         Returns:
             List of compressed relevant documents
         """
+        if ContextualCompressionRetriever is None or LLMChainExtractor is None:
+            logger.warning("ContextualCompressionRetriever not available, using fallback")
+            return self.document_processor.retrieve_relevant_chunks(case_id, query, k=k)
+        
         try:
             base_retriever = self._get_base_retriever(case_id, k=k*2)  # Get more before compression
             
@@ -157,6 +183,10 @@ class AdvancedRetrieverService:
         Returns:
             List of relevant documents from ensemble
         """
+        if EnsembleRetriever is None:
+            logger.warning("EnsembleRetriever not available, using fallback")
+            return self.document_processor.retrieve_relevant_chunks(case_id, query, k=k)
+        
         try:
             # Get base retriever (semantic search)
             semantic_retriever = self._get_base_retriever(case_id, k=k)
@@ -198,12 +228,16 @@ class AdvancedRetrieverService:
         Returns:
             List of relevant documents
         """
+        if LLMChainExtractor is None:
+            logger.warning("LLMChainExtractor not available, using fallback")
+            return self.document_processor.retrieve_relevant_chunks(case_id, query, k=k)
+        
         try:
             # Try multi-query first
             multi_query_docs = self.retrieve_with_multi_query(case_id, query, k=k)
             
             # Then apply compression
-            if multi_query_docs:
+            if multi_query_docs and LLMChainExtractor is not None:
                 compressor = LLMChainExtractor.from_llm(self.llm)
                 compressed_docs = []
                 for doc in multi_query_docs:

@@ -29,9 +29,13 @@ def create_legal_agent(
     Raises:
         ImportError: Если ни один из API недоступен
     """
-    # Попробовать новый API из langchain.agents
+    # Попробовать новый API из langchain.agents или langchain_core
     try:
-        from langchain.agents import create_agent
+        try:
+            from langchain.agents import create_agent
+        except ImportError:
+            # LangChain 1.x - try alternative location
+            from langchain_core.agents import create_agent
         prompt = system_prompt or (messages_modifier if isinstance(messages_modifier, str) else None)
         if prompt:
             agent = create_agent(
