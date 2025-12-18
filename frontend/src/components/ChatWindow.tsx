@@ -345,7 +345,10 @@ const ChatWindow = ({ caseId }: ChatWindowProps) => {
             />
             <button
               type="button"
-              onClick={handleSend}
+              onClick={(e) => {
+                e.preventDefault()
+                handleSend()
+              }}
               disabled={isLoading || !inputValue.trim() || isOverLimit}
               className="send-button"
               title="Отправить (Enter)"
