@@ -44,8 +44,8 @@ class TimelineEvent(Base):
     __tablename__ = "timeline_events"
     
     id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
-    case_id = Column(String, ForeignKey("cases.id", ondelete="CASCADE"), nullable=False, index=True)
-    date = Column(Date, nullable=False, index=True)
+    case_id = Column(String, ForeignKey("cases.id", ondelete="CASCADE"), nullable=True, index=True)  # nullable=True для совместимости
+    date = Column(DateTime, nullable=False, index=True)  # Изменено с Date на DateTime для совместимости с БД
     event_type = Column(String(100), nullable=True)  # Тип события
     description = Column(Text, nullable=False)
     source_document = Column(String(255), nullable=False)  # Имя документа-источника
