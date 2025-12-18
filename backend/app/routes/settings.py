@@ -1,6 +1,6 @@
 """Settings routes for Legal AI Vault"""
 from fastapi import APIRouter, HTTPException, Depends
-from pydantic import BaseModel, EmailStr, Field, field_validator
+from pydantic import BaseModel, Field, field_validator
 from sqlalchemy.orm import Session
 from typing import Optional, Dict, Any
 from app.utils.database import get_db
