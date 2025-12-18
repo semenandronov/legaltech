@@ -2,7 +2,7 @@
 from datetime import datetime, timedelta
 from typing import Optional
 from jose import JWTError, jwt
-from passlib.context import CryptContext
+import bcrypt
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from sqlalchemy.orm import Session
@@ -10,44 +10,63 @@ from app.config import config
 from app.models.user import User, UserSession
 from app.utils.database import get_db
 
-# Password hashing
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
-
 # HTTP Bearer token
 security = HTTPBearer()
 
 
 def verify_password(plain_password: str, hashed_password: str) -> bool:
-    """Verify a password against a hash
+    """Verify a password against a hash using bcrypt directly
     
     Bcrypt has a 72-byte limit. If password is longer, we truncate it
     to match the same truncation used during hashing.
-    """
-    # Bcrypt limitation: passwords cannot be longer than 72 bytes
-    # Truncate to match the same truncation used during hashing
-    password_bytes = plain_password.encode('utf-8')
-    if len(password_bytes) > 72:
-        password_bytes = password_bytes[:72]
-        plain_password = password_bytes.decode('utf-8', errors='ignore')
     
-    return pwd_context.verify(plain_password, hashed_password)
+    This function uses bcrypt directly instead of passlib to avoid
+    initialization issues with passlib's bcrypt backend detection.
+    """
+    try:
+        # Bcrypt limitation: passwords cannot be longer than 72 bytes
+        # Truncate to match the same truncation used during hashing
+        password_bytes = plain_password.encode('utf-8')
+        if len(password_bytes) > 72:
+            password_bytes = password_bytes[:72]
+        
+        # Convert hashed_password to bytes if it's a string
+        if isinstance(hashed_password, str):
+            hashed_password_bytes = hashed_password.encode('utf-8')
+        else:
+            hashed_password_bytes = hashed_password
+        
+        # Verify password using bcrypt directly
+        return bcrypt.checkpw(password_bytes, hashed_password_bytes)
+    except Exception as e:
+        # Log error but don't expose details
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.error(f"Password verification error: {e}")
+        return False
 
 
 def get_password_hash(password: str) -> str:
-    """Hash a password
+    """Hash a password using bcrypt directly
     
     Bcrypt has a 72-byte limit for passwords. If password is longer,
     we truncate it to 72 bytes before hashing.
+    
+    This function uses bcrypt directly instead of passlib to avoid
+    initialization issues with passlib's bcrypt backend detection.
     """
     # Bcrypt limitation: passwords cannot be longer than 72 bytes
     # Convert to bytes and truncate if necessary
     password_bytes = password.encode('utf-8')
     if len(password_bytes) > 72:
         password_bytes = password_bytes[:72]
-        # Decode back to string for hashing (bcrypt handles bytes internally)
-        password = password_bytes.decode('utf-8', errors='ignore')
     
-    return pwd_context.hash(password)
+    # Generate salt and hash password using bcrypt directly
+    salt = bcrypt.gensalt()
+    hashed = bcrypt.hashpw(password_bytes, salt)
+    
+    # Return as string (bcrypt hash is always ASCII-safe)
+    return hashed.decode('utf-8')
 
 
 def create_access_token(data: dict, expires_delta: Optional[timedelta] = None) -> str:
