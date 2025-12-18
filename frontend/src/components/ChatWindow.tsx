@@ -231,7 +231,8 @@ const ChatWindow = ({ caseId }: ChatWindowProps) => {
                     <button
                       type="button"
                       className="quick-action-btn"
-                      onClick={() => {
+                      onClick={(e) => {
+                        e.preventDefault()
                         handleSend('Проанализируй документы и найди все важные даты и события')
                       }}
                     >
@@ -240,7 +241,8 @@ const ChatWindow = ({ caseId }: ChatWindowProps) => {
                     <button
                       type="button"
                       className="quick-action-btn"
-                      onClick={() => {
+                      onClick={(e) => {
+                        e.preventDefault()
                         handleSend('Проанализируй документы и найди все противоречия и несоответствия')
                       }}
                     >
@@ -249,7 +251,8 @@ const ChatWindow = ({ caseId }: ChatWindowProps) => {
                     <button
                       type="button"
                       className="quick-action-btn"
-                      onClick={() => {
+                      onClick={(e) => {
+                        e.preventDefault()
                         handleSend('Извлеки ключевые факты из документов')
                       }}
                     >
@@ -258,7 +261,8 @@ const ChatWindow = ({ caseId }: ChatWindowProps) => {
                     <button
                       type="button"
                       className="quick-action-btn"
-                      onClick={() => {
+                      onClick={(e) => {
+                        e.preventDefault()
                         handleSend('Проведи анализ рисков по этому делу')
                       }}
                     >
