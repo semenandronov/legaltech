@@ -156,6 +156,13 @@ async def update_password(
     # Validate new password
     if len(request.new_password) < 8:
         raise HTTPException(status_code=400, detail="Новый пароль должен быть не менее 8 символов")
+    # Bcrypt limitation: 72 bytes max
+    password_bytes = request.new_password.encode('utf-8')
+    if len(password_bytes) > 72:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Пароль не может превышать 72 байта (примерно 72 символа для ASCII)"
+        )
     
     # Update password
     current_user.password_hash = get_password_hash(request.new_password)
