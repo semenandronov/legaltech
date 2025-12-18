@@ -13,7 +13,7 @@ class Case(Base):
     __tablename__ = "cases"
     
     id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
-    user_id = Column(String, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    user_id = Column(String, ForeignKey("users.id", ondelete="CASCADE"), nullable=True, index=True)  # nullable=True для совместимости с существующими данными
     title = Column(String(255), nullable=True)
     description = Column(Text, nullable=True)  # Описание дела
     case_type = Column(String(50), nullable=True)  # litigation, contracts, dd, compliance, other
