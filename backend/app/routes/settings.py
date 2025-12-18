@@ -160,7 +160,7 @@ async def update_password(
     password_bytes = request.new_password.encode('utf-8')
     if len(password_bytes) > 72:
         raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
+            status_code=400,
             detail="Пароль не может превышать 72 байта (примерно 72 символа для ASCII)"
         )
     
