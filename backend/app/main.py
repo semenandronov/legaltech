@@ -1,8 +1,10 @@
 """Main FastAPI application for Legal AI Vault"""
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Request, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, JSONResponse
+from fastapi.exceptions import RequestValidationError
+from pydantic import ValidationError
 from pathlib import Path
 import os
 import logging
@@ -37,6 +39,27 @@ app = FastAPI(
     title=config.API_TITLE,
     version=config.API_VERSION,
 )
+
+# Обработчик ошибок валидации
+@app.exception_handler(RequestValidationError)
+async def validation_exception_handler(request: Request, exc: RequestValidationError):
+    """Обработчик ошибок валидации Pydantic"""
+    errors = []
+    for error in exc.errors():
+        field = " -> ".join(str(loc) for loc in error.get("loc", []))
+        msg = error.get("msg", "Validation error")
+        errors.append(f"{field}: {msg}")
+    
+    error_message = "; ".join(errors) if errors else "Validation error"
+    logger.warning(f"Validation error: {error_message}")
+    
+    return JSONResponse(
+        status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+        content={
+            "detail": error_message,
+            "errors": exc.errors()
+        }
+    )
 
 # Add request logging middleware
 @app.middleware("http")

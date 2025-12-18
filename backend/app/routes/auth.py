@@ -174,6 +174,20 @@ async def login(
     try:
         logger.info(f"Login attempt for email: {request.email}")
         
+        # Дополнительная валидация email (на случай проблем с EmailStr)
+        if not request.email or '@' not in request.email:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="Invalid email format"
+            )
+        
+        # Валидация пароля
+        if not request.password:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="Password is required"
+            )
+        
         # Find user
         user = db.query(User).filter(User.email == request.email).first()
         if not user:

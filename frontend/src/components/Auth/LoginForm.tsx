@@ -17,7 +17,29 @@ const LoginForm = () => {
     try {
       await login(email, password)
     } catch (err: any) {
-      setError(err.response?.data?.detail || 'Ошибка при входе. Проверьте email и пароль.')
+      // Улучшенная обработка ошибок
+      let errorMessage = 'Ошибка при входе. Проверьте email и пароль.'
+      
+      if (err.response) {
+        const data = err.response.data
+        if (typeof data?.detail === 'string') {
+          errorMessage = data.detail
+        } else if (Array.isArray(data?.detail)) {
+          // Ошибки валидации Pydantic
+          errorMessage = data.detail.map((e: any) => {
+            const field = e.loc?.join('.') || 'field'
+            return `${field}: ${e.msg || 'validation error'}`
+          }).join('; ')
+        } else if (data?.detail) {
+          errorMessage = String(data.detail)
+        } else if (data?.message) {
+          errorMessage = String(data.message)
+        }
+      } else if (err.message) {
+        errorMessage = err.message
+      }
+      
+      setError(errorMessage)
     } finally {
       setLoading(false)
     }
