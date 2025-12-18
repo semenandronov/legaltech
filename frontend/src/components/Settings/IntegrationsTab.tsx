@@ -11,13 +11,12 @@ const IntegrationsTab = ({ settings, onUpdate }: IntegrationsTabProps) => {
   const [formSettings, setFormSettings] = useState(settings)
   const [loading, setLoading] = useState(false)
   const [success, setSuccess] = useState(false)
-
-  const [connectMessage, setConnectMessage] = useState<string | null>(null)
+  const [connectError, setConnectError] = useState<string | null>(null)
 
   const handleConnect = async (service: string) => {
     // In future, implement OAuth flow
-    setConnectMessage(`Интеграция с ${service} будет доступна в будущих версиях`)
-    setTimeout(() => setConnectMessage(null), 5000)
+    setConnectError(`Интеграция с ${service} будет доступна в будущих версиях`)
+    setTimeout(() => setConnectError(null), 5000)
   }
 
   const handleDisconnect = async (service: string) => {

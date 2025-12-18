@@ -17,8 +17,6 @@ const NotificationsTab = ({ settings, onUpdate }: NotificationsTabProps) => {
     setFormSettings((prev: any) => ({ ...prev, [key]: !prev[key] }))
   }
 
-  const [error, setError] = useState<string | null>(null)
-
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     setLoading(true)
@@ -88,7 +86,6 @@ const NotificationsTab = ({ settings, onUpdate }: NotificationsTabProps) => {
           </div>
         </div>
 
-        {error && <div className="settings-error">{error}</div>}
         {error && <div className="settings-error">{error}</div>}
         {success && (
           <div className="settings-success">Настройки уведомлений обновлены!</div>
