@@ -236,17 +236,17 @@ async def upload_files(
         all_documents = []  # For LangChain
         
         for file_info in files_to_create:
-        file_model = FileModel(
-            case_id=case_id,
-            filename=file_info["filename"],
-            file_type=file_info["file_type"],
-            original_text=file_info["original_text"],
-        )
-        db.add(file_model)
-        db.flush()  # Flush to get file_model.id
-        
-        # Process document with LangChain
-        try:
+            file_model = FileModel(
+                case_id=case_id,
+                filename=file_info["filename"],
+                file_type=file_info["file_type"],
+                original_text=file_info["original_text"],
+            )
+            db.add(file_model)
+            db.flush()  # Flush to get file_model.id
+            
+            # Process document with LangChain
+            try:
             # Use LangChain documents if available (better metadata), otherwise split manually
             if file_info["filename"] in langchain_documents_by_file and langchain_documents_by_file[file_info["filename"]]:
                 # Use documents from LangChain loader (already have metadata)
