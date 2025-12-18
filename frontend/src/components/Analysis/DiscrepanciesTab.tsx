@@ -11,6 +11,7 @@ const DiscrepanciesTab = ({ caseId }: DiscrepanciesTabProps) => {
   const [discrepancies, setDiscrepancies] = useState<DiscrepancyItem[]>([])
   const [stats, setStats] = useState<any>(null)
   const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
   const [filter, setFilter] = useState<'all' | 'HIGH' | 'MEDIUM' | 'LOW'>('all')
 
   useEffect(() => {
@@ -19,6 +20,7 @@ const DiscrepanciesTab = ({ caseId }: DiscrepanciesTabProps) => {
 
   const loadDiscrepancies = async () => {
     setLoading(true)
+    setError(null)
     try {
       const data = await getDiscrepancies(caseId)
       setDiscrepancies(data.discrepancies)
@@ -28,8 +30,9 @@ const DiscrepanciesTab = ({ caseId }: DiscrepanciesTabProps) => {
         medium_risk: data.medium_risk,
         low_risk: data.low_risk,
       })
-    } catch (error) {
+    } catch (error: any) {
       console.error('Ошибка при загрузке противоречий:', error)
+      setError(error.response?.data?.detail || 'Ошибка при загрузке противоречий')
     } finally {
       setLoading(false)
     }
@@ -41,6 +44,30 @@ const DiscrepanciesTab = ({ caseId }: DiscrepanciesTabProps) => {
 
   if (loading) {
     return <div className="analysis-tab-loading">Загрузка противоречий...</div>
+  }
+
+  if (error) {
+    return (
+      <div className="analysis-tab-empty">
+        <div className="analysis-tab-empty-icon">⚠️</div>
+        <h3>Ошибка загрузки</h3>
+        <p>{error}</p>
+        <button
+          onClick={loadDiscrepancies}
+          style={{
+            marginTop: '16px',
+            padding: '8px 16px',
+            background: '#4299e1',
+            color: 'white',
+            border: 'none',
+            borderRadius: '6px',
+            cursor: 'pointer',
+          }}
+        >
+          Попробовать снова
+        </button>
+      </div>
+    )
   }
 
   if (discrepancies.length === 0) {

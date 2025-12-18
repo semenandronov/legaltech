@@ -50,7 +50,7 @@ class LLMService:
             response = self.llm.invoke(messages)
             return response.content
         except Exception as e:
-            logger.error(f"Ошибка при генерации через LLM: {e}")
+            logger.error(f"Ошибка при генерации через LLM: {e}", exc_info=True)
             raise
     
     def generate_with_sources(

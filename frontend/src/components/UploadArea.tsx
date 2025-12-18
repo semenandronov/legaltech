@@ -54,6 +54,12 @@ const UploadArea = ({ onUpload }: UploadAreaProps) => {
   const handleFiles = (selectedFiles: File[]) => {
     setError(null)
 
+    // Validate that files were selected
+    if (!selectedFiles || selectedFiles.length === 0) {
+      setError('Пожалуйста, выберите хотя бы один файл')
+      return
+    }
+
     // Validate file sizes
     const tooBig = selectedFiles.find((file) => file.size > MAX_FILE_SIZE_BYTES)
     if (tooBig) {
@@ -71,7 +77,14 @@ const UploadArea = ({ onUpload }: UploadAreaProps) => {
   }
 
   const handleAnalysisSubmit = async (options: AnalysisOptionsType) => {
+    if (files.length === 0) {
+      setError('Пожалуйста, выберите файлы для загрузки')
+      setStep('files')
+      return
+    }
+
     setStep('processing')
+    setError(null)
 
     // Upload files with metadata
     try {

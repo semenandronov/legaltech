@@ -9,6 +9,7 @@ interface KeyFactsTabProps {
 const KeyFactsTab = ({ caseId }: KeyFactsTabProps) => {
   const [facts, setFacts] = useState<any>(null)
   const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
 
   useEffect(() => {
     loadKeyFacts()
@@ -16,11 +17,13 @@ const KeyFactsTab = ({ caseId }: KeyFactsTabProps) => {
 
   const loadKeyFacts = async () => {
     setLoading(true)
+    setError(null)
     try {
       const data = await getKeyFacts(caseId)
       setFacts(data.facts)
-    } catch (error) {
+    } catch (error: any) {
       console.error('Ошибка при загрузке ключевых фактов:', error)
+      setError(error.response?.data?.detail || 'Ошибка при загрузке ключевых фактов')
     } finally {
       setLoading(false)
     }
@@ -28,6 +31,30 @@ const KeyFactsTab = ({ caseId }: KeyFactsTabProps) => {
 
   if (loading) {
     return <div className="analysis-tab-loading">Загрузка ключевых фактов...</div>
+  }
+
+  if (error) {
+    return (
+      <div className="analysis-tab-empty">
+        <div className="analysis-tab-empty-icon">⚠️</div>
+        <h3>Ошибка загрузки</h3>
+        <p>{error}</p>
+        <button
+          onClick={loadKeyFacts}
+          style={{
+            marginTop: '16px',
+            padding: '8px 16px',
+            background: '#4299e1',
+            color: 'white',
+            border: 'none',
+            borderRadius: '6px',
+            cursor: 'pointer',
+          }}
+        >
+          Попробовать снова
+        </button>
+      </div>
+    )
   }
 
   if (!facts || Object.keys(facts).length === 0) {
@@ -72,12 +99,12 @@ const KeyFactsTab = ({ caseId }: KeyFactsTabProps) => {
           </div>
         )}
 
-        {facts.key_dates && (
+        {facts.key_dates && Object.keys(facts.key_dates).length > 0 && (
           <div className="key-facts-section">
             <h3>Ключевые даты</h3>
             {Object.entries(facts.key_dates).map(([key, value]: [string, any]) => (
               <div key={key} className="key-facts-item">
-                <strong>{key}:</strong> {value}
+                <strong>{key}:</strong> {value || 'Не указано'}
               </div>
             ))}
           </div>

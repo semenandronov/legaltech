@@ -55,12 +55,17 @@ async def start_analysis(
     if not case:
         raise HTTPException(status_code=404, detail="Дело не найдено")
     
-    # Update case status
-    case.status = "processing"
-    if case.case_metadata is None:
-        case.case_metadata = {}
-    case.case_metadata["analysis_error"] = None
-    db.commit()
+    try:
+        # Update case status
+        case.status = "processing"
+        if case.case_metadata is None:
+            case.case_metadata = {}
+        case.case_metadata["analysis_error"] = None
+        db.commit()
+    except Exception as e:
+        db.rollback()
+        logger.error(f"Ошибка при обновлении статуса дела {case_id}: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Ошибка при запуске анализа. Попробуйте позже.")
     
     # Start analysis in background
     # Note: We need to create a new DB session inside the background task
@@ -126,12 +131,16 @@ async def start_analysis(
                 logger.error(f"Ошибка при анализе дела {case_id}: {error_msg}", exc_info=True)
                 
                 # Update case status to failed
-                background_case.status = "failed"
-                if background_case.case_metadata is None:
-                    background_case.case_metadata = {}
-                background_case.case_metadata["analysis_error"] = error_msg
-                background_case.case_metadata["analysis_failed_at"] = datetime.utcnow().isoformat()
-                background_db.commit()
+                try:
+                    background_case.status = "failed"
+                    if background_case.case_metadata is None:
+                        background_case.case_metadata = {}
+                    background_case.case_metadata["analysis_error"] = error_msg
+                    background_case.case_metadata["analysis_failed_at"] = datetime.utcnow().isoformat()
+                    background_db.commit()
+                except Exception as commit_error:
+                    background_db.rollback()
+                    logger.error(f"Ошибка при сохранении статуса ошибки для дела {case_id}: {commit_error}", exc_info=True)
         except Exception as e:
             logger.error(f"Critical error in background analysis task for case {case_id}: {e}", exc_info=True)
         finally:
@@ -167,12 +176,12 @@ async def get_analysis_status(
     ).all()
     
     return {
-        "case_status": case.status,
+        "case_status": case.status or "pending",
         "analysis_results": {
             result.analysis_type: {
-                "status": result.status,
-                "created_at": result.created_at.isoformat(),
-                "updated_at": result.updated_at.isoformat()
+                "status": result.status or "pending",
+                "created_at": result.created_at.isoformat() if result.created_at else datetime.utcnow().isoformat(),
+                "updated_at": result.updated_at.isoformat() if result.updated_at else datetime.utcnow().isoformat()
             }
             for result in results
         }
@@ -204,13 +213,13 @@ async def get_timeline(
         "events": [
             {
                 "id": event.id,
-                "date": event.date.isoformat(),
-                "event_type": event.event_type,
-                "description": event.description,
-                "source_document": event.source_document,
-                "source_page": event.source_page,
-                "source_line": event.source_line,
-                "metadata": event.event_metadata
+                "date": event.date.isoformat() if event.date else datetime.utcnow().isoformat(),
+                "event_type": event.event_type or None,
+                "description": event.description or "",
+                "source_document": event.source_document or "",
+                "source_page": event.source_page if event.source_page is not None else None,
+                "source_line": event.source_line if event.source_line is not None else None,
+                "metadata": event.event_metadata or {}
             }
             for event in events
         ],
@@ -288,8 +297,8 @@ async def get_key_facts(
         return {"facts": {}, "message": "Ключевые факты еще не извлечены"}
     
     return {
-        "facts": result.result_data,
-        "created_at": result.created_at.isoformat()
+        "facts": result.result_data if result.result_data is not None else {},
+        "created_at": result.created_at.isoformat() if result.created_at else datetime.utcnow().isoformat()
     }
 
 
@@ -318,10 +327,11 @@ async def get_summary(
     if not result:
         return {"summary": "", "message": "Резюме еще не сгенерировано"}
     
+    result_data = result.result_data if result.result_data is not None else {}
     return {
-        "summary": result.result_data.get("summary", ""),
-        "key_facts": result.result_data.get("key_facts", {}),
-        "created_at": result.created_at.isoformat()
+        "summary": result_data.get("summary", "") if isinstance(result_data, dict) else "",
+        "key_facts": result_data.get("key_facts", {}) if isinstance(result_data, dict) else {},
+        "created_at": result.created_at.isoformat() if result.created_at else datetime.utcnow().isoformat()
     }
 
 
@@ -350,9 +360,10 @@ async def get_risks(
     if not result:
         return {"analysis": "", "message": "Анализ рисков еще не выполнен"}
     
+    result_data = result.result_data if result.result_data is not None else {}
     return {
-        "analysis": result.result_data.get("analysis", ""),
-        "discrepancies": result.result_data.get("discrepancies", {}),
-        "created_at": result.created_at.isoformat()
+        "analysis": result_data.get("analysis", "") if isinstance(result_data, dict) else "",
+        "discrepancies": result_data.get("discrepancies", {}) if isinstance(result_data, dict) else {},
+        "created_at": result.created_at.isoformat() if result.created_at else datetime.utcnow().isoformat()
     }
 

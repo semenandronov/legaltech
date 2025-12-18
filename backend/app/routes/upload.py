@@ -92,12 +92,18 @@ async def upload_files(
     for file in files:
         if not file.filename:
             raise HTTPException(status_code=400, detail="Пустое имя файла недопустимо")
+        
+        # Sanitize filename to prevent path traversal
+        filename = file.filename.replace("..", "").replace("/", "").replace("\\", "")
+        if filename != file.filename:
+            logger.warning(f"Sanitized filename from {file.filename} to {filename}")
+        
         # Check extension
-        _, ext = file.filename.rsplit(".", 1) if "." in file.filename else (file.filename, "")
+        _, ext = filename.rsplit(".", 1) if "." in filename else (filename, "")
         if ext.lower() not in allowed_extensions:
             raise HTTPException(
                 status_code=400,
-                detail=f"Файл '{file.filename}' имеет неподдерживаемый формат. Поддерживаются: {', '.join(allowed_extensions)}"
+                detail=f"Файл '{filename}' имеет неподдерживаемый формат. Поддерживаются: {', '.join(allowed_extensions)}"
             )
         
         # Check file size
@@ -105,24 +111,24 @@ async def upload_files(
         if len(content) > config.MAX_FILE_SIZE:
             raise HTTPException(
                 status_code=400,
-                detail=f"Файл '{file.filename}' слишком большой. Максимальный размер: {config.MAX_FILE_SIZE / 1024 / 1024} МБ"
+                detail=f"Файл '{filename}' слишком большой. Максимальный размер: {config.MAX_FILE_SIZE / 1024 / 1024} МБ"
             )
         
         # Parse file using LangChain loaders
         try:
             # Try LangChain loader first (better metadata extraction)
             try:
-                langchain_docs = DocumentLoaderService.load_document(content, file.filename)
+                langchain_docs = DocumentLoaderService.load_document(content, filename)
                 # Combine all documents from file into single text
                 text = "\n\n".join([doc.page_content for doc in langchain_docs])
                 
                 # Store LangChain documents for later processing
-                langchain_documents_by_file[file.filename] = langchain_docs
+                langchain_documents_by_file[filename] = langchain_docs
             except Exception as e:
-                logger.warning(f"LangChain loader failed for {file.filename}, falling back to manual parser: {e}")
+                logger.warning(f"LangChain loader failed for {filename}, falling back to manual parser: {e}")
                 # Fallback to manual parser
-                text = parse_file(content, file.filename)
-                langchain_documents_by_file[file.filename] = None
+                text = parse_file(content, filename)
+                langchain_documents_by_file[filename] = None
             
             # Remove NULL bytes (PostgreSQL doesn't allow them in strings)
             text = text.replace('\x00', '')
@@ -131,7 +137,7 @@ async def upload_files(
             if not text or not text.strip():
                 raise HTTPException(
                     status_code=400,
-                    detail=f"Файл '{file.filename}' не содержит текста или не может быть прочитан"
+                    detail=f"Файл '{filename}' не содержит текста или не может быть прочитан"
                 )
             
             total_text_len += len(text)
@@ -141,25 +147,25 @@ async def upload_files(
                     detail=f"Суммарный размер текста превышает лимит {config.MAX_TOTAL_TEXT_CHARS} символов"
                 )
             # Add separator with filename
-            text_parts.append(f"[{file.filename}]\n{text}")
-            file_names.append(file.filename)
+            text_parts.append(f"[{filename}]\n{text}")
+            file_names.append(filename)
 
             files_to_create.append(
                 {
                     "case_id": case_id,
-                    "filename": file.filename,
+                    "filename": filename,
                     "file_type": ext.lower(),
                     "original_text": text,
                 }
             )
         except ValueError as e:
-            logger.warning("Ошибка парсинга файла %s: %s", file.filename, e)
+            logger.warning("Ошибка парсинга файла %s: %s", filename, e)
             raise HTTPException(status_code=400, detail=str(e))
         except Exception as e:
-            logger.exception("Неизвестная ошибка при обработке файла %s", file.filename)
+            logger.exception("Неизвестная ошибка при обработке файла %s", filename)
             raise HTTPException(
                 status_code=500,
-                detail=f"Ошибка при обработке файла '{file.filename}': {str(e)}"
+                detail=f"Ошибка при обработке файла '{filename}'. Попробуйте загрузить файл снова."
             )
     
     # Check if we have any valid text content
@@ -221,14 +227,15 @@ async def upload_files(
         analysis_config=analysis_config
     )
     
-    db.add(case)
-    db.flush()  # Flush to get case.id
-    
-    # Create File entries and process with LangChain
-    document_processor = DocumentProcessor()
-    all_documents = []  # For LangChain
-    
-    for file_info in files_to_create:
+    try:
+        db.add(case)
+        db.flush()  # Flush to get case.id
+        
+        # Create File entries and process with LangChain
+        document_processor = DocumentProcessor()
+        all_documents = []  # For LangChain
+        
+        for file_info in files_to_create:
         file_model = FileModel(
             case_id=case_id,
             filename=file_info["filename"],
@@ -296,45 +303,56 @@ async def upload_files(
         except Exception as e:
             logger.warning(f"Ошибка при обработке документа {file_info['filename']} через LangChain: {e}")
             # Continue even if LangChain processing fails
-    
-    db.commit()
-    
-    # Store documents in vector database
-    try:
-        if all_documents:
-            logger.info(
-                f"Storing {len(all_documents)} document chunks in vector DB for case {case_id}",
-                extra={"case_id": case_id, "num_chunks": len(all_documents)}
+        
+        db.commit()
+        
+        # Store documents in vector database
+        try:
+            if all_documents:
+                logger.info(
+                    f"Storing {len(all_documents)} document chunks in vector DB for case {case_id}",
+                    extra={"case_id": case_id, "num_chunks": len(all_documents)}
+                )
+                document_processor.store_in_vector_db(
+                    case_id=case_id,
+                    documents=all_documents
+                )
+                logger.info(f"Successfully stored vector DB for case {case_id}")
+        except Exception as e:
+            logger.error(
+                f"Ошибка при сохранении в векторную БД для дела {case_id}: {e}",
+                extra={"case_id": case_id, "error": str(e)},
+                exc_info=True
             )
-            document_processor.store_in_vector_db(
-                case_id=case_id,
-                documents=all_documents
-            )
-            logger.info(f"Successfully stored vector DB for case {case_id}")
-    except Exception as e:
-        logger.error(
-            f"Ошибка при сохранении в векторную БД для дела {case_id}: {e}",
-            extra={"case_id": case_id, "error": str(e)},
-            exc_info=True
+            # Continue even if vector DB storage fails
+        
+        db.refresh(case)
+        
+        logger.info(
+            f"Successfully uploaded {len(file_names)} files for case {case_id}",
+            extra={
+                "case_id": case_id,
+                "num_files": len(file_names),
+                "user_id": current_user.id,
+            }
         )
-        # Continue even if vector DB storage fails
-    
-    db.refresh(case)
-    
-    logger.info(
-        f"Successfully uploaded {len(file_names)} files for case {case_id}",
-        extra={
+        
+        return {
             "case_id": case_id,
             "num_files": len(file_names),
-            "user_id": current_user.id,
+            "file_names": file_names,
+            "status": "success",
+            "message": f"Загружено {len(file_names)} файлов. Готово к чату!"
         }
-    )
-    
-    return {
-        "case_id": case_id,
-        "num_files": len(file_names),
-        "file_names": file_names,
-        "status": "success",
-        "message": f"Загружено {len(file_names)} файлов. Готово к чату!"
-    }
+    except Exception as e:
+        db.rollback()
+        logger.error(
+            f"Ошибка при сохранении дела {case_id} в БД: {e}",
+            extra={"case_id": case_id, "user_id": current_user.id},
+            exc_info=True
+        )
+        raise HTTPException(
+            status_code=500,
+            detail="Ошибка при сохранении дела. Попробуйте загрузить файлы снова."
+        )
 

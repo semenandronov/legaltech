@@ -99,9 +99,11 @@ class DocumentProcessor:
             Path to persistent directory
         """
         # Use persistent directory instead of temp
+        # Sanitize case_id to prevent path traversal
+        safe_case_id = case_id.replace("..", "").replace("/", "").replace("\\", "").replace(" ", "")
         base_dir = os.getenv("VECTOR_DB_DIR", os.path.join(os.getcwd(), "vector_db"))
         os.makedirs(base_dir, exist_ok=True)
-        return os.path.join(base_dir, f"chroma_{case_id}")
+        return os.path.join(base_dir, f"chroma_{safe_case_id}")
     
     def store_in_vector_db(
         self,

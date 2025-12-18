@@ -2,6 +2,7 @@
 from fastapi import APIRouter, HTTPException, Depends, Response, Query
 from sqlalchemy.orm import Session
 from typing import Optional
+from datetime import datetime
 from app.utils.database import get_db
 from app.utils.auth import get_current_user
 from app.models.case import Case
@@ -59,28 +60,28 @@ async def generate_report(
     ).all()
     
     # Prepare data
-    summary = summary_result.result_data.get("summary", "") if summary_result else ""
-    key_facts = key_facts_result.result_data if key_facts_result else {}
-    risk_analysis = risk_result.result_data.get("analysis", "") if risk_result else None
+    summary = summary_result.result_data.get("summary", "") if summary_result and summary_result.result_data else ""
+    key_facts = key_facts_result.result_data if key_facts_result and key_facts_result.result_data else {}
+    risk_analysis = risk_result.result_data.get("analysis", "") if risk_result and risk_result.result_data else None
     
     timeline_data = [
         {
-            "date": event.date.isoformat(),
-            "description": event.description,
-            "source_document": event.source_document,
-            "source_page": event.source_page,
-            "source_line": event.source_line
+            "date": event.date.isoformat() if event.date else datetime.utcnow().isoformat(),
+            "description": event.description or "",
+            "source_document": event.source_document or "",
+            "source_page": event.source_page if event.source_page is not None else None,
+            "source_line": event.source_line if event.source_line is not None else None
         }
         for event in timeline_events
     ]
     
     discrepancies_data = [
         {
-            "type": disc.type,
-            "severity": disc.severity,
-            "description": disc.description,
-            "source_documents": disc.source_documents,
-            "details": disc.details
+            "type": disc.type or "unknown",
+            "severity": disc.severity or "LOW",
+            "description": disc.description or "",
+            "source_documents": disc.source_documents or [],
+            "details": disc.details or {}
         }
         for disc in discrepancies
     ]
@@ -141,8 +142,8 @@ async def generate_report(
             raise HTTPException(status_code=400, detail="Неизвестный тип отчета")
     
     except Exception as e:
-        logger.error(f"Ошибка при генерации отчета: {e}")
-        raise HTTPException(status_code=500, detail=f"Ошибка при генерации отчета: {str(e)}")
+        logger.error(f"Ошибка при генерации отчета для дела {case_id}: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Ошибка при генерации отчета. Попробуйте позже.")
 
 
 @router.get("/{case_id}")

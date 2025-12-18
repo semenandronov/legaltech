@@ -10,6 +10,7 @@ const SummaryTab = ({ caseId }: SummaryTabProps) => {
   const [summary, setSummary] = useState<string>('')
   const [keyFacts, setKeyFacts] = useState<any>(null)
   const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
 
   useEffect(() => {
     loadSummary()
@@ -17,12 +18,14 @@ const SummaryTab = ({ caseId }: SummaryTabProps) => {
 
   const loadSummary = async () => {
     setLoading(true)
+    setError(null)
     try {
       const data = await getSummary(caseId)
       setSummary(data.summary || '')
       setKeyFacts(data.key_facts)
-    } catch (error) {
+    } catch (error: any) {
       console.error('Ошибка при загрузке резюме:', error)
+      setError(error.response?.data?.detail || 'Ошибка при загрузке резюме')
     } finally {
       setLoading(false)
     }
@@ -30,6 +33,30 @@ const SummaryTab = ({ caseId }: SummaryTabProps) => {
 
   if (loading) {
     return <div className="analysis-tab-loading">Загрузка резюме...</div>
+  }
+
+  if (error) {
+    return (
+      <div className="analysis-tab-empty">
+        <div className="analysis-tab-empty-icon">⚠️</div>
+        <h3>Ошибка загрузки</h3>
+        <p>{error}</p>
+        <button
+          onClick={loadSummary}
+          style={{
+            marginTop: '16px',
+            padding: '8px 16px',
+            background: '#4299e1',
+            color: 'white',
+            border: 'none',
+            borderRadius: '6px',
+            cursor: 'pointer',
+          }}
+        >
+          Попробовать снова
+        </button>
+      </div>
+    )
   }
 
   if (!summary) {

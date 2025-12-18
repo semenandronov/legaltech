@@ -13,6 +13,7 @@ const CasesList = ({ status, caseType }: CasesListProps) => {
   const [loading, setLoading] = useState(true)
   const [total, setTotal] = useState(0)
   const [skip, setSkip] = useState(0)
+  const [error, setError] = useState<string | null>(null)
   const limit = 20
 
   useEffect(() => {
@@ -21,12 +22,14 @@ const CasesList = ({ status, caseType }: CasesListProps) => {
 
   const loadCases = async () => {
     setLoading(true)
+    setError(null)
     try {
       const data: CasesListResponse = await getCasesList(skip, limit, status, caseType)
       setCases(data.cases)
       setTotal(data.total)
-    } catch (error) {
+    } catch (error: any) {
       console.error('Ошибка при загрузке дел:', error)
+      setError(error.response?.data?.detail || 'Ошибка при загрузке дел. Попробуйте обновить страницу.')
     } finally {
       setLoading(false)
     }
@@ -36,6 +39,32 @@ const CasesList = ({ status, caseType }: CasesListProps) => {
     return (
       <div className="cases-list">
         <div className="cases-list-loading">Загрузка дел...</div>
+      </div>
+    )
+  }
+
+  if (error && cases.length === 0) {
+    return (
+      <div className="cases-list">
+        <div className="cases-list-empty">
+          <div className="cases-list-empty-icon">⚠️</div>
+          <h3>Ошибка загрузки</h3>
+          <p>{error}</p>
+          <button
+            onClick={loadCases}
+            style={{
+              marginTop: '16px',
+              padding: '8px 16px',
+              background: '#4299e1',
+              color: 'white',
+              border: 'none',
+              borderRadius: '6px',
+              cursor: 'pointer',
+            }}
+          >
+            Попробовать снова
+          </button>
+        </div>
       </div>
     )
   }
@@ -59,6 +88,11 @@ const CasesList = ({ status, caseType }: CasesListProps) => {
     <div className="cases-list">
       <div className="cases-list-header">
         <h2>Мои дела ({total})</h2>
+        {error && (
+          <div style={{ color: '#ef4444', fontSize: '14px', marginTop: '8px' }}>
+            ⚠️ {error}
+          </div>
+        )}
       </div>
       <div className="cases-list-grid">
         {cases.map((caseItem) => (

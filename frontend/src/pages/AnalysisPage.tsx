@@ -15,6 +15,8 @@ const AnalysisPage = () => {
   const navigate = useNavigate()
   const [activeTab, setActiveTab] = useState('timeline')
   const [loading, setLoading] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const [success, setSuccess] = useState(false)
 
   useEffect(() => {
     if (caseId) {
@@ -31,20 +33,26 @@ const AnalysisPage = () => {
     try {
       await getAnalysisStatus(caseId)
       // Status loaded, can be used in future
-    } catch (error) {
+    } catch (error: any) {
       console.error('Ошибка при загрузке статуса анализа:', error)
+      // Не показываем ошибку при загрузке статуса, это не критично
     }
   }
 
   const handleStartAnalysis = async (types: string[]) => {
     if (!caseId) return
     setLoading(true)
+    setError(null)
+    setSuccess(false)
     try {
       await startAnalysis(caseId, types)
+      setSuccess(true)
+      setTimeout(() => setSuccess(false), 3000)
       // Poll for status updates
       setTimeout(() => loadStatus(), 2000)
-    } catch (error) {
+    } catch (error: any) {
       console.error('Ошибка при запуске анализа:', error)
+      setError(error.response?.data?.detail || 'Ошибка при запуске анализа')
     } finally {
       setLoading(false)
     }
@@ -72,6 +80,16 @@ const AnalysisPage = () => {
               <h1 className="analysis-page-title">Анализ дела</h1>
             </div>
             <div className="analysis-page-header-right">
+              {error && (
+                <div style={{ marginRight: '16px', color: '#ef4444', fontSize: '14px' }}>
+                  ⚠️ {error}
+                </div>
+              )}
+              {success && (
+                <div style={{ marginRight: '16px', color: '#10b981', fontSize: '14px' }}>
+                  ✅ Анализ запущен
+                </div>
+              )}
               <button
                 className="analysis-start-btn"
                 onClick={() => handleStartAnalysis(['timeline', 'discrepancies', 'key_facts', 'summary', 'risk_analysis'])}

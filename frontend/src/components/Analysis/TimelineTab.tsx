@@ -17,17 +17,23 @@ const TimelineTab = ({ caseId }: TimelineTabProps) => {
     loadTimeline()
   }, [caseId])
 
+  const [error, setError] = useState<string | null>(null)
+
   const loadTimeline = async () => {
     setLoading(true)
+    setError(null)
     try {
       const data = await getTimeline(caseId)
-      // Сортируем события по дате
-      const sortedEvents = [...data.events].sort(
-        (a, b) => new Date(a.date).getTime() - new Date(b.date).getTime()
-      )
+      // Сортируем события по дате, фильтруем невалидные даты
+      const sortedEvents = [...data.events]
+        .filter(event => event.date && !isNaN(new Date(event.date).getTime()))
+        .sort(
+          (a, b) => new Date(a.date).getTime() - new Date(b.date).getTime()
+        )
       setEvents(sortedEvents)
-    } catch (error) {
+    } catch (error: any) {
       console.error('Ошибка при загрузке таймлайна:', error)
+      setError(error.response?.data?.detail || 'Ошибка при загрузке таймлайна')
     } finally {
       setLoading(false)
     }
@@ -35,23 +41,24 @@ const TimelineTab = ({ caseId }: TimelineTabProps) => {
 
   // Статистика по событиям
   const stats = useMemo(() => {
-    const dateRange = events.length > 0
+    const validEvents = events.filter(e => e.date && !isNaN(new Date(e.date).getTime()))
+    const dateRange = validEvents.length > 0
       ? {
-          start: new Date(Math.min(...events.map(e => new Date(e.date).getTime()))),
-          end: new Date(Math.max(...events.map(e => new Date(e.date).getTime())))
+          start: new Date(Math.min(...validEvents.map(e => new Date(e.date).getTime()))),
+          end: new Date(Math.max(...validEvents.map(e => new Date(e.date).getTime())))
         }
       : null
 
     const eventTypesCount: Record<string, number> = {}
-    events.forEach(event => {
+    validEvents.forEach(event => {
       const type = event.event_type || 'Без типа'
       eventTypesCount[type] = (eventTypesCount[type] || 0) + 1
     })
 
-    const documentsCount = new Set(events.map(e => e.source_document)).size
+    const documentsCount = new Set(validEvents.map(e => e.source_document)).size
 
     return {
-      total: events.length,
+      total: validEvents.length,
       dateRange,
       eventTypesCount,
       documentsCount
@@ -74,6 +81,30 @@ const TimelineTab = ({ caseId }: TimelineTabProps) => {
 
   if (loading) {
     return <div className="analysis-tab-loading">Загрузка таймлайна...</div>
+  }
+
+  if (error) {
+    return (
+      <div className="analysis-tab-empty">
+        <div className="analysis-tab-empty-icon">⚠️</div>
+        <h3>Ошибка загрузки</h3>
+        <p>{error}</p>
+        <button
+          onClick={loadTimeline}
+          style={{
+            marginTop: '16px',
+            padding: '8px 16px',
+            background: '#4299e1',
+            color: 'white',
+            border: 'none',
+            borderRadius: '6px',
+            cursor: 'pointer',
+          }}
+        >
+          Попробовать снова
+        </button>
+      </div>
+    )
   }
 
   if (events.length === 0) {
@@ -109,7 +140,15 @@ const TimelineTab = ({ caseId }: TimelineTabProps) => {
             <div className="timeline-stat-item">
               <span className="timeline-stat-label">Период:</span>
               <span className="timeline-stat-value">
-                {stats.dateRange.start.toLocaleDateString('ru-RU')} — {stats.dateRange.end.toLocaleDateString('ru-RU')}
+                {stats.dateRange.start.toLocaleDateString('ru-RU', { 
+                  year: 'numeric', 
+                  month: 'long', 
+                  day: 'numeric' 
+                })} — {stats.dateRange.end.toLocaleDateString('ru-RU', { 
+                  year: 'numeric', 
+                  month: 'long', 
+                  day: 'numeric' 
+                })}
               </span>
               </div>
             <div className="timeline-stat-item">

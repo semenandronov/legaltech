@@ -22,16 +22,19 @@ const AnalysisOptions = ({ onSubmit, onBack }: AnalysisOptionsProps) => {
     summary: true,
     risk_analysis: false,
   })
+  const [error, setError] = useState<string | null>(null)
 
   const handleToggle = (key: keyof AnalysisOptions) => {
     setOptions((prev) => ({ ...prev, [key]: !prev[key] }))
+    setError(null)
   }
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault()
+    setError(null)
     // At least one option must be selected
     if (!Object.values(options).some((v) => v)) {
-      alert('Выберите хотя бы один тип анализа')
+      setError('Выберите хотя бы один тип анализа')
       return
     }
     onSubmit(options)
@@ -40,6 +43,7 @@ const AnalysisOptions = ({ onSubmit, onBack }: AnalysisOptionsProps) => {
   return (
     <div className="upload-step-container">
       <h2 className="upload-step-title">Выбери тип анализа</h2>
+      {error && <div className="auth-error" style={{ marginBottom: '16px' }}>{error}</div>}
       <form onSubmit={handleSubmit} className="upload-form">
         <div className="analysis-options-list">
           <label className="analysis-option">

@@ -12,6 +12,7 @@ const ReportsPage = () => {
   const navigate = useNavigate()
   const [availableReports, setAvailableReports] = useState<any[]>([])
   const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
 
   useEffect(() => {
     if (caseId) {
@@ -26,11 +27,13 @@ const ReportsPage = () => {
   const loadReports = async () => {
     if (!caseId) return
     setLoading(true)
+    setError(null)
     try {
       const data = await getReportsList(caseId)
       setAvailableReports(data.available_reports || [])
-    } catch (error) {
+    } catch (error: any) {
       console.error('Ошибка при загрузке отчетов:', error)
+      setError(error.response?.data?.detail || 'Ошибка при загрузке отчетов')
     } finally {
       setLoading(false)
     }
@@ -51,6 +54,23 @@ const ReportsPage = () => {
 
           {loading ? (
             <div className="reports-loading">Загрузка...</div>
+          ) : error ? (
+            <div className="reports-error" style={{ padding: '20px', textAlign: 'center' }}>
+              <div style={{ color: '#ef4444', marginBottom: '16px' }}>⚠️ {error}</div>
+              <button
+                onClick={loadReports}
+                style={{
+                  padding: '8px 16px',
+                  background: '#4299e1',
+                  color: 'white',
+                  border: 'none',
+                  borderRadius: '6px',
+                  cursor: 'pointer',
+                }}
+              >
+                Попробовать снова
+              </button>
+            </div>
           ) : (
             <div className="reports-content">
               {caseId && (

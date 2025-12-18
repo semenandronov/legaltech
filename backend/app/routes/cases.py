@@ -3,6 +3,7 @@ from fastapi import APIRouter, HTTPException, Depends, Query
 from pydantic import BaseModel, Field, field_validator
 from sqlalchemy.orm import Session
 from typing import List, Optional
+from datetime import datetime
 from app.utils.database import get_db
 from app.utils.auth import get_current_user
 from app.models.case import Case
@@ -125,14 +126,14 @@ async def get_cases(
     return [
         CaseResponse(
             id=case.id,
-            title=case.title,
-            description=case.description,
-            case_type=case.case_type,
-            status=case.status,
-            num_documents=case.num_documents,
-            file_names=case.file_names,
-            created_at=case.created_at.isoformat(),
-            updated_at=case.updated_at.isoformat()
+            title=case.title or None,
+            description=case.description or None,
+            case_type=case.case_type or None,
+            status=case.status or "pending",
+            num_documents=case.num_documents or 0,
+            file_names=case.file_names or [],
+            created_at=case.created_at.isoformat() if case.created_at else datetime.utcnow().isoformat(),
+            updated_at=case.updated_at.isoformat() if case.updated_at else datetime.utcnow().isoformat()
         )
         for case in cases
     ]
@@ -155,14 +156,14 @@ async def get_case(
     
     return CaseResponse(
         id=case.id,
-        title=case.title,
-        description=case.description,
-        case_type=case.case_type,
-        status=case.status,
-        num_documents=case.num_documents,
-        file_names=case.file_names,
-        created_at=case.created_at.isoformat(),
-        updated_at=case.updated_at.isoformat()
+        title=case.title or None,
+        description=case.description or None,
+        case_type=case.case_type or None,
+        status=case.status or "pending",
+        num_documents=case.num_documents or 0,
+        file_names=case.file_names or [],
+        created_at=case.created_at.isoformat() if case.created_at else datetime.utcnow().isoformat(),
+        updated_at=case.updated_at.isoformat() if case.updated_at else datetime.utcnow().isoformat()
     )
 
 
@@ -173,33 +174,40 @@ async def create_case(
     current_user: User = Depends(get_current_user)
 ):
     """Create a new case"""
-    case = Case(
-        user_id=current_user.id,
-        title=request.title,
-        description=request.description,
-        case_type=request.case_type,
-        status="pending",
-        full_text="",  # Will be filled when files are uploaded
-        num_documents=0,
-        file_names=[],
-        analysis_config=request.analysis_config,
-        case_metadata=request.metadata
-    )
-    
-    db.add(case)
-    db.commit()
-    db.refresh(case)
+    try:
+        case = Case(
+            user_id=current_user.id,
+            title=request.title,
+            description=request.description,
+            case_type=request.case_type,
+            status="pending",
+            full_text="",  # Will be filled when files are uploaded
+            num_documents=0,
+            file_names=[],
+            analysis_config=request.analysis_config,
+            case_metadata=request.metadata
+        )
+        
+        db.add(case)
+        db.commit()
+        db.refresh(case)
+    except Exception as e:
+        db.rollback()
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.error(f"Ошибка при создании дела: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Ошибка при создании дела. Попробуйте позже.")
     
     return CaseResponse(
         id=case.id,
-        title=case.title,
-        description=case.description,
-        case_type=case.case_type,
-        status=case.status,
-        num_documents=case.num_documents,
-        file_names=case.file_names,
-        created_at=case.created_at.isoformat(),
-        updated_at=case.updated_at.isoformat()
+        title=case.title or None,
+        description=case.description or None,
+        case_type=case.case_type or None,
+        status=case.status or "pending",
+        num_documents=case.num_documents or 0,
+        file_names=case.file_names or [],
+        created_at=case.created_at.isoformat() if case.created_at else datetime.utcnow().isoformat(),
+        updated_at=case.updated_at.isoformat() if case.updated_at else datetime.utcnow().isoformat()
     )
 
 
@@ -219,33 +227,40 @@ async def update_case(
     if not case:
         raise HTTPException(status_code=404, detail="Дело не найдено")
     
-    # Update fields
-    if request.title is not None:
-        case.title = request.title
-    if request.description is not None:
-        case.description = request.description
-    if request.case_type is not None:
-        case.case_type = request.case_type
-    if request.status is not None:
-        case.status = request.status
-    if request.analysis_config is not None:
-        case.analysis_config = request.analysis_config
-    if request.metadata is not None:
-        case.case_metadata = request.metadata
-    
-    db.commit()
-    db.refresh(case)
+    try:
+        # Update fields
+        if request.title is not None:
+            case.title = request.title
+        if request.description is not None:
+            case.description = request.description
+        if request.case_type is not None:
+            case.case_type = request.case_type
+        if request.status is not None:
+            case.status = request.status
+        if request.analysis_config is not None:
+            case.analysis_config = request.analysis_config
+        if request.metadata is not None:
+            case.case_metadata = request.metadata
+        
+        db.commit()
+        db.refresh(case)
+    except Exception as e:
+        db.rollback()
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.error(f"Ошибка при обновлении дела {case_id}: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Ошибка при обновлении дела. Попробуйте позже.")
     
     return CaseResponse(
         id=case.id,
-        title=case.title,
-        description=case.description,
-        case_type=case.case_type,
-        status=case.status,
-        num_documents=case.num_documents,
-        file_names=case.file_names,
-        created_at=case.created_at.isoformat(),
-        updated_at=case.updated_at.isoformat()
+        title=case.title or None,
+        description=case.description or None,
+        case_type=case.case_type or None,
+        status=case.status or "pending",
+        num_documents=case.num_documents or 0,
+        file_names=case.file_names or [],
+        created_at=case.created_at.isoformat() if case.created_at else datetime.utcnow().isoformat(),
+        updated_at=case.updated_at.isoformat() if case.updated_at else datetime.utcnow().isoformat()
     )
 
 
@@ -264,8 +279,15 @@ async def delete_case(
     if not case:
         raise HTTPException(status_code=404, detail="Дело не найдено")
     
-    db.delete(case)
-    db.commit()
+    try:
+        db.delete(case)
+        db.commit()
+    except Exception as e:
+        db.rollback()
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.error(f"Ошибка при удалении дела {case_id}: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Ошибка при удалении дела. Попробуйте позже.")
     
     return None
 

@@ -45,6 +45,7 @@ const ChatWindow = ({ caseId }: ChatWindowProps) => {
   const [inputValue, setInputValue] = useState('')
   const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [historyError, setHistoryError] = useState<string | null>(null)
   const messagesEndRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
@@ -90,6 +91,7 @@ const ChatWindow = ({ caseId }: ChatWindowProps) => {
 
   const loadHistory = async () => {
     try {
+      setHistoryError(null)
       const history = await fetchHistory(caseId)
       setMessages(
         history.map((msg: HistoryMessage) => ({
@@ -98,8 +100,9 @@ const ChatWindow = ({ caseId }: ChatWindowProps) => {
           sources: normalizeSources(msg.sources),
         })),
       )
-    } catch (err) {
+    } catch (err: any) {
       console.error('Ошибка при загрузке истории:', err)
+      setHistoryError(err.response?.data?.detail || 'Ошибка при загрузке истории сообщений')
     }
   }
 
@@ -204,7 +207,27 @@ const ChatWindow = ({ caseId }: ChatWindowProps) => {
       </div>
       <div className="chat-messages">
         <div className="chat-messages-wrapper">
-        {!hasMessages && !isLoading && (
+        {historyError && (
+          <div className="error-message" style={{ padding: '12px', margin: '16px', background: '#fee2e2', color: '#ef4444', borderRadius: '6px' }}>
+            ⚠️ {historyError}
+            <button
+              onClick={loadHistory}
+              style={{
+                marginLeft: '12px',
+                padding: '4px 12px',
+                background: '#4299e1',
+                color: 'white',
+                border: 'none',
+                borderRadius: '4px',
+                cursor: 'pointer',
+                fontSize: '12px',
+              }}
+            >
+              Обновить
+            </button>
+          </div>
+        )}
+        {!hasMessages && !isLoading && !historyError && (
           <div className="empty-state">
               <div className="empty-card">
                 <div className="empty-icon">⚖️</div>

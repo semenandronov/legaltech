@@ -131,9 +131,16 @@ async def get_current_user(
     if not session:
         raise credentials_exception
     
-    # Update last_used_at
-    session.last_used_at = datetime.utcnow()
-    db.commit()
+    try:
+        # Update last_used_at
+        session.last_used_at = datetime.utcnow()
+        db.commit()
+    except Exception as e:
+        db.rollback()
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.warning(f"Ошибка при обновлении last_used_at для сессии: {e}")
+        # Continue - это не критичная ошибка
     
     # Get user - проверка is_active через try/except для совместимости
     user = db.query(User).filter(User.id == user_id).first()

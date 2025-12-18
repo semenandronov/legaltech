@@ -238,14 +238,19 @@ async def chat(
             
             background_tasks.add_task(run_planned_analysis)
             
-            # Update case status
-            case.status = "processing"
-            if case.case_metadata is None:
-                case.case_metadata = {}
-            case.case_metadata["planned_task"] = request.question
-            case.case_metadata["planned_analyses"] = api_analysis_types
-            case.case_metadata["plan_confidence"] = confidence
-            db.commit()
+            try:
+                # Update case status
+                case.status = "processing"
+                if case.case_metadata is None:
+                    case.case_metadata = {}
+                case.case_metadata["planned_task"] = request.question
+                case.case_metadata["planned_analyses"] = api_analysis_types
+                case.case_metadata["plan_confidence"] = confidence
+                db.commit()
+            except Exception as commit_error:
+                db.rollback()
+                logger.error(f"Ошибка при обновлении статуса дела {request.case_id}: {commit_error}", exc_info=True)
+                # Continue - analysis will still run in background
             
             # Create response message
             answer = f"""Я понял вашу задачу и запланировал следующие анализы:
@@ -259,23 +264,28 @@ async def chat(
 
 Анализ выполняется в фоне. Результаты будут доступны через несколько минут. Вы можете проверить статус анализа в разделе отчетов."""
             
-            # Save user message
-            user_message = ChatMessage(
-                case_id=request.case_id,
-                role="user",
-                content=request.question
-            )
-            db.add(user_message)
-            
-            # Save assistant message
-            assistant_message = ChatMessage(
-                case_id=request.case_id,
-                role="assistant",
-                content=answer,
-                source_references=[]
-            )
-            db.add(assistant_message)
-            db.commit()
+            try:
+                # Save user message
+                user_message = ChatMessage(
+                    case_id=request.case_id,
+                    role="user",
+                    content=request.question
+                )
+                db.add(user_message)
+                
+                # Save assistant message
+                assistant_message = ChatMessage(
+                    case_id=request.case_id,
+                    role="assistant",
+                    content=answer,
+                    source_references=[]
+                )
+                db.add(assistant_message)
+                db.commit()
+            except Exception as commit_error:
+                db.rollback()
+                logger.error(f"Ошибка при сохранении сообщений в БД для дела {request.case_id}: {commit_error}", exc_info=True)
+                # Continue - message is already generated
             
             return ChatResponse(
                 answer=answer,
@@ -355,26 +365,31 @@ async def chat(
                 source_refs += f"{i}. {source_ref}\n"
             answer += source_refs
         
-        # Save user message
-        user_message = ChatMessage(
-            case_id=request.case_id,
-            role="user",
-            content=request.question
-        )
-        db.add(user_message)
-        
-        # Save assistant message
-        # Extract source file names for backward compatibility
-        source_file_names = [s.get("file", "") for s in sources]
-        assistant_message = ChatMessage(
-            case_id=request.case_id,
-            role="assistant",
-            content=answer,
-            source_references=source_file_names
-        )
-        db.add(assistant_message)
-        
-        db.commit()
+        try:
+            # Save user message
+            user_message = ChatMessage(
+                case_id=request.case_id,
+                role="user",
+                content=request.question
+            )
+            db.add(user_message)
+            
+            # Save assistant message
+            # Extract source file names for backward compatibility
+            source_file_names = [s.get("file", "") for s in (sources or []) if isinstance(s, dict)]
+            assistant_message = ChatMessage(
+                case_id=request.case_id,
+                role="assistant",
+                content=answer,
+                source_references=source_file_names or []
+            )
+            db.add(assistant_message)
+            
+            db.commit()
+        except Exception as commit_error:
+            db.rollback()
+            logger.error(f"Ошибка при сохранении сообщений в БД для дела {request.case_id}: {commit_error}", exc_info=True)
+            # Continue - message is already generated, just log the error
         
         return ChatResponse(
             answer=answer,
@@ -402,9 +417,10 @@ async def chat(
                 "Попробуйте упростить запрос или повторить попытку позже."
             )
         else:
+            logger.error(f"Ошибка при генерации ответа для дела {request.case_id}: {e}", exc_info=True)
             raise HTTPException(
                 status_code=500,
-                detail=f"Ошибка при генерации ответа: {str(e)}"
+                detail="Ошибка при генерации ответа. Попробуйте позже."
             )
 
 
@@ -560,9 +576,9 @@ async def get_history(
         "messages": [
             {
                 "role": msg.role,
-                "content": msg.content,
-                "sources": msg.source_references or [],
-                "created_at": msg.created_at.isoformat()
+                "content": msg.content or "",
+                "sources": msg.source_references if msg.source_references is not None else [],
+                "created_at": msg.created_at.isoformat() if msg.created_at else datetime.utcnow().isoformat()
             }
             for msg in messages
         ]

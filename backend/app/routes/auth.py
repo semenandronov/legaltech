@@ -130,34 +130,42 @@ async def register(
             detail="Password cannot exceed 72 bytes (approximately 72 characters for ASCII)"
         )
     
-    # Create user - используем поля, которые есть в БД
-    user = User(
-        email=request.email,
-        password=get_password_hash(request.password),  # Используем password, не password_hash
-        name=request.full_name,  # Используем name, не full_name
-        role="USER"  # Используем "USER" вместо "user" для соответствия enum в БД
-    )
-    # company может отсутствовать в БД, пропускаем если нет поля
-    if hasattr(User, 'company'):
-        user.company = request.company
-    db.add(user)
-    db.commit()
-    db.refresh(user)
-    
-    # Create tokens
-    access_token = create_access_token(data={"sub": user.id})
-    refresh_token = create_refresh_token(data={"sub": user.id})
-    
-    # Create session
-    expires_at = datetime.utcnow() + timedelta(minutes=config.ACCESS_TOKEN_EXPIRE_MINUTES)
-    session = UserSession(
-        user_id=user.id,
-        token=access_token,
-        refresh_token=refresh_token,
-        expires_at=expires_at
-    )
-    db.add(session)
-    db.commit()
+    try:
+        # Create user - используем поля, которые есть в БД
+        user = User(
+            email=request.email,
+            password=get_password_hash(request.password),  # Используем password, не password_hash
+            name=request.full_name,  # Используем name, не full_name
+            role="USER"  # Используем "USER" вместо "user" для соответствия enum в БД
+        )
+        # company может отсутствовать в БД, пропускаем если нет поля
+        if hasattr(User, 'company'):
+            user.company = request.company
+        db.add(user)
+        db.commit()
+        db.refresh(user)
+        
+        # Create tokens
+        access_token = create_access_token(data={"sub": user.id})
+        refresh_token = create_refresh_token(data={"sub": user.id})
+        
+        # Create session
+        expires_at = datetime.utcnow() + timedelta(minutes=config.ACCESS_TOKEN_EXPIRE_MINUTES)
+        session = UserSession(
+            user_id=user.id,
+            token=access_token,
+            refresh_token=refresh_token,
+            expires_at=expires_at
+        )
+        db.add(session)
+        db.commit()
+    except Exception as e:
+        db.rollback()
+        logger.error(f"Ошибка при регистрации пользователя: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Ошибка при регистрации. Попробуйте позже."
+        )
     
     logger.info(
         f"User registered successfully: {user.id}",
@@ -204,15 +212,15 @@ async def login(
                 detail="Password is required"
             )
         
-    # Find user
-    user = db.query(User).filter(User.email == request.email).first()
+        # Find user
+        user = db.query(User).filter(User.email == request.email).first()
         if not user:
             logger.warning(f"Login failed: user not found for email {request.email}")
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Incorrect email or password"
-        )
-    
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Incorrect email or password"
+            )
+        
         # Проверка is_active через property (безопасно)
         try:
             if hasattr(user, 'is_active') and not user.is_active:
@@ -241,39 +249,47 @@ async def login(
         
         if not verify_password(request.password, password_to_check):
             logger.warning(f"Login failed: incorrect password for email {request.email}")
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Incorrect email or password"
-        )
-    
-    # Create tokens
-    access_token = create_access_token(data={"sub": user.id})
-    refresh_token = create_refresh_token(data={"sub": user.id})
-    
-    # Create or update session
-    expires_at = datetime.utcnow() + timedelta(minutes=config.ACCESS_TOKEN_EXPIRE_MINUTES)
-    session = db.query(UserSession).filter(
-        UserSession.user_id == user.id,
-        UserSession.is_active == True
-    ).first()
-    
-    if session:
-        # Update existing session
-        session.token = access_token
-        session.refresh_token = refresh_token
-        session.expires_at = expires_at
-        session.last_used_at = datetime.utcnow()
-    else:
-        # Create new session
-        session = UserSession(
-            user_id=user.id,
-            token=access_token,
-            refresh_token=refresh_token,
-            expires_at=expires_at
-        )
-        db.add(session)
-    
-    db.commit()
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Incorrect email or password"
+            )
+        
+        # Create tokens
+        access_token = create_access_token(data={"sub": user.id})
+        refresh_token = create_refresh_token(data={"sub": user.id})
+        
+        try:
+            # Create or update session
+            expires_at = datetime.utcnow() + timedelta(minutes=config.ACCESS_TOKEN_EXPIRE_MINUTES)
+            session = db.query(UserSession).filter(
+                UserSession.user_id == user.id,
+                UserSession.is_active == True
+            ).first()
+            
+            if session:
+                # Update existing session
+                session.token = access_token
+                session.refresh_token = refresh_token
+                session.expires_at = expires_at
+                session.last_used_at = datetime.utcnow()
+            else:
+                # Create new session
+                session = UserSession(
+                    user_id=user.id,
+                    token=access_token,
+                    refresh_token=refresh_token,
+                    expires_at=expires_at
+                )
+                db.add(session)
+            
+            db.commit()
+        except Exception as e:
+            db.rollback()
+            logger.error(f"Ошибка при создании сессии для пользователя {user.id}: {e}", exc_info=True)
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Ошибка при входе. Попробуйте позже."
+            )
         
         # Используем property для совместимости
         try:
@@ -284,18 +300,18 @@ async def login(
         user_company = getattr(user, 'company', None)
         
         logger.info(f"Login successful for user: {user.id}")
-    
-    return TokenResponse(
-        access_token=access_token,
-        refresh_token=refresh_token,
-        user={
-            "id": user.id,
-            "email": user.email,
+        
+        return TokenResponse(
+            access_token=access_token,
+            refresh_token=refresh_token,
+            user={
+                "id": user.id,
+                "email": user.email,
                 "full_name": user_full_name,
                 "company": user_company,
-            "role": user.role
-        }
-    )
+                "role": user.role
+            }
+        )
     
     except HTTPException:
         raise
@@ -303,7 +319,7 @@ async def login(
         logger.error(f"Login error: {e}", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Internal server error: {str(e)}"
+            detail="Внутренняя ошибка сервера. Попробуйте позже."
         )
 
 
@@ -313,14 +329,19 @@ async def logout(
     db: Session = Depends(get_db)
 ):
     """Logout user - deactivate current session"""
-    session = db.query(UserSession).filter(
-        UserSession.user_id == current_user.id,
-        UserSession.is_active == True
-    ).first()
-    
-    if session:
-        session.is_active = False
-        db.commit()
+    try:
+        session = db.query(UserSession).filter(
+            UserSession.user_id == current_user.id,
+            UserSession.is_active == True
+        ).first()
+        
+        if session:
+            session.is_active = False
+            db.commit()
+    except Exception as e:
+        db.rollback()
+        logger.error(f"Ошибка при выходе пользователя {current_user.id}: {e}", exc_info=True)
+        # Не поднимаем исключение, так как выход должен быть успешным даже при ошибке
     
     return {"message": "Successfully logged out"}
 
@@ -393,11 +414,19 @@ async def refresh_token(
     except AttributeError:
         pass
     
-    # Create new access token
-    new_access_token = create_access_token(data={"sub": user.id})
-    session.token = new_access_token
-    session.last_used_at = datetime.utcnow()
-    db.commit()
+    try:
+        # Create new access token
+        new_access_token = create_access_token(data={"sub": user.id})
+        session.token = new_access_token
+        session.last_used_at = datetime.utcnow()
+        db.commit()
+    except Exception as e:
+        db.rollback()
+        logger.error(f"Ошибка при обновлении токена для пользователя {user_id}: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Ошибка при обновлении токена. Попробуйте позже."
+        )
     
     return {
         "access_token": new_access_token,

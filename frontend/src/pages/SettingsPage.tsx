@@ -16,6 +16,7 @@ const SettingsPage = () => {
   const [notifications, setNotifications] = useState<any>(null)
   const [integrations, setIntegrations] = useState<any>(null)
   const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
 
   useEffect(() => {
     loadSettings()
@@ -23,6 +24,7 @@ const SettingsPage = () => {
 
   const loadSettings = async () => {
     setLoading(true)
+    setError(null)
     try {
       const [profileData, notificationsData, integrationsData] = await Promise.all([
         getProfile(),
@@ -32,8 +34,9 @@ const SettingsPage = () => {
       setProfile(profileData)
       setNotifications(notificationsData)
       setIntegrations(integrationsData)
-    } catch (error) {
+    } catch (error: any) {
       console.error('Ошибка при загрузке настроек:', error)
+      setError(error.response?.data?.detail || 'Ошибка при загрузке настроек')
     } finally {
       setLoading(false)
     }
@@ -72,6 +75,27 @@ const SettingsPage = () => {
             </button>
             <h1 className="settings-page-title">Настройки</h1>
           </div>
+
+          {error && (
+            <div className="settings-error" style={{ marginBottom: '16px', padding: '12px', background: '#fee2e2', color: '#ef4444', borderRadius: '6px' }}>
+              ⚠️ {error}
+              <button
+                onClick={loadSettings}
+                style={{
+                  marginLeft: '12px',
+                  padding: '4px 12px',
+                  background: '#4299e1',
+                  color: 'white',
+                  border: 'none',
+                  borderRadius: '4px',
+                  cursor: 'pointer',
+                  fontSize: '12px',
+                }}
+              >
+                Обновить
+              </button>
+            </div>
+          )}
 
           <div className="settings-page-tabs">
             {tabs.map((tab) => (

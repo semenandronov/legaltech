@@ -64,7 +64,7 @@ class DocumentLoaderService:
                 if os.path.exists(tmp_path):
                     os.unlink(tmp_path)
         except Exception as e:
-            logger.error(f"Error loading PDF {filename}: {e}")
+            logger.error(f"Error loading PDF {filename}: {e}", exc_info=True)
             raise
     
     @staticmethod
@@ -109,7 +109,7 @@ class DocumentLoaderService:
                 if os.path.exists(tmp_path):
                     os.unlink(tmp_path)
         except Exception as e:
-            logger.error(f"Error loading DOCX {filename}: {e}")
+            logger.error(f"Error loading DOCX {filename}: {e}", exc_info=True)
             raise
     
     @staticmethod
@@ -151,7 +151,7 @@ class DocumentLoaderService:
                 if os.path.exists(tmp_path):
                     os.unlink(tmp_path)
         except Exception as e:
-            logger.error(f"Error loading TXT {filename}: {e}")
+            logger.error(f"Error loading TXT {filename}: {e}", exc_info=True)
             raise
     
     @staticmethod
@@ -198,7 +198,7 @@ class DocumentLoaderService:
             logger.info(f"Loaded XLSX {filename}: {len(documents)} sheets")
             return documents
         except Exception as e:
-            logger.error(f"Error loading XLSX {filename}: {e}")
+            logger.error(f"Error loading XLSX {filename}: {e}", exc_info=True)
             raise
     
     @staticmethod

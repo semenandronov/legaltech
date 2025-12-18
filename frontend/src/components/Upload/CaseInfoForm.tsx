@@ -17,10 +17,13 @@ const CaseInfoForm = ({ onSubmit, onCancel }: CaseInfoFormProps) => {
   const [description, setDescription] = useState('')
   const [caseType, setCaseType] = useState('litigation')
 
+  const [error, setError] = useState<string | null>(null)
+
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault()
+    setError(null)
     if (!title.trim()) {
-      alert('Пожалуйста, укажите название дела')
+      setError('Пожалуйста, укажите название дела')
       return
     }
     onSubmit({
@@ -31,8 +34,9 @@ const CaseInfoForm = ({ onSubmit, onCancel }: CaseInfoFormProps) => {
   }
 
   return (
-    <div className="upload-step-container">
+      <div className="upload-step-container">
       <h2 className="upload-step-title">Информация о деле</h2>
+      {error && <div className="auth-error" style={{ marginBottom: '16px' }}>{error}</div>}
       <form onSubmit={handleSubmit} className="upload-form">
         <div className="upload-field">
           <label htmlFor="title" className="upload-label">

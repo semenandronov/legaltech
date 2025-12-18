@@ -5,14 +5,17 @@ import './Dashboard.css'
 const StatsCards = () => {
   const [stats, setStats] = useState<DashboardStats | null>(null)
   const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
 
   useEffect(() => {
     const loadStats = async () => {
       try {
         const data = await getDashboardStats()
         setStats(data)
-      } catch (error) {
+        setError(null)
+      } catch (error: any) {
         console.error('Ошибка при загрузке статистики:', error)
+        setError('Не удалось загрузить статистику')
       } finally {
         setLoading(false)
       }
@@ -32,8 +35,14 @@ const StatsCards = () => {
     )
   }
 
-  if (!stats) {
-    return null
+  if (error || !stats) {
+    return (
+      <div className="stats-cards">
+        <div className="stat-card" style={{ gridColumn: '1 / -1', textAlign: 'center', padding: '20px' }}>
+          <div style={{ color: '#ef4444' }}>⚠️ {error || 'Не удалось загрузить статистику'}</div>
+        </div>
+      </div>
+    )
   }
 
   return (

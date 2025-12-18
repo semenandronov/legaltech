@@ -104,7 +104,13 @@ const CaseCard = ({ caseItem }: CaseCardProps) => {
           </button>
         </div>
         <div className="case-card-date">
-          Обновлено: {new Date(caseItem.updated_at).toLocaleDateString('ru-RU')}
+          Обновлено: {caseItem.updated_at 
+            ? new Date(caseItem.updated_at).toLocaleDateString('ru-RU', { 
+                year: 'numeric', 
+                month: 'long', 
+                day: 'numeric' 
+              })
+            : 'Не указано'}
         </div>
       </div>
     </div>

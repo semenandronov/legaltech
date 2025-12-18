@@ -60,7 +60,8 @@ async def get_stats(
     # Total documents
     total_documents = db.query(func.sum(Case.num_documents)).filter(
         Case.user_id == current_user.id
-    ).scalar() or 0
+    ).scalar()
+    total_documents = int(total_documents) if total_documents is not None else 0
     
     # Total analyses
     total_analyses = db.query(func.count(AnalysisResult.id)).join(
@@ -79,7 +80,8 @@ async def get_stats(
     documents_this_month = db.query(func.sum(Case.num_documents)).filter(
         Case.user_id == current_user.id,
         Case.created_at >= month_start
-    ).scalar() or 0
+    ).scalar()
+    documents_this_month = int(documents_this_month) if documents_this_month is not None else 0
     
     # Analyses this month
     analyses_this_month = db.query(func.count(AnalysisResult.id)).join(
@@ -127,12 +129,12 @@ async def get_cases_list(
         cases=[
             CaseListItem(
                 id=case.id,
-                title=case.title,
-                case_type=case.case_type,
-                status=case.status,
-                num_documents=case.num_documents,
-                created_at=case.created_at.isoformat(),
-                updated_at=case.updated_at.isoformat()
+                title=case.title or None,
+                case_type=case.case_type or None,
+                status=case.status or "pending",
+                num_documents=case.num_documents or 0,
+                created_at=case.created_at.isoformat() if case.created_at else datetime.utcnow().isoformat(),
+                updated_at=case.updated_at.isoformat() if case.updated_at else datetime.utcnow().isoformat()
             )
             for case in cases
         ],
@@ -156,12 +158,12 @@ async def get_recent_cases(
     return [
         CaseListItem(
             id=case.id,
-            title=case.title,
-            case_type=case.case_type,
-            status=case.status,
-            num_documents=case.num_documents,
-            created_at=case.created_at.isoformat(),
-            updated_at=case.updated_at.isoformat()
+            title=case.title or None,
+            case_type=case.case_type or None,
+            status=case.status or "pending",
+            num_documents=case.num_documents or 0,
+            created_at=case.created_at.isoformat() if case.created_at else datetime.utcnow().isoformat(),
+            updated_at=case.updated_at.isoformat() if case.updated_at else datetime.utcnow().isoformat()
         )
         for case in cases
     ]

@@ -11,24 +11,28 @@ const NotificationsTab = ({ settings, onUpdate }: NotificationsTabProps) => {
   const [formSettings, setFormSettings] = useState(settings)
   const [loading, setLoading] = useState(false)
   const [success, setSuccess] = useState(false)
+  const [error, setError] = useState<string | null>(null)
 
   const handleToggle = (key: string) => {
     setFormSettings((prev: any) => ({ ...prev, [key]: !prev[key] }))
   }
 
+  const [error, setError] = useState<string | null>(null)
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     setLoading(true)
     setSuccess(false)
+    setError(null)
 
     try {
       await updateNotifications(formSettings)
       setSuccess(true)
       onUpdate(formSettings)
       setTimeout(() => setSuccess(false), 3000)
-    } catch (error) {
+    } catch (error: any) {
       console.error('Ошибка при обновлении уведомлений:', error)
-      alert('Ошибка при обновлении уведомлений')
+      setError(error.response?.data?.detail || 'Ошибка при обновлении уведомлений')
     } finally {
       setLoading(false)
     }
@@ -84,6 +88,8 @@ const NotificationsTab = ({ settings, onUpdate }: NotificationsTabProps) => {
           </div>
         </div>
 
+        {error && <div className="settings-error">{error}</div>}
+        {error && <div className="settings-error">{error}</div>}
         {success && (
           <div className="settings-success">Настройки уведомлений обновлены!</div>
         )}

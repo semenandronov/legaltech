@@ -9,9 +9,11 @@ interface ReportTemplatesProps {
 
 const ReportTemplates = ({ caseId, availableReports }: ReportTemplatesProps) => {
   const [generating, setGenerating] = useState<string | null>(null)
+  const [error, setError] = useState<string | null>(null)
 
   const handleGenerate = async (reportType: string, format: string) => {
     setGenerating(`${reportType}_${format}`)
+    setError(null)
     try {
       const blob = await generateReport(caseId, reportType, format)
       
@@ -24,9 +26,9 @@ const ReportTemplates = ({ caseId, availableReports }: ReportTemplatesProps) => 
       a.click()
       document.body.removeChild(a)
       window.URL.revokeObjectURL(url)
-    } catch (error) {
+    } catch (error: any) {
       console.error('Ошибка при генерации отчета:', error)
-      alert('Ошибка при генерации отчета')
+      setError(error.response?.data?.detail || 'Ошибка при генерации отчета')
     } finally {
       setGenerating(null)
     }
@@ -35,6 +37,11 @@ const ReportTemplates = ({ caseId, availableReports }: ReportTemplatesProps) => 
   return (
     <div className="report-templates">
       <h2 className="report-templates-title">Шаблоны отчетов</h2>
+      {error && (
+        <div className="auth-error" style={{ marginBottom: '16px' }}>
+          {error}
+        </div>
+      )}
       <div className="report-templates-grid">
         {availableReports.map((report) => (
           <div key={report.type} className="report-template-card">

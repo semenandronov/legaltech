@@ -31,7 +31,29 @@ const RegisterForm = () => {
     try {
       await register(email, password, fullName || undefined, company || undefined)
     } catch (err: any) {
-      setError(err.response?.data?.detail || 'Ошибка при регистрации. Попробуйте еще раз.')
+      // Улучшенная обработка ошибок (как в LoginForm)
+      let errorMessage = 'Ошибка при регистрации. Попробуйте еще раз.'
+      
+      if (err.response) {
+        const data = err.response.data
+        if (typeof data?.detail === 'string') {
+          errorMessage = data.detail
+        } else if (Array.isArray(data?.detail)) {
+          // Ошибки валидации Pydantic
+          errorMessage = data.detail.map((e: any) => {
+            const field = e.loc?.join('.') || 'field'
+            return `${field}: ${e.msg || 'validation error'}`
+          }).join('; ')
+        } else if (data?.detail) {
+          errorMessage = String(data.detail)
+        } else if (data?.message) {
+          errorMessage = String(data.message)
+        }
+      } else if (err.message) {
+        errorMessage = err.message
+      }
+      
+      setError(errorMessage)
     } finally {
       setLoading(false)
     }

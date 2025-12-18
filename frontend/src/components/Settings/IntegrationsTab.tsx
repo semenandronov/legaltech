@@ -12,9 +12,12 @@ const IntegrationsTab = ({ settings, onUpdate }: IntegrationsTabProps) => {
   const [loading, setLoading] = useState(false)
   const [success, setSuccess] = useState(false)
 
+  const [connectMessage, setConnectMessage] = useState<string | null>(null)
+
   const handleConnect = async (service: string) => {
     // In future, implement OAuth flow
-    alert(`Интеграция с ${service} будет доступна в будущих версиях`)
+    setConnectMessage(`Интеграция с ${service} будет доступна в будущих версиях`)
+    setTimeout(() => setConnectMessage(null), 5000)
   }
 
   const handleDisconnect = async (service: string) => {
@@ -44,6 +47,9 @@ const IntegrationsTab = ({ settings, onUpdate }: IntegrationsTabProps) => {
   return (
     <div className="settings-tab-content">
       <h2 className="settings-section-title">Интеграции</h2>
+      {connectError && (
+        <div className="settings-error" style={{ marginBottom: '16px' }}>{connectError}</div>
+      )}
       <div className="settings-integrations-list">
         <div className="settings-integration-item">
           <div className="settings-integration-info">

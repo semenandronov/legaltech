@@ -130,19 +130,24 @@ async def update_profile(
     current_user: User = Depends(get_current_user)
 ):
     """Update user profile"""
-    if request.full_name is not None:
-        # Используем свойство full_name или напрямую name
-        if hasattr(current_user, 'full_name'):
-        current_user.full_name = request.full_name
-        elif hasattr(current_user, 'name'):
-            current_user.name = request.full_name
-    
-    if request.company is not None:
-        if hasattr(current_user, 'company'):
-        current_user.company = request.company
-    
-    db.commit()
-    db.refresh(current_user)
+    try:
+        if request.full_name is not None:
+            # Используем свойство full_name или напрямую name
+            if hasattr(current_user, 'full_name'):
+                current_user.full_name = request.full_name
+            elif hasattr(current_user, 'name'):
+                current_user.name = request.full_name
+        
+        if request.company is not None:
+            if hasattr(current_user, 'company'):
+                current_user.company = request.company
+        
+        db.commit()
+        db.refresh(current_user)
+    except Exception as e:
+        db.rollback()
+        logger.error(f"Ошибка при обновлении профиля пользователя {current_user.id}: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Ошибка при обновлении профиля. Попробуйте позже.")
     
     # Безопасный доступ к полям для ответа
     user_full_name = current_user.full_name if hasattr(current_user, 'full_name') else (current_user.name if hasattr(current_user, 'name') else None)
@@ -179,9 +184,14 @@ async def update_password(
             detail="Пароль не может превышать 72 байта (примерно 72 символа для ASCII)"
         )
     
-    # Update password
-    current_user.password_hash = get_password_hash(request.new_password)
-    db.commit()
+    try:
+        # Update password
+        current_user.password_hash = get_password_hash(request.new_password)
+        db.commit()
+    except Exception as e:
+        db.rollback()
+        logger.error(f"Ошибка при обновлении пароля пользователя {current_user.id}: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Ошибка при обновлении пароля. Попробуйте позже.")
     
     return {"message": "Пароль успешно обновлен"}
 

@@ -41,7 +41,9 @@ const TimelineVisualization = ({ events }: TimelineVisualizationProps) => {
     const groups: Record<string, TimelineEvent[]> = {}
 
     filteredEvents.forEach(event => {
+      if (!event.date) return // Skip events without date
       const date = new Date(event.date)
+      if (isNaN(date.getTime())) return // Skip invalid dates
       let groupKey: string
 
       switch (grouping) {
@@ -206,11 +208,13 @@ const TimelineVisualization = ({ events }: TimelineVisualizationProps) => {
                       <div className="timeline-event-content">
                         <div className="timeline-event-header">
                           <div className="timeline-event-date">
-                            {new Date(event.date).toLocaleDateString('ru-RU', {
-                              year: 'numeric',
-                              month: 'short',
-                              day: 'numeric',
-                            })}
+                            {event.date && !isNaN(new Date(event.date).getTime())
+                              ? new Date(event.date).toLocaleDateString('ru-RU', {
+                                  year: 'numeric',
+                                  month: 'short',
+                                  day: 'numeric',
+                                })
+                              : 'Дата не указана'}
                           </div>
                           {event.event_type && (
                             <div className="timeline-event-type-badge">

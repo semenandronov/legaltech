@@ -12,11 +12,16 @@ const ProfileTab = ({ profile, onUpdate }: ProfileTabProps) => {
   const [company, setCompany] = useState(profile.company || '')
   const [loading, setLoading] = useState(false)
   const [success, setSuccess] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  const [error, setError] = useState<string | null>(null)
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     setLoading(true)
     setSuccess(false)
+    setError(null)
+    setError(null)
 
     try {
       await updateProfile({
@@ -26,9 +31,9 @@ const ProfileTab = ({ profile, onUpdate }: ProfileTabProps) => {
       setSuccess(true)
       onUpdate()
       setTimeout(() => setSuccess(false), 3000)
-    } catch (error) {
+    } catch (error: any) {
       console.error('Ошибка при обновлении профиля:', error)
-      alert('Ошибка при обновлении профиля')
+      setError(error.response?.data?.detail || 'Ошибка при обновлении профиля')
     } finally {
       setLoading(false)
     }
@@ -102,6 +107,8 @@ const ProfileTab = ({ profile, onUpdate }: ProfileTabProps) => {
           </div>
         </div>
 
+        {error && <div className="settings-error">{error}</div>}
+        {error && <div className="settings-error">{error}</div>}
         {success && (
           <div className="settings-success">Профиль успешно обновлен!</div>
         )}
