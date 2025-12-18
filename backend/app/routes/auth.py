@@ -22,10 +22,18 @@ router = APIRouter()
 
 class RegisterRequest(BaseModel):
     """Request model for user registration"""
-    email: EmailStr
+    email: str  # Изменено с EmailStr на str для совместимости
     password: str = Field(..., min_length=8, max_length=72, description="Password must be at least 8 characters and not exceed 72 bytes")
     full_name: str | None = Field(None, max_length=255, description="User's full name")
     company: str | None = Field(None, max_length=255, description="User's company")
+    
+    @field_validator('email')
+    @classmethod
+    def validate_email(cls, v: str) -> str:
+        """Валидация email"""
+        if not v or '@' not in v:
+            raise ValueError('Invalid email format')
+        return v.lower().strip()  # Нормализуем email
     
     @field_validator('password')
     @classmethod
@@ -61,8 +69,16 @@ class RegisterRequest(BaseModel):
 
 class LoginRequest(BaseModel):
     """Request model for user login"""
-    email: EmailStr
+    email: str  # Изменено с EmailStr на str для совместимости
     password: str
+    
+    @field_validator('email')
+    @classmethod
+    def validate_email(cls, v: str) -> str:
+        """Валидация email"""
+        if not v or '@' not in v:
+            raise ValueError('Invalid email format')
+        return v.lower().strip()  # Нормализуем email
 
 
 class TokenResponse(BaseModel):
