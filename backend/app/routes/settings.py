@@ -131,7 +131,12 @@ async def update_profile(
 ):
     """Update user profile"""
     if request.full_name is not None:
-        current_user.full_name = request.full_name
+        # Используем свойство full_name или напрямую name
+        if hasattr(current_user, 'full_name'):
+            current_user.full_name = request.full_name
+        elif hasattr(current_user, 'name'):
+            current_user.name = request.full_name
+    
     if request.company is not None:
         if hasattr(current_user, 'company'):
             current_user.company = request.company
@@ -139,11 +144,15 @@ async def update_profile(
     db.commit()
     db.refresh(current_user)
     
+    # Безопасный доступ к полям для ответа
+    user_full_name = current_user.full_name if hasattr(current_user, 'full_name') else (current_user.name if hasattr(current_user, 'name') else None)
+    user_company = getattr(current_user, 'company', None)
+    
     return {
         "id": current_user.id,
         "email": current_user.email,
-        "full_name": current_user.full_name,
-        "company": getattr(current_user, 'company', None),
+        "full_name": user_full_name,
+        "company": user_company,
         "role": current_user.role
     }
 
