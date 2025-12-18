@@ -31,8 +31,8 @@ def create_legal_agent(
     """
     # Попробовать новый API из langchain.agents или langchain_core
     try:
-    try:
-        from langchain.agents import create_agent
+        try:
+            from langchain.agents import create_agent
         except ImportError:
             # LangChain 1.x - try alternative location
             from langchain_core.agents import create_agent
