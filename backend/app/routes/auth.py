@@ -1,6 +1,6 @@
 """Authentication routes for Legal AI Vault"""
 from fastapi import APIRouter, Depends, HTTPException, status
-from pydantic import BaseModel, EmailStr, Field, field_validator
+from pydantic import BaseModel, Field, field_validator
 from sqlalchemy.orm import Session
 from datetime import datetime, timedelta
 import logging
