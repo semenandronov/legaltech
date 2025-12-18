@@ -93,10 +93,17 @@ async def get_current_user(
     session.last_used_at = datetime.utcnow()
     db.commit()
     
-    # Get user
-    user = db.query(User).filter(User.id == user_id, User.is_active == True).first()
+    # Get user - проверка is_active через try/except для совместимости
+    user = db.query(User).filter(User.id == user_id).first()
     if user is None:
         raise credentials_exception
+    
+    # Проверка is_active если поле существует
+    try:
+        if hasattr(user, 'is_active') and not user.is_active:
+            raise credentials_exception
+    except AttributeError:
+        pass
     
     return user
 

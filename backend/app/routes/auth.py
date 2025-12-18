@@ -103,14 +103,16 @@ async def register(
             detail="Password must be at least 8 characters long"
         )
     
-    # Create user
+    # Create user - используем поля, которые есть в БД
     user = User(
         email=request.email,
-        password_hash=get_password_hash(request.password),
-        full_name=request.full_name,
-        company=request.company,
-        role="user"
+        password=get_password_hash(request.password),  # Используем password, не password_hash
+        name=request.full_name,  # Используем name, не full_name
+        role="USER"  # Используем "USER" вместо "user" для соответствия enum в БД
     )
+    # company может отсутствовать в БД, пропускаем если нет поля
+    if hasattr(User, 'company'):
+        user.company = request.company
     db.add(user)
     db.commit()
     db.refresh(user)
@@ -135,14 +137,18 @@ async def register(
         extra={"user_id": user.id, "email": user.email}
     )
     
+    # Используем property для совместимости
+    user_full_name = user.full_name if hasattr(user, 'full_name') else (user.name if hasattr(user, 'name') else None)
+    user_company = user.company if hasattr(user, 'company') else None
+    
     return TokenResponse(
         access_token=access_token,
         refresh_token=refresh_token,
         user={
             "id": user.id,
             "email": user.email,
-            "full_name": user.full_name,
-            "company": user.company,
+            "full_name": user_full_name,
+            "company": user_company,
             "role": user.role
         }
     )
@@ -154,61 +160,110 @@ async def login(
     db: Session = Depends(get_db)
 ):
     """Login user"""
-    # Find user
-    user = db.query(User).filter(User.email == request.email).first()
-    if not user or not user.is_active:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Incorrect email or password"
-        )
+    try:
+        logger.info(f"Login attempt for email: {request.email}")
+        
+        # Find user
+        user = db.query(User).filter(User.email == request.email).first()
+        if not user:
+            logger.warning(f"Login failed: user not found for email {request.email}")
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Incorrect email or password"
+            )
+        
+        # Проверка is_active через property (безопасно)
+        try:
+            if hasattr(user, 'is_active') and not user.is_active:
+                logger.warning(f"Login failed: account inactive for email {request.email}")
+                raise HTTPException(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    detail="Account is inactive"
+                )
+        except (AttributeError, TypeError):
+            # Если is_active не существует или не работает, пропускаем проверку
+            pass
+        
+        # Verify password - используем password_hash property, который возвращает password
+        # Сначала пробуем через property, потом напрямую
+        try:
+            password_to_check = user.password_hash
+        except (AttributeError, TypeError):
+            password_to_check = getattr(user, 'password', None)
+        
+        if not password_to_check:
+            logger.error(f"Login failed: password field not found for user {user.id}")
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Internal server error"
+            )
+        
+        if not verify_password(request.password, password_to_check):
+            logger.warning(f"Login failed: incorrect password for email {request.email}")
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Incorrect email or password"
+            )
     
-    # Verify password
-    if not verify_password(request.password, user.password_hash):
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Incorrect email or password"
-        )
-    
-    # Create tokens
-    access_token = create_access_token(data={"sub": user.id})
-    refresh_token = create_refresh_token(data={"sub": user.id})
-    
-    # Create or update session
-    expires_at = datetime.utcnow() + timedelta(minutes=config.ACCESS_TOKEN_EXPIRE_MINUTES)
-    session = db.query(UserSession).filter(
-        UserSession.user_id == user.id,
-        UserSession.is_active == True
-    ).first()
-    
-    if session:
-        # Update existing session
-        session.token = access_token
-        session.refresh_token = refresh_token
-        session.expires_at = expires_at
-        session.last_used_at = datetime.utcnow()
-    else:
-        # Create new session
-        session = UserSession(
-            user_id=user.id,
-            token=access_token,
+        # Create tokens
+        access_token = create_access_token(data={"sub": user.id})
+        refresh_token = create_refresh_token(data={"sub": user.id})
+        
+        # Create or update session
+        expires_at = datetime.utcnow() + timedelta(minutes=config.ACCESS_TOKEN_EXPIRE_MINUTES)
+        session = db.query(UserSession).filter(
+            UserSession.user_id == user.id,
+            UserSession.is_active == True
+        ).first()
+        
+        if session:
+            # Update existing session
+            session.token = access_token
+            session.refresh_token = refresh_token
+            session.expires_at = expires_at
+            session.last_used_at = datetime.utcnow()
+        else:
+            # Create new session
+            session = UserSession(
+                user_id=user.id,
+                token=access_token,
+                refresh_token=refresh_token,
+                expires_at=expires_at
+            )
+            db.add(session)
+        
+        db.commit()
+        
+        # Используем property для совместимости
+        try:
+            user_full_name = user.full_name
+        except (AttributeError, TypeError):
+            user_full_name = getattr(user, 'name', None)
+        
+        user_company = getattr(user, 'company', None)
+        
+        logger.info(f"Login successful for user: {user.id}")
+        
+        return TokenResponse(
+            access_token=access_token,
             refresh_token=refresh_token,
-            expires_at=expires_at
+            user={
+                "id": user.id,
+                "email": user.email,
+                "full_name": user_full_name,
+                "company": user_company,
+                "role": user.role
+            }
         )
-        db.add(session)
     
-    db.commit()
-    
-    return TokenResponse(
-        access_token=access_token,
-        refresh_token=refresh_token,
-        user={
-            "id": user.id,
-            "email": user.email,
-            "full_name": user.full_name,
-            "company": user.company,
-            "role": user.role
-        }
-    )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Login error: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Internal server error: {str(e)}"
+        )
 
 
 @router.post("/logout")
@@ -232,13 +287,18 @@ async def logout(
 @router.get("/me", response_model=UserResponse)
 async def get_me(current_user: User = Depends(get_current_user)):
     """Get current user information"""
+    # Используем property для совместимости
+    user_full_name = current_user.full_name if hasattr(current_user, 'full_name') else (current_user.name if hasattr(current_user, 'name') else None)
+    user_company = current_user.company if hasattr(current_user, 'company') else None
+    user_created_at = current_user.created_at if hasattr(current_user, 'created_at') else (current_user.createdAt if hasattr(current_user, 'createdAt') else datetime.utcnow())
+    
     return UserResponse(
         id=current_user.id,
         email=current_user.email,
-        full_name=current_user.full_name,
-        company=current_user.company,
+        full_name=user_full_name,
+        company=user_company,
         role=current_user.role,
-        created_at=current_user.created_at.isoformat()
+        created_at=user_created_at.isoformat() if hasattr(user_created_at, 'isoformat') else str(user_created_at)
     )
 
 
@@ -274,13 +334,23 @@ async def refresh_token(
             detail="Invalid refresh token"
         )
     
-    # Get user
-    user = db.query(User).filter(User.id == user_id, User.is_active == True).first()
+    # Get user - проверка is_active через try/except для совместимости
+    user = db.query(User).filter(User.id == user_id).first()
     if not user:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="User not found"
         )
+    
+    # Проверка is_active если поле существует
+    try:
+        if hasattr(user, 'is_active') and not user.is_active:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="User account is inactive"
+            )
+    except AttributeError:
+        pass
     
     # Create new access token
     new_access_token = create_access_token(data={"sub": user.id})
