@@ -8,6 +8,56 @@
   position: relative;
 }
 
+/* Navigation bar for quick access */
+.chat-nav-bar {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  background-color: var(--color-bg);
+  border-bottom: 1px solid var(--color-border);
+  padding: 8px 16px;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+}
+
+.chat-nav-buttons {
+  display: flex;
+  gap: 8px;
+  max-width: 768px;
+  width: 100%;
+  justify-content: center;
+}
+
+.chat-nav-button {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 16px;
+  background-color: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  color: var(--color-text);
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.chat-nav-button:hover {
+  background-color: var(--color-hover);
+  border-color: var(--color-primary);
+  transform: translateY(-1px);
+}
+
+.chat-nav-icon {
+  font-size: 16px;
+}
+
+.chat-nav-text {
+  font-size: 14px;
+}
+
 /* Remove header or make it minimal */
 .chat-header {
   display: none; /* Hide header for ChatGPT-style */
@@ -91,6 +141,54 @@
 .empty-question-btn:hover {
   background-color: var(--color-hover);
   border-color: var(--color-primary);
+}
+
+/* Quick actions panel */
+.quick-actions-panel {
+  margin-top: 32px;
+  padding-top: 24px;
+  border-top: 1px solid var(--color-border);
+}
+
+.quick-actions-title {
+  font-size: 13px;
+  color: var(--color-text-secondary);
+  margin-bottom: 12px;
+  text-align: center;
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.quick-actions-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: center;
+  max-width: 600px;
+  margin: 0 auto;
+}
+
+.quick-action-btn {
+  padding: 10px 16px;
+  background-color: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  color: var(--color-text);
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.quick-action-btn:hover {
+  background-color: var(--color-hover);
+  border-color: var(--color-primary);
+  transform: translateY(-2px);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
 }
 
 /* Messages - ChatGPT style */

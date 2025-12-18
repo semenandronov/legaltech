@@ -115,10 +115,10 @@ def fix_database():
             
             for field_name, field_type, default in new_fields:
                 try:
-                    cursor.execute(sql.SQL("ALTER TABLE timeline_events ADD COLUMN IF NOT EXISTS {} {}").format(
-                        sql.Identifier(field_name),
+                        cursor.execute(sql.SQL("ALTER TABLE timeline_events ADD COLUMN IF NOT EXISTS {} {}").format(
+                            sql.Identifier(field_name),
                         sql.SQL(f"{field_type} {default}")
-                    ))
+                        ))
                     print(f"      ✅ Добавлено поле: {field_name}")
                 except Exception as e:
                     print(f"      ⚠️  Ошибка при добавлении {field_name}: {e}")
@@ -152,10 +152,10 @@ def fix_database():
             
             # Переименовываем createdAt -> created_at, если нужно
             if 'createdAt' in existing_columns and 'created_at' not in existing_columns:
-                try:
+            try:
                     cursor.execute("ALTER TABLE timeline_events RENAME COLUMN \"createdAt\" TO created_at")
                     print("      ✅ Переименовано createdAt -> created_at")
-                except Exception as e:
+            except Exception as e:
                     print(f"      ⚠️  Ошибка при переименовании createdAt: {e}")
             
             # Устанавливаем source_document из description, если возможно
@@ -166,7 +166,7 @@ def fix_database():
                     WHERE source_document IS NULL
                 """)
                 print(f"      ✅ Установлен source_document по умолчанию ({cursor.rowcount} записей)")
-            except Exception as e:
+                    except Exception as e:
                 print(f"      ⚠️  Ошибка при установке source_document: {e}")
             
             print("   ✅ Миграция timeline_events завершена")

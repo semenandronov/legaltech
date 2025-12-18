@@ -133,13 +133,13 @@ async def update_profile(
     if request.full_name is not None:
         # Используем свойство full_name или напрямую name
         if hasattr(current_user, 'full_name'):
-            current_user.full_name = request.full_name
+        current_user.full_name = request.full_name
         elif hasattr(current_user, 'name'):
             current_user.name = request.full_name
     
     if request.company is not None:
         if hasattr(current_user, 'company'):
-            current_user.company = request.company
+        current_user.company = request.company
     
     db.commit()
     db.refresh(current_user)

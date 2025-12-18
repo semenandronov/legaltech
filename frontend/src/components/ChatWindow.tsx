@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from 'react'
+import { useNavigate } from 'react-router-dom'
 import './ChatWindow.css'
 import { fetchHistory, sendMessage, SourceInfo, HistoryMessage } from '../services/api'
 import ReactMarkdown from 'react-markdown'
@@ -39,6 +40,7 @@ const formatSourceReference = (source: SourceInfo): string => {
 }
 
 const ChatWindow = ({ caseId }: ChatWindowProps) => {
+  const navigate = useNavigate()
   const [messages, setMessages] = useState<Message[]>([])
   const [inputValue, setInputValue] = useState('')
   const [isLoading, setIsLoading] = useState(false)
@@ -101,25 +103,28 @@ const ChatWindow = ({ caseId }: ChatWindowProps) => {
     }
   }
 
-  const handleSend = async () => {
-    if (!inputValue.trim() || isLoading) {
+  const handleSend = async (customMessage?: string) => {
+    const messageToSend = customMessage || inputValue
+    if (!messageToSend.trim() || isLoading) {
       return
     }
 
-    const trimmed = inputValue.slice(0, MAX_INPUT_CHARS).trim()
+    const trimmed = messageToSend.slice(0, MAX_INPUT_CHARS).trim()
     const userMessage: Message = {
       role: 'user',
       content: trimmed,
     }
 
     setMessages((prev) => [...prev, userMessage])
-    setInputValue('')
+    if (!customMessage) {
+      setInputValue('')
+    }
     setIsLoading(true)
     setError(null)
 
     try {
       const response = await sendMessage(caseId, userMessage.content)
-      if (response.status === 'success') {
+      if (response.status === 'success' || response.status === 'task_planned') {
         const assistantMessage: Message = {
           role: 'assistant',
           content: response.answer,
@@ -163,8 +168,40 @@ const ChatWindow = ({ caseId }: ChatWindowProps) => {
 
   const hasMessages = messages.length > 0
 
+  const handleNavigateToAnalysis = () => {
+    navigate(`/cases/${caseId}/analysis`)
+  }
+
+  const handleNavigateToTimeline = () => {
+    navigate(`/cases/${caseId}/analysis`)
+    // Timeline будет открыт по умолчанию или можно добавить hash
+  }
+
   return (
     <div className="chat-container">
+      {/* Navigation bar for quick access to analysis */}
+      <div className="chat-nav-bar">
+        <div className="chat-nav-buttons">
+          <button
+            type="button"
+            className="chat-nav-button"
+            onClick={handleNavigateToAnalysis}
+            title="Перейти к анализу дела"
+          >
+            <span className="chat-nav-icon">📊</span>
+            <span className="chat-nav-text">Анализ</span>
+          </button>
+          <button
+            type="button"
+            className="chat-nav-button"
+            onClick={handleNavigateToTimeline}
+            title="Показать таймлайн событий"
+          >
+            <span className="chat-nav-icon">📅</span>
+            <span className="chat-nav-text">Таймлайн</span>
+          </button>
+        </div>
+      </div>
       <div className="chat-messages">
         <div className="chat-messages-wrapper">
         {!hasMessages && !isLoading && (
@@ -186,6 +223,48 @@ const ChatWindow = ({ caseId }: ChatWindowProps) => {
                       {q}
                     </button>
                   ))}
+                </div>
+                {/* Quick actions panel */}
+                <div className="quick-actions-panel">
+                  <div className="quick-actions-title">Быстрые действия:</div>
+                  <div className="quick-actions-buttons">
+                    <button
+                      type="button"
+                      className="quick-action-btn"
+                      onClick={() => {
+                        handleSend('Проанализируй документы и найди все важные даты и события')
+                      }}
+                    >
+                      📅 Извлечь таймлайн
+                    </button>
+                    <button
+                      type="button"
+                      className="quick-action-btn"
+                      onClick={() => {
+                        handleSend('Проанализируй документы и найди все противоречия и несоответствия')
+                      }}
+                    >
+                      ⚠️ Найти противоречия
+                    </button>
+                    <button
+                      type="button"
+                      className="quick-action-btn"
+                      onClick={() => {
+                        handleSend('Извлеки ключевые факты из документов')
+                      }}
+                    >
+                      🎯 Ключевые факты
+                    </button>
+                    <button
+                      type="button"
+                      className="quick-action-btn"
+                      onClick={() => {
+                        handleSend('Проведи анализ рисков по этому делу')
+                      }}
+                    >
+                      📈 Анализ рисков
+                    </button>
+                  </div>
                 </div>
               </div>
           </div>

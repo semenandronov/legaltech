@@ -13,6 +13,11 @@ const CaseCard = ({ caseItem }: CaseCardProps) => {
     navigate(`/cases/${caseItem.id}/chat`)
   }
 
+  const handleAnalysisClick = (e: React.MouseEvent) => {
+    e.stopPropagation() // Prevent card click
+    navigate(`/cases/${caseItem.id}/analysis`)
+  }
+
   const getStatusColor = (status: string) => {
     switch (status) {
       case 'completed':
@@ -65,6 +70,38 @@ const CaseCard = ({ caseItem }: CaseCardProps) => {
         <div className="case-card-info">
           <span className="case-card-type">{getTypeLabel(caseItem.case_type)}</span>
           <span className="case-card-documents">{caseItem.num_documents} документов</span>
+        </div>
+        <div className="case-card-actions">
+          <button
+            className="case-card-analysis-btn"
+            onClick={handleAnalysisClick}
+            title="Перейти к анализу"
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: '6px',
+              padding: '6px 12px',
+              background: '#4299e1',
+              color: 'white',
+              border: 'none',
+              borderRadius: '6px',
+              cursor: 'pointer',
+              fontSize: '13px',
+              fontWeight: '500',
+              transition: 'all 0.2s ease',
+            }}
+            onMouseEnter={(e) => {
+              e.currentTarget.style.background = '#3182ce'
+              e.currentTarget.style.transform = 'translateY(-1px)'
+            }}
+            onMouseLeave={(e) => {
+              e.currentTarget.style.background = '#4299e1'
+              e.currentTarget.style.transform = 'translateY(0)'
+            }}
+          >
+            <span>📊</span>
+            <span>Анализ</span>
+          </button>
         </div>
         <div className="case-card-date">
           Обновлено: {new Date(caseItem.updated_at).toLocaleDateString('ru-RU')}

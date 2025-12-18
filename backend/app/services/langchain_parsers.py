@@ -149,14 +149,14 @@ class ParserService:
             # Fallback: try to parse with parser if available
             parser = ParserService.create_timeline_parser()
             if parser is not None:
-                try:
-                    parsed = parser.parse(text)
-                    if isinstance(parsed, list):
-                        return parsed
-                    return [parsed]
-                except:
+            try:
+                parsed = parser.parse(text)
+                if isinstance(parsed, list):
+                    return parsed
+                return [parsed]
+            except:
                     pass
-            return []
+                return []
     
     @staticmethod
     def parse_discrepancies(text: str) -> List[DiscrepancyModel]:

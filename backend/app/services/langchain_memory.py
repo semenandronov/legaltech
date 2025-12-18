@@ -39,13 +39,13 @@ try:
 except ImportError:
     try:
         # Fallback to langchain.memory
-        from langchain.memory import (
-            ConversationBufferMemory,
-            ConversationSummaryMemory,
-            ConversationBufferWindowMemory,
-            ConversationKGMemory,
-            EntityMemory,
-        )
+from langchain.memory import (
+    ConversationBufferMemory,
+    ConversationSummaryMemory,
+    ConversationBufferWindowMemory,
+    ConversationKGMemory,
+    EntityMemory,
+)
         logger.debug("Memory classes imported from langchain.memory")
     except ImportError:
         # If memory classes are not available, set to None

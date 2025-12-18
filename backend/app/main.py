@@ -59,7 +59,7 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
             "detail": error_message,
             "errors": exc.errors()
         }
-    )
+)
 
 # Add request logging middleware
 @app.middleware("http")

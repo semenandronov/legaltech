@@ -51,7 +51,7 @@ def check_database():
                 nullable = "NULL" if is_nullable == "YES" else "NOT NULL"
                 default_str = f" DEFAULT {default}" if default else ""
                 print(f"     - {col_name}: {data_type} {nullable}{default_str}")
-        
+                
         # 4. Количество записей в каждой таблице
         print("\n📈 Количество записей в таблицах:")
         for table_name, _ in tables:
@@ -70,14 +70,14 @@ def check_database():
             ORDER BY tablename, indexname;
         """)
         indexes = cursor.fetchall()
-        if indexes:
+                if indexes:
             current_table = None
             for tablename, indexname, indexdef in indexes:
                 if current_table != tablename:
                     print(f"   Таблица: {tablename}")
                     current_table = tablename
                 print(f"     - {indexname}")
-        else:
+            else:
             print("   ⚠️  Индексы не найдены")
         
         # 6. Проверка внешних ключей
@@ -102,7 +102,7 @@ def check_database():
         if foreign_keys:
             for table_name, column_name, foreign_table, foreign_column, constraint_name in foreign_keys:
                 print(f"   {table_name}.{column_name} -> {foreign_table}.{foreign_column} ({constraint_name})")
-        else:
+            else:
             print("   ⚠️  Внешние ключи не найдены")
         
         # 7. Проверка последних записей в основных таблицах

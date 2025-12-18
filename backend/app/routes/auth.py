@@ -204,15 +204,15 @@ async def login(
                 detail="Password is required"
             )
         
-        # Find user
-        user = db.query(User).filter(User.email == request.email).first()
+    # Find user
+    user = db.query(User).filter(User.email == request.email).first()
         if not user:
             logger.warning(f"Login failed: user not found for email {request.email}")
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Incorrect email or password"
-            )
-        
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Incorrect email or password"
+        )
+    
         # Проверка is_active через property (безопасно)
         try:
             if hasattr(user, 'is_active') and not user.is_active:
@@ -241,39 +241,39 @@ async def login(
         
         if not verify_password(request.password, password_to_check):
             logger.warning(f"Login failed: incorrect password for email {request.email}")
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Incorrect email or password"
-            )
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Incorrect email or password"
+        )
     
-        # Create tokens
-        access_token = create_access_token(data={"sub": user.id})
-        refresh_token = create_refresh_token(data={"sub": user.id})
-        
-        # Create or update session
-        expires_at = datetime.utcnow() + timedelta(minutes=config.ACCESS_TOKEN_EXPIRE_MINUTES)
-        session = db.query(UserSession).filter(
-            UserSession.user_id == user.id,
-            UserSession.is_active == True
-        ).first()
-        
-        if session:
-            # Update existing session
-            session.token = access_token
-            session.refresh_token = refresh_token
-            session.expires_at = expires_at
-            session.last_used_at = datetime.utcnow()
-        else:
-            # Create new session
-            session = UserSession(
-                user_id=user.id,
-                token=access_token,
-                refresh_token=refresh_token,
-                expires_at=expires_at
-            )
-            db.add(session)
-        
-        db.commit()
+    # Create tokens
+    access_token = create_access_token(data={"sub": user.id})
+    refresh_token = create_refresh_token(data={"sub": user.id})
+    
+    # Create or update session
+    expires_at = datetime.utcnow() + timedelta(minutes=config.ACCESS_TOKEN_EXPIRE_MINUTES)
+    session = db.query(UserSession).filter(
+        UserSession.user_id == user.id,
+        UserSession.is_active == True
+    ).first()
+    
+    if session:
+        # Update existing session
+        session.token = access_token
+        session.refresh_token = refresh_token
+        session.expires_at = expires_at
+        session.last_used_at = datetime.utcnow()
+    else:
+        # Create new session
+        session = UserSession(
+            user_id=user.id,
+            token=access_token,
+            refresh_token=refresh_token,
+            expires_at=expires_at
+        )
+        db.add(session)
+    
+    db.commit()
         
         # Используем property для совместимости
         try:
@@ -284,18 +284,18 @@ async def login(
         user_company = getattr(user, 'company', None)
         
         logger.info(f"Login successful for user: {user.id}")
-        
-        return TokenResponse(
-            access_token=access_token,
-            refresh_token=refresh_token,
-            user={
-                "id": user.id,
-                "email": user.email,
+    
+    return TokenResponse(
+        access_token=access_token,
+        refresh_token=refresh_token,
+        user={
+            "id": user.id,
+            "email": user.email,
                 "full_name": user_full_name,
                 "company": user_company,
-                "role": user.role
-            }
-        )
+            "role": user.role
+        }
+    )
     
     except HTTPException:
         raise

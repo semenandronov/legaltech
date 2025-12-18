@@ -1,12 +1,17 @@
 import { useState } from 'react'
-import { NavLink, useNavigate } from 'react-router-dom'
+import { NavLink, useNavigate, useLocation } from 'react-router-dom'
 import { useAuth } from '../../contexts/AuthContext'
 import './Layout.css'
 
 const Sidebar = () => {
   const { logout, user } = useAuth()
   const navigate = useNavigate()
+  const location = useLocation()
   const [isCollapsed, setIsCollapsed] = useState(false)
+  
+  // Extract caseId from current path if on case page
+  const caseIdMatch = location.pathname.match(/\/cases\/([^/]+)/)
+  const currentCaseId = caseIdMatch ? caseIdMatch[1] : null
 
   const handleLogout = async () => {
     await logout()
@@ -44,6 +49,24 @@ const Sidebar = () => {
               <span className="sidebar-link-icon">📊</span>
               <span className="sidebar-link-text">Dashboard</span>
             </NavLink>
+            {currentCaseId && (
+              <>
+                <NavLink
+                  to={`/cases/${currentCaseId}/chat`}
+                  className={({ isActive }) => `sidebar-link ${isActive ? 'active' : ''}`}
+                >
+                  <span className="sidebar-link-icon">💬</span>
+                  <span className="sidebar-link-text">Чат</span>
+                </NavLink>
+                <NavLink
+                  to={`/cases/${currentCaseId}/analysis`}
+                  className={({ isActive }) => `sidebar-link ${isActive ? 'active' : ''}`}
+                >
+                  <span className="sidebar-link-icon">📊</span>
+                  <span className="sidebar-link-text">Анализ</span>
+                </NavLink>
+              </>
+            )}
             <NavLink
               to="/settings"
               className={({ isActive }) => `sidebar-link ${isActive ? 'active' : ''}`}
