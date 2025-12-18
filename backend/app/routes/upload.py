@@ -247,62 +247,62 @@ async def upload_files(
             
             # Process document with LangChain
             try:
-            # Use LangChain documents if available (better metadata), otherwise split manually
-            if file_info["filename"] in langchain_documents_by_file and langchain_documents_by_file[file_info["filename"]]:
-                # Use documents from LangChain loader (already have metadata)
-                langchain_docs = langchain_documents_by_file[file_info["filename"]]
-                
-                # Split each LangChain document into chunks if needed
-                chunks = []
-                for langchain_doc in langchain_docs:
-                    # Split large documents into smaller chunks
-                    if len(langchain_doc.page_content) > 1000:
-                        split_chunks = document_processor.split_documents(
-                            text=langchain_doc.page_content,
-                            filename=file_info["filename"],
-                            metadata={
-                                **langchain_doc.metadata,  # Preserve LangChain metadata
+                # Use LangChain documents if available (better metadata), otherwise split manually
+                if file_info["filename"] in langchain_documents_by_file and langchain_documents_by_file[file_info["filename"]]:
+                    # Use documents from LangChain loader (already have metadata)
+                    langchain_docs = langchain_documents_by_file[file_info["filename"]]
+                    
+                    # Split each LangChain document into chunks if needed
+                    chunks = []
+                    for langchain_doc in langchain_docs:
+                        # Split large documents into smaller chunks
+                        if len(langchain_doc.page_content) > 1000:
+                            split_chunks = document_processor.split_documents(
+                                text=langchain_doc.page_content,
+                                filename=file_info["filename"],
+                                metadata={
+                                    **langchain_doc.metadata,  # Preserve LangChain metadata
+                                    "file_id": file_model.id,
+                                    "file_type": file_info["file_type"]
+                                }
+                            )
+                            chunks.extend(split_chunks)
+                        else:
+                            # Use document as-is, just add file metadata
+                            langchain_doc.metadata.update({
                                 "file_id": file_model.id,
                                 "file_type": file_info["file_type"]
-                            }
-                        )
-                        chunks.extend(split_chunks)
-                    else:
-                        # Use document as-is, just add file metadata
-                        langchain_doc.metadata.update({
+                            })
+                            chunks.append(langchain_doc)
+                else:
+                    # Fallback: split document manually
+                    chunks = document_processor.split_documents(
+                        text=file_info["original_text"],
+                        filename=file_info["filename"],
+                        metadata={
                             "file_id": file_model.id,
                             "file_type": file_info["file_type"]
-                        })
-                        chunks.append(langchain_doc)
-            else:
-                # Fallback: split document manually
-                chunks = document_processor.split_documents(
-                    text=file_info["original_text"],
-                    filename=file_info["filename"],
-                    metadata={
-                        "file_id": file_model.id,
-                        "file_type": file_info["file_type"]
-                    }
-                )
-            
-            # Save chunks to database
-            for chunk_idx, chunk_doc in enumerate(chunks):
-                chunk_model = DocumentChunk(
-                    case_id=case_id,
-                    file_id=file_model.id,
-                    chunk_index=chunk_idx,
-                    chunk_text=chunk_doc.page_content,
-                    source_file=chunk_doc.metadata.get("source_file", file_info["filename"]),
-                    source_page=chunk_doc.metadata.get("source_page"),
-                    source_start_line=chunk_doc.metadata.get("source_start_line"),
-                    source_end_line=chunk_doc.metadata.get("source_end_line"),
-                    chunk_metadata=chunk_doc.metadata
-                )
-                db.add(chunk_model)
-                all_documents.append(chunk_doc)
-        except Exception as e:
-            logger.warning(f"Ошибка при обработке документа {file_info['filename']} через LangChain: {e}")
-            # Continue even if LangChain processing fails
+                        }
+                    )
+                
+                # Save chunks to database
+                for chunk_idx, chunk_doc in enumerate(chunks):
+                    chunk_model = DocumentChunk(
+                        case_id=case_id,
+                        file_id=file_model.id,
+                        chunk_index=chunk_idx,
+                        chunk_text=chunk_doc.page_content,
+                        source_file=chunk_doc.metadata.get("source_file", file_info["filename"]),
+                        source_page=chunk_doc.metadata.get("source_page"),
+                        source_start_line=chunk_doc.metadata.get("source_start_line"),
+                        source_end_line=chunk_doc.metadata.get("source_end_line"),
+                        chunk_metadata=chunk_doc.metadata
+                    )
+                    db.add(chunk_model)
+                    all_documents.append(chunk_doc)
+            except Exception as e:
+                logger.warning(f"Ошибка при обработке документа {file_info['filename']} через LangChain: {e}")
+                # Continue even if LangChain processing fails
         
         db.commit()
         
