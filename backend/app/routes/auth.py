@@ -23,7 +23,7 @@ router = APIRouter()
 class RegisterRequest(BaseModel):
     """Request model for user registration"""
     email: EmailStr
-    password: str = Field(..., min_length=8, max_length=100, description="Password must be at least 8 characters")
+    password: str = Field(..., min_length=8, max_length=72, description="Password must be at least 8 characters and not exceed 72 bytes")
     full_name: str | None = Field(None, max_length=255, description="User's full name")
     company: str | None = Field(None, max_length=255, description="User's company")
     
@@ -32,8 +32,12 @@ class RegisterRequest(BaseModel):
     def validate_password(cls, v: str) -> str:
         if len(v) < 8:
             raise ValueError('Password must be at least 8 characters long')
-        if len(v) > 100:
-            raise ValueError('Password must be at most 100 characters long')
+        # Bcrypt limitation: 72 bytes max
+        # For UTF-8, most characters are 1 byte, but some can be up to 4 bytes
+        # To be safe, limit to 72 characters (which should be <= 72 bytes for ASCII)
+        password_bytes = v.encode('utf-8')
+        if len(password_bytes) > 72:
+            raise ValueError('Password cannot exceed 72 bytes (approximately 72 characters for ASCII)')
         return v
     
     @field_validator('full_name')
@@ -101,6 +105,13 @@ async def register(
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Password must be at least 8 characters long"
+        )
+    # Bcrypt limitation: 72 bytes max
+    password_bytes = request.password.encode('utf-8')
+    if len(password_bytes) > 72:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Password cannot exceed 72 bytes (approximately 72 characters for ASCII)"
         )
     
     # Create user - используем поля, которые есть в БД

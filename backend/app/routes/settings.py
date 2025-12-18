@@ -59,15 +59,17 @@ class ProfileUpdateRequest(BaseModel):
 class PasswordUpdateRequest(BaseModel):
     """Request model for password update"""
     current_password: str = Field(..., min_length=1, description="Current password")
-    new_password: str = Field(..., min_length=8, max_length=100, description="New password (8-100 characters)")
+    new_password: str = Field(..., min_length=8, max_length=72, description="New password (8-72 bytes)")
     
     @field_validator('new_password')
     @classmethod
     def validate_new_password(cls, v: str) -> str:
         if len(v) < 8:
             raise ValueError('New password must be at least 8 characters long')
-        if len(v) > 100:
-            raise ValueError('New password must be at most 100 characters long')
+        # Bcrypt limitation: 72 bytes max
+        password_bytes = v.encode('utf-8')
+        if len(password_bytes) > 72:
+            raise ValueError('Password cannot exceed 72 bytes (approximately 72 characters for ASCII)')
         return v
 
 

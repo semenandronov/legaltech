@@ -18,12 +18,35 @@ security = HTTPBearer()
 
 
 def verify_password(plain_password: str, hashed_password: str) -> bool:
-    """Verify a password against a hash"""
+    """Verify a password against a hash
+    
+    Bcrypt has a 72-byte limit. If password is longer, we truncate it
+    to match the same truncation used during hashing.
+    """
+    # Bcrypt limitation: passwords cannot be longer than 72 bytes
+    # Truncate to match the same truncation used during hashing
+    password_bytes = plain_password.encode('utf-8')
+    if len(password_bytes) > 72:
+        password_bytes = password_bytes[:72]
+        plain_password = password_bytes.decode('utf-8', errors='ignore')
+    
     return pwd_context.verify(plain_password, hashed_password)
 
 
 def get_password_hash(password: str) -> str:
-    """Hash a password"""
+    """Hash a password
+    
+    Bcrypt has a 72-byte limit for passwords. If password is longer,
+    we truncate it to 72 bytes before hashing.
+    """
+    # Bcrypt limitation: passwords cannot be longer than 72 bytes
+    # Convert to bytes and truncate if necessary
+    password_bytes = password.encode('utf-8')
+    if len(password_bytes) > 72:
+        password_bytes = password_bytes[:72]
+        # Decode back to string for hashing (bcrypt handles bytes internally)
+        password = password_bytes.decode('utf-8', errors='ignore')
+    
     return pwd_context.hash(password)
 
 
