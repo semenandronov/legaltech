@@ -108,13 +108,18 @@ async def get_profile(
     current_user: User = Depends(get_current_user)
 ):
     """Get user profile"""
+    # Безопасный доступ к полям для совместимости
+    user_full_name = current_user.full_name if hasattr(current_user, 'full_name') else (current_user.name if hasattr(current_user, 'name') else None)
+    user_company = getattr(current_user, 'company', None)
+    user_created_at = current_user.created_at if hasattr(current_user, 'created_at') else (current_user.createdAt if hasattr(current_user, 'createdAt') else None)
+    
     return {
         "id": current_user.id,
         "email": current_user.email,
-        "full_name": current_user.full_name,
-        "company": current_user.company,
+        "full_name": user_full_name,
+        "company": user_company,
         "role": current_user.role,
-        "created_at": current_user.created_at.isoformat()
+        "created_at": user_created_at.isoformat() if user_created_at else None
     }
 
 
@@ -128,7 +133,8 @@ async def update_profile(
     if request.full_name is not None:
         current_user.full_name = request.full_name
     if request.company is not None:
-        current_user.company = request.company
+        if hasattr(current_user, 'company'):
+            current_user.company = request.company
     
     db.commit()
     db.refresh(current_user)
@@ -137,7 +143,7 @@ async def update_profile(
         "id": current_user.id,
         "email": current_user.email,
         "full_name": current_user.full_name,
-        "company": current_user.company,
+        "company": getattr(current_user, 'company', None),
         "role": current_user.role
     }
 
