@@ -9,7 +9,7 @@ const Header = () => {
   const [showUploadModal, setShowUploadModal] = useState(false)
   const navigate = useNavigate()
 
-  const handleUpload = (caseId: string, fileNames: string[]) => {
+  const handleUpload = (caseId: string, _fileNames: string[]) => {
     setShowUploadModal(false)
     navigate(`/cases/${caseId}/chat`)
     // Перезагрузить страницу для обновления списка дел
