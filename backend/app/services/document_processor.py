@@ -167,7 +167,7 @@ class DocumentProcessor:
                     logger.info(f"Loading vector DB for case {case_id} from {persist_directory}")
                     self.load_vector_store(case_id, persist_directory)
                 except Exception as e:
-                    logger.warning(f"Failed to load vector store for case {case_id}: {e}")
+                    logger.warning(f"Failed to load vector store for case {case_id}: {e}", exc_info=True)
                     return []
             else:
                 logger.warning(f"Vector store not found for case {case_id} at {persist_directory}")
@@ -198,7 +198,7 @@ class DocumentProcessor:
             
             return relevant_docs
         except Exception as e:
-            logger.error(f"Error retrieving chunks for case {case_id}: {e}")
+            logger.error(f"Error retrieving chunks for case {case_id}: {e}", exc_info=True)
             return []
     
     def load_vector_store(self, case_id: str, persist_directory: Optional[str] = None) -> Chroma:

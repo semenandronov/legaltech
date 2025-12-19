@@ -5,7 +5,7 @@ from sqlalchemy.orm import Session
 from typing import List, Optional, Dict, Any
 from app.utils.database import get_db
 from app.utils.auth import get_current_user
-from app.models.case import Case, ChatMessage
+from app.models.case import Case, ChatMessage, File as FileModel
 from app.models.user import User
 from app.services.rag_service import RAGService
 from app.services.langchain_memory import MemoryService
@@ -154,6 +154,14 @@ async def chat(
     ).first()
     if not case:
         raise HTTPException(status_code=404, detail="Дело не найдено")
+    
+    # Verify case has files uploaded
+    file_count = db.query(FileModel).filter(FileModel.case_id == request.case_id).count()
+    if file_count == 0:
+        raise HTTPException(
+            status_code=400,
+            detail="В деле нет загруженных документов. Пожалуйста, сначала загрузите документы."
+        )
     
     # Check if this is a task request
     if is_task_request(request.question):

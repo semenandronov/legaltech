@@ -51,19 +51,47 @@ class RAGService:
         Returns:
             List of relevant Document objects
         """
-        if retrieval_strategy == "multi_query":
-            return self.retriever_service.retrieve_with_multi_query(case_id, query, k=k)
-        elif retrieval_strategy == "compression":
-            return self.retriever_service.retrieve_with_compression(case_id, query, k=k*2)  # Get more before compression
-        elif retrieval_strategy == "ensemble":
-            return self.retriever_service.retrieve_with_ensemble(case_id, query, k=k)
-        else:
-            # Default: simple retrieval
-            return self.document_processor.retrieve_relevant_chunks(
-                case_id=case_id,
-                query=query,
-                k=k
-            )
+        try:
+            if retrieval_strategy == "multi_query":
+                docs = self.retriever_service.retrieve_with_multi_query(case_id, query, k=k)
+            elif retrieval_strategy == "compression":
+                docs = self.retriever_service.retrieve_with_compression(case_id, query, k=k*2)  # Get more before compression
+            elif retrieval_strategy == "ensemble":
+                docs = self.retriever_service.retrieve_with_ensemble(case_id, query, k=k)
+            else:
+                # Default: simple retrieval
+                docs = self.document_processor.retrieve_relevant_chunks(
+                    case_id=case_id,
+                    query=query,
+                    k=k
+                )
+            
+            # Ensure we return a list, even if empty
+            if docs is None:
+                logger.warning(f"Retrieval returned None for case {case_id}, returning empty list")
+                return []
+            
+            # Filter out None or invalid documents
+            valid_docs = [doc for doc in docs if doc is not None and hasattr(doc, 'page_content')]
+            
+            if not valid_docs:
+                logger.warning(f"No valid documents retrieved for case {case_id} with query: {query[:100]}")
+            
+            return valid_docs
+        except Exception as e:
+            logger.error(f"Error retrieving context for case {case_id}: {e}", exc_info=True)
+            # Fallback to simple retrieval on error
+            try:
+                logger.info(f"Falling back to simple retrieval for case {case_id}")
+                docs = self.document_processor.retrieve_relevant_chunks(
+                    case_id=case_id,
+                    query=query,
+                    k=k
+                )
+                return docs if docs is not None else []
+            except Exception as fallback_error:
+                logger.error(f"Fallback retrieval also failed for case {case_id}: {fallback_error}", exc_info=True)
+                return []
     
     def format_sources(self, documents: List[Document]) -> List[Dict[str, Any]]:
         """
@@ -314,7 +342,19 @@ class RAGService:
         try:
             logger.info(f"Generating answer for case {case_id}, query length: {len(query)}, context size: {prompt_size}")
             response = self.llm.invoke(formatted_prompt)
-            answer = response.content
+            
+            # Validate response
+            if not response:
+                logger.error(f"Empty response from LLM for case {case_id}")
+                raise Exception("Получен пустой ответ от API. Попробуйте еще раз.")
+            
+            answer = response.content if hasattr(response, 'content') else str(response)
+            
+            # Validate answer content
+            if not answer or len(answer.strip()) == 0:
+                logger.warning(f"Empty answer content from LLM for case {case_id}, using fallback")
+                answer = "Извините, не удалось сгенерировать ответ. Попробуйте переформулировать вопрос."
+            
             logger.info(f"Successfully generated answer for case {case_id}, answer length: {len(answer)}")
         except RateLimitError as e:
             logger.error(f"Rate limit error in RAG service for case {case_id}: {e}")
@@ -324,8 +364,11 @@ class RAGService:
             raise Exception("Превышено время ожидания ответа от API. Попробуйте упростить запрос.")
         except APIError as e:
             logger.error(f"API error in RAG service for case {case_id}: {e}")
-            if "authentication" in str(e).lower() or "api key" in str(e).lower():
+            error_str = str(e).lower()
+            if "authentication" in error_str or "api key" in error_str or "unauthorized" in error_str:
                 raise Exception("Ошибка аутентификации API. Проверьте API ключ.")
+            elif "rate limit" in error_str or "quota" in error_str:
+                raise Exception("Превышен лимит запросов к API. Попробуйте позже.")
             raise Exception(f"Ошибка API: {str(e)}")
         except LangChainException as e:
             logger.error(f"LangChain error in RAG service for case {case_id}: {e}")
