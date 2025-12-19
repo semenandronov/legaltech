@@ -17,7 +17,7 @@ interface PDFViewerProps {
 const PDFViewer: React.FC<PDFViewerProps> = ({
   fileId,
   caseId,
-  filename,
+  filename: _filename,
   onError
 }) => {
   const [numPages, setNumPages] = useState<number | null>(null)

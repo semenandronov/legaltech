@@ -51,7 +51,7 @@ const StatisticsChart: React.FC<StatisticsChartProps> = ({ data }) => {
                 fill="#8884d8"
                 dataKey="value"
               >
-                {data.data.map((entry, index) => (
+                {data.data.map((_entry, index) => (
                   <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
                 ))}
               </Pie>
