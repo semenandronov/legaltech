@@ -1,5 +1,5 @@
 """Analysis routes for Legal AI Vault"""
-from fastapi import APIRouter, HTTPException, Depends, BackgroundTasks
+from fastapi import APIRouter, HTTPException, Depends, BackgroundTasks, Query
 from pydantic import BaseModel, Field, field_validator
 from sqlalchemy.orm import Session
 from typing import Dict, Any, List

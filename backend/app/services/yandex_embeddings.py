@@ -12,6 +12,8 @@ logger = logging.getLogger(__name__)
 class YandexEmbeddings(Embeddings):
     """YandexGPT embeddings for LangChain using official SDK"""
     
+    sdk: Any = None  # Добавляем поле sdk
+    
     def __init__(self, **kwargs):
         """Initialize Yandex embeddings using official SDK"""
         # Поддерживаем оба варианта: API ключ (приоритет) или IAM токен
@@ -40,9 +42,10 @@ class YandexEmbeddings(Embeddings):
             if self.folder_id:
                 self.sdk = YCloudML(folder_id=self.folder_id, auth=auth)
             else:
-                # SDK может работать без folder_id если он встроен в API ключ
-                self.sdk = YCloudML(auth=auth)
-                logger.warning("YANDEX_FOLDER_ID not set, SDK will try to use folder from auth")
+                # SDK требует folder_id - если не указан, не инициализируем
+                logger.warning("YANDEX_FOLDER_ID not set, Yandex embeddings will not work. Using OpenAI fallback.")
+                self.sdk = None
+                return
         except Exception as e:
             logger.error(f"Failed to initialize Yandex Cloud ML SDK: {e}", exc_info=True)
             self.sdk = None

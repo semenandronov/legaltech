@@ -21,6 +21,7 @@ class ChatYandexGPT(BaseChatModel):
     iam_token: str = ""
     temperature: float = 0.7
     max_tokens: int = 2000
+    sdk: Any = None  # Добавляем поле sdk для Pydantic
     
     def __init__(self, **kwargs):
         """Initialize YandexGPT using official SDK"""
@@ -53,9 +54,10 @@ class ChatYandexGPT(BaseChatModel):
             if self.folder_id:
                 self.sdk = YCloudML(folder_id=self.folder_id, auth=auth)
             else:
-                # SDK может работать без folder_id если он встроен в API ключ
-                self.sdk = YCloudML(auth=auth)
-                logger.warning("YANDEX_FOLDER_ID not set, SDK will try to use folder from auth")
+                # SDK требует folder_id - если не указан, не инициализируем
+                logger.warning("YANDEX_FOLDER_ID not set, YandexGPT will not work. Using OpenRouter fallback.")
+                self.sdk = None
+                return
         except Exception as e:
             logger.error(f"Failed to initialize Yandex Cloud ML SDK: {e}", exc_info=True)
             self.sdk = None
