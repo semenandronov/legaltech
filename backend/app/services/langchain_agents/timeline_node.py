@@ -68,11 +68,17 @@ def timeline_agent_node(
             content=f"Извлеки все даты и события из документов дела {case_id}. Используй retrieve_documents_tool для поиска документов."
         )
         
-        # Run agent
-        result = agent.invoke({
-            "messages": [initial_message],
-            "case_id": case_id
-        })
+        # Run agent with safe invoke (handles tool use errors)
+        from app.services.langchain_agents.agent_factory import safe_agent_invoke
+        result = safe_agent_invoke(
+            agent,
+            llm,
+            {
+                "messages": [initial_message],
+                "case_id": case_id
+            },
+            config={"recursion_limit": 25}
+        )
         
         # Extract timeline data from agent response
         # The agent should have used save_timeline_tool, but we also parse the response

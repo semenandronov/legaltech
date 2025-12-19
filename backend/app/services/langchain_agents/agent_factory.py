@@ -1,6 +1,7 @@
 """Factory для создания агентов с обратной совместимостью"""
 from langchain_openai import ChatOpenAI
-from typing import List, Any, Optional
+from typing import List, Any, Optional, Dict
+from langchain_core.messages import HumanMessage, AIMessage
 import logging
 
 logger = logging.getLogger(__name__)
@@ -60,3 +61,68 @@ def create_legal_agent(
             f"Neither create_agent nor create_react_agent available. "
             f"Please ensure langchain>=0.1.0 or langgraph>=0.2.0 is installed. Error: {e}"
         )
+
+
+def safe_agent_invoke(
+    agent: Any,
+    llm: ChatOpenAI,
+    input_data: Dict[str, Any],
+    config: Optional[Dict] = None
+) -> Dict[str, Any]:
+    """
+    Безопасный вызов агента с fallback на прямой вызов LLM при ошибках tool use
+    
+    Args:
+        agent: Agent instance
+        llm: LLM instance for fallback
+        input_data: Input data for agent (must contain "messages")
+        config: Optional config for agent
+        
+    Returns:
+        Agent result or fallback LLM response
+    """
+    try:
+        agent_config = config or {}
+        agent_config.setdefault("recursion_limit", 25)
+        result = agent.invoke(input_data, config=agent_config)
+        return result
+    except Exception as e:
+        error_msg = str(e)
+        # Check if error is related to tool use not being supported
+        if any(keyword in error_msg.lower() for keyword in [
+            "tool use", "404", "no endpoints found", "not support", 
+            "function calling", "tools not available"
+        ]):
+            logger.warning(
+                f"Model does not support tool use (error: {error_msg[:200]}). "
+                "Falling back to direct LLM call."
+            )
+            # Fallback: use LLM directly without tools
+            messages = input_data.get("messages", [])
+            if not messages:
+                raise ValueError("No messages provided in input_data")
+            
+            # Get the last user message
+            last_message = messages[-1] if messages else None
+            if not last_message:
+                raise ValueError("No valid message found")
+            
+            # Create a simple prompt from the message
+            if isinstance(last_message, HumanMessage):
+                prompt = last_message.content
+            elif hasattr(last_message, 'content'):
+                prompt = str(last_message.content)
+            else:
+                prompt = str(last_message)
+            
+            # Call LLM directly
+            response = llm.invoke([HumanMessage(content=prompt)])
+            
+            # Return in the same format as agent
+            return {
+                "messages": [response] if response else [],
+                "case_id": input_data.get("case_id")
+            }
+        else:
+            # Re-raise if it's a different error
+            raise

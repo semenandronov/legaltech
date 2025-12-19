@@ -71,9 +71,15 @@ class PlanningAgent:
             
             message = HumanMessage(content=task_message)
             
-            # Выполняем агента
+            # Выполняем агента с безопасным вызовом
+            from app.services.langchain_agents.agent_factory import safe_agent_invoke
             try:
-                result = self.agent.invoke({"messages": [message]})
+                result = safe_agent_invoke(
+                    self.agent,
+                    self.llm,
+                    {"messages": [message]},
+                    config={"recursion_limit": 15}
+                )
                 
                 # Извлекаем ответ агента
                 if isinstance(result, dict):

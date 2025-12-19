@@ -72,8 +72,13 @@ class AgentCoordinator:
                 "metadata": {}
             }
             
-            # Create thread config for graph execution
+            # Create thread config for graph execution with increased recursion limit
             thread_config = config or {"configurable": {"thread_id": f"case_{case_id}"}}
+            # Increase recursion limit to prevent premature termination
+            if "configurable" in thread_config:
+                thread_config["configurable"]["recursion_limit"] = 50
+            else:
+                thread_config["recursion_limit"] = 50
             
             # Run graph
             final_state = None

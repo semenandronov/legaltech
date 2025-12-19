@@ -68,11 +68,17 @@ def discrepancy_agent_node(
             content=f"Найди все противоречия и несоответствия между документами дела {case_id}. Используй retrieve_documents_tool для поиска документов."
         )
         
-        # Run agent
-        result = agent.invoke({
-            "messages": [initial_message],
-            "case_id": case_id
-        })
+        # Run agent with safe invoke (handles tool use errors)
+        from app.services.langchain_agents.agent_factory import safe_agent_invoke
+        result = safe_agent_invoke(
+            agent,
+            llm,
+            {
+                "messages": [initial_message],
+                "case_id": case_id
+            },
+            config={"recursion_limit": 25}
+        )
         
         # Extract discrepancies from response
         response_text = result.get("messages", [])[-1].content if isinstance(result, dict) else str(result)
