@@ -190,7 +190,7 @@ def timeline_agent_node(
                     "source_page": event.source_page if hasattr(event, 'source_page') else event_model.source_page,
                     "source_line": event.source_line if hasattr(event, 'source_line') else event_model.source_line,
                     "reasoning": (event.event_metadata.get("reasoning", "") if event.event_metadata else "") if hasattr(event, 'event_metadata') else (event_model.reasoning if hasattr(event_model, 'reasoning') else ""),
-                    "confidence": event_model.confidence if hasattr(event_model, 'confidence') else 0.0
+                    "confidence": (event.event_metadata.get("confidence", 0.0) if event.event_metadata else 0.0) if hasattr(event, 'event_metadata') else (event_model.confidence if hasattr(event_model, 'confidence') else 0.0)
                 }
                 for event, event_model in zip(saved_events, parsed_events) if saved_events
             ] or [
@@ -202,7 +202,7 @@ def timeline_agent_node(
                     "source_page": event.source_page,
                     "source_line": event.source_line,
                     "reasoning": (event.event_metadata.get("reasoning", "") if event.event_metadata else "") if hasattr(event, 'event_metadata') else "",
-                    "confidence": event.confidence if hasattr(event, 'confidence') else 0.0
+                    "confidence": (event.event_metadata.get("confidence", 0.0) if event.event_metadata else 0.0) if hasattr(event, 'event_metadata') else 0.0
                 }
                 for event in parsed_events
             ],

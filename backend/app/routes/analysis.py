@@ -1010,11 +1010,8 @@ async def batch_confirm(
     try:
         # Update file metadata with status
         for file in files:
-            if file.file_metadata is None:
-                file.file_metadata = {}
-            file.file_metadata["review_status"] = "confirmed"
-            file.file_metadata["reviewed_at"] = datetime.utcnow().isoformat()
-            file.file_metadata["reviewed_by"] = current_user.id
+            # file_metadata удалено из модели, используем другие способы хранения статуса
+            # Статус review можно хранить в отдельной таблице или в case_metadata
         
         db.commit()
         
@@ -1069,11 +1066,7 @@ async def batch_reject(
     try:
         # Update file metadata with status
         for file in files:
-            if file.file_metadata is None:
-                file.file_metadata = {}
-            file.file_metadata["review_status"] = "rejected"
-            file.file_metadata["reviewed_at"] = datetime.utcnow().isoformat()
-            file.file_metadata["reviewed_by"] = current_user.id
+            # file_metadata удалено из модели, используем другие способы хранения статуса
         
         db.commit()
         
@@ -1127,11 +1120,7 @@ async def batch_withhold(
     try:
         # Update file metadata with status
         for file in files:
-            if file.file_metadata is None:
-                file.file_metadata = {}
-            file.file_metadata["review_status"] = "withheld"
-            file.file_metadata["reviewed_at"] = datetime.utcnow().isoformat()
-            file.file_metadata["reviewed_by"] = current_user.id
+            # file_metadata удалено из модели, используем другие способы хранения статуса
         
         db.commit()
         

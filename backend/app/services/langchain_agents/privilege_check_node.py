@@ -82,8 +82,9 @@ def privilege_check_agent_node(
                     continue
                 
                 # Extract sender and recipient from metadata if available
-                sender = file.file_metadata.get("sender", "") if file.file_metadata else ""
-                recipient = file.file_metadata.get("recipient", "") if file.file_metadata else ""
+                # file_metadata удалено из модели, используем пустые значения
+                sender = ""
+                recipient = ""
                 
                 # Create prompt for privilege check
                 # Limit text to avoid token limits
