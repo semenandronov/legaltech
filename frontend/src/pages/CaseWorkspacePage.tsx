@@ -338,6 +338,7 @@ const CaseWorkspacePage: React.FC = () => {
         setSelectedDocumentId(fileId)
       }}
     />
+  )
 
   // Правая панель (Chat)
   const rightPanel = (
