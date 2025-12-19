@@ -54,5 +54,20 @@ services:
       # Vector Database (optional, для хранения векторных БД)
       - key: VECTOR_DB_DIR
         value: "/tmp/vector_db"
+      
+      # Yandex Cloud Settings (опционально, для экономии 90%)
+      # Вариант 1: API ключ (рекомендуется, проще!)
+      - key: YANDEX_API_KEY
+        sync: false
+      # Вариант 2: IAM токен (альтернатива, истекает через 12 часов)
+      - key: YANDEX_IAM_TOKEN
+        sync: false
+      # Folder ID (опционально, может быть встроен в API ключ)
+      - key: YANDEX_FOLDER_ID
+        sync: false
+      - key: YANDEX_AI_STUDIO_CLASSIFIER_ID
+        sync: false
+      - key: YANDEX_GPT_MODEL
+        value: "yandexgpt-pro/latest"
     rootDir: .
     plan: free

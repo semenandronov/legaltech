@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react'
 import { DocumentWithMetadata } from './DocumentsList'
 import EntityHighlighting from './EntityHighlighting'
 import AIAnalysisPanel from './AIAnalysisPanel'
+import PDFViewer from './PDFViewer'
 import { getEntities, ExtractedEntity } from '../../services/api'
 import useKeyboardShortcuts from '../../hooks/useKeyboardShortcuts'
 import CommandPalette from '../KeyboardShortcuts/CommandPalette'
@@ -13,13 +14,15 @@ interface DocumentViewerProps {
   caseId: string
   onNavigateNext: () => void
   onNavigatePrev: () => void
+  onRelatedDocumentClick?: (fileId: string) => void
 }
 
 const DocumentViewer: React.FC<DocumentViewerProps> = ({
   document,
   caseId,
   onNavigateNext,
-  onNavigatePrev
+  onNavigatePrev,
+  onRelatedDocumentClick
 }) => {
   const [entities, setEntities] = useState<ExtractedEntity[]>([])
   const [documentText, setDocumentText] = useState<string>('')
@@ -29,11 +32,32 @@ const DocumentViewer: React.FC<DocumentViewerProps> = ({
   useEffect(() => {
     if (document?.id) {
       loadEntities()
-      // TODO: Загрузить текст документа через API
-      // Пока используем placeholder
-      setDocumentText('Содержимое документа будет загружено здесь...')
+      // Load document text for non-PDF files
+      if (document.file_type !== 'pdf') {
+        loadDocumentText()
+      }
     }
   }, [document?.id, caseId])
+
+  const loadDocumentText = async () => {
+    if (!document?.id || !caseId) return
+    try {
+      // For non-PDF files, we can show text content
+      // For PDF files, PDFViewer will handle display
+      const response = await fetch(`/api/cases/${caseId}/files/${document.id}/content`, {
+        headers: {
+          'Authorization': `Bearer ${localStorage.getItem('access_token')}`
+        }
+      })
+      if (response.ok) {
+        const text = await response.text()
+        setDocumentText(text)
+      }
+    } catch (err) {
+      console.error('Ошибка при загрузке текста документа:', err)
+      setDocumentText('Ошибка при загрузке содержимого документа')
+    }
+  }
 
   // Keyboard shortcuts для навигации
   useKeyboardShortcuts({
@@ -144,53 +168,68 @@ const DocumentViewer: React.FC<DocumentViewerProps> = ({
       </div>
 
       <div className="document-viewer-content">
-        <div className="document-viewer-text">
-          <div className="document-viewer-metadata">
-            {classification && (
-              <>
-                <div className="document-viewer-metadata-item">
-                  <strong>Тип:</strong> {classification.doc_type}
-                </div>
-                {classification.key_topics && classification.key_topics.length > 0 && (
+        {document.file_type === 'pdf' ? (
+          <PDFViewer
+            fileId={document.id}
+            caseId={caseId}
+            filename={document.filename}
+            onError={(error) => {
+              console.error('PDF viewer error:', error)
+              // Fallback to text view on error
+              loadDocumentText()
+            }}
+          />
+        ) : (
+          <div className="document-viewer-text">
+            <div className="document-viewer-metadata">
+              {classification && (
+                <>
                   <div className="document-viewer-metadata-item">
-                    <strong>Темы:</strong> {classification.key_topics.join(', ')}
+                    <strong>Тип:</strong> {classification.doc_type}
                   </div>
-                )}
-              </>
-            )}
-            {document.created_at && (
-              <div className="document-viewer-metadata-item">
-                <strong>Дата загрузки:</strong> {new Date(document.created_at).toLocaleDateString('ru-RU')}
+                  {classification.key_topics && classification.key_topics.length > 0 && (
+                    <div className="document-viewer-metadata-item">
+                      <strong>Темы:</strong> {classification.key_topics.join(', ')}
+                    </div>
+                  )}
+                </>
+              )}
+              {document.created_at && (
+                <div className="document-viewer-metadata-item">
+                  <strong>Дата загрузки:</strong> {new Date(document.created_at).toLocaleDateString('ru-RU')}
+                </div>
+              )}
+            </div>
+
+            {documentText ? (
+              <EntityHighlighting
+                text={documentText}
+                entities={entities}
+                onEntityClick={(entity) => {
+                  console.log('Entity clicked:', entity)
+                  // TODO: Показать детали сущности в модальном окне или sidebar
+                }}
+              />
+            ) : (
+              <div className="document-viewer-placeholder">
+                <p>Загрузка содержимого документа...</p>
               </div>
             )}
           </div>
-
-          {documentText ? (
-            <EntityHighlighting
-              text={documentText}
-              entities={entities}
-              onEntityClick={(entity) => {
-                console.log('Entity clicked:', entity)
-                // TODO: Показать детали сущности в модальном окне или sidebar
-              }}
-            />
-          ) : (
-            <div className="document-viewer-placeholder">
-              <p>Загрузка содержимого документа...</p>
-            </div>
-          )}
-        </div>
+        )}
       </div>
 
       <AIAnalysisPanel
         document={document}
         entities={entities}
+        caseId={caseId}
         onConfirm={() => console.log('Confirm document')}
         onReject={() => console.log('Reject document')}
         onWithhold={() => console.log('Withhold document')}
         onFlag={() => console.log('Flag document')}
         onBookmark={() => console.log('Bookmark document')}
         onAddComment={() => console.log('Add comment')}
+        onRelatedDocumentClick={onRelatedDocumentClick}
       />
 
       {showCommandPalette && (

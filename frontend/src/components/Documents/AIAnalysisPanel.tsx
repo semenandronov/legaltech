@@ -1,30 +1,55 @@
-import React, { useState } from 'react'
+import React, { useState, useEffect } from 'react'
 import { DocumentWithMetadata } from './DocumentsList'
-import { ExtractedEntity } from '../../services/api'
+import { ExtractedEntity, getRelatedDocuments, RelatedDocument } from '../../services/api'
 import './Documents.css'
 
 interface AIAnalysisPanelProps {
   document: DocumentWithMetadata | null
   entities?: ExtractedEntity[]
+  caseId?: string
   onConfirm?: () => void
   onReject?: () => void
   onWithhold?: () => void
   onFlag?: () => void
   onBookmark?: () => void
   onAddComment?: () => void
+  onRelatedDocumentClick?: (fileId: string) => void
 }
 
 const AIAnalysisPanel: React.FC<AIAnalysisPanelProps> = ({
   document,
   entities = [],
+  caseId,
   onConfirm,
   onReject,
   onWithhold,
   onFlag,
   onBookmark,
-  onAddComment
+  onAddComment,
+  onRelatedDocumentClick
 }) => {
   const [showReasoning, setShowReasoning] = useState(false)
+  const [relatedDocuments, setRelatedDocuments] = useState<RelatedDocument[]>([])
+  const [loadingRelated, setLoadingRelated] = useState(false)
+
+  useEffect(() => {
+    if (document?.id && caseId) {
+      loadRelatedDocuments()
+    }
+  }, [document?.id, caseId])
+
+  const loadRelatedDocuments = async () => {
+    if (!document?.id || !caseId) return
+    try {
+      setLoadingRelated(true)
+      const response = await getRelatedDocuments(caseId, document.id, 5)
+      setRelatedDocuments(response.related_documents || [])
+    } catch (err) {
+      console.error('Ошибка при загрузке связанных документов:', err)
+    } finally {
+      setLoadingRelated(false)
+    }
+  }
 
   if (!document) {
     return null
@@ -157,6 +182,41 @@ const AIAnalysisPanel: React.FC<AIAnalysisPanelProps> = ({
                 </span>
               ))}
             </div>
+          </div>
+        )}
+
+        {relatedDocuments.length > 0 && (
+          <div className="ai-analysis-item">
+            <span className="ai-analysis-label">🔗 Related Docs:</span>
+            <div className="ai-analysis-related-docs">
+              {relatedDocuments.map((relatedDoc) => (
+                <button
+                  key={relatedDoc.file_id}
+                  className="ai-analysis-related-doc-item"
+                  onClick={() => onRelatedDocumentClick?.(relatedDoc.file_id)}
+                  title={`Открыть ${relatedDoc.filename}`}
+                >
+                  <span className="ai-analysis-related-doc-name">
+                    {relatedDoc.filename}
+                  </span>
+                  <span className="ai-analysis-related-doc-score">
+                    {relatedDoc.relevance_score}% relevant
+                  </span>
+                  {relatedDoc.classification && (
+                    <span className="ai-analysis-related-doc-type">
+                      {relatedDoc.classification.doc_type}
+                    </span>
+                  )}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {loadingRelated && (
+          <div className="ai-analysis-item">
+            <span className="ai-analysis-label">🔗 Related Docs:</span>
+            <div className="ai-analysis-loading">Загрузка связанных документов...</div>
           </div>
         )}
 

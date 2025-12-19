@@ -1,6 +1,7 @@
 """RAG (Retrieval Augmented Generation) service"""
 from typing import List, Dict, Any, Tuple
 from langchain_openai import ChatOpenAI
+from app.services.yandex_llm import ChatYandexGPT
 from langchain_core.prompts import ChatPromptTemplate, SystemMessagePromptTemplate, HumanMessagePromptTemplate
 from langchain_core.documents import Document
 from langchain_core.exceptions import LangChainException
@@ -23,14 +24,36 @@ class RAGService:
         self.retriever_service = AdvancedRetrieverService(self.document_processor)
         self.memory_service = MemoryService()
         
-        # Initialize LLM (using OpenRouter)
-        self.llm = ChatOpenAI(
-            model=config.OPENROUTER_MODEL,
-            openai_api_key=config.OPENROUTER_API_KEY,
-            openai_api_base=config.OPENROUTER_BASE_URL,
-            temperature=0.7,
-            max_tokens=2000
-        )
+        # Initialize LLM - используем YandexGPT если доступен, иначе OpenRouter
+        # Для RAG можно оставить OpenRouter, но YandexGPT лучше понимает русский
+        # Проверяем наличие API ключа или IAM токена
+        if config.YANDEX_API_KEY or config.YANDEX_IAM_TOKEN:
+            try:
+                self.llm = ChatYandexGPT(
+                    model_name=config.YANDEX_GPT_MODEL,
+                    temperature=0.7,
+                    max_tokens=2000
+                )
+                logger.info("✅ Using YandexGPT for RAG (лучше для русского!)")
+            except Exception as e:
+                logger.warning(f"Failed to initialize YandexGPT for RAG: {e}, falling back to OpenRouter")
+                self.llm = ChatOpenAI(
+                    model=config.OPENROUTER_MODEL,
+                    openai_api_key=config.OPENROUTER_API_KEY,
+                    openai_api_base=config.OPENROUTER_BASE_URL,
+                    temperature=0.7,
+                    max_tokens=2000
+                )
+        else:
+            # Fallback to OpenRouter
+            self.llm = ChatOpenAI(
+                model=config.OPENROUTER_MODEL,
+                openai_api_key=config.OPENROUTER_API_KEY,
+                openai_api_base=config.OPENROUTER_BASE_URL,
+                temperature=0.7,
+                max_tokens=2000
+            )
+            logger.info("Using OpenRouter for RAG")
     
     def retrieve_context(
         self,

@@ -60,6 +60,16 @@ class Config:
     JWT_ALGORITHM: str = os.getenv("JWT_ALGORITHM", "HS256")
     ACCESS_TOKEN_EXPIRE_MINUTES: int = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "1440"))  # 24 hours
     
+    # Yandex Cloud Settings
+    # Вариант 1: API ключ (рекомендуется, проще!)
+    YANDEX_API_KEY: str = os.getenv("YANDEX_API_KEY", "")
+    # Вариант 2: IAM токен (альтернатива, истекает через 12 часов)
+    YANDEX_IAM_TOKEN: str = os.getenv("YANDEX_IAM_TOKEN", "")
+    # Folder ID (нужен для обоих вариантов, но можно извлечь из API ключа)
+    YANDEX_FOLDER_ID: str = os.getenv("YANDEX_FOLDER_ID", "")
+    YANDEX_AI_STUDIO_CLASSIFIER_ID: str = os.getenv("YANDEX_AI_STUDIO_CLASSIFIER_ID", "")  # ID классификатора из AI Studio
+    YANDEX_GPT_MODEL: str = os.getenv("YANDEX_GPT_MODEL", "yandexgpt-pro/latest")  # yandexgpt-pro/latest или yandexgpt/latest
+    
     def __init__(self):
         """Validate configuration on initialization"""
         self._validate()

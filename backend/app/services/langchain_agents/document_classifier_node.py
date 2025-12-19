@@ -7,6 +7,7 @@ from app.services.langchain_agents.state import AnalysisState
 from app.services.rag_service import RAGService
 from app.services.document_processor import DocumentProcessor
 from app.services.langchain_parsers import ParserService, DocumentClassificationModel
+from app.services.yandex_classifier import YandexDocumentClassifier
 from sqlalchemy.orm import Session
 from app.models.case import File, Case
 import logging
@@ -58,18 +59,29 @@ def document_classifier_agent_node(
             new_state["classification_result"] = None
             return new_state
         
-        # Initialize LLM with temperature=0 for deterministic classification
+        # Пытаемся использовать Yandex AI Studio классификатор (10x быстрее и дешевле!)
+        yandex_classifier = None
+        # Проверяем наличие API ключа или IAM токена + classifier_id
+        if (config.YANDEX_API_KEY or config.YANDEX_IAM_TOKEN) and config.YANDEX_AI_STUDIO_CLASSIFIER_ID:
+            try:
+                yandex_classifier = YandexDocumentClassifier()
+                if yandex_classifier.is_available():
+                    logger.info("✅ Using Yandex AI Studio classifier (10x быстрее, 100x дешевле!)")
+            except Exception as e:
+                logger.warning(f"Failed to initialize Yandex classifier: {e}, falling back to LLM")
+        
+        # Initialize LLM with temperature=0 for deterministic classification (fallback)
         llm = ChatOpenAI(
             model=config.OPENROUTER_MODEL,
             openai_api_key=config.OPENROUTER_API_KEY,
             openai_api_base=config.OPENROUTER_BASE_URL,
             temperature=0,  # Детерминизм критичен для классификации!
             max_tokens=2000
-        )
+        ) if not yandex_classifier else None
         
-        # Get classifier prompt
+        # Get classifier prompt (для LLM fallback)
         from app.services.langchain_agents.prompts import get_agent_prompt
-        system_prompt = get_agent_prompt("document_classifier")
+        system_prompt = get_agent_prompt("document_classifier") if not yandex_classifier else None
         
         # Classify each file
         classifications = []
@@ -85,31 +97,73 @@ def document_classifier_agent_node(
                 # Limit text to avoid token limits
                 limited_text = document_text[:4000]
                 
-                # Create prompt for classification
-                user_prompt = f"""КОНТЕКСТ ДЕЛА:
+                # Используем Yandex AI Studio если доступен
+                if yandex_classifier:
+                    try:
+                        # Yandex AI Studio классификация (быстро и дешево!)
+                        # Синхронный вызов (requests уже синхронный)
+                        yandex_result = yandex_classifier.classify(
+                            text=limited_text,
+                            classes=["contract", "letter", "privileged", "report", "other"]
+                        )
+                        
+                        # Преобразуем результат Yandex в формат DocumentClassificationModel
+                        doc_type = yandex_result["type"]
+                        confidence = yandex_result["confidence"]
+                        
+                        # Определяем привилегированность на основе типа
+                        is_privileged = doc_type == "privileged"
+                        privilege_type = "attorney-client" if is_privileged else "none"
+                        
+                        # Определяем релевантность на основе типа
+                        relevance_score = 80 if doc_type in ["contract", "privileged"] else 50 if doc_type == "letter" else 30
+                        
+                        classification = DocumentClassificationModel(
+                            doc_type=doc_type,
+                            relevance_score=relevance_score,
+                            is_privileged=is_privileged,
+                            privilege_type=privilege_type,
+                            key_topics=[],  # Yandex не возвращает темы, можно добавить позже
+                            confidence=confidence,
+                            reasoning=f"Классифицировано через Yandex AI Studio. Уверенность: {confidence:.0%}. Стоимость: {yandex_result['cost_rub']:.2f}₽"
+                        )
+                        
+                        logger.info(
+                            f"✅ Yandex classified file {file.id}: {doc_type} "
+                            f"(confidence: {confidence:.0%}, cost: {yandex_result['cost_rub']:.2f}₽)"
+                        )
+                    except Exception as yandex_error:
+                        logger.warning(f"Yandex classifier failed for file {file.id}: {yandex_error}, using LLM fallback")
+                        # Fallback to LLM
+                        yandex_classifier = None
+                
+                # Fallback to LLM classification
+                if not yandex_classifier:
+                    # Create prompt for classification
+                    user_prompt = f"""КОНТЕКСТ ДЕЛА:
 {case_context}
 
 ДОКУМЕНТ ДЛЯ АНАЛИЗА:
 {limited_text}
 
 Классифицируй этот документ."""
-                
-                # Try to use structured output
-                try:
-                    structured_llm = llm.with_structured_output(DocumentClassificationModel)
-                    prompt = ChatPromptTemplate.from_messages([
-                        ("system", system_prompt),
-                        ("human", user_prompt)
-                    ])
-                    chain = prompt | structured_llm
-                    classification = chain.invoke({})
-                except Exception as e:
-                    logger.warning(f"Structured output not supported, falling back to JSON parsing: {e}")
-                    # Fallback to direct LLM call
-                    from app.services.llm_service import LLMService
-                    llm_service = LLMService()
-                    response = llm_service.generate(system_prompt, user_prompt, temperature=0)
-                    classification = ParserService.parse_document_classification(response)
+                    
+                    # Try to use structured output
+                    try:
+                        structured_llm = llm.with_structured_output(DocumentClassificationModel)
+                        prompt = ChatPromptTemplate.from_messages([
+                            ("system", system_prompt),
+                            ("human", user_prompt)
+                        ])
+                        chain = prompt | structured_llm
+                        classification = chain.invoke({})
+                    except Exception as e:
+                        logger.warning(f"Structured output not supported, falling back to JSON parsing: {e}")
+                        # Fallback to direct LLM call
+                        from app.services.llm_service import LLMService
+                        llm_service = LLMService()
+                        response = llm_service.generate(system_prompt, user_prompt, temperature=0)
+                        classification = ParserService.parse_document_classification(response)
                 
                 classifications.append({
                     "file_id": file.id,

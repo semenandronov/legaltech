@@ -2,12 +2,13 @@
 from fastapi import APIRouter, HTTPException, Depends, BackgroundTasks
 from pydantic import BaseModel, Field, field_validator
 from sqlalchemy.orm import Session
-from typing import Dict, Any
+from typing import Dict, Any, List
 from datetime import datetime
 from app.utils.database import get_db
 from app.utils.auth import get_current_user
 from app.models.case import Case, File
 from app.models.user import User
+from app.models.case import File as FileModel
 from app.models.analysis import (
     AnalysisResult, Discrepancy, TimelineEvent,
     DocumentClassification, ExtractedEntity, PrivilegeCheck
@@ -971,5 +972,334 @@ async def get_analysis_report(
             "low_relevance_count": len(low_relevance),
             "message": f"Из {total_files} документов: {len(high_relevance)} на проверку, {len(privileged)} привилегированных, {len(low_relevance)} не релевантных"
         }
+    }
+
+
+# Batch Actions
+class BatchActionRequest(BaseModel):
+    """Request model for batch actions"""
+    file_ids: list[str] = Field(..., min_length=1, description="List of file IDs to process")
+
+
+@router.post("/{case_id}/batch/confirm")
+async def batch_confirm(
+    case_id: str,
+    request: BatchActionRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """Batch confirm documents (mark as relevant/confirmed)"""
+    # Verify case ownership
+    case = db.query(Case).filter(
+        Case.id == case_id,
+        Case.user_id == current_user.id
+    ).first()
+    
+    if not case:
+        raise HTTPException(status_code=404, detail="Дело не найдено")
+    
+    # Get files
+    files = db.query(FileModel).filter(
+        FileModel.id.in_(request.file_ids),
+        FileModel.case_id == case_id
+    ).all()
+    
+    if len(files) != len(request.file_ids):
+        raise HTTPException(status_code=400, detail="Некоторые файлы не найдены")
+    
+    try:
+        # Update file metadata with status
+        for file in files:
+            if file.file_metadata is None:
+                file.file_metadata = {}
+            file.file_metadata["review_status"] = "confirmed"
+            file.file_metadata["reviewed_at"] = datetime.utcnow().isoformat()
+            file.file_metadata["reviewed_by"] = current_user.id
+        
+        db.commit()
+        
+        # TODO: Create audit log entries
+        logger.info(
+            f"Batch confirmed {len(files)} documents in case {case_id}",
+            extra={
+                "user_id": current_user.id,
+                "case_id": case_id,
+                "file_ids": request.file_ids,
+                "action": "batch_confirm"
+            }
+        )
+        
+        return {
+            "status": "success",
+            "message": f"Подтверждено {len(files)} документов",
+            "confirmed_count": len(files)
+        }
+    except Exception as e:
+        db.rollback()
+        logger.error(f"Ошибка при batch confirm для дела {case_id}: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Ошибка при подтверждении документов")
+
+
+@router.post("/{case_id}/batch/reject")
+async def batch_reject(
+    case_id: str,
+    request: BatchActionRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """Batch reject documents (mark as not relevant)"""
+    # Verify case ownership
+    case = db.query(Case).filter(
+        Case.id == case_id,
+        Case.user_id == current_user.id
+    ).first()
+    
+    if not case:
+        raise HTTPException(status_code=404, detail="Дело не найдено")
+    
+    # Get files
+    files = db.query(FileModel).filter(
+        FileModel.id.in_(request.file_ids),
+        FileModel.case_id == case_id
+    ).all()
+    
+    if len(files) != len(request.file_ids):
+        raise HTTPException(status_code=400, detail="Некоторые файлы не найдены")
+    
+    try:
+        # Update file metadata with status
+        for file in files:
+            if file.file_metadata is None:
+                file.file_metadata = {}
+            file.file_metadata["review_status"] = "rejected"
+            file.file_metadata["reviewed_at"] = datetime.utcnow().isoformat()
+            file.file_metadata["reviewed_by"] = current_user.id
+        
+        db.commit()
+        
+        logger.info(
+            f"Batch rejected {len(files)} documents in case {case_id}",
+            extra={
+                "user_id": current_user.id,
+                "case_id": case_id,
+                "file_ids": request.file_ids,
+                "action": "batch_reject"
+            }
+        )
+        
+        return {
+            "status": "success",
+            "message": f"Отклонено {len(files)} документов",
+            "rejected_count": len(files)
+        }
+    except Exception as e:
+        db.rollback()
+        logger.error(f"Ошибка при batch reject для дела {case_id}: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Ошибка при отклонении документов")
+
+
+@router.post("/{case_id}/batch/withhold")
+async def batch_withhold(
+    case_id: str,
+    request: BatchActionRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """Batch withhold documents (mark as privileged/withheld)"""
+    # Verify case ownership
+    case = db.query(Case).filter(
+        Case.id == case_id,
+        Case.user_id == current_user.id
+    ).first()
+    
+    if not case:
+        raise HTTPException(status_code=404, detail="Дело не найдено")
+    
+    # Get files
+    files = db.query(FileModel).filter(
+        FileModel.id.in_(request.file_ids),
+        FileModel.case_id == case_id
+    ).all()
+    
+    if len(files) != len(request.file_ids):
+        raise HTTPException(status_code=400, detail="Некоторые файлы не найдены")
+    
+    try:
+        # Update file metadata with status
+        for file in files:
+            if file.file_metadata is None:
+                file.file_metadata = {}
+            file.file_metadata["review_status"] = "withheld"
+            file.file_metadata["reviewed_at"] = datetime.utcnow().isoformat()
+            file.file_metadata["reviewed_by"] = current_user.id
+        
+        db.commit()
+        
+        logger.info(
+            f"Batch withheld {len(files)} documents in case {case_id}",
+            extra={
+                "user_id": current_user.id,
+                "case_id": case_id,
+                "file_ids": request.file_ids,
+                "action": "batch_withhold"
+            }
+        )
+        
+        return {
+            "status": "success",
+            "message": f"Заблокировано {len(files)} документов",
+            "withheld_count": len(files)
+        }
+    except Exception as e:
+        db.rollback()
+        logger.error(f"Ошибка при batch withhold для дела {case_id}: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Ошибка при блокировке документов")
+
+
+@router.get("/{case_id}/files/{file_id}/related")
+async def get_related_documents(
+    case_id: str,
+    file_id: str,
+    limit: int = Query(5, ge=1, le=20, description="Maximum number of related documents"),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """Get related documents based on shared entities and topics"""
+    # Verify case ownership
+    case = db.query(Case).filter(
+        Case.id == case_id,
+        Case.user_id == current_user.id
+    ).first()
+    
+    if not case:
+        raise HTTPException(status_code=404, detail="Дело не найдено")
+    
+    # Get source file
+    source_file = db.query(FileModel).filter(
+        FileModel.id == file_id,
+        FileModel.case_id == case_id
+    ).first()
+    
+    if not source_file:
+        raise HTTPException(status_code=404, detail="Файл не найден")
+    
+    # Get source file entities
+    source_entities = db.query(ExtractedEntity).filter(
+        ExtractedEntity.file_id == file_id,
+        ExtractedEntity.case_id == case_id
+    ).all()
+    
+    # Get source file classification
+    source_classification = db.query(DocumentClassification).filter(
+        DocumentClassification.file_id == file_id,
+        DocumentClassification.case_id == case_id
+    ).first()
+    
+    # Find related documents by shared entities
+    related_files = []
+    if source_entities:
+        # Get entity types and values from source file
+        source_entity_types = set(e.entity_type for e in source_entities)
+        source_entity_texts = set(e.text.lower() for e in source_entities)
+        
+        # Find files with shared entities
+        all_entities = db.query(ExtractedEntity).filter(
+            ExtractedEntity.case_id == case_id,
+            ExtractedEntity.file_id != file_id
+        ).all()
+        
+        # Group entities by file_id
+        entities_by_file: Dict[str, List[ExtractedEntity]] = {}
+        for entity in all_entities:
+            if entity.file_id not in entities_by_file:
+                entities_by_file[entity.file_id] = []
+            entities_by_file[entity.file_id].append(entity)
+        
+        # Calculate similarity scores
+        file_scores: Dict[str, float] = {}
+        for file_id, entities in entities_by_file.items():
+            score = 0.0
+            shared_entities = 0
+            
+            for entity in entities:
+                if entity.entity_type in source_entity_types:
+                    score += 0.5
+                if entity.text.lower() in source_entity_texts:
+                    score += 1.0
+                    shared_entities += 1
+            
+            if score > 0:
+                # Normalize score
+                score = min(100, (score / max(len(source_entities), 1)) * 100)
+                file_scores[file_id] = score
+        
+        # Sort by score and get top files
+        sorted_files = sorted(file_scores.items(), key=lambda x: x[1], reverse=True)[:limit]
+        
+        # Get file details
+        for file_id, score in sorted_files:
+            file = db.query(FileModel).filter(FileModel.id == file_id).first()
+            if file:
+                classification = db.query(DocumentClassification).filter(
+                    DocumentClassification.file_id == file_id
+                ).first()
+                
+                related_files.append({
+                    "file_id": file.id,
+                    "filename": file.filename,
+                    "relevance_score": round(score, 1),
+                    "classification": {
+                        "doc_type": classification.doc_type if classification else None,
+                        "relevance_score": classification.relevance_score if classification else 0
+                    } if classification else None
+                })
+    
+    # Also consider documents with similar topics
+    if source_classification and source_classification.key_topics:
+        source_topics = set(source_classification.key_topics)
+        
+        # Find classifications with overlapping topics
+        similar_classifications = db.query(DocumentClassification).filter(
+            DocumentClassification.case_id == case_id,
+            DocumentClassification.file_id != file_id
+        ).all()
+        
+        topic_scores: Dict[str, float] = {}
+        for classification in similar_classifications:
+            if classification.key_topics:
+                classification_topics = set(classification.key_topics)
+                overlap = len(source_topics.intersection(classification_topics))
+                if overlap > 0:
+                    score = (overlap / max(len(source_topics), 1)) * 100
+                    if classification.file_id not in file_scores:  # Don't duplicate
+                        topic_scores[classification.file_id] = score
+        
+        # Add topic-based matches
+        for file_id, score in sorted(topic_scores.items(), key=lambda x: x[1], reverse=True)[:limit]:
+            if file_id not in [f["file_id"] for f in related_files]:
+                file = db.query(FileModel).filter(FileModel.id == file_id).first()
+                if file:
+                    classification = db.query(DocumentClassification).filter(
+                        DocumentClassification.file_id == file_id
+                    ).first()
+                    
+                    related_files.append({
+                        "file_id": file.id,
+                        "filename": file.filename,
+                        "relevance_score": round(score, 1),
+                        "classification": {
+                            "doc_type": classification.doc_type if classification else None,
+                            "relevance_score": classification.relevance_score if classification else 0
+                        } if classification else None
+                    })
+    
+    # Sort all related files by relevance score
+    related_files.sort(key=lambda x: x["relevance_score"], reverse=True)
+    
+    return {
+        "source_file_id": file_id,
+        "source_filename": source_file.filename,
+        "related_documents": related_files[:limit],
+        "total_related": len(related_files)
     }
 

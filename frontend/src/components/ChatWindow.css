@@ -58,9 +58,17 @@
   font-size: 14px;
 }
 
-/* Remove header or make it minimal */
+/* Chat header */
 .chat-header {
-  display: none; /* Hide header for ChatGPT-style */
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 16px;
+  border-bottom: 1px solid #e5e7eb;
+  background: #ffffff;
+  position: sticky;
+  top: 0;
+  z-index: 10;
 }
 
 /* Messages area - centered with max-width */
@@ -473,6 +481,144 @@
   opacity: 0.5;
   cursor: not-allowed;
   transform: none;
+}
+
+.chat-input-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.chat-file-button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 8px;
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  color: #6b7280;
+  transition: color 0.2s;
+  border-radius: 6px;
+}
+
+.chat-file-button:hover {
+  color: #3b82f6;
+  background: #f3f4f6;
+}
+
+.chat-drag-overlay {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(59, 130, 246, 0.1);
+  border: 2px dashed #3b82f6;
+  border-radius: 8px;
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+}
+
+.chat-drag-overlay-content {
+  text-align: center;
+  color: #3b82f6;
+}
+
+.chat-drag-overlay-icon {
+  font-size: 48px;
+  margin-bottom: 12px;
+}
+
+.chat-drag-overlay-text {
+  font-size: 18px;
+  font-weight: 600;
+  margin-bottom: 4px;
+}
+
+.chat-drag-overlay-hint {
+  font-size: 14px;
+  color: #6b7280;
+}
+
+.chat-container.dragging {
+  position: relative;
+}
+
+.chat-dropped-files {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 8px 16px;
+  background: #f9fafb;
+  border-bottom: 1px solid #e5e7eb;
+}
+
+.chat-dropped-file {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  background: #ffffff;
+  border: 1px solid #e5e7eb;
+  border-radius: 6px;
+  font-size: 13px;
+}
+
+.chat-dropped-file-name {
+  color: #1f2937;
+}
+
+.chat-dropped-file-remove {
+  background: none;
+  border: none;
+  color: #6b7280;
+  cursor: pointer;
+  font-size: 18px;
+  line-height: 1;
+  padding: 0;
+  width: 20px;
+  height: 20px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 4px;
+  transition: all 0.2s;
+}
+
+.chat-dropped-file-remove:hover {
+  background: #fee2e2;
+  color: #ef4444;
+}
+
+.chat-undo-button {
+  padding: 6px 12px;
+  background: #f3f4f6;
+  border: 1px solid #d1d5db;
+  border-radius: 6px;
+  color: #1f2937;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s;
+  margin-left: auto;
+}
+
+.chat-undo-button:hover {
+  background: #e5e7eb;
+  border-color: #9ca3af;
+}
+
+.chat-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 16px;
+  border-bottom: 1px solid #e5e7eb;
+  background: #ffffff;
 }
 
 .chat-input-footer {

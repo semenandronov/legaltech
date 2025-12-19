@@ -6,8 +6,9 @@ from typing import List, Optional
 from datetime import datetime
 from app.utils.database import get_db
 from app.utils.auth import get_current_user
-from app.models.case import Case
+from app.models.case import Case, File as FileModel
 from app.models.user import User
+from fastapi.responses import Response, StreamingResponse
 
 router = APIRouter()
 
@@ -290,4 +291,56 @@ async def delete_case(
         raise HTTPException(status_code=500, detail="Ошибка при удалении дела. Попробуйте позже.")
     
     return None
+
+
+@router.get("/{case_id}/files/{file_id}/content")
+async def get_file_content(
+    case_id: str,
+    file_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """Get file content (PDF, DOCX, TXT, etc.)"""
+    # Verify case ownership
+    case = db.query(Case).filter(
+        Case.id == case_id,
+        Case.user_id == current_user.id
+    ).first()
+    
+    if not case:
+        raise HTTPException(status_code=404, detail="Дело не найдено")
+    
+    # Get file
+    file = db.query(FileModel).filter(
+        FileModel.id == file_id,
+        FileModel.case_id == case_id
+    ).first()
+    
+    if not file:
+        raise HTTPException(status_code=404, detail="Файл не найден")
+    
+    # For now, return text content as plain text
+    # TODO: In future, store original files and return them for PDF/DOCX
+    # For PDF files, we would need to reconstruct PDF from text or store original
+    # For now, return text content with appropriate content type
+    
+    content_type = "text/plain"
+    if file.file_type == "pdf":
+        content_type = "application/pdf"
+        # Note: Currently we only have text, not original PDF
+        # This will need to be enhanced to store original files
+    elif file.file_type == "docx":
+        content_type = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+    elif file.file_type == "xlsx":
+        content_type = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    
+    # Return text content
+    # In future, if original files are stored, return the original file
+    return Response(
+        content=file.original_text.encode('utf-8'),
+        media_type=content_type,
+        headers={
+            "Content-Disposition": f'inline; filename="{file.filename}"'
+        }
+    )
 

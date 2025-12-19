@@ -5,6 +5,7 @@ from langchain_openai import OpenAIEmbeddings
 from langchain_community.vectorstores import Chroma
 from langchain_core.documents import Document
 from app.config import config
+from app.services.yandex_embeddings import YandexEmbeddings
 import os
 import logging
 
@@ -24,12 +25,27 @@ class DocumentProcessor:
             separators=["\n\n", "\n", ". ", " ", ""]
         )
         
-        # Initialize embeddings (using OpenRouter-compatible API)
-        self.embeddings = OpenAIEmbeddings(
-            openai_api_key=config.OPENROUTER_API_KEY,
-            openai_api_base=config.OPENROUTER_BASE_URL,
-            model="text-embedding-ada-002"  # Можно использовать другую модель через OpenRouter
-        )
+        # Initialize embeddings - используем Yandex если доступен, иначе OpenRouter
+        # Проверяем наличие API ключа или IAM токена
+        if config.YANDEX_API_KEY or config.YANDEX_IAM_TOKEN:
+            try:
+                self.embeddings = YandexEmbeddings()
+                logger.info("✅ Using Yandex embeddings (лучше для русского!)")
+            except Exception as e:
+                logger.warning(f"Failed to initialize Yandex embeddings: {e}, falling back to OpenAI")
+                self.embeddings = OpenAIEmbeddings(
+                    openai_api_key=config.OPENROUTER_API_KEY,
+                    openai_api_base=config.OPENROUTER_BASE_URL,
+                    model="text-embedding-ada-002"
+                )
+        else:
+            # Fallback to OpenRouter
+            self.embeddings = OpenAIEmbeddings(
+                openai_api_key=config.OPENROUTER_API_KEY,
+                openai_api_base=config.OPENROUTER_BASE_URL,
+                model="text-embedding-ada-002"
+            )
+            logger.info("Using OpenAI embeddings (OpenRouter)")
         
         # Vector store will be created per case
         self.vector_stores: Dict[str, Chroma] = {}

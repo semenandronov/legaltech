@@ -570,4 +570,41 @@ export const batchWithhold = async (caseId: string, fileIds: string[]): Promise<
   return response.data
 }
 
+// Document Content API
+export const getDocumentContent = async (caseId: string, fileId: string): Promise<Blob> => {
+  const response = await apiClient.get(
+    getApiUrl(`/api/cases/${caseId}/files/${fileId}/content`),
+    { responseType: 'blob' }
+  )
+  return response.data
+}
+
+// Related Documents API
+export interface RelatedDocument {
+  file_id: string
+  filename: string
+  relevance_score: number
+  classification?: {
+    doc_type: string
+    relevance_score: number
+  }
+}
+
+export interface RelatedDocumentsResponse {
+  source_file_id: string
+  source_filename: string
+  related_documents: RelatedDocument[]
+  total_related: number
+}
+
+export const getRelatedDocuments = async (caseId: string, fileId: string, limit?: number): Promise<RelatedDocumentsResponse> => {
+  const params: any = {}
+  if (limit) params.limit = limit
+  const response = await apiClient.get(
+    getApiUrl(`/api/analysis/${caseId}/files/${fileId}/related`),
+    { params }
+  )
+  return response.data
+}
+
 

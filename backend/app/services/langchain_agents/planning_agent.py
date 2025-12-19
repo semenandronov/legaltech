@@ -1,6 +1,7 @@
 """Planning agent for natural language task understanding and analysis planning"""
 from typing import Dict, Any, List, Optional
 from langchain_openai import ChatOpenAI
+from app.services.yandex_llm import ChatYandexGPT
 from app.services.langchain_agents.agent_factory import create_legal_agent
 from app.services.langchain_agents.planning_tools import get_planning_tools, AVAILABLE_ANALYSES
 from app.services.langchain_agents.prompts import get_agent_prompt
@@ -18,14 +19,35 @@ class PlanningAgent:
     
     def __init__(self):
         """Initialize planning agent"""
-        # Initialize LLM
-        self.llm = ChatOpenAI(
-            model=config.OPENROUTER_MODEL,
-            openai_api_key=config.OPENROUTER_API_KEY,
-            openai_api_base=config.OPENROUTER_BASE_URL,
-            temperature=0.1,  # Низкая температура для консистентности
-            max_tokens=500
-        )
+        # Initialize LLM - используем YandexGPT если доступен, иначе OpenRouter
+        # Проверяем наличие API ключа или IAM токена
+        if config.YANDEX_API_KEY or config.YANDEX_IAM_TOKEN:
+            try:
+                self.llm = ChatYandexGPT(
+                    model_name=config.YANDEX_GPT_MODEL,
+                    temperature=0.1,  # Низкая температура для консистентности
+                    max_tokens=500
+                )
+                logger.info("✅ Using YandexGPT for planning (10x дешевле!)")
+            except Exception as e:
+                logger.warning(f"Failed to initialize YandexGPT: {e}, falling back to OpenRouter")
+                self.llm = ChatOpenAI(
+                    model=config.OPENROUTER_MODEL,
+                    openai_api_key=config.OPENROUTER_API_KEY,
+                    openai_api_base=config.OPENROUTER_BASE_URL,
+                    temperature=0.1,
+                    max_tokens=500
+                )
+        else:
+            # Fallback to OpenRouter
+            self.llm = ChatOpenAI(
+                model=config.OPENROUTER_MODEL,
+                openai_api_key=config.OPENROUTER_API_KEY,
+                openai_api_base=config.OPENROUTER_BASE_URL,
+                temperature=0.1,
+                max_tokens=500
+            )
+            logger.info("Using OpenRouter for planning")
         
         # Get planning tools
         self.tools = get_planning_tools()

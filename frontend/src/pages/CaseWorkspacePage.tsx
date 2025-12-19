@@ -13,6 +13,9 @@ import {
   getDocuments,
   getClassifications,
   getPrivilegeChecks,
+  batchConfirm,
+  batchReject,
+  batchWithhold,
   DocumentItem,
   DocumentClassification,
   PrivilegeCheck
@@ -191,14 +194,36 @@ const CaseWorkspacePage: React.FC = () => {
   }
 
   const handleBatchAction = async (action: string, fileIds: string[]) => {
-    if (!caseId) return
+    if (!caseId || fileIds.length === 0) return
     try {
-      // TODO: Реализовать batch actions через API
-      console.log(`Batch action: ${action}`, fileIds)
-      // После успешного действия очистить выбор
+      setLoading(true)
+      setError(null)
+
+      let response
+      switch (action) {
+        case 'confirm':
+          response = await batchConfirm(caseId, fileIds)
+          break
+        case 'reject':
+          response = await batchReject(caseId, fileIds)
+          break
+        case 'withhold':
+          response = await batchWithhold(caseId, fileIds)
+          break
+        default:
+          throw new Error(`Неизвестное действие: ${action}`)
+      }
+
+      // После успешного действия очистить выбор и перезагрузить документы
       setSelectedDocuments(new Set())
+      await loadDocuments()
+      
+      // Показать сообщение об успехе (можно добавить toast notification)
+      console.log(`Успешно: ${response.message || action}`)
     } catch (err: any) {
       setError(err.response?.data?.detail || `Ошибка при выполнении ${action}`)
+    } finally {
+      setLoading(false)
     }
   }
 
@@ -309,8 +334,10 @@ const CaseWorkspacePage: React.FC = () => {
           setSelectedDocumentId(documents[currentIndex - 1].id)
         }
       }}
+      onRelatedDocumentClick={(fileId) => {
+        setSelectedDocumentId(fileId)
+      }}
     />
-  )
 
   // Правая панель (Chat)
   const rightPanel = (
