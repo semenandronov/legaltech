@@ -299,8 +299,6 @@ const CaseWorkspacePage: React.FC = () => {
         documents={documents}
         selectedDocuments={selectedDocuments}
         onSelectDocument={handleSelectDocument}
-        onSelectAll={handleSelectAll}
-        onSelectVisible={handleSelectVisible}
         onDocumentClick={handleDocumentClick}
         onBatchAction={handleBatchAction}
         sortBy="date"

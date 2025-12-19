@@ -333,7 +333,7 @@ const ChatWindow = ({ caseId, onDocumentClick }: ChatWindowProps) => {
         {messages.map((message, index) => {
           const confidence = extractConfidence(message.content)
           const hasSources = message.sources && message.sources.length > 0
-          const hasMultipleSources = hasSources && message.sources.length > 1
+          const hasMultipleSources = hasSources && message.sources && message.sources.length > 1
 
           return (
             <div
