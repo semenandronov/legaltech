@@ -190,20 +190,6 @@ const CaseWorkspacePage: React.FC = () => {
     })
   }
 
-  const handleSelectAll = () => {
-    if (selectedDocuments.size === documents.length) {
-      setSelectedDocuments(new Set())
-    } else {
-      setSelectedDocuments(new Set(documents.map(d => d.id)))
-    }
-  }
-
-  const handleSelectVisible = () => {
-    // Выбрать видимые документы (первые 50)
-    const visibleIds = documents.slice(0, 50).map(d => d.id)
-    setSelectedDocuments(new Set(visibleIds))
-  }
-
   const handleBatchAction = async (action: string, fileIds: string[]) => {
     if (!caseId) return
     try {
