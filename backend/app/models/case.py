@@ -64,7 +64,7 @@ class File(Base):
     filename = Column(String(255), nullable=False)
     file_type = Column(String(50), nullable=False)
     original_text = Column(Text, nullable=False)
-    file_metadata = Column(JSON, name="metadata", nullable=True)  # Метаданные файла (sender, recipient для privilege check и т.д.). Используем name="metadata" для совместимости с БД
+    # metadata удалено - не существует в БД, используем другие поля для хранения метаданных
     created_at = Column(DateTime, default=datetime.utcnow)
 
     # Relationships
