@@ -54,7 +54,7 @@ class TimelineEvent(Base):
     source_page = Column(Integer, nullable=True)  # Номер страницы
     source_line = Column(Integer, nullable=True)  # Номер строки или диапазон
     event_metadata = Column(JSON, nullable=True)  # Дополнительные метаданные (включает reasoning и confidence)
-    reasoning = Column(Text, nullable=True)  # Объяснение почему событие было извлечено
+    # reasoning удалено - хранится в event_metadata для совместимости с БД
     confidence = Column(String(10), nullable=True)  # Уверенность 0-1 (хранится как строка для совместимости)
     created_at = Column(DateTime, default=datetime.utcnow)
     
