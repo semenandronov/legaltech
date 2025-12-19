@@ -26,6 +26,6 @@ python-docx==1.2.0
 reportlab==4.4.6
 # Yandex Cloud services
 yandex-cloud-ml-sdk==0.17.1  # Официальный SDK для YandexGPT и Embeddings
-yandexcloud==0.274.0  # Для SpeechKit и других сервисов
+yandexcloud>=0.359.0  # Обновлено для совместимости с yandex-cloud-ml-sdk (требует >=0.359.0)
 requests>=2.32.5  # Обновлено для совместимости с langchain-community
 
