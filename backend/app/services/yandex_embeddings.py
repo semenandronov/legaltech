@@ -1,5 +1,5 @@
 """YandexGPT Embeddings for LangChain using official Yandex Cloud ML SDK"""
-from typing import List
+from typing import List, Any, Optional
 import logging
 from langchain_core.embeddings import Embeddings
 from yandex_cloud_ml_sdk import YCloudML

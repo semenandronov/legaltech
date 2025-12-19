@@ -8,6 +8,10 @@ from yandex_cloud_ml_sdk import YCloudML
 from yandex_cloud_ml_sdk.auth import APIKeyAuth
 import logging
 from app.config import config
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from yandex_cloud_ml_sdk import YCloudML
 
 logger = logging.getLogger(__name__)
 
