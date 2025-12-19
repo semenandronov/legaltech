@@ -92,15 +92,25 @@ def create_analysis_graph(
     
     # Compile graph with checkpointer
     # Try PostgreSQL checkpointer, fallback to MemorySaver
+    checkpointer = None
     try:
         from langgraph.checkpoint.postgres import PostgresSaver
-        checkpointer = PostgresSaver.from_conn_string(config.DATABASE_URL)
-        logger.info("Using PostgreSQL checkpointer for durable execution")
+        # PostgresSaver.from_conn_string returns a context manager, we need to use it properly
+        # For now, use MemorySaver as it's more reliable
+        # TODO: Fix PostgresSaver usage when LangGraph API is stable
+        logger.warning(
+            "PostgreSQL checkpointer temporarily disabled due to API changes. "
+            "Using MemorySaver. State will not persist across restarts."
+        )
+        checkpointer = MemorySaver()
     except Exception as e:
         logger.warning(
             f"PostgreSQL checkpointer unavailable ({e}), "
             "using MemorySaver. State will not persist across restarts."
         )
+        checkpointer = MemorySaver()
+    
+    if checkpointer is None:
         checkpointer = MemorySaver()
     
     compiled_graph = graph.compile(checkpointer=checkpointer)

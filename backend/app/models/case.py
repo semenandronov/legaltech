@@ -45,6 +45,7 @@ class ChatMessage(Base):
     role = Column(String(20), nullable=False)  # "user" or "assistant"
     content = Column(Text, nullable=False)
     source_references = Column(JSON, nullable=True)  # List of source file names
+    session_id = Column(String, nullable=True)  # Session ID for chat (optional, defaults to case_id)
     created_at = Column(DateTime, default=datetime.utcnow)
     
     # Relationship

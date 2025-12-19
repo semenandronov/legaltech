@@ -278,16 +278,18 @@ async def chat(
                 user_message = ChatMessage(
                     case_id=request.case_id,
                     role="user",
-                    content=request.question
+                    content=request.question,
+                    session_id=request.case_id  # Use case_id as session_id
                 )
                 db.add(user_message)
-                
+
                 # Save assistant message
                 assistant_message = ChatMessage(
                     case_id=request.case_id,
                     role="assistant",
                     content=answer,
-                    source_references=[]
+                    source_references=[],
+                    session_id=request.case_id  # Use case_id as session_id
                 )
                 db.add(assistant_message)
                 db.commit()
@@ -393,7 +395,8 @@ async def chat(
             user_message = ChatMessage(
                 case_id=request.case_id,
                 role="user",
-                content=request.question
+                content=request.question,
+                session_id=request.case_id  # Use case_id as session_id
             )
             db.add(user_message)
             
@@ -404,7 +407,8 @@ async def chat(
                 case_id=request.case_id,
                 role="assistant",
                 content=answer,
-                source_references=source_file_names or []
+                source_references=source_file_names or [],
+                session_id=request.case_id  # Use case_id as session_id
             )
             db.add(assistant_message)
             
