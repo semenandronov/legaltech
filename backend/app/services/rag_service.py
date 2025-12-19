@@ -290,11 +290,20 @@ class RAGService:
         # Format chat history using memory if enabled
         history_text = ""
         if use_memory and chat_history:
-            # Load history into memory
-            self.memory_service.load_history_into_memory(case_id, chat_history, memory_type="summary")
-            # Get memory variables
-            memory_vars = self.memory_service.get_memory_variables(case_id, memory_type="summary")
-            history_text = memory_vars.get("chat_history", "")
+            try:
+                # Load history into memory
+                self.memory_service.load_history_into_memory(case_id, chat_history, memory_type="summary")
+                # Get memory variables
+                memory_vars = self.memory_service.get_memory_variables(case_id, memory_type="summary")
+                history_text = memory_vars.get("chat_history", "")
+            except Exception as memory_error:
+                logger.warning(f"Memory not available for case {case_id}: {memory_error}. Using simple history formatting.")
+                # Fallback to simple history formatting
+                history_parts = []
+                for msg in chat_history[-5:]:  # Last 5 messages
+                    role = "Пользователь" if msg.get("role") == "user" else "Ассистент"
+                    history_parts.append(f"{role}: {msg.get('content', '')}")
+                history_text = "\n".join(history_parts)
         elif chat_history:
             # Fallback: simple history formatting
             history_parts = []

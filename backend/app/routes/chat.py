@@ -319,13 +319,20 @@ async def chat(
         for msg in history_messages[-10:]  # Last 10 messages
     ]
     
-    # Load history into memory
+    # Load history into memory (optional - don't fail if memory is not available)
     if chat_history:
-        memory_service.load_history_into_memory(
-            request.case_id,
-            chat_history,
-            memory_type="summary"
-        )
+        try:
+            memory_service.load_history_into_memory(
+                request.case_id,
+                chat_history,
+                memory_type="summary"
+            )
+        except Exception as memory_error:
+            logger.warning(
+                f"Failed to load history into memory for case {request.case_id}: {memory_error}. "
+                "Continuing without memory - chat will still work."
+            )
+            # Continue - memory is optional, chat works without it
     
     try:
         logger.info(
@@ -348,13 +355,20 @@ async def chat(
             use_memory=True  # Use memory for context
         )
         
-        # Save context to memory
-        memory_service.save_context(
-            request.case_id,
-            request.question,
-            answer,
-            memory_type="summary"
-        )
+        # Save context to memory (optional - don't fail if memory is not available)
+        try:
+            memory_service.save_context(
+                request.case_id,
+                request.question,
+                answer,
+                memory_type="summary"
+            )
+        except Exception as memory_error:
+            logger.warning(
+                f"Failed to save context to memory for case {request.case_id}: {memory_error}. "
+                "Continuing without memory - chat will still work."
+            )
+            # Continue - memory is optional, chat works without it
         
         logger.info(
             f"Successfully generated answer for case {request.case_id}",

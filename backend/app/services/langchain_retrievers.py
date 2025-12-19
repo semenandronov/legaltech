@@ -140,12 +140,26 @@ class AdvancedRetrieverService:
             )
             
             # Retrieve documents
-            documents = multi_query_retriever.get_relevant_documents(query)
+            # Try both old and new API methods
+            try:
+                # New LangChain API (invoke)
+                if hasattr(multi_query_retriever, 'invoke'):
+                    documents = multi_query_retriever.invoke(query)
+                # Old LangChain API (get_relevant_documents)
+                elif hasattr(multi_query_retriever, 'get_relevant_documents'):
+                    documents = multi_query_retriever.get_relevant_documents(query)
+                else:
+                    # Try to use as callable
+                    documents = multi_query_retriever(query)
+            except Exception as api_error:
+                logger.warning(f"Error calling MultiQueryRetriever API for case {case_id}: {api_error}")
+                # Fallback to simple retrieval
+                return self.document_processor.retrieve_relevant_chunks(case_id, query, k=k)
             
             logger.info(f"MultiQueryRetriever found {len(documents)} documents for case {case_id}")
             return documents
         except Exception as e:
-            logger.error(f"Error in MultiQueryRetriever for case {case_id}: {e}")
+            logger.error(f"Error in MultiQueryRetriever for case {case_id}: {e}", exc_info=True)
             # Fallback to simple retrieval
             return self.document_processor.retrieve_relevant_chunks(case_id, query, k=k)
     
