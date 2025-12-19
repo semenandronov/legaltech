@@ -140,19 +140,40 @@ class AdvancedRetrieverService:
             )
             
             # Retrieve documents
-            # Try both old and new API methods
+            # Try both old and new API methods with better error handling
+            documents = None
             try:
-                # New LangChain API (invoke)
+                # New LangChain API (invoke) - preferred method
                 if hasattr(multi_query_retriever, 'invoke'):
-                    documents = multi_query_retriever.invoke(query)
-                # Old LangChain API (get_relevant_documents)
-                elif hasattr(multi_query_retriever, 'get_relevant_documents'):
-                    documents = multi_query_retriever.get_relevant_documents(query)
-                else:
-                    # Try to use as callable
-                    documents = multi_query_retriever(query)
+                    try:
+                        documents = multi_query_retriever.invoke(query)
+                    except Exception as invoke_error:
+                        logger.warning(f"Error with invoke() method for case {case_id}: {invoke_error}")
+                        documents = None
+                
+                # Old LangChain API (get_relevant_documents) - fallback
+                if documents is None and hasattr(multi_query_retriever, 'get_relevant_documents'):
+                    try:
+                        documents = multi_query_retriever.get_relevant_documents(query)
+                    except Exception as get_docs_error:
+                        logger.warning(f"Error with get_relevant_documents() method for case {case_id}: {get_docs_error}")
+                        documents = None
+                
+                # Try to use as callable - last resort
+                if documents is None:
+                    try:
+                        documents = multi_query_retriever(query)
+                    except Exception as callable_error:
+                        logger.warning(f"Error calling MultiQueryRetriever as callable for case {case_id}: {callable_error}")
+                        documents = None
+                
+                # If all methods failed, use fallback
+                if documents is None:
+                    logger.warning(f"All MultiQueryRetriever methods failed for case {case_id}, using fallback")
+                    return self.document_processor.retrieve_relevant_chunks(case_id, query, k=k)
+                    
             except Exception as api_error:
-                logger.warning(f"Error calling MultiQueryRetriever API for case {case_id}: {api_error}")
+                logger.warning(f"Unexpected error calling MultiQueryRetriever API for case {case_id}: {api_error}", exc_info=True)
                 # Fallback to simple retrieval
                 return self.document_processor.retrieve_relevant_chunks(case_id, query, k=k)
             
@@ -199,7 +220,22 @@ class AdvancedRetrieverService:
             )
             
             # Retrieve and compress documents
-            documents = compression_retriever.get_relevant_documents(query)
+            # Try both old and new API methods
+            documents = None
+            try:
+                if hasattr(compression_retriever, 'invoke'):
+                    documents = compression_retriever.invoke(query)
+                elif hasattr(compression_retriever, 'get_relevant_documents'):
+                    documents = compression_retriever.get_relevant_documents(query)
+                else:
+                    documents = compression_retriever(query)
+            except Exception as api_error:
+                logger.warning(f"Error calling ContextualCompressionRetriever API for case {case_id}: {api_error}")
+                return self.document_processor.retrieve_relevant_chunks(case_id, query, k=k)
+            
+            if documents is None:
+                logger.warning(f"ContextualCompressionRetriever returned None for case {case_id}, using fallback")
+                return self.document_processor.retrieve_relevant_chunks(case_id, query, k=k)
             
             logger.info(f"ContextualCompressionRetriever found {len(documents)} documents for case {case_id}")
             return documents
@@ -246,7 +282,22 @@ class AdvancedRetrieverService:
             )
             
             # Retrieve documents
-            documents = ensemble_retriever.get_relevant_documents(query)
+            # Try both old and new API methods
+            documents = None
+            try:
+                if hasattr(ensemble_retriever, 'invoke'):
+                    documents = ensemble_retriever.invoke(query)
+                elif hasattr(ensemble_retriever, 'get_relevant_documents'):
+                    documents = ensemble_retriever.get_relevant_documents(query)
+                else:
+                    documents = ensemble_retriever(query)
+            except Exception as api_error:
+                logger.warning(f"Error calling EnsembleRetriever API for case {case_id}: {api_error}")
+                return self.document_processor.retrieve_relevant_chunks(case_id, query, k=k)
+            
+            if documents is None:
+                logger.warning(f"EnsembleRetriever returned None for case {case_id}, using fallback")
+                return self.document_processor.retrieve_relevant_chunks(case_id, query, k=k)
             
             logger.info(f"EnsembleRetriever found {len(documents)} documents for case {case_id}")
             return documents
