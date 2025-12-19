@@ -134,7 +134,8 @@ def is_task_request(question: str) -> bool:
     return False
 
 
-@router.post("/", response_model=ChatResponse)
+@router.post("/", response_model=ChatResponse, include_in_schema=True)
+@router.post("", response_model=ChatResponse, include_in_schema=False)
 async def chat(
     request: ChatRequest,
     background_tasks: BackgroundTasks,
