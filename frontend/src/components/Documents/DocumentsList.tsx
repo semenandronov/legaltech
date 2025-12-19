@@ -3,7 +3,6 @@ import { DocumentItem, DocumentClassification, PrivilegeCheck } from '../../serv
 import StatusIcon, { DocumentStatus } from '../Common/StatusIcon'
 import ConfidenceBadge from '../Common/ConfidenceBadge'
 import BatchActions from './BatchActions'
-import useKeyboardShortcuts from '../../hooks/useKeyboardShortcuts'
 import './Documents.css'
 
 export interface DocumentWithMetadata extends DocumentItem {
@@ -17,8 +16,6 @@ interface DocumentsListProps {
   documents: DocumentWithMetadata[]
   selectedDocuments: Set<string>
   onSelectDocument: (fileId: string, selected: boolean) => void
-  onSelectAll: () => void
-  onSelectVisible: () => void
   onDocumentClick: (fileId: string) => void
   onBatchAction?: (action: string, fileIds: string[]) => void
   sortBy?: 'date' | 'name' | 'relevance'
@@ -31,8 +28,6 @@ const DocumentsList: React.FC<DocumentsListProps> = ({
   documents,
   selectedDocuments,
   onSelectDocument,
-  onSelectAll,
-  onSelectVisible,
   onDocumentClick,
   onBatchAction,
   sortBy = 'date',
@@ -56,11 +51,6 @@ const DocumentsList: React.FC<DocumentsListProps> = ({
     return 'low'
   }
 
-  const getConfidenceDisplay = (confidence?: number) => {
-    if (!confidence) return '--'
-    return `${Math.round(confidence)}%`
-  }
-
   const visibleDocuments = documents.slice(0, visibleRange)
   const selectedCount = selectedDocuments.size
 
@@ -69,18 +59,6 @@ const DocumentsList: React.FC<DocumentsListProps> = ({
       loadMore()
     }
   }, [visibleRange, documents.length, hasMore, loadMore])
-
-  // Keyboard shortcuts для batch actions
-  useKeyboardShortcuts({
-    onSelectAll: () => {
-      if (selectedDocuments.size === documents.length) {
-        setSelectedDocuments(new Set())
-      } else {
-        setSelectedDocuments(new Set(documents.map(d => d.id)))
-      }
-    },
-    enabled: documents.length > 0
-  })
 
   return (
     <div className="documents-list">
@@ -108,7 +86,6 @@ const DocumentsList: React.FC<DocumentsListProps> = ({
           const isSelected = selectedDocuments.has(doc.id)
           const confidence = doc.confidence || doc.classification?.confidence || 0
           const relevanceScore = doc.classification?.relevance_score || 0
-          const isPrivileged = doc.privilegeCheck?.is_privileged || doc.classification?.is_privileged || false
 
           return (
             <div

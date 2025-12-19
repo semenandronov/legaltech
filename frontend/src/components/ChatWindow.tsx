@@ -2,7 +2,7 @@ import { useState, useEffect, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
 import './ChatWindow.css'
 import './Chat/Chat.css'
-import { fetchHistory, sendMessage, SourceInfo, HistoryMessage, classifyDocuments, checkPrivilege, extractEntities, getTimeline, getAnalysisReport } from '../services/api'
+import { fetchHistory, sendMessage, SourceInfo, HistoryMessage, classifyDocuments, extractEntities, getTimeline, getAnalysisReport } from '../services/api'
 import ReactMarkdown from 'react-markdown'
 import QuickButtons from './Chat/QuickButtons'
 import ConfidenceBadge from './Common/ConfidenceBadge'
@@ -29,22 +29,7 @@ const RECOMMENDED_QUESTIONS: string[] = [
   'Каковы мои шансы выиграть спор в суде исходя из документов?',
 ]
 
-const formatSourceReference = (source: SourceInfo): string => {
-  let ref = `[Документ: ${source.file}`
-  if (source.page) {
-    ref += `, стр. ${source.page}`
-  }
-  if (source.start_line) {
-    ref += `, строки ${source.start_line}`
-    if (source.end_line && source.end_line !== source.start_line) {
-      ref += `-${source.end_line}`
-    }
-  }
-  ref += ']'
-  return ref
-}
-
-const ChatWindow = ({ caseId, fileNames = [], onDocumentClick }: ChatWindowProps) => {
+const ChatWindow = ({ caseId, onDocumentClick }: ChatWindowProps) => {
   const navigate = useNavigate()
   const [messages, setMessages] = useState<Message[]>([])
   const [inputValue, setInputValue] = useState('')
@@ -175,14 +160,6 @@ const ChatWindow = ({ caseId, fileNames = [], onDocumentClick }: ChatWindowProps
   const isOverLimit = remainingChars < 0
 
   const hasMessages = messages.length > 0
-
-  const handleNavigateToAnalysis = () => {
-    navigate(`/cases/${caseId}/analysis`)
-  }
-
-  const handleNavigateToTimeline = () => {
-    navigate(`/cases/${caseId}/analysis`)
-  }
 
   const handleClassifyAll = async () => {
     try {
@@ -383,7 +360,7 @@ const ChatWindow = ({ caseId, fileNames = [], onDocumentClick }: ChatWindowProps
                   </div>
                 )}
 
-                {hasSources && (
+                {hasSources && message.sources && (
                   <div className="chat-message-sources">
                     <div className="chat-message-sources-title">Источники:</div>
                     <div className="chat-message-sources-list">
@@ -395,7 +372,7 @@ const ChatWindow = ({ caseId, fileNames = [], onDocumentClick }: ChatWindowProps
                         />
                       ))}
                     </div>
-                    {hasMultipleSources && (
+                    {hasMultipleSources && message.sources && (
                       <div className="chat-batch-actions">
                         <button
                           className="chat-batch-action-btn"

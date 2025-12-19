@@ -22,7 +22,6 @@ const DocumentViewer: React.FC<DocumentViewerProps> = ({
   onNavigatePrev
 }) => {
   const [entities, setEntities] = useState<ExtractedEntity[]>([])
-  const [loadingEntities, setLoadingEntities] = useState(false)
   const [documentText, setDocumentText] = useState<string>('')
   const [showCommandPalette, setShowCommandPalette] = useState(false)
   const [showShortcutsHelp, setShowShortcutsHelp] = useState(false)
@@ -79,14 +78,11 @@ const DocumentViewer: React.FC<DocumentViewerProps> = ({
 
   const loadEntities = async () => {
     if (!document?.id || !caseId) return
-    setLoadingEntities(true)
     try {
       const response = await getEntities(caseId, document.id)
       setEntities(response.entities || [])
     } catch (err) {
       console.error('Ошибка при загрузке сущностей:', err)
-    } finally {
-      setLoadingEntities(false)
     }
   }
 

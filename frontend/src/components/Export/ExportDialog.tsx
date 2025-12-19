@@ -18,13 +18,12 @@ export interface ExportOptions {
 }
 
 interface ExportDialogProps {
-  caseId: string
+  caseId?: string
   onClose: () => void
   onExport: (options: ExportOptions) => Promise<void>
 }
 
 const ExportDialog: React.FC<ExportDialogProps> = ({
-  caseId,
   onClose,
   onExport
 }) => {

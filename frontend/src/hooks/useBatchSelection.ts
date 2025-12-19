@@ -11,8 +11,7 @@ export interface UseBatchSelectionReturn {
 }
 
 export const useBatchSelection = (
-  allItems: string[],
-  visibleItems?: string[]
+  allItems: string[]
 ): UseBatchSelectionReturn => {
   const [selectedItems, setSelectedItems] = useState<Set<string>>(new Set())
 
@@ -41,7 +40,6 @@ export const useBatchSelection = (
   }, [allItems, selectedItems.size])
 
   const selectVisible = useCallback((visibleIds: string[]) => {
-    const visibleSet = new Set(visibleIds)
     const allVisibleSelected = visibleIds.every(id => selectedItems.has(id))
     
     if (allVisibleSelected) {
