@@ -27,5 +27,5 @@ reportlab==4.4.6
 # Yandex Cloud services
 yandex-cloud-ml-sdk==0.17.1  # Официальный SDK для YandexGPT и Embeddings
 yandexcloud==0.274.0  # Для SpeechKit и других сервисов
-requests==2.31.0
+requests>=2.32.5  # Обновлено для совместимости с langchain-community
 
