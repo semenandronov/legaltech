@@ -34,6 +34,9 @@ class Case(Base):
     discrepancies = relationship("Discrepancy", back_populates="case", cascade="all, delete-orphan")
     timeline_events = relationship("TimelineEvent", back_populates="case", cascade="all, delete-orphan")
     document_chunks = relationship("DocumentChunk", back_populates="case", cascade="all, delete-orphan")
+    document_classifications = relationship("DocumentClassification", back_populates="case", cascade="all, delete-orphan")
+    extracted_entities = relationship("ExtractedEntity", back_populates="case", cascade="all, delete-orphan")
+    privilege_checks = relationship("PrivilegeCheck", back_populates="case", cascade="all, delete-orphan")
 
 
 class ChatMessage(Base):
@@ -61,9 +64,13 @@ class File(Base):
     filename = Column(String(255), nullable=False)
     file_type = Column(String(50), nullable=False)
     original_text = Column(Text, nullable=False)
+    metadata = Column(JSON, nullable=True)  # Метаданные файла (sender, recipient для privilege check и т.д.)
     created_at = Column(DateTime, default=datetime.utcnow)
 
     # Relationships
     case = relationship("Case", back_populates="files")
     chunks = relationship("DocumentChunk", back_populates="file", cascade="all, delete-orphan")
+    document_classifications = relationship("DocumentClassification", back_populates="file", cascade="all, delete-orphan")
+    extracted_entities = relationship("ExtractedEntity", back_populates="file", cascade="all, delete-orphan")
+    privilege_checks = relationship("PrivilegeCheck", back_populates="file", cascade="all, delete-orphan")
 

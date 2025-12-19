@@ -32,7 +32,9 @@ class Discrepancy(Base):
     severity = Column(String(20), nullable=False)  # HIGH, MEDIUM, LOW
     description = Column(Text, nullable=False)
     source_documents = Column(JSON, nullable=False)  # Список документов с противоречиями
-    details = Column(JSON, nullable=True)  # Дополнительные детали
+    details = Column(JSON, nullable=True)  # Дополнительные детали (включает reasoning и confidence)
+    reasoning = Column(Text, nullable=True)  # Объяснение почему противоречие было обнаружено
+    confidence = Column(String(10), nullable=True)  # Уверенность 0-1 (хранится как строка для совместимости)
     created_at = Column(DateTime, default=datetime.utcnow)
     
     # Relationship
@@ -51,7 +53,9 @@ class TimelineEvent(Base):
     source_document = Column(String(255), nullable=False)  # Имя документа-источника
     source_page = Column(Integer, nullable=True)  # Номер страницы
     source_line = Column(Integer, nullable=True)  # Номер строки или диапазон
-    event_metadata = Column(JSON, nullable=True)  # Дополнительные метаданные (переименовано из metadata)
+    event_metadata = Column(JSON, nullable=True)  # Дополнительные метаданные (включает reasoning и confidence)
+    reasoning = Column(Text, nullable=True)  # Объяснение почему событие было извлечено
+    confidence = Column(String(10), nullable=True)  # Уверенность 0-1 (хранится как строка для совместимости)
     created_at = Column(DateTime, default=datetime.utcnow)
     
     # Relationship
@@ -78,4 +82,68 @@ class DocumentChunk(Base):
     # Relationships
     case = relationship("Case", back_populates="document_chunks")
     file = relationship("File", back_populates="chunks")
+
+
+class DocumentClassification(Base):
+    """DocumentClassification model - stores document classification results"""
+    __tablename__ = "document_classifications"
+    
+    id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    case_id = Column(String, ForeignKey("cases.id", ondelete="CASCADE"), nullable=False, index=True)
+    file_id = Column(String, ForeignKey("files.id", ondelete="CASCADE"), nullable=True, index=True)
+    doc_type = Column(String(100), nullable=False)  # Тип документа
+    relevance_score = Column(Integer, nullable=False)  # Релевантность 0-100
+    is_privileged = Column(String(10), nullable=False, default="false")  # true/false как строка
+    privilege_type = Column(String(50), nullable=False, default="none")  # attorney-client, work-product, none
+    key_topics = Column(JSON, nullable=True)  # Массив основных тем
+    confidence = Column(String(10), nullable=True)  # Уверенность 0-1
+    reasoning = Column(Text, nullable=True)  # Подробное объяснение решения
+    prompt_version = Column(String(20), nullable=True, default="v1")  # Версия промпта
+    created_at = Column(DateTime, default=datetime.utcnow)
+    
+    # Relationships
+    case = relationship("Case")
+    file = relationship("File")
+
+
+class ExtractedEntity(Base):
+    """ExtractedEntity model - stores extracted named entities"""
+    __tablename__ = "extracted_entities"
+    
+    id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    case_id = Column(String, ForeignKey("cases.id", ondelete="CASCADE"), nullable=False, index=True)
+    file_id = Column(String, ForeignKey("files.id", ondelete="CASCADE"), nullable=True, index=True)
+    entity_text = Column(Text, nullable=False)  # Текст сущности
+    entity_type = Column(String(50), nullable=False)  # PERSON, ORG, DATE, AMOUNT, CONTRACT_TERM
+    confidence = Column(String(10), nullable=True)  # Уверенность 0-1
+    context = Column(Text, nullable=True)  # Контекст, в котором найдена сущность
+    source_document = Column(String(255), nullable=True)  # Имя документа-источника
+    source_page = Column(Integer, nullable=True)  # Номер страницы
+    source_line = Column(Integer, nullable=True)  # Номер строки
+    created_at = Column(DateTime, default=datetime.utcnow)
+    
+    # Relationships
+    case = relationship("Case")
+    file = relationship("File")
+
+
+class PrivilegeCheck(Base):
+    """PrivilegeCheck model - stores privilege check results (КРИТИЧНО для e-discovery!)"""
+    __tablename__ = "privilege_checks"
+    
+    id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    case_id = Column(String, ForeignKey("cases.id", ondelete="CASCADE"), nullable=False, index=True)
+    file_id = Column(String, ForeignKey("files.id", ondelete="CASCADE"), nullable=False, index=True)
+    is_privileged = Column(String(10), nullable=False)  # true/false как строка
+    privilege_type = Column(String(50), nullable=False)  # attorney-client, work-product, none
+    confidence = Column(String(10), nullable=False)  # Уверенность 0-100 (критично >95%)
+    reasoning = Column(JSON, nullable=True)  # Ключевые факторы (массив строк)
+    withhold_recommendation = Column(String(10), nullable=False, default="false")  # true/false как строка
+    requires_human_review = Column(String(10), nullable=False, default="true")  # Всегда требует human review
+    prompt_version = Column(String(20), nullable=True, default="v1")  # Версия промпта
+    created_at = Column(DateTime, default=datetime.utcnow)
+    
+    # Relationships
+    case = relationship("Case")
+    file = relationship("File")
 

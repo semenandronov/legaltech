@@ -54,12 +54,12 @@ def summary_agent_node(
         # Get tools
         tools = get_all_tools()
         
-        # Initialize LLM
+        # Initialize LLM with temperature=0.3 for creative summary (creative task)
         llm = ChatOpenAI(
             model=config.OPENROUTER_MODEL,
             openai_api_key=config.OPENROUTER_API_KEY,
             openai_api_base=config.OPENROUTER_BASE_URL,
-            temperature=0.7,  # Higher temperature for more creative summary
+            temperature=0.3,  # Creative задача, но все еще контролируемая
             max_tokens=2000
         )
         

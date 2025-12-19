@@ -1,0 +1,70 @@
+/* 3-panel layout согласно UX/UI гайду */
+.workspace-layout {
+  display: grid;
+  grid-template-columns: 30% 50% 20%;
+  height: 100vh;
+  overflow: hidden;
+}
+
+.workspace-left-panel {
+  border-right: 1px solid #e5e7eb;
+  overflow-y: auto;
+  background: #ffffff;
+}
+
+.workspace-center-panel {
+  border-right: 1px solid #e5e7eb;
+  overflow-y: auto;
+  background: #ffffff;
+}
+
+.workspace-right-panel {
+  position: relative;
+  overflow-y: auto;
+  background: #f9fafb;
+  transition: width 0.3s ease;
+}
+
+.workspace-right-panel.collapsed {
+  width: 0;
+  overflow: hidden;
+}
+
+.workspace-toggle-chat {
+  position: absolute;
+  top: 50%;
+  left: -20px;
+  transform: translateY(-50%);
+  background: #3b82f6;
+  color: white;
+  border: none;
+  border-radius: 50%;
+  width: 40px;
+  height: 40px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+  z-index: 10;
+}
+
+.workspace-toggle-chat:hover {
+  background: #2563eb;
+}
+
+/* Responsive для мобильных */
+@media (max-width: 1024px) {
+  .workspace-layout {
+    grid-template-columns: 1fr;
+    grid-template-rows: auto auto auto;
+  }
+  
+  .workspace-left-panel,
+  .workspace-center-panel,
+  .workspace-right-panel {
+    border-right: none;
+    border-bottom: 1px solid #e5e7eb;
+    max-height: 50vh;
+  }
+}

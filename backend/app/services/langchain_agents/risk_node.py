@@ -55,12 +55,12 @@ def risk_agent_node(
         # Get tools
         tools = get_all_tools()
         
-        # Initialize LLM
+        # Initialize LLM with temperature=0.1 for risk analysis (slightly higher for analysis task)
         llm = ChatOpenAI(
             model=config.OPENROUTER_MODEL,
             openai_api_key=config.OPENROUTER_API_KEY,
             openai_api_base=config.OPENROUTER_BASE_URL,
-            temperature=0.3,
+            temperature=0.1,  # Немного выше для аналитической задачи, но все еще детерминистично
             max_tokens=2000
         )
         

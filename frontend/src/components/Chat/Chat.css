@@ -1,0 +1,141 @@
+/* Quick Buttons Styles */
+.chat-quick-buttons {
+  padding: 12px 16px;
+  border-bottom: 1px solid #e5e7eb;
+  background: #f9fafb;
+}
+
+.chat-quick-buttons-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: #6b7280;
+  margin-bottom: 8px;
+}
+
+.chat-quick-buttons-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.chat-quick-button {
+  padding: 6px 12px;
+  background: white;
+  color: #1f2937;
+  border: 1px solid #d1d5db;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 500;
+  transition: all 0.15s;
+}
+
+.chat-quick-button:hover {
+  background: #f3f4f6;
+  border-color: #3b82f6;
+}
+
+/* Confidence Badge Styles */
+.chat-confidence-badge {
+  display: inline-block;
+  padding: 4px 8px;
+  border-radius: 4px;
+  font-size: 12px;
+  font-weight: 600;
+  margin-left: 8px;
+}
+
+.chat-confidence-badge.high {
+  background: #d1fae5;
+  color: #065f46;
+}
+
+.chat-confidence-badge.medium {
+  background: #fef3c7;
+  color: #92400e;
+}
+
+.chat-confidence-badge.low {
+  background: #fee2e2;
+  color: #991b1b;
+}
+
+/* Citation Link Styles */
+.chat-citation-link {
+  display: inline-block;
+  padding: 4px 8px;
+  margin: 4px 4px 4px 0;
+  background: #eff6ff;
+  color: #1e40af;
+  border: 1px solid #bfdbfe;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 500;
+  transition: all 0.15s;
+}
+
+.chat-citation-link:hover {
+  background: #dbeafe;
+  border-color: #3b82f6;
+  transform: translateY(-1px);
+}
+
+/* Chat Message Improvements */
+.chat-message-assistant .message-bubble {
+  position: relative;
+}
+
+.chat-message-sources {
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid #e5e7eb;
+}
+
+.chat-message-sources-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: #6b7280;
+  margin-bottom: 8px;
+}
+
+.chat-message-sources-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.chat-batch-actions {
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid #e5e7eb;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.chat-batch-action-btn {
+  padding: 6px 12px;
+  background: #3b82f6;
+  color: white;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 500;
+  transition: all 0.15s;
+}
+
+.chat-batch-action-btn:hover {
+  background: #2563eb;
+}
+
+.chat-batch-action-btn.secondary {
+  background: #f3f4f6;
+  color: #1f2937;
+  border: 1px solid #d1d5db;
+}
+
+.chat-batch-action-btn.secondary:hover {
+  background: #e5e7eb;
+}

@@ -1,0 +1,56 @@
+/* Confidence Badge Styles - используем цвета из colors.css */
+.confidence-badge {
+  display: inline-block;
+  padding: 4px 8px;
+  border-radius: 4px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.confidence-badge-small {
+  font-size: 11px;
+  padding: 2px 6px;
+}
+
+.confidence-badge-medium {
+  font-size: 12px;
+  padding: 4px 8px;
+}
+
+.confidence-badge-large {
+  font-size: 14px;
+  padding: 6px 10px;
+}
+
+.confidence-badge.high {
+  background: #d1fae5;
+  color: #065f46;
+}
+
+.confidence-badge.medium {
+  background: #fef3c7;
+  color: #92400e;
+}
+
+.confidence-badge.low {
+  background: #fee2e2;
+  color: #991b1b;
+}
+
+/* Status Icon Styles */
+.status-icon {
+  display: inline-block;
+  line-height: 1;
+}
+
+.status-icon-small {
+  font-size: 14px;
+}
+
+.status-icon-medium {
+  font-size: 16px;
+}
+
+.status-icon-large {
+  font-size: 20px;
+}

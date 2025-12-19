@@ -9,6 +9,9 @@ from app.services.langchain_agents.key_facts_node import key_facts_agent_node
 from app.services.langchain_agents.discrepancy_node import discrepancy_agent_node
 from app.services.langchain_agents.risk_node import risk_agent_node
 from app.services.langchain_agents.summary_node import summary_agent_node
+from app.services.langchain_agents.document_classifier_node import document_classifier_agent_node
+from app.services.langchain_agents.entity_extraction_node import entity_extraction_agent_node
+from app.services.langchain_agents.privilege_check_node import privilege_check_agent_node
 from sqlalchemy.orm import Session
 from app.services.rag_service import RAGService
 from app.services.document_processor import DocumentProcessor
@@ -49,6 +52,15 @@ def create_analysis_graph(
     def summary_node(state: AnalysisState) -> AnalysisState:
         return summary_agent_node(state, db, rag_service, document_processor)
     
+    def document_classifier_node(state: AnalysisState) -> AnalysisState:
+        return document_classifier_agent_node(state, db, rag_service, document_processor)
+    
+    def entity_extraction_node(state: AnalysisState) -> AnalysisState:
+        return entity_extraction_agent_node(state, db, rag_service, document_processor)
+    
+    def privilege_check_node(state: AnalysisState) -> AnalysisState:
+        return privilege_check_agent_node(state, db, rag_service, document_processor)
+    
     def supervisor_node(state: AnalysisState) -> AnalysisState:
         """Supervisor node - routes to appropriate agent"""
         # Supervisor doesn't modify state, just routes
@@ -64,6 +76,9 @@ def create_analysis_graph(
     graph.add_node("discrepancy", discrepancy_node)
     graph.add_node("risk", risk_node)
     graph.add_node("summary", summary_node)
+    graph.add_node("document_classifier", document_classifier_node)
+    graph.add_node("entity_extraction", entity_extraction_node)
+    graph.add_node("privilege_check", privilege_check_node)
     
     # Add edges from START
     graph.add_edge(START, "supervisor")
@@ -78,6 +93,9 @@ def create_analysis_graph(
             "discrepancy": "discrepancy",
             "risk": "risk",
             "summary": "summary",
+            "document_classifier": "document_classifier",
+            "entity_extraction": "entity_extraction",
+            "privilege_check": "privilege_check",
             "end": END,
             "supervisor": "supervisor"  # Wait if dependencies not ready
         }
@@ -89,6 +107,9 @@ def create_analysis_graph(
     graph.add_edge("discrepancy", "supervisor")
     graph.add_edge("risk", "supervisor")
     graph.add_edge("summary", "supervisor")
+    graph.add_edge("document_classifier", "supervisor")
+    graph.add_edge("entity_extraction", "supervisor")
+    graph.add_edge("privilege_check", "supervisor")
     
     # Compile graph with checkpointer
     # Try PostgreSQL checkpointer, fallback to MemorySaver

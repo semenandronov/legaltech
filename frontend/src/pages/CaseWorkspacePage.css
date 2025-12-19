@@ -1,0 +1,102 @@
+.workspace-content {
+  margin-left: 250px;
+}
+
+.workspace-main {
+  height: calc(100vh - 60px);
+  overflow: hidden;
+}
+
+.workspace-header {
+  padding: 16px 24px;
+  border-bottom: 1px solid #e5e7eb;
+  background: #ffffff;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+.workspace-back-btn {
+  padding: 6px 12px;
+  background: #f3f4f6;
+  color: #1f2937;
+  border: 1px solid #d1d5db;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 14px;
+  font-weight: 500;
+  transition: all 0.15s;
+}
+
+.workspace-back-btn:hover {
+  background: #e5e7eb;
+}
+
+.workspace-title {
+  font-size: 20px;
+  font-weight: 600;
+  color: #1f2937;
+  margin: 0;
+}
+
+.workspace-left-content {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  overflow: hidden;
+}
+
+.loading-state,
+.error-state {
+  padding: 48px;
+  text-align: center;
+  color: #6b7280;
+}
+
+.error-state {
+  color: #ef4444;
+}
+
+.documents-list-empty {
+  padding: 48px 24px;
+  text-align: center;
+  color: #6b7280;
+  font-size: 14px;
+}
+
+.document-filters-save-dialog {
+  margin-top: 12px;
+  padding: 12px;
+  background: #f9fafb;
+  border: 1px solid #e5e7eb;
+  border-radius: 6px;
+}
+
+.document-filters-save-dialog input {
+  width: 100%;
+  padding: 6px 8px;
+  border: 1px solid #d1d5db;
+  border-radius: 4px;
+  font-size: 13px;
+  margin-bottom: 8px;
+}
+
+.document-filters-save-dialog div {
+  display: flex;
+  gap: 8px;
+}
+
+.document-filters-save-dialog button {
+  flex: 1;
+  padding: 6px 12px;
+  border: 1px solid #d1d5db;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 12px;
+}
+
+.document-filters-save-dialog button:first-child {
+  background: #3b82f6;
+  color: white;
+  border-color: #3b82f6;
+}

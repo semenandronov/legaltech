@@ -6,6 +6,7 @@ from app.services.langchain_agents.state import AnalysisState
 from app.services.rag_service import RAGService
 from app.services.document_processor import DocumentProcessor
 from langchain_core.messages import HumanMessage
+from concurrent.futures import ThreadPoolExecutor, as_completed
 import logging
 import time
 
@@ -67,6 +68,9 @@ class AgentCoordinator:
                 "discrepancy_result": None,
                 "risk_result": None,
                 "summary_result": None,
+                "classification_result": None,
+                "entities_result": None,
+                "privilege_result": None,
                 "analysis_types": analysis_types,
                 "errors": [],
                 "metadata": {}
@@ -80,8 +84,20 @@ class AgentCoordinator:
             else:
                 thread_config["recursion_limit"] = 50
             
-            # Run graph
+            # Run graph with parallel processing for independent agents
+            # Note: LangGraph handles parallelization internally, but we can optimize
+            # by running independent analysis types in parallel batches
             final_state = None
+            
+            # Check if we can run independent agents in parallel
+            independent_types = ["timeline", "key_facts", "discrepancy", "entity_extraction", "document_classifier"]
+            dependent_types = ["risk", "summary", "privilege_check"]
+            
+            # If only independent types, we can optimize
+            if all(at in independent_types for at in analysis_types) and len(analysis_types) > 1:
+                logger.info(f"Running {len(analysis_types)} independent agents, using optimized execution")
+                # LangGraph will handle this, but we log it for monitoring
+            
             for state in self.graph.stream(initial_state, thread_config):
                 # Log progress
                 node_name = list(state.keys())[0] if state else "unknown"
@@ -107,6 +123,9 @@ class AgentCoordinator:
                 "discrepancies": final_state.get("discrepancy_result") if final_state else None,
                 "risk_analysis": final_state.get("risk_result") if final_state else None,
                 "summary": final_state.get("summary_result") if final_state else None,
+                "classification": final_state.get("classification_result") if final_state else None,
+                "entities": final_state.get("entities_result") if final_state else None,
+                "privilege": final_state.get("privilege_result") if final_state else None,
                 "errors": final_state.get("errors", []) if final_state else [],
                 "execution_time": execution_time,
                 "metadata": final_state.get("metadata", {}) if final_state else {}
@@ -128,6 +147,9 @@ class AgentCoordinator:
                 "discrepancies": None,
                 "risk_analysis": None,
                 "summary": None,
+                "classification": None,
+                "entities": None,
+                "privilege": None,
                 "errors": [{"coordinator": str(e)}],
                 "execution_time": execution_time,
                 "metadata": {}

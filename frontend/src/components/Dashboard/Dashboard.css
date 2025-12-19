@@ -6,8 +6,8 @@
 }
 
 .stat-card {
-  background: #111111;
-  border: 1px solid #1f1f1f;
+  background: #ffffff;
+  border: 1px solid #e5e7eb;
   border-radius: 12px;
   padding: 24px;
   display: flex;
@@ -17,14 +17,14 @@
 }
 
 .stat-card:hover {
-  border-color: #333;
+  border-color: #d1d5db;
   transform: translateY(-2px);
 }
 
 .stat-card.loading {
   min-height: 120px;
   justify-content: center;
-  color: #a0a0a0;
+  color: #6b7280;
 }
 
 .stat-card-icon {
@@ -39,13 +39,13 @@
 .stat-card-value {
   font-size: 32px;
   font-weight: 700;
-  color: #ffffff;
+  color: #1f2937;
   margin-bottom: 4px;
 }
 
 .stat-card-label {
   font-size: 14px;
-  color: #a0a0a0;
+  color: #6b7280;
   margin-bottom: 4px;
 }
 
@@ -65,7 +65,7 @@
 .cases-list-header h2 {
   font-size: 24px;
   font-weight: 700;
-  color: #ffffff;
+  color: #1f2937;
   margin: 0;
 }
 
@@ -73,7 +73,7 @@
 .cases-list-empty {
   text-align: center;
   padding: 60px 20px;
-  color: #a0a0a0;
+  color: #6b7280;
 }
 
 .cases-list-empty-icon {
@@ -83,13 +83,13 @@
 
 .cases-list-empty h3 {
   font-size: 20px;
-  color: #e5e5e5;
+  color: #1f2937;
   margin: 0 0 8px 0;
 }
 
 .cases-list-empty p {
   font-size: 14px;
-  color: #a0a0a0;
+  color: #6b7280;
   margin: 0;
 }
 
@@ -100,8 +100,8 @@
 }
 
 .case-card {
-  background: #111111;
-  border: 1px solid #1f1f1f;
+  background: #ffffff;
+  border: 1px solid #e5e7eb;
   border-radius: 12px;
   padding: 20px;
   cursor: pointer;
@@ -109,9 +109,9 @@
 }
 
 .case-card:hover {
-  border-color: #333;
+  border-color: #d1d5db;
   transform: translateY(-2px);
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
 }
 
 .case-card-header {
@@ -125,7 +125,7 @@
 .case-card-title {
   font-size: 18px;
   font-weight: 600;
-  color: #ffffff;
+  color: #1f2937;
   margin: 0;
   flex: 1;
   overflow: hidden;
@@ -152,7 +152,7 @@
   display: flex;
   gap: 16px;
   font-size: 14px;
-  color: #a0a0a0;
+  color: #6b7280;
 }
 
 .case-card-type {
@@ -202,18 +202,18 @@
 
 .cases-list-load-more {
   padding: 12px 24px;
-  background: #1f1f1f;
-  border: 1px solid #333;
+  background: #ffffff;
+  border: 1px solid #d1d5db;
   border-radius: 8px;
-  color: #e5e5e5;
+  color: #1f2937;
   cursor: pointer;
   font-size: 14px;
   transition: all 0.2s;
 }
 
 .cases-list-load-more:hover:not(:disabled) {
-  background: #2a2a2a;
-  border-color: #444;
+  background: #f9fafb;
+  border-color: #9ca3af;
 }
 
 .cases-list-load-more:disabled {

@@ -375,4 +375,199 @@ export const updateIntegrations = async (settings: any): Promise<any> => {
   return response.data
 }
 
+// Documents API
+export interface DocumentItem {
+  id: string
+  filename: string
+  file_type: string
+  created_at: string
+}
+
+export interface DocumentListResponse {
+  documents: DocumentItem[]
+  total: number
+}
+
+export const getDocuments = async (caseId: string): Promise<DocumentListResponse> => {
+  const response = await apiClient.get(getApiUrl(`/api/cases/${caseId}/files`))
+  return response.data
+}
+
+// Classification API
+export interface DocumentClassification {
+  id: string
+  file_id: string
+  file_name: string
+  doc_type: string
+  relevance_score: number
+  is_privileged: boolean
+  privilege_type: string
+  key_topics: string[]
+  confidence: number
+  reasoning: string
+  created_at: string
+}
+
+export interface ClassificationsResponse {
+  classifications: DocumentClassification[]
+  total: number
+}
+
+export const getClassifications = async (caseId: string): Promise<ClassificationsResponse> => {
+  const response = await apiClient.get(getApiUrl(`/api/analysis/${caseId}/classify`))
+  return response.data
+}
+
+export const classifyDocuments = async (caseId: string, fileId?: string): Promise<any> => {
+  const response = await apiClient.post(
+    getApiUrl(`/api/analysis/${caseId}/classify`),
+    fileId ? { file_id: fileId } : {}
+  )
+  return response.data
+}
+
+// Entities API
+export interface ExtractedEntity {
+  id: string
+  file_id: string
+  file_name: string
+  text: string
+  type: string
+  confidence: number
+  context: string
+  source_document: string
+  source_page: number | null
+  source_line: number | null
+  created_at: string
+}
+
+export interface EntitiesResponse {
+  entities: ExtractedEntity[]
+  entities_by_type: Record<string, ExtractedEntity[]>
+  total_entities: number
+  by_type_count: Record<string, number>
+}
+
+export const getEntities = async (caseId: string, fileId?: string): Promise<EntitiesResponse> => {
+  const params: any = {}
+  if (fileId) params.file_id = fileId
+  const response = await apiClient.get(getApiUrl(`/api/analysis/${caseId}/entities`), { params })
+  return response.data
+}
+
+export const extractEntities = async (caseId: string, fileId?: string): Promise<any> => {
+  const response = await apiClient.post(
+    getApiUrl(`/api/analysis/${caseId}/entities`),
+    fileId ? { file_id: fileId } : {}
+  )
+  return response.data
+}
+
+// Privilege API
+export interface PrivilegeCheck {
+  id: string
+  file_id: string
+  is_privileged: boolean
+  privilege_type: string
+  confidence: number
+  reasoning: string[]
+  withhold_recommendation: boolean
+  requires_human_review: boolean
+  created_at: string
+}
+
+export interface PrivilegeChecksResponse {
+  privilege_checks: PrivilegeCheck[]
+  total: number
+  privileged_count: number
+  requires_review_count: number
+}
+
+export const getPrivilegeChecks = async (caseId: string): Promise<PrivilegeChecksResponse> => {
+  const response = await apiClient.get(getApiUrl(`/api/analysis/${caseId}/privilege`))
+  return response.data
+}
+
+export const checkPrivilege = async (caseId: string, fileId: string): Promise<any> => {
+  const response = await apiClient.post(
+    getApiUrl(`/api/analysis/${caseId}/privilege`),
+    { file_id: fileId }
+  )
+  return response.data
+}
+
+// Analysis Report API
+export interface AnalysisReport {
+  case_id: string
+  case_title: string | null
+  total_files: number
+  categorization: {
+    high_relevance: {
+      count: number
+      label: string
+      files: any[]
+    }
+    privileged: {
+      count: number
+      label: string
+      files: any[]
+      warning: string
+    }
+    medium_relevance: {
+      count: number
+      label: string
+      files: any[]
+    }
+    low_relevance: {
+      count: number
+      label: string
+      files: any[]
+    }
+  }
+  statistics: {
+    total_entities: number
+    entities_by_type: Record<string, number>
+    timeline_events: number
+    discrepancies: number
+    classified_files: number
+    privilege_checked_files: number
+  }
+  summary: {
+    high_relevance_count: number
+    privileged_count: number
+    low_relevance_count: number
+    message: string
+  }
+}
+
+export const getAnalysisReport = async (caseId: string): Promise<AnalysisReport> => {
+  const response = await apiClient.get(getApiUrl(`/api/analysis/${caseId}/report`))
+  return response.data
+}
+
+// Batch Actions API
+export const batchConfirm = async (caseId: string, fileIds: string[]): Promise<any> => {
+  const response = await apiClient.post(
+    getApiUrl(`/api/analysis/${caseId}/batch/confirm`),
+    { file_ids: fileIds }
+  )
+  return response.data
+}
+
+export const batchReject = async (caseId: string, fileIds: string[]): Promise<any> => {
+  const response = await apiClient.post(
+    getApiUrl(`/api/analysis/${caseId}/batch/reject`),
+    { file_ids: fileIds }
+  )
+  return response.data
+}
+
+export const batchWithhold = async (caseId: string, fileIds: string[]): Promise<any> => {
+  const response = await apiClient.post(
+    getApiUrl(`/api/analysis/${caseId}/batch/withhold`),
+    { file_ids: fileIds }
+  )
+  return response.data
+}
+
 

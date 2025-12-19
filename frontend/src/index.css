@@ -1,28 +1,30 @@
-/* Global styles and CSS variables (ChatGPT-style dark theme) */
+/* Global styles and CSS variables (Light theme) */
 :root {
-  /* ChatGPT color palette */
-  --color-bg: #343541; /* main background */
-  --color-bg-secondary: #202123; /* sidebar background */
-  --color-bg-tertiary: #444654; /* message background */
-  --color-surface: #40414f; /* input background */
-  --color-text: #ececf1; /* primary text */
-  --color-text-secondary: #8e8ea0; /* secondary text */
-  --color-text-muted: #565869; /* muted text */
-  --color-border: #565869; /* borders */
+  /* Light color palette */
+  --color-bg: #ffffff; /* main background */
+  --color-bg-secondary: #f9fafb; /* sidebar background */
+  --color-bg-tertiary: #f3f4f6; /* message background */
+  --color-surface: #ffffff; /* input background */
+  --color-surface-alt: #f9fafb; /* alternate surface */
+  --color-text: #1f2937; /* primary text */
+  --color-text-secondary: #6b7280; /* secondary text */
+  --color-text-muted: #9ca3af; /* muted text */
+  --color-text-light: #6b7280; /* light text */
+  --color-border: #e5e7eb; /* borders */
   
   /* Accent colors */
-  --color-primary: #10a37f; /* ChatGPT green */
-  --color-primary-hover: #0d8f6e;
-  --color-success: #10a37f;
+  --color-primary: #3b82f6; /* blue */
+  --color-primary-hover: #2563eb;
+  --color-success: #10b981;
   --color-error: #ef4444;
   
   /* Message colors */
-  --color-message-user: #10a37f; /* user message background */
+  --color-message-user: #3b82f6; /* user message background */
   --color-message-assistant: transparent; /* assistant message (no background) */
   
   /* Interactive elements */
-  --color-hover: rgba(255, 255, 255, 0.05);
-  --color-active: rgba(255, 255, 255, 0.1);
+  --color-hover: rgba(0, 0, 0, 0.05);
+  --color-active: rgba(0, 0, 0, 0.1);
 }
 
 * {

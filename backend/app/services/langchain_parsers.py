@@ -43,6 +43,8 @@ class TimelineEventModel(BaseModel):
     source_document: str = Field(description="Source document filename")
     source_page: Optional[int] = Field(None, description="Page number in source document")
     source_line: Optional[int] = Field(None, description="Line number in source document")
+    reasoning: str = Field(description="Объяснение почему это событие было извлечено из документа")
+    confidence: float = Field(description="Уверенность в извлечении события (0-1)", ge=0.0, le=1.0)
 
 
 class DiscrepancyModel(BaseModel):
@@ -52,6 +54,8 @@ class DiscrepancyModel(BaseModel):
     description: str = Field(description="Description of the discrepancy")
     source_documents: List[str] = Field(description="List of source document filenames")
     details: Dict[str, Any] = Field(default_factory=dict, description="Additional details")
+    reasoning: str = Field(description="Объяснение почему это противоречие было обнаружено")
+    confidence: float = Field(description="Уверенность в обнаружении противоречия (0-1)", ge=0.0, le=1.0)
 
 
 class KeyFactModel(BaseModel):
@@ -61,7 +65,41 @@ class KeyFactModel(BaseModel):
     description: Optional[str] = Field(None, description="Additional description")
     source_document: str = Field(description="Source document filename")
     source_page: Optional[int] = Field(None, description="Page number")
-    confidence: Optional[float] = Field(None, description="Confidence score 0-1")
+    confidence: float = Field(description="Confidence score 0-1", ge=0.0, le=1.0)
+    reasoning: str = Field(description="Объяснение почему этот факт считается ключевым")
+
+
+class DocumentClassificationModel(BaseModel):
+    """Model for document classification"""
+    doc_type: str = Field(description="Тип документа: письмо, контракт, отчет и т.д.")
+    relevance_score: int = Field(description="Релевантность к делу (0-100)", ge=0, le=100)
+    is_privileged: bool = Field(description="Защищено ли привилегией (предварительная оценка)")
+    privilege_type: str = Field(description="Тип привилегии: attorney-client, work-product, none")
+    key_topics: List[str] = Field(description="Массив основных тем документа")
+    confidence: float = Field(description="Уверенность классификации (0-1)", ge=0.0, le=1.0)
+    reasoning: str = Field(description="Подробное объяснение решения классификации - это критично!")
+
+
+class EntityModel(BaseModel):
+    """Model for extracted entity"""
+    text: str = Field(description="Текст сущности")
+    type: str = Field(description="Тип сущности: PERSON, ORG, DATE, AMOUNT, CONTRACT_TERM")
+    confidence: float = Field(description="Уверенность в извлечении (0-1)", ge=0.0, le=1.0)
+    context: str = Field(description="Контекст, в котором была найдена сущность")
+
+
+class EntitiesExtractionModel(BaseModel):
+    """Model for entities extraction result"""
+    entities: List[EntityModel] = Field(description="Извлеченные сущности")
+
+
+class PrivilegeCheckModel(BaseModel):
+    """Model for privilege check result"""
+    is_privileged: bool = Field(description="Защищено ли привилегией")
+    privilege_type: str = Field(description="Тип привилегии: attorney-client, work-product, none")
+    confidence: float = Field(description="Уверенность проверки (0-100, критично >95%)", ge=0.0, le=100.0)
+    reasoning: List[str] = Field(description="Ключевые факторы для решения (массив строк)")
+    withhold_recommendation: bool = Field(description="Рекомендация не раскрывать документ")
 
 
 class ParserService:
@@ -204,6 +242,126 @@ class ParserService:
                 except:
                     pass
             return []
+    
+    @staticmethod
+    def parse_document_classification(text: str) -> DocumentClassificationModel:
+        """
+        Parse document classification from LLM output
+        
+        Args:
+            text: LLM output text
+            
+        Returns:
+            DocumentClassificationModel object
+        """
+        try:
+            import json
+            # Extract JSON from text
+            if "```json" in text:
+                text = text.split("```json")[1].split("```")[0].strip()
+            elif "```" in text:
+                text = text.split("```")[1].split("```")[0].strip()
+            
+            data = json.loads(text)
+            
+            # Handle both dict and single object
+            if isinstance(data, list) and len(data) > 0:
+                data = data[0]
+            
+            classification = DocumentClassificationModel(**data)
+            return classification
+        except Exception as e:
+            logger.error(f"Error parsing document classification: {e}")
+            # Return default classification on error
+            return DocumentClassificationModel(
+                doc_type="unknown",
+                relevance_score=0,
+                is_privileged=False,
+                privilege_type="none",
+                key_topics=[],
+                confidence=0.0,
+                reasoning=f"Ошибка парсинга: {str(e)}"
+            )
+    
+    @staticmethod
+    def parse_entities(text: str) -> EntitiesExtractionModel:
+        """
+        Parse entities extraction from LLM output
+        
+        Args:
+            text: LLM output text
+            
+        Returns:
+            EntitiesExtractionModel object
+        """
+        try:
+            import json
+            # Extract JSON from text
+            if "```json" in text:
+                text = text.split("```json")[1].split("```")[0].strip()
+            elif "```" in text:
+                text = text.split("```")[1].split("```")[0].strip()
+            
+            data = json.loads(text)
+            
+            # Handle both dict with entities key and direct list
+            if isinstance(data, dict) and "entities" in data:
+                entities_data = data["entities"]
+            elif isinstance(data, list):
+                entities_data = data
+            else:
+                entities_data = []
+            
+            entities = []
+            for item in entities_data:
+                try:
+                    entity = EntityModel(**item)
+                    entities.append(entity)
+                except Exception as e:
+                    logger.warning(f"Failed to parse entity: {e}, data: {item}")
+            
+            return EntitiesExtractionModel(entities=entities)
+        except Exception as e:
+            logger.error(f"Error parsing entities: {e}")
+            return EntitiesExtractionModel(entities=[])
+    
+    @staticmethod
+    def parse_privilege_check(text: str) -> PrivilegeCheckModel:
+        """
+        Parse privilege check from LLM output
+        
+        Args:
+            text: LLM output text
+            
+        Returns:
+            PrivilegeCheckModel object
+        """
+        try:
+            import json
+            # Extract JSON from text
+            if "```json" in text:
+                text = text.split("```json")[1].split("```")[0].strip()
+            elif "```" in text:
+                text = text.split("```")[1].split("```")[0].strip()
+            
+            data = json.loads(text)
+            
+            # Handle both dict and single object
+            if isinstance(data, list) and len(data) > 0:
+                data = data[0]
+            
+            privilege_check = PrivilegeCheckModel(**data)
+            return privilege_check
+        except Exception as e:
+            logger.error(f"Error parsing privilege check: {e}")
+            # Return default privilege check on error (safe default: not privileged)
+            return PrivilegeCheckModel(
+                is_privileged=False,
+                privilege_type="none",
+                confidence=0.0,
+                reasoning=[f"Ошибка парсинга: {str(e)}"],
+                withhold_recommendation=False
+            )
     
     @staticmethod
     def parse_key_facts(text: str) -> List[KeyFactModel]:

@@ -47,12 +47,12 @@ def key_facts_agent_node(
         # Get tools
         tools = get_all_tools()
         
-        # Initialize LLM
+        # Initialize LLM with temperature=0 for deterministic extraction
         llm = ChatOpenAI(
             model=config.OPENROUTER_MODEL,
             openai_api_key=config.OPENROUTER_API_KEY,
             openai_api_base=config.OPENROUTER_BASE_URL,
-            temperature=0.3,
+            temperature=0,  # Детерминизм критичен для юридических задач
             max_tokens=2000
         )
         
@@ -109,16 +109,31 @@ def key_facts_agent_node(
             query = "Извлеки ключевые факты: стороны спора, суммы, даты, суть спора, судья, суд"
             relevant_docs = rag_service.retrieve_context(case_id, query, k=20)
             
-            # Use LLM to extract key facts
-            from app.services.llm_service import LLMService
-            llm_service = LLMService()
+            # Use LLM with structured output for key facts extraction
+            from langchain_core.prompts import ChatPromptTemplate
+            from app.services.langchain_parsers import KeyFactModel
+            from typing import List
             
             sources_text = rag_service.format_sources_for_prompt(relevant_docs)
             system_prompt = get_agent_prompt("key_facts")
             user_prompt = f"Извлеки ключевые факты из следующих документов:\n\n{sources_text}"
             
-            response = llm_service.generate(system_prompt, user_prompt, temperature=0.3)
-            parsed_facts = ParserService.parse_key_facts(response)
+            # Try to use structured output if supported
+            try:
+                structured_llm = llm.with_structured_output(List[KeyFactModel])
+                prompt = ChatPromptTemplate.from_messages([
+                    ("system", system_prompt),
+                    ("human", user_prompt)
+                ])
+                chain = prompt | structured_llm
+                parsed_facts = chain.invoke({})
+            except Exception as e:
+                logger.warning(f"Structured output not supported, falling back to JSON parsing: {e}")
+                # Fallback to direct LLM call and parsing
+                from app.services.llm_service import LLMService
+                llm_service = LLMService()
+                response = llm_service.generate(system_prompt, user_prompt, temperature=0)
+                parsed_facts = ParserService.parse_key_facts(response)
         
         # Convert to structured format
         facts_data = {
@@ -135,7 +150,8 @@ def key_facts_agent_node(
                 "description": fact_model.description,
                 "source_document": fact_model.source_document,
                 "source_page": fact_model.source_page,
-                "confidence": fact_model.confidence
+                "confidence": fact_model.confidence,
+                "reasoning": fact_model.reasoning if hasattr(fact_model, 'reasoning') else ""
             }
             
             # Categorize facts

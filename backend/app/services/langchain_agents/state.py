@@ -18,6 +18,9 @@ class AnalysisState(TypedDict):
     discrepancy_result: Optional[Dict[str, Any]]
     risk_result: Optional[Dict[str, Any]]
     summary_result: Optional[Dict[str, Any]]
+    classification_result: Optional[Dict[str, Any]]  # Document classification
+    entities_result: Optional[Dict[str, Any]]  # Entity extraction
+    privilege_result: Optional[Dict[str, Any]]  # Privilege check
     
     # Analysis types requested
     analysis_types: List[str]

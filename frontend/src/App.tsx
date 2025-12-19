@@ -4,6 +4,7 @@ import LoginPage from './pages/LoginPage'
 import RegisterPage from './pages/RegisterPage'
 import Dashboard from './pages/Dashboard'
 import AnalysisPage from './pages/AnalysisPage'
+import CaseWorkspacePage from './pages/CaseWorkspacePage'
 import ReportsPage from './pages/ReportsPage'
 import SettingsPage from './pages/SettingsPage'
 import { useState, useEffect } from 'react'
@@ -29,6 +30,14 @@ function App() {
         element={
           <ProtectedRoute>
             <CaseChatPage />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/cases/:caseId/workspace"
+        element={
+          <ProtectedRoute>
+            <CaseWorkspacePage />
           </ProtectedRoute>
         }
       />

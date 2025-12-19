@@ -47,12 +47,12 @@ def discrepancy_agent_node(
         # Get tools
         tools = get_all_tools()
         
-        # Initialize LLM
+        # Initialize LLM with temperature=0 for deterministic detection
         llm = ChatOpenAI(
             model=config.OPENROUTER_MODEL,
             openai_api_key=config.OPENROUTER_API_KEY,
             openai_api_base=config.OPENROUTER_BASE_URL,
-            temperature=0.3,
+            temperature=0,  # Детерминизм критичен для юридических задач
             max_tokens=2000
         )
         
@@ -111,29 +111,49 @@ def discrepancy_agent_node(
             query = "Найди все противоречия, несоответствия и расхождения между документами"
             relevant_docs = rag_service.retrieve_context(case_id, query, k=30)
             
-            # Use LLM to analyze discrepancies
-            from app.services.llm_service import LLMService
-            llm_service = LLMService()
+            # Use LLM with structured output for discrepancy detection
+            from langchain_core.prompts import ChatPromptTemplate
+            from app.services.langchain_parsers import DiscrepancyModel
+            from typing import List
             
             sources_text = rag_service.format_sources_for_prompt(relevant_docs)
             system_prompt = get_agent_prompt("discrepancy")
             user_prompt = f"Проанализируй следующие документы и найди все противоречия:\n\n{sources_text}"
             
-            response = llm_service.generate(system_prompt, user_prompt, temperature=0.3)
-            parsed_discrepancies = ParserService.parse_discrepancies(response)
+            # Try to use structured output if supported
+            try:
+                structured_llm = llm.with_structured_output(List[DiscrepancyModel])
+                prompt = ChatPromptTemplate.from_messages([
+                    ("system", system_prompt),
+                    ("human", user_prompt)
+                ])
+                chain = prompt | structured_llm
+                parsed_discrepancies = chain.invoke({})
+            except Exception as e:
+                logger.warning(f"Structured output not supported, falling back to JSON parsing: {e}")
+                # Fallback to direct LLM call and parsing
+                from app.services.llm_service import LLMService
+                llm_service = LLMService()
+                response = llm_service.generate(system_prompt, user_prompt, temperature=0)
+                parsed_discrepancies = ParserService.parse_discrepancies(response)
         
         # Save discrepancies to database
         saved_discrepancies = []
         if db and parsed_discrepancies:
             for disc_model in parsed_discrepancies:
                 try:
+                    # Include reasoning and confidence in details
+                    details_with_reasoning = disc_model.details.copy() if disc_model.details else {}
+                    details_with_reasoning["reasoning"] = disc_model.reasoning if hasattr(disc_model, 'reasoning') else ""
+                    details_with_reasoning["confidence"] = disc_model.confidence if hasattr(disc_model, 'confidence') else 0.0
+                    
                     discrepancy = Discrepancy(
                         case_id=case_id,
                         type=disc_model.type,
                         severity=disc_model.severity,
                         description=disc_model.description,
                         source_documents=disc_model.source_documents,
-                        details=disc_model.details
+                        details=details_with_reasoning
                     )
                     db.add(discrepancy)
                     saved_discrepancies.append(discrepancy)
@@ -153,7 +173,9 @@ def discrepancy_agent_node(
                     "severity": disc.severity if hasattr(disc, 'severity') else disc_model.severity,
                     "description": disc.description if hasattr(disc, 'description') else disc_model.description,
                     "source_documents": disc.source_documents if hasattr(disc, 'source_documents') else disc_model.source_documents,
-                    "details": disc.details if hasattr(disc, 'details') else disc_model.details
+                    "details": disc.details if hasattr(disc, 'details') else disc_model.details,
+                    "reasoning": disc.details.get("reasoning", "") if hasattr(disc, 'details') and disc.details else (disc_model.reasoning if hasattr(disc_model, 'reasoning') else ""),
+                    "confidence": disc.details.get("confidence", 0.0) if hasattr(disc, 'details') and disc.details else (disc_model.confidence if hasattr(disc_model, 'confidence') else 0.0)
                 }
                 for disc, disc_model in zip(saved_discrepancies, parsed_discrepancies) if saved_discrepancies
             ] or [
@@ -162,7 +184,9 @@ def discrepancy_agent_node(
                     "severity": disc.severity,
                     "description": disc.description,
                     "source_documents": disc.source_documents,
-                    "details": disc.details
+                    "details": disc.details,
+                    "reasoning": disc.reasoning if hasattr(disc, 'reasoning') else "",
+                    "confidence": disc.confidence if hasattr(disc, 'confidence') else 0.0
                 }
                 for disc in parsed_discrepancies
             ],

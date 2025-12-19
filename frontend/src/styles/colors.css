@@ -1,0 +1,92 @@
+/* Color Coding System согласно UX/UI гайду */
+
+:root {
+  /* Основные цвета для confidence и статусов */
+  --color-safe: #10b981;      /* GREEN (>90% confidence) - Safe, Confirmed, OK, Relevant */
+  --color-info: #3b82f6;      /* BLUE - Neutral, Information, Person */
+  --color-caution: #f59e0b;   /* YELLOW (60-90%) - Caution, Review Needed, Low Confidence */
+  --color-critical: #ef4444;  /* RED (<60%) - Critical, Withheld, Error, Not Relevant */
+  --color-disabled: #6b7280;  /* GRAY - Disabled, Archived, Pending */
+  --color-privileged: #a855f7; /* PURPLE - Privileged, Sensitive */
+  
+  /* Фоновые цвета */
+  --color-background: #ffffff;
+  --color-background-alt: #f9fafb;
+  --color-text: #1f2937;
+  --color-text-muted: #6b7280;
+  
+  /* Границы */
+  --color-border: #e5e7eb;
+  --color-border-light: #f3f4f6;
+}
+
+/* Confidence badges */
+.confidence-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 4px 8px;
+  border-radius: 4px;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.confidence-badge.safe {
+  background: var(--color-safe);
+  color: white;
+}
+
+.confidence-badge.caution {
+  background: var(--color-caution);
+  color: white;
+}
+
+.confidence-badge.critical {
+  background: var(--color-critical);
+  color: white;
+}
+
+/* Document status colors */
+.document-item.safe {
+  border-left: 4px solid var(--color-safe);
+}
+
+.document-item.caution {
+  border-left: 4px solid var(--color-caution);
+}
+
+.document-item.critical {
+  border-left: 4px solid var(--color-critical);
+}
+
+.document-item.privileged {
+  border-left: 4px solid var(--color-privileged);
+}
+
+/* Entity highlighting colors */
+.entity-person {
+  background: var(--color-info);
+  color: white;
+  padding: 2px 4px;
+  border-radius: 3px;
+}
+
+.entity-org {
+  background: var(--color-safe);
+  color: white;
+  padding: 2px 4px;
+  border-radius: 3px;
+}
+
+.entity-date {
+  background: var(--color-caution);
+  color: white;
+  padding: 2px 4px;
+  border-radius: 3px;
+}
+
+.entity-amount {
+  background: var(--color-critical);
+  color: white;
+  padding: 2px 4px;
+  border-radius: 3px;
+}

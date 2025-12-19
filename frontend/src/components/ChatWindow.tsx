@@ -1,8 +1,12 @@
 import { useState, useEffect, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
 import './ChatWindow.css'
-import { fetchHistory, sendMessage, SourceInfo, HistoryMessage } from '../services/api'
+import './Chat/Chat.css'
+import { fetchHistory, sendMessage, SourceInfo, HistoryMessage, classifyDocuments, checkPrivilege, extractEntities, getTimeline, getAnalysisReport } from '../services/api'
 import ReactMarkdown from 'react-markdown'
+import QuickButtons from './Chat/QuickButtons'
+import ConfidenceBadge from './Common/ConfidenceBadge'
+import CitationLink from './Chat/CitationLink'
 
 interface Message {
   role: 'user' | 'assistant'
@@ -12,7 +16,8 @@ interface Message {
 
 interface ChatWindowProps {
   caseId: string
-  fileNames?: string[]  // Optional, not currently used
+  fileNames?: string[]
+  onDocumentClick?: (filename: string) => void  // Callback для открытия документа в viewer
 }
 
 const MAX_INPUT_CHARS = 5000
@@ -39,7 +44,7 @@ const formatSourceReference = (source: SourceInfo): string => {
   return ref
 }
 
-const ChatWindow = ({ caseId }: ChatWindowProps) => {
+const ChatWindow = ({ caseId, fileNames = [], onDocumentClick }: ChatWindowProps) => {
   const navigate = useNavigate()
   const [messages, setMessages] = useState<Message[]>([])
   const [inputValue, setInputValue] = useState('')
@@ -177,34 +182,131 @@ const ChatWindow = ({ caseId }: ChatWindowProps) => {
 
   const handleNavigateToTimeline = () => {
     navigate(`/cases/${caseId}/analysis`)
-    // Timeline будет открыт по умолчанию или можно добавить hash
+  }
+
+  const handleClassifyAll = async () => {
+    try {
+      setIsLoading(true)
+      await classifyDocuments(caseId)
+      const response = await sendMessage(caseId, 'Классифицируй все документы в деле')
+      const assistantMessage: Message = {
+        role: 'assistant',
+        content: response.answer,
+        sources: response.sources || []
+      }
+      setMessages((prev) => [...prev, assistantMessage])
+    } catch (err: any) {
+      setError(err.response?.data?.detail || 'Ошибка при классификации документов')
+    } finally {
+      setIsLoading(false)
+    }
+  }
+
+  const handleFindPrivilege = async () => {
+    try {
+      setIsLoading(true)
+      const response = await sendMessage(caseId, 'Найди все привилегированные документы')
+      const assistantMessage: Message = {
+        role: 'assistant',
+        content: response.answer,
+        sources: response.sources || []
+      }
+      setMessages((prev) => [...prev, assistantMessage])
+    } catch (err: any) {
+      setError(err.response?.data?.detail || 'Ошибка при поиске привилегированных документов')
+    } finally {
+      setIsLoading(false)
+    }
+  }
+
+  const handleTimeline = async () => {
+    try {
+      setIsLoading(true)
+      const timeline = await getTimeline(caseId)
+      const response = await sendMessage(caseId, 'Покажи таймлайн событий из документов')
+      const assistantMessage: Message = {
+        role: 'assistant',
+        content: response.answer || `Найдено ${timeline.total} событий в таймлайне`,
+        sources: response.sources || []
+      }
+      setMessages((prev) => [...prev, assistantMessage])
+    } catch (err: any) {
+      setError(err.response?.data?.detail || 'Ошибка при загрузке таймлайна')
+    } finally {
+      setIsLoading(false)
+    }
+  }
+
+  const handleStatistics = async () => {
+    try {
+      setIsLoading(true)
+      const report = await getAnalysisReport(caseId)
+      const statsText = `Статистика по делу:\n- Всего файлов: ${report.total_files}\n- Высокая релевантность: ${report.summary.high_relevance_count}\n- Привилегированных: ${report.summary.privileged_count}\n- Низкая релевантность: ${report.summary.low_relevance_count}`
+      const assistantMessage: Message = {
+        role: 'assistant',
+        content: statsText,
+        sources: []
+      }
+      setMessages((prev) => [...prev, assistantMessage])
+    } catch (err: any) {
+      setError(err.response?.data?.detail || 'Ошибка при загрузке статистики')
+    } finally {
+      setIsLoading(false)
+    }
+  }
+
+  const handleExtractEntities = async () => {
+    try {
+      setIsLoading(true)
+      await extractEntities(caseId)
+      const response = await sendMessage(caseId, 'Извлеки все сущности из документов')
+      const assistantMessage: Message = {
+        role: 'assistant',
+        content: response.answer,
+        sources: response.sources || []
+      }
+      setMessages((prev) => [...prev, assistantMessage])
+    } catch (err: any) {
+      setError(err.response?.data?.detail || 'Ошибка при извлечении сущностей')
+    } finally {
+      setIsLoading(false)
+    }
+  }
+
+  const handleCitationClick = (source: SourceInfo) => {
+    if (onDocumentClick) {
+      onDocumentClick(source.file)
+    } else {
+      // Fallback: навигация к анализу
+      navigate(`/cases/${caseId}/workspace`)
+    }
+  }
+
+  // Извлекаем confidence из ответа (если есть)
+  const extractConfidence = (content: string): number | null => {
+    const match = content.match(/(\d+)%?\s*(?:confidence|уверенность|conf)/i)
+    if (match) {
+      return parseInt(match[1])
+    }
+    return null
   }
 
   return (
     <div className="chat-container">
-      {/* Navigation bar for quick access to analysis */}
-      <div className="chat-nav-bar">
-        <div className="chat-nav-buttons">
-          <button
-            type="button"
-            className="chat-nav-button"
-            onClick={handleNavigateToAnalysis}
-            title="Перейти к анализу дела"
-          >
-            <span className="chat-nav-icon">📊</span>
-            <span className="chat-nav-text">Анализ</span>
-          </button>
-          <button
-            type="button"
-            className="chat-nav-button"
-            onClick={handleNavigateToTimeline}
-            title="Показать таймлайн событий"
-          >
-            <span className="chat-nav-icon">📅</span>
-            <span className="chat-nav-text">Таймлайн</span>
-          </button>
-        </div>
+      <div className="chat-header">
+        <h3 className="chat-header-title">🤖 E-Discovery Assistant</h3>
       </div>
+
+      {!hasMessages && !isLoading && !historyError && (
+        <QuickButtons
+          onClassifyAll={handleClassifyAll}
+          onFindPrivilege={handleFindPrivilege}
+          onTimeline={handleTimeline}
+          onStatistics={handleStatistics}
+          onExtractEntities={handleExtractEntities}
+        />
+      )}
+
       <div className="chat-messages">
         <div className="chat-messages-wrapper">
         {historyError && (
@@ -229,109 +331,107 @@ const ChatWindow = ({ caseId }: ChatWindowProps) => {
         )}
         {!hasMessages && !isLoading && !historyError && (
           <div className="empty-state">
-              <div className="empty-card">
-                <div className="empty-icon">⚖️</div>
-                <h3 className="empty-title">Legal AI</h3>
-                <p className="empty-subtitle">
-                  Задайте вопрос по загруженным документам. AI проанализирует контракты, переписку и таблицы.
-                </p>
-                <div className="empty-questions-grid">
-                  {RECOMMENDED_QUESTIONS.map((q) => (
-                    <button
-                      key={q}
-                      type="button"
-                      className="empty-question-btn"
-                      onClick={() => handleRecommendedClick(q)}
-                    >
-                      {q}
-                    </button>
-                  ))}
-                </div>
-                {/* Quick actions panel */}
-                <div className="quick-actions-panel">
-                  <div className="quick-actions-title">Быстрые действия:</div>
-                  <div className="quick-actions-buttons">
-                    <button
-                      type="button"
-                      className="quick-action-btn"
-                      onClick={(e) => {
-                        e.preventDefault()
-                        handleSend('Проанализируй документы и найди все важные даты и события')
-                      }}
-                    >
-                      📅 Извлечь таймлайн
-                    </button>
-                    <button
-                      type="button"
-                      className="quick-action-btn"
-                      onClick={(e) => {
-                        e.preventDefault()
-                        handleSend('Проанализируй документы и найди все противоречия и несоответствия')
-                      }}
-                    >
-                      ⚠️ Найти противоречия
-                    </button>
-                    <button
-                      type="button"
-                      className="quick-action-btn"
-                      onClick={(e) => {
-                        e.preventDefault()
-                        handleSend('Извлеки ключевые факты из документов')
-                      }}
-                    >
-                      🎯 Ключевые факты
-                    </button>
-                    <button
-                      type="button"
-                      className="quick-action-btn"
-                      onClick={(e) => {
-                        e.preventDefault()
-                        handleSend('Проведи анализ рисков по этому делу')
-                      }}
-                    >
-                      📈 Анализ рисков
-                    </button>
-                  </div>
-                </div>
+            <div className="empty-card">
+              <div className="empty-icon">⚖️</div>
+              <h3 className="empty-title">Legal AI</h3>
+              <p className="empty-subtitle">
+                Задайте вопрос по загруженным документам. AI проанализирует контракты, переписку и таблицы.
+              </p>
+              <div className="empty-questions-grid">
+                {RECOMMENDED_QUESTIONS.map((q) => (
+                  <button
+                    key={q}
+                    type="button"
+                    className="empty-question-btn"
+                    onClick={() => handleRecommendedClick(q)}
+                  >
+                    {q}
+                  </button>
+                ))}
               </div>
+            </div>
           </div>
         )}
 
-        {messages.map((message, index) => (
-          <div
-            key={index}
-            className={`message ${message.role === 'user' ? 'message-user' : 'message-assistant'}`}
-            role="article"
-            aria-label={message.role === 'user' ? 'Сообщение пользователя' : 'Ответ ассистента'}
-          >
-            {message.role === 'assistant' && (
-              <div className="message-avatar assistant-avatar">AI</div>
-            )}
-            {message.role === 'user' && (
-              <div className="message-avatar user-avatar">You</div>
-            )}
-            <div className={`message-bubble ${message.role}`}>
-              <div className="message-text">
-                <ReactMarkdown>{message.content}</ReactMarkdown>
-              </div>
-              {message.sources && message.sources.length > 0 && (
-                <div className="sources">
-                  <div className="sources-title">Источники:</div>
-                  <div className="sources-list">
-                    {message.sources.map((source, idx) => {
-                      const sourceRef = formatSourceReference(source)
-                      return (
-                        <div key={idx} className="source-item" title={source.text_preview || sourceRef}>
-                          <span className="source-ref">{sourceRef}</span>
-                        </div>
-                      )
-                    })}
-                  </div>
-                </div>
+        {messages.map((message, index) => {
+          const confidence = extractConfidence(message.content)
+          const hasSources = message.sources && message.sources.length > 0
+          const hasMultipleSources = hasSources && message.sources.length > 1
+
+          return (
+            <div
+              key={index}
+              className={`message ${message.role === 'user' ? 'message-user' : 'message-assistant'}`}
+              role="article"
+              aria-label={message.role === 'user' ? 'Сообщение пользователя' : 'Ответ ассистента'}
+            >
+              {message.role === 'assistant' && (
+                <div className="message-avatar assistant-avatar">AI</div>
               )}
+              {message.role === 'user' && (
+                <div className="message-avatar user-avatar">You</div>
+              )}
+              <div className={`message-bubble ${message.role}`}>
+                <div className="message-text">
+                  <ReactMarkdown>{message.content}</ReactMarkdown>
+                </div>
+                
+                {message.role === 'assistant' && confidence !== null && (
+                  <div style={{ marginTop: '8px' }}>
+                    <span style={{ fontSize: '12px', color: '#6b7280' }}>Уверенность: </span>
+                    <ConfidenceBadge confidence={confidence} />
+                  </div>
+                )}
+
+                {hasSources && (
+                  <div className="chat-message-sources">
+                    <div className="chat-message-sources-title">Источники:</div>
+                    <div className="chat-message-sources-list">
+                      {message.sources.map((source, idx) => (
+                        <CitationLink
+                          key={idx}
+                          source={source}
+                          onClick={handleCitationClick}
+                        />
+                      ))}
+                    </div>
+                    {hasMultipleSources && (
+                      <div className="chat-batch-actions">
+                        <button
+                          className="chat-batch-action-btn"
+                          onClick={() => {
+                            // TODO: Реализовать batch withhold для найденных документов
+                            console.log('Withhold these', message.sources?.map(s => s.file))
+                          }}
+                        >
+                          🔒 Withhold эти {message.sources.length}
+                        </button>
+                        <button
+                          className="chat-batch-action-btn secondary"
+                          onClick={() => {
+                            // TODO: Реализовать export списка
+                            console.log('Export list', message.sources?.map(s => s.file))
+                          }}
+                        >
+                          📋 Экспорт список
+                        </button>
+                        <button
+                          className="chat-batch-action-btn secondary"
+                          onClick={() => {
+                            // TODO: Показать статистику
+                            handleStatistics()
+                          }}
+                        >
+                          📊 Статистика по типам
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
             </div>
-          </div>
-        ))}
+          )
+        })}
 
         {isLoading && (
           <div className="message message-assistant" role="status" aria-live="polite">

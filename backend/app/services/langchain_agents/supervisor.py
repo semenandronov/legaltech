@@ -27,8 +27,11 @@ def create_supervisor_agent() -> Any:
     Returns:
         Supervisor agent instance
     """
-    # Create handoff tools for each agent
+    # Create handoff tools for each agent (все агенты)
     handoff_tools = [
+        create_handoff_tool("document_classifier"),
+        create_handoff_tool("privilege_check"),
+        create_handoff_tool("entity_extraction"),
         create_handoff_tool("timeline"),
         create_handoff_tool("key_facts"),
         create_handoff_tool("discrepancy"),
@@ -36,12 +39,12 @@ def create_supervisor_agent() -> Any:
         create_handoff_tool("summary"),
     ]
     
-    # Initialize LLM
+    # Initialize LLM with temperature=0 for deterministic routing
     llm = ChatOpenAI(
         model=config.OPENROUTER_MODEL,
         openai_api_key=config.OPENROUTER_API_KEY,
         openai_api_base=config.OPENROUTER_BASE_URL,
-        temperature=0.1,  # Low temperature for consistent routing decisions
+        temperature=0,  # Детерминизм критичен для маршрутизации
         max_tokens=500
     )
     
@@ -58,6 +61,9 @@ def route_to_agent(state: AnalysisState) -> str:
     """
     Route function that determines which agent should handle the next task
     
+    Работает как "бригадир" - координирует работу специализированных агентов
+    с reasoning и логированием решений.
+    
     Args:
         state: Current graph state
     
@@ -66,6 +72,7 @@ def route_to_agent(state: AnalysisState) -> str:
     """
     analysis_types = state.get("analysis_types", [])
     requested_types = set(analysis_types)
+    case_id = state.get("case_id", "unknown")
     
     # Check what's already done
     completed = set()
@@ -79,29 +86,106 @@ def route_to_agent(state: AnalysisState) -> str:
         completed.add("risk")
     if state.get("summary_result"):
         completed.add("summary")
+    if state.get("classification_result"):
+        completed.add("document_classifier")
+    if state.get("entities_result"):
+        completed.add("entity_extraction")
+    if state.get("privilege_result"):
+        completed.add("privilege_check")
     
     # Check dependencies
     discrepancy_ready = state.get("discrepancy_result") is not None
     key_facts_ready = state.get("key_facts_result") is not None
+    classification_ready = state.get("classification_result") is not None
     
-    # Determine next agent
-    # Independent agents can run in parallel
-    if "timeline" in requested_types and "timeline" not in completed:
-        return "timeline"
-    if "key_facts" in requested_types and "key_facts" not in completed:
-        return "key_facts"
-    if "discrepancy" in requested_types and "discrepancy" not in completed:
-        return "discrepancy"
+    # Determine next agent with reasoning (как бригадир объясняет решение)
+    reasoning_parts = []
+    next_agent = None
     
-    # Dependent agents
-    if "risk" in requested_types and "risk" not in completed and discrepancy_ready:
-        return "risk"
-    if "summary" in requested_types and "summary" not in completed and key_facts_ready:
-        return "summary"
+    # Priority order (как описал пользователь):
+    # 1. Document classifier (должен запуститься первым - "Что за документ?")
+    if "document_classifier" in requested_types and "document_classifier" not in completed:
+        reasoning_parts.append("Классификатор должен запуститься первым, чтобы понять тип документов")
+        next_agent = "document_classifier"
+        logger.info(f"[Супервизор] Дело {case_id}: → Классификатор: 'Что за документ?'")
     
-    # All done
-    if requested_types.issubset(completed):
-        return "end"
+    # 2. Privilege check (если классификация показала потенциальную привилегию)
+    elif "privilege_check" in requested_types and "privilege_check" not in completed:
+        if classification_ready:
+            classification = state.get("classification_result", {})
+            classifications = classification.get("classifications", [])
+            has_potential_privilege = any(c.get("is_privileged", False) for c in classifications)
+            if has_potential_privilege:
+                privileged_count = len([c for c in classifications if c.get("is_privileged", False)])
+                reasoning_parts.append(f"Классификатор нашел {privileged_count} потенциально привилегированных документов → проверяем привилегию")
+                next_agent = "privilege_check"
+                logger.info(f"[Супервизор] Дело {case_id}: Классификатор нашел привилегированные → Привилегир: 'Проверяю на адвокатскую тайну'")
+        # Также запускаем если явно запрошено
+        if next_agent is None and "privilege_check" in requested_types:
+            reasoning_parts.append("Явно запрошена проверка привилегий")
+            next_agent = "privilege_check"
+            logger.info(f"[Супервизор] Дело {case_id}: → Привилегир: 'Проверяю привилегию'")
     
-    # If dependencies not ready, wait (return to supervisor)
-    return "supervisor"
+    # 3. Entity extraction (независимый, может работать параллельно - "Найди людей и даты")
+    elif "entity_extraction" in requested_types and "entity_extraction" not in completed:
+        reasoning_parts.append("Энтити-Экстрактор может работать параллельно, извлекая сущности")
+        next_agent = "entity_extraction"
+        logger.info(f"[Супервизор] Дело {case_id}: → Энтити-Экстрактор: 'Найди людей, даты, суммы'")
+    
+    # 4. Независимые агенты могут работать параллельно
+    elif "timeline" in requested_types and "timeline" not in completed:
+        reasoning_parts.append("Timeline агент независим, может работать параллельно")
+        next_agent = "timeline"
+        logger.info(f"[Супервизор] Дело {case_id}: → Timeline: 'Извлекаю события'")
+    elif "key_facts" in requested_types and "key_facts" not in completed:
+        reasoning_parts.append("Key Facts агент независим, может работать параллельно")
+        next_agent = "key_facts"
+        logger.info(f"[Супервизор] Дело {case_id}: → Key Facts: 'Извлекаю ключевые факты'")
+    elif "discrepancy" in requested_types and "discrepancy" not in completed:
+        reasoning_parts.append("Discrepancy агент независим, может работать параллельно")
+        next_agent = "discrepancy"
+        logger.info(f"[Супервизор] Дело {case_id}: → Discrepancy: 'Ищу противоречия'")
+    
+    # 5. Зависимые агенты (требуют результаты других)
+    elif "risk" in requested_types and "risk" not in completed:
+        if discrepancy_ready:
+            reasoning_parts.append("Discrepancy готов → Risk агент может анализировать риски")
+            next_agent = "risk"
+            logger.info(f"[Супервизор] Дело {case_id}: Discrepancy готов → Risk: 'Анализирую риски'")
+        else:
+            reasoning_parts.append("Risk требует Discrepancy, ждем...")
+            next_agent = "supervisor"  # Ждем
+    elif "summary" in requested_types and "summary" not in completed:
+        if key_facts_ready:
+            reasoning_parts.append("Key Facts готов → Summary агент может создать резюме")
+            next_agent = "summary"
+            logger.info(f"[Супервизор] Дело {case_id}: Key Facts готов → Summary: 'Создаю резюме'")
+        else:
+            reasoning_parts.append("Summary требует Key Facts, ждем...")
+            next_agent = "supervisor"  # Ждем
+    
+    # Все готово
+    elif requested_types.issubset(completed):
+        reasoning_parts.append("Все запрошенные анализы завершены")
+        next_agent = "end"
+        logger.info(f"[Супервизор] Дело {case_id}: ✅ Все анализы завершены!")
+    
+    # Если зависимости не готовы, ждем
+    else:
+        reasoning_parts.append("Ожидание готовности зависимостей...")
+        next_agent = "supervisor"
+    
+    # Сохраняем reasoning в метаданные для аудита
+    if "metadata" not in state:
+        state["metadata"] = {}
+    if "supervisor_reasoning" not in state["metadata"]:
+        state["metadata"]["supervisor_reasoning"] = []
+    state["metadata"]["supervisor_reasoning"].append({
+        "step": len(state["metadata"]["supervisor_reasoning"]) + 1,
+        "reasoning": " | ".join(reasoning_parts) if reasoning_parts else "Определение следующего агента",
+        "next_agent": next_agent,
+        "completed": list(completed),
+        "requested": list(requested_types)
+    })
+    
+    return next_agent if next_agent else "supervisor"
