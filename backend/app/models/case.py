@@ -64,7 +64,7 @@ class File(Base):
     filename = Column(String(255), nullable=False)
     file_type = Column(String(50), nullable=False)
     original_text = Column(Text, nullable=False)
-    metadata = Column(JSON, nullable=True)  # Метаданные файла (sender, recipient для privilege check и т.д.)
+    file_metadata = Column(JSON, nullable=True)  # Метаданные файла (sender, recipient для privilege check и т.д.)
     created_at = Column(DateTime, default=datetime.utcnow)
 
     # Relationships
