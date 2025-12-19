@@ -1009,9 +1009,11 @@ async def batch_confirm(
     
     try:
         # Update file metadata with status
+        # file_metadata удалено из модели, используем другие способы хранения статуса
+        # Статус review можно хранить в отдельной таблице или в case_metadata
+        # TODO: Реализовать хранение статуса review в отдельной таблице или case_metadata
         for file in files:
-            # file_metadata удалено из модели, используем другие способы хранения статуса
-            # Статус review можно хранить в отдельной таблице или в case_metadata
+            pass  # Пока ничего не делаем, так как file_metadata удалено
         
         db.commit()
         
@@ -1065,8 +1067,10 @@ async def batch_reject(
     
     try:
         # Update file metadata with status
+        # file_metadata удалено из модели, используем другие способы хранения статуса
+        # TODO: Реализовать хранение статуса review в отдельной таблице или case_metadata
         for file in files:
-            # file_metadata удалено из модели, используем другие способы хранения статуса
+            pass  # Пока ничего не делаем, так как file_metadata удалено
         
         db.commit()
         
@@ -1119,8 +1123,10 @@ async def batch_withhold(
     
     try:
         # Update file metadata with status
+        # file_metadata удалено из модели, используем другие способы хранения статуса
+        # TODO: Реализовать хранение статуса review в отдельной таблице или case_metadata
         for file in files:
-            # file_metadata удалено из модели, используем другие способы хранения статуса
+            pass  # Пока ничего не делаем, так как file_metadata удалено
         
         db.commit()
         
