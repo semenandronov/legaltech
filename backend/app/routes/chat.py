@@ -279,7 +279,7 @@ async def chat(
                     case_id=request.case_id,
                     role="user",
                     content=request.question,
-                    session_id=request.case_id  # Use case_id as session_id
+                    session_id=None  # session_id nullable, не используем внешний ключ
                 )
                 db.add(user_message)
 
@@ -289,7 +289,7 @@ async def chat(
                     role="assistant",
                     content=answer,
                     source_references=[],
-                    session_id=request.case_id  # Use case_id as session_id
+                    session_id=None  # session_id nullable, не используем внешний ключ
                 )
                 db.add(assistant_message)
                 db.commit()
@@ -396,7 +396,7 @@ async def chat(
                 case_id=request.case_id,
                 role="user",
                 content=request.question,
-                session_id=request.case_id  # Use case_id as session_id
+                session_id=None  # session_id nullable, не используем внешний ключ
             )
             db.add(user_message)
             
@@ -408,7 +408,7 @@ async def chat(
                 role="assistant",
                 content=answer,
                 source_references=source_file_names or [],
-                session_id=request.case_id  # Use case_id as session_id
+                session_id=None  # session_id nullable, не используем внешний ключ
             )
             db.add(assistant_message)
             
