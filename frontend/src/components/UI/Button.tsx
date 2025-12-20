@@ -1,10 +1,7 @@
-import { ButtonHTMLAttributes, forwardRef, ReactNode } from 'react'
-import { motion, HTMLMotionProps } from 'framer-motion'
+import { forwardRef, ReactNode, ButtonHTMLAttributes } from 'react'
+import { motion } from 'framer-motion'
 
-type ButtonMotionProps = Omit<HTMLMotionProps<'button'>, 'children' | 'className' | 'disabled'>
-type ButtonBaseProps = Omit<ButtonHTMLAttributes<HTMLButtonElement>, keyof ButtonMotionProps>
-
-interface ButtonProps extends ButtonBaseProps {
+interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
   variant?: 'primary' | 'secondary' | 'danger'
   size?: 'sm' | 'md' | 'lg'
   isLoading?: boolean
