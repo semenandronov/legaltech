@@ -127,13 +127,28 @@ class YandexIndexService:
             # Попробуем через search_indexes (если доступно)
             if hasattr(self.sdk, 'search_indexes'):
                 logger.info(f"Creating search index '{index_name}' for case {case_id} via SDK")
-                index = self.sdk.search_indexes.create(
-                    name=index_name,
-                    description=f"Index for case {case_id}"
-                )
-                index_id = index.id if hasattr(index, 'id') else str(index)
-                logger.info(f"✅ Created search index {index_id} for case {case_id}")
-                return index_id
+                search_indexes = self.sdk.search_indexes
+                
+                # Логируем доступные методы для отладки
+                available_methods = [m for m in dir(search_indexes) if not m.startswith('_') and callable(getattr(search_indexes, m, None))]
+                logger.debug(f"Available methods in search_indexes: {available_methods}")
+                
+                # Пробуем разные возможные методы
+                if hasattr(search_indexes, 'create'):
+                    index = search_indexes.create(name=index_name, description=f"Index for case {case_id}")
+                    index_id = index.id if hasattr(index, 'id') else str(index)
+                    logger.info(f"✅ Created search index {index_id} for case {case_id}")
+                    return index_id
+                elif hasattr(search_indexes, 'create_index'):
+                    index = search_indexes.create_index(name=index_name, description=f"Index for case {case_id}")
+                    index_id = index.id if hasattr(index, 'id') else str(index)
+                    logger.info(f"✅ Created search index {index_id} for case {case_id}")
+                    return index_id
+                else:
+                    logger.warning(
+                        f"search_indexes не содержит методов create или create_index. "
+                        f"Доступные методы: {available_methods}"
+                    )
             
             # Если ни один из методов не доступен, логируем доступные атрибуты
             available_attrs = [attr for attr in dir(self.sdk) if not attr.startswith('_')]

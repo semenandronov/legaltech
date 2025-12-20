@@ -31,23 +31,29 @@ def ensure_schema():
                         "ADD COLUMN IF NOT EXISTS case_id TEXT REFERENCES cases(id) ON DELETE CASCADE"
                     )
                 )
-            # Check if sessionId column exists and if it's NOT NULL, make it nullable or set default
-            if "sessionId" in columns:
-                session_id_col = columns["sessionId"]
-                # If sessionId is NOT NULL, we need to update existing NULL values or change constraint
-                # For now, we'll just ensure existing NULL values get case_id as default
-                # This is a workaround - ideally the column should be nullable
+            # Check if sessionId column exists and if it's NOT NULL, make it nullable
+            session_id_col_info = next((col for col in inspector.get_columns("chat_messages") if col["name"] == "sessionId"), None)
+            if session_id_col_info:
+                # Check if column is NOT NULL and needs to be altered
+                if not session_id_col_info.get("nullable", True):
+                    logger.info("⚠️  Altering chat_messages.sessionId to be NULLABLE...")
+                    try:
+                        # Remove NOT NULL constraint
+                        conn.execute(text('ALTER TABLE chat_messages ALTER COLUMN "sessionId" DROP NOT NULL'))
+                        logger.info("✅ chat_messages.sessionId column altered to NULLABLE")
+                    except Exception as e:
+                        logger.warning(f"Could not alter sessionId column to NULLABLE: {e}")
+                
+                # Update any existing NULL sessionId values to use case_id from the same row
                 try:
-                    # Update any NULL sessionId values to use case_id from the same row
                     conn.execute(
                         text(
-                            "UPDATE chat_messages "
-                            "SET \"sessionId\" = case_id "
-                            "WHERE \"sessionId\" IS NULL"
+                            'UPDATE chat_messages '
+                            'SET "sessionId" = case_id '
+                            'WHERE "sessionId" IS NULL AND case_id IS NOT NULL'
                         )
                     )
                 except Exception as e:
-                    # If update fails, try to alter column to allow NULL (if possible)
                     logger.warning(f"Could not update NULL sessionId values: {e}")
             conn.execute(
                 text(
