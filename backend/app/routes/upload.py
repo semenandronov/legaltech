@@ -161,6 +161,10 @@ async def upload_files(
                 f"total text length: {len(text)} chars"
             )
             
+            # ВАЖНО: Сохраняем оригинальный файл для загрузки в Yandex Vector Store
+            # content уже прочитан выше (await file.read()), сохраняем его в original_files
+            original_files[filename] = content
+            
             # Remove NULL bytes (PostgreSQL doesn't allow them in strings)
             text = text.replace('\x00', '')
             
