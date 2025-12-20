@@ -138,47 +138,47 @@ class YandexIndexService:
                 # Загружаем ОРИГИНАЛЬНЫЙ файл в Vector Store
                 logger.debug(f"Uploading original file {filename} ({len(file_content)} bytes, {mime_type}) to Vector Store...")
                 
-                # Пробуем загрузить оригинальный файл
-                # ВАЖНО: SDK может требовать file-like object вместо content
-                # Пробуем разные варианты сигнатуры метода
-                import io
-                file_obj = io.BytesIO(file_content)
+                # ВАЖНО: SDK files.upload() скорее всего требует file_path (путь к файлу)
+                # Сохраняем содержимое во временный файл для загрузки
+                import tempfile
+                import os
                 
-                # Пробуем сначала с file параметром
+                # Создаем временный файл с правильным расширением для определения MIME типа
+                _, ext = os.path.splitext(filename)
+                with tempfile.NamedTemporaryFile(delete=False, suffix=ext) as tmp_file:
+                    tmp_file.write(file_content)
+                    tmp_path = tmp_file.name
+                
                 try:
+                    # Пробуем загрузить через file_path (наиболее вероятный вариант)
+                    # Согласно документации SDK, files.upload() принимает путь к файлу
                     uploaded_file = self.sdk.files.upload(
-                        file=file_obj,
-                        name=filename,
-                        mime_type=mime_type
+                        file_path=tmp_path,
+                        name=filename
                     )
-                except TypeError:
-                    # Если не подошло, пробуем с data
+                except Exception as upload_error:
+                    # Если file_path не работает, пробуем другие варианты
+                    logger.warning(f"file_path failed, trying alternatives: {upload_error}")
+                    
+                    # Пробуем с file-like object
+                    import io
+                    file_obj = io.BytesIO(file_content)
                     try:
-                        file_obj.seek(0)
                         uploaded_file = self.sdk.files.upload(
-                            data=file_content,
-                            name=filename,
-                            mime_type=mime_type
+                            file=file_obj,
+                            name=filename
                         )
                     except TypeError:
-                        # Если не подошло, пробуем с file_path (но мы работаем в памяти)
-                        # Тогда сохраним временно на диск
-                        import tempfile
-                        import os
-                        with tempfile.NamedTemporaryFile(delete=False, suffix=f"_{filename}") as tmp_file:
-                            tmp_file.write(file_content)
-                            tmp_path = tmp_file.name
-                        
-                        try:
-                            uploaded_file = self.sdk.files.upload(
-                                file_path=tmp_path,
-                                name=filename,
-                                mime_type=mime_type
-                            )
-                        finally:
-                            # Удаляем временный файл
-                            if os.path.exists(tmp_path):
-                                os.unlink(tmp_path)
+                        # Если ничего не работает, выбрасываем исходную ошибку
+                        raise Exception(
+                            f"Failed to upload file {filename}. "
+                            f"Tried file_path and file parameters. "
+                            f"Original error: {upload_error}"
+                        ) from upload_error
+                finally:
+                    # Удаляем временный файл
+                    if os.path.exists(tmp_path):
+                        os.unlink(tmp_path)
                 
                 # Получаем ID загруженного файла
                 # Может быть uploaded_file.id, uploaded_file.file_id или просто строка
