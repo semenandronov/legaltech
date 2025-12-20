@@ -1,4 +1,5 @@
 """Cases routes for Legal AI Vault"""
+import logging
 from fastapi import APIRouter, HTTPException, Depends, Query
 from pydantic import BaseModel, Field, field_validator
 from sqlalchemy.orm import Session
@@ -10,6 +11,7 @@ from app.models.case import Case, File as FileModel
 from app.models.user import User
 from fastapi.responses import Response, StreamingResponse
 
+logger = logging.getLogger(__name__)
 router = APIRouter()
 
 VALID_CASE_TYPES = ["litigation", "contracts", "dd", "compliance", "other"]
@@ -271,7 +273,15 @@ async def delete_case(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
-    """Delete a case"""
+    """
+    Delete a case
+    
+    ВАЖНО: При удалении кейса также удаляются:
+    - Индекс в Yandex AI Studio (yandex_index_id)
+    - Ассистент в Yandex AI Studio (yandex_assistant_id)
+    
+    Удаление происходит до удаления записи из БД, чтобы иметь доступ к ID.
+    """
     case = db.query(Case).filter(
         Case.id == case_id,
         Case.user_id == current_user.id
@@ -280,13 +290,49 @@ async def delete_case(
     if not case:
         raise HTTPException(status_code=404, detail="Дело не найдено")
     
+    # Сохраняем ID для удаления из Yandex перед удалением из БД
+    yandex_index_id = case.yandex_index_id
+    yandex_assistant_id = case.yandex_assistant_id
+    
     try:
+        # Удаляем индекс из Yandex AI Studio (если существует)
+        if yandex_index_id:
+            try:
+                from app.services.yandex_index import YandexIndexService
+                index_service = YandexIndexService()
+                if index_service.is_available():
+                    logger.info(f"Deleting Yandex index {yandex_index_id} for case {case_id}")
+                    index_service.delete_index(yandex_index_id)
+                    logger.info(f"✅ Deleted Yandex index {yandex_index_id} for case {case_id}")
+            except Exception as e:
+                # Логируем ошибку, но не блокируем удаление кейса
+                logger.warning(f"Failed to delete Yandex index {yandex_index_id} for case {case_id}: {e}", exc_info=True)
+        
+        # Удаляем ассистента из Yandex AI Studio (если существует)
+        if yandex_assistant_id:
+            try:
+                from app.services.yandex_assistant import YandexAssistantService
+                assistant_service = YandexAssistantService()
+                if assistant_service.is_available():
+                    logger.info(f"Deleting Yandex assistant {yandex_assistant_id} for case {case_id}")
+                    assistant_service.delete_assistant(yandex_assistant_id)
+                    logger.info(f"✅ Deleted Yandex assistant {yandex_assistant_id} for case {case_id}")
+            except Exception as e:
+                # Логируем ошибку, но не блокируем удаление кейса
+                logger.warning(f"Failed to delete Yandex assistant {yandex_assistant_id} for case {case_id}: {e}", exc_info=True)
+        
+        # Удаляем кейс из БД
+        # CASCADE удалит связанные записи (files, document_chunks, chat_messages и т.д.)
         db.delete(case)
         db.commit()
+        
+        logger.info(f"✅ Deleted case {case_id} and associated Yandex resources")
+        
+    except HTTPException:
+        # Пробрасываем HTTPException как есть
+        raise
     except Exception as e:
         db.rollback()
-        import logging
-        logger = logging.getLogger(__name__)
         logger.error(f"Ошибка при удалении дела {case_id}: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail="Ошибка при удалении дела. Попробуйте позже.")
     

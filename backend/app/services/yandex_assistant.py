@@ -76,8 +76,13 @@ class YandexAssistantService:
         if not assistant_name:
             assistant_name = f"legal_ai_vault_case_{case_id}"
         
-        # TODO: Verify actual API endpoint with Yandex AI Studio documentation
-        # This is a placeholder based on typical assistant API patterns
+        # ВАЖНО: foundationModels/v1/assistants - это устаревший API endpoint
+        # Нужно использовать новый Assistants API через SDK или новый REST endpoint
+        # TODO: Заменить на использование SDK (sdk.assistants) или новый REST API endpoint
+        # Проверить документацию: https://yandex.cloud/docs/ai-studio/sdk-ref/
+        # 
+        # Проблема: SDK может не поддерживать ассистентов напрямую
+        # В этом случае нужно найти актуальный REST endpoint (не foundationModels)
         url = f"{self.base_url}/foundationModels/v1/assistants"
         
         # Assistant configuration with Vector Store tool
@@ -170,8 +175,9 @@ class YandexAssistantService:
                 "YANDEX_API_KEY/YANDEX_IAM_TOKEN and YANDEX_FOLDER_ID must be set"
             )
         
-        # TODO: Verify actual API endpoint and message format
-        # This is a placeholder based on typical chat API patterns
+        # ВАЖНО: foundationModels/v1/assistants - это устаревший API endpoint
+        # Нужно использовать новый Assistants API через SDK или новый REST endpoint
+        # TODO: Заменить на использование SDK или новый REST API endpoint
         url = f"{self.base_url}/foundationModels/v1/assistants/{assistant_id}/chat"
         
         # Build messages list
@@ -249,7 +255,8 @@ class YandexAssistantService:
                 "YANDEX_API_KEY/YANDEX_IAM_TOKEN and YANDEX_FOLDER_ID must be set"
             )
         
-        # TODO: Verify actual API endpoint
+        # ВАЖНО: foundationModels/v1/assistants - это устаревший API endpoint
+        # TODO: Заменить на использование SDK или новый REST API endpoint
         url = f"{self.base_url}/foundationModels/v1/assistants/{assistant_id}"
         
         try:
@@ -279,7 +286,8 @@ class YandexAssistantService:
                 "YANDEX_API_KEY/YANDEX_IAM_TOKEN and YANDEX_FOLDER_ID must be set"
             )
         
-        # TODO: Verify actual API endpoint
+        # ВАЖНО: foundationModels/v1/assistants - это устаревший API endpoint
+        # TODO: Заменить на использование SDK или новый REST API endpoint
         url = f"{self.base_url}/foundationModels/v1/assistants/{assistant_id}"
         
         try:
