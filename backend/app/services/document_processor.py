@@ -113,12 +113,17 @@ class DocumentProcessor:
         original_files: Dict[str, bytes] = None
     ) -> str:
         """
-        Store documents in Yandex AI Studio Index
+        Store original files in Yandex AI Studio Vector Store
+        
+        ВАЖНО: 
+        - original_files загружаются напрямую в Yandex Vector Store
+        - documents НЕ используются - оставлен параметр только для совместимости
         
         Args:
             case_id: Case identifier
-            documents: List of Document objects
+            documents: List of Document objects (НЕ используется, оставлен для совместимости)
             db: Database session for saving index_id
+            original_files: Dict[str, bytes] - оригинальные файлы для загрузки в Yandex Vector Store
             
         Returns:
             index_id: ID of created/updated index
@@ -128,7 +133,7 @@ class DocumentProcessor:
         if not original_files:
             raise ValueError(f"No original files provided for case {case_id}. Cannot create index without files.")
         
-        logger.info(f"Storing {len(documents)} documents in Yandex Index for case {case_id}")
+        logger.info(f"Storing {len(original_files)} original files in Yandex Vector Store for case {case_id}")
         
         # Check if index already exists for this case
         from app.models.case import Case
