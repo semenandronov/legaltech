@@ -1,6 +1,5 @@
 """Planning agent for natural language task understanding and analysis planning"""
 from typing import Dict, Any, List, Optional
-from langchain_openai import ChatOpenAI
 from app.services.yandex_llm import ChatYandexGPT
 from app.services.langchain_agents.agent_factory import create_legal_agent
 from app.services.langchain_agents.planning_tools import get_planning_tools, AVAILABLE_ANALYSES
