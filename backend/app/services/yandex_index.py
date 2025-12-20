@@ -87,13 +87,13 @@ class YandexIndexService:
         
         index_name = name or f"{self.index_prefix}_{case_id}"
         
-        # ВАЖНО: Актуальный эндпоинт для Index API может отличаться
-        # Возможные варианты:
-        # - https://llm.api.cloud.yandex.net/foundationModels/v1/indexes (возможно устарел)
-        # - https://llm.api.cloud.yandex.net/v1/indexes
-        # - Другой домен/путь для Search Index API
-        # Проверьте актуальную документацию Yandex AI Studio для правильного эндпоинта
-        url = f"{self.base_url}/foundationModels/v1/indexes"
+        # ВАЖНО: Актуальный эндпоинт для Index API
+        # Старый эндпоинт /foundationModels/v1/indexes возвращает 404
+        # Нужно перейти на новый Search Index API
+        # Документация: https://github.com/yandex-cloud/docs.git
+        # Проверьте раздел AI Studio / Search Index API в документации
+        # TODO: Обновить URL на правильный эндпоинт нового Search Index API
+        url = f"{self.base_url}/foundationModels/v1/indexes"  # УСТАРЕЛО - возвращает 404
         
         payload = {
             "name": index_name,
