@@ -289,44 +289,45 @@ async def upload_files(
             db.flush()  # Flush to get file_model.id
             
             # Process document with LangChain
+            # ВАЖНО: Используем только LangChain documents, никаких fallback
             try:
-                # Use LangChain documents if available (better metadata), otherwise split manually
-                if file_info["filename"] in langchain_documents_by_file and langchain_documents_by_file[file_info["filename"]]:
-                    # Use documents from LangChain loader (already have metadata)
-                    langchain_docs = langchain_documents_by_file[file_info["filename"]]
-                    
-                    # Split each LangChain document into chunks if needed
-                    chunks = []
-                    for langchain_doc in langchain_docs:
-                        # Split large documents into smaller chunks
-                        if len(langchain_doc.page_content) > 1000:
-                            split_chunks = document_processor.split_documents(
-                                text=langchain_doc.page_content,
-                                filename=file_info["filename"],
-                                metadata={
-                                    **langchain_doc.metadata,  # Preserve LangChain metadata
-                                    "file_id": file_model.id,
-                                    "file_type": file_info["file_type"]
-                                }
-                            )
-                            chunks.extend(split_chunks)
-                        else:
-                            # Use document as-is, just add file metadata
-                            langchain_doc.metadata.update({
-                                "file_id": file_model.id,
-                                "file_type": file_info["file_type"]
-                            })
-                            chunks.append(langchain_doc)
-                else:
-                    # Fallback: split document manually
-                    chunks = document_processor.split_documents(
-                        text=file_info["original_text"],
-                        filename=file_info["filename"],
-                        metadata={
-                            "file_id": file_model.id,
-                            "file_type": file_info["file_type"]
-                        }
+                # Проверяем, что LangChain documents доступны
+                if file_info["filename"] not in langchain_documents_by_file:
+                    raise ValueError(
+                        f"LangChain documents not found for file {file_info['filename']}. "
+                        f"This should not happen - file should be processed through LangChain loader first."
                     )
+                
+                langchain_docs = langchain_documents_by_file[file_info["filename"]]
+                if not langchain_docs:
+                    raise ValueError(
+                        f"LangChain documents list is empty for file {file_info['filename']}. "
+                        f"LangChain loader should have returned at least one document."
+                    )
+                
+                # Split each LangChain document into chunks if needed
+                chunks = []
+                for langchain_doc in langchain_docs:
+                    # Убеждаемся, что метаданные LangChain сохранены
+                    # Добавляем file_id и file_type к метаданным
+                    langchain_doc.metadata.update({
+                        "file_id": file_model.id,
+                        "file_type": file_info["file_type"]
+                    })
+                    
+                    # Split large documents into smaller chunks
+                    if len(langchain_doc.page_content) > 1000:
+                        split_chunks = document_processor.split_documents(
+                            text=langchain_doc.page_content,
+                            filename=file_info["filename"],
+                            metadata={
+                                **langchain_doc.metadata,  # Preserve all LangChain metadata
+                            }
+                        )
+                        chunks.extend(split_chunks)
+                    else:
+                        # Use document as-is with all metadata
+                        chunks.append(langchain_doc)
                 
                 # Save chunks to database
                 for chunk_idx, chunk_doc in enumerate(chunks):
