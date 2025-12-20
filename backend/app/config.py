@@ -69,6 +69,7 @@ class Config:
     YANDEX_FOLDER_ID: str = os.getenv("YANDEX_FOLDER_ID", "")
     YANDEX_AI_STUDIO_CLASSIFIER_ID: str = os.getenv("YANDEX_AI_STUDIO_CLASSIFIER_ID", "")  # ID классификатора из AI Studio
     YANDEX_GPT_MODEL: str = os.getenv("YANDEX_GPT_MODEL", "yandexgpt-pro/latest")  # yandexgpt-pro/latest или yandexgpt/latest
+    YANDEX_INDEX_PREFIX: str = os.getenv("YANDEX_INDEX_PREFIX", "legal_ai_vault")  # Префикс для имен индексов
     
     def __init__(self):
         """Validate configuration on initialization"""

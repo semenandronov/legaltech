@@ -1,10 +1,9 @@
 """Advanced LangChain retrievers for Legal AI Vault"""
 from typing import List, Optional
+from sqlalchemy.orm import Session
 import logging
-import os
 
 from langchain_core.documents import Document
-from langchain_core.retrievers import BaseRetriever
 from langchain_openai import ChatOpenAI
 from app.config import config
 from app.services.document_processor import DocumentProcessor
@@ -79,39 +78,27 @@ class AdvancedRetrieverService:
             max_tokens=500
         )
     
-    def _get_base_retriever(self, case_id: str, k: int = 5) -> BaseRetriever:
+    def _get_base_documents(self, case_id: str, query: str, k: int = 5, db: Optional[Session] = None) -> List[Document]:
         """
-        Get base retriever for a case
+        Get base documents for a case using Yandex Index
         
         Args:
             case_id: Case identifier
+            query: Search query
             k: Number of documents to retrieve
+            db: Optional database session
             
         Returns:
-            Base retriever instance
+            List of documents
         """
-        # Load vector store if needed
-        if case_id not in self.document_processor.vector_stores:
-            persist_directory = self.document_processor._get_persist_directory(case_id)
-            if os.path.exists(persist_directory):
-                try:
-                    self.document_processor.load_vector_store(case_id, persist_directory)
-                except Exception as e:
-                    logger.error(f"Failed to load vector store for case {case_id}: {e}")
-                    raise
-            else:
-                raise ValueError(f"Vector store not found for case {case_id}")
-        
-        vector_store = self.document_processor.vector_stores[case_id]
-        return vector_store.as_retriever(
-            search_kwargs={"k": k}
-        )
+        return self.document_processor.retrieve_relevant_chunks(case_id, query, k=k, db=db)
     
     def retrieve_with_multi_query(
         self,
         case_id: str,
         query: str,
-        k: int = 5
+        k: int = 5,
+        db: Optional[Session] = None
     ) -> List[Document]:
         """
         Retrieve documents using MultiQueryRetriever
@@ -126,69 +113,18 @@ class AdvancedRetrieverService:
         Returns:
             List of relevant documents
         """
-        if MultiQueryRetriever is None:
-            logger.warning("MultiQueryRetriever not available, using fallback")
-            return self.document_processor.retrieve_relevant_chunks(case_id, query, k=k)
-        
-        try:
-            base_retriever = self._get_base_retriever(case_id, k=k)
-            
-            # Create MultiQueryRetriever
-            multi_query_retriever = MultiQueryRetriever.from_llm(
-                retriever=base_retriever,
-                llm=self.llm
-            )
-            
-            # Retrieve documents
-            # Try both old and new API methods with better error handling
-            documents = None
-            try:
-                # New LangChain API (invoke) - preferred method
-                if hasattr(multi_query_retriever, 'invoke'):
-                    try:
-                        documents = multi_query_retriever.invoke(query)
-                    except Exception as invoke_error:
-                        logger.warning(f"Error with invoke() method for case {case_id}: {invoke_error}")
-                        documents = None
-                
-                # Old LangChain API (get_relevant_documents) - fallback
-                if documents is None and hasattr(multi_query_retriever, 'get_relevant_documents'):
-                    try:
-                        documents = multi_query_retriever.get_relevant_documents(query)
-                    except Exception as get_docs_error:
-                        logger.warning(f"Error with get_relevant_documents() method for case {case_id}: {get_docs_error}")
-                        documents = None
-                
-                # Try to use as callable - last resort
-                if documents is None:
-                    try:
-                        documents = multi_query_retriever(query)
-                    except Exception as callable_error:
-                        logger.warning(f"Error calling MultiQueryRetriever as callable for case {case_id}: {callable_error}")
-                        documents = None
-                
-                # If all methods failed, use fallback
-                if documents is None:
-                    logger.warning(f"All MultiQueryRetriever methods failed for case {case_id}, using fallback")
-                    return self.document_processor.retrieve_relevant_chunks(case_id, query, k=k)
-                    
-            except Exception as api_error:
-                logger.warning(f"Unexpected error calling MultiQueryRetriever API for case {case_id}: {api_error}", exc_info=True)
-                # Fallback to simple retrieval
-                return self.document_processor.retrieve_relevant_chunks(case_id, query, k=k)
-            
-            logger.info(f"MultiQueryRetriever found {len(documents)} documents for case {case_id}")
-            return documents
-        except Exception as e:
-            logger.error(f"Error in MultiQueryRetriever for case {case_id}: {e}", exc_info=True)
-            # Fallback to simple retrieval
-            return self.document_processor.retrieve_relevant_chunks(case_id, query, k=k)
+        # Note: MultiQueryRetriever requires a LangChain retriever, which we don't have with Yandex Index API
+        # For now, we use direct search which is already optimized
+        # Future: Could implement multi-query logic manually if needed
+        logger.debug(f"Using direct Yandex Index search for multi-query (case {case_id})")
+        return self._get_base_documents(case_id, query, k=k, db=db)
     
     def retrieve_with_compression(
         self,
         case_id: str,
         query: str,
-        k: int = 5
+        k: int = 5,
+        db: Optional[Session] = None
     ) -> List[Document]:
         """
         Retrieve documents using ContextualCompressionRetriever
@@ -203,52 +139,32 @@ class AdvancedRetrieverService:
         Returns:
             List of compressed relevant documents
         """
-        if ContextualCompressionRetriever is None or LLMChainExtractor is None:
-            logger.warning("ContextualCompressionRetriever not available, using fallback")
-            return self.document_processor.retrieve_relevant_chunks(case_id, query, k=k)
+        # Note: ContextualCompressionRetriever requires a LangChain retriever, which we don't have with Yandex Index API
+        # Get more documents and apply compression manually if needed
+        # For now, we use direct search (Yandex Index already does semantic search)
+        logger.debug(f"Using direct Yandex Index search for compression (case {case_id})")
+        # Get more documents initially for compression
+        documents = self._get_base_documents(case_id, query, k=k*2, db=db)
         
-        try:
-            base_retriever = self._get_base_retriever(case_id, k=k*2)  # Get more before compression
-            
-            # Create compressor
-            compressor = LLMChainExtractor.from_llm(self.llm)
-            
-            # Create compression retriever
-            compression_retriever = ContextualCompressionRetriever(
-                base_compressor=compressor,
-                base_retriever=base_retriever
-            )
-            
-            # Retrieve and compress documents
-            # Try both old and new API methods
-            documents = None
+        # Apply compression if LLMChainExtractor is available
+        if LLMChainExtractor is not None and documents:
             try:
-                if hasattr(compression_retriever, 'invoke'):
-                    documents = compression_retriever.invoke(query)
-                elif hasattr(compression_retriever, 'get_relevant_documents'):
-                    documents = compression_retriever.get_relevant_documents(query)
-                else:
-                    documents = compression_retriever(query)
-            except Exception as api_error:
-                logger.warning(f"Error calling ContextualCompressionRetriever API for case {case_id}: {api_error}")
-                return self.document_processor.retrieve_relevant_chunks(case_id, query, k=k)
-            
-            if documents is None:
-                logger.warning(f"ContextualCompressionRetriever returned None for case {case_id}, using fallback")
-                return self.document_processor.retrieve_relevant_chunks(case_id, query, k=k)
-            
-            logger.info(f"ContextualCompressionRetriever found {len(documents)} documents for case {case_id}")
-            return documents
-        except Exception as e:
-            logger.error(f"Error in ContextualCompressionRetriever for case {case_id}: {e}")
-            # Fallback to simple retrieval
-            return self.document_processor.retrieve_relevant_chunks(case_id, query, k=k)
+                compressor = LLMChainExtractor.from_llm(self.llm)
+                compressed_docs = compressor.compress_documents(documents, query)
+                logger.info(f"Compressed {len(documents)} to {len(compressed_docs)} documents for case {case_id}")
+                return compressed_docs[:k]
+            except Exception as e:
+                logger.warning(f"Error applying compression for case {case_id}: {e}")
+                return documents[:k]
+        
+        return documents[:k]
     
     def retrieve_with_ensemble(
         self,
         case_id: str,
         query: str,
-        k: int = 5
+        k: int = 5,
+        db: Optional[Session] = None
     ) -> List[Document]:
         """
         Retrieve documents using EnsembleRetriever
@@ -263,54 +179,18 @@ class AdvancedRetrieverService:
         Returns:
             List of relevant documents from ensemble
         """
-        if EnsembleRetriever is None:
-            logger.warning("EnsembleRetriever not available, using fallback")
-            return self.document_processor.retrieve_relevant_chunks(case_id, query, k=k)
-        
-        try:
-            # Get base retriever (semantic search)
-            semantic_retriever = self._get_base_retriever(case_id, k=k)
-            
-            # For ensemble, we'd ideally have multiple retrievers
-            # For now, we'll use the same retriever with different search params
-            # In production, you might add BM25 or keyword-based retriever
-            
-            # Create ensemble retriever
-            ensemble_retriever = EnsembleRetriever(
-                retrievers=[semantic_retriever],
-                weights=[1.0]  # Equal weight for now
-            )
-            
-            # Retrieve documents
-            # Try both old and new API methods
-            documents = None
-            try:
-                if hasattr(ensemble_retriever, 'invoke'):
-                    documents = ensemble_retriever.invoke(query)
-                elif hasattr(ensemble_retriever, 'get_relevant_documents'):
-                    documents = ensemble_retriever.get_relevant_documents(query)
-                else:
-                    documents = ensemble_retriever(query)
-            except Exception as api_error:
-                logger.warning(f"Error calling EnsembleRetriever API for case {case_id}: {api_error}")
-                return self.document_processor.retrieve_relevant_chunks(case_id, query, k=k)
-            
-            if documents is None:
-                logger.warning(f"EnsembleRetriever returned None for case {case_id}, using fallback")
-                return self.document_processor.retrieve_relevant_chunks(case_id, query, k=k)
-            
-            logger.info(f"EnsembleRetriever found {len(documents)} documents for case {case_id}")
-            return documents
-        except Exception as e:
-            logger.error(f"Error in EnsembleRetriever for case {case_id}: {e}")
-            # Fallback to simple retrieval
-            return self.document_processor.retrieve_relevant_chunks(case_id, query, k=k)
+        # Note: EnsembleRetriever requires LangChain retrievers, which we don't have with Yandex Index API
+        # For now, we use direct search (Yandex Index already does optimized semantic search)
+        # Future: Could combine multiple search strategies manually if needed
+        logger.debug(f"Using direct Yandex Index search for ensemble (case {case_id})")
+        return self._get_base_documents(case_id, query, k=k, db=db)
     
     def retrieve_hybrid(
         self,
         case_id: str,
         query: str,
-        k: int = 5
+        k: int = 5,
+        db: Optional[Session] = None
     ) -> List[Document]:
         """
         Hybrid retrieval combining multiple strategies
@@ -323,30 +203,24 @@ class AdvancedRetrieverService:
         Returns:
             List of relevant documents
         """
-        if LLMChainExtractor is None:
-            logger.warning("LLMChainExtractor not available, using fallback")
-            return self.document_processor.retrieve_relevant_chunks(case_id, query, k=k)
-        
+        # Use multi-query approach (which now uses direct search) and apply compression
         try:
-            # Try multi-query first
-            multi_query_docs = self.retrieve_with_multi_query(case_id, query, k=k)
+            # Get documents using multi-query (direct search)
+            documents = self.retrieve_with_multi_query(case_id, query, k=k*2, db=db)
             
-            # Then apply compression
-            if multi_query_docs and LLMChainExtractor is not None:
+            # Apply compression if available
+            if documents and LLMChainExtractor is not None:
                 compressor = LLMChainExtractor.from_llm(self.llm)
-                compressed_docs = []
-                for doc in multi_query_docs:
-                    try:
-                        compressed = compressor.compress_documents([doc], query)
-                        compressed_docs.extend(compressed)
-                    except:
-                        compressed_docs.append(doc)
-                
-                logger.info(f"Hybrid retrieval found {len(compressed_docs)} documents for case {case_id}")
-                return compressed_docs[:k]  # Limit to k documents
+                try:
+                    compressed_docs = compressor.compress_documents(documents, query)
+                    logger.info(f"Hybrid retrieval compressed {len(documents)} to {len(compressed_docs)} documents for case {case_id}")
+                    return compressed_docs[:k]
+                except Exception as e:
+                    logger.warning(f"Error applying compression in hybrid retrieval for case {case_id}: {e}")
+                    return documents[:k]
             
-            return multi_query_docs
+            return documents[:k]
         except Exception as e:
             logger.error(f"Error in hybrid retrieval for case {case_id}: {e}")
             # Fallback to simple retrieval
-            return self.document_processor.retrieve_relevant_chunks(case_id, query, k=k)
+            return self._get_base_documents(case_id, query, k=k, db=db)

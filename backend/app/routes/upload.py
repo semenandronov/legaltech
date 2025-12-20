@@ -333,25 +333,45 @@ async def upload_files(
         
         db.commit()
         
-        # Store documents in vector database
+        # Store documents in vector database (Yandex AI Studio Index)
+        index_id = None
         try:
             if all_documents:
                 logger.info(
-                    f"Storing {len(all_documents)} document chunks in vector DB for case {case_id}",
+                    f"Storing {len(all_documents)} document chunks in Yandex Index for case {case_id}",
                     extra={"case_id": case_id, "num_chunks": len(all_documents)}
                 )
-                document_processor.store_in_vector_db(
+                index_id = document_processor.store_in_vector_db(
                     case_id=case_id,
-                    documents=all_documents
+                    documents=all_documents,
+                    db=db
                 )
-                logger.info(f"Successfully stored vector DB for case {case_id}")
+                logger.info(f"Successfully stored documents in Yandex Index {index_id} for case {case_id}")
         except Exception as e:
             logger.error(
-                f"Ошибка при сохранении в векторную БД для дела {case_id}: {e}",
+                f"Ошибка при сохранении в Yandex Index для дела {case_id}: {e}",
                 extra={"case_id": case_id, "error": str(e)},
                 exc_info=True
             )
             # Continue even if vector DB storage fails
+        
+        # Create assistant for case (after index is created)
+        if index_id:
+            try:
+                from app.services.yandex_assistant import YandexAssistantService
+                assistant_service = YandexAssistantService()
+                assistant_id = assistant_service.create_assistant(case_id, index_id)
+                case.yandex_assistant_id = assistant_id
+                db.commit()
+                logger.info(f"✅ Created assistant {assistant_id} for case {case_id}")
+            except Exception as e:
+                logger.warning(f"Failed to create assistant for case {case_id}: {e}")
+                # Продолжаем, ассистент создастся при первом запросе в чате
+                if db:
+                    try:
+                        db.rollback()
+                    except:
+                        pass
         
         db.refresh(case)
         

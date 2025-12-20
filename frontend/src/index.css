@@ -1,50 +1,26 @@
-/* Global styles and CSS variables (Light theme) */
-:root {
-  /* Light color palette */
-  --color-bg: #ffffff; /* main background */
-  --color-bg-secondary: #f9fafb; /* sidebar background */
-  --color-bg-tertiary: #f3f4f6; /* message background */
-  --color-surface: #ffffff; /* input background */
-  --color-surface-alt: #f9fafb; /* alternate surface */
-  --color-text: #1f2937; /* primary text */
-  --color-text-secondary: #6b7280; /* secondary text */
-  --color-text-muted: #9ca3af; /* muted text */
-  --color-text-light: #6b7280; /* light text */
-  --color-border: #e5e7eb; /* borders */
-  
-  /* Accent colors */
-  --color-primary: #3b82f6; /* blue */
-  --color-primary-hover: #2563eb;
-  --color-success: #10b981;
-  --color-error: #ef4444;
-  
-  /* Message colors */
-  --color-message-user: #3b82f6; /* user message background */
-  --color-message-assistant: transparent; /* assistant message (no background) */
-  
-  /* Interactive elements */
-  --color-hover: rgba(0, 0, 0, 0.05);
-  --color-active: rgba(0, 0, 0, 0.1);
-}
+/* Tailwind CSS Directives */
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
 
-* {
-  margin: 0;
-  padding: 0;
-  box-sizing: border-box;
-}
+/* Theme and Typography */
+@import './styles/theme.css';
+@import './styles/typography.css';
 
-body {
-  font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen',
-    'Ubuntu', 'Cantarell', 'Fira Sans', 'Droid Sans', 'Helvetica Neue', sans-serif;
-  -webkit-font-smoothing: antialiased;
-  -moz-osx-font-smoothing: grayscale;
-  background-color: var(--color-bg);
-  color: var(--color-text);
-  font-size: 16px;
-  line-height: 1.75;
-}
+/* Base Styles */
+@layer base {
+  * {
+    @apply box-border;
+  }
 
-#root {
-  min-height: 100vh;
+  body {
+    @apply font-sans antialiased;
+    @apply bg-primary text-primary;
+    @apply text-body-large;
+  }
+
+  #root {
+    @apply min-h-screen;
+  }
 }
 

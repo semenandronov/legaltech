@@ -1,0 +1,88 @@
+/* Theme CSS Variables for Dark and Light Modes */
+
+/* Dark Mode (Default) */
+:root {
+  /* Background colors */
+  --bg-primary: #0F1419;
+  --bg-secondary: #1A2332;
+  --bg-tertiary: #242F3F;
+  --border: #3A4556;
+  
+  /* Text colors */
+  --text-primary: #F5F5F5;
+  --text-secondary: #A0A8B8;
+  --text-disabled: #5A6476;
+  
+  /* Accent colors */
+  --primary: #0FA3FF;
+  --primary-hover: #0D8FD9;
+  --success: #28C76F;
+  --warning: #FFB547;
+  --error: #FF5370;
+  --info: #00BDD4;
+  
+  /* Document type colors */
+  --doc-contract: #9C27B0;
+  --doc-email: #FF6F00;
+  --doc-court: #D32F2F;
+  --doc-sanction: #880E4F;
+  --doc-compliance: #00838F;
+}
+
+/* Light Mode */
+:root[data-theme="light"] {
+  /* Background colors */
+  --bg-primary: #FFFFFF;
+  --bg-secondary: #F8F9FA;
+  --bg-tertiary: #F0F2F5;
+  --border: #E5E8EB;
+  
+  /* Text colors */
+  --text-primary: #0F1419;
+  --text-secondary: #666B78;
+  --text-disabled: #B8BCC5;
+  
+  /* Accent colors */
+  --primary: #0866FF;
+  --primary-hover: #0756E0;
+  --success: #22AB94;
+  --warning: #F59E0B;
+  --error: #DC3545;
+  --info: #0288D1;
+  
+  /* Document type colors (same for both modes) */
+  --doc-contract: #7B1FA2;
+  --doc-email: #E65100;
+  --doc-court: #C62828;
+  --doc-sanction: #880E4F;
+  --doc-compliance: #00838F;
+}
+
+/* Utility classes for theme colors */
+.bg-primary {
+  background-color: var(--bg-primary);
+}
+
+.bg-secondary {
+  background-color: var(--bg-secondary);
+}
+
+.bg-tertiary {
+  background-color: var(--bg-tertiary);
+}
+
+.border-theme {
+  border-color: var(--border);
+}
+
+.text-primary {
+  color: var(--text-primary);
+}
+
+.text-secondary {
+  color: var(--text-secondary);
+}
+
+.text-disabled {
+  color: var(--text-disabled);
+}

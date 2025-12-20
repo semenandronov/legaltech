@@ -1,13 +1,14 @@
 """LangChain chains for Legal AI Vault"""
 from typing import List, Dict, Any, Optional
+from sqlalchemy.orm import Session
 import logging
-import os
 
 from langchain_core.prompts import PromptTemplate, ChatPromptTemplate
 from langchain_openai import ChatOpenAI
 from langchain_core.documents import Document
 from app.config import config
 from app.services.document_processor import DocumentProcessor
+from app.services.yandex_index import YandexIndexRetriever
 
 logger = logging.getLogger(__name__)
 
@@ -58,12 +59,13 @@ class ChainService:
             max_tokens=2000
         )
     
-    def create_retrieval_qa_chain(self, case_id: str) -> RetrievalQA:
+    def create_retrieval_qa_chain(self, case_id: str, db: Optional[Session] = None) -> RetrievalQA:
         """
         Create RetrievalQA chain for RAG
         
         Args:
             case_id: Case identifier
+            db: Optional database session
             
         Returns:
             RetrievalQA instance
@@ -74,16 +76,17 @@ class ChainService:
                 "Please ensure langchain is properly installed."
             )
         
-        # Load vector store
-        if case_id not in self.document_processor.vector_stores:
-            persist_directory = self.document_processor._get_persist_directory(case_id)
-            if os.path.exists(persist_directory):
-                self.document_processor.load_vector_store(case_id, persist_directory)
-            else:
-                raise ValueError(f"Vector store not found for case {case_id}")
+        # Get index_id for case
+        index_id = self.document_processor.get_index_id(case_id, db)
+        if not index_id:
+            raise ValueError(f"Index not found for case {case_id}. Please upload documents first.")
         
-        retriever = self.document_processor.vector_stores[case_id].as_retriever(
-            search_kwargs={"k": 5}
+        # Create Yandex Index retriever
+        retriever = YandexIndexRetriever(
+            index_service=self.document_processor.index_service,
+            index_id=index_id,
+            k=5,
+            db_session=db
         )
         
         # Create prompt template
@@ -240,19 +243,20 @@ class ChainService:
         
         return map_reduce_chain
     
-    def run_retrieval_qa(self, case_id: str, question: str) -> Dict[str, Any]:
+    def run_retrieval_qa(self, case_id: str, question: str, db: Optional[Session] = None) -> Dict[str, Any]:
         """
         Run RetrievalQA chain
         
         Args:
             case_id: Case identifier
             question: User question
+            db: Optional database session
             
         Returns:
             Dictionary with answer and sources
         """
         try:
-            chain = self.create_retrieval_qa_chain(case_id)
+            chain = self.create_retrieval_qa_chain(case_id, db=db)
             result = chain({"query": question})
             
             return {

@@ -1,12 +1,11 @@
 """Document processor service using LangChain"""
 from typing import List, Dict, Any, Optional
 from langchain_text_splitters import RecursiveCharacterTextSplitter
-from langchain_openai import OpenAIEmbeddings
-from langchain_community.vectorstores import Chroma
 from langchain_core.documents import Document
 from app.config import config
 from app.services.yandex_embeddings import YandexEmbeddings
-import os
+from app.services.yandex_index import YandexIndexService
+from sqlalchemy.orm import Session
 import logging
 
 logger = logging.getLogger(__name__)
@@ -44,8 +43,13 @@ class DocumentProcessor:
             logger.error(f"Failed to initialize Yandex embeddings: {e}")
             raise ValueError(f"Ошибка инициализации Yandex embeddings: {str(e)}")
         
-        # Vector store will be created per case
-        self.vector_stores: Dict[str, Chroma] = {}
+        # Initialize Yandex Index service
+        try:
+            self.index_service = YandexIndexService()
+            logger.info("✅ Using Yandex Index service")
+        except Exception as e:
+            logger.error(f"Failed to initialize Yandex Index service: {e}")
+            raise ValueError(f"Ошибка инициализации Yandex Index service: {str(e)}")
     
     def split_documents(
         self,
@@ -101,144 +105,121 @@ class DocumentProcessor:
         embeddings = self.embeddings.embed_documents(texts)
         return embeddings
     
-    def _get_persist_directory(self, case_id: str) -> str:
-        """
-        Get persistent directory for vector store
-        
-        Args:
-            case_id: Case identifier
-            
-        Returns:
-            Path to persistent directory
-        """
-        # Use persistent directory instead of temp
-        # Sanitize case_id to prevent path traversal
-        safe_case_id = case_id.replace("..", "").replace("/", "").replace("\\", "").replace(" ", "")
-        base_dir = os.getenv("VECTOR_DB_DIR", os.path.join(os.getcwd(), "vector_db"))
-        os.makedirs(base_dir, exist_ok=True)
-        return os.path.join(base_dir, f"chroma_{safe_case_id}")
-    
     def store_in_vector_db(
         self,
         case_id: str,
         documents: List[Document],
-        persist_directory: str = None
-    ) -> Chroma:
+        db: Session
+    ) -> str:
         """
-        Store documents in vector database
+        Store documents in Yandex AI Studio Index
         
         Args:
             case_id: Case identifier
             documents: List of Document objects
-            persist_directory: Directory to persist vector store (optional)
+            db: Database session for saving index_id
             
         Returns:
-            Chroma vector store instance
+            index_id: ID of created/updated index
         """
-        # Use persistent directory if not specified
-        if persist_directory is None:
-            persist_directory = self._get_persist_directory(case_id)
+        if not documents:
+            logger.warning(f"No documents to store for case {case_id}")
+            return None
         
-        logger.info(f"Storing vector DB for case {case_id} in {persist_directory}")
+        logger.info(f"Storing {len(documents)} documents in Yandex Index for case {case_id}")
         
-        # Create or load vector store
-        vector_store = Chroma.from_documents(
-            documents=documents,
-            embedding=self.embeddings,
-            persist_directory=persist_directory
-        )
+        # Check if index already exists for this case
+        from app.models.case import Case
+        case = db.query(Case).filter(Case.id == case_id).first()
+        if not case:
+            raise ValueError(f"Case {case_id} not found in database")
         
-        # Store reference
-        self.vector_stores[case_id] = vector_store
+        index_id = case.yandex_index_id
         
-        return vector_store
+        # Create new index if doesn't exist
+        if not index_id:
+            try:
+                index_id = self.index_service.create_index(case_id)
+                case.yandex_index_id = index_id
+                db.commit()
+                logger.info(f"✅ Created and saved index {index_id} for case {case_id}")
+            except Exception as e:
+                db.rollback()
+                logger.error(f"Failed to create index for case {case_id}: {e}", exc_info=True)
+                raise
+        
+        # Add documents to index
+        try:
+            self.index_service.add_documents(index_id, documents)
+            logger.info(f"✅ Added {len(documents)} documents to index {index_id}")
+        except Exception as e:
+            logger.error(f"Failed to add documents to index {index_id}: {e}", exc_info=True)
+            raise
+        
+        return index_id
     
     def retrieve_relevant_chunks(
         self,
         case_id: str,
         query: str,
         k: int = 5,
-        distance_threshold: float = 1.5
+        distance_threshold: float = 1.5,
+        db: Optional[Session] = None
     ) -> List[Document]:
         """
-        Retrieve relevant document chunks using semantic search
+        Retrieve relevant document chunks using Yandex AI Studio Index search
         
         Args:
             case_id: Case identifier
             query: Search query
             k: Number of chunks to retrieve
-            distance_threshold: Maximum distance (ChromaDB returns distance, lower is better)
+            distance_threshold: Maximum distance threshold (for filtering, not used by Yandex Index API directly)
+            db: Optional database session for getting index_id
             
         Returns:
             List of relevant Document objects with scores
         """
-        # Try to load vector store if not in memory
-        if case_id not in self.vector_stores:
-            persist_directory = self._get_persist_directory(case_id)
-            if os.path.exists(persist_directory):
-                try:
-                    logger.info(f"Loading vector DB for case {case_id} from {persist_directory}")
-                    self.load_vector_store(case_id, persist_directory)
-                except Exception as e:
-                    logger.warning(f"Failed to load vector store for case {case_id}: {e}", exc_info=True)
-                    return []
-            else:
-                logger.warning(f"Vector store not found for case {case_id} at {persist_directory}")
-                return []
+        # Get index_id for case
+        index_id = self.index_service.get_index_id(case_id, db_session=db)
         
-        vector_store = self.vector_stores[case_id]
+        if not index_id:
+            logger.warning(f"No index found for case {case_id}")
+            return []
         
         try:
-            # Perform similarity search with scores
-            # ChromaDB returns distance scores (lower = better, typically 0-2 range)
-            results = vector_store.similarity_search_with_score(query, k=k)
+            # Search in Yandex Index
+            documents = self.index_service.search(index_id, query, k=k)
             
-            # Filter by threshold and return documents
-            # Since score is distance, we want scores <= threshold (lower distance = better match)
-            relevant_docs = []
-            for doc, score in results:
-                # Convert distance to similarity-like score for metadata (inverse: lower distance = higher similarity)
-                similarity_like = 1.0 / (1.0 + float(score)) if score > 0 else 1.0
-                
-                if score <= distance_threshold:
-                    # Add both distance and similarity-like score to metadata
-                    doc.metadata["distance_score"] = float(score)
-                    doc.metadata["similarity_score"] = similarity_like
-                    relevant_docs.append(doc)
+            # Filter by threshold if needed (Yandex Index returns similarity scores)
+            # Yandex Index returns similarity_score in metadata (higher = better)
+            if distance_threshold < 1.5:  # Only filter if threshold is meaningful
+                filtered_docs = []
+                for doc in documents:
+                    similarity_score = doc.metadata.get("similarity_score", 1.0)
+                    # Convert similarity to distance: distance = 1 - similarity
+                    distance_score = 1.0 - similarity_score
+                    if distance_score <= distance_threshold:
+                        filtered_docs.append(doc)
+                documents = filtered_docs
             
-            if not relevant_docs:
-                logger.warning(f"No relevant chunks found for case {case_id} with distance threshold {distance_threshold}")
+            if not documents:
+                logger.warning(f"No relevant chunks found for case {case_id} in index {index_id}")
             
-            return relevant_docs
+            return documents
         except Exception as e:
             logger.error(f"Error retrieving chunks for case {case_id}: {e}", exc_info=True)
             return []
     
-    def load_vector_store(self, case_id: str, persist_directory: Optional[str] = None) -> Chroma:
+    def get_index_id(self, case_id: str, db: Optional[Session] = None) -> Optional[str]:
         """
-        Load existing vector store from disk
+        Get index_id for case from database
         
         Args:
             case_id: Case identifier
-            persist_directory: Directory where vector store is persisted (optional)
+            db: Optional database session
             
         Returns:
-            Chroma vector store instance
-            
-        Raises:
-            ValueError: If persist_directory doesn't exist
+            index_id if found, None otherwise
         """
-        if persist_directory is None:
-            persist_directory = self._get_persist_directory(case_id)
-        
-        if not os.path.exists(persist_directory):
-            raise ValueError(f"Vector store directory not found: {persist_directory}")
-        
-        vector_store = Chroma(
-            persist_directory=persist_directory,
-            embedding_function=self.embeddings
-        )
-        self.vector_stores[case_id] = vector_store
-        logger.info(f"Loaded vector store for case {case_id} from {persist_directory}")
-        return vector_store
+        return self.index_service.get_index_id(case_id, db_session=db)
 

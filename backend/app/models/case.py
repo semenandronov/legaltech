@@ -23,6 +23,8 @@ class Case(Base):
     file_names = Column(JSON, nullable=False)  # List of file names
     analysis_config = Column(JSON, nullable=True)  # Настройки анализа
     case_metadata = Column(JSON, nullable=True)  # Дополнительные метаданные (переименовано из metadata, т.к. metadata зарезервировано SQLAlchemy)
+    yandex_index_id = Column(String(255), nullable=True)  # ID индекса в Yandex AI Studio
+    yandex_assistant_id = Column(String(255), nullable=True)  # ID ассистента в Yandex AI Studio
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     

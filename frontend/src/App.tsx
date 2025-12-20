@@ -3,6 +3,10 @@ import ProtectedRoute from './components/ProtectedRoute'
 import LoginPage from './pages/LoginPage'
 import RegisterPage from './pages/RegisterPage'
 import Dashboard from './pages/Dashboard'
+import CasesListPage from './pages/CasesListPage'
+import CaseOverviewPage from './pages/CaseOverviewPage'
+import ContradictionsPage from './pages/ContradictionsPage'
+import DocumentsPage from './pages/DocumentsPage'
 import AnalysisPage from './pages/AnalysisPage'
 import CaseWorkspacePage from './pages/CaseWorkspacePage'
 import ReportsPage from './pages/ReportsPage'
@@ -21,7 +25,15 @@ function App() {
         path="/"
         element={
           <ProtectedRoute>
-            <Dashboard />
+            <Navigate to="/cases" replace />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/cases"
+        element={
+          <ProtectedRoute>
+            <CasesListPage />
           </ProtectedRoute>
         }
       />
@@ -37,7 +49,23 @@ function App() {
         path="/cases/:caseId/workspace"
         element={
           <ProtectedRoute>
-            <CaseWorkspacePage />
+            <CaseOverviewPage />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/cases/:caseId/documents"
+        element={
+          <ProtectedRoute>
+            <DocumentsPage />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/cases/:caseId/contradictions"
+        element={
+          <ProtectedRoute>
+            <ContradictionsPage />
           </ProtectedRoute>
         }
       />
@@ -106,4 +134,3 @@ const CaseChatPage = () => {
 }
 
 export default App
-

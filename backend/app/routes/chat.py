@@ -433,14 +433,14 @@ async def chat(
             }
         )
         
-        # Use RAG service to generate answer with sources and memory
-        answer, sources = rag_service.generate_answer(
+        # Use RAG service to generate answer with sources
+        # Now uses Yandex Assistant API internally
+        answer, sources = rag_service.generate_with_sources(
             case_id=request.case_id,
             query=request.question,
-            chat_history=chat_history,
             k=5,  # Retrieve top 5 relevant chunks
-            retrieval_strategy="multi_query",  # Use improved retrieval
-            use_memory=True  # Use memory for context
+            db=db,  # Pass database session for Assistant API
+            history=chat_history  # Pass chat history for Assistant API
         )
         
         # Save context to memory (optional - don't fail if memory is not available)

@@ -1,7 +1,8 @@
 import { useState } from 'react'
 import { NavLink, useNavigate, useLocation } from 'react-router-dom'
+import { ChevronLeft, ChevronRight, Home, Settings, LogOut } from 'lucide-react'
 import { useAuth } from '../../contexts/AuthContext'
-import './Layout.css'
+import Button from '../UI/Button'
 
 const Sidebar = () => {
   const { logout, user } = useAuth()
@@ -9,97 +10,121 @@ const Sidebar = () => {
   const location = useLocation()
   const [isCollapsed, setIsCollapsed] = useState(false)
   
-  // Extract caseId from current path if on case page
-  const caseIdMatch = location.pathname.match(/\/cases\/([^/]+)/)
-  const currentCaseId = caseIdMatch ? caseIdMatch[1] : null
-
   const handleLogout = async () => {
     await logout()
     navigate('/login')
   }
-
+  
+  const navItems = [
+    { to: '/cases', icon: Home, label: 'Дела' },
+    { to: '/settings', icon: Settings, label: 'Настройки' },
+  ]
+  
   return (
-    <aside className={`sidebar ${isCollapsed ? 'collapsed' : ''}`}>
-      <div className="sidebar-header">
+    <aside className={`bg-secondary border-r border-border flex flex-col transition-all duration-300 ${
+      isCollapsed ? 'w-[60px]' : 'w-[260px]'
+    }`}>
+      {/* Header */}
+      <div className="flex items-center justify-between p-4 border-b border-border min-h-[56px]">
         {!isCollapsed && (
-          <div className="sidebar-brand">
-            <span className="sidebar-brand-icon">⚖️</span>
-            <span className="sidebar-brand-text">Legal AI</span>
+          <div className="flex items-center gap-2">
+            <span className="text-xl">⚖️</span>
+            <span className="text-body font-semibold text-primary">Legal AI</span>
           </div>
         )}
         <button
-          className="sidebar-toggle"
           onClick={() => setIsCollapsed(!isCollapsed)}
+          className="p-1 hover:bg-tertiary rounded transition-colors"
           aria-label={isCollapsed ? 'Развернуть' : 'Свернуть'}
         >
-          <svg width="16" height="16" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
-            {isCollapsed ? (
-              <path d="M6 12L10 8L6 4" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
-            ) : (
-              <path d="M10 12L6 8L10 4" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
-            )}
-          </svg>
+          {isCollapsed ? (
+            <ChevronRight className="w-4 h-4 text-secondary" />
+          ) : (
+            <ChevronLeft className="w-4 h-4 text-secondary" />
+          )}
         </button>
       </div>
       
+      {/* Navigation */}
       {!isCollapsed && (
         <>
-          <nav className="sidebar-nav">
-            <NavLink to="/" className={({ isActive }) => `sidebar-link ${isActive ? 'active' : ''}`}>
-              <span className="sidebar-link-icon">📊</span>
-              <span className="sidebar-link-text">Dashboard</span>
-            </NavLink>
-            {currentCaseId && (
-              <>
+          <nav className="flex-1 p-4 space-y-1">
+            {navItems.map((item) => {
+              const Icon = item.icon
+              const isActive = location.pathname === item.to || location.pathname.startsWith(item.to + '/')
+              
+              return (
                 <NavLink
-                  to={`/cases/${currentCaseId}/chat`}
-                  className={({ isActive }) => `sidebar-link ${isActive ? 'active' : ''}`}
+                  key={item.to}
+                  to={item.to}
+                  className={`flex items-center gap-3 px-3 py-2 text-body font-medium rounded-md transition-colors ${
+                    isActive
+                      ? 'bg-primary bg-opacity-10 text-primary'
+                      : 'text-secondary hover:text-primary hover:bg-tertiary'
+                  }`}
                 >
-                  <span className="sidebar-link-icon">💬</span>
-                  <span className="sidebar-link-text">Чат</span>
+                  <Icon className="w-5 h-5" />
+                  <span>{item.label}</span>
                 </NavLink>
-                <NavLink
-                  to={`/cases/${currentCaseId}/analysis`}
-                  className={({ isActive }) => `sidebar-link ${isActive ? 'active' : ''}`}
-                >
-                  <span className="sidebar-link-icon">📊</span>
-                  <span className="sidebar-link-text">Анализ</span>
-                </NavLink>
-              </>
-            )}
-            <NavLink
-              to="/settings"
-              className={({ isActive }) => `sidebar-link ${isActive ? 'active' : ''}`}
-            >
-              <span className="sidebar-link-icon">⚙️</span>
-              <span className="sidebar-link-text">Настройки</span>
-            </NavLink>
+              )
+            })}
           </nav>
           
-          <div className="sidebar-footer">
+          {/* Footer */}
+          <div className="p-4 border-t border-border space-y-3">
             {user && (
-              <div className="sidebar-user">
-                <div className="sidebar-user-avatar">
+              <div className="flex items-center gap-3 px-3 py-2">
+                <div className="w-8 h-8 rounded-full bg-primary bg-opacity-20 flex items-center justify-center text-small font-semibold text-primary">
                   {user.full_name?.[0]?.toUpperCase() || user.email[0].toUpperCase()}
                 </div>
-                <div className="sidebar-user-info">
-                  <div className="sidebar-user-name">{user.full_name || user.email}</div>
+                <div className="flex-1 min-w-0">
+                  <div className="text-body font-medium text-primary truncate">
+                    {user.full_name || user.email}
+                  </div>
                   {user.company && (
-                    <div className="sidebar-user-company">{user.company}</div>
+                    <div className="text-small text-secondary truncate">{user.company}</div>
                   )}
                 </div>
               </div>
             )}
-            <button className="sidebar-logout" onClick={handleLogout}>
-              <span className="sidebar-link-icon">🚪</span>
-              <span className="sidebar-link-text">Выход</span>
-            </button>
+            <Button
+              variant="secondary"
+              className="w-full justify-start"
+              onClick={handleLogout}
+            >
+              <LogOut className="w-4 h-4 mr-2" />
+              Выход
+            </Button>
           </div>
         </>
+      )}
+      
+      {/* Collapsed state icons */}
+      {isCollapsed && (
+        <nav className="flex-1 p-2 space-y-2">
+          {navItems.map((item) => {
+            const Icon = item.icon
+            const isActive = location.pathname === item.to || location.pathname.startsWith(item.to + '/')
+            
+            return (
+              <NavLink
+                key={item.to}
+                to={item.to}
+                className={`flex items-center justify-center p-2 rounded-md transition-colors ${
+                  isActive
+                    ? 'bg-primary bg-opacity-10 text-primary'
+                    : 'text-secondary hover:text-primary hover:bg-tertiary'
+                }`}
+                title={item.label}
+              >
+                <Icon className="w-5 h-5" />
+              </NavLink>
+            )
+          })}
+        </nav>
       )}
     </aside>
   )
 }
 
 export default Sidebar
-
