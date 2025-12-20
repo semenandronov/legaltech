@@ -330,33 +330,10 @@ async def upload_files(
                         # Use document as-is with all metadata
                         chunks.append(langchain_doc)
                 
-                # Save chunks to database
-                for chunk_idx, chunk_doc in enumerate(chunks):
-                    # Очищаем текст чанка от NUL символов
-                    sanitized_chunk_text = sanitize_text(chunk_doc.page_content)
-                    
-                    # Убеждаемся, что метаданные правильно установлены
-                    # source_file должен быть установлен из metadata или filename
-                    source_file = chunk_doc.metadata.get("source_file") or file_info["filename"]
-                    
-                    chunk_model = DocumentChunk(
-                        case_id=case_id,
-                        file_id=file_model.id,
-                        chunk_index=chunk_idx,
-                        chunk_text=sanitized_chunk_text,
-                        source_file=source_file,
-                        source_page=chunk_doc.metadata.get("source_page"),
-                        source_start_line=chunk_doc.metadata.get("source_start_line"),
-                        source_end_line=chunk_doc.metadata.get("source_end_line"),
-                        chunk_metadata=chunk_doc.metadata
-                    )
-                    db.add(chunk_model)
-                    # Используем очищенный текст для документов LangChain и обновляем metadata
-                    chunk_doc.page_content = sanitized_chunk_text
-                    # Убеждаемся, что source_file установлен в metadata
-                    if "source_file" not in chunk_doc.metadata:
-                        chunk_doc.metadata["source_file"] = source_file
-                    all_documents.append(chunk_doc)
+                # ВАЖНО: Chunks НЕ сохраняем в БД, так как поиск идет через Yandex Vector Store
+                # LangChain используется только для обработки текста на нашей стороне (если нужно)
+                # Все документы уже загружены в Yandex Vector Store как оригинальные файлы
+                # Сохраняем только информацию о файле (File model)
                     
                 logger.info(
                     f"Processed {len(chunks)} chunks from LangChain for file {file_info['filename']} "

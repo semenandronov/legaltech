@@ -157,13 +157,11 @@ class DocumentProcessor:
                 logger.error(f"Failed to create index for case {case_id}: {e}", exc_info=True)
                 raise
         
-        # Если индекс уже существует, добавляем документы через add_documents
-        try:
-            result = self.index_service.add_documents(index_id, documents)
-            logger.info(f"✅ Added {len(documents)} documents to existing index {index_id}: {result}")
-        except Exception as e:
-            logger.error(f"Failed to add documents to existing index {index_id}: {e}", exc_info=True)
-            raise
+        # Если индекс уже существует, добавляем файлы через add_files
+        # ВАЖНО: Для добавления файлов в существующий индекс нужно использовать original_files
+        # Но сейчас это не реализовано - при повторной загрузке нужно пересоздавать индекс
+        # Или реализовать add_files в YandexIndexService
+        logger.info(f"Index {index_id} already exists for case {case_id}. Adding files to existing index not yet implemented.")
         
         return index_id
     
