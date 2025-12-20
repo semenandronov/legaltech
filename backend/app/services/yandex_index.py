@@ -1,9 +1,10 @@
 """Yandex AI Studio Vector Store service for search indexes"""
-import requests
 import logging
 from typing import List, Dict, Any, Optional
 from langchain_core.documents import Document
 from langchain_core.retrievers import BaseRetriever
+from yandex_cloud_ml_sdk import YCloudML
+from yandex_cloud_ml_sdk.auth import APIKeyAuth
 from app.config import config
 
 logger = logging.getLogger(__name__)
@@ -72,22 +73,13 @@ class YandexIndexService:
             logger.error(f"Failed to initialize Yandex Cloud ML SDK: {e}", exc_info=True)
             self.sdk = None
     
-    def _get_headers(self) -> Dict[str, str]:
-        """Get HTTP headers for API requests"""
-        if self.use_api_key:
-            auth_header = f"Api-Key {self.api_key}"
-        else:
-            auth_header = f"Bearer {self.iam_token}"
-        
-        headers = {
-            "Authorization": auth_header,
-            "Content-Type": "application/json"
-        }
-        
-        if self.folder_id:
-            headers["x-folder-id"] = self.folder_id
-        
-        return headers
+    def _ensure_sdk(self):
+        """Ensure SDK is initialized"""
+        if not self.sdk:
+            raise ValueError(
+                "Yandex Cloud ML SDK not initialized. "
+                "Check YANDEX_API_KEY/YANDEX_IAM_TOKEN and YANDEX_FOLDER_ID in .env file"
+            )
     
     def create_index(self, case_id: str, name: str = None) -> str:
         """
