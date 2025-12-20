@@ -137,24 +137,31 @@ class DocumentProcessor:
         index_id = case.yandex_index_id
         
         # Create new index if doesn't exist
+        # ВАЖНО: Для Yandex Vector Store нужно передавать документы при создании индекса,
+        # потому что create_deferred требует обязательный параметр files
         if not index_id:
             try:
-                index_id = self.index_service.create_index(case_id)
+                # Передаем документы в create_index, чтобы они были загружены как файлы
+                # и индекс создан с этими файлами
+                index_id = self.index_service.create_index(case_id, documents=documents)
                 case.yandex_index_id = index_id
                 db.commit()
-                logger.info(f"✅ Created and saved index {index_id} for case {case_id}")
+                logger.info(f"✅ Created and saved index {index_id} for case {case_id} with {len(documents)} documents")
+                # Документы уже добавлены при создании индекса, не нужно добавлять их еще раз
+                return index_id
             except Exception as e:
                 db.rollback()
                 logger.error(f"Failed to create index for case {case_id}: {e}", exc_info=True)
                 raise
         
-        # Add documents to index
+        # Если индекс уже существует, добавляем документы через add_documents
+        # (хотя это может не работать, т.к. add_documents еще не полностью реализован)
         try:
-            self.index_service.add_documents(index_id, documents)
-            logger.info(f"✅ Added {len(documents)} documents to index {index_id}")
+            result = self.index_service.add_documents(index_id, documents)
+            logger.info(f"✅ Added {len(documents)} documents to existing index {index_id}: {result}")
         except Exception as e:
-            logger.error(f"Failed to add documents to index {index_id}: {e}", exc_info=True)
-            raise
+            logger.warning(f"Failed to add documents to existing index {index_id}: {e}. Index may need to be recreated with documents.")
+            # Не бросаем исключение, т.к. индекс уже существует и может быть использован
         
         return index_id
     

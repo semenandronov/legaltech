@@ -1,4 +1,5 @@
 """Yandex AI Studio Vector Store service for search indexes"""
+import json
 import logging
 from typing import List, Dict, Any, Optional
 from langchain_core.documents import Document
@@ -81,49 +82,98 @@ class YandexIndexService:
                 "Check YANDEX_API_KEY/YANDEX_IAM_TOKEN and YANDEX_FOLDER_ID in .env file"
             )
     
-    def create_index(self, case_id: str, name: str = None) -> str:
+    def _upload_documents_as_files(self, documents: List[Document]) -> List[str]:
+        """
+        Upload documents as files to Vector Store and return file IDs
+        
+        Args:
+            documents: List of Document objects to upload
+            
+        Returns:
+            List of file IDs
+        """
+        if not hasattr(self.sdk, 'files') or not hasattr(self.sdk.files, 'upload'):
+            raise NotImplementedError(
+                "SDK does not support files.upload(). "
+                "Cannot upload documents as files to Vector Store."
+            )
+        
+        file_ids = []
+        for i, doc in enumerate(documents):
+            try:
+                # Конвертируем документ в JSON формат для загрузки
+                file_content = json.dumps({
+                    "text": doc.page_content,
+                    "metadata": doc.metadata
+                }, ensure_ascii=False).encode('utf-8')
+                
+                # Используем source из metadata как имя файла, если доступно
+                file_name = doc.metadata.get("source", f"document_{i}.json")
+                if not file_name.endswith('.json'):
+                    file_name = f"{file_name}.json"
+                
+                # Загружаем файл в Vector Store
+                logger.debug(f"Uploading file {file_name} to Vector Store...")
+                uploaded_file = self.sdk.files.upload(
+                    name=file_name,
+                    content=file_content,
+                    mime_type="application/json"
+                )
+                
+                # Получаем ID загруженного файла
+                file_id = uploaded_file.id if hasattr(uploaded_file, 'id') else str(uploaded_file)
+                file_ids.append(file_id)
+                logger.debug(f"✅ Uploaded file {file_name} with ID {file_id}")
+                
+            except Exception as e:
+                logger.error(f"Failed to upload document {i}: {e}", exc_info=True)
+                # Продолжаем загрузку остальных файлов даже если один не удался
+                continue
+        
+        if not file_ids:
+            raise Exception("Failed to upload any documents as files to Vector Store")
+        
+        logger.info(f"✅ Uploaded {len(file_ids)} files to Vector Store")
+        return file_ids
+    
+    def create_index(self, case_id: str, name: str = None, documents: Optional[List[Document]] = None) -> str:
         """
         Create new Vector Store search index for case using ML SDK
         
-        ВАЖНО: Используйте Yandex Cloud ML SDK для работы с Search Indexes
-        SDK Reference: https://yandex.cloud/docs/ai-studio/sdk-ref/
-        SDK поддерживает: sdk.search_indexes для работы с индексами
+        ВАЖНО: create_deferred требует обязательный параметр files (список ID файлов).
+        Поэтому необходимо сначала загрузить документы как файлы, затем создать индекс с их ID.
         
-        Документация Vector Store: https://yandex.cloud/docs/ai-studio/concepts/vector-store
+        Документация: https://yandex.cloud/docs/ai-studio/concepts/vector-store
+        SDK Reference: https://yandex.cloud/docs/ai-studio/sdk-ref/
         
         Args:
             case_id: Case identifier
             name: Optional index name (defaults to index_prefix_case_id)
+            documents: Optional list of documents to upload before creating index.
+                      If provided, documents will be uploaded as files and index created with them.
+                      If not provided, will attempt to create empty index (may fail).
         
         Returns:
             index_id: ID of created Vector Store index
-        
-        TODO: Реализовать через SDK:
-        - Использовать sdk.search_indexes.create() или sdk.vector_store для создания индекса
-        - Проверить примеры использования SDK:
-          * SDK Examples: https://github.com/yandex-cloud/yandex-cloud-ml-sdk/tree/master/examples
-          * Yandex Cloud Examples: https://github.com/yandex-cloud-examples
-          (старый репозиторий examples заархивирован)
-        - Для Vector Store может потребоваться сначала загрузить файлы через sdk.files
         """
         self._ensure_sdk()
         
         index_name = name or f"{self.index_prefix}_{case_id}"
+        file_ids = []
+        
+        # Если документы переданы, загружаем их как файлы
+        if documents:
+            logger.info(f"Uploading {len(documents)} documents as files before creating index...")
+            file_ids = self._upload_documents_as_files(documents)
+            logger.info(f"✅ Uploaded {len(file_ids)} files, will create index with these files")
+        else:
+            logger.warning(
+                "No documents provided. create_deferred requires files parameter. "
+                "Index creation may fail. Consider providing documents."
+            )
         
         # Пробуем создать индекс через SDK
-        # Vector Store API в SDK может быть доступен через разные пути
         try:
-            # Попробуем через vector_store (если доступно)
-            if hasattr(self.sdk, 'vector_store'):
-                logger.info(f"Creating Vector Store index '{index_name}' for case {case_id} via SDK")
-                vector_store = self.sdk.vector_store.create(
-                    name=index_name,
-                    description=f"Index for case {case_id}"
-                )
-                index_id = vector_store.id if hasattr(vector_store, 'id') else str(vector_store)
-                logger.info(f"✅ Created Vector Store index {index_id} for case {case_id}")
-                return index_id
-            
             # Попробуем через search_indexes (если доступно)
             if hasattr(self.sdk, 'search_indexes'):
                 logger.info(f"Creating search index '{index_name}' for case {case_id} via SDK")
@@ -134,64 +184,49 @@ class YandexIndexService:
                 logger.info(f"Available methods in search_indexes: {available_methods}")
                 
                 # Используем create_deferred - это правильный метод для создания индекса в SDK
-                # create_deferred требует параметр files (список файлов)
-                # Для создания индекса без файлов используем пустой список
+                # create_deferred требует обязательный параметр files (список ID файлов)
                 if hasattr(search_indexes, 'create_deferred'):
-                    logger.info(f"Creating index using create_deferred method...")
-                    # create_deferred требует параметр files - используем пустой список для пустого индекса
-                    # Файлы будут добавлены позже через add_documents
+                    logger.info(f"Creating index using create_deferred method with {len(file_ids)} files...")
+                    
+                    # ВАЖНО: create_deferred требует список ID файлов, НЕ пустой список
+                    if not file_ids:
+                        raise ValueError(
+                            "create_deferred requires files parameter (list of file IDs). "
+                            "Cannot create index without files. Please provide documents when calling create_index."
+                        )
+                    
                     index = search_indexes.create_deferred(
                         name=index_name,
                         description=f"Index for case {case_id}",
-                        files=[]  # Пустой список - файлы будут добавлены позже
+                        files=file_ids  # Список ID загруженных файлов
                     )
                     index_id = index.id if hasattr(index, 'id') else str(index)
-                    logger.info(f"✅ Created search index {index_id} for case {case_id} (deferred)")
-                    return index_id
-                elif hasattr(search_indexes, 'create'):
-                    index = search_indexes.create(name=index_name, description=f"Index for case {case_id}")
-                    index_id = index.id if hasattr(index, 'id') else str(index)
-                    logger.info(f"✅ Created search index {index_id} for case {case_id}")
-                    return index_id
-                elif hasattr(search_indexes, 'create_index'):
-                    index = search_indexes.create_index(name=index_name, description=f"Index for case {case_id}")
-                    index_id = index.id if hasattr(index, 'id') else str(index)
-                    logger.info(f"✅ Created search index {index_id} for case {case_id}")
+                    logger.info(f"✅ Created search index {index_id} for case {case_id} with {len(file_ids)} files (deferred)")
                     return index_id
                 else:
                     logger.error(
-                        f"search_indexes не содержит методов create_deferred, create или create_index. "
+                        f"search_indexes не содержит метода create_deferred. "
                         f"Доступные методы: {available_methods}. "
                         f"Проверьте документацию SDK: https://yandex.cloud/docs/ai-studio/sdk-ref/"
                     )
                     raise NotImplementedError(
-                        f"Метод создания индекса не найден в SDK. "
+                        f"Метод create_deferred не найден в SDK. "
                         f"Доступные методы search_indexes: {available_methods}. "
                         f"Проверьте документацию SDK для правильного использования."
                     )
             
-            # Если ни один из методов не доступен, логируем доступные атрибуты
+            # Если search_indexes не доступен
             available_attrs = [attr for attr in dir(self.sdk) if not attr.startswith('_')]
             logger.warning(
-                f"SDK не содержит vector_store или search_indexes. "
+                f"SDK не содержит search_indexes. "
                 f"Доступные атрибуты SDK: {', '.join(available_attrs[:20])}..."
             )
             raise NotImplementedError(
-                "SDK не содержит vector_store или search_indexes атрибутов. "
+                "SDK не содержит search_indexes атрибута. "
                 "Проверьте документацию SDK и доступные методы. "
                 "SDK Reference: https://yandex.cloud/docs/ai-studio/sdk-ref/"
             )
             
-        except AttributeError as e:
-            logger.error(
-                f"AttributeError при создании индекса через SDK: {e}. "
-                f"Возможно, API SDK отличается от ожидаемого. "
-                f"Проверьте документацию: https://yandex.cloud/docs/ai-studio/sdk-ref/"
-            )
-            raise NotImplementedError(
-                f"Создание индекса через SDK не поддерживается или API изменился: {str(e)}. "
-                "Проверьте актуальную документацию SDK."
-            )
         except Exception as e:
             logger.error(f"Error creating index via SDK: {e}", exc_info=True)
             raise Exception(f"Ошибка при создании индекса через SDK: {str(e)}")
