@@ -145,29 +145,34 @@ async def upload_files(
             )
         
         # Parse file using LangChain loaders
+        # ВАЖНО: Используем только LangChain loaders, никаких fallback
         try:
-            # Try LangChain loader first (better metadata extraction)
-            try:
-                langchain_docs = DocumentLoaderService.load_document(content, filename)
-                # Combine all documents from file into single text
-                text = "\n\n".join([doc.page_content for doc in langchain_docs])
-                
-                # Store LangChain documents for later processing
-                langchain_documents_by_file[filename] = langchain_docs
-            except Exception as e:
-                error_msg = str(e)
-                logger.warning(f"LangChain loader failed for {filename}, falling back to manual parser: {error_msg}")
-                # Fallback to manual parser
-                try:
-                    text = parse_file(content, filename)
-                    langchain_documents_by_file[filename] = None
-                except Exception as parse_error:
-                    # Provide more detailed error message
-                    logger.error(f"Both LangChain and manual parser failed for {filename}: {parse_error}")
-                    raise HTTPException(
-                        status_code=400,
-                        detail=f"Не удалось обработать файл '{filename}': {str(parse_error)}"
-                    )
+            langchain_docs = DocumentLoaderService.load_document(content, filename)
+            
+            if not langchain_docs:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"LangChain loader не вернул документы для файла '{filename}'"
+                )
+            
+            # Combine all documents from file into single text
+            text = "\n\n".join([doc.page_content for doc in langchain_docs])
+            
+            # Убеждаемся, что все документы имеют правильные метаданные
+            for doc in langchain_docs:
+                if "source_file" not in doc.metadata:
+                    doc.metadata["source_file"] = filename
+                # Убеждаемся, что source есть в metadata (для совместимости)
+                if "source" not in doc.metadata:
+                    doc.metadata["source"] = filename
+            
+            # Store LangChain documents for later processing
+            langchain_documents_by_file[filename] = langchain_docs
+            
+            logger.info(
+                f"Loaded {len(langchain_docs)} LangChain documents from {filename}, "
+                f"total text length: {len(text)} chars"
+            )
             
             # Remove NULL bytes (PostgreSQL doesn't allow them in strings)
             text = text.replace('\x00', '')
