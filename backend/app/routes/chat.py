@@ -88,65 +88,74 @@ def format_source_reference(source: Dict[str, Any]) -> str:
     return ref
 
 
-def is_task_request(question: str) -> bool:
+async def classify_request(question: str, llm) -> bool:
     """
-    Определяет, является ли запрос задачей для выполнения анализов
-    или обычным вопросом
-    
-    Планировщик запускается ТОЛЬКО для явных команд типа:
-    - "Проанализируй документы и найди все риски"
-    - "Извлеки все даты из документов"
-    - "Создай отчет по делу"
-    
-    Все остальные вопросы обрабатываются через RAG чат.
+    Использует LLM для определения, является ли запрос задачей для выполнения анализов
+    или обычным вопросом для RAG чата.
     
     Args:
         question: Текст запроса пользователя
+        llm: LLM для классификации
     
     Returns:
         True если это задача, False если вопрос
     """
+    from langchain_core.prompts import ChatPromptTemplate
+    from langchain_core.messages import SystemMessage, HumanMessage
+    
+    classification_prompt = ChatPromptTemplate.from_messages([
+        SystemMessage(content="""Ты классификатор запросов пользователя. Твоя задача - определить, является ли запрос:
+
+1. ЗАДАЧЕЙ для выполнения анализа документов (требует запуска агентов):
+   - "Проанализируй документы и найди все риски"
+   - "Извлеки все даты из документов"
+   - "Создай отчет по делу"
+   - "Найди все противоречия в документах"
+   - Любые команды на выполнение комплексного анализа
+
+2. ОБЫЧНЫМ ВОПРОСОМ для RAG чата (просто ответ на основе документов):
+   - "Какие ключевые сроки и даты важны в этом деле?"
+   - "Что говорится в договоре о сроках?"
+   - "Кто является сторонами договора?"
+   - "Как дела?" (разговорные вопросы)
+   - Любые вопросы, на которые можно ответить сразу на основе документов
+
+Отвечай ТОЛЬКО одним словом: "task" для задачи или "question" для вопроса."""),
+        HumanMessage(content=f"Запрос пользователя: {question}")
+    ])
+    
+    try:
+        response = llm.invoke(classification_prompt.format_messages())
+        result = response.content.lower().strip()
+        
+        # Извлекаем результат (может быть "task", "question" или в тексте)
+        if "task" in result and "question" not in result:
+            logger.info(f"LLM classified '{question[:50]}...' as TASK")
+            return True
+        else:
+            logger.info(f"LLM classified '{question[:50]}...' as QUESTION")
+            return False
+    except Exception as e:
+        logger.warning(f"Error in LLM classification: {e}, falling back to keyword-based detection")
+        # Fallback к простой проверке ключевых слов
+        return _fallback_task_detection(question)
+
+
+def _fallback_task_detection(question: str) -> bool:
+    """Простая проверка ключевых слов как fallback"""
     question_lower = question.lower().strip()
     
-    # ВСЕ вопросы с вопросительными словами - это обычные вопросы, не задачи
-    question_words = [
-        "какие", "что", "где", "когда", "почему", "зачем", "как", 
-        "кто", "чей", "чему", "чем", "откуда", "куда",
-        "who", "what", "where", "when", "why", "how", "which"
+    # Явные команды выполнения
+    explicit_commands = [
+        "проанализируй", "анализируй", "выполни", "извлеки все",
+        "создай отчет", "сделай анализ", "запусти анализ",
+        "проведи анализ", "найди все"
     ]
     
-    # Если начинается с вопросительного слова - это обычный вопрос
-    first_words = question_lower.split()[:3]
-    if any(word in first_words for word in question_words):
-        return False
-    
-    # Разговорные фразы - всегда обычные вопросы
-    conversational_phrases = [
-        "как дела", "как поживаешь", "привет", "здравствуй", "hello", "hi",
-        "что нового", "расскажи", "объясни", "что такое", "кто такой",
-        "помоги", "подскажи", "скажи"
-    ]
-    
-    for phrase in conversational_phrases:
-        if phrase in question_lower:
-            return False
-    
-    # ЯВНЫЕ команды выполнения - только они запускают планировщик
-    # Должны быть в начале предложения или с явным действием
-    explicit_task_commands = [
-        "проанализируй", "анализируй", "выполни", "извлеки",
-        "создай", "сделай", "запусти", "проведи анализ", "провести анализ",
-        "сделать анализ", "проанализируй все", "извлеки все",
-        "analyze all", "extract all", "create", "generate report",
-        "run analysis", "perform analysis", "execute analysis"
-    ]
-    
-    # Проверяем, что команда в начале предложения
-    for command in explicit_task_commands:
-        if question_lower.startswith(command) or f" {command}" in question_lower:
+    for command in explicit_commands:
+        if command in question_lower:
             return True
     
-    # Все остальное - обычные вопросы
     return False
 
 
@@ -179,8 +188,41 @@ async def chat(
             detail="В деле нет загруженных документов. Пожалуйста, сначала загрузите документы."
         )
     
-    # Check if this is a task request
-    if is_task_request(request.question):
+    # Используем LLM для определения типа запроса (задача или вопрос)
+    # Инициализируем LLM для классификации
+    from app.services.yandex_llm import ChatYandexGPT
+    from langchain_openai import ChatOpenAI
+    
+    classification_llm = None
+    if config.YANDEX_API_KEY or config.YANDEX_IAM_TOKEN:
+        try:
+            classification_llm = ChatYandexGPT(
+                model_name=config.YANDEX_GPT_MODEL,
+                temperature=0.0,  # Нулевая температура для консистентности
+                max_tokens=10
+            )
+        except Exception as e:
+            logger.warning(f"Failed to initialize YandexGPT for classification: {e}, using OpenRouter")
+            classification_llm = ChatOpenAI(
+                model=config.OPENROUTER_MODEL,
+                openai_api_key=config.OPENROUTER_API_KEY,
+                openai_api_base=config.OPENROUTER_BASE_URL,
+                temperature=0.0,
+                max_tokens=10
+            )
+    else:
+        classification_llm = ChatOpenAI(
+            model=config.OPENROUTER_MODEL,
+            openai_api_key=config.OPENROUTER_API_KEY,
+            openai_api_base=config.OPENROUTER_BASE_URL,
+            temperature=0.0,
+            max_tokens=10
+        )
+    
+    # Классифицируем запрос через LLM
+    is_task = await classify_request(request.question, classification_llm)
+    
+    if is_task:
         # This is a task - use Planning Agent
         try:
             logger.info(f"Detected task request for case {request.case_id}: {request.question[:100]}...")
