@@ -23,7 +23,10 @@ class YandexIndexService:
     
     ВАЖНО: Используйте Yandex Cloud ML SDK для работы с Search Indexes
     SDK Reference: https://yandex.cloud/docs/ai-studio/sdk-ref/
-    GitHub: https://github.com/yandex-cloud/yandex-cloud-ml-sdk
+    GitHub SDK: https://github.com/yandex-cloud/yandex-cloud-ml-sdk
+    SDK Examples: https://github.com/yandex-cloud/yandex-cloud-ml-sdk/tree/master/examples
+    Yandex Cloud Examples: https://github.com/yandex-cloud-examples
+    (старый репозиторий https://github.com/yandex-cloud/examples заархивирован)
     
     SDK поддерживает:
     - sdk.search_indexes - работа с search indexes
@@ -105,8 +108,10 @@ class YandexIndexService:
         
         TODO: Реализовать через SDK:
         - Использовать sdk.search_indexes.create() или sdk.vector_store для создания индекса
-        - Проверить примеры использования SDK в репозитории:
-          https://github.com/yandex-cloud/yandex-cloud-ml-sdk/tree/master/examples
+        - Проверить примеры использования SDK:
+          * SDK Examples: https://github.com/yandex-cloud/yandex-cloud-ml-sdk/tree/master/examples
+          * Yandex Cloud Examples: https://github.com/yandex-cloud-examples
+          (старый репозиторий examples заархивирован)
         - Для Vector Store может потребоваться сначала загрузить файлы через sdk.files
         """
         self._ensure_sdk()
