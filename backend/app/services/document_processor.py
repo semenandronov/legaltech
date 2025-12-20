@@ -123,9 +123,10 @@ class DocumentProcessor:
         Returns:
             index_id: ID of created/updated index
         """
-        if not documents:
-            logger.warning(f"No documents to store for case {case_id}")
-            return None
+        # ВАЖНО: documents больше не используются для загрузки в Yandex Vector Store
+        # Проверяем только original_files - если их нет, это ошибка
+        if not original_files:
+            raise ValueError(f"No original files provided for case {case_id}. Cannot create index without files.")
         
         logger.info(f"Storing {len(documents)} documents in Yandex Index for case {case_id}")
         
