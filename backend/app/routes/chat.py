@@ -93,6 +93,13 @@ def is_task_request(question: str) -> bool:
     Определяет, является ли запрос задачей для выполнения анализов
     или обычным вопросом
     
+    Планировщик запускается ТОЛЬКО для явных команд типа:
+    - "Проанализируй документы и найди все риски"
+    - "Извлеки все даты из документов"
+    - "Создай отчет по делу"
+    
+    Все остальные вопросы обрабатываются через RAG чат.
+    
     Args:
         question: Текст запроса пользователя
     
@@ -101,36 +108,45 @@ def is_task_request(question: str) -> bool:
     """
     question_lower = question.lower().strip()
     
-    # Ключевые слова для задач (команды выполнения)
-    task_keywords = [
-        "проанализируй", "анализируй", "выполни", "найди", "извлеки",
-        "создай", "сделай", "запусти", "проведи", "провести",
-        "проведу", "провести анализ", "сделать анализ",
-        "analyze", "extract", "find", "create", "generate",
-        "run", "perform", "execute"
+    # ВСЕ вопросы с вопросительными словами - это обычные вопросы, не задачи
+    question_words = [
+        "какие", "что", "где", "когда", "почему", "зачем", "как", 
+        "кто", "чей", "чему", "чем", "откуда", "куда",
+        "who", "what", "where", "when", "why", "how", "which"
     ]
     
-    # Проверка на команды выполнения
-    for keyword in task_keywords:
-        if keyword in question_lower:
+    # Если начинается с вопросительного слова - это обычный вопрос
+    first_words = question_lower.split()[:3]
+    if any(word in first_words for word in question_words):
+        return False
+    
+    # Разговорные фразы - всегда обычные вопросы
+    conversational_phrases = [
+        "как дела", "как поживаешь", "привет", "здравствуй", "hello", "hi",
+        "что нового", "расскажи", "объясни", "что такое", "кто такой",
+        "помоги", "подскажи", "скажи"
+    ]
+    
+    for phrase in conversational_phrases:
+        if phrase in question_lower:
+            return False
+    
+    # ЯВНЫЕ команды выполнения - только они запускают планировщик
+    # Должны быть в начале предложения или с явным действием
+    explicit_task_commands = [
+        "проанализируй", "анализируй", "выполни", "извлеки",
+        "создай", "сделай", "запусти", "проведи анализ", "провести анализ",
+        "сделать анализ", "проанализируй все", "извлеки все",
+        "analyze all", "extract all", "create", "generate report",
+        "run analysis", "perform analysis", "execute analysis"
+    ]
+    
+    # Проверяем, что команда в начале предложения
+    for command in explicit_task_commands:
+        if question_lower.startswith(command) or f" {command}" in question_lower:
             return True
     
-    # Проверка на конкретные типы анализов в запросе
-    analysis_keywords = [
-        "timeline", "хронология", "даты", "события",
-        "key facts", "ключевые факты", "факты",
-        "discrepancy", "противоречия", "несоответствия",
-        "risk", "риски", "анализ рисков",
-        "summary", "резюме", "краткое содержание"
-    ]
-    
-    # Если есть упоминание типов анализов + команда или конструкция задачи
-    has_analysis_keyword = any(keyword in question_lower for keyword in analysis_keywords)
-    has_task_structure = any(word in question_lower for word in ["все", "всех", "всех", "какие", "какие-либо"])
-    
-    if has_analysis_keyword and (has_task_structure or any(cmd in question_lower for cmd in ["нужно", "требуется", "необходимо"])):
-        return True
-    
+    # Все остальное - обычные вопросы
     return False
 
 

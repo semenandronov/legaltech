@@ -208,17 +208,34 @@ class RAGService:
         Returns:
             Tuple of (answer, sources)
         """
+        # Проверка на разговорные вопросы - даем дружелюбный ответ
+        query_lower = query.lower().strip()
+        conversational_questions = {
+            "как дела": "Спасибо, всё хорошо! Готов помочь вам с анализом документов дела. Задайте вопрос о документах, и я найду нужную информацию.",
+            "как поживаешь": "Спасибо, отлично! Чем могу помочь с вашим делом?",
+            "привет": "Привет! Готов помочь с анализом документов. Что вас интересует?",
+            "здравствуй": "Здравствуйте! Чем могу помочь с вашим делом?",
+            "hello": "Hello! I'm ready to help you analyze your case documents. What would you like to know?",
+            "hi": "Hi! How can I help you with your case?",
+        }
+        
+        for key, response in conversational_questions.items():
+            if query_lower == key or query_lower.startswith(key + " "):
+                return response, []
+        
         # Retrieve relevant chunks
         relevant_docs = self.retrieve_context(case_id, query, k=k)
         
-        if not relevant_docs:
-            return "Не найдено релевантной информации в документах дела.", []
+        # Даже если нет релевантных документов, генерируем ответ через LLM
+        # Это позволяет отвечать на любые вопросы естественным языком
         
         # Format sources for prompt
         sources_text = self.format_sources_for_prompt(relevant_docs)
         
         # Create prompt
-        system_template = """Ты эксперт по анализу юридических документов.
+        if relevant_docs:
+            sources_text = self.format_sources_for_prompt(relevant_docs)
+            system_template = """Ты эксперт по анализу юридических документов.
 Ты отвечаешь на вопросы на основе предоставленных документов дела.
 
 ВАЖНО:
@@ -232,6 +249,20 @@ class RAGService:
 
 {additional_context}
 """
+        else:
+            # Если нет документов, все равно отвечаем на вопрос естественным языком
+            sources_text = ""
+            system_template = """Ты помощник для работы с юридическими документами.
+Ты отвечаешь на вопросы пользователя естественным языком.
+
+ВАЖНО:
+- Отвечай дружелюбно и понятно
+- Если вопрос не связан с документами дела - отвечай на него естественно
+- Если пользователь спрашивает о документах, но они не загружены - объясни это вежливо
+- Не давай юридических советов, только общую информацию
+
+{additional_context}
+"""
         
         human_template = "{question}"
         
@@ -242,11 +273,17 @@ class RAGService:
         
         # Format prompt
         additional_context = context or ""
-        formatted_prompt = prompt.format_messages(
-            sources=sources_text,
-            additional_context=additional_context,
-            question=query
-        )
+        if relevant_docs:
+            formatted_prompt = prompt.format_messages(
+                sources=sources_text,
+                additional_context=additional_context,
+                question=query
+            )
+        else:
+            formatted_prompt = prompt.format_messages(
+                additional_context=additional_context,
+                question=query
+            )
         
         # Check context size
         prompt_size = sum(len(str(msg.content)) for msg in formatted_prompt)
@@ -305,10 +342,17 @@ class RAGService:
         relevant_docs = self.retrieve_context(case_id, query, k=k, retrieval_strategy=retrieval_strategy)
         
         if not relevant_docs:
+            # Для разговорных вопросов даем более дружелюбный ответ
+            query_lower = query.lower().strip()
+            if any(word in query_lower for word in ["как", "что", "где", "когда", "почему", "зачем"]):
+                return "Я не нашел конкретной информации по вашему вопросу в документах дела. Попробуйте переформулировать вопрос или уточнить, что именно вас интересует.", []
             return "Не найдено релевантной информации в документах дела.", []
         
-        # Format sources with context limit
-        sources_text = self.format_sources_for_prompt(relevant_docs)
+        # Format sources with context limit (если есть документы)
+        if relevant_docs:
+            sources_text = self.format_sources_for_prompt(relevant_docs)
+        else:
+            sources_text = ""
         
         # Format chat history using memory if enabled
         history_text = ""
@@ -335,8 +379,9 @@ class RAGService:
                 history_parts.append(f"{role}: {msg.get('content', '')}")
             history_text = "\n".join(history_parts)
         
-        # Create prompt
-        system_template = """Ты эксперт по анализу юридических документов.
+        # Create prompt - разные шаблоны в зависимости от наличия документов
+        if relevant_docs:
+            system_template = """Ты эксперт по анализу юридических документов.
 Ты отвечаешь на вопросы на основе предоставленных документов дела.
 
 ВАЖНО:
@@ -350,6 +395,19 @@ class RAGService:
 
 {history}
 """
+        else:
+            # Если нет документов, все равно отвечаем естественным языком
+            system_template = """Ты помощник для работы с юридическими документами.
+Ты отвечаешь на вопросы пользователя естественным языком.
+
+ВАЖНО:
+- Отвечай дружелюбно и понятно на любые вопросы
+- Если вопрос не связан с документами дела - отвечай на него естественно
+- Если пользователь спрашивает о документах, но они не загружены - объясни это вежливо
+- Не давай юридических советов, только общую информацию
+
+{history}
+"""
         
         human_template = "{question}"
         
@@ -359,11 +417,17 @@ class RAGService:
         ])
         
         # Format prompt
-        formatted_prompt = prompt.format_messages(
-            sources=sources_text,
-            history=history_text,
-            question=query
-        )
+        if relevant_docs:
+            formatted_prompt = prompt.format_messages(
+                sources=sources_text,
+                history=history_text,
+                question=query
+            )
+        else:
+            formatted_prompt = prompt.format_messages(
+                history=history_text,
+                question=query
+            )
         
         # Check context size
         prompt_size = sum(len(str(msg.content)) for msg in formatted_prompt)
