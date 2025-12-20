@@ -361,11 +361,12 @@ async def chat(
             
             try:
                 # Save user message
+                # Use case_id as session_id since DB requires non-null sessionId
                 user_message = ChatMessage(
                     case_id=request.case_id,
                     role="user",
                     content=request.question,
-                    session_id=None  # session_id nullable, не используем внешний ключ
+                    session_id=request.case_id  # Use case_id as session_id
                 )
                 db.add(user_message)
 
@@ -375,7 +376,7 @@ async def chat(
                     role="assistant",
                     content=answer,
                     source_references=[],
-                    session_id=None  # session_id nullable, не используем внешний ключ
+                    session_id=request.case_id  # Use case_id as session_id
                 )
                 db.add(assistant_message)
                 db.commit()
@@ -478,11 +479,12 @@ async def chat(
         
         try:
             # Save user message
+            # Use case_id as session_id since DB requires non-null sessionId
             user_message = ChatMessage(
                 case_id=request.case_id,
                 role="user",
                 content=request.question,
-                session_id=None  # session_id nullable, не используем внешний ключ
+                session_id=request.case_id  # Use case_id as session_id
             )
             db.add(user_message)
             
@@ -494,7 +496,7 @@ async def chat(
                 role="assistant",
                 content=answer,
                 source_references=source_file_names or [],
-                session_id=None  # session_id nullable, не используем внешний ключ
+                session_id=request.case_id  # Use case_id as session_id
             )
             db.add(assistant_message)
             
