@@ -138,47 +138,40 @@ class YandexIndexService:
                 # Загружаем ОРИГИНАЛЬНЫЙ файл в Vector Store
                 logger.debug(f"Uploading original file {filename} ({len(file_content)} bytes, {mime_type}) to Vector Store...")
                 
-                # ВАЖНО: SDK files.upload() скорее всего требует file_path (путь к файлу)
-                # Сохраняем содержимое во временный файл для загрузки
-                import tempfile
-                import os
+                # ВАЖНО: Согласно документации SDK, files.upload() принимает:
+                # - file (file-like object)
+                # - file_name (имя файла, не name!)
+                import io
+                file_obj = io.BytesIO(file_content)
                 
-                # Создаем временный файл с правильным расширением для определения MIME типа
-                _, ext = os.path.splitext(filename)
-                with tempfile.NamedTemporaryFile(delete=False, suffix=ext) as tmp_file:
-                    tmp_file.write(file_content)
-                    tmp_path = tmp_file.name
-                
+                # Пробуем загрузить с file и file_name параметрами
                 try:
-                    # Пробуем загрузить через file_path (наиболее вероятный вариант)
-                    # Согласно документации SDK, files.upload() принимает путь к файлу
                     uploaded_file = self.sdk.files.upload(
-                        file_path=tmp_path,
-                        name=filename
+                        file=file_obj,
+                        file_name=filename
                     )
-                except Exception as upload_error:
-                    # Если file_path не работает, пробуем другие варианты
-                    logger.warning(f"file_path failed, trying alternatives: {upload_error}")
-                    
-                    # Пробуем с file-like object
-                    import io
-                    file_obj = io.BytesIO(file_content)
+                except TypeError as type_error:
+                    # Если file_name не работает, пробуем name
+                    logger.warning(f"file_name parameter failed, trying 'name': {type_error}")
+                    file_obj.seek(0)  # Сбрасываем позицию для повторного чтения
                     try:
                         uploaded_file = self.sdk.files.upload(
                             file=file_obj,
                             name=filename
                         )
                     except TypeError:
-                        # Если ничего не работает, выбрасываем исходную ошибку
-                        raise Exception(
-                            f"Failed to upload file {filename}. "
-                            f"Tried file_path and file parameters. "
-                            f"Original error: {upload_error}"
-                        ) from upload_error
-                finally:
-                    # Удаляем временный файл
-                    if os.path.exists(tmp_path):
-                        os.unlink(tmp_path)
+                        # Если и name не работает, пробуем только file
+                        logger.warning(f"'name' parameter also failed, trying only 'file': {type_error}")
+                        file_obj.seek(0)
+                        uploaded_file = self.sdk.files.upload(file=file_obj)
+                        logger.warning(f"Uploaded without filename - may need to set it separately")
+                except Exception as upload_error:
+                    # Если ничего не работает, выбрасываем ошибку
+                    raise Exception(
+                        f"Failed to upload file {filename}. "
+                        f"Tried file+file_name, file+name, and file-only parameters. "
+                        f"Original error: {upload_error}"
+                    ) from upload_error
                 
                 # Получаем ID загруженного файла
                 # Может быть uploaded_file.id, uploaded_file.file_id или просто строка
