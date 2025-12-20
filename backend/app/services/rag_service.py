@@ -212,8 +212,50 @@ class RAGService:
             try:
                 index_id = self.document_processor.get_index_id(case_id, db)
                 if not index_id:
-                    logger.warning(f"No index found for case {case_id}, cannot create assistant")
-                    return "Извините, для этого дела еще не загружены документы. Пожалуйста, загрузите документы сначала.", []
+                    # Check if case has files (documents were uploaded but index creation failed)
+                    if db:
+                        from app.models.case import Case, File as FileModel
+                        case = db.query(Case).filter(Case.id == case_id).first()
+                        file_count = db.query(FileModel).filter(FileModel.case_id == case_id).count()
+                        
+                        if case and file_count > 0:
+                            # Case has files but no index - try to recreate index from stored chunks
+                            logger.info(f"Case {case_id} has {file_count} files but no index, attempting to recreate index")
+                            try:
+                                # Try to recreate index from document_chunks
+                                from app.models.analysis import DocumentChunk
+                                chunks = db.query(DocumentChunk).filter(DocumentChunk.case_id == case_id).limit(100).all()
+                                
+                                if chunks:
+                                    # Convert chunks to LangChain Documents
+                                    from langchain_core.documents import Document
+                                    documents = []
+                                    for chunk in chunks:
+                                        doc = Document(
+                                            page_content=chunk.chunk_text,
+                                            metadata=chunk.chunk_metadata or {}
+                                        )
+                                        documents.append(doc)
+                                    
+                                    # Store in vector DB
+                                    index_id = self.document_processor.store_in_vector_db(
+                                        case_id=case_id,
+                                        documents=documents,
+                                        db=db
+                                    )
+                                    logger.info(f"Successfully recreated index {index_id} for case {case_id}")
+                                else:
+                                    logger.warning(f"No document chunks found for case {case_id}")
+                                    return "Извините, для этого дела документы были загружены, но не были обработаны. Пожалуйста, попробуйте загрузить документы заново.", []
+                            except Exception as recreate_error:
+                                logger.error(f"Failed to recreate index for case {case_id}: {recreate_error}", exc_info=True)
+                                return "Извините, для этого дела документы были загружены, но возникла ошибка при создании поискового индекса. Пожалуйста, попробуйте загрузить документы заново или обратитесь в поддержку.", []
+                        else:
+                            logger.warning(f"No files found for case {case_id}, cannot create assistant")
+                            return "Извините, для этого дела еще не загружены документы. Пожалуйста, загрузите документы сначала.", []
+                    else:
+                        logger.warning(f"No index found for case {case_id} and no db session, cannot create assistant")
+                        return "Извините, для этого дела еще не загружены документы. Пожалуйста, загрузите документы сначала.", []
                 
                 assistant_id = self.assistant_service.create_assistant(case_id, index_id)
                 
