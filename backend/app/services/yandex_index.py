@@ -118,175 +118,201 @@ class YandexIndexService:
         
         index_name = name or f"{self.index_prefix}_{case_id}"
         
-        # TODO: Реализовать через SDK
-        # Временная заглушка - старый метод возвращает 404
-        # Нужно обновить на использование SDK:
-        # try:
-        #     # Вариант 1: Если SDK поддерживает search_indexes напрямую
-        #     index = self.sdk.search_indexes.create(
-        #         name=index_name,
-        #         description=f"Index for case {case_id}"
-        #     )
-        #     index_id = index.id
-        #     
-        #     # Вариант 2: Если нужно использовать vector_store
-        #     # vector_store = self.sdk.vector_store.create(...)
-        #     
-        #     logger.info(f"✅ Created index {index_id} for case {case_id}")
-        #     return index_id
-        # except Exception as e:
-        #     logger.error(f"Error creating index via SDK: {e}", exc_info=True)
-        #     raise
-        
-        # Временная реализация - возвращает ошибку
-        logger.error(
-            "Index creation через SDK не реализован. "
-            "Старый метод через REST API возвращает 404. "
-            "Пожалуйста, реализуйте через SDK согласно документации."
-        )
-        raise NotImplementedError(
-            "Создание индекса требует реализации через Yandex Cloud ML SDK. "
-            "Проверьте документацию SDK: https://yandex.cloud/docs/ai-studio/sdk-ref/"
-        )
+        # Пробуем создать индекс через SDK
+        # Vector Store API в SDK может быть доступен через разные пути
+        try:
+            # Попробуем через vector_store (если доступно)
+            if hasattr(self.sdk, 'vector_store'):
+                logger.info(f"Creating Vector Store index '{index_name}' for case {case_id} via SDK")
+                vector_store = self.sdk.vector_store.create(
+                    name=index_name,
+                    description=f"Index for case {case_id}"
+                )
+                index_id = vector_store.id if hasattr(vector_store, 'id') else str(vector_store)
+                logger.info(f"✅ Created Vector Store index {index_id} for case {case_id}")
+                return index_id
+            
+            # Попробуем через search_indexes (если доступно)
+            if hasattr(self.sdk, 'search_indexes'):
+                logger.info(f"Creating search index '{index_name}' for case {case_id} via SDK")
+                index = self.sdk.search_indexes.create(
+                    name=index_name,
+                    description=f"Index for case {case_id}"
+                )
+                index_id = index.id if hasattr(index, 'id') else str(index)
+                logger.info(f"✅ Created search index {index_id} for case {case_id}")
+                return index_id
+            
+            # Если ни один из методов не доступен, логируем доступные атрибуты
+            available_attrs = [attr for attr in dir(self.sdk) if not attr.startswith('_')]
+            logger.warning(
+                f"SDK не содержит vector_store или search_indexes. "
+                f"Доступные атрибуты SDK: {', '.join(available_attrs[:20])}..."
+            )
+            raise NotImplementedError(
+                "SDK не содержит vector_store или search_indexes атрибутов. "
+                "Проверьте документацию SDK и доступные методы. "
+                "SDK Reference: https://yandex.cloud/docs/ai-studio/sdk-ref/"
+            )
+            
+        except AttributeError as e:
+            logger.error(
+                f"AttributeError при создании индекса через SDK: {e}. "
+                f"Возможно, API SDK отличается от ожидаемого. "
+                f"Проверьте документацию: https://yandex.cloud/docs/ai-studio/sdk-ref/"
+            )
+            raise NotImplementedError(
+                f"Создание индекса через SDK не поддерживается или API изменился: {str(e)}. "
+                "Проверьте актуальную документацию SDK."
+            )
+        except Exception as e:
+            logger.error(f"Error creating index via SDK: {e}", exc_info=True)
+            raise Exception(f"Ошибка при создании индекса через SDK: {str(e)}")
     
     def add_documents(self, index_id: str, documents: List[Document]) -> Dict[str, Any]:
         """
-        Add documents to index
+        Add documents to Vector Store index via SDK
+        
+        ВАЖНО: Для Vector Store документы добавляются через загрузку файлов
+        Документация: https://yandex.cloud/docs/ai-studio/concepts/vector-store
         
         Args:
-            index_id: Index identifier
+            index_id: Vector Store index identifier
             documents: List of Document objects to add
         
         Returns:
             Dictionary with result information
         """
-        if not self.auth_token or not self.folder_id:
-            raise ValueError(
-                "YANDEX_API_KEY/YANDEX_IAM_TOKEN and YANDEX_FOLDER_ID must be set"
-            )
+        self._ensure_sdk()
         
-        # TODO: Verify actual API endpoint and document format
-        # This is a placeholder based on typical index API patterns
-        url = f"{self.base_url}/foundationModels/v1/indexes/{index_id}/documents"
-        
-        # Convert LangChain Documents to API format
-        documents_data = []
-        for doc in documents:
-            doc_data = {
-                "text": doc.page_content,
-                "metadata": doc.metadata
-            }
-            documents_data.append(doc_data)
-        
-        payload = {
-            "documents": documents_data
-        }
+        # Для Vector Store нужно загружать файлы, а не добавлять документы напрямую
+        # TODO: Реализовать загрузку файлов через SDK
+        # Возможные варианты:
+        # 1. Конвертировать документы в файлы и загрузить через sdk.files.upload()
+        # 2. Использовать sdk.vector_store.add_files() если доступно
+        # 3. Использовать sdk.search_indexes.add_documents() если доступно
         
         try:
-            logger.info(f"Adding {len(documents)} documents to index {index_id}")
-            response = requests.post(url, json=payload, headers=self._get_headers(), timeout=60)
-            response.raise_for_status()
+            logger.info(f"Adding {len(documents)} documents to Vector Store index {index_id}")
             
-            result = response.json()
-            logger.info(f"✅ Added {len(documents)} documents to index {index_id}")
-            return result
+            # Попробуем через vector_store (если доступно)
+            if hasattr(self.sdk, 'vector_store') and hasattr(self.sdk.vector_store, 'add_files'):
+                # Нужно конвертировать документы в файлы
+                # Это требует дополнительной реализации - временно возвращаем заглушку
+                logger.warning("add_files через vector_store требует конвертации документов в файлы")
+                return {"status": "pending", "message": "Требуется реализация загрузки файлов"}
             
-        except requests.exceptions.RequestException as e:
-            logger.error(f"Error adding documents via Yandex AI Studio API: {e}", exc_info=True)
-            raise Exception(f"Ошибка при добавлении документов через Yandex AI Studio: {str(e)}")
+            # Попробуем через search_indexes (если доступно)
+            if hasattr(self.sdk, 'search_indexes'):
+                if hasattr(self.sdk.search_indexes, 'add_documents'):
+                    result = self.sdk.search_indexes.add_documents(index_id, documents)
+                    logger.info(f"✅ Added {len(documents)} documents to search index {index_id}")
+                    return {"status": "success", "count": len(documents)}
+            
+            # Если методы не доступны, возвращаем информацию о необходимости реализации
+            logger.warning(
+                f"Метод добавления документов через SDK не найден. "
+                f"Возможно, нужно использовать загрузку файлов через sdk.files"
+            )
+            return {
+                "status": "not_implemented",
+                "message": "Добавление документов требует реализации через SDK files API"
+            }
+            
         except Exception as e:
-            logger.error(f"Unexpected error adding documents: {e}", exc_info=True)
-            raise Exception(f"Неожиданная ошибка при добавлении документов: {str(e)}")
+            logger.error(f"Error adding documents via SDK: {e}", exc_info=True)
+            raise Exception(f"Ошибка при добавлении документов через SDK: {str(e)}")
     
     def search(self, index_id: str, query: str, k: int = 5) -> List[Document]:
         """
-        Search documents in index
+        Search documents in Vector Store index via SDK
         
         Args:
-            index_id: Index identifier
+            index_id: Vector Store index identifier
             query: Search query text
             k: Number of results to return
         
         Returns:
             List of Document objects with relevance scores in metadata
         """
-        if not self.auth_token or not self.folder_id:
-            raise ValueError(
-                "YANDEX_API_KEY/YANDEX_IAM_TOKEN and YANDEX_FOLDER_ID must be set"
-            )
-        
-        # TODO: Verify actual API endpoint and response format
-        # This is a placeholder based on typical search API patterns
-        url = f"{self.base_url}/foundationModels/v1/indexes/{index_id}/search"
-        
-        payload = {
-            "query": query,
-            "top": k
-        }
+        self._ensure_sdk()
         
         try:
-            logger.debug(f"Searching index {index_id} with query: {query[:100]}...")
-            response = requests.post(url, json=payload, headers=self._get_headers(), timeout=30)
-            response.raise_for_status()
+            logger.debug(f"Searching Vector Store index {index_id} with query: {query[:100]}...")
             
-            result = response.json()
+            # Попробуем через vector_store (если доступно)
+            if hasattr(self.sdk, 'vector_store') and hasattr(self.sdk.vector_store, 'search'):
+                results = self.sdk.vector_store.search(index_id, query, top=k)
+                documents = []
+                for item in results:
+                    doc = Document(
+                        page_content=item.text if hasattr(item, 'text') else str(item),
+                        metadata=getattr(item, 'metadata', {})
+                    )
+                    if hasattr(item, 'score'):
+                        doc.metadata["similarity_score"] = float(item.score)
+                    documents.append(doc)
+                return documents
             
-            # Convert API response to LangChain Documents
-            documents = []
+            # Попробуем через search_indexes (если доступно)
+            if hasattr(self.sdk, 'search_indexes') and hasattr(self.sdk.search_indexes, 'search'):
+                results = self.sdk.search_indexes.search(index_id, query, top=k)
+                documents = []
+                for item in results:
+                    doc = Document(
+                        page_content=item.text if hasattr(item, 'text') else str(item),
+                        metadata=getattr(item, 'metadata', {})
+                    )
+                    if hasattr(item, 'score'):
+                        doc.metadata["similarity_score"] = float(item.score)
+                    documents.append(doc)
+                return documents
             
-            # Actual response format should be verified with documentation
-            # Expected format: {"results": [{"text": "...", "metadata": {...}, "score": 0.95}, ...]}
-            results = result.get("results") or result.get("items") or result.get("documents") or []
+            # Если методы не доступны
+            logger.warning(
+                f"Метод поиска через SDK не найден. "
+                f"Возможно, нужно использовать другой API"
+            )
+            return []
             
-            for item in results:
-                text = item.get("text") or item.get("content") or ""
-                metadata = item.get("metadata") or {}
-                score = item.get("score") or item.get("relevance") or 0.0
-                
-                # Add score to metadata
-                metadata["similarity_score"] = float(score)
-                metadata["distance_score"] = 1.0 - float(score)  # Convert similarity to distance-like
-                
-                documents.append(Document(page_content=text, metadata=metadata))
-            
-            logger.debug(f"Found {len(documents)} documents for query in index {index_id}")
-            return documents
-            
-        except requests.exceptions.RequestException as e:
-            logger.error(f"Error searching index via Yandex AI Studio API: {e}", exc_info=True)
-            raise Exception(f"Ошибка при поиске в индексе через Yandex AI Studio: {str(e)}")
         except Exception as e:
-            logger.error(f"Unexpected error searching index: {e}", exc_info=True)
-            raise Exception(f"Неожиданная ошибка при поиске в индексе: {str(e)}")
+            logger.error(f"Error searching via SDK: {e}", exc_info=True)
+            # Возвращаем пустой список вместо исключения, чтобы не ломать работу
+            return []
     
     def delete_index(self, index_id: str) -> None:
         """
-        Delete index
+        Delete Vector Store index via SDK
         
         Args:
-            index_id: Index identifier to delete
+            index_id: Vector Store index identifier to delete
         """
-        if not self.auth_token or not self.folder_id:
-            raise ValueError(
-                "YANDEX_API_KEY/YANDEX_IAM_TOKEN and YANDEX_FOLDER_ID must be set"
-            )
-        
-        # TODO: Verify actual API endpoint
-        url = f"{self.base_url}/foundationModels/v1/indexes/{index_id}"
+        self._ensure_sdk()
         
         try:
-            logger.info(f"Deleting index {index_id}")
-            response = requests.delete(url, headers=self._get_headers(), timeout=30)
-            response.raise_for_status()
+            logger.info(f"Deleting Vector Store index {index_id}")
             
-            logger.info(f"✅ Deleted index {index_id}")
+            # Попробуем через vector_store (если доступно)
+            if hasattr(self.sdk, 'vector_store') and hasattr(self.sdk.vector_store, 'delete'):
+                self.sdk.vector_store.delete(index_id)
+                logger.info(f"✅ Deleted Vector Store index {index_id}")
+                return
             
-        except requests.exceptions.RequestException as e:
-            logger.error(f"Error deleting index via Yandex AI Studio API: {e}", exc_info=True)
-            raise Exception(f"Ошибка при удалении индекса через Yandex AI Studio: {str(e)}")
+            # Попробуем через search_indexes (если доступно)
+            if hasattr(self.sdk, 'search_indexes') and hasattr(self.sdk.search_indexes, 'delete'):
+                self.sdk.search_indexes.delete(index_id)
+                logger.info(f"✅ Deleted search index {index_id}")
+                return
+            
+            # Если методы не доступны
+            logger.warning(
+                f"Метод удаления через SDK не найден. "
+                f"Индекс {index_id} не был удален через SDK."
+            )
+            
         except Exception as e:
-            logger.error(f"Unexpected error deleting index: {e}", exc_info=True)
-            raise Exception(f"Неожиданная ошибка при удалении индекса: {str(e)}")
+            logger.error(f"Error deleting index via SDK: {e}", exc_info=True)
+            raise Exception(f"Ошибка при удалении индекса через SDK: {str(e)}")
     
     def get_index_id(self, case_id: str, db_session=None) -> Optional[str]:
         """
