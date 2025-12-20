@@ -16,6 +16,8 @@ SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 def ensure_schema():
     """Ensure required columns and indexes exist"""
     inspector = inspect(engine)
+    
+    # Ensure chat_messages schema
     if "chat_messages" in inspector.get_table_names():
         columns = [col["name"] for col in inspector.get_columns("chat_messages")]
         with engine.begin() as conn:
@@ -32,6 +34,19 @@ def ensure_schema():
                     "ON chat_messages(case_id)"
                 )
             )
+    
+    # Ensure cases table has yandex fields
+    if "cases" in inspector.get_table_names():
+        columns = [col["name"] for col in inspector.get_columns("cases")]
+        with engine.begin() as conn:
+            if "yandex_index_id" not in columns:
+                conn.execute(
+                    text("ALTER TABLE cases ADD COLUMN IF NOT EXISTS yandex_index_id VARCHAR(255)")
+                )
+            if "yandex_assistant_id" not in columns:
+                conn.execute(
+                    text("ALTER TABLE cases ADD COLUMN IF NOT EXISTS yandex_assistant_id VARCHAR(255)")
+                )
 
 
 def init_db():
