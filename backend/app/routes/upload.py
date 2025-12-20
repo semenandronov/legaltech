@@ -5,7 +5,6 @@ from fastapi import APIRouter, UploadFile, File, HTTPException, Depends, Form
 from pydantic import BaseModel, Field, field_validator
 from typing import List, Optional
 from sqlalchemy.orm import Session
-from app.utils.file_parser import parse_file
 from app.services.langchain_loaders import DocumentLoaderService
 from app.utils.database import get_db
 from app.utils.auth import get_current_user
