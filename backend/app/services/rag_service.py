@@ -1,6 +1,5 @@
 """RAG (Retrieval Augmented Generation) service"""
 from typing import List, Dict, Any, Tuple
-from langchain_openai import ChatOpenAI
 from app.services.yandex_llm import ChatYandexGPT
 from langchain_core.prompts import ChatPromptTemplate, SystemMessagePromptTemplate, HumanMessagePromptTemplate
 from langchain_core.documents import Document
