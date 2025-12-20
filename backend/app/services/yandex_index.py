@@ -19,21 +19,22 @@ logger = logging.getLogger(__name__)
 
 class YandexIndexService:
     """
-    Service for Yandex AI Studio Vector Store (Search Index)
+    Service for Yandex AI Studio Vector Store (Search Index) using ML SDK
     
-    ВАЖНО: Используйте Vector Store API вместо устаревшего Index API
-    Документация: https://yandex.cloud/docs/ai-studio/concepts/vector-store
+    ВАЖНО: Используйте Yandex Cloud ML SDK для работы с Search Indexes
+    SDK Reference: https://yandex.cloud/docs/ai-studio/sdk-ref/
+    GitHub: https://github.com/yandex-cloud/yandex-cloud-ml-sdk
     
-    Vector Store API работает через:
-    1. Загрузку файлов в Vector Store
-    2. Создание индекса из загруженных файлов  
-    3. Использование индекса через Responses API с инструментом file_search
+    SDK поддерживает:
+    - sdk.search_indexes - работа с search indexes
+    - sdk.files - загрузка файлов для Vector Store
+    - sdk.assistants - создание ассистентов с инструментом file_search
     
-    Старый эндпоинт /foundationModels/v1/indexes устарел и возвращает 404
+    Документация Vector Store: https://yandex.cloud/docs/ai-studio/concepts/vector-store
     """
     
     def __init__(self):
-        """Initialize Yandex Vector Store service"""
+        """Initialize Yandex Vector Store service using ML SDK"""
         self.api_key = config.YANDEX_API_KEY
         self.iam_token = config.YANDEX_IAM_TOKEN
         self.folder_id = config.YANDEX_FOLDER_ID
@@ -48,22 +49,25 @@ class YandexIndexService:
                 "YANDEX_API_KEY or YANDEX_IAM_TOKEN not set. "
                 "Yandex Vector Store service will not work."
             )
+            self.sdk = None
+            return
         
         if not self.folder_id:
             logger.warning(
                 "YANDEX_FOLDER_ID not set. "
                 "Yandex Vector Store service requires folder_id."
             )
+            self.sdk = None
+            return
         
-        # Base URL for Yandex AI Studio API
-        # TODO: Обновить на правильный базовый URL для Vector Store API
-        # Проверьте документацию: https://yandex.cloud/docs/ai-studio/concepts/vector-store
-        # Vector Store API может использовать тот же базовый URL что и Responses API
-        # Возможные варианты (требуют проверки в документации API):
-        # - https://llm.api.cloud.yandex.net/foundationModels/v1/vectorStore
-        # - https://llm.api.cloud.yandex.net/v1/vectorStore
-        # - Другой путь согласно актуальной документации Vector Store API
-        self.base_url = "https://llm.api.cloud.yandex.net"
+        # Инициализируем SDK
+        try:
+            auth = APIKeyAuth(self.api_key) if self.use_api_key else self.iam_token
+            self.sdk = YCloudML(folder_id=self.folder_id, auth=auth)
+            logger.info("✅ Yandex Cloud ML SDK initialized for Vector Store")
+        except Exception as e:
+            logger.error(f"Failed to initialize Yandex Cloud ML SDK: {e}", exc_info=True)
+            self.sdk = None
     
     def _get_headers(self) -> Dict[str, str]:
         """Get HTTP headers for API requests"""
@@ -84,16 +88,13 @@ class YandexIndexService:
     
     def create_index(self, case_id: str, name: str = None) -> str:
         """
-        Create new Vector Store search index for case
+        Create new Vector Store search index for case using ML SDK
         
-        ВАЖНО: Этот метод требует обновления для использования Vector Store API
-        Старый эндпоинт /foundationModels/v1/indexes устарел (возвращает 404)
+        ВАЖНО: Используйте Yandex Cloud ML SDK для работы с Search Indexes
+        SDK Reference: https://yandex.cloud/docs/ai-studio/sdk-ref/
+        SDK поддерживает: sdk.search_indexes для работы с индексами
         
-        Vector Store API работает в два этапа:
-        1. Загрузка файлов в Vector Store (POST /vectorStore/files)
-        2. Создание индекса из загруженных файлов (POST /vectorStore)
-        
-        Документация: https://yandex.cloud/docs/ai-studio/concepts/vector-store
+        Документация Vector Store: https://yandex.cloud/docs/ai-studio/concepts/vector-store
         
         Args:
             case_id: Case identifier
@@ -102,64 +103,46 @@ class YandexIndexService:
         Returns:
             index_id: ID of created Vector Store index
         
-        TODO: Реализовать через Vector Store API:
-        - Загрузку файлов в Vector Store
-        - Создание индекса из загруженных файлов
-        - Проверить актуальные эндпоинты в документации Vector Store API
+        TODO: Реализовать через SDK:
+        - Использовать sdk.search_indexes.create() или sdk.vector_store для создания индекса
+        - Проверить примеры использования SDK в репозитории:
+          https://github.com/yandex-cloud/yandex-cloud-ml-sdk/tree/master/examples
+        - Для Vector Store может потребоваться сначала загрузить файлы через sdk.files
         """
-        if not self.auth_token or not self.folder_id:
-            raise ValueError(
-                "YANDEX_API_KEY/YANDEX_IAM_TOKEN and YANDEX_FOLDER_ID must be set"
-            )
+        self._ensure_sdk()
         
         index_name = name or f"{self.index_prefix}_{case_id}"
         
-        # УСТАРЕЛО: Старый эндпоинт возвращает 404
-        # Нужно использовать Vector Store API:
-        # 1. POST /foundationModels/v1/vectorStore/files (загрузка файлов)
-        # 2. POST /foundationModels/v1/vectorStore (создание индекса)
-        # TODO: Обновить на актуальные эндпоинты Vector Store API
-        url = f"{self.base_url}/foundationModels/v1/indexes"  # УСТАРЕЛО - возвращает 404
+        # TODO: Реализовать через SDK
+        # Временная заглушка - старый метод возвращает 404
+        # Нужно обновить на использование SDK:
+        # try:
+        #     # Вариант 1: Если SDK поддерживает search_indexes напрямую
+        #     index = self.sdk.search_indexes.create(
+        #         name=index_name,
+        #         description=f"Index for case {case_id}"
+        #     )
+        #     index_id = index.id
+        #     
+        #     # Вариант 2: Если нужно использовать vector_store
+        #     # vector_store = self.sdk.vector_store.create(...)
+        #     
+        #     logger.info(f"✅ Created index {index_id} for case {case_id}")
+        #     return index_id
+        # except Exception as e:
+        #     logger.error(f"Error creating index via SDK: {e}", exc_info=True)
+        #     raise
         
-        payload = {
-            "name": index_name,
-            "description": f"Index for case {case_id}",
-            "folder_id": self.folder_id
-        }
-        
-        try:
-            logger.info(f"Creating index '{index_name}' for case {case_id} via URL: {url}")
-            response = requests.post(url, json=payload, headers=self._get_headers(), timeout=30)
-            
-            # Логируем детали ответа для отладки
-            if response.status_code == 404:
-                logger.error(
-                    f"404 Not Found for Index API endpoint: {url}. "
-                    f"Проверьте документацию Yandex AI Studio для актуального эндпоинта Search Index API. "
-                    f"Возможно, эндпоинт изменился или использует другой путь/домен."
-                )
-            
-            response.raise_for_status()
-            
-            result = response.json()
-            
-            # Extract index_id from response
-            # Actual response format should be verified with documentation
-            index_id = result.get("id") or result.get("index_id") or result.get("indexId")
-            
-            if not index_id:
-                logger.error(f"Unexpected response format from Yandex Index API: {result}")
-                raise ValueError("Failed to extract index_id from API response")
-            
-            logger.info(f"✅ Created index {index_id} for case {case_id}")
-            return index_id
-            
-        except requests.exceptions.RequestException as e:
-            logger.error(f"Error creating index via Yandex AI Studio API: {e}", exc_info=True)
-            raise Exception(f"Ошибка при создании индекса через Yandex AI Studio: {str(e)}")
-        except Exception as e:
-            logger.error(f"Unexpected error creating index: {e}", exc_info=True)
-            raise Exception(f"Неожиданная ошибка при создании индекса: {str(e)}")
+        # Временная реализация - возвращает ошибку
+        logger.error(
+            "Index creation через SDK не реализован. "
+            "Старый метод через REST API возвращает 404. "
+            "Пожалуйста, реализуйте через SDK согласно документации."
+        )
+        raise NotImplementedError(
+            "Создание индекса требует реализации через Yandex Cloud ML SDK. "
+            "Проверьте документацию SDK: https://yandex.cloud/docs/ai-studio/sdk-ref/"
+        )
     
     def add_documents(self, index_id: str, documents: List[Document]) -> Dict[str, Any]:
         """
