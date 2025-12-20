@@ -150,9 +150,16 @@ class DocumentProcessor:
                 # Документы уже добавлены при создании индекса, не нужно добавлять их еще раз
                 return index_id
             except Exception as e:
-                db.rollback()
-                logger.error(f"Failed to create index for case {case_id}: {e}", exc_info=True)
-                raise
+                logger.error(f"Failed to create Yandex index for case {case_id}: {e}", exc_info=True)
+                logger.warning(
+                    f"Index creation failed for case {case_id}, but documents are saved to database. "
+                    f"System will use database search instead of Vector Store. "
+                    f"Documents can still be retrieved, but search may be slower."
+                )
+                # НЕ бросаем исключение - документы уже сохранены в БД (document_chunks)
+                # Это позволит системе работать даже если Vector Store недоступен
+                # Возвращаем None, чтобы показать, что индекс не создан
+                return None
         
         # Если индекс уже существует, добавляем документы через add_documents
         # (хотя это может не работать, т.к. add_documents еще не полностью реализован)
@@ -189,32 +196,103 @@ class DocumentProcessor:
         # Get index_id for case
         index_id = self.index_service.get_index_id(case_id, db_session=db)
         
-        if not index_id:
-            logger.warning(f"No index found for case {case_id}")
+        # Если индекс есть - используем поиск по Vector Store
+        if index_id:
+            try:
+                # Search in Yandex Index
+                documents = self.index_service.search(index_id, query, k=k)
+                
+                # Filter by threshold if needed (Yandex Index returns similarity scores)
+                # Yandex Index returns similarity_score in metadata (higher = better)
+                if distance_threshold < 1.5:  # Only filter if threshold is meaningful
+                    filtered_docs = []
+                    for doc in documents:
+                        similarity_score = doc.metadata.get("similarity_score", 1.0)
+                        # Convert similarity to distance: distance = 1 - similarity
+                        distance_score = 1.0 - similarity_score
+                        if distance_score <= distance_threshold:
+                            filtered_docs.append(doc)
+                    documents = filtered_docs
+                
+                if not documents:
+                    logger.warning(f"No relevant chunks found for case {case_id} in index {index_id}")
+                else:
+                    logger.info(f"Found {len(documents)} chunks in Vector Store for case {case_id}")
+                
+                return documents
+            except Exception as e:
+                logger.error(f"Error retrieving chunks from Vector Store for case {case_id}: {e}", exc_info=True)
+                logger.info(f"Falling back to database search for case {case_id}")
+                # Fallback на поиск по БД если Vector Store недоступен
+                return self._retrieve_from_database(case_id, query, k, db)
+        else:
+            # Если индекса нет - используем поиск по БД
+            logger.info(f"No Vector Store index for case {case_id}, using database search")
+            return self._retrieve_from_database(case_id, query, k, db)
+    
+    def _retrieve_from_database(self, case_id: str, query: str, k: int, db: Optional[Session]) -> List[Document]:
+        """
+        Fallback: Retrieve chunks from database using text search
+        
+        Args:
+            case_id: Case identifier
+            query: Search query
+            k: Number of chunks to retrieve
+            db: Database session
+            
+        Returns:
+            List of Document objects
+        """
+        if not db:
+            logger.warning("No database session provided for database search fallback")
             return []
         
         try:
-            # Search in Yandex Index
-            documents = self.index_service.search(index_id, query, k=k)
+            from app.models.analysis import DocumentChunk
+            from sqlalchemy import or_
             
-            # Filter by threshold if needed (Yandex Index returns similarity scores)
-            # Yandex Index returns similarity_score in metadata (higher = better)
-            if distance_threshold < 1.5:  # Only filter if threshold is meaningful
-                filtered_docs = []
-                for doc in documents:
-                    similarity_score = doc.metadata.get("similarity_score", 1.0)
-                    # Convert similarity to distance: distance = 1 - similarity
-                    distance_score = 1.0 - similarity_score
-                    if distance_score <= distance_threshold:
-                        filtered_docs.append(doc)
-                documents = filtered_docs
+            # Простой текстовый поиск по чанкам в БД
+            # Ищем чанки, которые содержат слова из запроса
+            query_words = query.lower().split()
             
-            if not documents:
-                logger.warning(f"No relevant chunks found for case {case_id} in index {index_id}")
+            # Строим условие поиска: чанк должен содержать хотя бы одно слово из запроса
+            conditions = []
+            for word in query_words[:5]:  # Берем первые 5 слов чтобы не перегружать запрос
+                if len(word) > 2:  # Игнорируем короткие слова
+                    conditions.append(DocumentChunk.chunk_text.ilike(f"%{word}%"))
             
+            if not conditions:
+                # Если нет условий, возвращаем первые k чанков
+                chunks = db.query(DocumentChunk).filter(
+                    DocumentChunk.case_id == case_id
+                ).limit(k).all()
+            else:
+                chunks = db.query(DocumentChunk).filter(
+                    DocumentChunk.case_id == case_id,
+                    or_(*conditions)
+                ).limit(k * 2).all()  # Берем больше, чтобы потом отсортировать
+            
+            # Конвертируем в LangChain Documents
+            documents = []
+            for chunk in chunks[:k]:  # Ограничиваем результатами
+                doc = Document(
+                    page_content=chunk.chunk_text,
+                    metadata={
+                        "source_file": chunk.source_file,
+                        "source_page": chunk.source_page,
+                        "source_start_line": chunk.source_start_line,
+                        "source_end_line": chunk.source_end_line,
+                        "chunk_index": chunk.chunk_index,
+                        **(chunk.chunk_metadata or {})
+                    }
+                )
+                documents.append(doc)
+            
+            logger.info(f"Retrieved {len(documents)} chunks from database for case {case_id}")
             return documents
+            
         except Exception as e:
-            logger.error(f"Error retrieving chunks for case {case_id}: {e}", exc_info=True)
+            logger.error(f"Error retrieving chunks from database for case {case_id}: {e}", exc_info=True)
             return []
     
     def get_index_id(self, case_id: str, db: Optional[Session] = None) -> Optional[str]:
