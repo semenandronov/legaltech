@@ -82,7 +82,7 @@ class YandexIndexService:
                 "Check YANDEX_API_KEY/YANDEX_IAM_TOKEN and YANDEX_FOLDER_ID in .env file"
             )
     
-    def _upload_documents_as_files(self, documents: List[Document], original_files: Dict[str, bytes] = None) -> List[str]:
+    def _upload_original_files(self, original_files: Dict[str, bytes]) -> List[str]:
         """
         Upload original files to Vector Store and return file IDs
         
