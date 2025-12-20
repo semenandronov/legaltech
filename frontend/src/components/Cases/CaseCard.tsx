@@ -115,7 +115,7 @@ const CaseCard = ({ caseItem }: CaseCardProps) => {
           <Button
             variant="primary"
             size="sm"
-            onClick={(e) => {
+            onClick={(e: React.MouseEvent<HTMLButtonElement>) => {
               e.stopPropagation()
               navigate(`/cases/${caseItem.id}/workspace`)
             }}
@@ -125,7 +125,7 @@ const CaseCard = ({ caseItem }: CaseCardProps) => {
           <Button
             variant="secondary"
             size="sm"
-            onClick={(e) => {
+            onClick={(e: React.MouseEvent<HTMLButtonElement>) => {
               e.stopPropagation()
               console.log('Export')
             }}
