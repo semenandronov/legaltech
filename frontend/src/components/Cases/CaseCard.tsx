@@ -1,3 +1,4 @@
+import React from 'react'
 import { useNavigate } from 'react-router-dom'
 import { FileText, Calendar, MoreVertical } from 'lucide-react'
 import { CaseListItem } from '../../services/api'
