@@ -1,6 +1,6 @@
 """Risk analysis agent node for LangGraph"""
 from typing import Dict, Any
-from langchain_openai import ChatOpenAI
+from app.services.yandex_llm import ChatYandexGPT
 from app.services.langchain_agents.agent_factory import create_legal_agent
 from app.config import config
 from app.services.langchain_agents.state import AnalysisState
@@ -56,10 +56,12 @@ def risk_agent_node(
         tools = get_all_tools()
         
         # Initialize LLM with temperature=0.1 for risk analysis (slightly higher for analysis task)
-        llm = ChatOpenAI(
-            model=config.OPENROUTER_MODEL,
-            openai_api_key=config.OPENROUTER_API_KEY,
-            openai_api_base=config.OPENROUTER_BASE_URL,
+        # Только YandexGPT, без fallback
+        if not (config.YANDEX_API_KEY or config.YANDEX_IAM_TOKEN) or not config.YANDEX_FOLDER_ID:
+            raise ValueError("YANDEX_API_KEY/YANDEX_IAM_TOKEN и YANDEX_FOLDER_ID должны быть настроены")
+        
+        llm = ChatYandexGPT(
+            model_name=config.YANDEX_GPT_MODEL,
             temperature=0.1,  # Немного выше для аналитической задачи, но все еще детерминистично
             max_tokens=2000
         )

@@ -25,27 +25,24 @@ class DocumentProcessor:
             separators=["\n\n", "\n", ". ", " ", ""]
         )
         
-        # Initialize embeddings - используем Yandex если доступен, иначе OpenRouter
-        # Проверяем наличие API ключа или IAM токена
-        if config.YANDEX_API_KEY or config.YANDEX_IAM_TOKEN:
-            try:
-                self.embeddings = YandexEmbeddings()
-                logger.info("✅ Using Yandex embeddings (лучше для русского!)")
-            except Exception as e:
-                logger.warning(f"Failed to initialize Yandex embeddings: {e}, falling back to OpenAI")
-                self.embeddings = OpenAIEmbeddings(
-                    openai_api_key=config.OPENROUTER_API_KEY,
-                    openai_api_base=config.OPENROUTER_BASE_URL,
-                    model="text-embedding-ada-002"
-                )
-        else:
-            # Fallback to OpenRouter
-            self.embeddings = OpenAIEmbeddings(
-                openai_api_key=config.OPENROUTER_API_KEY,
-                openai_api_base=config.OPENROUTER_BASE_URL,
-                model="text-embedding-ada-002"
+        # Initialize embeddings - только Yandex, без fallback
+        if not (config.YANDEX_API_KEY or config.YANDEX_IAM_TOKEN):
+            raise ValueError(
+                "YANDEX_API_KEY или YANDEX_IAM_TOKEN должны быть настроены. "
+                "OpenRouter больше не используется."
             )
-            logger.info("Using OpenAI embeddings (OpenRouter)")
+        
+        if not config.YANDEX_FOLDER_ID:
+            raise ValueError(
+                "YANDEX_FOLDER_ID должен быть настроен для работы Yandex embeddings."
+            )
+        
+        try:
+            self.embeddings = YandexEmbeddings()
+            logger.info("✅ Using Yandex embeddings")
+        except Exception as e:
+            logger.error(f"Failed to initialize Yandex embeddings: {e}")
+            raise ValueError(f"Ошибка инициализации Yandex embeddings: {str(e)}")
         
         # Vector store will be created per case
         self.vector_stores: Dict[str, Chroma] = {}

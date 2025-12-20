@@ -19,35 +19,28 @@ class PlanningAgent:
     
     def __init__(self):
         """Initialize planning agent"""
-        # Initialize LLM - используем YandexGPT если доступен, иначе OpenRouter
-        # Проверяем наличие API ключа или IAM токена
-        if config.YANDEX_API_KEY or config.YANDEX_IAM_TOKEN:
-            try:
-                self.llm = ChatYandexGPT(
-                    model_name=config.YANDEX_GPT_MODEL,
-                    temperature=0.1,  # Низкая температура для консистентности
-                    max_tokens=500
-                )
-                logger.info("✅ Using YandexGPT for planning (10x дешевле!)")
-            except Exception as e:
-                logger.warning(f"Failed to initialize YandexGPT: {e}, falling back to OpenRouter")
-                self.llm = ChatOpenAI(
-                    model=config.OPENROUTER_MODEL,
-                    openai_api_key=config.OPENROUTER_API_KEY,
-                    openai_api_base=config.OPENROUTER_BASE_URL,
-                    temperature=0.1,
-                    max_tokens=500
-                )
-        else:
-            # Fallback to OpenRouter
-            self.llm = ChatOpenAI(
-                model=config.OPENROUTER_MODEL,
-                openai_api_key=config.OPENROUTER_API_KEY,
-                openai_api_base=config.OPENROUTER_BASE_URL,
-                temperature=0.1,
+        # Initialize LLM - только YandexGPT, без fallback
+        if not (config.YANDEX_API_KEY or config.YANDEX_IAM_TOKEN):
+            raise ValueError(
+                "YANDEX_API_KEY или YANDEX_IAM_TOKEN должны быть настроены. "
+                "OpenRouter больше не используется."
+            )
+        
+        if not config.YANDEX_FOLDER_ID:
+            raise ValueError(
+                "YANDEX_FOLDER_ID должен быть настроен для работы YandexGPT."
+            )
+        
+        try:
+            self.llm = ChatYandexGPT(
+                model_name=config.YANDEX_GPT_MODEL,
+                temperature=0.1,  # Низкая температура для консистентности
                 max_tokens=500
             )
-            logger.info("Using OpenRouter for planning")
+            logger.info("✅ Using YandexGPT for planning")
+        except Exception as e:
+            logger.error(f"Failed to initialize YandexGPT: {e}")
+            raise ValueError(f"Ошибка инициализации YandexGPT: {str(e)}")
         
         # Get planning tools
         self.tools = get_planning_tools()

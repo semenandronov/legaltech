@@ -1,6 +1,6 @@
 """Supervisor agent for LangGraph multi-agent system"""
 from typing import Dict, Any
-from langchain_openai import ChatOpenAI
+from app.services.yandex_llm import ChatYandexGPT
 from app.services.langchain_agents.agent_factory import create_legal_agent
 from langchain_core.tools import Tool
 from app.config import config
@@ -40,10 +40,12 @@ def create_supervisor_agent() -> Any:
     ]
     
     # Initialize LLM with temperature=0 for deterministic routing
-    llm = ChatOpenAI(
-        model=config.OPENROUTER_MODEL,
-        openai_api_key=config.OPENROUTER_API_KEY,
-        openai_api_base=config.OPENROUTER_BASE_URL,
+    # Только YandexGPT, без fallback
+    if not (config.YANDEX_API_KEY or config.YANDEX_IAM_TOKEN) or not config.YANDEX_FOLDER_ID:
+        raise ValueError("YANDEX_API_KEY/YANDEX_IAM_TOKEN и YANDEX_FOLDER_ID должны быть настроены")
+    
+    llm = ChatYandexGPT(
+        model_name=config.YANDEX_GPT_MODEL,
         temperature=0,  # Детерминизм критичен для маршрутизации
         max_tokens=500
     )

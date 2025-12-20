@@ -24,36 +24,28 @@ class RAGService:
         self.retriever_service = AdvancedRetrieverService(self.document_processor)
         self.memory_service = MemoryService()
         
-        # Initialize LLM - используем YandexGPT если доступен, иначе OpenRouter
-        # Для RAG можно оставить OpenRouter, но YandexGPT лучше понимает русский
-        # Проверяем наличие API ключа или IAM токена
-        if config.YANDEX_API_KEY or config.YANDEX_IAM_TOKEN:
-            try:
-                self.llm = ChatYandexGPT(
-                    model_name=config.YANDEX_GPT_MODEL,
-                    temperature=0.7,
-                    max_tokens=2000
-                )
-                logger.info("✅ Using YandexGPT for RAG (лучше для русского!)")
-            except Exception as e:
-                logger.warning(f"Failed to initialize YandexGPT for RAG: {e}, falling back to OpenRouter")
-                self.llm = ChatOpenAI(
-                    model=config.OPENROUTER_MODEL,
-                    openai_api_key=config.OPENROUTER_API_KEY,
-                    openai_api_base=config.OPENROUTER_BASE_URL,
-                    temperature=0.7,
-                    max_tokens=2000
-                )
-        else:
-            # Fallback to OpenRouter
-            self.llm = ChatOpenAI(
-                model=config.OPENROUTER_MODEL,
-                openai_api_key=config.OPENROUTER_API_KEY,
-                openai_api_base=config.OPENROUTER_BASE_URL,
+        # Initialize LLM - только YandexGPT, без fallback
+        if not (config.YANDEX_API_KEY or config.YANDEX_IAM_TOKEN):
+            raise ValueError(
+                "YANDEX_API_KEY или YANDEX_IAM_TOKEN должны быть настроены. "
+                "OpenRouter больше не используется."
+            )
+        
+        if not config.YANDEX_FOLDER_ID:
+            raise ValueError(
+                "YANDEX_FOLDER_ID должен быть настроен для работы YandexGPT."
+            )
+        
+        try:
+            self.llm = ChatYandexGPT(
+                model_name=config.YANDEX_GPT_MODEL,
                 temperature=0.7,
                 max_tokens=2000
             )
-            logger.info("Using OpenRouter for RAG")
+            logger.info("✅ Using YandexGPT for RAG")
+        except Exception as e:
+            logger.error(f"Failed to initialize YandexGPT for RAG: {e}")
+            raise ValueError(f"Ошибка инициализации YandexGPT: {str(e)}")
     
     def retrieve_context(
         self,

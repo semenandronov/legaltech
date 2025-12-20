@@ -103,21 +103,41 @@ async def classify_request(question: str, llm) -> bool:
     from langchain_core.prompts import ChatPromptTemplate
     from langchain_core.messages import SystemMessage, HumanMessage
     
+    # Получаем список доступных агентов для промпта
+    from app.services.langchain_agents.planning_tools import AVAILABLE_ANALYSES
+    
+    agents_list = []
+    for agent_name, agent_info in AVAILABLE_ANALYSES.items():
+        description = agent_info["description"]
+        keywords = ", ".join(agent_info["keywords"][:3])  # Первые 3 ключевых слова
+        agents_list.append(f"- {agent_name}: {description} (ключевые слова: {keywords})")
+    
+    agents_text = "\n".join(agents_list)
+    
     classification_prompt = ChatPromptTemplate.from_messages([
-        SystemMessage(content="""Ты классификатор запросов пользователя в системе анализа юридических документов.
+        SystemMessage(content=f"""Ты классификатор запросов пользователя в системе анализа юридических документов.
+
+В системе доступны следующие агенты для выполнения задач:
+
+{agents_text}
+
+Дополнительные агенты:
+- document_classifier: Классификация документов (договор/письмо/привилегированный)
+- entity_extraction: Извлечение сущностей (имена, организации, суммы, даты)
+- privilege_check: Проверка привилегий документов
 
 Определи тип запроса:
 
-ЗАДАЧА (task) - если запрос требует выполнения комплексного анализа через агентов:
-- Команды: "проанализируй", "извлеки все", "создай отчет", "найди все"
-- Требует запуска фоновых процессов анализа
-- Примеры: "Проанализируй документы и найди все риски", "Извлеки все даты"
+ЗАДАЧА (task) - если запрос требует выполнения одного из доступных агентов:
+- Запрос относится к функциям агентов (извлечение дат, поиск противоречий, анализ рисков и т.д.)
+- Требует запуска фонового анализа через агентов
+- Примеры: "Извлеки все даты из документов", "Найди противоречия", "Проанализируй риски", "Создай резюме дела"
 
 ВОПРОС (question) - если это обычный вопрос для RAG чата:
-- Вопросы с "какие", "что", "где", "когда", "кто"
+- Вопросы с "какие", "что", "где", "когда", "кто", "почему"
 - Разговорные фразы: "как дела", "привет"
-- Требует немедленного ответа на основе документов
-- Примеры: "Какие ключевые сроки?", "Что говорится в договоре?"
+- Требует немедленного ответа на основе уже загруженных документов
+- Примеры: "Какие ключевые сроки важны в этом деле?", "Что говорится в договоре о сроках?"
 
 Отвечай ТОЛЬКО: task или question"""),
         HumanMessage(content=f"Запрос: {question}")
@@ -199,34 +219,32 @@ async def chat(
         )
     
     # Используем LLM для определения типа запроса (задача или вопрос)
-    # Инициализируем LLM для классификации
+    # Только YandexGPT, без fallback на OpenRouter
     from app.services.yandex_llm import ChatYandexGPT
-    from langchain_openai import ChatOpenAI
     
-    classification_llm = None
-    if config.YANDEX_API_KEY or config.YANDEX_IAM_TOKEN:
-        try:
-            classification_llm = ChatYandexGPT(
-                model_name=config.YANDEX_GPT_MODEL,
-                temperature=0.0,  # Нулевая температура для консистентности
-                max_tokens=10
-            )
-        except Exception as e:
-            logger.warning(f"Failed to initialize YandexGPT for classification: {e}, using OpenRouter")
-            classification_llm = ChatOpenAI(
-                model=config.OPENROUTER_MODEL,
-                openai_api_key=config.OPENROUTER_API_KEY,
-                openai_api_base=config.OPENROUTER_BASE_URL,
-                temperature=0.0,
-                max_tokens=10
-            )
-    else:
-        classification_llm = ChatOpenAI(
-            model=config.OPENROUTER_MODEL,
-            openai_api_key=config.OPENROUTER_API_KEY,
-            openai_api_base=config.OPENROUTER_BASE_URL,
-            temperature=0.0,
+    if not (config.YANDEX_API_KEY or config.YANDEX_IAM_TOKEN):
+        raise HTTPException(
+            status_code=500,
+            detail="Yandex API ключ не настроен. Пожалуйста, настройте YANDEX_API_KEY или YANDEX_IAM_TOKEN."
+        )
+    
+    if not config.YANDEX_FOLDER_ID:
+        raise HTTPException(
+            status_code=500,
+            detail="YANDEX_FOLDER_ID не настроен. Пожалуйста, настройте YANDEX_FOLDER_ID."
+        )
+    
+    try:
+        classification_llm = ChatYandexGPT(
+            model_name=config.YANDEX_GPT_MODEL,
+            temperature=0.0,  # Нулевая температура для консистентности
             max_tokens=10
+        )
+    except Exception as e:
+        logger.error(f"Failed to initialize YandexGPT for classification: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Ошибка инициализации YandexGPT: {str(e)}"
         )
     
     # Классифицируем запрос через LLM
