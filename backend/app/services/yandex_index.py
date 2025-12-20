@@ -131,7 +131,7 @@ class YandexIndexService:
                 
                 # Логируем доступные методы для отладки
                 available_methods = [m for m in dir(search_indexes) if not m.startswith('_') and callable(getattr(search_indexes, m, None))]
-                logger.debug(f"Available methods in search_indexes: {available_methods}")
+                logger.info(f"Available methods in search_indexes: {available_methods}")
                 
                 # Пробуем разные возможные методы
                 if hasattr(search_indexes, 'create'):
@@ -145,9 +145,16 @@ class YandexIndexService:
                     logger.info(f"✅ Created search index {index_id} for case {case_id}")
                     return index_id
                 else:
-                    logger.warning(
+                    logger.error(
                         f"search_indexes не содержит методов create или create_index. "
-                        f"Доступные методы: {available_methods}"
+                        f"Доступные методы: {available_methods}. "
+                        f"Проверьте документацию SDK: https://yandex.cloud/docs/ai-studio/sdk-ref/"
+                    )
+                    # Временно возвращаем ошибку - требуется ручная настройка
+                    raise NotImplementedError(
+                        f"Метод создания индекса не найден в SDK. "
+                        f"Доступные методы search_indexes: {available_methods}. "
+                        f"Проверьте документацию SDK для правильного использования."
                     )
             
             # Если ни один из методов не доступен, логируем доступные атрибуты
