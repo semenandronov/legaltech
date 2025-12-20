@@ -1,7 +1,10 @@
 import { ButtonHTMLAttributes, forwardRef, ReactNode } from 'react'
-import { motion } from 'framer-motion'
+import { motion, HTMLMotionProps } from 'framer-motion'
 
-interface ButtonProps extends Omit<ButtonHTMLAttributes<HTMLButtonElement>, 'onDrag' | 'onDragStart' | 'onDragEnd'> {
+type ButtonMotionProps = Omit<HTMLMotionProps<'button'>, 'children' | 'className' | 'disabled'>
+type ButtonBaseProps = Omit<ButtonHTMLAttributes<HTMLButtonElement>, keyof ButtonMotionProps>
+
+interface ButtonProps extends ButtonBaseProps {
   variant?: 'primary' | 'secondary' | 'danger'
   size?: 'sm' | 'md' | 'lg'
   isLoading?: boolean
@@ -26,9 +29,6 @@ const Button = forwardRef<HTMLButtonElement, ButtonProps>(
     
     const classes = `${baseClasses} ${variantClasses[variant]} ${sizeClasses[size]} ${className}`
     
-    // Filter out drag handlers that conflict with framer-motion
-    const { onDrag, onDragStart, onDragEnd, ...restProps } = props
-    
     return (
       <motion.button
         ref={ref}
@@ -36,7 +36,7 @@ const Button = forwardRef<HTMLButtonElement, ButtonProps>(
         disabled={disabled || isLoading}
         whileHover={!disabled && !isLoading ? { scale: 1.02 } : {}}
         whileTap={!disabled && !isLoading ? { scale: 0.98 } : {}}
-        {...restProps}
+        {...(props as any)}
       >
         {isLoading ? (
           <span className="flex items-center gap-2">

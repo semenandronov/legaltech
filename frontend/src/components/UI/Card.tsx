@@ -1,7 +1,10 @@
 import { HTMLAttributes, ReactNode } from 'react'
-import { motion } from 'framer-motion'
+import { motion, HTMLMotionProps } from 'framer-motion'
 
-interface CardProps extends Omit<HTMLAttributes<HTMLDivElement>, 'onDrag' | 'onDragStart' | 'onDragEnd'> {
+type CardMotionProps = Omit<HTMLMotionProps<'div'>, 'children' | 'className'>
+type CardBaseProps = Omit<HTMLAttributes<HTMLDivElement>, keyof CardMotionProps>
+
+interface CardProps extends CardBaseProps {
   children: ReactNode
   variant?: 'default' | 'gradient' | 'accent'
   hoverable?: boolean
@@ -21,14 +24,12 @@ const Card = ({ children, variant = 'default', hoverable = false, className = ''
   const classes = `${baseClasses} ${variantClasses[variant]} ${hoverClasses} ${className}`
   
   if (hoverable) {
-    // Filter out drag handlers that conflict with framer-motion
-    const { onDrag, onDragStart, onDragEnd, ...restProps } = props
     return (
       <motion.div
         className={classes}
         whileHover={{ scale: 1.01 }}
         transition={{ duration: 0.2 }}
-        {...restProps}
+        {...(props as any)}
       >
         {children}
       </motion.div>
