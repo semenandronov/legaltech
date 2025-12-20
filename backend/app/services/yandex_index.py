@@ -114,7 +114,6 @@ class YandexIndexService:
             )
         
         file_ids = []
-        upload_errors = []
         
         for i, doc in enumerate(documents):
             try:
@@ -148,7 +147,7 @@ class YandexIndexService:
                     file_id = uploaded_file.file_id
                 elif isinstance(uploaded_file, str):
                     file_id = uploaded_file
-                else:
+        else:
                     # Пытаемся преобразовать в строку
                     file_id = str(uploaded_file)
                     logger.warning(f"Unknown uploaded_file type, using str(): {type(uploaded_file)}")
@@ -156,34 +155,18 @@ class YandexIndexService:
                 file_ids.append(file_id)
                 logger.debug(f"✅ Uploaded file {file_name} with ID {file_id}")
                 
-            except AttributeError as e:
-                error_msg = f"AttributeError when uploading document {i} ({file_name}): {e}"
-                logger.error(error_msg, exc_info=True)
-                upload_errors.append(error_msg)
-                continue
-            except TypeError as e:
-                error_msg = f"TypeError when uploading document {i} ({file_name}): {e}. Check upload() method signature."
-                logger.error(error_msg, exc_info=True)
-                upload_errors.append(error_msg)
-                continue
             except Exception as e:
                 error_msg = f"Failed to upload document {i} ({file_name}): {type(e).__name__}: {e}"
                 logger.error(error_msg, exc_info=True)
-                upload_errors.append(error_msg)
-                # Продолжаем загрузку остальных файлов даже если один не удался
-                continue
+                raise Exception(f"Ошибка при загрузке файла {file_name} в Vector Store: {str(e)}") from e
         
         if not file_ids:
-            error_summary = "\n".join(upload_errors[:5])  # Первые 5 ошибок
             raise Exception(
                 f"Failed to upload any documents as files to Vector Store. "
-                f"Errors: {error_summary}"
+                f"Tried to upload {len(documents)} documents, but all failed."
             )
         
-        if len(upload_errors) > 0:
-            logger.warning(f"Successfully uploaded {len(file_ids)}/{len(documents)} files. {len(upload_errors)} failed.")
-        
-        logger.info(f"✅ Uploaded {len(file_ids)} files to Vector Store")
+        logger.info(f"✅ Uploaded {len(file_ids)}/{len(documents)} files to Vector Store")
         return file_ids
     
     def create_index(self, case_id: str, name: str = None, documents: Optional[List[Document]] = None) -> str:
@@ -369,8 +352,8 @@ class YandexIndexService:
             # Попробуем через search_indexes (если доступно)
             if hasattr(self.sdk, 'search_indexes') and hasattr(self.sdk.search_indexes, 'search'):
                 results = self.sdk.search_indexes.search(index_id, query, top=k)
-                documents = []
-                for item in results:
+            documents = []
+            for item in results:
                     doc = Document(
                         page_content=item.text if hasattr(item, 'text') else str(item),
                         metadata=getattr(item, 'metadata', {})
