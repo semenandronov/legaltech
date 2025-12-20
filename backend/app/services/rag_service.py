@@ -229,12 +229,14 @@ class RAGService:
         # Даже если нет релевантных документов, генерируем ответ через LLM
         # Это позволяет отвечать на любые вопросы естественным языком
         
-        # Format sources for prompt
-        sources_text = self.format_sources_for_prompt(relevant_docs)
+        # Format sources for prompt (если есть документы)
+        if relevant_docs:
+            sources_text = self.format_sources_for_prompt(relevant_docs)
+        else:
+            sources_text = ""
         
         # Create prompt
         if relevant_docs:
-            sources_text = self.format_sources_for_prompt(relevant_docs)
             system_template = """Ты эксперт по анализу юридических документов.
 Ты отвечаешь на вопросы на основе предоставленных документов дела.
 
@@ -344,12 +346,8 @@ class RAGService:
         # Retrieve relevant chunks using specified strategy
         relevant_docs = self.retrieve_context(case_id, query, k=k, retrieval_strategy=retrieval_strategy)
         
-        if not relevant_docs:
-            # Для разговорных вопросов даем более дружелюбный ответ
-            query_lower = query.lower().strip()
-            if any(word in query_lower for word in ["как", "что", "где", "когда", "почему", "зачем"]):
-                return "Я не нашел конкретной информации по вашему вопросу в документах дела. Попробуйте переформулировать вопрос или уточнить, что именно вас интересует.", []
-            return "Не найдено релевантной информации в документах дела.", []
+        # Даже если нет релевантных документов, генерируем ответ через LLM
+        # Это позволяет отвечать на любые вопросы естественным языком
         
         # Format sources with context limit (если есть документы)
         if relevant_docs:
