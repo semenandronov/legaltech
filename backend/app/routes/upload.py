@@ -106,7 +106,6 @@ async def upload_files(
     text_parts: List[str] = []
     total_text_len = 0
     files_to_create: List[dict] = []
-    langchain_documents_by_file: Dict[str, List[Document]] = {}  # Store LangChain documents for DB chunks
     original_files: Dict[str, bytes] = {}  # Store original file content for Yandex Vector Store
 
     # Генерируем case_id один раз, чтобы использовать его и для Case, и для File
@@ -155,22 +154,11 @@ async def upload_files(
                     detail=f"LangChain loader не вернул документы для файла '{filename}'"
                 )
             
-            # Combine all documents from file into single text
+            # Combine all documents from file into single text (для валидации)
             text = "\n\n".join([doc.page_content for doc in langchain_docs])
             
-            # Убеждаемся, что все документы имеют правильные метаданные
-            for doc in langchain_docs:
-                if "source_file" not in doc.metadata:
-                    doc.metadata["source_file"] = filename
-                # Убеждаемся, что source есть в metadata (для совместимости)
-                if "source" not in doc.metadata:
-                    doc.metadata["source"] = filename
-            
-            # Store LangChain documents for later processing
-            langchain_documents_by_file[filename] = langchain_docs
-            
             logger.info(
-                f"Loaded {len(langchain_docs)} LangChain documents from {filename}, "
+                f"Extracted text from {filename} using LangChain, "
                 f"total text length: {len(text)} chars"
             )
             
@@ -275,9 +263,11 @@ async def upload_files(
         db.add(case)
         db.flush()  # Flush to get case.id
         
-        # Create File entries and process with LangChain
+        # Create File entries
+        # ВАЖНО: LangChain больше НЕ используется для сохранения chunks в БД
+        # LangChain использовался только для извлечения текста (уже сделано выше)
+        # Оригинальные файлы загружаются напрямую в Yandex Vector Store
         document_processor = DocumentProcessor()
-        all_documents = []  # For LangChain
         
         for file_info in files_to_create:
             file_model = FileModel(
@@ -300,24 +290,24 @@ async def upload_files(
         
         db.commit()
         
-        # Store documents in vector database (Yandex AI Studio Index)
-        if not all_documents:
+        # Store original files in Yandex Vector Store
+        if not original_files:
             raise HTTPException(
                 status_code=400,
-                detail="Не удалось извлечь документы для сохранения в индекс"
+                detail="Не удалось загрузить файлы для сохранения в индекс"
             )
         
         logger.info(
-            f"Storing {len(all_documents)} document chunks in Yandex Index for case {case_id}",
-            extra={"case_id": case_id, "num_chunks": len(all_documents)}
+            f"Storing {len(original_files)} original files in Yandex Vector Store for case {case_id}",
+            extra={"case_id": case_id, "num_files": len(original_files)}
         )
         index_id = document_processor.store_in_vector_db(
             case_id=case_id,
-            documents=all_documents,  # Используется только для нашей БД
+            documents=[],  # Не используется - все идет через оригинальные файлы
             db=db,
             original_files=original_files  # Оригинальные файлы для Yandex Vector Store
         )
-        logger.info(f"Successfully stored documents in Yandex Index {index_id} for case {case_id}")
+        logger.info(f"Successfully stored {len(original_files)} files in Yandex Vector Store index {index_id} for case {case_id}")
         
         # Create assistant for case (after index is created)
         if not index_id:
