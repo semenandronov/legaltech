@@ -134,9 +134,17 @@ class YandexIndexService:
                 logger.info(f"Available methods in search_indexes: {available_methods}")
                 
                 # Используем create_deferred - это правильный метод для создания индекса в SDK
+                # create_deferred требует параметр files (список файлов)
+                # Для создания индекса без файлов используем пустой список
                 if hasattr(search_indexes, 'create_deferred'):
                     logger.info(f"Creating index using create_deferred method...")
-                    index = search_indexes.create_deferred(name=index_name, description=f"Index for case {case_id}")
+                    # create_deferred требует параметр files - используем пустой список для пустого индекса
+                    # Файлы будут добавлены позже через add_documents
+                    index = search_indexes.create_deferred(
+                        name=index_name,
+                        description=f"Index for case {case_id}",
+                        files=[]  # Пустой список - файлы будут добавлены позже
+                    )
                     index_id = index.id if hasattr(index, 'id') else str(index)
                     logger.info(f"✅ Created search index {index_id} for case {case_id} (deferred)")
                     return index_id
