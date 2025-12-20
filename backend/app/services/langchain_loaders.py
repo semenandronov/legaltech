@@ -86,6 +86,14 @@ class DocumentLoaderService:
                 tmp_path = tmp_file.name
             
             try:
+                # Validate that file is actually a ZIP (DOCX files are ZIP archives)
+                import zipfile
+                try:
+                    zip_test = zipfile.ZipFile(io.BytesIO(content))
+                    zip_test.close()
+                except zipfile.BadZipFile:
+                    raise ValueError(f"Файл {filename} не является корректным DOCX файлом (не является ZIP архивом)")
+                
                 # Try UnstructuredWordDocumentLoader first (better structure preservation)
                 try:
                     loader = UnstructuredWordDocumentLoader(tmp_path, mode="elements")

@@ -31,13 +31,36 @@ def parse_docx(file_content: bytes, filename: str) -> str:
     """Extract text from DOCX file"""
     try:
         import io
+        import zipfile
+        
+        # Validate that file is actually a ZIP (DOCX files are ZIP archives)
+        try:
+            zip_test = zipfile.ZipFile(io.BytesIO(file_content))
+            zip_test.close()
+        except zipfile.BadZipFile:
+            raise ValueError(f"Файл {filename} не является корректным DOCX файлом (не является ZIP архивом)")
+        
+        # Parse DOCX
         docx_file = io.BytesIO(file_content)
         doc = Document(docx_file)
         text_parts = []
         for paragraph in doc.paragraphs:
             if paragraph.text.strip():
                 text_parts.append(paragraph.text)
-        return _clean_text("\n".join(text_parts))
+        
+        # Also extract text from tables
+        for table in doc.tables:
+            for row in table.rows:
+                row_text = " | ".join(cell.text.strip() for cell in row.cells if cell.text.strip())
+                if row_text:
+                    text_parts.append(row_text)
+        
+        result = _clean_text("\n".join(text_parts))
+        if not result.strip():
+            raise ValueError(f"DOCX файл {filename} не содержит текста")
+        return result
+    except ValueError:
+        raise
     except Exception as e:
         raise ValueError(f"Ошибка при чтении DOCX файла {filename}: {str(e)}")
 

@@ -129,8 +129,15 @@ async def upload_files(
                 detail=f"Файл '{filename}' имеет неподдерживаемый формат. Поддерживаются: {', '.join(allowed_extensions)}"
             )
         
-        # Check file size
+        # Check file size and read content
         content = await file.read()
+        
+        if len(content) == 0:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Файл '{filename}' пуст или не может быть прочитан"
+            )
+        
         if len(content) > config.MAX_FILE_SIZE:
             raise HTTPException(
                 status_code=400,
@@ -148,10 +155,19 @@ async def upload_files(
                 # Store LangChain documents for later processing
                 langchain_documents_by_file[filename] = langchain_docs
             except Exception as e:
-                logger.warning(f"LangChain loader failed for {filename}, falling back to manual parser: {e}")
+                error_msg = str(e)
+                logger.warning(f"LangChain loader failed for {filename}, falling back to manual parser: {error_msg}")
                 # Fallback to manual parser
-                text = parse_file(content, filename)
-                langchain_documents_by_file[filename] = None
+                try:
+                    text = parse_file(content, filename)
+                    langchain_documents_by_file[filename] = None
+                except Exception as parse_error:
+                    # Provide more detailed error message
+                    logger.error(f"Both LangChain and manual parser failed for {filename}: {parse_error}")
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"Не удалось обработать файл '{filename}': {str(parse_error)}"
+                    )
             
             # Remove NULL bytes (PostgreSQL doesn't allow them in strings)
             text = text.replace('\x00', '')
