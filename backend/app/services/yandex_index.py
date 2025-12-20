@@ -139,11 +139,46 @@ class YandexIndexService:
                 logger.debug(f"Uploading original file {filename} ({len(file_content)} bytes, {mime_type}) to Vector Store...")
                 
                 # Пробуем загрузить оригинальный файл
-                uploaded_file = self.sdk.files.upload(
-                    name=filename,
-                    content=file_content,
-                    mime_type=mime_type
-                )
+                # ВАЖНО: SDK может требовать file-like object вместо content
+                # Пробуем разные варианты сигнатуры метода
+                import io
+                file_obj = io.BytesIO(file_content)
+                
+                # Пробуем сначала с file параметром
+                try:
+                    uploaded_file = self.sdk.files.upload(
+                        file=file_obj,
+                        name=filename,
+                        mime_type=mime_type
+                    )
+                except TypeError:
+                    # Если не подошло, пробуем с data
+                    try:
+                        file_obj.seek(0)
+                        uploaded_file = self.sdk.files.upload(
+                            data=file_content,
+                            name=filename,
+                            mime_type=mime_type
+                        )
+                    except TypeError:
+                        # Если не подошло, пробуем с file_path (но мы работаем в памяти)
+                        # Тогда сохраним временно на диск
+                        import tempfile
+                        import os
+                        with tempfile.NamedTemporaryFile(delete=False, suffix=f"_{filename}") as tmp_file:
+                            tmp_file.write(file_content)
+                            tmp_path = tmp_file.name
+                        
+                        try:
+                            uploaded_file = self.sdk.files.upload(
+                                file_path=tmp_path,
+                                name=filename,
+                                mime_type=mime_type
+                            )
+                        finally:
+                            # Удаляем временный файл
+                            if os.path.exists(tmp_path):
+                                os.unlink(tmp_path)
                 
                 # Получаем ID загруженного файла
                 # Может быть uploaded_file.id, uploaded_file.file_id или просто строка
