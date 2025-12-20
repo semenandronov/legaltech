@@ -106,7 +106,8 @@ async def upload_files(
     text_parts: List[str] = []
     total_text_len = 0
     files_to_create: List[dict] = []
-    langchain_documents_by_file: Dict[str, List[Document]] = {}  # Store LangChain documents
+    langchain_documents_by_file: Dict[str, List[Document]] = {}  # Store LangChain documents for DB chunks
+    original_files: Dict[str, bytes] = {}  # Store original file content for Yandex Vector Store
 
     # Генерируем case_id один раз, чтобы использовать его и для Case, и для File
     case_id = str(uuid.uuid4())

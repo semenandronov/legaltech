@@ -82,12 +82,15 @@ class YandexIndexService:
                 "Check YANDEX_API_KEY/YANDEX_IAM_TOKEN and YANDEX_FOLDER_ID in .env file"
             )
     
-    def _upload_documents_as_files(self, documents: List[Document]) -> List[str]:
+    def _upload_documents_as_files(self, documents: List[Document], original_files: Dict[str, bytes] = None) -> List[str]:
         """
-        Upload documents as files to Vector Store and return file IDs
+        Upload original files to Vector Store and return file IDs
+        
+        ВАЖНО: Загружаем ОРИГИНАЛЬНЫЕ файлы (PDF, DOCX и т.д.) напрямую в Yandex Vector Store.
+        LangChain используется только для обработки на нашей стороне (БД).
         
         Args:
-            documents: List of Document objects to upload
+            original_files: Dict[str, bytes] - оригинальные файлы {filename: content}
             
         Returns:
             List of file IDs
@@ -101,7 +104,7 @@ class YandexIndexService:
             logger.error("SDK does not have 'files' attribute")
             raise NotImplementedError(
                 "SDK does not support files API. "
-                "Cannot upload documents as files to Vector Store. "
+                "Cannot upload files to Vector Store. "
                 "Check SDK documentation for correct API."
             )
         
@@ -109,34 +112,37 @@ class YandexIndexService:
             logger.error(f"SDK.files does not have 'upload' method. Available methods: {[m for m in dir(self.sdk.files) if not m.startswith('_')]}")
             raise NotImplementedError(
                 "SDK does not support files.upload() method. "
-                "Cannot upload documents as files to Vector Store. "
+                "Cannot upload files to Vector Store. "
                 "Available files methods: " + str([m for m in dir(self.sdk.files) if not m.startswith('_')])
             )
         
         file_ids = []
         
-        for i, doc in enumerate(documents):
+        # Определяем MIME типы для разных форматов
+        def get_mime_type(filename: str) -> str:
+            ext = filename.rsplit('.', 1)[-1].lower() if '.' in filename else ''
+            mime_types = {
+                'pdf': 'application/pdf',
+                'docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+                'doc': 'application/msword',
+                'txt': 'text/plain',
+                'xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+                'xls': 'application/vnd.ms-excel'
+            }
+            return mime_types.get(ext, 'application/octet-stream')
+        
+        for filename, file_content in original_files.items():
             try:
-                # Конвертируем документ в JSON формат для загрузки
-                # ВАЖНО: Возможно нужен другой формат (чистый текст или другой JSON)
-                file_content = json.dumps({
-                    "text": doc.page_content,
-                    "metadata": doc.metadata
-                }, ensure_ascii=False).encode('utf-8')
+                mime_type = get_mime_type(filename)
                 
-                # Используем source из metadata как имя файла, если доступно
-                file_name = doc.metadata.get("source", f"document_{i}.json")
-                if not file_name.endswith('.json'):
-                    file_name = f"{file_name}.json"
+                # Загружаем ОРИГИНАЛЬНЫЙ файл в Vector Store
+                logger.debug(f"Uploading original file {filename} ({len(file_content)} bytes, {mime_type}) to Vector Store...")
                 
-                # Загружаем файл в Vector Store
-                logger.debug(f"Uploading file {file_name} ({len(file_content)} bytes) to Vector Store...")
-                
-                # Пробуем загрузить файл
+                # Пробуем загрузить оригинальный файл
                 uploaded_file = self.sdk.files.upload(
-                    name=file_name,
+                    name=filename,
                     content=file_content,
-                    mime_type="application/json"
+                    mime_type=mime_type
                 )
                 
                 # Получаем ID загруженного файла
@@ -153,28 +159,31 @@ class YandexIndexService:
                     logger.warning(f"Unknown uploaded_file type, using str(): {type(uploaded_file)}")
                 
                 file_ids.append(file_id)
-                logger.debug(f"✅ Uploaded file {file_name} with ID {file_id}")
+                logger.debug(f"✅ Uploaded original file {filename} with ID {file_id}")
                 
             except Exception as e:
-                error_msg = f"Failed to upload document {i} ({file_name}): {type(e).__name__}: {e}"
+                error_msg = f"Failed to upload original file {filename}: {type(e).__name__}: {e}"
                 logger.error(error_msg, exc_info=True)
-                raise Exception(f"Ошибка при загрузке файла {file_name} в Vector Store: {str(e)}") from e
+                raise Exception(f"Ошибка при загрузке оригинального файла {filename} в Vector Store: {str(e)}") from e
         
         if not file_ids:
             raise Exception(
-                f"Failed to upload any documents as files to Vector Store. "
-                f"Tried to upload {len(documents)} documents, but all failed."
+                f"Failed to upload any original files to Vector Store. "
+                f"Tried to upload {len(original_files)} files, but all failed."
             )
         
-        logger.info(f"✅ Uploaded {len(file_ids)}/{len(documents)} files to Vector Store")
+        logger.info(f"✅ Uploaded {len(file_ids)}/{len(original_files)} original files to Vector Store")
         return file_ids
     
-    def create_index(self, case_id: str, name: str = None, documents: Optional[List[Document]] = None) -> str:
+    def create_index(self, case_id: str, name: str = None, original_files: Optional[Dict[str, bytes]] = None) -> str:
         """
         Create new Vector Store search index for case using ML SDK
         
         ВАЖНО: create_deferred требует обязательный параметр files (список ID файлов).
-        Поэтому необходимо сначала загрузить документы как файлы, затем создать индекс с их ID.
+        Поэтому необходимо сначала загрузить ОРИГИНАЛЬНЫЕ файлы, затем создать индекс с их ID.
+        
+        LangChain используется ТОЛЬКО для обработки на нашей стороне (извлечение текста, chunks для БД).
+        В Yandex Vector Store загружаем оригинальные файлы напрямую.
         
         Документация: https://yandex.cloud/docs/ai-studio/concepts/vector-store
         SDK Reference: https://yandex.cloud/docs/ai-studio/sdk-ref/
@@ -182,9 +191,8 @@ class YandexIndexService:
         Args:
             case_id: Case identifier
             name: Optional index name (defaults to index_prefix_case_id)
-            documents: Optional list of documents to upload before creating index.
-                      If provided, documents will be uploaded as files and index created with them.
-                      If not provided, will attempt to create empty index (may fail).
+            original_files: Dict[str, bytes] - оригинальные файлы {filename: content} для загрузки в Vector Store.
+                           Если не предоставлены, попытка создать пустой индекс (может не удаться).
         
         Returns:
             index_id: ID of created Vector Store index
@@ -194,10 +202,10 @@ class YandexIndexService:
         index_name = name or f"{self.index_prefix}_{case_id}"
         file_ids = []
         
-        # Если документы переданы, загружаем их как файлы
-        if documents:
-            logger.info(f"Uploading {len(documents)} documents as files before creating index...")
-            file_ids = self._upload_documents_as_files(documents)
+        # Если оригинальные файлы переданы, загружаем их напрямую в Vector Store
+        if original_files:
+            logger.info(f"Uploading {len(original_files)} original files to Vector Store before creating index...")
+            file_ids = self._upload_original_files(original_files)
             logger.info(f"✅ Uploaded {len(file_ids)} files, will create index with these files")
         else:
             logger.warning(

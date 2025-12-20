@@ -109,7 +109,8 @@ class DocumentProcessor:
         self,
         case_id: str,
         documents: List[Document],
-        db: Session
+        db: Session,
+        original_files: Dict[str, bytes] = None
     ) -> str:
         """
         Store documents in Yandex AI Studio Index
