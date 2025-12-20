@@ -1,4 +1,4 @@
-"""Yandex AI Studio Index service for vector store / search index"""
+"""Yandex AI Studio Vector Store service for search indexes"""
 import requests
 import logging
 from typing import List, Dict, Any, Optional
@@ -8,12 +8,32 @@ from app.config import config
 
 logger = logging.getLogger(__name__)
 
+# ВАЖНО: Используйте Vector Store API для создания поисковых индексов
+# Документация: https://yandex.cloud/docs/ai-studio/concepts/vector-store
+# Старый Index API (/foundationModels/v1/indexes) устарел и возвращает 404
+# Vector Store API работает через:
+# 1. Загрузку файлов в Vector Store
+# 2. Создание индекса из загруженных файлов
+# 3. Использование индекса через Responses API или Realtime API с инструментом file_search
+
 
 class YandexIndexService:
-    """Service for Yandex AI Studio Vector Store / Search Index"""
+    """
+    Service for Yandex AI Studio Vector Store (Search Index)
+    
+    ВАЖНО: Используйте Vector Store API вместо устаревшего Index API
+    Документация: https://yandex.cloud/docs/ai-studio/concepts/vector-store
+    
+    Vector Store API работает через:
+    1. Загрузку файлов в Vector Store
+    2. Создание индекса из загруженных файлов  
+    3. Использование индекса через Responses API с инструментом file_search
+    
+    Старый эндпоинт /foundationModels/v1/indexes устарел и возвращает 404
+    """
     
     def __init__(self):
-        """Initialize Yandex Index service"""
+        """Initialize Yandex Vector Store service"""
         self.api_key = config.YANDEX_API_KEY
         self.iam_token = config.YANDEX_IAM_TOKEN
         self.folder_id = config.YANDEX_FOLDER_ID
@@ -26,28 +46,24 @@ class YandexIndexService:
         if not self.auth_token:
             logger.warning(
                 "YANDEX_API_KEY or YANDEX_IAM_TOKEN not set. "
-                "Yandex Index service will not work."
+                "Yandex Vector Store service will not work."
             )
         
         if not self.folder_id:
             logger.warning(
                 "YANDEX_FOLDER_ID not set. "
-                "Yandex Index service requires folder_id."
+                "Yandex Vector Store service requires folder_id."
             )
         
         # Base URL for Yandex AI Studio API
-        # ВАЖНО: Index API перешел на новый Search Index API с другим доменом/путем
-        # Старый эндпоинт /foundationModels/v1/indexes возвращает 404
-        # Нужно использовать новый Search Index API
-        # Документация: https://github.com/yandex-cloud/docs.git
-        # Проверьте актуальную документацию в разделе AI Studio / Search Index API
+        # TODO: Обновить на правильный базовый URL для Vector Store API
+        # Проверьте документацию: https://yandex.cloud/docs/ai-studio/concepts/vector-store
+        # Vector Store API может использовать тот же базовый URL что и Responses API
+        # Возможные варианты (требуют проверки в документации API):
+        # - https://llm.api.cloud.yandex.net/foundationModels/v1/vectorStore
+        # - https://llm.api.cloud.yandex.net/v1/vectorStore
+        # - Другой путь согласно актуальной документации Vector Store API
         self.base_url = "https://llm.api.cloud.yandex.net"
-        # TODO: Обновить на правильный базовый URL для нового Search Index API
-        # Проверьте документацию: https://yandex.cloud/docs/ai-studio/ (Search Index раздел)
-        # Возможные варианты (требуют проверки в документации):
-        # - https://searchindex.api.cloud.yandex.net
-        # - https://llm.api.cloud.yandex.net/v1/searchindex
-        # - Другой домен/путь согласно актуальной документации
     
     def _get_headers(self) -> Dict[str, str]:
         """Get HTTP headers for API requests"""
@@ -68,17 +84,28 @@ class YandexIndexService:
     
     def create_index(self, case_id: str, name: str = None) -> str:
         """
-        Create new search index for case
+        Create new Vector Store search index for case
+        
+        ВАЖНО: Этот метод требует обновления для использования Vector Store API
+        Старый эндпоинт /foundationModels/v1/indexes устарел (возвращает 404)
+        
+        Vector Store API работает в два этапа:
+        1. Загрузка файлов в Vector Store (POST /vectorStore/files)
+        2. Создание индекса из загруженных файлов (POST /vectorStore)
+        
+        Документация: https://yandex.cloud/docs/ai-studio/concepts/vector-store
         
         Args:
             case_id: Case identifier
             name: Optional index name (defaults to index_prefix_case_id)
         
         Returns:
-            index_id: ID of created index
+            index_id: ID of created Vector Store index
         
-        Note: This is a placeholder implementation. Actual API endpoint
-        should be verified with Yandex AI Studio documentation.
+        TODO: Реализовать через Vector Store API:
+        - Загрузку файлов в Vector Store
+        - Создание индекса из загруженных файлов
+        - Проверить актуальные эндпоинты в документации Vector Store API
         """
         if not self.auth_token or not self.folder_id:
             raise ValueError(
@@ -87,12 +114,11 @@ class YandexIndexService:
         
         index_name = name or f"{self.index_prefix}_{case_id}"
         
-        # ВАЖНО: Актуальный эндпоинт для Index API
-        # Старый эндпоинт /foundationModels/v1/indexes возвращает 404
-        # Нужно перейти на новый Search Index API
-        # Документация: https://github.com/yandex-cloud/docs.git
-        # Проверьте раздел AI Studio / Search Index API в документации
-        # TODO: Обновить URL на правильный эндпоинт нового Search Index API
+        # УСТАРЕЛО: Старый эндпоинт возвращает 404
+        # Нужно использовать Vector Store API:
+        # 1. POST /foundationModels/v1/vectorStore/files (загрузка файлов)
+        # 2. POST /foundationModels/v1/vectorStore (создание индекса)
+        # TODO: Обновить на актуальные эндпоинты Vector Store API
         url = f"{self.base_url}/foundationModels/v1/indexes"  # УСТАРЕЛО - возвращает 404
         
         payload = {
