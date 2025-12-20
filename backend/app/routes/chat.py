@@ -104,37 +104,47 @@ async def classify_request(question: str, llm) -> bool:
     from langchain_core.messages import SystemMessage, HumanMessage
     
     classification_prompt = ChatPromptTemplate.from_messages([
-        SystemMessage(content="""Ты классификатор запросов пользователя. Твоя задача - определить, является ли запрос:
+        SystemMessage(content="""Ты классификатор запросов пользователя в системе анализа юридических документов.
 
-1. ЗАДАЧЕЙ для выполнения анализа документов (требует запуска агентов):
-   - "Проанализируй документы и найди все риски"
-   - "Извлеки все даты из документов"
-   - "Создай отчет по делу"
-   - "Найди все противоречия в документах"
-   - Любые команды на выполнение комплексного анализа
+Определи тип запроса:
 
-2. ОБЫЧНЫМ ВОПРОСОМ для RAG чата (просто ответ на основе документов):
-   - "Какие ключевые сроки и даты важны в этом деле?"
-   - "Что говорится в договоре о сроках?"
-   - "Кто является сторонами договора?"
-   - "Как дела?" (разговорные вопросы)
-   - Любые вопросы, на которые можно ответить сразу на основе документов
+ЗАДАЧА (task) - если запрос требует выполнения комплексного анализа через агентов:
+- Команды: "проанализируй", "извлеки все", "создай отчет", "найди все"
+- Требует запуска фоновых процессов анализа
+- Примеры: "Проанализируй документы и найди все риски", "Извлеки все даты"
 
-Отвечай ТОЛЬКО одним словом: "task" для задачи или "question" для вопроса."""),
-        HumanMessage(content=f"Запрос пользователя: {question}")
+ВОПРОС (question) - если это обычный вопрос для RAG чата:
+- Вопросы с "какие", "что", "где", "когда", "кто"
+- Разговорные фразы: "как дела", "привет"
+- Требует немедленного ответа на основе документов
+- Примеры: "Какие ключевые сроки?", "Что говорится в договоре?"
+
+Отвечай ТОЛЬКО: task или question"""),
+        HumanMessage(content=f"Запрос: {question}")
     ])
     
     try:
-        response = llm.invoke(classification_prompt.format_messages())
+        formatted_messages = classification_prompt.format_messages()
+        response = llm.invoke(formatted_messages)
         result = response.content.lower().strip()
         
-        # Извлекаем результат (может быть "task", "question" или в тексте)
-        if "task" in result and "question" not in result:
-            logger.info(f"LLM classified '{question[:50]}...' as TASK")
-            return True
-        else:
-            logger.info(f"LLM classified '{question[:50]}...' as QUESTION")
-            return False
+        # Извлекаем результат - ищем "task" или "question"
+        # Убираем лишние символы и пробелы
+        result_clean = result.replace(".", "").replace(",", "").strip()
+        
+        # Проверяем наличие "task" (не должно быть "question" рядом)
+        if "task" in result_clean:
+            # Если есть и "task" и "question", проверяем что идет первым
+            task_pos = result_clean.find("task")
+            question_pos = result_clean.find("question")
+            
+            if question_pos == -1 or (task_pos != -1 and task_pos < question_pos):
+                logger.info(f"LLM classified '{question[:50]}...' as TASK (result: {result_clean})")
+                return True
+        
+        # По умолчанию - это вопрос
+        logger.info(f"LLM classified '{question[:50]}...' as QUESTION (result: {result_clean})")
+        return False
     except Exception as e:
         logger.warning(f"Error in LLM classification: {e}, falling back to keyword-based detection")
         # Fallback к простой проверке ключевых слов
