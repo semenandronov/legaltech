@@ -70,8 +70,8 @@ const ContradictionsPage = () => {
             contradictions={formattedContradictions}
             onResolve={(id) => console.log('Resolve', id)}
             onIgnore={(id) => console.log('Ignore', id)}
-            onReview={(id) => {
-              const contradiction = contradictions.find(c => c.id === id)
+            onViewDocument={(document) => {
+              const contradiction = contradictions.find(c => c.source_documents.includes(document))
               if (contradiction) setSelectedContradiction(contradiction)
             }}
           />

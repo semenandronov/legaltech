@@ -1,6 +1,5 @@
-import { useState } from 'react'
 import { LayoutGrid, List } from 'lucide-react'
-import { CaseListItem, CasesListResponse } from '../../services/api'
+import { CaseListItem } from '../../services/api'
 import CaseCard from './CaseCard'
 import Pagination from '../UI/Pagination'
 import Skeleton from '../UI/Skeleton'

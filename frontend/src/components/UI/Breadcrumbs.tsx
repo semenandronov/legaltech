@@ -1,4 +1,3 @@
-import { ReactNode } from 'react'
 import { ChevronRight } from 'lucide-react'
 
 interface BreadcrumbItem {

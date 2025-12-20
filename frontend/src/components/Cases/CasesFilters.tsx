@@ -2,7 +2,6 @@ import { useState } from 'react'
 import { Search, X } from 'lucide-react'
 import Input from '../UI/Input'
 import Checkbox from '../UI/Checkbox'
-import Select from '../UI/Select'
 import DatePicker from '../UI/DatePicker'
 import Button from '../UI/Button'
 

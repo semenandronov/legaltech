@@ -1,4 +1,4 @@
-import { FileText, AlertTriangle, Users, Clock } from 'lucide-react'
+import { FileText, Users, Clock } from 'lucide-react'
 import Card from '../UI/Card'
 import Button from '../UI/Button'
 

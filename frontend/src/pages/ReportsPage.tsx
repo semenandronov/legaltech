@@ -1,20 +1,18 @@
 import { useState, useEffect } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
-import { getReportsList, generateReport, AvailableReport } from '../services/api'
+import { getReportsList, generateReport } from '../services/api'
 import MainLayout from '../components/Layout/MainLayout'
 import CaseNavigation from '../components/CaseOverview/CaseNavigation'
 import Card from '../components/UI/Card'
 import Button from '../components/UI/Button'
 import Radio from '../components/UI/Radio'
 import Checkbox from '../components/UI/Checkbox'
-import Select from '../components/UI/Select'
 import Input from '../components/UI/Input'
 import Spinner from '../components/UI/Spinner'
 
 const ReportsPage = () => {
   const { caseId } = useParams<{ caseId: string }>()
   const navigate = useNavigate()
-  const [availableReports, setAvailableReports] = useState<AvailableReport[]>([])
   const [loading, setLoading] = useState(true)
   const [reportType, setReportType] = useState('case_memo')
   const [sections, setSections] = useState<string[]>(['executive_summary'])
@@ -32,8 +30,8 @@ const ReportsPage = () => {
     if (!caseId) return
     setLoading(true)
     try {
-      const data = await getReportsList(caseId)
-      setAvailableReports(data.available_reports || [])
+      await getReportsList(caseId)
+      // availableReports можно использовать в будущем
     } catch (error) {
       console.error('Ошибка при загрузке отчетов:', error)
     } finally {
@@ -124,7 +122,7 @@ const ReportsPage = () => {
                       key={option.value}
                       label={option.label}
                       checked={sections.includes(option.value)}
-                      onChange={(e) => handleSectionToggle(option.value)}
+                      onChange={() => handleSectionToggle(option.value)}
                     />
                   ))}
                 </div>

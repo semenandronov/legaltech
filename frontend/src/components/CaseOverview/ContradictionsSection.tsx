@@ -1,4 +1,4 @@
-import { AlertTriangle, CheckCircle, XCircle, ExternalLink } from 'lucide-react'
+import { AlertTriangle, CheckCircle, XCircle } from 'lucide-react'
 import Card from '../UI/Card'
 import Button from '../UI/Button'
 import Badge from '../UI/Badge'
@@ -21,7 +21,6 @@ interface ContradictionsSectionProps {
   contradictions: Contradiction[]
   onResolve?: (id: string) => void
   onIgnore?: (id: string) => void
-  onReview?: (id: string) => void
   onViewDocument?: (document: string) => void
 }
 
@@ -29,7 +28,6 @@ const ContradictionsSection = ({
   contradictions,
   onResolve,
   onIgnore,
-  onReview,
   onViewDocument,
 }: ContradictionsSectionProps) => {
   if (contradictions.length === 0) {

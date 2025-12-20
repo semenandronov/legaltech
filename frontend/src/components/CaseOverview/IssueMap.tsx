@@ -1,5 +1,4 @@
 import Card from '../UI/Card'
-import Badge from '../UI/Badge'
 
 interface Issue {
   tag: string

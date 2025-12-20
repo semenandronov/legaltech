@@ -1,5 +1,5 @@
 import { useNavigate } from 'react-router-dom'
-import { FileText, Calendar, User, MoreVertical } from 'lucide-react'
+import { FileText, Calendar, MoreVertical } from 'lucide-react'
 import { CaseListItem } from '../../services/api'
 import Card from '../UI/Card'
 import Badge from '../UI/Badge'
