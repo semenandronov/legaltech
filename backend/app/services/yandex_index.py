@@ -91,17 +91,35 @@ class YandexIndexService:
             
         Returns:
             List of file IDs
+            
+        Raises:
+            NotImplementedError: If SDK does not support files.upload()
+            Exception: If all file uploads fail
         """
-        if not hasattr(self.sdk, 'files') or not hasattr(self.sdk.files, 'upload'):
+        # Проверяем поддержку files.upload() в SDK
+        if not hasattr(self.sdk, 'files'):
+            logger.error("SDK does not have 'files' attribute")
             raise NotImplementedError(
-                "SDK does not support files.upload(). "
-                "Cannot upload documents as files to Vector Store."
+                "SDK does not support files API. "
+                "Cannot upload documents as files to Vector Store. "
+                "Check SDK documentation for correct API."
+            )
+        
+        if not hasattr(self.sdk.files, 'upload'):
+            logger.error(f"SDK.files does not have 'upload' method. Available methods: {[m for m in dir(self.sdk.files) if not m.startswith('_')]}")
+            raise NotImplementedError(
+                "SDK does not support files.upload() method. "
+                "Cannot upload documents as files to Vector Store. "
+                "Available files methods: " + str([m for m in dir(self.sdk.files) if not m.startswith('_')])
             )
         
         file_ids = []
+        upload_errors = []
+        
         for i, doc in enumerate(documents):
             try:
                 # Конвертируем документ в JSON формат для загрузки
+                # ВАЖНО: Возможно нужен другой формат (чистый текст или другой JSON)
                 file_content = json.dumps({
                     "text": doc.page_content,
                     "metadata": doc.metadata
@@ -113,7 +131,9 @@ class YandexIndexService:
                     file_name = f"{file_name}.json"
                 
                 # Загружаем файл в Vector Store
-                logger.debug(f"Uploading file {file_name} to Vector Store...")
+                logger.debug(f"Uploading file {file_name} ({len(file_content)} bytes) to Vector Store...")
+                
+                # Пробуем загрузить файл
                 uploaded_file = self.sdk.files.upload(
                     name=file_name,
                     content=file_content,
@@ -121,17 +141,47 @@ class YandexIndexService:
                 )
                 
                 # Получаем ID загруженного файла
-                file_id = uploaded_file.id if hasattr(uploaded_file, 'id') else str(uploaded_file)
+                # Может быть uploaded_file.id, uploaded_file.file_id или просто строка
+                if hasattr(uploaded_file, 'id'):
+                    file_id = uploaded_file.id
+                elif hasattr(uploaded_file, 'file_id'):
+                    file_id = uploaded_file.file_id
+                elif isinstance(uploaded_file, str):
+                    file_id = uploaded_file
+                else:
+                    # Пытаемся преобразовать в строку
+                    file_id = str(uploaded_file)
+                    logger.warning(f"Unknown uploaded_file type, using str(): {type(uploaded_file)}")
+                
                 file_ids.append(file_id)
                 logger.debug(f"✅ Uploaded file {file_name} with ID {file_id}")
                 
+            except AttributeError as e:
+                error_msg = f"AttributeError when uploading document {i} ({file_name}): {e}"
+                logger.error(error_msg, exc_info=True)
+                upload_errors.append(error_msg)
+                continue
+            except TypeError as e:
+                error_msg = f"TypeError when uploading document {i} ({file_name}): {e}. Check upload() method signature."
+                logger.error(error_msg, exc_info=True)
+                upload_errors.append(error_msg)
+                continue
             except Exception as e:
-                logger.error(f"Failed to upload document {i}: {e}", exc_info=True)
+                error_msg = f"Failed to upload document {i} ({file_name}): {type(e).__name__}: {e}"
+                logger.error(error_msg, exc_info=True)
+                upload_errors.append(error_msg)
                 # Продолжаем загрузку остальных файлов даже если один не удался
                 continue
         
         if not file_ids:
-            raise Exception("Failed to upload any documents as files to Vector Store")
+            error_summary = "\n".join(upload_errors[:5])  # Первые 5 ошибок
+            raise Exception(
+                f"Failed to upload any documents as files to Vector Store. "
+                f"Errors: {error_summary}"
+            )
+        
+        if len(upload_errors) > 0:
+            logger.warning(f"Successfully uploaded {len(file_ids)}/{len(documents)} files. {len(upload_errors)} failed.")
         
         logger.info(f"✅ Uploaded {len(file_ids)} files to Vector Store")
         return file_ids
