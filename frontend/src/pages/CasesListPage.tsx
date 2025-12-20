@@ -29,10 +29,7 @@ const CasesListPage = () => {
     setLoading(true)
     try {
       const skip = (currentPage - 1) * limit
-      const status = filters.status.length > 0 ? filters.status[0] : undefined
-      const caseType = filters.caseType.length > 0 ? filters.caseType[0] : undefined
-      
-      const data = await getCasesList(skip, limit, status, caseType)
+      const data = await getCasesList(skip, limit)
       setCases(data.cases)
       setTotal(data.total)
     } catch (error: any) {

@@ -19,13 +19,13 @@ const ReportsPage = () => {
   const [format, setFormat] = useState('docx')
   const [email, setEmail] = useState('')
   const [downloading, setDownloading] = useState(false)
-  
+
   useEffect(() => {
     if (caseId) {
       loadReports()
     }
   }, [caseId])
-  
+
   const loadReports = async () => {
     if (!caseId) return
     setLoading(true)
@@ -81,7 +81,7 @@ const ReportsPage = () => {
       </MainLayout>
     )
   }
-  
+
   return (
     <MainLayout>
       <div className="flex h-full">
@@ -162,8 +162,8 @@ const ReportsPage = () => {
                 <p className="text-small text-secondary mt-2">
                   Или оставьте пустым, чтобы скачать файл
                 </p>
-              </div>
-              
+          </div>
+
               {/* Actions */}
               <div className="flex items-center gap-4 pt-4 border-t border-border">
                 <Button
@@ -179,7 +179,7 @@ const ReportsPage = () => {
               </div>
             </div>
           </Card>
-        </div>
+            </div>
       </div>
     </MainLayout>
   )

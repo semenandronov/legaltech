@@ -9,7 +9,7 @@ const Sidebar = () => {
   const navigate = useNavigate()
   const location = useLocation()
   const [isCollapsed, setIsCollapsed] = useState(false)
-  
+
   const handleLogout = async () => {
     await logout()
     navigate('/login')
@@ -19,7 +19,7 @@ const Sidebar = () => {
     { to: '/cases', icon: Home, label: 'Дела' },
     { to: '/settings', icon: Settings, label: 'Настройки' },
   ]
-  
+
   return (
     <aside className={`bg-secondary border-r border-border flex flex-col transition-all duration-300 ${
       isCollapsed ? 'w-[60px]' : 'w-[260px]'
@@ -37,11 +37,11 @@ const Sidebar = () => {
           className="p-1 hover:bg-tertiary rounded transition-colors"
           aria-label={isCollapsed ? 'Развернуть' : 'Свернуть'}
         >
-          {isCollapsed ? (
+            {isCollapsed ? (
             <ChevronRight className="w-4 h-4 text-secondary" />
-          ) : (
+            ) : (
             <ChevronLeft className="w-4 h-4 text-secondary" />
-          )}
+            )}
         </button>
       </div>
       

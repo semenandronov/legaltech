@@ -46,7 +46,7 @@ def ensure_schema():
             if "yandex_assistant_id" not in columns:
                 conn.execute(
                     text("ALTER TABLE cases ADD COLUMN IF NOT EXISTS yandex_assistant_id VARCHAR(255)")
-                )
+            )
 
 
 def init_db():

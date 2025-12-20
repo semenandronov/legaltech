@@ -24,23 +24,23 @@ const Header = () => {
           <div className="flex items-center gap-4">
             <h1 className="text-h2 text-primary flex items-center gap-2">
               <span>⚖️</span>
-              Legal AI Vault
-            </h1>
-          </div>
+            Legal AI Vault
+          </h1>
+        </div>
           <div className="flex items-center gap-4">
             <Button variant="primary" onClick={() => setShowUploadModal(true)}>
               <span className="mr-2">📄</span>
               Загрузить новое дело
             </Button>
             <ThemeToggle />
-            {user && (
+          {user && (
               <div className="flex flex-col items-end">
                 <span className="text-body text-primary font-medium">{user.full_name || user.email}</span>
-                {user.company && (
+              {user.company && (
                   <span className="text-small text-secondary">{user.company}</span>
-                )}
-              </div>
-            )}
+              )}
+            </div>
+          )}
           </div>
         </div>
       </header>
@@ -51,7 +51,7 @@ const Header = () => {
         title="Загрузить новое дело"
         size="lg"
       >
-        <UploadArea onUpload={handleUpload} />
+            <UploadArea onUpload={handleUpload} />
       </Modal>
     </>
   )

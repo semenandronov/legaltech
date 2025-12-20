@@ -10,9 +10,9 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
     <BrowserRouter>
       <ThemeProvider>
-        <AuthProvider>
-          <App />
-        </AuthProvider>
+      <AuthProvider>
+        <App />
+      </AuthProvider>
       </ThemeProvider>
     </BrowserRouter>
   </React.StrictMode>,
