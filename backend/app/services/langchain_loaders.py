@@ -41,21 +41,24 @@ class DocumentLoaderService:
                 loader = PyPDFLoader(tmp_path)
                 documents = loader.load()
                 
-                # Add filename to metadata
+                # Add filename and page info to metadata
                 for doc in documents:
-                    if not doc.metadata.get("source"):
-                        doc.metadata["source_file"] = filename
-                    else:
-                        # Extract page number from source if available
-                        source = doc.metadata.get("source", "")
-                        if "page" in source.lower():
-                            try:
-                                # PyPDFLoader adds page info to source
-                                page_num = int(source.split("page")[-1].strip())
+                    # Устанавливаем source_file для всех документов
+                    doc.metadata["source_file"] = filename
+                    
+                    # Извлекаем номер страницы из source метаданных PyPDFLoader
+                    source = doc.metadata.get("source", "")
+                    if source and "page" in source.lower():
+                        try:
+                            # PyPDFLoader формат: ".../filename.pdf:page=N"
+                            # Ищем номер страницы
+                            import re
+                            page_match = re.search(r'page[=:]?\s*(\d+)', source, re.IGNORECASE)
+                            if page_match:
+                                page_num = int(page_match.group(1))
                                 doc.metadata["source_page"] = page_num
-                            except:
-                                pass
-                        doc.metadata["source_file"] = filename
+                        except Exception as e:
+                            logger.debug(f"Could not extract page number from source '{source}': {e}")
                 
                 logger.info(f"Loaded PDF {filename}: {len(documents)} pages")
                 return documents

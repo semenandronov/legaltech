@@ -328,24 +328,43 @@ async def upload_files(
                 for chunk_idx, chunk_doc in enumerate(chunks):
                     # Очищаем текст чанка от NUL символов
                     sanitized_chunk_text = sanitize_text(chunk_doc.page_content)
+                    
+                    # Убеждаемся, что метаданные правильно установлены
+                    # source_file должен быть установлен из metadata или filename
+                    source_file = chunk_doc.metadata.get("source_file") or file_info["filename"]
+                    
                     chunk_model = DocumentChunk(
                         case_id=case_id,
                         file_id=file_model.id,
                         chunk_index=chunk_idx,
                         chunk_text=sanitized_chunk_text,
-                        source_file=chunk_doc.metadata.get("source_file", file_info["filename"]),
+                        source_file=source_file,
                         source_page=chunk_doc.metadata.get("source_page"),
                         source_start_line=chunk_doc.metadata.get("source_start_line"),
                         source_end_line=chunk_doc.metadata.get("source_end_line"),
                         chunk_metadata=chunk_doc.metadata
                     )
                     db.add(chunk_model)
-                    # Используем очищенный текст для документов LangChain
+                    # Используем очищенный текст для документов LangChain и обновляем metadata
                     chunk_doc.page_content = sanitized_chunk_text
+                    # Убеждаемся, что source_file установлен в metadata
+                    if "source_file" not in chunk_doc.metadata:
+                        chunk_doc.metadata["source_file"] = source_file
                     all_documents.append(chunk_doc)
+                    
+                logger.info(
+                    f"Processed {len(chunks)} chunks from LangChain for file {file_info['filename']} "
+                    f"(case {case_id}, file_id {file_model.id})"
+                )
             except Exception as e:
-                logger.warning(f"Ошибка при обработке документа {file_info['filename']} через LangChain: {e}")
-                # Continue even if LangChain processing fails
+                logger.error(
+                    f"Ошибка при обработке документа {file_info['filename']} через LangChain: {e}",
+                    exc_info=True
+                )
+                raise HTTPException(
+                    status_code=500,
+                    detail=f"Ошибка при обработке документа '{file_info['filename']}' через LangChain: {str(e)}"
+                )
         
         db.commit()
         
