@@ -312,8 +312,11 @@ class RAGService:
             logger.error(f"Unexpected error in RAG service for case {case_id}: {e}", exc_info=True)
             raise Exception(f"Неожиданная ошибка: {str(e)}")
         
-        # Format sources
-        sources = self.format_sources(relevant_docs)
+        # Format sources (если есть документы)
+        if relevant_docs:
+            sources = self.format_sources(relevant_docs)
+        else:
+            sources = []
         
         return answer, sources
     
@@ -473,8 +476,11 @@ class RAGService:
             logger.error(f"Unexpected error in RAG service for case {case_id}: {e}", exc_info=True)
             raise Exception(f"Неожиданная ошибка: {str(e)}")
         
-        # Format sources
-        sources = self.format_sources(relevant_docs)
+        # Format sources (если есть документы)
+        if relevant_docs:
+            sources = self.format_sources(relevant_docs)
+        else:
+            sources = []
         
         return answer, sources
 
