@@ -387,8 +387,9 @@ async def upload_files(
         )
         index_id = document_processor.store_in_vector_db(
             case_id=case_id,
-            documents=all_documents,
-            db=db
+            documents=all_documents,  # Используется только для нашей БД
+            db=db,
+            original_files=original_files  # Оригинальные файлы для Yandex Vector Store
         )
         logger.info(f"Successfully stored documents in Yandex Index {index_id} for case {case_id}")
         
