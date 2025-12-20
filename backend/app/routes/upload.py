@@ -9,7 +9,6 @@ from app.services.langchain_loaders import DocumentLoaderService
 from app.utils.database import get_db
 from app.utils.auth import get_current_user
 from app.models.case import Case, File as FileModel
-from app.models.analysis import DocumentChunk
 from app.models.user import User
 from app.services.document_processor import DocumentProcessor
 from langchain_core.documents import Document
