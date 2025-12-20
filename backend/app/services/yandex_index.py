@@ -133,8 +133,14 @@ class YandexIndexService:
                 available_methods = [m for m in dir(search_indexes) if not m.startswith('_') and callable(getattr(search_indexes, m, None))]
                 logger.info(f"Available methods in search_indexes: {available_methods}")
                 
-                # Пробуем разные возможные методы
-                if hasattr(search_indexes, 'create'):
+                # Используем create_deferred - это правильный метод для создания индекса в SDK
+                if hasattr(search_indexes, 'create_deferred'):
+                    logger.info(f"Creating index using create_deferred method...")
+                    index = search_indexes.create_deferred(name=index_name, description=f"Index for case {case_id}")
+                    index_id = index.id if hasattr(index, 'id') else str(index)
+                    logger.info(f"✅ Created search index {index_id} for case {case_id} (deferred)")
+                    return index_id
+                elif hasattr(search_indexes, 'create'):
                     index = search_indexes.create(name=index_name, description=f"Index for case {case_id}")
                     index_id = index.id if hasattr(index, 'id') else str(index)
                     logger.info(f"✅ Created search index {index_id} for case {case_id}")
@@ -146,11 +152,10 @@ class YandexIndexService:
                     return index_id
                 else:
                     logger.error(
-                        f"search_indexes не содержит методов create или create_index. "
+                        f"search_indexes не содержит методов create_deferred, create или create_index. "
                         f"Доступные методы: {available_methods}. "
                         f"Проверьте документацию SDK: https://yandex.cloud/docs/ai-studio/sdk-ref/"
                     )
-                    # Временно возвращаем ошибку - требуется ручная настройка
                     raise NotImplementedError(
                         f"Метод создания индекса не найден в SDK. "
                         f"Доступные методы search_indexes: {available_methods}. "
