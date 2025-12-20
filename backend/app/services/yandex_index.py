@@ -352,8 +352,8 @@ class YandexIndexService:
             # Попробуем через search_indexes (если доступно)
             if hasattr(self.sdk, 'search_indexes') and hasattr(self.sdk.search_indexes, 'search'):
                 results = self.sdk.search_indexes.search(index_id, query, top=k)
-            documents = []
-            for item in results:
+                documents = []
+                for item in results:
                     doc = Document(
                         page_content=item.text if hasattr(item, 'text') else str(item),
                         metadata=getattr(item, 'metadata', {})
