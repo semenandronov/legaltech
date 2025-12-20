@@ -33,7 +33,8 @@ class ChatYandexGPT(BaseChatModel):
         self.folder_id = kwargs.get("folder_id", config.YANDEX_FOLDER_ID)
         self.api_key = kwargs.get("api_key", config.YANDEX_API_KEY)
         self.iam_token = kwargs.get("iam_token", config.YANDEX_IAM_TOKEN)
-        self.model_name = kwargs.get("model_name", config.YANDEX_GPT_MODEL)
+        # Используем полный URI из конфига, если указан, иначе fallback на короткое имя
+        self.model_name = kwargs.get("model_name") or config.YANDEX_GPT_MODEL_URI or config.YANDEX_GPT_MODEL
         self.temperature = kwargs.get("temperature", 0.7)
         self.max_tokens = kwargs.get("max_tokens", 2000)
         
@@ -86,19 +87,24 @@ class ChatYandexGPT(BaseChatModel):
             )
         
         try:
-            # SDK может работать как с коротким именем (если folder_id указан при инициализации),
-            # так и с полным URI формата gpt://<folder_id>/<model_name>
-            # Попробуем использовать короткое имя, SDK сам добавит folder_id
-            # Если будет ошибка - можно попробовать полный URI
+            # Используем model_name как есть - должен быть полный URI (gpt://<folder_id>/<model>/<version>)
+            # или короткое имя для обратной совместимости
             model_name_to_use = self.model_name
             
-            # Если model_name уже содержит полный URI (начинается с gpt://), используем как есть
-            if self.model_name.startswith("gpt://"):
-                model_name_to_use = self.model_name
+            # Если model_name не полный URI и folder_id есть, формируем полный URI
+            if not self.model_name.startswith("gpt://") and self.folder_id:
+                # Формируем полный URI из короткого имени
+                if "/" in self.model_name:
+                    # Уже есть версия (например, yandexgpt-pro/latest)
+                    model_name_to_use = f"gpt://{self.folder_id}/{self.model_name}"
+                else:
+                    # Только имя модели, добавляем /latest
+                    model_name_to_use = f"gpt://{self.folder_id}/{self.model_name}/latest"
+                logger.info(f"Converted short model name to full URI: {model_name_to_use}")
+            elif self.model_name.startswith("gpt://"):
                 logger.debug(f"Using full model URI: {model_name_to_use}")
             else:
-                # Используем короткое имя - SDK должен автоматически добавить folder_id
-                logger.debug(f"Using short model name (folder_id will be added by SDK): {model_name_to_use}")
+                logger.warning(f"Using short model name without folder_id (may fail): {model_name_to_use}")
             
             # Получаем модель completions
             model = self.sdk.models.completions(model_name_to_use)

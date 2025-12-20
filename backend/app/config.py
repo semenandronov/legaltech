@@ -68,8 +68,17 @@ class Config:
     # Folder ID (нужен для обоих вариантов, но можно извлечь из API ключа)
     YANDEX_FOLDER_ID: str = os.getenv("YANDEX_FOLDER_ID", "")
     YANDEX_AI_STUDIO_CLASSIFIER_ID: str = os.getenv("YANDEX_AI_STUDIO_CLASSIFIER_ID", "")  # ID классификатора из AI Studio
-    YANDEX_GPT_MODEL: str = os.getenv("YANDEX_GPT_MODEL", "yandexgpt-pro/latest")  # yandexgpt-pro/latest или yandexgpt/latest (короткое имя, будет преобразовано в gpt://<folder_id>/...)
-    YANDEX_EMBEDDING_MODEL: str = os.getenv("YANDEX_EMBEDDING_MODEL", "text-search-query")  # text-search-query или text-search-doc (короткое имя, будет преобразовано в emb://<folder_id>/...)
+    # Model URIs - используйте полные URI из AI Studio (gpt://<folder_id>/<model>/<version>)
+    # Пример: gpt://b1g4samml2s1n1509ptp/yandexgpt-lite/rc
+    YANDEX_GPT_MODEL_URI: str = os.getenv("YANDEX_GPT_MODEL_URI", "")  # Полный URI модели LLM (например, gpt://<folder_id>/yandexgpt-pro/latest)
+    # Если YANDEX_GPT_MODEL_URI не указан, будет использовано короткое имя (устаревший способ)
+    YANDEX_GPT_MODEL: str = os.getenv("YANDEX_GPT_MODEL", "yandexgpt-pro/latest")  # Fallback: короткое имя модели (устаревший способ)
+    # Embedding model URI - используйте полный URI (emb://<folder_id>/text-search-query/latest или emb://<folder_id>/text-search-doc/latest)
+    # text-search-query - для коротких текстов (запросы)
+    # text-search-doc - для больших текстов (документы)
+    YANDEX_EMBEDDING_MODEL_URI: str = os.getenv("YANDEX_EMBEDDING_MODEL_URI", "")  # Полный URI модели эмбеддингов (например, emb://<folder_id>/text-search-query/latest)
+    # Если YANDEX_EMBEDDING_MODEL_URI не указан, будет использовано короткое имя (устаревший способ)
+    YANDEX_EMBEDDING_MODEL: str = os.getenv("YANDEX_EMBEDDING_MODEL", "text-search-query")  # Fallback: короткое имя (устаревший способ)
     YANDEX_INDEX_PREFIX: str = os.getenv("YANDEX_INDEX_PREFIX", "legal_ai_vault")  # Префикс для имен индексов
     
     def __init__(self):

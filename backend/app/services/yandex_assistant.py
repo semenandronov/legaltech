@@ -81,10 +81,21 @@ class YandexAssistantService:
         url = f"{self.base_url}/foundationModels/v1/assistants"
         
         # Assistant configuration with Vector Store tool
+        # Используем полный URI модели, если указан, иначе fallback на короткое имя
+        model_config = config.get("model") if config else None
+        if not model_config:
+            model_config = app_config.YANDEX_GPT_MODEL_URI or app_config.YANDEX_GPT_MODEL
+        # Если это короткое имя и есть folder_id, формируем полный URI
+        if not model_config.startswith("gpt://") and app_config.YANDEX_FOLDER_ID:
+            if "/" in model_config:
+                model_config = f"gpt://{app_config.YANDEX_FOLDER_ID}/{model_config}"
+            else:
+                model_config = f"gpt://{app_config.YANDEX_FOLDER_ID}/{model_config}/latest"
+        
         assistant_config = {
             "name": assistant_name,
             "description": f"Legal AI Assistant for case {case_id}",
-            "model": config.get("model", app_config.YANDEX_GPT_MODEL) if config else app_config.YANDEX_GPT_MODEL,
+            "model": model_config,
             "tools": [
                 {
                     "type": "vector_store",

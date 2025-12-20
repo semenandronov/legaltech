@@ -69,19 +69,27 @@ class YandexEmbeddings(Embeddings):
         embeddings = []
         
         try:
-            # SDK может работать как с коротким именем (если folder_id указан при инициализации),
-            # так и с полным URI формата emb://<folder_id>/<model_name>
-            # Попробуем использовать короткое имя, SDK сам добавит folder_id
-            embedding_model_name = getattr(config, 'YANDEX_EMBEDDING_MODEL', 'text-search-query')
+            # Используем полный URI из конфига, если указан
+            embedding_model_uri = getattr(config, 'YANDEX_EMBEDDING_MODEL_URI', '')
+            embedding_model_name = embedding_model_uri or getattr(config, 'YANDEX_EMBEDDING_MODEL', 'text-search-query')
             
-            # Если model_name уже содержит полный URI (начинается с emb://), используем как есть
-            if embedding_model_name.startswith("emb://"):
+            # Если model_name не полный URI и folder_id есть, формируем полный URI
+            if not embedding_model_name.startswith("emb://") and self.folder_id:
+                # Формируем полный URI из короткого имени
+                # Добавляем /latest если версия не указана
+                if "/" in embedding_model_name:
+                    # Уже есть версия (например, text-search-query/latest)
+                    model_name_to_use = f"emb://{self.folder_id}/{embedding_model_name}"
+                else:
+                    # Только имя модели, добавляем /latest
+                    model_name_to_use = f"emb://{self.folder_id}/{embedding_model_name}/latest"
+                logger.info(f"Converted short embedding model name to full URI: {model_name_to_use}")
+            elif embedding_model_name.startswith("emb://"):
                 model_name_to_use = embedding_model_name
                 logger.debug(f"Using full embedding model URI: {model_name_to_use}")
             else:
-                # Используем короткое имя - SDK должен автоматически добавить folder_id
                 model_name_to_use = embedding_model_name
-                logger.debug(f"Using short embedding model name (folder_id will be added by SDK): {model_name_to_use}")
+                logger.warning(f"Using short embedding model name without folder_id (may fail): {model_name_to_use}")
             
             # Получаем модель embeddings
             embeddings_model = self.sdk.models.text_embeddings(model_name_to_use)

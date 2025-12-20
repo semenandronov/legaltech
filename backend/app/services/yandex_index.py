@@ -36,7 +36,15 @@ class YandexIndexService:
             )
         
         # Base URL for Yandex AI Studio API
+        # ВАЖНО: Index API перешел на новый Search Index API с другим доменом/путем
+        # Старый эндпоинт /foundationModels/v1/indexes возвращает 404
+        # Нужно использовать новый Search Index API (проверьте актуальную документацию)
         self.base_url = "https://llm.api.cloud.yandex.net"
+        # TODO: Обновить на правильный базовый URL для нового Search Index API
+        # Возможные варианты:
+        # - https://searchindex.api.cloud.yandex.net
+        # - https://llm.api.cloud.yandex.net/v1/searchindex
+        # Проверьте актуальную документацию Yandex AI Studio
     
     def _get_headers(self) -> Dict[str, str]:
         """Get HTTP headers for API requests"""
