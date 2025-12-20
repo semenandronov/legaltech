@@ -147,7 +147,7 @@ class YandexIndexService:
                     file_id = uploaded_file.file_id
                 elif isinstance(uploaded_file, str):
                     file_id = uploaded_file
-        else:
+                else:
                     # Пытаемся преобразовать в строку
                     file_id = str(uploaded_file)
                     logger.warning(f"Unknown uploaded_file type, using str(): {type(uploaded_file)}")
