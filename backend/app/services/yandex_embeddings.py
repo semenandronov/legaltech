@@ -69,8 +69,22 @@ class YandexEmbeddings(Embeddings):
         embeddings = []
         
         try:
+            # SDK может работать как с коротким именем (если folder_id указан при инициализации),
+            # так и с полным URI формата emb://<folder_id>/<model_name>
+            # Попробуем использовать короткое имя, SDK сам добавит folder_id
+            embedding_model_name = getattr(config, 'YANDEX_EMBEDDING_MODEL', 'text-search-query')
+            
+            # Если model_name уже содержит полный URI (начинается с emb://), используем как есть
+            if embedding_model_name.startswith("emb://"):
+                model_name_to_use = embedding_model_name
+                logger.debug(f"Using full embedding model URI: {model_name_to_use}")
+            else:
+                # Используем короткое имя - SDK должен автоматически добавить folder_id
+                model_name_to_use = embedding_model_name
+                logger.debug(f"Using short embedding model name (folder_id will be added by SDK): {model_name_to_use}")
+            
             # Получаем модель embeddings
-            embeddings_model = self.sdk.models.text_embeddings('yandexgpt')
+            embeddings_model = self.sdk.models.text_embeddings(model_name_to_use)
             
             # Обрабатываем каждый текст
             for text in texts:

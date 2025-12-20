@@ -68,7 +68,8 @@ class Config:
     # Folder ID (нужен для обоих вариантов, но можно извлечь из API ключа)
     YANDEX_FOLDER_ID: str = os.getenv("YANDEX_FOLDER_ID", "")
     YANDEX_AI_STUDIO_CLASSIFIER_ID: str = os.getenv("YANDEX_AI_STUDIO_CLASSIFIER_ID", "")  # ID классификатора из AI Studio
-    YANDEX_GPT_MODEL: str = os.getenv("YANDEX_GPT_MODEL", "yandexgpt-pro/latest")  # yandexgpt-pro/latest или yandexgpt/latest
+    YANDEX_GPT_MODEL: str = os.getenv("YANDEX_GPT_MODEL", "yandexgpt-pro/latest")  # yandexgpt-pro/latest или yandexgpt/latest (короткое имя, будет преобразовано в gpt://<folder_id>/...)
+    YANDEX_EMBEDDING_MODEL: str = os.getenv("YANDEX_EMBEDDING_MODEL", "text-search-query")  # text-search-query или text-search-doc (короткое имя, будет преобразовано в emb://<folder_id>/...)
     YANDEX_INDEX_PREFIX: str = os.getenv("YANDEX_INDEX_PREFIX", "legal_ai_vault")  # Префикс для имен индексов
     
     def __init__(self):

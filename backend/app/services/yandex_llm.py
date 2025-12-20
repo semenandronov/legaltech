@@ -86,8 +86,22 @@ class ChatYandexGPT(BaseChatModel):
             )
         
         try:
+            # SDK может работать как с коротким именем (если folder_id указан при инициализации),
+            # так и с полным URI формата gpt://<folder_id>/<model_name>
+            # Попробуем использовать короткое имя, SDK сам добавит folder_id
+            # Если будет ошибка - можно попробовать полный URI
+            model_name_to_use = self.model_name
+            
+            # Если model_name уже содержит полный URI (начинается с gpt://), используем как есть
+            if self.model_name.startswith("gpt://"):
+                model_name_to_use = self.model_name
+                logger.debug(f"Using full model URI: {model_name_to_use}")
+            else:
+                # Используем короткое имя - SDK должен автоматически добавить folder_id
+                logger.debug(f"Using short model name (folder_id will be added by SDK): {model_name_to_use}")
+            
             # Получаем модель completions
-            model = self.sdk.models.completions(self.model_name)
+            model = self.sdk.models.completions(model_name_to_use)
             
             # Настраиваем параметры
             model = model.configure(

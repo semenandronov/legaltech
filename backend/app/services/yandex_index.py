@@ -76,8 +76,12 @@ class YandexIndexService:
         
         index_name = name or f"{self.index_prefix}_{case_id}"
         
-        # TODO: Verify actual API endpoint with Yandex AI Studio documentation
-        # This is a placeholder based on typical index API patterns
+        # ВАЖНО: Актуальный эндпоинт для Index API может отличаться
+        # Возможные варианты:
+        # - https://llm.api.cloud.yandex.net/foundationModels/v1/indexes (возможно устарел)
+        # - https://llm.api.cloud.yandex.net/v1/indexes
+        # - Другой домен/путь для Search Index API
+        # Проверьте актуальную документацию Yandex AI Studio для правильного эндпоинта
         url = f"{self.base_url}/foundationModels/v1/indexes"
         
         payload = {
@@ -87,8 +91,17 @@ class YandexIndexService:
         }
         
         try:
-            logger.info(f"Creating index '{index_name}' for case {case_id}")
+            logger.info(f"Creating index '{index_name}' for case {case_id} via URL: {url}")
             response = requests.post(url, json=payload, headers=self._get_headers(), timeout=30)
+            
+            # Логируем детали ответа для отладки
+            if response.status_code == 404:
+                logger.error(
+                    f"404 Not Found for Index API endpoint: {url}. "
+                    f"Проверьте документацию Yandex AI Studio для актуального эндпоинта Search Index API. "
+                    f"Возможно, эндпоинт изменился или использует другой путь/домен."
+                )
+            
             response.raise_for_status()
             
             result = response.json()
