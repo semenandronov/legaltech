@@ -167,6 +167,7 @@ class YandexIndexService:
                     # SDK files.upload() принимает путь к файлу как строку
                     # Согласно документации: file = sdk.files.upload("<путь_к_файлу>", ttl_days=5, expiration_policy="static")
                     # Файлы будут храниться 30 дней (для юридических документов нужно долгое хранение)
+                    logger.debug(f"Attempting to upload file to folder_id: {self.folder_id}")
                     uploaded_file = self.sdk.files.upload(
                         tmp_path,
                         ttl_days=30,
@@ -421,8 +422,8 @@ class YandexIndexService:
             # Попробуем через search_indexes (если доступно)
             if hasattr(self.sdk, 'search_indexes') and hasattr(self.sdk.search_indexes, 'search'):
                 results = self.sdk.search_indexes.search(index_id, query, top=k)
-                documents = []
-                for item in results:
+            documents = []
+            for item in results:
                     doc = Document(
                         page_content=item.text if hasattr(item, 'text') else str(item),
                         metadata=getattr(item, 'metadata', {})
