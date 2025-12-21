@@ -3,6 +3,7 @@ services:
     name: legal-ai-vault
     runtime: python
     buildCommand: |
+      pip install --upgrade pip &&
       pip install -r backend/requirements.txt &&
       cd frontend && npm install --legacy-peer-deps && npm run build
     startCommand: cd backend && uvicorn app.main:app --host 0.0.0.0 --port $PORT
