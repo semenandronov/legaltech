@@ -234,14 +234,22 @@ const RelationshipGraph = ({ nodes, links, onDocumentClick }: RelationshipGraphP
     // Update positions on simulation tick
     simulation.on('tick', () => {
       link
-        .attr('x1', (d: any) => d.source.x)
-        .attr('y1', (d: any) => d.source.y)
-        .attr('x2', (d: any) => d.target.x)
-        .attr('y2', (d: any) => d.target.y)
+        .attr('x1', (d) => ((d.source as SimulationNode).x ?? 0))
+        .attr('y1', (d) => ((d.source as SimulationNode).y ?? 0))
+        .attr('x2', (d) => ((d.target as SimulationNode).x ?? 0))
+        .attr('y2', (d) => ((d.target as SimulationNode).y ?? 0))
 
       linkLabels
-        .attr('x', (d: any) => (d.source.x + d.target.x) / 2)
-        .attr('y', (d: any) => (d.source.y + d.target.y) / 2)
+        .attr('x', (d) => {
+          const source = d.source as SimulationNode
+          const target = d.target as SimulationNode
+          return ((source.x ?? 0) + (target.x ?? 0)) / 2
+        })
+        .attr('y', (d) => {
+          const source = d.source as SimulationNode
+          const target = d.target as SimulationNode
+          return ((source.y ?? 0) + (target.y ?? 0)) / 2
+        })
 
       node.attr('cx', (d) => (d as SimulationNode).x ?? 0).attr('cy', (d) => (d as SimulationNode).y ?? 0)
 
