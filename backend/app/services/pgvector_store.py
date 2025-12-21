@@ -260,6 +260,8 @@ class CaseVectorStore:
         """
         # Create query embedding
         query_embedding = self.embeddings.embed_query(query)
+        # Convert to PostgreSQL array format string
+        query_embedding_str = '[' + ','.join(str(float(x)) for x in query_embedding) + ']'
         
         # Combine case_id filter with additional filters
         search_filter = {"case_id": case_id}
