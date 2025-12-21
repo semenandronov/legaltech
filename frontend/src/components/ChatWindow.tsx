@@ -52,11 +52,6 @@ const ChatWindow = ({ caseId, onDocumentClick }: ChatWindowProps) => {
   const [autocompleteSelectedIndex, setAutocompleteSelectedIndex] = useState(0)
   const [isDragging, setIsDragging] = useState(false)
   const [droppedFiles, setDroppedFiles] = useState<File[]>([])
-  const [actionHistory, setActionHistory] = useState<Array<{
-    type: 'batch_withhold' | 'batch_confirm' | 'batch_reject' | 'message'
-    data: any
-    timestamp: number
-  }>>([])
 
   useEffect(() => {
     loadHistory()
@@ -164,13 +159,6 @@ const ChatWindow = ({ caseId, onDocumentClick }: ChatWindowProps) => {
       setTimeout(() => {
         scrollToBottom()
       }, 200)
-      
-      // Save user message to history for undo (not assistant response)
-      setActionHistory(prev => [...prev, {
-        type: 'message',
-        data: { message: userMessage },
-        timestamp: Date.now()
-      }])
       } else {
         setError('Ошибка при получении ответа')
       }
@@ -436,44 +424,6 @@ const ChatWindow = ({ caseId, onDocumentClick }: ChatWindowProps) => {
     }
   }
 
-  const handleUndo = async () => {
-    if (actionHistory.length === 0) return
-
-    const lastAction = actionHistory[actionHistory.length - 1]
-    
-    try {
-      setIsLoading(true)
-      
-      // Revert the last action
-      switch (lastAction.type) {
-        case 'batch_withhold':
-          // TODO: Implement undo for batch withhold
-          // This would require an API endpoint to revert the action
-          console.log('Undo batch withhold:', lastAction.data)
-          // For now, just remove from history
-          break
-        case 'batch_confirm':
-          // TODO: Implement undo for batch confirm
-          console.log('Undo batch confirm:', lastAction.data)
-          break
-        case 'batch_reject':
-          // TODO: Implement undo for batch reject
-          console.log('Undo batch reject:', lastAction.data)
-          break
-        case 'message':
-          // Remove the last message
-          setMessages((prev) => prev.slice(0, -1))
-          break
-      }
-      
-      // Remove action from history
-      setActionHistory((prev) => prev.slice(0, -1))
-    } catch (err: any) {
-      setError(err.response?.data?.detail || 'Ошибка при отмене действия')
-    } finally {
-      setIsLoading(false)
-    }
-  }
 
   const handleCitationClick = (source: SourceInfo) => {
     if (onDocumentClick) {
@@ -678,13 +628,6 @@ const ChatWindow = ({ caseId, onDocumentClick }: ChatWindowProps) => {
                                 // This is a placeholder - actual implementation depends on your data structure
                                 return s.file
                               }) || []
-                              
-                              // Save action to history for undo
-                              setActionHistory(prev => [...prev, {
-                                type: 'batch_withhold',
-                                data: { fileIds, sources: message.sources },
-                                timestamp: Date.now()
-                              }])
                               
                               // TODO: Call batch withhold API
                               console.log('Withhold these', fileIds)
