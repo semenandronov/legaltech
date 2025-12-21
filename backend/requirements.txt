@@ -18,7 +18,9 @@ langchain-openai==1.1.5
 langchain-community==0.4.1
 langchain-core==1.2.2
 langchain-classic==1.0.0
-langchain-postgres==0.0.16  # PGVector support for LangChain (latest version compatible)
+# langchain-postgres temporarily removed due to incompatibility with langchain-core 1.2.2
+# Will use direct pgvector approach via SQLAlchemy
+# langchain-postgres==0.0.16  # Requires langchain-core<0.3, incompatible with 1.2.2
 langgraph==1.0.5
 langgraph-checkpoint-postgres==3.0.2
 pgvector==0.3.4  # PostgreSQL vector extension Python bindings
