@@ -207,10 +207,19 @@ const InteractiveTimelineVisualization = ({
           .style('top', (e.pageY - 10) + 'px')
       }
 
-      const handleMouseOut = function () {
+      const handleMouseOutCircle = function (this: SVGCircleElement) {
         if (selectedEvent !== event.id) {
           setHoveredEvent(null)
           d3.select(this).transition().duration(200).attr('r', selectedEvent === event.id ? 12 : 8).attr('fill', selectedEvent === event.id ? '#2563eb' : '#3b82f6')
+          label.attr('font-weight', selectedEvent === event.id ? '600' : '400')
+        }
+        tooltip.transition().duration(200).style('opacity', 0)
+      }
+
+      const handleMouseOutText = function () {
+        if (selectedEvent !== event.id) {
+          setHoveredEvent(null)
+          marker.transition().duration(200).attr('r', selectedEvent === event.id ? 12 : 8).attr('fill', selectedEvent === event.id ? '#2563eb' : '#3b82f6')
           label.attr('font-weight', selectedEvent === event.id ? '600' : '400')
         }
         tooltip.transition().duration(200).style('opacity', 0)
@@ -220,13 +229,13 @@ const InteractiveTimelineVisualization = ({
         .style('cursor', 'pointer')
         .on('click', handleClick)
         .on('mouseover', handleMouseOver)
-        .on('mouseout', handleMouseOut)
+        .on('mouseout', handleMouseOutCircle)
       
       label
         .style('cursor', 'pointer')
         .on('click', handleClick)
         .on('mouseover', handleMouseOver)
-        .on('mouseout', handleMouseOut)
+        .on('mouseout', handleMouseOutText)
     })
 
     // Cleanup

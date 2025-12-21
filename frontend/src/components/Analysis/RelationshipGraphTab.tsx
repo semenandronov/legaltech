@@ -1,5 +1,5 @@
 import { useEffect, useState, useMemo } from 'react'
-import { getRelationshipGraph, RelationshipGraph, RelationshipNode, RelationshipLink } from '../../services/api'
+import { getRelationshipGraph, RelationshipGraph } from '../../services/api'
 import RelationshipGraphComponent from './RelationshipGraph'
 import { useNavigate } from 'react-router-dom'
 import './Analysis.css'
