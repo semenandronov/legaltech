@@ -86,7 +86,7 @@ class YandexIndexService:
                 "Check YANDEX_API_KEY/YANDEX_IAM_TOKEN and YANDEX_FOLDER_ID in .env file"
             )
     
-    def _upload_original_files(self, original_files: Dict[str, bytes]) -> List[str]:
+    def _upload_original_files(self, original_files: Dict[str, bytes]) -> List[Any]:
         """
         Upload original files to Vector Store and return file IDs
         
@@ -139,49 +139,32 @@ class YandexIndexService:
             try:
                 mime_type = get_mime_type(filename)
                 
-                # Загружаем ОРИГИНАЛЬНЫЙ файл в Vector Store через REST API
-                # SDK files.upload() не работает, используем прямой REST API вызов
-                logger.debug(f"Uploading original file {filename} ({len(file_content)} bytes, {mime_type}) to Vector Store via REST API...")
+                # Загружаем ОРИГИНАЛЬНЫЙ файл в Vector Store через SDK
+                # Согласно документации: sdk.files.upload("<путь_к_файлу>") принимает путь к файлу как строку
+                logger.debug(f"Uploading original file {filename} ({len(file_content)} bytes, {mime_type}) to Vector Store...")
                 
-                # Используем прямой REST API вызов для загрузки файла
-                # Документация: https://yandex.cloud/docs/ai-studio/api-ref/grpc/files_service
-                api_url = "https://llm.api.cloud.yandex.net/ai/llm/v1alpha/files"
-                
-                headers = {
-                    "Authorization": f"Api-Key {self.api_key}" if self.use_api_key else f"Bearer {self.iam_token}",
-                    "x-folder-id": self.folder_id
-                }
-                
-                # Подготавливаем файл для загрузки
-                files_data = {
-                    'file': (filename, file_content, mime_type)
-                }
+                # Сохраняем файл во временный файл, так как SDK требует путь к файлу
+                _, ext = os.path.splitext(filename)
+                with tempfile.NamedTemporaryFile(delete=False, suffix=ext) as tmp_file:
+                    tmp_file.write(file_content)
+                    tmp_path = tmp_file.name
                 
                 try:
-                    response = requests.post(api_url, headers=headers, files=files_data, timeout=60)
-                    response.raise_for_status()
+                    # SDK files.upload() принимает путь к файлу как строку
+                    uploaded_file = self.sdk.files.upload(tmp_path)
                     
-                    result = response.json()
-                    # Получаем ID файла из ответа
-                    file_id = result.get('id') or result.get('fileId') or result.get('file_id')
-                    
-                    if not file_id:
-                        # Пробуем найти ID в других полях
-                        file_id = result.get('file', {}).get('id') if isinstance(result.get('file'), dict) else None
-                    
-                    if not file_id:
-                        raise Exception(f"Failed to get file ID from API response: {result}")
-                    
-                    logger.debug(f"✅ Successfully uploaded file {filename} via REST API, file_id: {file_id}")
-                except requests.exceptions.RequestException as api_error:
-                    error_msg = f"REST API upload failed: {api_error}"
-                    if hasattr(api_error, 'response') and api_error.response is not None:
-                        error_msg += f" Response: {api_error.response.text}"
-                    logger.error(error_msg)
-                    raise Exception(f"Ошибка при загрузке файла {filename} через REST API: {error_msg}") from api_error
-                
-                file_ids.append(file_id)
-                logger.debug(f"✅ Uploaded original file {filename} with ID {file_id}")
+                    # Получаем объект файла (не только ID, а весь объект для передачи в create_deferred)
+                    # Согласно документации, create_deferred принимает список файлов (объектов)
+                    file_ids.append(uploaded_file)
+                    logger.debug(f"✅ Successfully uploaded file {filename} via SDK")
+                except Exception as upload_error:
+                    error_msg = f"SDK files.upload() failed: {upload_error}"
+                    logger.error(error_msg, exc_info=True)
+                    raise Exception(f"Ошибка при загрузке файла {filename} через SDK: {error_msg}") from upload_error
+                finally:
+                    # Удаляем временный файл
+                    if os.path.exists(tmp_path):
+                        os.unlink(tmp_path)
                 
             except Exception as e:
                 error_msg = f"Failed to upload original file {filename}: {type(e).__name__}: {e}"
