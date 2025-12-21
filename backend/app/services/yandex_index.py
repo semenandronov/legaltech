@@ -4,6 +4,7 @@ import logging
 import inspect
 import tempfile
 import os
+import requests
 from typing import List, Dict, Any, Optional
 from langchain_core.documents import Document
 from langchain_core.retrievers import BaseRetriever
@@ -138,91 +139,46 @@ class YandexIndexService:
             try:
                 mime_type = get_mime_type(filename)
                 
-                # Загружаем ОРИГИНАЛЬНЫЙ файл в Vector Store
-                logger.debug(f"Uploading original file {filename} ({len(file_content)} bytes, {mime_type}) to Vector Store...")
+                # Загружаем ОРИГИНАЛЬНЫЙ файл в Vector Store через REST API
+                # SDK files.upload() не работает, используем прямой REST API вызов
+                logger.debug(f"Uploading original file {filename} ({len(file_content)} bytes, {mime_type}) to Vector Store via REST API...")
                 
-                # Получаем сигнатуру метода для отладки
+                # Используем прямой REST API вызов для загрузки файла
+                # Документация: https://yandex.cloud/docs/ai-studio/api-ref/grpc/files_service
+                api_url = "https://llm.api.cloud.yandex.net/ai/llm/v1alpha/files"
+                
+                headers = {
+                    "Authorization": f"Api-Key {self.api_key}" if self.use_api_key else f"Bearer {self.iam_token}",
+                    "x-folder-id": self.folder_id
+                }
+                
+                # Подготавливаем файл для загрузки
+                files_data = {
+                    'file': (filename, file_content, mime_type)
+                }
+                
                 try:
-                    sig = inspect.signature(self.sdk.files.upload)
-                    logger.debug(f"files.upload() signature: {sig}")
-                    logger.debug(f"files.upload() parameters: {list(sig.parameters.keys())}")
-                except Exception as sig_error:
-                    logger.warning(f"Could not inspect files.upload signature: {sig_error}")
-                
-                # Пробуем разные варианты вызова метода upload()
-                uploaded_file = None
-                last_error = None
-                
-                # Вариант 1: path (путь к файлу) - сохраняем во временный файл
-                try:
-                    _, ext = os.path.splitext(filename)
-                    with tempfile.NamedTemporaryFile(delete=False, suffix=ext) as tmp_file:
-                        tmp_file.write(file_content)
-                        tmp_path = tmp_file.name
+                    response = requests.post(api_url, headers=headers, files=files_data, timeout=60)
+                    response.raise_for_status()
                     
-                    try:
-                        uploaded_file = self.sdk.files.upload(path=tmp_path)
-                        logger.debug(f"✅ Successfully uploaded using path parameter")
-                    finally:
-                        if os.path.exists(tmp_path):
-                            os.unlink(tmp_path)
-                except Exception as e:
-                    last_error = e
-                    logger.debug(f"path parameter failed: {e}")
+                    result = response.json()
+                    # Получаем ID файла из ответа
+                    file_id = result.get('id') or result.get('fileId') or result.get('file_id')
                     
-                    # Вариант 2: path и name
-                    try:
-                        _, ext = os.path.splitext(filename)
-                        with tempfile.NamedTemporaryFile(delete=False, suffix=ext) as tmp_file:
-                            tmp_file.write(file_content)
-                            tmp_path = tmp_file.name
-                        
-                        try:
-                            uploaded_file = self.sdk.files.upload(path=tmp_path, name=filename)
-                            logger.debug(f"✅ Successfully uploaded using path+name parameters")
-                        finally:
-                            if os.path.exists(tmp_path):
-                                os.unlink(tmp_path)
-                    except Exception as e2:
-                        last_error = e2
-                        logger.debug(f"path+name parameters failed: {e2}")
-                        
-                        # Вариант 3: file_obj через BytesIO
-                        try:
-                            import io
-                            file_obj = io.BytesIO(file_content)
-                            uploaded_file = self.sdk.files.upload(file_obj=file_obj)
-                            logger.debug(f"✅ Successfully uploaded using file_obj parameter")
-                        except Exception as e3:
-                            last_error = e3
-                            logger.debug(f"file_obj parameter failed: {e3}")
-                            
-                            # Если ничего не сработало, выбрасываем ошибку
-                            raise Exception(
-                                f"Failed to upload file {filename}. "
-                                f"Tried: path, path+name, file_obj. "
-                                f"Last error: {last_error}"
-                            ) from e3
-                
-                # Проверяем, что файл был загружен
-                if uploaded_file is None:
-                    raise Exception(
-                        f"Failed to upload file {filename}. "
-                        f"All upload attempts failed. Last error: {last_error}"
-                    )
-                
-                # Получаем ID загруженного файла
-                # Может быть uploaded_file.id, uploaded_file.file_id или просто строка
-                if hasattr(uploaded_file, 'id'):
-                    file_id = uploaded_file.id
-                elif hasattr(uploaded_file, 'file_id'):
-                    file_id = uploaded_file.file_id
-                elif isinstance(uploaded_file, str):
-                    file_id = uploaded_file
-                else:
-                    # Пытаемся преобразовать в строку
-                    file_id = str(uploaded_file)
-                    logger.warning(f"Unknown uploaded_file type, using str(): {type(uploaded_file)}")
+                    if not file_id:
+                        # Пробуем найти ID в других полях
+                        file_id = result.get('file', {}).get('id') if isinstance(result.get('file'), dict) else None
+                    
+                    if not file_id:
+                        raise Exception(f"Failed to get file ID from API response: {result}")
+                    
+                    logger.debug(f"✅ Successfully uploaded file {filename} via REST API, file_id: {file_id}")
+                except requests.exceptions.RequestException as api_error:
+                    error_msg = f"REST API upload failed: {api_error}"
+                    if hasattr(api_error, 'response') and api_error.response is not None:
+                        error_msg += f" Response: {api_error.response.text}"
+                    logger.error(error_msg)
+                    raise Exception(f"Ошибка при загрузке файла {filename} через REST API: {error_msg}") from api_error
                 
                 file_ids.append(file_id)
                 logger.debug(f"✅ Uploaded original file {filename} with ID {file_id}")
