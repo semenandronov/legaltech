@@ -23,7 +23,7 @@ class VectorEmbedding(VectorBase):
     
     uuid = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
     collection_id = Column(String, nullable=True)
-    embedding = Column(Vector(1536), nullable=True)  # Vector dimension (Yandex embeddings are 1536)
+    embedding = Column(Vector(256), nullable=True)  # Vector dimension (Yandex text-search-query embeddings are 256)
     document = Column(JSON, nullable=True)
     custom_id = Column(String, nullable=True)
 
