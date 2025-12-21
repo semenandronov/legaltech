@@ -154,13 +154,15 @@ class CaseVectorStore:
                     # Convert embedding list to PostgreSQL array format string
                     embedding_array_str = '[' + ','.join(str(float(x)) for x in embedding) + ']'
                     
-                    # Insert into database
+                    # Insert into database - use explicit parameter binding
+                    table_name = VectorEmbedding.__tablename__
+                    stmt = text(
+                        f"INSERT INTO {table_name} "
+                        "(uuid, collection_id, embedding, document, custom_id) "
+                        "VALUES (:uuid, :collection_id, :embedding::vector, :document::jsonb, :custom_id)"
+                    )
                     conn.execute(
-                        text(f"""
-                            INSERT INTO {VectorEmbedding.__tablename__} 
-                            (uuid, collection_id, embedding, document, custom_id)
-                            VALUES (:uuid, :collection_id, :embedding::vector, :document::jsonb, :custom_id)
-                        """),
+                        stmt,
                         {
                             "uuid": doc_id,
                             "collection_id": self.collection_name,
@@ -217,13 +219,15 @@ class CaseVectorStore:
                     # Convert embedding list to PostgreSQL array format string
                     embedding_array_str = '[' + ','.join(str(float(x)) for x in embedding) + ']'
                     
-                    # Insert into database
+                    # Insert into database - use explicit parameter binding
+                    table_name = VectorEmbedding.__tablename__
+                    stmt = text(
+                        f"INSERT INTO {table_name} "
+                        "(uuid, collection_id, embedding, document, custom_id) "
+                        "VALUES (:uuid, :collection_id, :embedding::vector, :document::jsonb, :custom_id)"
+                    )
                     conn.execute(
-                        text(f"""
-                            INSERT INTO {VectorEmbedding.__tablename__} 
-                            (uuid, collection_id, embedding, document, custom_id)
-                            VALUES (:uuid, :collection_id, :embedding::vector, :document::jsonb, :custom_id)
-                        """),
+                        stmt,
                         {
                             "uuid": doc_id,
                             "collection_id": self.collection_name,
