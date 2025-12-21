@@ -1,10 +1,9 @@
 """Document processor service using LangChain"""
 from typing import List, Dict, Any, Optional
-from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_core.documents import Document
 from app.config import config
 from app.services.yandex_embeddings import YandexEmbeddings
-from app.services.yandex_index import YandexIndexService
+from app.services.legal_splitter import LegalTextSplitter
 from sqlalchemy.orm import Session
 import logging
 
@@ -16,12 +15,10 @@ class DocumentProcessor:
     
     def __init__(self):
         """Initialize document processor"""
-        # Text splitter configuration
-        self.text_splitter = RecursiveCharacterTextSplitter(
-            chunk_size=1000,
-            chunk_overlap=200,
-            length_function=len,
-            separators=["\n\n", "\n", ". ", " ", ""]
+        # Use LegalTextSplitter optimized for legal documents
+        self.text_splitter = LegalTextSplitter(
+            chunk_size=1200,  # Optimal for legal documents
+            chunk_overlap=300  # Better overlap for context preservation
         )
         
         # Initialize embeddings - только Yandex, без fallback
@@ -43,13 +40,14 @@ class DocumentProcessor:
             logger.error(f"Failed to initialize Yandex embeddings: {e}")
             raise ValueError(f"Ошибка инициализации Yandex embeddings: {str(e)}")
         
-        # Initialize Yandex Index service
+        # Initialize PGVector store (only vector store supported)
         try:
-            self.index_service = YandexIndexService()
-            logger.info("✅ Using Yandex Index service")
+            from app.services.pgvector_store import CaseVectorStore
+            self.vector_store = CaseVectorStore(embeddings=self.embeddings)
+            logger.info("✅ Using PGVector store (production-ready, multi-tenant)")
         except Exception as e:
-            logger.error(f"Failed to initialize Yandex Index service: {e}")
-            raise ValueError(f"Ошибка инициализации Yandex Index service: {str(e)}")
+            logger.error(f"Failed to initialize PGVector store: {e}", exc_info=True)
+            raise ValueError(f"Ошибка инициализации PGVector store: {str(e)}")
     
     def split_documents(
         self,
@@ -91,19 +89,28 @@ class DocumentProcessor:
         
         return documents
     
-    def create_embeddings(self, documents: List[Document]) -> List[List[float]]:
+    def create_embeddings(self, documents: List[Document], batch_size: int = 100) -> List[List[float]]:
         """
-        Create embeddings for documents
+        Create embeddings for documents with batch processing
         
         Args:
             documents: List of Document objects
+            batch_size: Number of documents to process in each batch (default: 100)
             
         Returns:
             List of embedding vectors
         """
         texts = [doc.page_content for doc in documents]
-        embeddings = self.embeddings.embed_documents(texts)
-        return embeddings
+        
+        # Process in batches to avoid memory issues and rate limits
+        all_embeddings = []
+        for i in range(0, len(texts), batch_size):
+            batch_texts = texts[i:i + batch_size]
+            batch_embeddings = self.embeddings.embed_documents(batch_texts)
+            all_embeddings.extend(batch_embeddings)
+            logger.debug(f"Processed embeddings batch {i // batch_size + 1}/{(len(texts) + batch_size - 1) // batch_size}")
+        
+        return all_embeddings
     
     def store_in_vector_db(
         self,
@@ -113,63 +120,36 @@ class DocumentProcessor:
         original_files: Dict[str, bytes] = None
     ) -> str:
         """
-        Store original files in Yandex AI Studio Vector Store
-        
-        ВАЖНО: 
-        - original_files загружаются напрямую в Yandex Vector Store
-        - documents НЕ используются - оставлен параметр только для совместимости
+        Store documents in PGVector database
         
         Args:
             case_id: Case identifier
-            documents: List of Document objects (НЕ используется, оставлен для совместимости)
-            db: Database session for saving index_id
-            original_files: Dict[str, bytes] - оригинальные файлы для загрузки в Yandex Vector Store
+            documents: List of Document objects
+            db: Database session (not used, kept for API compatibility)
+            original_files: Ignored (kept for API compatibility)
             
         Returns:
-            index_id: ID of created/updated index
+            collection_name
         """
-        # ВАЖНО: documents больше не используются для загрузки в Yandex Vector Store
-        # Проверяем только original_files - если их нет, это ошибка
-        if not original_files:
-            raise ValueError(f"No original files provided for case {case_id}. Cannot create index without files.")
+        if not documents:
+            raise ValueError(f"No documents provided for case {case_id}. Cannot store in PGVector without documents.")
         
-        logger.info(f"Storing {len(original_files)} original files in Yandex Vector Store for case {case_id}")
+        logger.info(f"Storing {len(documents)} document chunks in PGVector for case {case_id}")
         
-        # Check if index already exists for this case
-        from app.models.case import Case
-        case = db.query(Case).filter(Case.id == case_id).first()
-        if not case:
-            raise ValueError(f"Case {case_id} not found in database")
-        
-        index_id = case.yandex_index_id
-        
-        # Create new index if doesn't exist
-        # ВАЖНО: Для Yandex Vector Store нужно передавать ОРИГИНАЛЬНЫЕ файлы при создании индекса,
-        # потому что create_deferred требует обязательный параметр files
-        if not index_id:
-            try:
-                # Передаем оригинальные файлы в create_index для загрузки в Vector Store
-                # LangChain documents используются только для нашей БД, не для Yandex
-                if not original_files:
-                    raise ValueError(f"No original files provided for case {case_id}. Cannot create index without files.")
-                index_id = self.index_service.create_index(case_id, original_files=original_files)
-                case.yandex_index_id = index_id
-                db.commit()
-                logger.info(f"✅ Created and saved index {index_id} for case {case_id} with {len(original_files)} original files")
-                # Документы уже добавлены при создании индекса, не нужно добавлять их еще раз
-                return index_id
-            except Exception as e:
-                db.rollback()
-                logger.error(f"Failed to create index for case {case_id}: {e}", exc_info=True)
-                raise
-        
-        # Если индекс уже существует, добавляем файлы через add_files
-        # ВАЖНО: Для добавления файлов в существующий индекс нужно использовать original_files
-        # Но сейчас это не реализовано - при повторной загрузке нужно пересоздавать индекс
-        # Или реализовать add_files в YandexIndexService
-        logger.info(f"Index {index_id} already exists for case {case_id}. Adding files to existing index not yet implemented.")
-        
-        return index_id
+        try:
+            # Add case_id to all document metadata for multi-tenant filtering
+            for doc in documents:
+                doc.metadata["case_id"] = case_id
+            
+            # Store documents in PGVector
+            ids = self.vector_store.add_documents(documents, case_id=case_id)
+            logger.info(f"✅ Stored {len(ids)} documents in PGVector for case {case_id}")
+            
+            # Return collection name as identifier
+            return self.vector_store.collection_name
+        except Exception as e:
+            logger.error(f"Failed to store documents in PGVector for case {case_id}: {e}", exc_info=True)
+            raise
     
     def retrieve_relevant_chunks(
         self,
@@ -180,62 +160,63 @@ class DocumentProcessor:
         db: Optional[Session] = None
     ) -> List[Document]:
         """
-        Retrieve relevant document chunks using Yandex AI Studio Index search
+        Retrieve relevant document chunks using PGVector search
         
         Args:
             case_id: Case identifier
             query: Search query
             k: Number of chunks to retrieve
-            distance_threshold: Maximum distance threshold (for filtering, not used by Yandex Index API directly)
-            db: Optional database session for getting index_id
+            distance_threshold: Maximum distance threshold (for filtering)
+            db: Optional database session (not used, kept for API compatibility)
             
         Returns:
             List of relevant Document objects with scores
         """
-        # Get index_id for case
-        index_id = self.index_service.get_index_id(case_id, db_session=db)
-        
-        if not index_id:
-            raise ValueError(
-                f"No Yandex Vector Store index found for case {case_id}. "
-                f"Index must be created before retrieving documents. "
-                f"Please upload documents first."
-            )
-        
         try:
-            # Search in Yandex Index
-            documents = self.index_service.search(index_id, query, k=k)
+            # Search in PGVector with case_id filter (multi-tenant isolation)
+            documents = self.vector_store.similarity_search(
+                query=query,
+                case_id=case_id,
+                k=k
+            )
             
-            # Filter by threshold if needed (Yandex Index returns similarity scores)
-            # Yandex Index returns similarity_score in metadata (higher = better)
+            # Filter by distance threshold if provided
             if distance_threshold < 1.5:  # Only filter if threshold is meaningful
+                # Get documents with scores
+                docs_with_scores = self.vector_store.similarity_search_with_score(
+                    query=query,
+                    case_id=case_id,
+                    k=k * 2  # Get more to filter
+                )
+                # Filter by distance threshold
                 filtered_docs = []
-                for doc in documents:
-                    similarity_score = doc.metadata.get("similarity_score", 1.0)
-                    # Convert similarity to distance: distance = 1 - similarity
-                    distance_score = 1.0 - similarity_score
-                    if distance_score <= distance_threshold:
+                for doc, score in docs_with_scores:
+                    # Score is distance (lower = better)
+                    if score <= distance_threshold:
                         filtered_docs.append(doc)
+                        if len(filtered_docs) >= k:
+                            break
                 documents = filtered_docs
             
             if not documents:
-                logger.warning(f"No relevant chunks found for case {case_id} in index {index_id}")
+                logger.warning(f"No relevant chunks found for case {case_id} in PGVector")
             
             return documents
         except Exception as e:
-            logger.error(f"Error retrieving chunks for case {case_id}: {e}", exc_info=True)
+            logger.error(f"Error retrieving chunks from PGVector for case {case_id}: {e}", exc_info=True)
             raise
     
     def get_index_id(self, case_id: str, db: Optional[Session] = None) -> Optional[str]:
         """
-        Get index_id for case from database
+        Get collection identifier for case (PGVector)
         
         Args:
             case_id: Case identifier
-            db: Optional database session
+            db: Optional database session (not used, kept for API compatibility)
             
         Returns:
-            index_id if found, None otherwise
+            collection_name (all cases share collection, filtered by metadata)
         """
-        return self.index_service.get_index_id(case_id, db_session=db)
+        # For PGVector, return collection name (all cases share collection, filtered by metadata)
+        return self.vector_store.collection_name
 

@@ -310,6 +310,35 @@ export const getRisks = async (caseId: string): Promise<{ analysis: string; disc
   return response.data
 }
 
+export interface RelationshipNode {
+  id: string
+  type: string
+  label: string
+  properties: any
+  source_document?: string | null
+  source_page?: number | null
+}
+
+export interface RelationshipLink {
+  source: string
+  target: string
+  type: string
+  label?: string | null
+  source_document?: string | null
+  source_page?: number | null
+  properties?: any
+}
+
+export interface RelationshipGraph {
+  nodes: RelationshipNode[]
+  links: RelationshipLink[]
+}
+
+export const getRelationshipGraph = async (caseId: string): Promise<RelationshipGraph> => {
+  const response = await apiClient.get(getApiUrl(`/api/analysis/${caseId}/relationship-graph`))
+  return response.data
+}
+
 // Reports API
 export interface AvailableReport {
   type: string

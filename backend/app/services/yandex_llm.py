@@ -7,6 +7,7 @@ from langchain_core.callbacks import CallbackManagerForLLMRun
 from yandex_cloud_ml_sdk import YCloudML
 from yandex_cloud_ml_sdk.auth import APIKeyAuth
 import logging
+import time
 from app.config import config
 from typing import TYPE_CHECKING
 

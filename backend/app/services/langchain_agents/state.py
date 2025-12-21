@@ -21,6 +21,7 @@ class AnalysisState(TypedDict):
     classification_result: Optional[Dict[str, Any]]  # Document classification
     entities_result: Optional[Dict[str, Any]]  # Entity extraction
     privilege_result: Optional[Dict[str, Any]]  # Privilege check
+    relationship_result: Optional[Dict[str, Any]]  # Relationship graph
     
     # Analysis types requested
     analysis_types: List[str]

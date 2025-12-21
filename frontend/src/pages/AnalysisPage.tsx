@@ -7,6 +7,7 @@ import DiscrepanciesTab from '../components/Analysis/DiscrepanciesTab'
 import KeyFactsTab from '../components/Analysis/KeyFactsTab'
 import SummaryTab from '../components/Analysis/SummaryTab'
 import RiskAnalysisTab from '../components/Analysis/RiskAnalysisTab'
+import RelationshipGraphTab from '../components/Analysis/RelationshipGraphTab'
 import { startAnalysis, getAnalysisStatus } from '../services/api'
 import './AnalysisPage.css'
 
@@ -64,6 +65,7 @@ const AnalysisPage = () => {
     { id: 'key_facts', label: '🎯 Ключевые факты', icon: '🎯' },
     { id: 'summary', label: '📊 Резюме', icon: '📊' },
     { id: 'risks', label: '📈 Анализ рисков', icon: '📈' },
+    { id: 'relationship', label: '🔗 Граф связей', icon: '🔗' },
   ]
 
   return (
@@ -119,6 +121,7 @@ const AnalysisPage = () => {
             {activeTab === 'key_facts' && caseId && <KeyFactsTab caseId={caseId} />}
             {activeTab === 'summary' && caseId && <SummaryTab caseId={caseId} />}
             {activeTab === 'risks' && caseId && <RiskAnalysisTab caseId={caseId} />}
+            {activeTab === 'relationship' && caseId && <RelationshipGraphTab caseId={caseId} />}
           </div>
         </main>
       </div>

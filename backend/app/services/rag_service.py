@@ -4,7 +4,7 @@ from sqlalchemy.orm import Session
 from langchain_core.documents import Document
 from app.config import config
 from app.services.document_processor import DocumentProcessor
-from app.services.yandex_assistant import YandexAssistantService
+# YandexAssistantService imported conditionally - only for yandex vector store
 from app.services.langchain_retrievers import AdvancedRetrieverService
 from app.services.langchain_memory import MemoryService
 import logging
@@ -21,24 +21,8 @@ class RAGService:
         self.retriever_service = AdvancedRetrieverService(self.document_processor)
         self.memory_service = MemoryService()
         
-        # Initialize Yandex Assistant service
-        if not (config.YANDEX_API_KEY or config.YANDEX_IAM_TOKEN):
-            raise ValueError(
-                "YANDEX_API_KEY или YANDEX_IAM_TOKEN должны быть настроены. "
-                "OpenRouter больше не используется."
-            )
-        
-        if not config.YANDEX_FOLDER_ID:
-            raise ValueError(
-                "YANDEX_FOLDER_ID должен быть настроен для работы Yandex Assistant."
-            )
-        
-        try:
-            self.assistant_service = YandexAssistantService()
-            logger.info("✅ Using Yandex Assistant API for RAG")
-        except Exception as e:
-            logger.error(f"Failed to initialize Yandex Assistant service: {e}")
-            raise ValueError(f"Ошибка инициализации Yandex Assistant service: {str(e)}")
+        # Using direct RAG with YandexGPT + pgvector (no Assistant API)
+        logger.info("✅ Using direct RAG with YandexGPT + pgvector")
     
     def retrieve_context(
         self,
@@ -176,13 +160,15 @@ class RAGService:
         history: Optional[List[Dict[str, str]]] = None
     ) -> Tuple[str, List[Dict[str, Any]]]:
         """
-        Generate answer with source references using Yandex Assistant API
+        Generate answer with source references
+        
+        Uses direct RAG with pgvector + YandexGPT (no Assistant API).
         
         Args:
             case_id: Case identifier
             query: User query
-            context: Additional context (optional, currently not used with Assistant API)
-            k: Number of chunks to retrieve (used as hint for Assistant)
+            context: Additional context (optional)
+            k: Number of chunks to retrieve
             db: Optional database session
             history: Optional chat history in format [{"role": "user|assistant", "content": "..."}, ...]
             
@@ -204,62 +190,67 @@ class RAGService:
             if query_lower == key or query_lower.startswith(key + " "):
                 return response, []
         
-        # Get or create assistant for case
-        assistant_id = self.assistant_service.get_assistant_id(case_id, db_session=db)
+        # Use direct RAG with pgvector + YandexGPT
+        return self._generate_with_direct_rag(case_id, query, k, db, history)
+    
+    def _generate_with_direct_rag(
+        self,
+        case_id: str,
+        query: str,
+        k: int,
+        db: Optional[Session],
+        history: Optional[List[Dict[str, str]]]
+    ) -> Tuple[str, List[Dict[str, Any]]]:
+        """Generate using direct RAG with pgvector + YandexGPT"""
+        from app.services.yandex_llm import ChatYandexGPT
+        from langchain_core.prompts import ChatPromptTemplate
+        from langchain_core.messages import HumanMessage, AIMessage, SystemMessage
         
-        if not assistant_id:
-            # Create assistant if doesn't exist
-            try:
-                index_id = self.document_processor.get_index_id(case_id, db)
-                if not index_id:
-                    # Check if case has files (documents were uploaded but index creation failed)
-                    if db:
-                        from app.models.case import Case, File as FileModel
-                        case = db.query(Case).filter(Case.id == case_id).first()
-                        file_count = db.query(FileModel).filter(FileModel.case_id == case_id).count()
-                        
-                        if case and file_count > 0:
-                            # Case has files but no index - это ошибка, индекс должен был быть создан при загрузке
-                            logger.error(f"Case {case_id} has {file_count} files but no index. Index should have been created during file upload.")
-                            return "Извините, для этого дела документы были загружены, но индекс не был создан. Пожалуйста, загрузите документы заново или обратитесь в поддержку.", []
-                        else:
-                            logger.warning(f"No files found for case {case_id}, cannot create assistant")
-                            return "Извините, для этого дела еще не загружены документы. Пожалуйста, загрузите документы сначала.", []
-                    else:
-                        logger.warning(f"No index found for case {case_id} and no db session, cannot create assistant")
-                        return "Извините, для этого дела еще не загружены документы. Пожалуйста, загрузите документы сначала.", []
-                
-                assistant_id = self.assistant_service.create_assistant(case_id, index_id)
-                
-                # Save assistant_id to database
-                if db:
-                    from app.models.case import Case
-                    case = db.query(Case).filter(Case.id == case_id).first()
-                    if case:
-                        case.yandex_assistant_id = assistant_id
-                        db.commit()
-                        logger.info(f"Saved assistant_id {assistant_id} for case {case_id}")
-            except Exception as e:
-                logger.error(f"Failed to create assistant for case {case_id}: {e}", exc_info=True)
-                raise Exception(f"Не удалось создать ассистента для дела. Ошибка: {str(e)}")
+        # Retrieve relevant documents
+        documents = self.retrieve_context(case_id, query, k=k, db=db)
         
-        # Send message to assistant
-        response = self.assistant_service.send_message(assistant_id, query, history=history)
+        if not documents:
+            return "Извините, не удалось найти релевантные документы для вашего запроса.", []
         
-        answer = response.get("answer", "")
-        sources_raw = response.get("sources", [])
+        # Format context from documents
+        context = self.format_sources_for_prompt(documents)
         
-        # Format sources to match expected format
-        sources = []
-        for source in sources_raw:
-            formatted_source = {
-                "file": source.get("file", "unknown"),
-                "page": source.get("page"),
-                "start_line": source.get("start_line"),
-                "end_line": source.get("end_line"),
-                "text_preview": source.get("content", "")[:200] + "..." if len(source.get("content", "")) > 200 else source.get("content", "")
-            }
-            sources.append(formatted_source)
+        # Prepare messages
+        messages = []
+        messages.append(SystemMessage(content="""Ты эксперт по анализу юридических документов.
+Ты отвечаешь на вопросы на основе предоставленных документов.
+
+ВАЖНО:
+- ВСЕГДА указывай конкретные источники в формате: [Документ: filename.pdf, стр. 5, строки 12-15]
+- Если информация не найдена в документах - скажи честно
+- Не давай юридических советов, только анализ фактов из документов
+- Используй точные цитаты из документов когда это возможно"""))
+        
+        # Add history
+        if history:
+            for msg in history:
+                if msg.get("role") == "user":
+                    messages.append(HumanMessage(content=msg.get("content", "")))
+                elif msg.get("role") == "assistant":
+                    messages.append(AIMessage(content=msg.get("content", "")))
+        
+        # Add current query with context
+        user_message = f"""Используй следующие документы для ответа:
+
+{context}
+
+Вопрос: {query}
+
+Ответ (обязательно укажи источники):"""
+        messages.append(HumanMessage(content=user_message))
+        
+        # Generate answer
+        llm = ChatYandexGPT()
+        response = llm.invoke(messages)
+        answer = response.content if hasattr(response, 'content') else str(response)
+        
+        # Format sources
+        sources = self.format_sources(documents)
         
         return answer, sources
     

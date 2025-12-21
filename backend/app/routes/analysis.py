@@ -11,7 +11,8 @@ from app.models.user import User
 from app.models.case import File as FileModel
 from app.models.analysis import (
     AnalysisResult, Discrepancy, TimelineEvent,
-    DocumentClassification, ExtractedEntity, PrivilegeCheck
+    DocumentClassification, ExtractedEntity, PrivilegeCheck,
+    RelationshipNode, RelationshipEdge
 )
 from app.models.case import File
 from app.services.analysis_service import AnalysisService
@@ -379,6 +380,65 @@ async def get_risks(
         "analysis": result_data.get("analysis", "") if isinstance(result_data, dict) else "",
         "discrepancies": result_data.get("discrepancies", {}) if isinstance(result_data, dict) else {},
         "created_at": result.created_at.isoformat() if result.created_at else datetime.utcnow().isoformat()
+    }
+
+
+@router.get("/{case_id}/relationship-graph")
+async def get_relationship_graph(
+    case_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """Get relationship graph for a case"""
+    # Verify case ownership
+    case = db.query(Case).filter(
+        Case.id == case_id,
+        Case.user_id == current_user.id
+    ).first()
+    
+    if not case:
+        raise HTTPException(status_code=404, detail="Дело не найдено")
+    
+    # Get all nodes for this case
+    nodes = db.query(RelationshipNode).filter(
+        RelationshipNode.case_id == case_id
+    ).all()
+    
+    # Get all edges for this case
+    edges = db.query(RelationshipEdge).filter(
+        RelationshipEdge.case_id == case_id
+    ).all()
+    
+    # Format nodes for D3.js
+    formatted_nodes = [
+        {
+            "id": node.node_id,
+            "type": node.node_type,
+            "label": node.node_label,
+            "properties": node.properties if node.properties is not None else {},
+            "source_document": node.source_document,
+            "source_page": node.source_page
+        }
+        for node in nodes
+    ]
+    
+    # Format links for D3.js
+    formatted_links = [
+        {
+            "source": edge.source_node_id,
+            "target": edge.target_node_id,
+            "type": edge.relationship_type,
+            "label": edge.relationship_label,
+            "source_document": edge.source_document,
+            "source_page": edge.source_page,
+            "properties": edge.properties if edge.properties is not None else {}
+        }
+        for edge in edges
+    ]
+    
+    return {
+        "nodes": formatted_nodes,
+        "links": formatted_links
     }
 
 

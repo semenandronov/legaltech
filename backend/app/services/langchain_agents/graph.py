@@ -12,6 +12,7 @@ from app.services.langchain_agents.summary_node import summary_agent_node
 from app.services.langchain_agents.document_classifier_node import document_classifier_agent_node
 from app.services.langchain_agents.entity_extraction_node import entity_extraction_agent_node
 from app.services.langchain_agents.privilege_check_node import privilege_check_agent_node
+from app.services.langchain_agents.relationship_node import relationship_agent_node
 from sqlalchemy.orm import Session
 from app.services.rag_service import RAGService
 from app.services.document_processor import DocumentProcessor
@@ -61,6 +62,9 @@ def create_analysis_graph(
     def privilege_check_node(state: AnalysisState) -> AnalysisState:
         return privilege_check_agent_node(state, db, rag_service, document_processor)
     
+    def relationship_node(state: AnalysisState) -> AnalysisState:
+        return relationship_agent_node(state, db, rag_service, document_processor)
+    
     def supervisor_node(state: AnalysisState) -> AnalysisState:
         """Supervisor node - routes to appropriate agent"""
         # Supervisor doesn't modify state, just routes
@@ -79,6 +83,7 @@ def create_analysis_graph(
     graph.add_node("document_classifier", document_classifier_node)
     graph.add_node("entity_extraction", entity_extraction_node)
     graph.add_node("privilege_check", privilege_check_node)
+    graph.add_node("relationship", relationship_node)
     
     # Add edges from START
     graph.add_edge(START, "supervisor")
@@ -96,6 +101,7 @@ def create_analysis_graph(
             "document_classifier": "document_classifier",
             "entity_extraction": "entity_extraction",
             "privilege_check": "privilege_check",
+            "relationship": "relationship",
             "end": END,
             "supervisor": "supervisor"  # Wait if dependencies not ready
         }
@@ -110,31 +116,14 @@ def create_analysis_graph(
     graph.add_edge("document_classifier", "supervisor")
     graph.add_edge("entity_extraction", "supervisor")
     graph.add_edge("privilege_check", "supervisor")
+    graph.add_edge("relationship", "supervisor")
     
-    # Compile graph with checkpointer
-    # Try PostgreSQL checkpointer, fallback to MemorySaver
-    checkpointer = None
-    try:
-        from langgraph.checkpoint.postgres import PostgresSaver
-        # PostgresSaver.from_conn_string returns a context manager, we need to use it properly
-        # For now, use MemorySaver as it's more reliable
-        # TODO: Fix PostgresSaver usage when LangGraph API is stable
-        logger.warning(
-            "PostgreSQL checkpointer temporarily disabled due to API changes. "
-            "Using MemorySaver. State will not persist across restarts."
-        )
-        checkpointer = MemorySaver()
-    except Exception as e:
-        logger.warning(
-            f"PostgreSQL checkpointer unavailable ({e}), "
-            "using MemorySaver. State will not persist across restarts."
-        )
-        checkpointer = MemorySaver()
+    # Compile graph with checkpointer using context manager
+    # Use PostgreSQL checkpointer for production persistence
+    from app.utils.checkpointer_setup import get_checkpointer
     
-    if checkpointer is None:
-        checkpointer = MemorySaver()
-    
-    compiled_graph = graph.compile(checkpointer=checkpointer)
+    with get_checkpointer() as checkpointer:
+        compiled_graph = graph.compile(checkpointer=checkpointer)
     
     logger.info("Created LangGraph for multi-agent analysis")
     

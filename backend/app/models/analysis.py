@@ -146,3 +146,41 @@ class PrivilegeCheck(Base):
     case = relationship("Case")
     file = relationship("File")
 
+
+class RelationshipNode(Base):
+    """RelationshipNode model - stores nodes in relationship graph"""
+    __tablename__ = "relationship_nodes"
+    
+    id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    case_id = Column(String, ForeignKey("cases.id", ondelete="CASCADE"), nullable=False, index=True)
+    node_id = Column(String, nullable=False, index=True)  # Unique identifier for node in graph (e.g., "CEO_Ivanov")
+    node_type = Column(String(50), nullable=False)  # Person, Organization, Contract, Event, etc.
+    node_label = Column(String(255), nullable=False)  # Display label (e.g., "Иванов Иван Иванович")
+    properties = Column(JSON, nullable=True)  # Additional properties (title, role, etc.)
+    source_document = Column(String(255), nullable=True)  # Source document
+    source_page = Column(Integer, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    
+    # Relationships
+    case = relationship("Case")
+
+
+class RelationshipEdge(Base):
+    """RelationshipEdge model - stores edges (relationships) in relationship graph"""
+    __tablename__ = "relationship_edges"
+    
+    id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    case_id = Column(String, ForeignKey("cases.id", ondelete="CASCADE"), nullable=False, index=True)
+    source_node_id = Column(String, nullable=False, index=True)  # Reference to RelationshipNode.node_id
+    target_node_id = Column(String, nullable=False, index=True)  # Reference to RelationshipNode.node_id
+    relationship_type = Column(String(100), nullable=False)  # signed, works_for, owns, contacted, etc.
+    relationship_label = Column(String(255), nullable=True)  # Display label
+    confidence = Column(String(10), nullable=True)  # Confidence 0-1
+    context = Column(Text, nullable=True)  # Context where relationship was found
+    source_document = Column(String(255), nullable=True)  # Source document
+    source_page = Column(Integer, nullable=True)
+    properties = Column(JSON, nullable=True)  # Additional properties (date, amount, etc.)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    
+    # Relationships
+    case = relationship("Case")

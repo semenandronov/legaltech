@@ -37,6 +37,7 @@ def create_supervisor_agent() -> Any:
         create_handoff_tool("discrepancy"),
         create_handoff_tool("risk"),
         create_handoff_tool("summary"),
+        create_handoff_tool("relationship"),
     ]
     
     # Initialize LLM with temperature=0 for deterministic routing
@@ -94,8 +95,11 @@ def route_to_agent(state: AnalysisState) -> str:
         completed.add("entity_extraction")
     if state.get("privilege_result"):
         completed.add("privilege_check")
+    if state.get("relationship_result"):
+        completed.add("relationship")
     
     # Check dependencies
+    entities_ready = state.get("entities_result") is not None
     discrepancy_ready = state.get("discrepancy_result") is not None
     key_facts_ready = state.get("key_facts_result") is not None
     classification_ready = state.get("classification_result") is not None
@@ -133,6 +137,17 @@ def route_to_agent(state: AnalysisState) -> str:
         reasoning_parts.append("Энтити-Экстрактор может работать параллельно, извлекая сущности")
         next_agent = "entity_extraction"
         logger.info(f"[Супервизор] Дело {case_id}: → Энтити-Экстрактор: 'Найди людей, даты, суммы'")
+    
+    # 4. Relationship extraction (требует entities - строит граф связей)
+    elif "relationship" in requested_types and "relationship" not in completed:
+        if entities_ready:
+            reasoning_parts.append("Энтити готовы → строим граф связей между участниками")
+            next_agent = "relationship"
+            logger.info(f"[Супервизор] Дело {case_id}: Энтити готовы → Relationship: 'Строю граф связей'")
+        else:
+            # Wait for entities
+            reasoning_parts.append("Relationship требует entities, ждем...")
+            next_agent = "entity_extraction" if "entity_extraction" in requested_types else "supervisor"
     
     # 4. Независимые агенты могут работать параллельно
     elif "timeline" in requested_types and "timeline" not in completed:

@@ -1,6 +1,8 @@
 import { useEffect, useState, useMemo } from 'react'
 import { getTimeline, TimelineEvent } from '../../services/api'
 import TimelineVisualization from './TimelineVisualization'
+import InteractiveTimelineVisualization from './InteractiveTimelineVisualization'
+import { useNavigate } from 'react-router-dom'
 import './Analysis.css'
 
 interface TimelineTabProps {
@@ -12,6 +14,8 @@ const TimelineTab = ({ caseId }: TimelineTabProps) => {
   const [loading, setLoading] = useState(true)
   const [searchQuery, setSearchQuery] = useState('')
   const [showStats, setShowStats] = useState(true)
+  const [useInteractive, setUseInteractive] = useState(true)
+  const navigate = useNavigate()
 
   useEffect(() => {
     loadTimeline()
@@ -194,7 +198,32 @@ const TimelineTab = ({ caseId }: TimelineTabProps) => {
           <button onClick={() => setSearchQuery('')}>Очистить поиск</button>
         </div>
       ) : (
-        <TimelineVisualization events={filteredEvents} />
+        <>
+          <div className="timeline-view-toggle">
+            <button
+              className={`timeline-toggle-btn ${useInteractive ? 'active' : ''}`}
+              onClick={() => setUseInteractive(true)}
+            >
+              Интерактивная временная линия
+            </button>
+            <button
+              className={`timeline-toggle-btn ${!useInteractive ? 'active' : ''}`}
+              onClick={() => setUseInteractive(false)}
+            >
+              Список событий
+            </button>
+          </div>
+          {useInteractive ? (
+            <InteractiveTimelineVisualization
+              events={filteredEvents}
+              onDocumentClick={(documentName, page) => {
+                navigate(`/cases/${caseId}/documents?highlight=${encodeURIComponent(documentName)}${page ? `&page=${page}` : ''}`)
+              }}
+            />
+          ) : (
+            <TimelineVisualization events={filteredEvents} />
+          )}
+        </>
       )}
     </div>
   )

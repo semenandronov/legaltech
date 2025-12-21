@@ -11,7 +11,7 @@ import logging
 import sys
 from datetime import datetime
 from app.config import config
-from app.routes import upload, chat, auth, cases, dashboard, analysis, reports, settings
+from app.routes import upload, chat, auth, cases, dashboard, analysis, reports, settings, websocket
 from app.utils.database import init_db
 
 # Configure structured logging
@@ -107,6 +107,10 @@ async def log_requests(request: Request, call_next):
         )
         raise
 
+# Metrics middleware (tracking request metrics)
+from app.middleware.metrics import MetricsMiddleware
+app.add_middleware(MetricsMiddleware)
+
 # CORS middleware
 app.add_middleware(
     CORSMiddleware,
@@ -125,12 +129,20 @@ app.include_router(reports.router, prefix="/api/reports", tags=["reports"])
 app.include_router(settings.router, prefix="/api/settings", tags=["settings"])
 app.include_router(upload.router, prefix="/api/upload", tags=["upload"])
 app.include_router(chat.router, prefix="/api/chat", tags=["chat"])
+app.include_router(websocket.router, tags=["websocket"])
 
 
 @app.get("/api/health")
 async def health():
     """Health check endpoint"""
     return {"status": "ok"}
+
+
+@app.get("/api/metrics")
+async def metrics():
+    """Metrics endpoint (for monitoring)"""
+    from app.middleware.metrics import get_metrics
+    return get_metrics()
 
 
 # Debug endpoint to check routes

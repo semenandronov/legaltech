@@ -4,13 +4,29 @@ from sqlalchemy.orm import Session
 import logging
 
 from langchain_core.prompts import PromptTemplate, ChatPromptTemplate
-from langchain_openai import ChatOpenAI
 from langchain_core.documents import Document
 from app.config import config
 from app.services.document_processor import DocumentProcessor
-from app.services.yandex_index import YandexIndexRetriever
+from app.services.yandex_llm import ChatYandexGPT
+# YandexIndexRetriever removed - using pgvector retriever instead
 
 logger = logging.getLogger(__name__)
+
+# Try to import modern chain creation functions
+create_retrieval_chain = None
+create_stuff_documents_chain = None
+
+try:
+    from langchain.chains.combine_documents import create_stuff_documents_chain
+    from langchain.chains.retrieval import create_retrieval_chain
+    logger.debug("create_retrieval_chain and create_stuff_documents_chain imported")
+except ImportError:
+    try:
+        from langchain.chains.combine_documents import create_stuff_documents_chain
+        from langchain.chains.retrieval import create_retrieval_chain
+        logger.debug("create_retrieval_chain and create_stuff_documents_chain imported from alternative path")
+    except ImportError:
+        logger.warning("create_retrieval_chain and create_stuff_documents_chain not available")
 
 # Try to import chain classes with multiple fallback strategies
 LLMChain = None
@@ -51,10 +67,8 @@ class ChainService:
     def __init__(self, document_processor: DocumentProcessor = None):
         """Initialize chain service"""
         self.document_processor = document_processor or DocumentProcessor()
-        self.llm = ChatOpenAI(
-            model=config.OPENROUTER_MODEL,
-            openai_api_key=config.OPENROUTER_API_KEY,
-            openai_api_base=config.OPENROUTER_BASE_URL,
+        # Use ChatYandexGPT instead of ChatOpenAI
+        self.llm = ChatYandexGPT(
             temperature=0.7,
             max_tokens=2000
         )
@@ -76,50 +90,13 @@ class ChainService:
                 "Please ensure langchain is properly installed."
             )
         
-        # Get index_id for case
-        index_id = self.document_processor.get_index_id(case_id, db)
-        if not index_id:
-            raise ValueError(f"Index not found for case {case_id}. Please upload documents first.")
-        
-        # Create Yandex Index retriever
-        retriever = YandexIndexRetriever(
-            index_service=self.document_processor.index_service,
-            index_id=index_id,
-            k=5,
-            db_session=db
+        # This method is deprecated - YandexIndexRetriever is no longer used (migrated to pgvector)
+        # Use RAGService.generate_with_sources instead
+        raise NotImplementedError(
+            "ChainService.create_retrieval_qa_chain is deprecated. "
+            "YandexIndexRetriever is no longer used (migrated to pgvector). "
+            "Use RAGService.generate_with_sources instead."
         )
-        
-        # Create prompt template
-        prompt_template = """Используй следующие документы для ответа на вопрос.
-Если ответ не найден в документах, скажи честно.
-
-Документы:
-{context}
-
-Вопрос: {question}
-
-Ответ (обязательно укажи источники в формате [Документ: filename.pdf, стр. X]):"""
-        
-        prompt = PromptTemplate(
-            template=prompt_template,
-            input_variables=["context", "question"]
-        )
-        
-        # Create QA chain
-        qa_chain = load_qa_chain(
-            llm=self.llm,
-            chain_type="stuff",
-            prompt=prompt
-        )
-        
-        # Create RetrievalQA chain
-        chain = RetrievalQA(
-            combine_documents_chain=qa_chain,
-            retriever=retriever,
-            return_source_documents=True
-        )
-        
-        return chain
     
     def create_sequential_analysis_chain(self) -> SequentialChain:
         """
@@ -309,4 +286,50 @@ class ChainService:
         except Exception as e:
             logger.error(f"Error in MapReduce chain: {e}")
             raise
+    
+    def create_rag_chain(self, case_id: str, retriever, db: Optional[Session] = None):
+        """
+        Create RAG chain using create_retrieval_chain and create_stuff_documents_chain
+        
+        This is the modern LangChain approach for RAG.
+        
+        Args:
+            case_id: Case identifier
+            retriever: LangChain retriever instance (e.g., from pgvector)
+            db: Optional database session
+            
+        Returns:
+            Runnable chain for RAG
+        """
+        if create_retrieval_chain is None or create_stuff_documents_chain is None:
+            logger.warning("create_retrieval_chain not available, returning None")
+            return None
+        
+        # Create prompt for RAG
+        RAG_PROMPT = ChatPromptTemplate.from_messages([
+            ("system", """Ты эксперт по анализу юридических документов.
+Ты отвечаешь на вопросы на основе документов из векторного хранилища.
+
+ВАЖНО:
+- ВСЕГДА указывай конкретные источники в формате: [Документ: filename.pdf, стр. 5, строки 12-15]
+- Если информация не найдена в документах - скажи честно
+- Не давай юридических советов, только анализ фактов из документов
+- Используй точные цитаты из документов когда это возможно"""),
+            ("human", "Контекст:\n{context}\n\nВопрос: {question}")
+        ])
+        
+        # Create document chain
+        document_chain = create_stuff_documents_chain(
+            llm=self.llm,
+            prompt=RAG_PROMPT
+        )
+        
+        # Create retrieval chain
+        rag_chain = create_retrieval_chain(
+            retriever=retriever,
+            combine_docs_chain=document_chain
+        )
+        
+        logger.info(f"Created RAG chain for case {case_id}")
+        return rag_chain
 

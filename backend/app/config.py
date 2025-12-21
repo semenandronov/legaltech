@@ -25,6 +25,9 @@ class Config:
         "postgresql://user:password@localhost:5432/legal_ai_vault"
     )
     
+    # Vector Store: Only pgvector is supported
+    # VECTOR_STORE_TYPE removed - using pgvector only
+    
     # CORS
     CORS_ORIGINS: List[str] = os.getenv(
         "CORS_ORIGINS",
@@ -49,80 +52,36 @@ class Config:
     AGENT_TIMEOUT: int = int(os.getenv("AGENT_TIMEOUT", "300"))  # Timeout per agent in seconds
     AGENT_RETRY_COUNT: int = int(os.getenv("AGENT_RETRY_COUNT", "2"))  # Retry count on failure
     
-    # LangSmith Settings (optional, for monitoring and debugging)
+    # Yandex Cloud AI Studio (GPT + Embeddings + Vector Store)
+    YANDEX_API_KEY: str = os.getenv("YANDEX_API_KEY", "")
+    YANDEX_IAM_TOKEN: str = os.getenv("YANDEX_IAM_TOKEN", "")  # Альтернатива API ключу
+    YANDEX_FOLDER_ID: str = os.getenv("YANDEX_FOLDER_ID", "")  # Обязательно для работы Yandex сервисов
+    YANDEX_GPT_MODEL: str = os.getenv("YANDEX_GPT_MODEL", "yandexgpt-lite/latest")  # Модель по умолчанию
+    YANDEX_EMBEDDING_MODEL: str = os.getenv("YANDEX_EMBEDDING_MODEL", "text-search-query/latest")  # Модель embeddings по умолчанию
+    
+    # Полные URI моделей (приоритет над короткими именами)
+    # Формат: gpt://<folder-id>/yandexgpt-lite/latest или emb://<folder-id>/text-search-query/latest
+    YANDEX_GPT_MODEL_URI: str = os.getenv("YANDEX_GPT_MODEL_URI", "")
+    YANDEX_EMBEDDING_MODEL_URI: str = os.getenv("YANDEX_EMBEDDING_MODEL_URI", "")
+    # Yandex Index prefix - removed (Yandex Vector Store no longer used)
+    # YANDEX_INDEX_PREFIX: str = os.getenv("YANDEX_INDEX_PREFIX", "legal_ai_vault")
+    
+    # LangSmith (LangChain monitoring and compliance)
     LANGSMITH_API_KEY: str = os.getenv("LANGSMITH_API_KEY", "")
     LANGSMITH_PROJECT: str = os.getenv("LANGSMITH_PROJECT", "legal-ai-vault")
     LANGSMITH_TRACING: bool = os.getenv("LANGCHAIN_TRACING_V2", "false").lower() == "true"
     LANGSMITH_ENDPOINT: str = os.getenv("LANGCHAIN_ENDPOINT", "https://api.smith.langchain.com")
     
-    # JWT Settings
-    JWT_SECRET_KEY: str = os.getenv("JWT_SECRET_KEY", "your-secret-key-change-in-production")
+    # File Storage
+    UPLOAD_DIR: str = os.getenv("UPLOAD_DIR", "./uploads")
+    
+    # Security / JWT
+    SECRET_KEY: str = os.getenv("SECRET_KEY", "your-secret-key-here-change-in-production")
+    JWT_SECRET_KEY: str = os.getenv("JWT_SECRET_KEY", os.getenv("SECRET_KEY", "your-secret-key-change-in-production"))
     JWT_ALGORITHM: str = os.getenv("JWT_ALGORITHM", "HS256")
+    ALGORITHM: str = "HS256"  # Alias for JWT_ALGORITHM
     ACCESS_TOKEN_EXPIRE_MINUTES: int = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "1440"))  # 24 hours
-    
-    # Yandex Cloud Settings
-    # Вариант 1: API ключ (рекомендуется, проще!)
-    YANDEX_API_KEY: str = os.getenv("YANDEX_API_KEY", "")
-    # Вариант 2: IAM токен (альтернатива, истекает через 12 часов)
-    YANDEX_IAM_TOKEN: str = os.getenv("YANDEX_IAM_TOKEN", "")
-    # Folder ID (нужен для обоих вариантов, но можно извлечь из API ключа)
-    YANDEX_FOLDER_ID: str = os.getenv("YANDEX_FOLDER_ID", "")
-    YANDEX_AI_STUDIO_CLASSIFIER_ID: str = os.getenv("YANDEX_AI_STUDIO_CLASSIFIER_ID", "")  # ID классификатора из AI Studio
-    # Model URIs - используйте полные URI из AI Studio (gpt://<folder_id>/<model>/<version>)
-    # Пример: gpt://b1g4samml2s1n1509ptp/yandexgpt-lite/rc
-    YANDEX_GPT_MODEL_URI: str = os.getenv("YANDEX_GPT_MODEL_URI", "")  # Полный URI модели LLM (например, gpt://<folder_id>/yandexgpt-pro/latest)
-    # Если YANDEX_GPT_MODEL_URI не указан, будет использовано короткое имя (устаревший способ)
-    YANDEX_GPT_MODEL: str = os.getenv("YANDEX_GPT_MODEL", "yandexgpt-pro/latest")  # Fallback: короткое имя модели (устаревший способ)
-    # Embedding model URI - используйте полный URI (emb://<folder_id>/text-search-query/latest или emb://<folder_id>/text-search-doc/latest)
-    # text-search-query - для коротких текстов (запросы)
-    # text-search-doc - для больших текстов (документы)
-    YANDEX_EMBEDDING_MODEL_URI: str = os.getenv("YANDEX_EMBEDDING_MODEL_URI", "")  # Полный URI модели эмбеддингов (например, emb://<folder_id>/text-search-query/latest)
-    # Если YANDEX_EMBEDDING_MODEL_URI не указан, будет использовано короткое имя (устаревший способ)
-    YANDEX_EMBEDDING_MODEL: str = os.getenv("YANDEX_EMBEDDING_MODEL", "text-search-query")  # Fallback: короткое имя (устаревший способ)
-    YANDEX_INDEX_PREFIX: str = os.getenv("YANDEX_INDEX_PREFIX", "legal_ai_vault")  # Префикс для имен индексов
-    
-    def __init__(self):
-        """Validate configuration on initialization"""
-        self._validate()
-        self._setup_langsmith()
-    
-    def _setup_langsmith(self):
-        """Setup LangSmith tracing if enabled"""
-        if self.LANGSMITH_TRACING and self.LANGSMITH_API_KEY:
-            import os
-            os.environ["LANGCHAIN_TRACING_V2"] = "true"
-            os.environ["LANGCHAIN_API_KEY"] = self.LANGSMITH_API_KEY
-            os.environ["LANGCHAIN_PROJECT"] = self.LANGSMITH_PROJECT
-            os.environ["LANGCHAIN_ENDPOINT"] = self.LANGSMITH_ENDPOINT
-            logger.info("✅ LangSmith tracing enabled")
-        elif self.LANGSMITH_TRACING and not self.LANGSMITH_API_KEY:
-            logger.warning(
-                "LANGSMITH_TRACING is enabled but LANGSMITH_API_KEY is not set. "
-                "LangSmith tracing will not work."
-            )
-    
-    def _validate(self):
-        """Validate critical configuration values"""
-        # Validate OpenRouter API key
-        if not self.OPENROUTER_API_KEY or self.OPENROUTER_API_KEY.strip() == "":
-            logger.warning(
-                "OPENROUTER_API_KEY is not set or empty. "
-                "LLM features will not work. Please set OPENROUTER_API_KEY in .env file."
-            )
-        
-        # Validate JWT secret key
-        default_jwt_secret = "your-secret-key-change-in-production"
-        if self.JWT_SECRET_KEY == default_jwt_secret:
-            logger.warning(
-                "⚠️  SECURITY WARNING: Using default JWT_SECRET_KEY! "
-                "This is insecure for production. Please set a strong JWT_SECRET_KEY in .env file."
-            )
-        elif len(self.JWT_SECRET_KEY) < 32:
-            logger.warning(
-                f"JWT_SECRET_KEY is too short ({len(self.JWT_SECRET_KEY)} chars). "
-                "For security, use at least 32 characters."
-            )
 
 
+# Create config instance
 config = Config()
-

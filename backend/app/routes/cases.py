@@ -277,8 +277,7 @@ async def delete_case(
     Delete a case
     
     ВАЖНО: При удалении кейса также удаляются:
-    - Индекс в Yandex AI Studio (yandex_index_id)
-    - Ассистент в Yandex AI Studio (yandex_assistant_id)
+    - Индексы и ассистенты Yandex больше не используются (мигрировали на pgvector)
     
     Удаление происходит до удаления записи из БД, чтобы иметь доступ к ID.
     """
@@ -290,37 +289,11 @@ async def delete_case(
     if not case:
         raise HTTPException(status_code=404, detail="Дело не найдено")
     
-    # Сохраняем ID для удаления из Yandex перед удалением из БД
-    yandex_index_id = case.yandex_index_id
-    yandex_assistant_id = case.yandex_assistant_id
+    # Note: Yandex Index and Assistant resources are no longer used (migrated to pgvector)
+    # If case has old yandex_index_id or yandex_assistant_id, they are left as-is for historical records
+    # PGVector documents are automatically deleted via CASCADE in database schema
     
     try:
-        # Удаляем индекс из Yandex AI Studio (если существует)
-        if yandex_index_id:
-            try:
-                from app.services.yandex_index import YandexIndexService
-                index_service = YandexIndexService()
-                if index_service.is_available():
-                    logger.info(f"Deleting Yandex index {yandex_index_id} for case {case_id}")
-                    index_service.delete_index(yandex_index_id)
-                    logger.info(f"✅ Deleted Yandex index {yandex_index_id} for case {case_id}")
-            except Exception as e:
-                # Логируем ошибку, но не блокируем удаление кейса
-                logger.warning(f"Failed to delete Yandex index {yandex_index_id} for case {case_id}: {e}", exc_info=True)
-        
-        # Удаляем ассистента из Yandex AI Studio (если существует)
-        if yandex_assistant_id:
-            try:
-                from app.services.yandex_assistant import YandexAssistantService
-                assistant_service = YandexAssistantService()
-                if assistant_service.is_available():
-                    logger.info(f"Deleting Yandex assistant {yandex_assistant_id} for case {case_id}")
-                    assistant_service.delete_assistant(yandex_assistant_id)
-                    logger.info(f"✅ Deleted Yandex assistant {yandex_assistant_id} for case {case_id}")
-            except Exception as e:
-                # Логируем ошибку, но не блокируем удаление кейса
-                logger.warning(f"Failed to delete Yandex assistant {yandex_assistant_id} for case {case_id}: {e}", exc_info=True)
-        
         # Удаляем кейс из БД
         # CASCADE удалит связанные записи (files, document_chunks, chat_messages и т.д.)
         db.delete(case)

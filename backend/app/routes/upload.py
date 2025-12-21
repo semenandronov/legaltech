@@ -293,46 +293,41 @@ async def upload_files(
         
         db.commit()
         
-        # Store original files in Yandex Vector Store
-        if not original_files:
-            raise HTTPException(
-                status_code=400,
-                detail="Не удалось загрузить файлы для сохранения в индекс"
+        # Store documents in PGVector
+        logger.info(
+            f"Preparing documents for PGVector storage for case {case_id}",
+            extra={"case_id": case_id, "num_files": len(file_names)}
+        )
+        
+        # Create documents from all files using document_processor
+        all_documents = []
+        for file_info in files_to_create:
+            filename = file_info["filename"]
+            text = file_info["original_text"]
+            
+            # Split text into chunks with metadata
+            file_documents = document_processor.split_documents(
+                text=text,
+                filename=filename,
+                metadata={"case_id": case_id}
             )
+            all_documents.extend(file_documents)
         
         logger.info(
-            f"Storing {len(original_files)} original files in Yandex Vector Store for case {case_id}",
-            extra={"case_id": case_id, "num_files": len(original_files)}
+            f"Storing {len(all_documents)} document chunks in PGVector for case {case_id}",
+            extra={"case_id": case_id, "num_chunks": len(all_documents)}
         )
-        index_id = document_processor.store_in_vector_db(
+        
+        collection_name = document_processor.store_in_vector_db(
             case_id=case_id,
-            documents=[],  # Не используется - все идет через оригинальные файлы
+            documents=all_documents,
             db=db,
-            original_files=original_files  # Оригинальные файлы для Yandex Vector Store
+            original_files=None  # Not used for PGVector
         )
-        logger.info(f"Successfully stored {len(original_files)} files in Yandex Vector Store index {index_id} for case {case_id}")
+        logger.info(f"Successfully stored {len(all_documents)} document chunks in PGVector collection '{collection_name}' for case {case_id}")
         
-        # Create assistant for case (after index is created)
-        if not index_id:
-            raise HTTPException(
-                status_code=500,
-                detail=f"Индекс не был создан для дела {case_id}. Невозможно создать ассистента."
-            )
-        
-        try:
-            from app.services.yandex_assistant import YandexAssistantService
-            assistant_service = YandexAssistantService()
-            assistant_id = assistant_service.create_assistant(case_id, index_id)
-            case.yandex_assistant_id = assistant_id
-            db.commit()
-            logger.info(f"✅ Created assistant {assistant_id} for case {case_id}")
-        except Exception as e:
-            db.rollback()
-            logger.error(f"Failed to create assistant for case {case_id}: {e}", exc_info=True)
-            raise HTTPException(
-                status_code=500,
-                detail=f"Ошибка при создании ассистента для дела: {str(e)}"
-            )
+        # PGVector: No assistant needed, we use direct RAG with YandexGPT
+        logger.info(f"PGVector: Skipping assistant creation for case {case_id} (using direct RAG)")
         
         db.refresh(case)
         

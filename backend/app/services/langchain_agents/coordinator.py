@@ -71,6 +71,7 @@ class AgentCoordinator:
                 "classification_result": None,
                 "entities_result": None,
                 "privilege_result": None,
+                "relationship_result": None,
                 "analysis_types": analysis_types,
                 "errors": [],
                 "metadata": {}
@@ -91,7 +92,7 @@ class AgentCoordinator:
             
             # Check if we can run independent agents in parallel
             independent_types = ["timeline", "key_facts", "discrepancy", "entity_extraction", "document_classifier"]
-            dependent_types = ["risk", "summary", "privilege_check"]
+            dependent_types = ["risk", "summary", "privilege_check", "relationship"]  # relationship depends on entities
             
             # If only independent types, we can optimize
             if all(at in independent_types for at in analysis_types) and len(analysis_types) > 1:
@@ -110,6 +111,10 @@ class AgentCoordinator:
                 final_state = self.graph.get_state(thread_config).values
             
             execution_time = time.time() - start_time
+            
+            # Track agent execution metrics
+            from app.middleware.metrics import track_agent_execution
+            track_agent_execution("multi_agent_analysis", execution_time, success=True)
             
             logger.info(
                 f"Multi-agent analysis completed for case {case_id} in {execution_time:.2f}s"
