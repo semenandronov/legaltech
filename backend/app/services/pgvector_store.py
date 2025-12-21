@@ -155,24 +155,21 @@ class CaseVectorStore:
                     embedding_array_str = '[' + ','.join(str(float(x)) for x in embedding) + ']'
                     document_json_str = json.dumps(doc_json)
                     
-                    # Insert into database - use explicit parameter binding with unique parameter names
+                    # Insert using raw psycopg2 cursor to avoid SQLAlchemy parameter style conflicts
                     table_name = VectorEmbedding.__tablename__
-                    sql_str = (
+                    sql = (
                         f"INSERT INTO {table_name} "
                         "(uuid, collection_id, embedding, document, custom_id) "
-                        "VALUES (:uuid_param, :collection_id_param, :embedding_param::vector, :document_param::jsonb, :custom_id_param)"
+                        "VALUES (%s, %s, %s::vector, %s::jsonb, %s)"
                     )
-                    stmt = text(sql_str)
-                    conn.execute(
-                        stmt,
-                        {
-                            "uuid_param": doc_id,
-                            "collection_id_param": self.collection_name,
-                            "embedding_param": embedding_array_str,
-                            "document_param": document_json_str,
-                            "custom_id_param": doc_id
-                        }
+                    # Get raw connection and cursor for psycopg2 parameter style
+                    raw_conn = conn.connection.dbapi_connection
+                    cursor = raw_conn.cursor()
+                    cursor.execute(
+                        sql,
+                        (doc_id, self.collection_name, embedding_array_str, document_json_str, doc_id)
                     )
+                    cursor.close()
             
             logger.info(f"✅ Added {len(ids)} documents to PGVector store for case {case_id}")
             return ids
@@ -222,24 +219,21 @@ class CaseVectorStore:
                     embedding_array_str = '[' + ','.join(str(float(x)) for x in embedding) + ']'
                     document_json_str = json.dumps(doc_json)
                     
-                    # Insert into database - use explicit parameter binding with unique parameter names
+                    # Insert using raw psycopg2 cursor to avoid SQLAlchemy parameter style conflicts
                     table_name = VectorEmbedding.__tablename__
-                    sql_str = (
+                    sql = (
                         f"INSERT INTO {table_name} "
                         "(uuid, collection_id, embedding, document, custom_id) "
-                        "VALUES (:uuid_param, :collection_id_param, :embedding_param::vector, :document_param::jsonb, :custom_id_param)"
+                        "VALUES (%s, %s, %s::vector, %s::jsonb, %s)"
                     )
-                    stmt = text(sql_str)
-                    conn.execute(
-                        stmt,
-                        {
-                            "uuid_param": doc_id,
-                            "collection_id_param": self.collection_name,
-                            "embedding_param": embedding_array_str,
-                            "document_param": document_json_str,
-                            "custom_id_param": doc_id
-                        }
+                    # Get raw connection and cursor for psycopg2 parameter style
+                    raw_conn = conn.connection.dbapi_connection
+                    cursor = raw_conn.cursor()
+                    cursor.execute(
+                        sql,
+                        (doc_id, self.collection_name, embedding_array_str, document_json_str, doc_id)
                     )
+                    cursor.close()
             
             logger.info(f"✅ Added {len(ids)} texts to PGVector store for case {case_id}")
             return ids
