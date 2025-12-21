@@ -368,29 +368,33 @@ class CaseVectorStore:
                     LIMIT %s
                 """
                 
-                raw_conn = conn.connection.dbapi_connection
+                # Get raw connection properly - use conn.connection for SQLAlchemy 1.4+
+                # conn.connection is the underlying DBAPI connection
+                raw_conn = conn.connection
                 cursor = raw_conn.cursor()
-                cursor.execute(
-                    sql,
-                    (query_embedding_str, self.collection_name, query_embedding_str, k)
-                )
-                
-                documents = []
-                for row in cursor.fetchall():
-                    doc_data = row[1]  # document column is at index 1
-                    if isinstance(doc_data, str):
-                        doc_data = json.loads(doc_data)
-                    elif isinstance(doc_data, dict):
-                        pass  # Already a dict
-                    else:
-                        doc_data = {}
-                    
-                    doc = Document(
-                        page_content=doc_data.get("page_content", ""),
-                        metadata=doc_data.get("metadata", {})
+                try:
+                    cursor.execute(
+                        sql,
+                        (query_embedding_str, self.collection_name, query_embedding_str, k)
                     )
-                    documents.append(doc)
-                cursor.close()
+                    
+                    documents = []
+                    for row in cursor.fetchall():
+                        doc_data = row[1]  # document column is at index 1
+                        if isinstance(doc_data, str):
+                            doc_data = json.loads(doc_data)
+                        elif isinstance(doc_data, dict):
+                            pass  # Already a dict
+                        else:
+                            doc_data = {}
+                        
+                        doc = Document(
+                            page_content=doc_data.get("page_content", ""),
+                            metadata=doc_data.get("metadata", {})
+                        )
+                        documents.append(doc)
+                finally:
+                    cursor.close()
                 
                 logger.debug(f"Found {len(documents)} similar documents for case {case_id}")
                 return documents
@@ -449,31 +453,34 @@ class CaseVectorStore:
                     LIMIT %s
                 """
                 
-                raw_conn = conn.connection.dbapi_connection
+                # Get raw connection properly - use conn.connection for SQLAlchemy 1.4+
+                raw_conn = conn.connection
                 cursor = raw_conn.cursor()
-                cursor.execute(
-                    sql,
-                    (query_embedding_str, self.collection_name, query_embedding_str, k)
-                )
-                
-                documents_with_scores = []
-                for row in cursor.fetchall():
-                    doc_data = row[1]  # document column is at index 1
-                    similarity = row[2] if len(row) > 2 else 0.0  # similarity column
-                    
-                    if isinstance(doc_data, str):
-                        doc_data = json.loads(doc_data)
-                    elif isinstance(doc_data, dict):
-                        pass  # Already a dict
-                    else:
-                        doc_data = {}
-                    
-                    doc = Document(
-                        page_content=doc_data.get("page_content", ""),
-                        metadata=doc_data.get("metadata", {})
+                try:
+                    cursor.execute(
+                        sql,
+                        (query_embedding_str, self.collection_name, query_embedding_str, k)
                     )
-                    documents_with_scores.append((doc, float(similarity) if similarity else 0.0))
-                cursor.close()
+                    
+                    documents_with_scores = []
+                    for row in cursor.fetchall():
+                        doc_data = row[1]  # document column is at index 1
+                        similarity = row[2] if len(row) > 2 else 0.0  # similarity column
+                        
+                        if isinstance(doc_data, str):
+                            doc_data = json.loads(doc_data)
+                        elif isinstance(doc_data, dict):
+                            pass  # Already a dict
+                        else:
+                            doc_data = {}
+                        
+                        doc = Document(
+                            page_content=doc_data.get("page_content", ""),
+                            metadata=doc_data.get("metadata", {})
+                        )
+                        documents_with_scores.append((doc, float(similarity) if similarity else 0.0))
+                finally:
+                    cursor.close()
                 
                 logger.debug(f"Found {len(documents_with_scores)} similar documents with scores for case {case_id}")
                 return documents_with_scores
