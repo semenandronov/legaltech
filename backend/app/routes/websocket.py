@@ -1,12 +1,8 @@
 """WebSocket routes for streaming analysis"""
-from fastapi import WebSocket, WebSocketDisconnect, APIRouter, Depends
-from sqlalchemy.orm import Session
-from app.utils.database import get_db
+from fastapi import WebSocket, WebSocketDisconnect, APIRouter
 from app.services.langchain_agents.coordinator import AgentCoordinator
 from app.services.rag_service import RAGService
 from app.services.document_processor import DocumentProcessor
-from app.models.user import User
-from app.routes.auth import get_current_user_websocket
 import json
 import logging
 
