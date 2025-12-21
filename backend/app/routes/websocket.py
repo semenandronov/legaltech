@@ -24,6 +24,10 @@ async def stream_analysis(
     await websocket.accept()
     logger.info(f"WebSocket connection opened for case {case_id}")
     
+    # Get database session
+    from app.utils.database import SessionLocal
+    db = SessionLocal()
+    
     try:
         # Initialize services
         document_processor = DocumentProcessor()
