@@ -281,7 +281,7 @@ class CaseVectorStore:
                         LIMIT :k
                     """),
                     {
-                        "query_embedding": str(query_embedding),
+                        "query_embedding": query_embedding_str,
                         "collection_id": self.collection_name,
                         "k": k
                     }
@@ -352,7 +352,7 @@ class CaseVectorStore:
                         LIMIT :k
                     """),
                     {
-                        "query_embedding": str(query_embedding),
+                        "query_embedding": query_embedding_str,
                         "collection_id": self.collection_name,
                         "k": k
                     }
