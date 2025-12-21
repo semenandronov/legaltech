@@ -51,7 +51,19 @@ class YandexIndexService:
         """Initialize Yandex Vector Store service using ML SDK"""
         self.api_key = config.YANDEX_API_KEY
         self.iam_token = config.YANDEX_IAM_TOKEN
-        self.folder_id = config.YANDEX_FOLDER_ID
+        
+        # ВАЖНО: SDK может использовать YC_FOLDER_ID из переменных окружения
+        # Проверяем оба варианта, но приоритет у YANDEX_FOLDER_ID
+        import os
+        yc_folder_id = os.getenv("YC_FOLDER_ID", "")
+        self.folder_id = config.YANDEX_FOLDER_ID or yc_folder_id
+        
+        if yc_folder_id and yc_folder_id != config.YANDEX_FOLDER_ID:
+            logger.warning(
+                f"⚠️  Обнаружена переменная YC_FOLDER_ID={yc_folder_id}, которая отличается от YANDEX_FOLDER_ID={config.YANDEX_FOLDER_ID}. "
+                f"Используется YANDEX_FOLDER_ID: {config.YANDEX_FOLDER_ID}"
+            )
+        
         self.index_prefix = getattr(config, 'YANDEX_INDEX_PREFIX', 'legal_ai_vault')
         
         # Используем API ключ если есть, иначе IAM токен
