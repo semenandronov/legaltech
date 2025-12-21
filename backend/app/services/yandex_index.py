@@ -244,15 +244,47 @@ class YandexIndexService:
                         )
                     
                     # Согласно документации, create_deferred принимает файлы первым позиционным параметром
-                    # и дополнительные параметры через именованные параметры
-                    index = self.sdk.search_indexes.create_deferred(
-                        file_ids,  # Список объектов файлов (первый позиционный параметр)
-                        name=index_name,
-                        description=f"Index for case {case_id}"
-                    )
-                    index_id = index.id if hasattr(index, 'id') else str(index)
-                    logger.info(f"✅ Created search index {index_id} for case {case_id} with {len(file_ids)} files (deferred)")
-                    return index_id
+                    # и index_type через именованный параметр
+                    # По умолчанию используем VectorSearchIndexType для смыслового поиска
+                    try:
+                        from yandex_cloud_ml_sdk.search_indexes import (
+                            VectorSearchIndexType,
+                            StaticIndexChunkingStrategy
+                        )
+                        
+                        # Создаем индекс с векторным поиском (рекомендуется для RAG)
+                        operation = self.sdk.search_indexes.create_deferred(
+                            file_ids,  # Список объектов файлов (первый позиционный параметр)
+                            index_type=VectorSearchIndexType(
+                                chunking_strategy=StaticIndexChunkingStrategy(
+                                    max_chunk_size_tokens=700,
+                                    chunk_overlap_tokens=300,
+                                )
+                            ),
+                            name=index_name,
+                            description=f"Index for case {case_id}"
+                        )
+                        
+                        # Дожидаемся создания индекса (операция асинхронная)
+                        logger.info(f"Waiting for index creation to complete...")
+                        search_index = operation.wait()
+                        
+                        # Получаем ID индекса
+                        index_id = search_index.id if hasattr(search_index, 'id') else str(search_index)
+                        logger.info(f"✅ Created search index {index_id} for case {case_id} with {len(file_ids)} files")
+                        return index_id
+                    except ImportError:
+                        # Если импорт не удался, пробуем без типов индексов (простой вариант)
+                        logger.warning("Could not import index types, using default index creation")
+                        operation = self.sdk.search_indexes.create_deferred(
+                            file_ids,
+                            name=index_name,
+                            description=f"Index for case {case_id}"
+                        )
+                        search_index = operation.wait()
+                        index_id = search_index.id if hasattr(search_index, 'id') else str(search_index)
+                        logger.info(f"✅ Created search index {index_id} for case {case_id} with {len(file_ids)} files (default)")
+                        return index_id
                 else:
                     logger.error(
                         f"search_indexes не содержит метода create_deferred. "
