@@ -177,11 +177,7 @@ const InteractiveTimelineVisualization = ({
         }
       }
 
-      const handleMouseOver = function (this: SVGCircleElement, e: MouseEvent) {
-        setHoveredEvent(event.id)
-        d3.select(this).transition().duration(200).attr('r', 10).attr('fill', '#60a5fa')
-        label.attr('font-weight', '600')
-        
+      const showTooltip = (e: MouseEvent) => {
         const dateStr = new Date(event.date).toLocaleDateString('ru-RU', {
           year: 'numeric',
           month: 'long',
@@ -207,6 +203,20 @@ const InteractiveTimelineVisualization = ({
           .style('top', (e.pageY - 10) + 'px')
       }
 
+      const handleMouseOverCircle = function (this: SVGCircleElement, e: MouseEvent) {
+        setHoveredEvent(event.id)
+        d3.select(this).transition().duration(200).attr('r', 10).attr('fill', '#60a5fa')
+        label.attr('font-weight', '600')
+        showTooltip(e)
+      }
+
+      const handleMouseOverText = function (this: SVGTextElement, e: MouseEvent) {
+        setHoveredEvent(event.id)
+        marker.transition().duration(200).attr('r', 10).attr('fill', '#60a5fa')
+        label.attr('font-weight', '600')
+        showTooltip(e)
+      }
+
       const handleMouseOutCircle = function (this: SVGCircleElement) {
         if (selectedEvent !== event.id) {
           setHoveredEvent(null)
@@ -228,13 +238,13 @@ const InteractiveTimelineVisualization = ({
       marker
         .style('cursor', 'pointer')
         .on('click', handleClick)
-        .on('mouseover', handleMouseOver)
+        .on('mouseover', handleMouseOverCircle)
         .on('mouseout', handleMouseOutCircle)
       
       label
         .style('cursor', 'pointer')
         .on('click', handleClick)
-        .on('mouseover', handleMouseOver)
+        .on('mouseover', handleMouseOverText)
         .on('mouseout', handleMouseOutText)
     })
 
