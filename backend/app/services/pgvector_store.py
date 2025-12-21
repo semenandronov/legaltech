@@ -1,7 +1,7 @@
 """PGVector Vector Store service for multi-tenant document storage using direct SQLAlchemy approach"""
 from typing import List, Dict, Any, Optional
 from sqlalchemy.orm import Session
-from sqlalchemy import create_engine, text, Column, String, JSON
+from sqlalchemy import create_engine, text, Column, String, JSON, bindparam
 from sqlalchemy.ext.declarative import declarative_base
 from langchain_core.documents import Document
 from app.config import config
