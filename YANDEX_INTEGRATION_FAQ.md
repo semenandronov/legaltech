@@ -239,8 +239,11 @@ sdk = YCloudML(folder_id=folder_id, auth=auth)
 
 2. **Проверить права доступа:**
    - Убедитесь, что у вашего аккаунта/сервисного аккаунта есть права:
-     - `ai.studio.user` - для работы с AI Studio
-     - `storage.editor` - если используется Object Storage
+     - `ai.assistants.editor` - **ОБЯЗАТЕЛЬНО** для загрузки файлов в Vector Store через files.upload()
+     - `ai.languageModels.user` - для работы с YandexGPT и Embeddings
+     - `editor` или `admin` - альтернатива для ai.assistants.editor (но рекомендуется именно ai.assistants.editor)
+   
+   **ВАЖНО:** Роль `ai.assistants.auditor` НЕДОСТАТОЧНА для загрузки файлов! Нужна именно `ai.assistants.editor`.
 
 3. **Включить AI Studio:**
    - Убедитесь, что AI Studio активирован для вашего каталога
@@ -260,7 +263,7 @@ sdk = YCloudML(folder_id=folder_id, auth=auth)
 - [ ] Установлен `YANDEX_FOLDER_ID`
 - [ ] Проверен формат `YANDEX_GPT_MODEL_URI` (если используется)
 - [ ] Проверен формат `YANDEX_EMBEDDING_MODEL_URI` (если используется)
-- [ ] API ключ имеет права доступа к AI Studio
+- [ ] API ключ имеет права доступа к AI Studio (роль `ai.assistants.editor` обязательна!)
 - [ ] AI Studio активирован в каталоге
 - [ ] База данных имеет необходимые колонки (`yandex_index_id`, `yandex_assistant_id`)
 - [ ] Колонка `chat_messages.sessionId` nullable
