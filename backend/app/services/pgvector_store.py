@@ -75,7 +75,7 @@ class CaseVectorStore:
                     CREATE TABLE IF NOT EXISTS {VectorEmbedding.__tablename__} (
                         uuid TEXT PRIMARY KEY,
                         collection_id TEXT,
-                        embedding vector(1536),
+                        embedding vector(256),
                         document JSONB,
                         custom_id TEXT
                     )
