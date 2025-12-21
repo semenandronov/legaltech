@@ -238,14 +238,16 @@ class CaseVectorStore:
                         "(uuid, collection_id, embedding, document, custom_id) "
                         "VALUES (%s, %s, %s::vector, %s::jsonb, %s)"
                     )
-                    # Get raw connection and cursor for psycopg2 parameter style
-                    raw_conn = conn.connection.dbapi_connection
+                    # Get raw connection properly - use conn.connection for SQLAlchemy 1.4+
+                    raw_conn = conn.connection
                     cursor = raw_conn.cursor()
-                    cursor.execute(
-                        sql,
-                        (doc_id, self.collection_name, embedding_array_str, document_json_str, doc_id)
-                    )
-                    cursor.close()
+                    try:
+                        cursor.execute(
+                            sql,
+                            (doc_id, self.collection_name, embedding_array_str, document_json_str, doc_id)
+                        )
+                    finally:
+                        cursor.close()
             
             logger.info(f"✅ Added {len(ids)} documents to PGVector store for case {case_id}")
             return ids
@@ -302,14 +304,16 @@ class CaseVectorStore:
                         "(uuid, collection_id, embedding, document, custom_id) "
                         "VALUES (%s, %s, %s::vector, %s::jsonb, %s)"
                     )
-                    # Get raw connection and cursor for psycopg2 parameter style
-                    raw_conn = conn.connection.dbapi_connection
+                    # Get raw connection properly - use conn.connection for SQLAlchemy 1.4+
+                    raw_conn = conn.connection
                     cursor = raw_conn.cursor()
-                    cursor.execute(
-                        sql,
-                        (doc_id, self.collection_name, embedding_array_str, document_json_str, doc_id)
-                    )
-                    cursor.close()
+                    try:
+                        cursor.execute(
+                            sql,
+                            (doc_id, self.collection_name, embedding_array_str, document_json_str, doc_id)
+                        )
+                    finally:
+                        cursor.close()
             
             logger.info(f"✅ Added {len(ids)} texts to PGVector store for case {case_id}")
             return ids
