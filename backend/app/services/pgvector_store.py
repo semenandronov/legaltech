@@ -122,6 +122,54 @@ class CaseVectorStore:
             logger.error(f"Failed to ensure table exists: {e}", exc_info=True)
             raise
     
+    def _fix_vector_dimension_if_needed(self):
+        """Fix vector dimension if table was created with wrong dimension (1536 instead of 256)"""
+        try:
+            with self.engine.connect() as conn:
+                table_name = VectorEmbedding.__tablename__
+                
+                # Check if table exists and get the actual dimension
+                result = conn.execute(text(f"""
+                    SELECT t.typname, a.attname, pg_catalog.format_type(a.atttypid, a.atttypmod) as type
+                    FROM pg_catalog.pg_attribute a
+                    JOIN pg_catalog.pg_class c ON a.attrelid = c.oid
+                    JOIN pg_catalog.pg_type t ON a.atttypid = t.oid
+                    WHERE c.relname = '{table_name}'
+                    AND a.attname = 'embedding'
+                    AND NOT a.attisdropped
+                """))
+                row = result.fetchone()
+                
+                if row:
+                    type_str = row[2] if len(row) > 2 else ""
+                    # If dimension is 1536, we need to fix it
+                    if 'vector(1536)' in type_str:
+                        logger.warning(f"Table {table_name} has wrong vector dimension (1536). Recreating table...")
+                        # Drop and recreate table (data will be lost, but this is necessary)
+                        with self.engine.begin() as trans_conn:
+                            trans_conn.execute(text(f"DROP TABLE IF EXISTS {table_name} CASCADE"))
+                            trans_conn.execute(text(f"""
+                                CREATE TABLE {table_name} (
+                                    uuid TEXT PRIMARY KEY,
+                                    collection_id TEXT,
+                                    embedding vector(256),
+                                    document JSONB,
+                                    custom_id TEXT
+                                )
+                            """))
+                            trans_conn.execute(text(f"""
+                                CREATE INDEX IF NOT EXISTS idx_{table_name}_collection_id 
+                                ON {table_name}(collection_id)
+                            """))
+                            trans_conn.execute(text(f"""
+                                CREATE INDEX IF NOT EXISTS idx_{table_name}_document_gin 
+                                ON {table_name} USING GIN (document)
+                            """))
+                        logger.info(f"✅ Table {table_name} recreated with correct vector dimension (256)")
+        except Exception as e:
+            logger.warning(f"Could not fix vector dimension (table may not exist yet): {e}")
+            # This is OK if table doesn't exist - it will be created with correct dimension
+    
     def get_retriever(self, case_id: str, k: int = 5, search_kwargs: Optional[Dict] = None):
         """
         Get retriever for a specific case with metadata filtering
@@ -162,6 +210,9 @@ class CaseVectorStore:
         # Create embeddings
         texts = [doc.page_content for doc in documents]
         embeddings = self.embeddings.embed_documents(texts)
+        
+        # Fix vector dimension if needed (migration from 1536 to 256)
+        self._fix_vector_dimension_if_needed()
         
         ids = []
         try:
