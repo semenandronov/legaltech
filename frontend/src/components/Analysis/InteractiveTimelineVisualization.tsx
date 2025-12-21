@@ -72,7 +72,12 @@ const InteractiveTimelineVisualization = ({
       .padding(0.3)
 
     // Create axis
-    const xAxis = d3.axisBottom(xScale).ticks(10).tickFormat(d3.timeFormat('%d.%m.%Y'))
+    const xAxis = d3.axisBottom(xScale).ticks(10).tickFormat((d) => {
+      if (d instanceof Date) {
+        return d3.timeFormat('%d.%m.%Y')(d)
+      }
+      return String(d)
+    })
     const axisGroup = svg
       .append('g')
       .attr('transform', `translate(0, ${height - margin.bottom})`)
@@ -82,7 +87,7 @@ const InteractiveTimelineVisualization = ({
     axisGroup.selectAll('line, path').attr('stroke', '#d1d5db')
 
     // Create timeline line
-    const timelineLine = svg
+    svg
       .append('line')
       .attr('x1', margin.left)
       .attr('x2', width - margin.right)
@@ -172,7 +177,7 @@ const InteractiveTimelineVisualization = ({
         }
       }
 
-      const handleMouseOver = function (e: MouseEvent) {
+      const handleMouseOver = function (this: SVGCircleElement, e: MouseEvent) {
         setHoveredEvent(event.id)
         d3.select(this).transition().duration(200).attr('r', 10).attr('fill', '#60a5fa')
         label.attr('font-weight', '600')
@@ -187,14 +192,17 @@ const InteractiveTimelineVisualization = ({
           .transition()
           .duration(200)
           .style('opacity', 1)
-          .html(
-            `<strong>${event.event_type || 'Событие'}</strong><br/>` +
-            `<em>${dateStr}</em><br/><br/>` +
-            `${event.description}<br/><br/>` +
-            (event.source_document
-              ? `📄 ${event.source_document}${event.source_page ? `, стр. ${event.source_page}` : ''}`
-              : '')
-          )
+        
+        tooltip.html(
+          `<strong>${event.event_type || 'Событие'}</strong><br/>` +
+          `<em>${dateStr}</em><br/><br/>` +
+          `${event.description}<br/><br/>` +
+          (event.source_document
+            ? `📄 ${event.source_document}${event.source_page ? `, стр. ${event.source_page}` : ''}`
+            : '')
+        )
+        
+        tooltip
           .style('left', (e.pageX + 10) + 'px')
           .style('top', (e.pageY - 10) + 'px')
       }

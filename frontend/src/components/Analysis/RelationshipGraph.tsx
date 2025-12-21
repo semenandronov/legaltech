@@ -9,6 +9,14 @@ interface RelationshipGraphProps {
   onDocumentClick?: (documentName: string, page?: number | null) => void
 }
 
+// Extended node type for D3 force simulation
+interface SimulationNode extends RelationshipNode, d3.SimulationNodeDatum {
+  x?: number
+  y?: number
+  fx?: number | null
+  fy?: number | null
+}
+
 const RelationshipGraph = ({ nodes, links, onDocumentClick }: RelationshipGraphProps) => {
   const svgRef = useRef<SVGSVGElement>(null)
   const [selectedNode, setSelectedNode] = useState<string | null>(null)
@@ -53,22 +61,33 @@ const RelationshipGraph = ({ nodes, links, onDocumentClick }: RelationshipGraphP
 
     // Create node map for quick lookup
     const nodeMap = new Map(nodes.map(n => [n.id, n]))
-
-    // Convert link source/target strings to node references
-    const formattedLinks = links.map(link => ({
-      ...link,
-      source: nodeMap.get(link.source) || link.source,
-      target: nodeMap.get(link.target) || link.target
-    })).filter(link => link.source !== link.target && (typeof link.source !== 'string') && (typeof link.target !== 'string'))
+    
+    const simulationNodes: SimulationNode[] = nodes.map(node => ({ ...node }))
+    
+    const formattedLinks: d3.SimulationLinkDatum<SimulationNode>[] = links
+      .map((link) => {
+        const sourceNode = nodeMap.get(link.source)
+        const targetNode = nodeMap.get(link.target)
+        if (sourceNode && targetNode && sourceNode.id !== targetNode.id) {
+          return {
+            source: sourceNode,
+            target: targetNode,
+            type: link.type,
+            label: link.label
+          } as d3.SimulationLinkDatum<SimulationNode> & { type: string; label?: string | null }
+        }
+        return null
+      })
+      .filter((link): link is d3.SimulationLinkDatum<SimulationNode> & { type: string; label?: string | null } => link !== null)
 
     // Create force simulation
     const simulation = d3
-      .forceSimulation(nodes as any)
+      .forceSimulation(simulationNodes)
       .force(
         'link',
         d3
           .forceLink(formattedLinks)
-          .id((d: any) => d.id)
+          .id((d) => (d as SimulationNode).id)
           .distance(100)
       )
       .force('charge', d3.forceManyBody().strength(-300))
@@ -86,12 +105,16 @@ const RelationshipGraph = ({ nodes, links, onDocumentClick }: RelationshipGraphP
       .attr('class', 'relationship-link')
       .attr('stroke', '#999')
       .attr('stroke-opacity', 0.6)
-      .attr('stroke-width', (d: any) => {
-        const linkKey = `${typeof d.source === 'object' ? d.source.id : d.source}-${typeof d.target === 'object' ? d.target.id : d.target}`
+      .attr('stroke-width', (d) => {
+        const sourceId = (d.source as SimulationNode).id
+        const targetId = (d.target as SimulationNode).id
+        const linkKey = `${sourceId}-${targetId}`
         return selectedLink === linkKey ? 3 : 2
       })
-      .on('mouseover', function (event, d: any) {
-        const linkKey = `${typeof d.source === 'object' ? d.source.id : d.source}-${typeof d.target === 'object' ? d.target.id : d.target}`
+      .on('mouseover', function (_event, d) {
+        const sourceId = (d.source as SimulationNode).id
+        const targetId = (d.target as SimulationNode).id
+        const linkKey = `${sourceId}-${targetId}`
         setSelectedLink(linkKey)
         d3.select(this).attr('stroke-width', 3).attr('stroke-opacity', 1)
       })
@@ -109,7 +132,10 @@ const RelationshipGraph = ({ nodes, links, onDocumentClick }: RelationshipGraphP
       .enter()
       .append('text')
       .attr('class', 'relationship-link-label')
-      .text((d) => d.label || d.type)
+      .text((d) => {
+        const linkData = d as d3.SimulationLinkDatum<SimulationNode> & { type: string; label?: string | null }
+        return linkData.label || linkData.type
+      })
       .attr('font-size', '10px')
       .attr('fill', '#666')
       .attr('text-anchor', 'middle')
@@ -120,7 +146,7 @@ const RelationshipGraph = ({ nodes, links, onDocumentClick }: RelationshipGraphP
       .append('g')
       .attr('class', 'relationship-nodes')
       .selectAll('circle')
-      .data(nodes)
+      .data(simulationNodes)
       .enter()
       .append('circle')
       .attr('class', 'relationship-node')
@@ -131,7 +157,7 @@ const RelationshipGraph = ({ nodes, links, onDocumentClick }: RelationshipGraphP
       .attr('cursor', 'pointer')
       .call(
         d3
-          .drag<SVGCircleElement, RelationshipNode>()
+          .drag<SVGCircleElement, SimulationNode>()
           .on('start', dragstarted)
           .on('drag', dragged)
           .on('end', dragended)
@@ -143,11 +169,11 @@ const RelationshipGraph = ({ nodes, links, onDocumentClick }: RelationshipGraphP
           onDocumentClick(d.source_document, d.source_page)
         }
       })
-      .on('mouseover', function (event, d) {
+      .on('mouseover', function (_event, d) {
         setHoveredNode(d.id)
         d3.select(this).attr('stroke-width', 3).attr('stroke', '#fff')
       })
-      .on('mouseout', function (event, d) {
+      .on('mouseout', function (_event, d) {
         if (selectedNode !== d.id) {
           setHoveredNode(null)
           d3.select(this).attr('stroke-width', selectedNode === d.id ? 3 : 1).attr('stroke', '#000')
@@ -159,7 +185,7 @@ const RelationshipGraph = ({ nodes, links, onDocumentClick }: RelationshipGraphP
       .append('g')
       .attr('class', 'relationship-node-labels')
       .selectAll('text')
-      .data(nodes)
+      .data(simulationNodes)
       .enter()
       .append('text')
       .attr('class', 'relationship-node-label')
@@ -217,26 +243,29 @@ const RelationshipGraph = ({ nodes, links, onDocumentClick }: RelationshipGraphP
         .attr('x', (d: any) => (d.source.x + d.target.x) / 2)
         .attr('y', (d: any) => (d.source.y + d.target.y) / 2)
 
-      node.attr('cx', (d: any) => d.x).attr('cy', (d: any) => d.y)
+      node.attr('cx', (d) => (d as SimulationNode).x ?? 0).attr('cy', (d) => (d as SimulationNode).y ?? 0)
 
-      nodeLabels.attr('x', (d: any) => d.x).attr('y', (d: any) => d.y)
+      nodeLabels.attr('x', (d) => (d as SimulationNode).x ?? 0).attr('y', (d) => ((d as SimulationNode).y ?? 0) + 25)
     })
 
-    function dragstarted(event: d3.D3DragEvent<SVGCircleElement, RelationshipNode, RelationshipNode>) {
+    function dragstarted(event: d3.D3DragEvent<SVGCircleElement, SimulationNode, SimulationNode>) {
       if (!event.active) simulation.alphaTarget(0.3).restart()
-      event.subject.fx = event.subject.x
-      event.subject.fy = event.subject.y
+      const node = event.subject as SimulationNode
+      node.fx = node.x ?? 0
+      node.fy = node.y ?? 0
     }
 
-    function dragged(event: d3.D3DragEvent<SVGCircleElement, RelationshipNode, RelationshipNode>) {
-      event.subject.fx = event.x
-      event.subject.fy = event.y
+    function dragged(event: d3.D3DragEvent<SVGCircleElement, SimulationNode, SimulationNode>) {
+      const node = event.subject as SimulationNode
+      node.fx = event.x
+      node.fy = event.y
     }
 
-    function dragended(event: d3.D3DragEvent<SVGCircleElement, RelationshipNode, RelationshipNode>) {
+    function dragended(event: d3.D3DragEvent<SVGCircleElement, SimulationNode, SimulationNode>) {
       if (!event.active) simulation.alphaTarget(0)
-      event.subject.fx = null
-      event.subject.fy = null
+      const node = event.subject as SimulationNode
+      node.fx = null
+      node.fy = null
     }
 
     // Cleanup
