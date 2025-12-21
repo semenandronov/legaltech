@@ -217,13 +217,13 @@ const RelationshipGraph = ({ nodes, links, onDocumentClick }: RelationshipGraphP
           .transition()
           .duration(200)
           .style('opacity', 1)
+        tooltip.html(
+          `<strong>${d.label}</strong><br/>` +
+          `Тип: ${d.type}<br/>` +
+          (d.source_document ? `Документ: ${d.source_document}<br/>` : '') +
+          (d.source_page ? `Стр. ${d.source_page}` : '')
+        )
         tooltip
-          .html(
-            `<strong>${d.label}</strong><br/>` +
-            `Тип: ${d.type}<br/>` +
-            (d.source_document ? `Документ: ${d.source_document}<br/>` : '') +
-            (d.source_page ? `Стр. ${d.source_page}` : '')
-          )
           .style('left', event.pageX + 10 + 'px')
           .style('top', event.pageY - 10 + 'px')
       })
