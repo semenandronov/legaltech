@@ -88,7 +88,7 @@ class YandexIndexService:
     
     def _upload_original_files(self, original_files: Dict[str, bytes]) -> List[Any]:
         """
-        Upload original files to Vector Store and return file IDs
+        Upload original files to Vector Store and return file objects
         
         ВАЖНО: Загружаем ОРИГИНАЛЬНЫЕ файлы (PDF, DOCX и т.д.) напрямую в Yandex Vector Store.
         LangChain используется только для обработки на нашей стороне (БД).
@@ -96,8 +96,8 @@ class YandexIndexService:
         Args:
             original_files: Dict[str, bytes] - оригинальные файлы {filename: content}
             
-        Returns:
-            List of file IDs
+            Returns:
+            List of file objects (for passing to create_deferred)
             
         Raises:
             NotImplementedError: If SDK does not support files.upload()
