@@ -234,17 +234,21 @@ class YandexIndexService:
                 if hasattr(search_indexes, 'create_deferred'):
                     logger.info(f"Creating index using create_deferred method with {len(file_ids)} files...")
                     
-                    # ВАЖНО: create_deferred требует список ID файлов, НЕ пустой список
+                    # ВАЖНО: create_deferred требует список файлов (объектов), НЕ пустой список
+                    # Согласно документации: sdk.search_indexes.create_deferred(files, ...)
+                    # где files - это список объектов файлов, полученных из sdk.files.upload()
                     if not file_ids:
                         raise ValueError(
-                            "create_deferred requires files parameter (list of file IDs). "
+                            "create_deferred requires files parameter (list of file objects). "
                             "Cannot create index without files. Please provide documents when calling create_index."
                         )
                     
-                    index = search_indexes.create_deferred(
+                    # Согласно документации, create_deferred принимает файлы первым позиционным параметром
+                    # и дополнительные параметры через именованные параметры
+                    index = self.sdk.search_indexes.create_deferred(
+                        file_ids,  # Список объектов файлов (первый позиционный параметр)
                         name=index_name,
-                        description=f"Index for case {case_id}",
-                        files=file_ids  # Список ID загруженных файлов
+                        description=f"Index for case {case_id}"
                     )
                     index_id = index.id if hasattr(index, 'id') else str(index)
                     logger.info(f"✅ Created search index {index_id} for case {case_id} with {len(file_ids)} files (deferred)")
