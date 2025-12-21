@@ -63,11 +63,20 @@ const ChatWindow = ({ caseId, onDocumentClick }: ChatWindowProps) => {
   }, [caseId])
 
   useEffect(() => {
-    scrollToBottom()
+    // Perplexity-style smooth scroll with delay for better UX
+    const timer = setTimeout(() => {
+      scrollToBottom()
+    }, 100)
+    return () => clearTimeout(timer)
   }, [messages, isLoading])
 
   const scrollToBottom = () => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
+    if (messagesEndRef.current) {
+      messagesEndRef.current.scrollIntoView({ 
+        behavior: 'smooth',
+        block: 'end'
+      })
+    }
   }
 
   // Type guard to check if source is SourceInfo
@@ -132,8 +141,14 @@ const ChatWindow = ({ caseId, onDocumentClick }: ChatWindowProps) => {
     if (!customMessage) {
       setInputValue('')
     }
-    setIsLoading(true)
     setError(null)
+    
+    // Perplexity-style: smooth scroll after user message
+    setTimeout(() => {
+      scrollToBottom()
+    }, 150)
+    
+    setIsLoading(true)
 
     try {
       const response = await sendMessage(caseId, userMessage.content)
@@ -144,6 +159,11 @@ const ChatWindow = ({ caseId, onDocumentClick }: ChatWindowProps) => {
         sources: response.sources || [],
       }
       setMessages((prev) => [...prev, assistantMessage])
+      
+      // Perplexity-style: smooth scroll after AI response
+      setTimeout(() => {
+        scrollToBottom()
+      }, 200)
       
       // Save user message to history for undo (not assistant response)
       setActionHistory(prev => [...prev, {
@@ -543,19 +563,7 @@ const ChatWindow = ({ caseId, onDocumentClick }: ChatWindowProps) => {
           </div>
         </div>
       )}
-      <div className="chat-header">
-        <h3 className="chat-header-title">🤖 E-Discovery Assistant</h3>
-        {actionHistory.length > 0 && (
-          <button
-            className="chat-undo-button"
-            onClick={handleUndo}
-            title="Отменить последнее действие"
-            aria-label="Отменить последнее действие"
-          >
-            ↶ Undo
-          </button>
-        )}
-      </div>
+      {/* Header removed for Perplexity style */}
 
       {!hasMessages && !isLoading && !historyError && (
         <QuickButtons
@@ -629,9 +637,6 @@ const ChatWindow = ({ caseId, onDocumentClick }: ChatWindowProps) => {
               {message.role === 'assistant' && (
                 <div className="message-avatar assistant-avatar">AI</div>
               )}
-              {message.role === 'user' && (
-                <div className="message-avatar user-avatar">You</div>
-              )}
               <div className={`message-bubble ${message.role}`}>
                 <div className="message-text">
                   <ReactMarkdown>{message.content}</ReactMarkdown>
@@ -645,7 +650,7 @@ const ChatWindow = ({ caseId, onDocumentClick }: ChatWindowProps) => {
                 
                 {message.role === 'assistant' && confidence !== null && (
                   <div style={{ marginTop: '8px' }}>
-                    <span style={{ fontSize: '12px', color: '#6b7280' }}>Уверенность: </span>
+                    <span style={{ fontSize: '12px', color: 'var(--color-text-secondary)' }}>Уверенность: </span>
                     <ConfidenceBadge confidence={confidence} />
                   </div>
                 )}
@@ -713,6 +718,9 @@ const ChatWindow = ({ caseId, onDocumentClick }: ChatWindowProps) => {
                   </div>
                 )}
               </div>
+              {message.role === 'user' && (
+                <div className="message-avatar user-avatar">You</div>
+              )}
             </div>
           )
         })}
@@ -759,7 +767,7 @@ const ChatWindow = ({ caseId, onDocumentClick }: ChatWindowProps) => {
             <div className="chat-input-container">
               <textarea
                 className="chat-input-textarea"
-                placeholder="Сообщение Legal AI... (начните с / для команд или перетащите файлы)"
+                placeholder="Задайте вопрос..."
                 value={inputValue}
                 onChange={handleTextareaChange}
                 onKeyDown={handleKeyDown}

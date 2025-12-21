@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { NavLink, useNavigate, useLocation } from 'react-router-dom'
 import { ChevronLeft, ChevronRight, Home, Settings, LogOut } from 'lucide-react'
 import { useAuth } from '../../contexts/AuthContext'
@@ -9,6 +9,13 @@ const Sidebar = () => {
   const navigate = useNavigate()
   const location = useLocation()
   const [isCollapsed, setIsCollapsed] = useState(false)
+
+  useEffect(() => {
+    const root = document.querySelector('.dashboard-root') as HTMLElement
+    if (root) {
+      root.setAttribute('data-sidebar-collapsed', String(isCollapsed))
+    }
+  }, [isCollapsed])
 
   const handleLogout = async () => {
     await logout()
@@ -21,7 +28,7 @@ const Sidebar = () => {
   ]
 
   return (
-    <aside className={`bg-secondary border-r border-border flex flex-col transition-all duration-300 ${
+    <aside className={`bg-secondary border-r border-border flex flex-col transition-all duration-300 fixed left-0 top-0 h-screen z-50 ${
       isCollapsed ? 'w-[60px]' : 'w-[260px]'
     }`}>
       {/* Header */}

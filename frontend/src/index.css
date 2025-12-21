@@ -8,8 +8,53 @@
 @tailwind utilities;
 
 /* Theme CSS Variables for Dark and Light Modes */
-/* Dark Mode (Default) */
+/* Light Mode - Default (Perplexity style) */
 :root {
+  /* Background colors */
+  --bg-primary: #FFFFFF;
+  --bg-secondary: #F8F9FA;
+  --bg-tertiary: #F0F2F5;
+  --border: #E5E8EB;
+  
+  /* Text colors */
+  --text-primary: #0F1419;
+  --text-secondary: #666B78;
+  --text-disabled: #B8BCC5;
+  
+  /* Accent colors */
+  --primary: #00BDD4;
+  --primary-hover: #00A8BD;
+  --success: #22AB94;
+  --warning: #F59E0B;
+  --error: #DC3545;
+  --info: #00BDD4;
+  
+  /* Document type colors */
+  --doc-contract: #7B1FA2;
+  --doc-email: #E65100;
+  --doc-court: #C62828;
+  --doc-sanction: #880E4F;
+  --doc-compliance: #00838F;
+  
+  /* Chat variables - Light theme (Perplexity) */
+  --color-bg: #FFFFFF;
+  --color-surface: #F8F9FA;
+  --color-surface-alt: #F0F2F5;
+  --color-border: #E5E8EB;
+  --color-text: #0F1419;
+  --color-text-secondary: #666B78;
+  --color-text-muted: #B8BCC5;
+  --color-primary: #00BDD4;
+  --color-primary-hover: #00A8BD;
+  --color-hover: #F0F2F5;
+  --color-active: #E5E8EB;
+  --color-message-user: #00BDD4;
+  --color-message-assistant: #F8F9FA;
+  --color-error: #DC3545;
+}
+
+/* Dark Mode */
+:root[data-theme="dark"] {
   /* Background colors */
   --bg-primary: #0F1419;
   --bg-secondary: #1A2332;
@@ -29,41 +74,28 @@
   --error: #FF5370;
   --info: #00BDD4;
   
-  /* Document type colors */
+  /* Document type colors (same for both modes) */
   --doc-contract: #9C27B0;
   --doc-email: #FF6F00;
   --doc-court: #D32F2F;
   --doc-sanction: #880E4F;
   --doc-compliance: #00838F;
-}
-
-/* Light Mode */
-:root[data-theme="light"] {
-  /* Background colors */
-  --bg-primary: #FFFFFF;
-  --bg-secondary: #F8F9FA;
-  --bg-tertiary: #F0F2F5;
-  --border: #E5E8EB;
   
-  /* Text colors */
-  --text-primary: #0F1419;
-  --text-secondary: #666B78;
-  --text-disabled: #B8BCC5;
-  
-  /* Accent colors */
-  --primary: #0866FF;
-  --primary-hover: #0756E0;
-  --success: #22AB94;
-  --warning: #F59E0B;
-  --error: #DC3545;
-  --info: #0288D1;
-  
-  /* Document type colors (same for both modes) */
-  --doc-contract: #7B1FA2;
-  --doc-email: #E65100;
-  --doc-court: #C62828;
-  --doc-sanction: #880E4F;
-  --doc-compliance: #00838F;
+  /* Chat variables - Dark theme */
+  --color-bg: #0F1419;
+  --color-surface: #1A2332;
+  --color-surface-alt: #242F3F;
+  --color-border: #3A4556;
+  --color-text: #F5F5F5;
+  --color-text-secondary: #A0A8B8;
+  --color-text-muted: #5A6476;
+  --color-primary: #00BDD4;
+  --color-primary-hover: #00A8BD;
+  --color-hover: #1A2332;
+  --color-active: #242F3F;
+  --color-message-user: #00BDD4;
+  --color-message-assistant: #1A2332;
+  --color-error: #FF5370;
 }
 
 /* Utility classes for theme colors */
