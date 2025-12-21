@@ -151,7 +151,13 @@ class YandexIndexService:
                 
                 try:
                     # SDK files.upload() принимает путь к файлу как строку
-                    uploaded_file = self.sdk.files.upload(tmp_path)
+                    # Согласно документации: file = sdk.files.upload("<путь_к_файлу>", ttl_days=5, expiration_policy="static")
+                    # Файлы будут храниться 30 дней (для юридических документов нужно долгое хранение)
+                    uploaded_file = self.sdk.files.upload(
+                        tmp_path,
+                        ttl_days=30,
+                        expiration_policy="static"
+                    )
                     
                     # Получаем объект файла (не только ID, а весь объект для передачи в create_deferred)
                     # Согласно документации, create_deferred принимает список файлов (объектов)
