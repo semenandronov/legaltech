@@ -16,11 +16,16 @@ logger = logging.getLogger(__name__)
 
 # ВАЖНО: Используйте Vector Store API для создания поисковых индексов
 # Документация: https://yandex.cloud/docs/ai-studio/concepts/vector-store
+# Примеры использования: https://github.com/yandex-cloud/yandex-cloud-ml-sdk
 # Старый Index API (/foundationModels/v1/indexes) устарел и возвращает 404
 # Vector Store API работает через:
-# 1. Загрузку файлов в Vector Store
-# 2. Создание индекса из загруженных файлов
+# 1. Загрузку файлов в Vector Store через sdk.files.upload()
+# 2. Создание индекса из загруженных файлов через sdk.search_indexes.create_deferred()
 # 3. Использование индекса через Responses API или Realtime API с инструментом file_search
+#
+# Примеры из репозитория GitHub:
+# - search-assistant.py - создание RAG-ассистента с Vector Store
+# - assistant-text.py / assistant-hybrid.py - создание ассистентов с разными типами индексов
 
 
 class YandexIndexService:
