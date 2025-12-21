@@ -348,42 +348,49 @@ class CaseVectorStore:
         
         try:
             with self.engine.connect() as conn:
-                # Build filter condition for JSONB
+                # Build filter condition for JSONB (escape single quotes for SQL safety)
                 filter_conditions = []
                 for key, value in search_filter.items():
-                    filter_conditions.append(f"document->'metadata'->>'{key}' = '{value}'")
+                    # Escape single quotes in value
+                    escaped_value = str(value).replace("'", "''")
+                    filter_conditions.append(f"document->'metadata'->>'{key}' = '{escaped_value}'")
                 filter_sql = " AND ".join(filter_conditions) if filter_conditions else "1=1"
                 
-                # Perform similarity search using cosine distance
-                # Note: pgvector uses <-> operator for cosine distance (lower is better)
-                results = conn.execute(
-                    text(f"""
-                        SELECT uuid, document, 
-                               1 - (embedding <=> :query_embedding::vector) as similarity
-                        FROM {VectorEmbedding.__tablename__}
-                        WHERE collection_id = :collection_id
-                          AND {filter_sql}
-                        ORDER BY embedding <=> :query_embedding::vector
-                        LIMIT :k
-                    """),
-                    {
-                        "query_embedding": query_embedding_str,
-                        "collection_id": self.collection_name,
-                        "k": k
-                    }
+                # Use raw psycopg2 cursor to avoid SQLAlchemy parameter style conflicts
+                table_name = VectorEmbedding.__tablename__
+                sql = f"""
+                    SELECT uuid, document, 
+                           1 - (embedding <=> %s::vector) as similarity
+                    FROM {table_name}
+                    WHERE collection_id = %s
+                      AND {filter_sql}
+                    ORDER BY embedding <=> %s::vector
+                    LIMIT %s
+                """
+                
+                raw_conn = conn.connection.dbapi_connection
+                cursor = raw_conn.cursor()
+                cursor.execute(
+                    sql,
+                    (query_embedding_str, self.collection_name, query_embedding_str, k)
                 )
                 
                 documents = []
-                for row in results:
-                    doc_data = row.document
+                for row in cursor.fetchall():
+                    doc_data = row[1]  # document column is at index 1
                     if isinstance(doc_data, str):
                         doc_data = json.loads(doc_data)
+                    elif isinstance(doc_data, dict):
+                        pass  # Already a dict
+                    else:
+                        doc_data = {}
                     
                     doc = Document(
                         page_content=doc_data.get("page_content", ""),
                         metadata=doc_data.get("metadata", {})
                     )
                     documents.append(doc)
+                cursor.close()
                 
                 logger.debug(f"Found {len(documents)} similar documents for case {case_id}")
                 return documents
