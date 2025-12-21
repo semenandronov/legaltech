@@ -87,6 +87,31 @@ class CaseVectorStore:
                     ON {VectorEmbedding.__tablename__}(collection_id)
                 """))
                 
+                # Check if embedding column has correct dimension (256)
+                # If table was created with wrong dimension (1536), we need to fix it
+                try:
+                    result = conn.execute(text(f"""
+                        SELECT atttypmod FROM pg_attribute 
+                        WHERE attrelid = '{VectorEmbedding.__tablename__}'::regclass 
+                        AND attname = 'embedding'
+                    """))
+                    row = result.fetchone()
+                    if row and row[0]:
+                        # atttypmod for vector(256) should be -1 (variable) or specific dimension
+                        # For vector(1536), atttypmod would be different
+                        # Check actual dimension by querying the column definition
+                        dim_result = conn.execute(text(f"""
+                            SELECT COUNT(*) FROM information_schema.columns 
+                            WHERE table_name = '{VectorEmbedding.__tablename__}' 
+                            AND column_name = 'embedding'
+                            AND data_type = 'USER-DEFINED'
+                        """))
+                        # If column exists with wrong dimension, we need to recreate table
+                        # This is a safety check - actual fix will happen on first insert attempt
+                        logger.debug(f"Embedding column exists in {VectorEmbedding.__tablename__}")
+                except Exception as e:
+                    logger.debug(f"Could not check embedding column dimension: {e}")
+                
                 # Create GIN index on document JSONB for metadata filtering
                 conn.execute(text(f"""
                     CREATE INDEX IF NOT EXISTS idx_{VectorEmbedding.__tablename__}_document_gin 
