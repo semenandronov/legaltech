@@ -153,22 +153,24 @@ class CaseVectorStore:
                     
                     # Convert embedding list to PostgreSQL array format string
                     embedding_array_str = '[' + ','.join(str(float(x)) for x in embedding) + ']'
+                    document_json_str = json.dumps(doc_json)
                     
-                    # Insert into database - use explicit parameter binding
+                    # Insert into database - use explicit parameter binding with unique parameter names
                     table_name = VectorEmbedding.__tablename__
-                    stmt = text(
+                    sql_str = (
                         f"INSERT INTO {table_name} "
                         "(uuid, collection_id, embedding, document, custom_id) "
-                        "VALUES (:uuid, :collection_id, :embedding::vector, :document::jsonb, :custom_id)"
+                        "VALUES (:uuid_param, :collection_id_param, :embedding_param::vector, :document_param::jsonb, :custom_id_param)"
                     )
+                    stmt = text(sql_str)
                     conn.execute(
                         stmt,
                         {
-                            "uuid": doc_id,
-                            "collection_id": self.collection_name,
-                            "embedding": embedding_array_str,
-                            "document": json.dumps(doc_json),
-                            "custom_id": doc_id
+                            "uuid_param": doc_id,
+                            "collection_id_param": self.collection_name,
+                            "embedding_param": embedding_array_str,
+                            "document_param": document_json_str,
+                            "custom_id_param": doc_id
                         }
                     )
             
@@ -218,22 +220,24 @@ class CaseVectorStore:
                     
                     # Convert embedding list to PostgreSQL array format string
                     embedding_array_str = '[' + ','.join(str(float(x)) for x in embedding) + ']'
+                    document_json_str = json.dumps(doc_json)
                     
-                    # Insert into database - use explicit parameter binding
+                    # Insert into database - use explicit parameter binding with unique parameter names
                     table_name = VectorEmbedding.__tablename__
-                    stmt = text(
+                    sql_str = (
                         f"INSERT INTO {table_name} "
                         "(uuid, collection_id, embedding, document, custom_id) "
-                        "VALUES (:uuid, :collection_id, :embedding::vector, :document::jsonb, :custom_id)"
+                        "VALUES (:uuid_param, :collection_id_param, :embedding_param::vector, :document_param::jsonb, :custom_id_param)"
                     )
+                    stmt = text(sql_str)
                     conn.execute(
                         stmt,
                         {
-                            "uuid": doc_id,
-                            "collection_id": self.collection_name,
-                            "embedding": embedding_array_str,
-                            "document": json.dumps(doc_json),
-                            "custom_id": doc_id
+                            "uuid_param": doc_id,
+                            "collection_id_param": self.collection_name,
+                            "embedding_param": embedding_array_str,
+                            "document_param": document_json_str,
+                            "custom_id_param": doc_id
                         }
                     )
             
