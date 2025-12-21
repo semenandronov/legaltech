@@ -151,6 +151,9 @@ class CaseVectorStore:
                         "metadata": doc.metadata
                     }
                     
+                    # Convert embedding list to PostgreSQL array format string
+                    embedding_array_str = '[' + ','.join(str(float(x)) for x in embedding) + ']'
+                    
                     # Insert into database
                     conn.execute(
                         text(f"""
@@ -161,7 +164,7 @@ class CaseVectorStore:
                         {
                             "uuid": doc_id,
                             "collection_id": self.collection_name,
-                            "embedding": str(embedding),  # Convert to string for vector type
+                            "embedding": embedding_array_str,
                             "document": json.dumps(doc_json),
                             "custom_id": doc_id
                         }
@@ -211,6 +214,9 @@ class CaseVectorStore:
                         "metadata": metadata
                     }
                     
+                    # Convert embedding list to PostgreSQL array format string
+                    embedding_array_str = '[' + ','.join(str(float(x)) for x in embedding) + ']'
+                    
                     # Insert into database
                     conn.execute(
                         text(f"""
@@ -221,7 +227,7 @@ class CaseVectorStore:
                         {
                             "uuid": doc_id,
                             "collection_id": self.collection_name,
-                            "embedding": str(embedding),  # Convert to string for vector type
+                            "embedding": embedding_array_str,
                             "document": json.dumps(doc_json),
                             "custom_id": doc_id
                         }
