@@ -97,6 +97,17 @@ class YandexAssistantService:
             else:
                 model_config = f"gpt://{app_config.YANDEX_FOLDER_ID}/{model_config}/latest"
         
+        default_system_prompt = """Ты эксперт по анализу юридических документов.
+Ты отвечаешь на вопросы на основе документов из векторного хранилища.
+
+ВАЖНО:
+- ВСЕГДА указывай конкретные источники в формате: [Документ: filename.pdf, стр. 5, строки 12-15]
+- Если информация не найдена в документах - скажи честно
+- Не давай юридических советов, только анализ фактов из документов
+- Используй точные цитаты из документов когда это возможно"""
+        
+        system_prompt = config.get("system_prompt", default_system_prompt) if config else default_system_prompt
+        
         assistant_config = {
             "name": assistant_name,
             "description": f"Legal AI Assistant for case {case_id}",
@@ -107,17 +118,7 @@ class YandexAssistantService:
                     "index_id": index_id
                 }
             ],
-            "system_prompt": config.get(
-                "system_prompt",
-                """Ты эксперт по анализу юридических документов.
-Ты отвечаешь на вопросы на основе документов из векторного хранилища.
-
-ВАЖНО:
-- ВСЕГДА указывай конкретные источники в формате: [Документ: filename.pdf, стр. 5, строки 12-15]
-- Если информация не найдена в документах - скажи честно
-- Не давай юридических советов, только анализ фактов из документов
-- Используй точные цитаты из документов когда это возможно"""
-            )
+            "system_prompt": system_prompt
         }
         
         # Merge with custom config if provided

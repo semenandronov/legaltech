@@ -78,7 +78,7 @@ class YandexIndexService:
         try:
             auth = APIKeyAuth(self.api_key) if self.use_api_key else self.iam_token
             self.sdk = YCloudML(folder_id=self.folder_id, auth=auth)
-            logger.info("✅ Yandex Cloud ML SDK initialized for Vector Store")
+            logger.info(f"✅ Yandex Cloud ML SDK initialized for Vector Store with folder_id: {self.folder_id}")
         except Exception as e:
             logger.error(f"Failed to initialize Yandex Cloud ML SDK: {e}", exc_info=True)
             self.sdk = None
