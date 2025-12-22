@@ -6,15 +6,15 @@ import ProfileTab from '../components/Settings/ProfileTab'
 import NotificationsTab from '../components/Settings/NotificationsTab'
 import IntegrationsTab from '../components/Settings/IntegrationsTab'
 import SecurityTab from '../components/Settings/SecurityTab'
-import { getProfile, getNotifications, getIntegrations } from '../services/api'
+import { getProfile, getNotifications, getIntegrations, UserProfile, NotificationSettings, IntegrationSettings } from '../services/api'
 import './SettingsPage.css'
 
 const SettingsPage = () => {
   const navigate = useNavigate()
   const [activeTab, setActiveTab] = useState('profile')
-  const [profile, setProfile] = useState<any>(null)
-  const [notifications, setNotifications] = useState<any>(null)
-  const [integrations, setIntegrations] = useState<any>(null)
+  const [profile, setProfile] = useState<UserProfile | null>(null)
+  const [notifications, setNotifications] = useState<NotificationSettings | null>(null)
+  const [integrations, setIntegrations] = useState<IntegrationSettings | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
 
@@ -34,9 +34,11 @@ const SettingsPage = () => {
       setProfile(profileData)
       setNotifications(notificationsData)
       setIntegrations(integrationsData)
-    } catch (error: any) {
-      console.error('Ошибка при загрузке настроек:', error)
-      setError(error.response?.data?.detail || 'Ошибка при загрузке настроек')
+    } catch (error: unknown) {
+      const errorMessage = error && typeof error === 'object' && 'response' in error
+        ? (error as { response?: { data?: { detail?: string } } }).response?.data?.detail || 'Ошибка при загрузке настроек'
+        : 'Ошибка при загрузке настроек'
+      setError(errorMessage)
     } finally {
       setLoading(false)
     }

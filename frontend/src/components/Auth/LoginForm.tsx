@@ -1,32 +1,59 @@
+"use client"
+
 import { useState } from 'react'
 import { useAuth } from '../../contexts/AuthContext'
-import './Auth.css'
+import { useForm } from 'react-hook-form'
+import { zodResolver } from '@hookform/resolvers/zod'
+import * as z from 'zod'
+import { toast } from 'sonner'
+import {
+  Form,
+  FormControl,
+  FormDescription,
+  FormField,
+  FormItem,
+  FormLabel,
+  FormMessage,
+} from '@/components/UI/form'
+import Input from '@/components/UI/Input'
+import { Button } from '@/components/UI/Button'
+import { Alert, AlertDescription } from '@/components/UI/alert'
+
+const loginSchema = z.object({
+  email: z.string().email('Некорректный email адрес'),
+  password: z.string().min(8, 'Пароль должен содержать минимум 8 символов'),
+})
+
+type LoginFormValues = z.infer<typeof loginSchema>
 
 const LoginForm = () => {
-  const [email, setEmail] = useState('')
-  const [password, setPassword] = useState('')
   const [error, setError] = useState<string | null>(null)
-  const [loading, setLoading] = useState(false)
   const { login } = useAuth()
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault()
-    setError(null)
-    setLoading(true)
+  const form = useForm<LoginFormValues>({
+    resolver: zodResolver(loginSchema),
+    defaultValues: {
+      email: '',
+      password: '',
+    },
+  })
 
+  const handleSubmit = async (values: LoginFormValues) => {
+    setError(null)
+    
     try {
-      await login(email, password)
-    } catch (err: any) {
-      // Улучшенная обработка ошибок
+      await login(values.email, values.password)
+      toast.success('Успешный вход в систему')
+    } catch (err: unknown) {
       let errorMessage = 'Ошибка при входе. Проверьте email и пароль.'
       
-      if (err.response) {
-        const data = err.response.data
+      if (err && typeof err === 'object' && 'response' in err) {
+        const axiosError = err as { response?: { data?: { detail?: string | Array<{ loc?: string[]; msg?: string }>; message?: string } } }
+        const data = axiosError.response?.data
         if (typeof data?.detail === 'string') {
           errorMessage = data.detail
         } else if (Array.isArray(data?.detail)) {
-          // Ошибки валидации Pydantic
-          errorMessage = data.detail.map((e: any) => {
+          errorMessage = data.detail.map((e) => {
             const field = e.loc?.join('.') || 'field'
             return `${field}: ${e.msg || 'validation error'}`
           }).join('; ')
@@ -35,13 +62,12 @@ const LoginForm = () => {
         } else if (data?.message) {
           errorMessage = String(data.message)
         }
-      } else if (err.message) {
+      } else if (err && typeof err === 'object' && 'message' in err && typeof err.message === 'string') {
         errorMessage = err.message
       }
       
       setError(errorMessage)
-    } finally {
-      setLoading(false)
+      toast.error(errorMessage)
     }
   }
 
@@ -51,50 +77,68 @@ const LoginForm = () => {
         <h2 className="auth-title">Вход в систему</h2>
         <p className="auth-subtitle">Войдите в свой аккаунт для продолжения</p>
 
-        {error && <div className="auth-error">{error}</div>}
+        {error && (
+          <Alert variant="destructive" className="mb-4">
+            <AlertDescription>{error}</AlertDescription>
+          </Alert>
+        )}
 
-        <form onSubmit={handleSubmit} className="auth-form">
-          <div className="auth-field">
-            <label htmlFor="email" className="auth-label">
-              Email
-            </label>
-            <input
-              id="email"
-              type="email"
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              required
-              className="auth-input"
-              placeholder="your@email.com"
-              disabled={loading}
+        <Form {...form}>
+          <form onSubmit={form.handleSubmit(handleSubmit)} className="auth-form space-y-4">
+            <FormField
+              control={form.control}
+              name="email"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Email</FormLabel>
+                  <FormControl>
+                    <Input
+                      type="email"
+                      placeholder="your@email.com"
+                      disabled={form.formState.isSubmitting}
+                      {...field}
+                    />
+                  </FormControl>
+                  <FormMessage />
+                </FormItem>
+              )}
             />
-          </div>
 
-          <div className="auth-field">
-            <label htmlFor="password" className="auth-label">
-              Пароль
-            </label>
-            <input
-              id="password"
-              type="password"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              required
-              className="auth-input"
-              placeholder="••••••••"
-              disabled={loading}
-              minLength={8}
+            <FormField
+              control={form.control}
+              name="password"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Пароль</FormLabel>
+                  <FormControl>
+                    <Input
+                      type="password"
+                      placeholder="••••••••"
+                      disabled={form.formState.isSubmitting}
+                      {...field}
+                    />
+                  </FormControl>
+                  <FormDescription>
+                    Минимум 8 символов
+                  </FormDescription>
+                  <FormMessage />
+                </FormItem>
+              )}
             />
-          </div>
 
-          <button type="submit" className="auth-button" disabled={loading}>
-            {loading ? 'Вход...' : 'Войти'}
-          </button>
-        </form>
+            <Button
+              type="submit"
+              className="w-full"
+              disabled={form.formState.isSubmitting}
+              isLoading={form.formState.isSubmitting}
+            >
+              {form.formState.isSubmitting ? 'Вход...' : 'Войти'}
+            </Button>
+          </form>
+        </Form>
       </div>
     </div>
   )
 }
 
 export default LoginForm
-

@@ -1,6 +1,6 @@
 import * as React from "react"
 import { Slot } from "@radix-ui/react-slot"
-import { cva } from "class-variance-authority"
+import { cva, type VariantProps } from "class-variance-authority"
 
 import { cn } from "@/lib/utils"
 
@@ -18,10 +18,7 @@ const buttonVariants = cva(
           "bg-secondary text-secondary-foreground hover:bg-secondary/80",
         ghost: "hover:bg-accent hover:text-accent-foreground",
         link: "text-primary underline-offset-4 hover:underline",
-        // Additional variants for backward compatibility
-        primary: "bg-primary text-primary-foreground hover:bg-primary/90",
-        danger: "bg-destructive text-destructive-foreground hover:bg-destructive/90",
-      } as const,
+      },
       size: {
         default: "h-10 px-4 py-2",
         sm: "h-9 rounded-md px-3",
@@ -36,38 +33,24 @@ const buttonVariants = cva(
   }
 )
 
-type ButtonVariant = "default" | "destructive" | "outline" | "secondary" | "ghost" | "link" | "primary" | "danger"
-
-interface ButtonProps
-  extends Omit<React.ButtonHTMLAttributes<HTMLButtonElement>, "variant"> {
+export interface ButtonProps
+  extends React.ButtonHTMLAttributes<HTMLButtonElement>,
+    VariantProps<typeof buttonVariants> {
   asChild?: boolean
-  isLoading?: boolean
-  variant?: ButtonVariant
-  size?: "default" | "sm" | "lg" | "icon"
 }
 
 const Button = React.forwardRef<HTMLButtonElement, ButtonProps>(
-  ({ className, variant, size, asChild = false, isLoading, disabled, children, ...props }, ref) => {
+  ({ className, variant, size, asChild = false, ...props }, ref) => {
     const Comp = asChild ? Slot : "button"
     return (
       <Comp
-        className={cn(buttonVariants({ variant: variant as any, size, className }))}
+        className={cn(buttonVariants({ variant, size, className }))}
         ref={ref}
-        disabled={disabled || isLoading}
         {...props}
-      >
-        {isLoading ? (
-          <>
-            <span className="mr-2">...</span>
-            {children}
-          </>
-        ) : children}
-      </Comp>
+      />
     )
   }
 )
 Button.displayName = "Button"
 
-export type { ButtonProps, ButtonVariant }
 export { Button, buttonVariants }
-export default Button

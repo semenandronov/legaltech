@@ -5,7 +5,7 @@ services:
     buildCommand: |
       pip install --upgrade pip &&
       pip install -r backend/requirements.txt &&
-      cd frontend && npm install --legacy-peer-deps && npm run build
+      cd frontend && npm install --legacy-peer-deps && npm run type-check && npm run build
     startCommand: cd backend && uvicorn app.main:app --host 0.0.0.0 --port $PORT
     envVars:
       # Database
@@ -31,6 +31,10 @@ services:
       # CORS
       - key: CORS_ORIGINS
         value: "*"
+      
+      # Frontend Environment Variables
+      - key: VITE_API_URL
+        sync: false  # Should be set to the Render service URL
       
       # Multi-Agent System
       - key: AGENT_ENABLED

@@ -21,6 +21,7 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/comp
 import { Alert, AlertDescription, AlertTitle } from '@/components/UI/alert'
 import { Skeleton } from '@/components/UI/Skeleton'
 import { cn } from '@/lib/utils'
+import { logger } from '@/lib/logger'
 
 interface Message {
   role: 'user' | 'assistant'
@@ -178,7 +179,7 @@ const ChatWindow = ({ caseId, onDocumentClick }: ChatWindowProps) => {
         })),
       )
     } catch (err: any) {
-      console.error('Ошибка при загрузке истории:', err)
+      logger.error('Ошибка при загрузке истории:', err)
       setHistoryError(err.response?.data?.detail || 'Ошибка при загрузке истории сообщений')
     }
   }

@@ -13,6 +13,7 @@ import { useState, useEffect } from 'react'
 import ChatWindow from './components/ChatWindow'
 import Sidebar from './components/Layout/Sidebar'
 import { getCase } from './services/api'
+import { logger } from './lib/logger'
 
 function App() {
   return (
@@ -112,7 +113,7 @@ const CaseChatPage = () => {
       const caseData = await getCase(caseId)
       setFileNames(caseData.file_names || [])
     } catch (error) {
-      console.error('Ошибка при загрузке дела:', error)
+      logger.error('Ошибка при загрузке дела:', error)
     }
   }
 

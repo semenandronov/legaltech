@@ -41,8 +41,11 @@ const SecurityTab = ({}: SecurityTabProps) => {
       setNewPassword('')
       setConfirmPassword('')
       setTimeout(() => setSuccess(false), 3000)
-    } catch (err: any) {
-      setError(err.response?.data?.detail || 'Ошибка при изменении пароля')
+    } catch (err: unknown) {
+      const errorMessage = err && typeof err === 'object' && 'response' in err
+        ? (err as { response?: { data?: { detail?: string } } }).response?.data?.detail || 'Ошибка при изменении пароля'
+        : 'Ошибка при изменении пароля'
+      setError(errorMessage)
     } finally {
       setLoading(false)
     }

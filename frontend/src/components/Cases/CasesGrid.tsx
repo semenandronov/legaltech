@@ -1,9 +1,10 @@
-import { LayoutGrid, List } from 'lucide-react'
+import { LayoutGrid, List, Table2 } from 'lucide-react'
 import { CaseListItem } from '../../services/api'
 import CaseCard from './CaseCard'
 import Pagination from '../UI/Pagination'
-import { Skeleton } from '../UI/Skeleton'
+import { Skeleton } from '../UI/skeleton'
 import { Button } from '../UI/Button'
+import { CasesTable } from './CasesTable'
 
 interface CasesGridProps {
   cases: CaseListItem[]
@@ -11,8 +12,8 @@ interface CasesGridProps {
   loading: boolean
   currentPage: number
   onPageChange: (page: number) => void
-  viewMode: 'grid' | 'list'
-  onViewModeChange: (mode: 'grid' | 'list') => void
+  viewMode: 'grid' | 'list' | 'table'
+  onViewModeChange: (mode: 'grid' | 'list' | 'table') => void
 }
 
 const CasesGrid = ({
@@ -73,12 +74,21 @@ const CasesGrid = ({
           >
             <List className="w-4 h-4" />
           </Button>
+          <Button
+            variant={viewMode === 'table' ? 'primary' : 'secondary'}
+            size="sm"
+            onClick={() => onViewModeChange('table')}
+          >
+            <Table2 className="w-4 h-4" />
+          </Button>
         </div>
       </div>
       
-      {/* Grid/List */}
+      {/* Grid/List/Table */}
       <div className="flex-1 overflow-y-auto p-6">
-        {viewMode === 'grid' ? (
+        {viewMode === 'table' ? (
+          <CasesTable data={cases} loading={loading} />
+        ) : viewMode === 'grid' ? (
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
             {cases.map((caseItem) => (
               <CaseCard key={caseItem.id} caseItem={caseItem} />
@@ -94,7 +104,7 @@ const CasesGrid = ({
       </div>
       
       {/* Pagination */}
-      {totalPages > 1 && (
+      {totalPages > 1 && viewMode !== 'table' && (
         <div className="p-6 border-t border-border flex justify-center">
           <Pagination
             currentPage={currentPage}

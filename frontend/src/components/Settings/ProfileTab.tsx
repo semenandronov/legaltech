@@ -1,9 +1,9 @@
 import { useState } from 'react'
-import { updateProfile } from '../../services/api'
+import { updateProfile, UserProfile } from '../../services/api'
 import './Settings.css'
 
 interface ProfileTabProps {
-  profile: any
+  profile: UserProfile
   onUpdate: () => void
 }
 
@@ -28,9 +28,11 @@ const ProfileTab = ({ profile, onUpdate }: ProfileTabProps) => {
       setSuccess(true)
       onUpdate()
       setTimeout(() => setSuccess(false), 3000)
-    } catch (error: any) {
-      console.error('Ошибка при обновлении профиля:', error)
-      setError(error.response?.data?.detail || 'Ошибка при обновлении профиля')
+    } catch (error: unknown) {
+      const errorMessage = error && typeof error === 'object' && 'response' in error
+        ? (error as { response?: { data?: { detail?: string } } }).response?.data?.detail || 'Ошибка при обновлении профиля'
+        : 'Ошибка при обновлении профиля'
+      setError(errorMessage)
     } finally {
       setLoading(false)
     }

@@ -10,6 +10,8 @@ import TimelineSection from '../components/CaseOverview/TimelineSection'
 import IssueMap from '../components/CaseOverview/IssueMap'
 import QuickStats from '../components/CaseOverview/QuickStats'
 import Spinner from '../components/UI/Spinner'
+import { Tabs, TabList, Tab, TabPanel } from '../components/UI/Tabs'
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../components/UI/Card'
 
 const CaseOverviewPage = () => {
   const { caseId } = useParams<{ caseId: string }>()
@@ -119,34 +121,71 @@ const CaseOverviewPage = () => {
       <div className="flex-1 flex flex-col overflow-hidden">
         <CaseHeader caseData={caseData} />
         <div className="flex-1 overflow-y-auto">
-          <div className="p-6 space-y-8">
-            {/* Key Risks */}
-            <section>
-              <h2 className="text-h2 text-primary mb-4">
-                Ключевые риски ({risks.length} выявлено)
-              </h2>
-              <RiskCards risks={risks} />
-            </section>
-            
-            {/* Contradictions */}
-            <section>
-              <h2 className="text-h2 text-primary mb-4">
-                Противоречия ({contradictions.length} найдено)
-              </h2>
-              <ContradictionsSection contradictions={contradictions} />
-            </section>
-            
-            {/* Timeline */}
-            <section>
-              <h2 className="text-h2 text-primary mb-4">Временная линия</h2>
-              <TimelineSection events={timelineEvents} />
-            </section>
-            
-            {/* Issue Map */}
-            <section>
-              <h2 className="text-h2 text-primary mb-4">Карта вопросов</h2>
-              <IssueMap issues={issues} />
-            </section>
+          <div className="p-6">
+            <Tabs defaultTab="overview" className="space-y-6">
+              <TabList>
+                <Tab id="overview">Обзор</Tab>
+                <Tab id="risks">Риски</Tab>
+                <Tab id="contradictions">Противоречия</Tab>
+                <Tab id="timeline">Временная линия</Tab>
+                <Tab id="issues">Карта вопросов</Tab>
+              </TabList>
+              
+              <TabPanel id="overview" className="space-y-6">
+                <Card>
+                  <CardHeader>
+                    <CardTitle>Обзор дела</CardTitle>
+                    <CardDescription>
+                      Общая информация о деле и его статусе
+                    </CardDescription>
+                  </CardHeader>
+                  <CardContent>
+                    <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                      <div>
+                        <div className="text-2xl font-bold text-primary">{caseData.num_documents}</div>
+                        <div className="text-sm text-muted-foreground">Документов</div>
+                      </div>
+                      <div>
+                        <div className="text-2xl font-bold text-error">{risks.length}</div>
+                        <div className="text-sm text-muted-foreground">Рисков</div>
+                      </div>
+                      <div>
+                        <div className="text-2xl font-bold text-warning">{contradictions.length}</div>
+                        <div className="text-sm text-muted-foreground">Противоречий</div>
+                      </div>
+                      <div>
+                        <div className="text-2xl font-bold text-success">{issues.length}</div>
+                        <div className="text-sm text-muted-foreground">Вопросов</div>
+                      </div>
+                    </div>
+                  </CardContent>
+                </Card>
+              </TabPanel>
+              
+              <TabPanel id="risks" className="space-y-4">
+                <h2 className="text-h2 text-primary">
+                  Ключевые риски ({risks.length} выявлено)
+                </h2>
+                <RiskCards risks={risks} />
+              </TabPanel>
+              
+              <TabPanel id="contradictions" className="space-y-4">
+                <h2 className="text-h2 text-primary">
+                  Противоречия ({contradictions.length} найдено)
+                </h2>
+                <ContradictionsSection contradictions={contradictions} />
+              </TabPanel>
+              
+              <TabPanel id="timeline" className="space-y-4">
+                <h2 className="text-h2 text-primary">Временная линия</h2>
+                <TimelineSection events={timelineEvents} />
+              </TabPanel>
+              
+              <TabPanel id="issues" className="space-y-4">
+                <h2 className="text-h2 text-primary">Карта вопросов</h2>
+                <IssueMap issues={issues} />
+              </TabPanel>
+            </Tabs>
           </div>
         </div>
       </div>

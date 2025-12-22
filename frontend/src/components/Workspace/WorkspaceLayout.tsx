@@ -1,4 +1,11 @@
+"use client"
+
 import React from 'react'
+import {
+  ResizablePanelGroup,
+  ResizablePanel,
+  ResizableHandle,
+} from "@/components/UI/resizable"
 import './WorkspaceLayout.css'
 
 interface WorkspaceLayoutProps {
@@ -17,26 +24,38 @@ const WorkspaceLayout: React.FC<WorkspaceLayoutProps> = ({
   onToggleRightPanel
 }) => {
   return (
-    <div className="workspace-layout">
-      <div className="workspace-left-panel">
-        {leftPanel}
-      </div>
-      <div className="workspace-center-panel">
-        {centerPanel}
-      </div>
-      <div className={`workspace-right-panel ${rightPanelCollapsed ? 'collapsed' : ''}`}>
-        {rightPanel}
-        {onToggleRightPanel && (
-          <button 
-            className="workspace-toggle-chat"
-            onClick={onToggleRightPanel}
-            aria-label={rightPanelCollapsed ? "Развернуть чат" : "Свернуть чат"}
-          >
-            {rightPanelCollapsed ? '💬' : '◀'}
-          </button>
-        )}
-      </div>
-    </div>
+    <ResizablePanelGroup direction="horizontal" className="workspace-layout h-full">
+      <ResizablePanel defaultSize={20} minSize={15} maxSize={30}>
+        <div className="workspace-left-panel h-full">
+          {leftPanel}
+        </div>
+      </ResizablePanel>
+      <ResizableHandle withHandle />
+      <ResizablePanel defaultSize={60} minSize={40}>
+        <div className="workspace-center-panel h-full">
+          {centerPanel}
+        </div>
+      </ResizablePanel>
+      {!rightPanelCollapsed && (
+        <>
+          <ResizableHandle withHandle />
+          <ResizablePanel defaultSize={20} minSize={15} maxSize={30}>
+            <div className="workspace-right-panel h-full">
+              {rightPanel}
+              {onToggleRightPanel && (
+                <button 
+                  className="workspace-toggle-chat"
+                  onClick={onToggleRightPanel}
+                  aria-label="Свернуть чат"
+                >
+                  ◀
+                </button>
+              )}
+            </div>
+          </ResizablePanel>
+        </>
+      )}
+    </ResizablePanelGroup>
   )
 }
 

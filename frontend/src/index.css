@@ -123,29 +123,45 @@
     --input: 214.3 31.8% 91.4%;
     --ring: 188 100% 50%;
     --radius: 0.5rem;
+    --sidebar-background: 0 0% 98%;
+    --sidebar-foreground: 240 5.3% 26.1%;
+    --sidebar-primary: 240 5.9% 10%;
+    --sidebar-primary-foreground: 0 0% 98%;
+    --sidebar-accent: 240 4.8% 95.9%;
+    --sidebar-accent-foreground: 240 5.9% 10%;
+    --sidebar-border: 220 13% 91%;
+    --sidebar-ring: 217.2 91.2% 59.8%;
   }
 
   .dark,
   [data-theme="dark"] {
-    --background: 222.2 47.4% 5.9%;
-    --foreground: 210 40% 98%;
-    --card: 222.2 47.4% 8.9%;
-    --card-foreground: 210 40% 98%;
-    --popover: 222.2 47.4% 8.9%;
-    --popover-foreground: 210 40% 98%;
+    --background: 15 23% 9%;
+    --foreground: 0 0% 98%;
+    --card: 26 25% 16%;
+    --card-foreground: 0 0% 98%;
+    --popover: 26 25% 16%;
+    --popover-foreground: 0 0% 98%;
     --primary: 188 100% 50%;
-    --primary-foreground: 222.2 47.4% 11.2%;
-    --secondary: 217.2 32.6% 17.5%;
-    --secondary-foreground: 210 40% 98%;
-    --muted: 217.2 32.6% 17.5%;
+    --primary-foreground: 15 23% 9%;
+    --secondary: 26 25% 22%;
+    --secondary-foreground: 0 0% 98%;
+    --muted: 26 25% 22%;
     --muted-foreground: 215 20.2% 65.1%;
-    --accent: 217.2 32.6% 17.5%;
-    --accent-foreground: 210 40% 98%;
-    --destructive: 0 62.8% 30.6%;
-    --destructive-foreground: 210 40% 98%;
-    --border: 217.2 32.6% 17.5%;
-    --input: 217.2 32.6% 17.5%;
+    --accent: 26 25% 22%;
+    --accent-foreground: 0 0% 98%;
+    --destructive: 0 62.8% 50%;
+    --destructive-foreground: 0 0% 98%;
+    --border: 26 25% 30%;
+    --input: 26 25% 30%;
     --ring: 188 100% 50%;
+    --sidebar-background: 26 25% 16%;
+    --sidebar-foreground: 0 0% 98%;
+    --sidebar-primary: 188 100% 50%;
+    --sidebar-primary-foreground: 15 23% 9%;
+    --sidebar-accent: 26 25% 22%;
+    --sidebar-accent-foreground: 0 0% 98%;
+    --sidebar-border: 26 25% 30%;
+    --sidebar-ring: 188 100% 50%;
   }
 }
 
@@ -245,6 +261,15 @@
 
   #root {
     @apply min-h-screen;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+  body {
+    @apply bg-background text-foreground;
   }
 }
 

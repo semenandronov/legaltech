@@ -1,11 +1,24 @@
 import React from 'react'
 import { useNavigate } from 'react-router-dom'
-import { FileText, Calendar, MoreVertical } from 'lucide-react'
+import { FileText, Calendar, MoreVertical, ExternalLink, Share2, Archive, Copy } from 'lucide-react'
 import { CaseListItem } from '../../services/api'
 import { Card } from '../UI/Card'
 import { Badge } from '../UI/Badge'
 import { Button } from '../UI/Button'
-import Dropdown from '../UI/Dropdown'
+import {
+  ContextMenu,
+  ContextMenuContent,
+  ContextMenuItem,
+  ContextMenuSeparator,
+  ContextMenuTrigger,
+} from '@/components/UI/context-menu'
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from '@/components/UI/dropdown-menu'
 
 interface CaseCardProps {
   caseItem: CaseListItem
@@ -59,31 +72,55 @@ const CaseCard = ({ caseItem }: CaseCardProps) => {
   ]
   
   return (
-    <Card hoverable className="cursor-pointer" onClick={() => navigate(`/cases/${caseItem.id}/workspace`)}>
-      <div className="space-y-3">
-        {/* Header */}
-        <div className="flex items-start justify-between">
-          <div className="flex-1">
-            <div className="flex items-center gap-2 mb-2">
-              <FileText className="w-5 h-5 text-primary" />
-              <h3 className="text-h3 text-primary">{caseItem.title || 'Без названия'}</h3>
+    <ContextMenu>
+      <ContextMenuTrigger>
+        <Card hoverable className="cursor-pointer" onClick={() => navigate(`/cases/${caseItem.id}/workspace`)}>
+          <div className="space-y-3">
+            {/* Header */}
+            <div className="flex items-start justify-between">
+              <div className="flex-1">
+                <div className="flex items-center gap-2 mb-2">
+                  <FileText className="w-5 h-5 text-primary" />
+                  <h3 className="text-h3 text-primary">{caseItem.title || 'Без названия'}</h3>
+                </div>
+                {caseItem.case_type && (
+                  <p className="text-body text-secondary">vs {caseItem.case_type}</p>
+                )}
+              </div>
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <button
+                    className="p-1 hover:bg-tertiary rounded transition-colors"
+                    onClick={(e) => e.stopPropagation()}
+                  >
+                    <MoreVertical className="w-4 h-4 text-secondary" />
+                  </button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end">
+                  <DropdownMenuItem onClick={() => navigate(`/cases/${caseItem.id}/workspace`)}>
+                    <ExternalLink className="mr-2 h-4 w-4" />
+                    Открыть
+                  </DropdownMenuItem>
+                  <DropdownMenuItem onClick={() => navigate(`/cases/${caseItem.id}/chat`)}>
+                    Чат
+                  </DropdownMenuItem>
+                  <DropdownMenuSeparator />
+                  <DropdownMenuItem>
+                    <Copy className="mr-2 h-4 w-4" />
+                    Копировать
+                  </DropdownMenuItem>
+                  <DropdownMenuItem>
+                    <Share2 className="mr-2 h-4 w-4" />
+                    Поделиться
+                  </DropdownMenuItem>
+                  <DropdownMenuSeparator />
+                  <DropdownMenuItem className="text-destructive">
+                    <Archive className="mr-2 h-4 w-4" />
+                    Архивировать
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
             </div>
-            {caseItem.case_type && (
-              <p className="text-body text-secondary">vs {caseItem.case_type}</p>
-            )}
-          </div>
-          <Dropdown
-            trigger={
-              <button
-                className="p-1 hover:bg-tertiary rounded transition-colors"
-                onClick={(e) => e.stopPropagation()}
-              >
-                <MoreVertical className="w-4 h-4 text-secondary" />
-              </button>
-            }
-            items={dropdownItems}
-          />
-        </div>
         
         {/* Badges */}
         <div className="flex items-center gap-2 flex-wrap">
@@ -136,6 +173,31 @@ const CaseCard = ({ caseItem }: CaseCardProps) => {
         </div>
       </div>
     </Card>
+      </ContextMenuTrigger>
+      <ContextMenuContent className="w-56">
+        <ContextMenuItem onClick={() => navigate(`/cases/${caseItem.id}/workspace`)}>
+          <ExternalLink className="mr-2 h-4 w-4" />
+          Открыть
+        </ContextMenuItem>
+        <ContextMenuItem onClick={() => navigate(`/cases/${caseItem.id}/chat`)}>
+          Чат
+        </ContextMenuItem>
+        <ContextMenuSeparator />
+        <ContextMenuItem>
+          <Copy className="mr-2 h-4 w-4" />
+          Копировать
+        </ContextMenuItem>
+        <ContextMenuItem>
+          <Share2 className="mr-2 h-4 w-4" />
+          Поделиться
+        </ContextMenuItem>
+        <ContextMenuSeparator />
+        <ContextMenuItem className="text-destructive">
+          <Archive className="mr-2 h-4 w-4" />
+          Архивировать
+        </ContextMenuItem>
+      </ContextMenuContent>
+    </ContextMenu>
   )
 }
 

@@ -1,46 +1,73 @@
+"use client"
+
 import { useState } from 'react'
 import { useAuth } from '../../contexts/AuthContext'
-import './Auth.css'
+import { useForm } from 'react-hook-form'
+import { zodResolver } from '@hookform/resolvers/zod'
+import * as z from 'zod'
+import { toast } from 'sonner'
+import {
+  Form,
+  FormControl,
+  FormDescription,
+  FormField,
+  FormItem,
+  FormLabel,
+  FormMessage,
+} from '@/components/UI/form'
+import Input from '@/components/UI/Input'
+import { Button } from '@/components/UI/Button'
+import { Alert, AlertDescription } from '@/components/UI/alert'
+
+const registerSchema = z.object({
+  email: z.string().email('Некорректный email адрес'),
+  password: z.string().min(8, 'Пароль должен содержать минимум 8 символов'),
+  confirmPassword: z.string().min(8, 'Пароль должен содержать минимум 8 символов'),
+  fullName: z.string().optional(),
+  company: z.string().optional(),
+}).refine((data) => data.password === data.confirmPassword, {
+  message: "Пароли не совпадают",
+  path: ["confirmPassword"],
+})
+
+type RegisterFormValues = z.infer<typeof registerSchema>
 
 const RegisterForm = () => {
-  const [email, setEmail] = useState('')
-  const [password, setPassword] = useState('')
-  const [confirmPassword, setConfirmPassword] = useState('')
-  const [fullName, setFullName] = useState('')
-  const [company, setCompany] = useState('')
   const [error, setError] = useState<string | null>(null)
-  const [loading, setLoading] = useState(false)
   const { register } = useAuth()
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault()
+  const form = useForm<RegisterFormValues>({
+    resolver: zodResolver(registerSchema),
+    defaultValues: {
+      email: '',
+      password: '',
+      confirmPassword: '',
+      fullName: '',
+      company: '',
+    },
+  })
+
+  const handleSubmit = async (values: RegisterFormValues) => {
     setError(null)
-
-    if (password !== confirmPassword) {
-      setError('Пароли не совпадают')
-      return
-    }
-
-    if (password.length < 8) {
-      setError('Пароль должен быть не менее 8 символов')
-      return
-    }
-
-    setLoading(true)
-
+    
     try {
-      await register(email, password, fullName || undefined, company || undefined)
-    } catch (err: any) {
-      // Улучшенная обработка ошибок (как в LoginForm)
+      await register(
+        values.email,
+        values.password,
+        values.fullName || undefined,
+        values.company || undefined
+      )
+      toast.success('Регистрация успешна! Добро пожаловать!')
+    } catch (err: unknown) {
       let errorMessage = 'Ошибка при регистрации. Попробуйте еще раз.'
       
-      if (err.response) {
-        const data = err.response.data
+      if (err && typeof err === 'object' && 'response' in err) {
+        const axiosError = err as { response?: { data?: { detail?: string | Array<{ loc?: string[]; msg?: string }>; message?: string } } }
+        const data = axiosError.response?.data
         if (typeof data?.detail === 'string') {
           errorMessage = data.detail
         } else if (Array.isArray(data?.detail)) {
-          // Ошибки валидации Pydantic
-          errorMessage = data.detail.map((e: any) => {
+          errorMessage = data.detail.map((e) => {
             const field = e.loc?.join('.') || 'field'
             return `${field}: ${e.msg || 'validation error'}`
           }).join('; ')
@@ -49,13 +76,12 @@ const RegisterForm = () => {
         } else if (data?.message) {
           errorMessage = String(data.message)
         }
-      } else if (err.message) {
+      } else if (err && typeof err === 'object' && 'message' in err && typeof err.message === 'string') {
         errorMessage = err.message
       }
       
       setError(errorMessage)
-    } finally {
-      setLoading(false)
+      toast.error(errorMessage)
     }
   }
 
@@ -65,97 +91,125 @@ const RegisterForm = () => {
         <h2 className="auth-title">Регистрация</h2>
         <p className="auth-subtitle">Создайте новый аккаунт</p>
 
-        {error && <div className="auth-error">{error}</div>}
+        {error && (
+          <Alert variant="destructive" className="mb-4">
+            <AlertDescription>{error}</AlertDescription>
+          </Alert>
+        )}
 
-        <form onSubmit={handleSubmit} className="auth-form">
-          <div className="auth-field">
-            <label htmlFor="email" className="auth-label">
-              Email *
-            </label>
-            <input
-              id="email"
-              type="email"
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              required
-              className="auth-input"
-              placeholder="your@email.com"
-              disabled={loading}
+        <Form {...form}>
+          <form onSubmit={form.handleSubmit(handleSubmit)} className="auth-form space-y-4">
+            <FormField
+              control={form.control}
+              name="email"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Email *</FormLabel>
+                  <FormControl>
+                    <Input
+                      type="email"
+                      placeholder="your@email.com"
+                      disabled={form.formState.isSubmitting}
+                      {...field}
+                    />
+                  </FormControl>
+                  <FormMessage />
+                </FormItem>
+              )}
             />
-          </div>
 
-          <div className="auth-field">
-            <label htmlFor="fullName" className="auth-label">
-              ФИО
-            </label>
-            <input
-              id="fullName"
-              type="text"
-              value={fullName}
-              onChange={(e) => setFullName(e.target.value)}
-              className="auth-input"
-              placeholder="Иванов Иван Иванович"
-              disabled={loading}
+            <FormField
+              control={form.control}
+              name="fullName"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>ФИО</FormLabel>
+                  <FormControl>
+                    <Input
+                      type="text"
+                      placeholder="Иванов Иван Иванович"
+                      disabled={form.formState.isSubmitting}
+                      {...field}
+                    />
+                  </FormControl>
+                  <FormMessage />
+                </FormItem>
+              )}
             />
-          </div>
 
-          <div className="auth-field">
-            <label htmlFor="company" className="auth-label">
-              Компания
-            </label>
-            <input
-              id="company"
-              type="text"
-              value={company}
-              onChange={(e) => setCompany(e.target.value)}
-              className="auth-input"
-              placeholder="ООО Компания"
-              disabled={loading}
+            <FormField
+              control={form.control}
+              name="company"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Компания</FormLabel>
+                  <FormControl>
+                    <Input
+                      type="text"
+                      placeholder="ООО Компания"
+                      disabled={form.formState.isSubmitting}
+                      {...field}
+                    />
+                  </FormControl>
+                  <FormMessage />
+                </FormItem>
+              )}
             />
-          </div>
 
-          <div className="auth-field">
-            <label htmlFor="password" className="auth-label">
-              Пароль * (минимум 8 символов)
-            </label>
-            <input
-              id="password"
-              type="password"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              required
-              className="auth-input"
-              placeholder="••••••••"
-              disabled={loading}
-              minLength={8}
+            <FormField
+              control={form.control}
+              name="password"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Пароль *</FormLabel>
+                  <FormControl>
+                    <Input
+                      type="password"
+                      placeholder="••••••••"
+                      disabled={form.formState.isSubmitting}
+                      {...field}
+                    />
+                  </FormControl>
+                  <FormDescription>
+                    Минимум 8 символов
+                  </FormDescription>
+                  <FormMessage />
+                </FormItem>
+              )}
             />
-          </div>
 
-          <div className="auth-field">
-            <label htmlFor="confirmPassword" className="auth-label">
-              Подтвердите пароль *
-            </label>
-            <input
-              id="confirmPassword"
-              type="password"
-              value={confirmPassword}
-              onChange={(e) => setConfirmPassword(e.target.value)}
-              required
-              className="auth-input"
-              placeholder="••••••••"
-              disabled={loading}
-              minLength={8}
+            <FormField
+              control={form.control}
+              name="confirmPassword"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Подтвердите пароль *</FormLabel>
+                  <FormControl>
+                    <Input
+                      type="password"
+                      placeholder="••••••••"
+                      disabled={form.formState.isSubmitting}
+                      {...field}
+                    />
+                  </FormControl>
+                  <FormMessage />
+                </FormItem>
+              )}
             />
-          </div>
 
-          <button type="submit" className="auth-button" disabled={loading}>
-            {loading ? 'Регистрация...' : 'Зарегистрироваться'}
-          </button>
-        </form>
+            <Button
+              type="submit"
+              className="w-full"
+              disabled={form.formState.isSubmitting}
+              isLoading={form.formState.isSubmitting}
+            >
+              {form.formState.isSubmitting ? 'Регистрация...' : 'Зарегистрироваться'}
+            </Button>
+          </form>
+        </Form>
       </div>
     </div>
   )
 }
 
 export default RegisterForm
-

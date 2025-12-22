@@ -1,10 +1,10 @@
 import { useState } from 'react'
-import { updateNotifications } from '../../services/api'
+import { updateNotifications, NotificationSettings } from '../../services/api'
 import './Settings.css'
 
 interface NotificationsTabProps {
-  settings: any
-  onUpdate: (newSettings: any) => void
+  settings: NotificationSettings
+  onUpdate: (newSettings: NotificationSettings) => void
 }
 
 const NotificationsTab = ({ settings, onUpdate }: NotificationsTabProps) => {
@@ -14,7 +14,7 @@ const NotificationsTab = ({ settings, onUpdate }: NotificationsTabProps) => {
   const [error, setError] = useState<string | null>(null)
 
   const handleToggle = (key: string) => {
-    setFormSettings((prev: any) => ({ ...prev, [key]: !prev[key] }))
+    setFormSettings((prev) => ({ ...prev, [key]: !prev[key as keyof NotificationSettings] }))
   }
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -28,9 +28,11 @@ const NotificationsTab = ({ settings, onUpdate }: NotificationsTabProps) => {
       setSuccess(true)
       onUpdate(formSettings)
       setTimeout(() => setSuccess(false), 3000)
-    } catch (error: any) {
-      console.error('Ошибка при обновлении уведомлений:', error)
-      setError(error.response?.data?.detail || 'Ошибка при обновлении уведомлений')
+    } catch (error: unknown) {
+      const errorMessage = error && typeof error === 'object' && 'response' in error
+        ? (error as { response?: { data?: { detail?: string } } }).response?.data?.detail || 'Ошибка при обновлении уведомлений'
+        : 'Ошибка при обновлении уведомлений'
+      setError(errorMessage)
     } finally {
       setLoading(false)
     }

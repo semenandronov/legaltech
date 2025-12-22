@@ -1,6 +1,54 @@
-import axios from 'axios'
+import axios, { AxiosError, AxiosRequestConfig } from 'axios'
+import { logger } from '../lib/logger'
 
 const BASE_URL = import.meta.env.VITE_API_URL || ''
+
+// Error types
+export interface ApiError {
+  message: string
+  status?: number
+  detail?: string | Array<{ loc?: string[]; msg?: string }>
+  code?: string
+}
+
+export class ApiException extends Error {
+  status?: number
+  detail?: string | Array<{ loc?: string[]; msg?: string }>
+  code?: string
+
+  constructor(message: string, status?: number, detail?: string | Array<{ loc?: string[]; msg?: string }>, code?: string) {
+    super(message)
+    this.name = 'ApiException'
+    this.status = status
+    this.detail = detail
+    this.code = code
+  }
+}
+
+// Helper to extract error message from axios error
+export const extractErrorMessage = (error: unknown): string => {
+  if (axios.isAxiosError(error)) {
+    const axiosError = error as AxiosError<{ detail?: string | Array<{ loc?: string[]; msg?: string }>; message?: string }>
+    const data = axiosError.response?.data
+    
+    if (typeof data?.detail === 'string') {
+      return data.detail
+    } else if (Array.isArray(data?.detail)) {
+      return data.detail.map((e) => {
+        const field = e.loc?.join('.') || 'field'
+        return `${field}: ${e.msg || 'validation error'}`
+      }).join('; ')
+    } else if (data?.message) {
+      return data.message
+    } else if (axiosError.message) {
+      return axiosError.message
+    }
+  } else if (error instanceof Error) {
+    return error.message
+  }
+  
+  return 'Произошла неизвестная ошибка'
+}
 
 // Create axios instance
 const apiClient = axios.create()
@@ -22,11 +70,11 @@ apiClient.interceptors.request.use(
 // Response interceptor to handle token refresh
 apiClient.interceptors.response.use(
   (response) => response,
-  async (error) => {
-    const originalRequest = error.config
+  async (error: AxiosError) => {
+    const originalRequest = error.config as AxiosRequestConfig & { _retry?: boolean }
 
     // If error is 401 and we haven't tried to refresh yet
-    if (error.response?.status === 401 && !originalRequest._retry) {
+    if (error.response?.status === 401 && originalRequest && !originalRequest._retry) {
       originalRequest._retry = true
 
       try {
@@ -44,17 +92,31 @@ apiClient.interceptors.response.use(
           localStorage.setItem('access_token', access_token)
 
           // Retry original request with new token
-          originalRequest.headers.Authorization = `Bearer ${access_token}`
+          if (originalRequest.headers) {
+            originalRequest.headers.Authorization = `Bearer ${access_token}`
+          }
           return apiClient(originalRequest)
         }
       } catch (refreshError) {
         // Refresh failed, logout user
+        logger.error('Token refresh failed:', refreshError)
         localStorage.removeItem('access_token')
         localStorage.removeItem('refresh_token')
         localStorage.removeItem('user')
         window.location.href = '/login'
         return Promise.reject(refreshError)
       }
+    }
+
+    // Log error for debugging
+    if (error.response) {
+      logger.error('API Error:', {
+        status: error.response.status,
+        data: error.response.data,
+        url: error.config?.url,
+      })
+    } else {
+      logger.error('API Network Error:', error.message)
     }
 
     return Promise.reject(error)
@@ -94,17 +156,25 @@ export const getApiUrl = (path: string) => {
   return `${prefix}${path}`
 }
 
+export interface AnalysisConfig {
+  enable_timeline?: boolean
+  enable_entities?: boolean
+  enable_classification?: boolean
+  enable_privilege_check?: boolean
+  [key: string]: unknown
+}
+
 export interface CaseInfo {
   title: string
   description?: string
   case_type?: string
-  analysis_config?: any
+  analysis_config?: AnalysisConfig
 }
 
 export const uploadFiles = async (
   files: File[],
   caseInfo?: CaseInfo | null,
-  analysisOptions?: any
+  analysisOptions?: AnalysisConfig
 ): Promise<UploadResponse> => {
   const formData = new FormData()
   files.forEach((file) => {
@@ -189,13 +259,20 @@ export const getDashboardStats = async (): Promise<DashboardStats> => {
   return response.data
 }
 
+interface CasesListParams {
+  skip: number
+  limit: number
+  status?: string
+  case_type?: string
+}
+
 export const getCasesList = async (
   skip: number = 0,
   limit: number = 100,
   status?: string,
   case_type?: string
 ): Promise<CasesListResponse> => {
-  const params: any = { skip, limit }
+  const params: CasesListParams = { skip, limit }
   if (status) params.status = status
   if (case_type) params.case_type = case_type
   
@@ -229,6 +306,10 @@ export const getCase = async (caseId: string): Promise<CaseResponse> => {
 }
 
 // Analysis API
+export interface TimelineEventMetadata {
+  [key: string]: unknown
+}
+
 export interface TimelineEvent {
   id: string
   date: string
@@ -237,7 +318,11 @@ export interface TimelineEvent {
   source_document: string
   source_page: number | null
   source_line: number | null
-  metadata: any
+  metadata: TimelineEventMetadata
+}
+
+export interface DiscrepancyDetails {
+  [key: string]: unknown
 }
 
 export interface DiscrepancyItem {
@@ -246,7 +331,7 @@ export interface DiscrepancyItem {
   severity: 'HIGH' | 'MEDIUM' | 'LOW'
   description: string
   source_documents: string[]
-  details: any
+  details: DiscrepancyDetails
   created_at: string
 }
 
@@ -295,26 +380,51 @@ export const getDiscrepancies = async (
   return response.data
 }
 
-export const getKeyFacts = async (caseId: string): Promise<{ facts: any; created_at?: string }> => {
+export interface KeyFact {
+  [key: string]: unknown
+}
+
+export interface KeyFactsResponse {
+  facts: KeyFact
+  created_at?: string
+}
+
+export const getKeyFacts = async (caseId: string): Promise<KeyFactsResponse> => {
   const response = await apiClient.get(getApiUrl(`/api/analysis/${caseId}/key-facts`))
   return response.data
 }
 
-export const getSummary = async (caseId: string): Promise<{ summary: string; key_facts: any; created_at?: string }> => {
+export interface SummaryResponse {
+  summary: string
+  key_facts: KeyFact
+  created_at?: string
+}
+
+export const getSummary = async (caseId: string): Promise<SummaryResponse> => {
   const response = await apiClient.get(getApiUrl(`/api/analysis/${caseId}/summary`))
   return response.data
 }
 
-export const getRisks = async (caseId: string): Promise<{ analysis: string; discrepancies: any; created_at?: string }> => {
+export interface RisksResponse {
+  analysis: string
+  discrepancies: DiscrepancyDetails
+  created_at?: string
+}
+
+export const getRisks = async (caseId: string): Promise<RisksResponse> => {
   const response = await apiClient.get(getApiUrl(`/api/analysis/${caseId}/risks`))
   return response.data
+}
+
+export interface RelationshipNodeProperties {
+  [key: string]: unknown
 }
 
 export interface RelationshipNode {
   id: string
   type: string
   label: string
-  properties: any
+  properties: RelationshipNodeProperties
   source_document?: string | null
   source_page?: number | null
 }
@@ -326,7 +436,7 @@ export interface RelationshipLink {
   label?: string | null
   source_document?: string | null
   source_page?: number | null
-  properties?: any
+  properties?: RelationshipNodeProperties
 }
 
 export interface RelationshipGraph {
@@ -369,37 +479,61 @@ export const generateReport = async (
 }
 
 // Settings API
-export const getProfile = async (): Promise<any> => {
+export interface UserProfile {
+  id: string
+  email: string
+  full_name: string | null
+  company: string | null
+  role: string
+  created_at: string
+}
+
+export interface NotificationSettings {
+  email_notifications?: boolean
+  case_updates?: boolean
+  analysis_complete?: boolean
+  [key: string]: unknown
+}
+
+export interface IntegrationSettings {
+  [key: string]: unknown
+}
+
+export const getProfile = async (): Promise<UserProfile> => {
   const response = await apiClient.get(getApiUrl('/api/settings/profile'))
   return response.data
 }
 
-export const updateProfile = async (data: { full_name?: string; company?: string }): Promise<any> => {
+export const updateProfile = async (data: { full_name?: string; company?: string }): Promise<UserProfile> => {
   const response = await apiClient.put(getApiUrl('/api/settings/profile'), data)
   return response.data
 }
 
-export const updatePassword = async (data: { current_password: string; new_password: string }): Promise<any> => {
+export interface PasswordUpdateResponse {
+  message: string
+}
+
+export const updatePassword = async (data: { current_password: string; new_password: string }): Promise<PasswordUpdateResponse> => {
   const response = await apiClient.put(getApiUrl('/api/settings/password'), data)
   return response.data
 }
 
-export const getNotifications = async (): Promise<any> => {
+export const getNotifications = async (): Promise<NotificationSettings> => {
   const response = await apiClient.get(getApiUrl('/api/settings/notifications'))
   return response.data
 }
 
-export const updateNotifications = async (settings: any): Promise<any> => {
+export const updateNotifications = async (settings: NotificationSettings): Promise<NotificationSettings> => {
   const response = await apiClient.put(getApiUrl('/api/settings/notifications'), settings)
   return response.data
 }
 
-export const getIntegrations = async (): Promise<any> => {
+export const getIntegrations = async (): Promise<IntegrationSettings> => {
   const response = await apiClient.get(getApiUrl('/api/settings/integrations'))
   return response.data
 }
 
-export const updateIntegrations = async (settings: any): Promise<any> => {
+export const updateIntegrations = async (settings: IntegrationSettings): Promise<IntegrationSettings> => {
   const response = await apiClient.put(getApiUrl('/api/settings/integrations'), settings)
   return response.data
 }
@@ -447,7 +581,13 @@ export const getClassifications = async (caseId: string): Promise<Classification
   return response.data
 }
 
-export const classifyDocuments = async (caseId: string, fileId?: string): Promise<any> => {
+export interface ClassifyDocumentsResponse {
+  status: string
+  message: string
+  classifications?: DocumentClassification[]
+}
+
+export const classifyDocuments = async (caseId: string, fileId?: string): Promise<ClassifyDocumentsResponse> => {
   const response = await apiClient.post(
     getApiUrl(`/api/analysis/${caseId}/classify`),
     fileId ? { file_id: fileId } : {}
@@ -477,14 +617,24 @@ export interface EntitiesResponse {
   by_type_count: Record<string, number>
 }
 
+interface EntitiesParams {
+  file_id?: string
+}
+
 export const getEntities = async (caseId: string, fileId?: string): Promise<EntitiesResponse> => {
-  const params: any = {}
+  const params: EntitiesParams = {}
   if (fileId) params.file_id = fileId
   const response = await apiClient.get(getApiUrl(`/api/analysis/${caseId}/entities`), { params })
   return response.data
 }
 
-export const extractEntities = async (caseId: string, fileId?: string): Promise<any> => {
+export interface ExtractEntitiesResponse {
+  status: string
+  message: string
+  entities?: ExtractedEntity[]
+}
+
+export const extractEntities = async (caseId: string, fileId?: string): Promise<ExtractEntitiesResponse> => {
   const response = await apiClient.post(
     getApiUrl(`/api/analysis/${caseId}/entities`),
     fileId ? { file_id: fileId } : {}
@@ -517,7 +667,13 @@ export const getPrivilegeChecks = async (caseId: string): Promise<PrivilegeCheck
   return response.data
 }
 
-export const checkPrivilege = async (caseId: string, fileId: string): Promise<any> => {
+export interface CheckPrivilegeResponse {
+  status: string
+  message: string
+  privilege_check?: PrivilegeCheck
+}
+
+export const checkPrivilege = async (caseId: string, fileId: string): Promise<CheckPrivilegeResponse> => {
   const response = await apiClient.post(
     getApiUrl(`/api/analysis/${caseId}/privilege`),
     { file_id: fileId }
@@ -526,6 +682,13 @@ export const checkPrivilege = async (caseId: string, fileId: string): Promise<an
 }
 
 // Analysis Report API
+export interface CategorizedFile {
+  id: string
+  filename: string
+  file_type: string
+  [key: string]: unknown
+}
+
 export interface AnalysisReport {
   case_id: string
   case_title: string | null
@@ -534,23 +697,23 @@ export interface AnalysisReport {
     high_relevance: {
       count: number
       label: string
-      files: any[]
+      files: CategorizedFile[]
     }
     privileged: {
       count: number
       label: string
-      files: any[]
+      files: CategorizedFile[]
       warning: string
     }
     medium_relevance: {
       count: number
       label: string
-      files: any[]
+      files: CategorizedFile[]
     }
     low_relevance: {
       count: number
       label: string
-      files: any[]
+      files: CategorizedFile[]
     }
   }
   statistics: {
@@ -575,7 +738,14 @@ export const getAnalysisReport = async (caseId: string): Promise<AnalysisReport>
 }
 
 // Batch Actions API
-export const batchConfirm = async (caseId: string, fileIds: string[]): Promise<any> => {
+export interface BatchActionResponse {
+  status: string
+  message: string
+  processed_count?: number
+  failed_count?: number
+}
+
+export const batchConfirm = async (caseId: string, fileIds: string[]): Promise<BatchActionResponse> => {
   const response = await apiClient.post(
     getApiUrl(`/api/analysis/${caseId}/batch/confirm`),
     { file_ids: fileIds }
@@ -583,7 +753,7 @@ export const batchConfirm = async (caseId: string, fileIds: string[]): Promise<a
   return response.data
 }
 
-export const batchReject = async (caseId: string, fileIds: string[]): Promise<any> => {
+export const batchReject = async (caseId: string, fileIds: string[]): Promise<BatchActionResponse> => {
   const response = await apiClient.post(
     getApiUrl(`/api/analysis/${caseId}/batch/reject`),
     { file_ids: fileIds }
@@ -591,7 +761,7 @@ export const batchReject = async (caseId: string, fileIds: string[]): Promise<an
   return response.data
 }
 
-export const batchWithhold = async (caseId: string, fileIds: string[]): Promise<any> => {
+export const batchWithhold = async (caseId: string, fileIds: string[]): Promise<BatchActionResponse> => {
   const response = await apiClient.post(
     getApiUrl(`/api/analysis/${caseId}/batch/withhold`),
     { file_ids: fileIds }
@@ -626,8 +796,12 @@ export interface RelatedDocumentsResponse {
   total_related: number
 }
 
+interface RelatedDocumentsParams {
+  limit?: number
+}
+
 export const getRelatedDocuments = async (caseId: string, fileId: string, limit?: number): Promise<RelatedDocumentsResponse> => {
-  const params: any = {}
+  const params: RelatedDocumentsParams = {}
   if (limit) params.limit = limit
   const response = await apiClient.get(
     getApiUrl(`/api/analysis/${caseId}/files/${fileId}/related`),

@@ -96,8 +96,66 @@ Frontend будет доступен на `http://localhost:5173`
 - `POST /api/chat` - Отправка вопроса
 - `GET /api/chat/{case_id}/history` - История чата
 
+## Деплой на Render
+
+### Подготовка
+
+1. Убедитесь, что у вас есть:
+   - Аккаунт на [Render.com](https://render.com)
+   - База данных PostgreSQL (можно использовать Neon или Render PostgreSQL)
+   - API ключ от OpenRouter
+
+2. Создайте файл `render.yaml` в корне проекта (уже включен в проект)
+
+### Настройка переменных окружения в Render
+
+В настройках сервиса на Render добавьте следующие переменные окружения:
+
+**Обязательные:**
+- `DATABASE_URL` - URL подключения к PostgreSQL
+- `OPENROUTER_API_KEY` - API ключ от OpenRouter
+- `JWT_SECRET_KEY` - Секретный ключ для JWT (сгенерируйте случайную строку)
+- `VITE_API_URL` - URL вашего backend сервиса на Render (например: `https://your-app.onrender.com`)
+
+**Опциональные:**
+- `OPENROUTER_MODEL` - Модель для использования (по умолчанию: `openrouter/auto`)
+- `CORS_ORIGINS` - Разрешенные источники для CORS (по умолчанию: `*`)
+- `AGENT_ENABLED` - Включить систему агентов (по умолчанию: `true`)
+
+Полный список переменных окружения см. в `backend/.env.example` и `frontend/.env.example`
+
+### Деплой
+
+1. Подключите ваш GitHub репозиторий к Render
+2. Render автоматически обнаружит `render.yaml` и создаст сервис
+3. Установите все переменные окружения в настройках сервиса
+4. Render автоматически выполнит сборку и деплой
+
+### Проверка деплоя
+
+После успешного деплоя:
+1. Проверьте, что backend доступен: `https://your-app.onrender.com/api/health`
+2. Проверьте, что frontend загружается и подключается к backend
+3. Проверьте логи в панели Render на наличие ошибок
+
+### Troubleshooting
+
+**Проблема: Build fails**
+- Проверьте логи сборки в Render
+- Убедитесь, что все зависимости установлены
+- Проверьте, что `npm run type-check` проходит успешно
+
+**Проблема: Frontend не подключается к backend**
+- Проверьте переменную `VITE_API_URL` - она должна указывать на ваш backend URL
+- Проверьте CORS настройки в backend
+- Проверьте, что backend запущен и доступен
+
+**Проблема: Ошибки типов TypeScript**
+- Запустите `npm run type-check` локально
+- Исправьте все ошибки типов перед коммитом
+
 ## Технологии
 
 - **Backend**: FastAPI, SQLAlchemy, OpenRouter (через OpenAI-клиент), pypdf, python-docx, openpyxl
-- **Frontend**: React, TypeScript, Vite, Axios
+- **Frontend**: React, TypeScript, Vite, Axios, shadcn/ui
 - **База данных**: PostgreSQL

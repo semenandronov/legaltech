@@ -1,4 +1,5 @@
 import axios from 'axios'
+import { logger } from '../lib/logger'
 
 const BASE_URL = import.meta.env.VITE_API_URL || ''
 
@@ -65,7 +66,7 @@ export const logout = async (): Promise<void> => {
         }
       )
     } catch (error) {
-      console.error('Logout error:', error)
+      logger.error('Logout error:', error)
     }
   }
   localStorage.removeItem('access_token')

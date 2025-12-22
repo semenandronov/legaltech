@@ -9,7 +9,7 @@ const CasesListPage = () => {
   const [total, setTotal] = useState(0)
   const [loading, setLoading] = useState(true)
   const [currentPage, setCurrentPage] = useState(1)
-  const [viewMode, setViewMode] = useState<'grid' | 'list'>('grid')
+  const [viewMode, setViewMode] = useState<'grid' | 'list' | 'table'>('grid')
   const [filters, setFilters] = useState<FilterState>({
     search: '',
     status: [],

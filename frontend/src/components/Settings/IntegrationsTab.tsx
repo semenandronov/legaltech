@@ -1,10 +1,11 @@
 import { useState } from 'react'
-import { updateIntegrations } from '../../services/api'
+import { updateIntegrations, IntegrationSettings } from '../../services/api'
+import { logger } from '../../lib/logger'
 import './Settings.css'
 
 interface IntegrationsTabProps {
-  settings: any
-  onUpdate: (newSettings: any) => void
+  settings: IntegrationSettings
+  onUpdate: (newSettings: IntegrationSettings) => void
 }
 
 const IntegrationsTab = ({ settings, onUpdate }: IntegrationsTabProps) => {
@@ -37,7 +38,7 @@ const IntegrationsTab = ({ settings, onUpdate }: IntegrationsTabProps) => {
       setSuccess(true)
       setTimeout(() => setSuccess(false), 3000)
     } catch (error) {
-      console.error('Ошибка при отключении интеграции:', error)
+      logger.error('Ошибка при отключении интеграции:', error)
     } finally {
       setLoading(false)
     }
