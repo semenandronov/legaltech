@@ -408,7 +408,8 @@ const ChatWindow = ({ caseId, onDocumentClick }: ChatWindowProps) => {
   const hasMessages = messages.length > 0
 
   // Removed unused handlers - QuickButtons component was removed
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  // These functions are kept for potential future use
+  // @ts-expect-error - Unused but kept for future use
   const _handleClassifyAll = async () => {
     try {
       setIsLoading(true)
@@ -427,7 +428,7 @@ const ChatWindow = ({ caseId, onDocumentClick }: ChatWindowProps) => {
     }
   }
 
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  // @ts-expect-error - Unused but kept for future use
   const _handleFindPrivilege = async () => {
     try {
       setIsLoading(true)
@@ -445,7 +446,7 @@ const ChatWindow = ({ caseId, onDocumentClick }: ChatWindowProps) => {
     }
   }
 
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  // @ts-expect-error - Unused but kept for future use
   const _handleTimeline = async () => {
     try {
       setIsLoading(true)
@@ -464,7 +465,7 @@ const ChatWindow = ({ caseId, onDocumentClick }: ChatWindowProps) => {
     }
   }
 
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  // @ts-expect-error - Unused but kept for future use
   const _handleStatistics = async () => {
     try {
       setIsLoading(true)
@@ -483,7 +484,7 @@ const ChatWindow = ({ caseId, onDocumentClick }: ChatWindowProps) => {
     }
   }
 
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  // @ts-expect-error - Unused but kept for future use
   const _handleExtractEntities = async () => {
     try {
       setIsLoading(true)
