@@ -100,6 +100,30 @@
   --color-error: #DC3545;
 }
 
+/* Radix Themes Custom Variables for Perplexity Style */
+:root[data-radix-theme] {
+  --accent-9: #00D4FF;
+  --accent-10: #00B8E6;
+}
+
+:root[data-radix-theme][data-is-dark-theme="true"] {
+  --gray-1: #0F0F23;
+  --gray-2: #1A1B2E;
+  --gray-3: #242538;
+  --gray-4: #2A2B3E;
+  --gray-9: #B0B3C0;
+  --gray-12: #FFFFFF;
+}
+
+:root[data-radix-theme][data-is-dark-theme="false"] {
+  --gray-1: #FFFFFF;
+  --gray-2: #F8F9FA;
+  --gray-3: #F0F2F5;
+  --gray-4: #E5E8EB;
+  --gray-9: #666B78;
+  --gray-12: #0F1419;
+}
+
 /* Utility classes for theme colors */
 .bg-primary {
   background-color: var(--bg-primary);

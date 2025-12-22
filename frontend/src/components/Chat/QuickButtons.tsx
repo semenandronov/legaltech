@@ -1,4 +1,5 @@
 import React from 'react'
+import { Button, Flex, Text } from '@radix-ui/themes'
 import './Chat.css'
 
 interface QuickButtonsProps {
@@ -17,56 +18,85 @@ const QuickButtons: React.FC<QuickButtonsProps> = ({
   onExtractEntities
 }) => {
   return (
-    <div className="chat-quick-buttons">
-      <div className="chat-quick-buttons-title">📌 Quick Start:</div>
-      <div className="chat-quick-buttons-grid">
+    <Box 
+      className="chat-quick-buttons"
+      style={{
+        padding: '16px 24px',
+        borderBottom: '1px solid var(--color-border)',
+        backgroundColor: 'var(--color-surface)',
+      }}
+    >
+      <Text 
+        className="chat-quick-buttons-title"
+        size="1"
+        weight="bold"
+        style={{
+          marginBottom: '12px',
+          textTransform: 'uppercase',
+          letterSpacing: '0.5px',
+          color: 'var(--color-text-secondary)',
+          display: 'block',
+        }}
+      >
+        📌 Quick Start:
+      </Text>
+      <Flex 
+        className="chat-quick-buttons-grid"
+        wrap="wrap"
+        gap="2"
+      >
         {onClassifyAll && (
-          <button
-            className="chat-quick-button"
+          <Button
+            variant="soft"
+            size="2"
             onClick={onClassifyAll}
             aria-label="Классифицировать все документы"
           >
             [Classify All]
-          </button>
+          </Button>
         )}
         {onFindPrivilege && (
-          <button
-            className="chat-quick-button"
+          <Button
+            variant="soft"
+            size="2"
             onClick={onFindPrivilege}
             aria-label="Найти привилегированные документы"
           >
             [Find Privilege]
-          </button>
+          </Button>
         )}
         {onTimeline && (
-          <button
-            className="chat-quick-button"
+          <Button
+            variant="soft"
+            size="2"
             onClick={onTimeline}
             aria-label="Показать таймлайн"
           >
             [Timeline]
-          </button>
+          </Button>
         )}
         {onStatistics && (
-          <button
-            className="chat-quick-button"
+          <Button
+            variant="soft"
+            size="2"
             onClick={onStatistics}
             aria-label="Показать статистику"
           >
             [Statistics]
-          </button>
+          </Button>
         )}
         {onExtractEntities && (
-          <button
-            className="chat-quick-button"
+          <Button
+            variant="soft"
+            size="2"
             onClick={onExtractEntities}
             aria-label="Извлечь сущности"
           >
             [Extract Entities]
-          </button>
+          </Button>
         )}
-      </div>
-    </div>
+      </Flex>
+    </Box>
   )
 }
 

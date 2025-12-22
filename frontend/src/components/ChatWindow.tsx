@@ -1,5 +1,7 @@
 import { useState, useEffect, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
+import { Box, Flex, Text, TextArea, Button, IconButton, Card } from '@radix-ui/themes'
+import { Send, Paperclip } from 'lucide-react'
 import './ChatWindow.css'
 import './Chat/Chat.css'
 import { fetchHistory, sendMessage, SourceInfo, HistoryMessage, classifyDocuments, extractEntities, getTimeline, getAnalysisReport } from '../services/api'
@@ -47,6 +49,7 @@ const ChatWindow = ({ caseId, onDocumentClick }: ChatWindowProps) => {
   const [error, setError] = useState<string | null>(null)
   const [historyError, setHistoryError] = useState<string | null>(null)
   const messagesEndRef = useRef<HTMLDivElement>(null)
+  const textareaRef = useRef<HTMLTextAreaElement>(null)
   const [autocompleteVisible, setAutocompleteVisible] = useState(false)
   const [autocompleteSuggestions, setAutocompleteSuggestions] = useState<string[]>([])
   const [autocompleteSelectedIndex, setAutocompleteSelectedIndex] = useState(0)
@@ -585,12 +588,20 @@ const ChatWindow = ({ caseId, onDocumentClick }: ChatWindowProps) => {
   }
 
   return (
-    <div 
+    <Box 
       className={`chat-container ${isDragging ? 'dragging' : ''}`}
       onDragEnter={handleDragEnter}
       onDragLeave={handleDragLeave}
       onDragOver={handleDragOver}
       onDrop={handleDrop}
+      style={{ 
+        display: 'flex',
+        flexDirection: 'column',
+        height: '100vh',
+        backgroundColor: 'var(--color-bg)',
+        position: 'relative',
+        overflow: 'hidden'
+      }}
     >
       {isDragging && (
         <div className="chat-drag-overlay">
@@ -613,8 +624,30 @@ const ChatWindow = ({ caseId, onDocumentClick }: ChatWindowProps) => {
         />
       )}
 
-      <div className="chat-messages">
-        <div className="chat-messages-wrapper">
+      <Box 
+        className="chat-messages"
+        style={{
+          flex: 1,
+          overflowY: 'auto',
+          overflowX: 'hidden',
+          display: 'flex',
+          flexDirection: 'column',
+          alignItems: 'center',
+          padding: 0,
+          width: '100%',
+          backgroundColor: 'var(--color-bg)',
+          scrollBehavior: 'smooth',
+        }}
+      >
+        <Box 
+          className="chat-messages-wrapper"
+          style={{
+            width: '100%',
+            maxWidth: '768px',
+            margin: '0 auto',
+            padding: '80px 24px 140px',
+          }}
+        >
         {historyError && (
           <div className="error-message" style={{ padding: '12px', margin: '16px', background: '#fee2e2', color: '#ef4444', borderRadius: '6px' }}>
             ⚠️ {historyError}
@@ -636,27 +669,62 @@ const ChatWindow = ({ caseId, onDocumentClick }: ChatWindowProps) => {
           </div>
         )}
         {!hasMessages && !isLoading && !historyError && (
-          <div className="empty-state">
-            <div className="empty-card">
-              <div className="empty-icon">⚖️</div>
-              <h3 className="empty-title">Legal AI</h3>
-              <p className="empty-subtitle">
+          <Box 
+            className="empty-state"
+            style={{
+              display: 'flex',
+              justifyContent: 'center',
+              alignItems: 'center',
+              height: '100%',
+              padding: '40px 24px',
+            }}
+          >
+            <Card 
+              className="empty-card"
+              style={{
+                maxWidth: '640px',
+                width: '100%',
+                textAlign: 'center',
+                padding: '40px',
+              }}
+            >
+              <Box style={{ fontSize: '48px', marginBottom: '24px', opacity: 0.9 }}>⚖️</Box>
+              <Text size="7" weight="bold" style={{ marginBottom: '12px', display: 'block' }}>
+                Legal AI
+              </Text>
+              <Text size="3" color="gray" style={{ marginBottom: '40px', display: 'block', lineHeight: 1.6 }}>
                 Задайте вопрос по загруженным документам. AI проанализирует контракты, переписку и таблицы.
-              </p>
-              <div className="empty-questions-grid">
+              </Text>
+              <Box 
+                className="empty-questions-grid"
+                style={{
+                  display: 'grid',
+                  gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))',
+                  gap: '12px',
+                  maxWidth: '600px',
+                  margin: '0 auto',
+                }}
+              >
                 {RECOMMENDED_QUESTIONS.map((q) => (
-                  <button
+                  <Button
                     key={q}
-                    type="button"
-                    className="empty-question-btn"
+                    variant="soft"
+                    size="3"
                     onClick={() => handleRecommendedClick(q)}
+                    style={{
+                      textAlign: 'left',
+                      justifyContent: 'flex-start',
+                      height: 'auto',
+                      padding: '14px 18px',
+                      lineHeight: 1.5,
+                    }}
                   >
                     {q}
-                  </button>
+                  </Button>
                 ))}
-              </div>
-            </div>
-          </div>
+              </Box>
+            </Card>
+          </Box>
         )}
 
         {messages.map((message, index) => {
@@ -670,67 +738,186 @@ const ChatWindow = ({ caseId, onDocumentClick }: ChatWindowProps) => {
           const displaySources = isStreamingMessage ? streamingSources : (message.sources || [])
 
           return (
-            <div
+            <Flex
               key={index}
               className={`message ${message.role === 'user' ? 'message-user' : 'message-assistant'}`}
               role="article"
               aria-label={message.role === 'user' ? 'Сообщение пользователя' : 'Ответ ассистента'}
+              align="start"
+              gap="3"
+              style={{
+                width: '100%',
+                marginBottom: '24px',
+                justifyContent: message.role === 'user' ? 'flex-end' : 'flex-start',
+              }}
             >
               {message.role === 'assistant' && (
-                <div className="message-avatar assistant-avatar">AI</div>
+                <Box 
+                  className="message-avatar assistant-avatar"
+                  style={{
+                    width: '32px',
+                    height: '32px',
+                    borderRadius: '8px',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    fontSize: '13px',
+                    fontWeight: 600,
+                    flexShrink: 0,
+                    marginTop: '2px',
+                    background: 'linear-gradient(135deg, #00D4FF 0%, #00B8E6 100%)',
+                    color: '#0F0F23',
+                  }}
+                >
+                  AI
+                </Box>
               )}
-              <div className={`message-bubble ${message.role}`}>
-                <div className="message-text">
-                  <MessageContent
-                    content={displayContent}
-                    sources={displaySources}
-                    onCitationClick={handleCitationClick}
-                    isStreaming={isStreamingMessage}
-                  />
-                </div>
-                
-                {statistics && (
-                  <div style={{ marginTop: '16px' }}>
-                    <StatisticsChart data={statistics} />
-                  </div>
-                )}
-                
-                {message.role === 'assistant' && confidence !== null && (
-                  <div style={{ marginTop: '8px' }}>
-                    <span style={{ fontSize: '12px', color: 'var(--color-text-secondary)' }}>Уверенность: </span>
-                    <ConfidenceBadge confidence={confidence} />
-                  </div>
-                )}
-
-                {/* Sources are now inline citations only - no separate block */}
-              </div>
+              {message.role === 'assistant' ? (
+                <Card
+                  className={`message-bubble assistant`}
+                  style={{
+                    maxWidth: '768px',
+                    padding: '20px 24px',
+                    borderRadius: '16px',
+                    backgroundColor: 'var(--color-message-assistant)',
+                    boxShadow: '0 1px 3px rgba(0, 0, 0, 0.1)',
+                  }}
+                >
+                  <Text className="message-text" style={{ fontSize: '16px', lineHeight: 1.75, color: 'inherit', fontWeight: 400 }}>
+                    <MessageContent
+                      content={displayContent}
+                      sources={displaySources}
+                      onCitationClick={handleCitationClick}
+                      isStreaming={isStreamingMessage}
+                    />
+                  </Text>
+                  
+                  {statistics && (
+                    <Box style={{ marginTop: '16px' }}>
+                      <StatisticsChart data={statistics} />
+                    </Box>
+                  )}
+                  
+                  {confidence !== null && (
+                    <Flex align="center" gap="2" style={{ marginTop: '8px' }}>
+                      <Text size="1" color="gray">Уверенность: </Text>
+                      <ConfidenceBadge confidence={confidence} />
+                    </Flex>
+                  )}
+                </Card>
+              ) : (
+                <Box
+                  className={`message-bubble user`}
+                  style={{
+                    maxWidth: '85%',
+                    padding: '12px 16px',
+                    borderRadius: '18px 18px 4px 18px',
+                    marginLeft: 'auto',
+                    backgroundColor: 'var(--color-message-user)',
+                    color: '#0F0F23',
+                    fontWeight: 400,
+                  }}
+                >
+                  <Text style={{ fontSize: '16px', lineHeight: 1.75 }}>
+                    {message.content}
+                  </Text>
+                </Box>
+              )}
               {message.role === 'user' && (
-                <div className="message-avatar user-avatar">You</div>
+                <Box 
+                  className="message-avatar user-avatar"
+                  style={{
+                    width: '32px',
+                    height: '32px',
+                    borderRadius: '8px',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    fontSize: '13px',
+                    fontWeight: 600,
+                    flexShrink: 0,
+                    marginTop: '2px',
+                    backgroundColor: 'var(--color-border)',
+                    color: 'var(--color-text)',
+                  }}
+                >
+                  You
+                </Box>
               )}
-            </div>
+            </Flex>
           )
         })}
 
         {isLoading && !isWebSocketStreaming && currentStreamingMessageRef.current === null && (
-          <div className="message message-assistant" role="status" aria-live="polite">
-            <div className="message-avatar assistant-avatar" aria-hidden="true">AI</div>
-            <div className="message-bubble assistant loading-bubble">
-              <div className="typing-indicator" aria-label="Генерация ответа">
-                <div className="typing-dot"></div>
-                <div className="typing-dot"></div>
-                <div className="typing-dot"></div>
-              </div>
-            </div>
-          </div>
+          <Flex
+            className="message message-assistant"
+            role="status"
+            aria-live="polite"
+            align="start"
+            gap="3"
+            style={{
+              width: '100%',
+              marginBottom: '24px',
+              justifyContent: 'flex-start',
+            }}
+          >
+            <Box 
+              className="message-avatar assistant-avatar"
+              aria-hidden="true"
+              style={{
+                width: '32px',
+                height: '32px',
+                borderRadius: '8px',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                fontSize: '13px',
+                fontWeight: 600,
+                flexShrink: 0,
+                marginTop: '2px',
+                background: 'linear-gradient(135deg, #00D4FF 0%, #00B8E6 100%)',
+                color: '#0F0F23',
+              }}
+            >
+              AI
+            </Box>
+            <Card
+              className="message-bubble assistant loading-bubble"
+              style={{
+                padding: '20px 24px',
+                borderRadius: '16px',
+                backgroundColor: 'var(--color-message-assistant)',
+              }}
+            >
+              <Box className="typing-indicator" aria-label="Генерация ответа" style={{ display: 'flex', gap: '4px' }}>
+                <Box className="typing-dot" style={{ width: '8px', height: '8px', borderRadius: '50%', backgroundColor: 'var(--color-primary)', animation: 'typingPulse 1.4s ease-in-out infinite' }}></Box>
+                <Box className="typing-dot" style={{ width: '8px', height: '8px', borderRadius: '50%', backgroundColor: 'var(--color-primary)', animation: 'typingPulse 1.4s ease-in-out infinite 0.2s' }}></Box>
+                <Box className="typing-dot" style={{ width: '8px', height: '8px', borderRadius: '50%', backgroundColor: 'var(--color-primary)', animation: 'typingPulse 1.4s ease-in-out infinite 0.4s' }}></Box>
+              </Box>
+            </Card>
+          </Flex>
         )}
 
         {error && <div className="error-message">{error}</div>}
 
         <div ref={messagesEndRef} />
-        </div>
-      </div>
+        </Box>
+      </Box>
 
-      <div className="chat-input-area">
+      <Box 
+        className="chat-input-area"
+        style={{
+          position: 'fixed',
+          bottom: 0,
+          left: '260px',
+          right: 0,
+          backgroundColor: 'var(--color-bg)',
+          borderTop: '1px solid var(--color-border)',
+          padding: '24px 0',
+          zIndex: 100,
+          transition: 'left 0.3s ease',
+        }}
+      >
         {droppedFiles.length > 0 && (
           <div className="chat-dropped-files">
             {droppedFiles.map((file, index) => (
@@ -748,17 +935,61 @@ const ChatWindow = ({ caseId, onDocumentClick }: ChatWindowProps) => {
             ))}
           </div>
         )}
-        <div className="chat-input-wrapper">
-          <div className="chat-input-main">
-            <div className="chat-input-container">
-              <textarea
-                className="chat-input-textarea"
+        <Box 
+          className="chat-input-wrapper"
+          style={{
+            maxWidth: '768px',
+            width: '100%',
+            margin: '0 auto',
+            padding: '0 24px',
+            boxSizing: 'border-box',
+          }}
+        >
+          <Flex
+            className="chat-input-main"
+            align="center"
+            gap="3"
+            style={{
+              backgroundColor: 'var(--color-surface)',
+              border: '1.5px solid var(--color-border)',
+              borderRadius: '26px',
+              padding: '12px 16px',
+              minHeight: '52px',
+              width: '100%',
+              boxSizing: 'border-box',
+            }}
+          >
+            <Box 
+              className="chat-input-container"
+              style={{
+                position: 'relative',
+                flex: 1,
+                minWidth: 0,
+                display: 'flex',
+                alignItems: 'center',
+              }}
+            >
+              <TextArea
+                ref={textareaRef}
                 placeholder={PLACEHOLDERS[currentPlaceholderIndex]}
                 value={inputValue}
                 onChange={handleTextareaChange}
                 onKeyDown={handleKeyDown}
                 disabled={isLoading}
-                rows={1}
+                resize="none"
+                style={{
+                  minHeight: '24px',
+                  maxHeight: '200px',
+                  lineHeight: 1.5,
+                  width: '100%',
+                  minWidth: 0,
+                  border: 'none',
+                  background: 'transparent',
+                  padding: 0,
+                  fontSize: '16px',
+                  fontFamily: 'inherit',
+                  outline: 'none',
+                }}
                 aria-label="Введите сообщение"
                 aria-describedby="input-help"
               />
@@ -768,18 +999,39 @@ const ChatWindow = ({ caseId, onDocumentClick }: ChatWindowProps) => {
                 onSelect={handleAutocompleteSelect}
                 visible={autocompleteVisible}
               />
-            </div>
-            <div className="chat-input-actions">
+            </Box>
+            <Flex className="chat-input-actions" align="center" gap="2" style={{ flexShrink: 0 }}>
               {/* Pro Search Toggle */}
-              <button
-                type="button"
+              <Button
+                variant="soft"
+                size="2"
                 onClick={() => setProSearchEnabled(!proSearchEnabled)}
-                className={`pro-search-toggle ${proSearchEnabled ? 'active' : ''}`}
+                className={proSearchEnabled ? 'active' : ''}
                 title="Глубокий поиск (Pro)"
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '6px',
+                  padding: '6px 12px',
+                  backgroundColor: proSearchEnabled ? 'rgba(255, 193, 7, 0.25)' : 'rgba(255, 193, 7, 0.12)',
+                  borderColor: proSearchEnabled ? '#FFC107' : 'rgba(255, 193, 7, 0.25)',
+                  color: '#FFC107',
+                  fontSize: '12px',
+                }}
               >
-                <span className="pro-search-badge"></span>
-                <span>Pro Search</span>
-              </button>
+                <Box 
+                  className="pro-search-badge"
+                  style={{
+                    width: '5px',
+                    height: '5px',
+                    borderRadius: '50%',
+                    background: '#FFC107',
+                    boxShadow: '0 0 3px rgba(255, 193, 7, 0.6)',
+                    flexShrink: 0,
+                  }}
+                />
+                <Text size="2">Pro Search</Text>
+              </Button>
               
               <input
                 type="file"
@@ -789,31 +1041,40 @@ const ChatWindow = ({ caseId, onDocumentClick }: ChatWindowProps) => {
                 onChange={handleFileInput}
                 style={{ display: 'none' }}
               />
-              <label htmlFor="chat-file-input" className="chat-file-button" title="Прикрепить файл">
-                <svg width="20" height="20" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg">
-                  <path d="M8 2a2 2 0 00-2 2v12a2 2 0 002 2h4a2 2 0 002-2V7.414A2 2 0 0013.414 6L9 .586A2 2 0 008 2z" stroke="currentColor" strokeWidth="2" fill="none"/>
-                </svg>
-              </label>
-              <button
-                type="button"
+              <IconButton
+                asChild
+                variant="ghost"
+                size="2"
+                title="Прикрепить файл"
+              >
+                <label htmlFor="chat-file-input" style={{ cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                  <Paperclip size={20} />
+                </label>
+              </IconButton>
+              <IconButton
+                variant="solid"
+                size="2"
                 onClick={(e) => {
                   e.preventDefault()
                   handleSend()
                 }}
                 disabled={isLoading || !inputValue.trim() || isOverLimit}
-                className="send-button"
                 title="Отправить (Enter)"
                 aria-label="Отправить сообщение"
+                style={{
+                  backgroundColor: 'var(--color-primary)',
+                  color: '#0F0F23',
+                  width: '32px',
+                  height: '32px',
+                }}
               >
-                <svg width="16" height="16" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
-                  <path d="M.5 1.163L1.847.5l13.5 7.5-13.5 7.5L.5 14.837V8.837l8.5-1.674L.5 5.837V1.163z" fill="currentColor"/>
-                </svg>
-              </button>
-            </div>
-          </div>
-        </div>
-      </div>
-    </div>
+                <Send size={16} />
+              </IconButton>
+            </Flex>
+          </Flex>
+        </Box>
+      </Box>
+    </Box>
   )
 }
 
