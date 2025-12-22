@@ -1,6 +1,6 @@
 import React from 'react'
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/UI/card'
-import { Button } from '@/components/UI/button'
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/UI/Card'
+import { Button } from '@/components/UI/Button'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/UI/tooltip'
 import './Chat.css'
 

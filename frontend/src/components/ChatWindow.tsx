@@ -6,22 +6,20 @@ import './ChatWindow.css'
 import './Chat/Chat.css'
 import { fetchHistory, sendMessage, SourceInfo, HistoryMessage, classifyDocuments, extractEntities, getTimeline, getAnalysisReport } from '../services/api'
 import { useWebSocketChat } from '../hooks/useWebSocketChat'
-import QuickButtons from './Chat/QuickButtons'
 import ConfidenceBadge from './Common/ConfidenceBadge'
 import MessageContent from './Chat/MessageContent'
 import Autocomplete from './Chat/Autocomplete'
 import StatisticsChart from './Chat/StatisticsChart'
-import { Button } from '@/components/UI/button'
-import { Card, CardContent } from '@/components/UI/card'
-import { Textarea } from '@/components/UI/textarea'
+import { Button } from '@/components/UI/Button'
+import { Card, CardContent } from '@/components/UI/Card'
+import { Textarea } from '@/components/UI/Textarea'
 import { Avatar, AvatarFallback } from '@/components/UI/avatar'
-import { Badge } from '@/components/UI/badge'
+import { Badge } from '@/components/UI/Badge'
 import { Separator } from '@/components/UI/separator'
 import { ScrollArea } from '@/components/UI/scroll-area'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/UI/tooltip'
-import { Switch } from '@/components/UI/switch'
 import { Alert, AlertDescription, AlertTitle } from '@/components/UI/alert'
-import { Skeleton } from '@/components/UI/skeleton'
+import { Skeleton } from '@/components/UI/Skeleton'
 import { cn } from '@/lib/utils'
 
 interface Message {
@@ -80,7 +78,7 @@ const ChatWindow = ({ caseId, onDocumentClick }: ChatWindowProps) => {
     'Какие сроки важны...',
   ]
   const [currentPlaceholderIndex, setCurrentPlaceholderIndex] = useState(0)
-  const [proSearchEnabled, setProSearchEnabled] = useState(false)
+  const [proSearchEnabled] = useState(false)
 
   const { isConnected, isStreaming: isWebSocketStreaming, sendMessage: sendWebSocketMessage } = useWebSocketChat({
     caseId,
