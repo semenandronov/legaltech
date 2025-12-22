@@ -408,6 +408,7 @@ const ChatWindow = ({ caseId, onDocumentClick }: ChatWindowProps) => {
   const hasMessages = messages.length > 0
 
   // Removed unused handlers - QuickButtons component was removed
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   const _handleClassifyAll = async () => {
     try {
       setIsLoading(true)
@@ -426,6 +427,7 @@ const ChatWindow = ({ caseId, onDocumentClick }: ChatWindowProps) => {
     }
   }
 
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   const _handleFindPrivilege = async () => {
     try {
       setIsLoading(true)
@@ -443,6 +445,7 @@ const ChatWindow = ({ caseId, onDocumentClick }: ChatWindowProps) => {
     }
   }
 
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   const _handleTimeline = async () => {
     try {
       setIsLoading(true)
@@ -461,6 +464,7 @@ const ChatWindow = ({ caseId, onDocumentClick }: ChatWindowProps) => {
     }
   }
 
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   const _handleStatistics = async () => {
     try {
       setIsLoading(true)
@@ -479,6 +483,7 @@ const ChatWindow = ({ caseId, onDocumentClick }: ChatWindowProps) => {
     }
   }
 
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   const _handleExtractEntities = async () => {
     try {
       setIsLoading(true)

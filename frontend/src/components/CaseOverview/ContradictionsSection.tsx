@@ -52,7 +52,7 @@ const ContradictionsSection = ({
   return (
     <div className="space-y-4">
       {contradictions.map((contradiction) => (
-        <Card key={contradiction.id} variant="accent" className="border-l-4 border-l-warning">
+        <Card key={contradiction.id} className="border-l-4 border-l-warning">
           <div className="space-y-3">
             <div className="flex items-start justify-between">
               <div className="flex items-center gap-2">

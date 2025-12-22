@@ -32,7 +32,7 @@ const RiskCards = ({ risks, onViewDocument }: RiskCardsProps) => {
   return (
     <div className="space-y-4">
       {risks.map((risk) => (
-        <Card key={risk.id} variant="accent" className="border-l-4">
+        <Card key={risk.id} className="border-l-4">
           <div className="space-y-3">
             <div className="flex items-start justify-between">
               <div className="flex items-center gap-3">
