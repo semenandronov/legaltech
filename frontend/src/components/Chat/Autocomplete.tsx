@@ -1,5 +1,5 @@
 import React from 'react'
-import { Card, CardContent } from '@/components/UI/Card'
+import { Card, CardContent } from '@/components/UI/card'
 import { cn } from '@/lib/utils'
 import './Chat.css'
 
