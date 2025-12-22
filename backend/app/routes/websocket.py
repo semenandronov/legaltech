@@ -200,6 +200,7 @@ async def stream_chat(
             data = await websocket.receive_json()
             query = data.get("query", "")
             history = data.get("history", [])
+            pro_search = data.get("pro_search", False)
             
             if not query:
                 await websocket.send_json({
@@ -209,26 +210,57 @@ async def stream_chat(
                 continue
             
             # Send acknowledgment
-            await websocket.send_json({
-                "type": "processing",
-                "message": "Обработка запроса..."
-            })
+            if pro_search:
+                await websocket.send_json({
+                    "type": "processing",
+                    "message": "🔍 Deep Research activated..."
+                })
+            else:
+                await websocket.send_json({
+                    "type": "processing",
+                    "message": "Обработка запроса..."
+                })
             
             # Generate response with sources
             try:
+                # Pro Search uses more sources and deeper analysis
+                k = 15 if pro_search else 5
+                
                 answer, sources = rag_service.generate_with_sources(
                     case_id=case_id,
                     query=query,
-                    k=5,
+                    k=k,
                     db=db,
                     history=history
                 )
                 
-                # Send response
+                # Stream tokens for Perplexity-style UX
+                # Split answer into tokens (words) and send progressively
+                words = answer.split(' ')
+                accumulated = ''
+                
+                for i, word in enumerate(words):
+                    accumulated += word
+                    if i < len(words) - 1:
+                        accumulated += ' '
+                    
+                    # Send token
+                    await websocket.send_json({
+                        "type": "token",
+                        "content": word + (' ' if i < len(words) - 1 else ''),
+                        "done": False
+                    })
+                    
+                    # Small delay for smooth streaming effect
+                    import asyncio
+                    await asyncio.sleep(0.02)  # ~50 tokens per second
+                
+                # Send final response with sources
                 await websocket.send_json({
                     "type": "response",
                     "answer": answer,
-                    "sources": sources
+                    "sources": sources,
+                    "done": True
                 })
                 
             except Exception as e:

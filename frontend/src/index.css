@@ -53,48 +53,50 @@
   --color-error: #DC3545;
 }
 
-/* Dark Mode */
+/* Dark Mode - Perplexity Style */
 :root[data-theme="dark"] {
-  /* Background colors */
-  --bg-primary: #0F1419;
-  --bg-secondary: #1A2332;
-  --bg-tertiary: #242F3F;
-  --border: #3A4556;
+  /* Background colors - Perplexity dark */
+  --bg-primary: #0F0F23;
+  --bg-secondary: #1A1B2E;
+  --bg-tertiary: #242538;
+  --border: #2A2B3E;
   
   /* Text colors */
-  --text-primary: #F5F5F5;
-  --text-secondary: #A0A8B8;
-  --text-disabled: #5A6476;
+  --text-primary: #FFFFFF;
+  --text-secondary: #B0B3C0;
+  --text-disabled: #5A5D6E;
   
-  /* Accent colors */
-  --primary: #0FA3FF;
-  --primary-hover: #0D8FD9;
+  /* Accent colors - Perplexity cyan + purple */
+  --primary: #00D4FF;
+  --primary-hover: #00B8E6;
+  --secondary: #7C3AED;
   --success: #28C76F;
   --warning: #FFB547;
   --error: #FF5370;
-  --info: #00BDD4;
+  --info: #00D4FF;
   
-  /* Document type colors (same for both modes) */
+  /* Document type colors */
   --doc-contract: #9C27B0;
   --doc-email: #FF6F00;
   --doc-court: #D32F2F;
   --doc-sanction: #880E4F;
   --doc-compliance: #00838F;
   
-  /* Chat variables - Dark theme */
-  --color-bg: #0F1419;
-  --color-surface: #1A2332;
-  --color-surface-alt: #242F3F;
-  --color-border: #3A4556;
-  --color-text: #F5F5F5;
-  --color-text-secondary: #A0A8B8;
-  --color-text-muted: #5A6476;
-  --color-primary: #00BDD4;
-  --color-primary-hover: #00A8BD;
-  --color-hover: #1A2332;
-  --color-active: #242F3F;
-  --color-message-user: #00BDD4;
-  --color-message-assistant: #1A2332;
+  /* Chat variables - Perplexity dark theme */
+  --color-bg: #0F0F23;
+  --color-surface: #1A1B2E;
+  --color-surface-alt: #242538;
+  --color-border: #2A2B3E;
+  --color-text: #FFFFFF;
+  --color-text-secondary: #B0B3C0;
+  --color-text-muted: #5A5D6E;
+  --color-primary: #00D4FF;
+  --color-primary-hover: #00B8E6;
+  --color-secondary: #7C3AED;
+  --color-hover: #242538;
+  --color-active: #2A2B3E;
+  --color-message-user: #00D4FF;
+  --color-message-assistant: #1A1B2E;
   --color-error: #FF5370;
 }
 

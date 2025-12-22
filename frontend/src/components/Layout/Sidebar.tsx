@@ -1,11 +1,13 @@
 import { useState, useEffect } from 'react'
 import { NavLink, useNavigate, useLocation } from 'react-router-dom'
-import { ChevronLeft, ChevronRight, Home, Settings, LogOut } from 'lucide-react'
+import { ChevronLeft, ChevronRight, Home, Settings, LogOut, Moon, Sun } from 'lucide-react'
 import { useAuth } from '../../contexts/AuthContext'
+import { useTheme } from '../../contexts/ThemeContext'
 import Button from '../UI/Button'
 
 const Sidebar = () => {
   const { logout, user } = useAuth()
+  const { theme, toggleTheme } = useTheme()
   const navigate = useNavigate()
   const location = useLocation()
   const [isCollapsed, setIsCollapsed] = useState(false)
@@ -94,6 +96,23 @@ const Sidebar = () => {
                 </div>
               </div>
             )}
+            <button
+              onClick={toggleTheme}
+              className="flex items-center gap-3 px-3 py-2 w-full text-body font-medium rounded-md transition-colors text-secondary hover:text-primary hover:bg-tertiary"
+              aria-label={theme === 'dark' ? 'Переключить на светлую тему' : 'Переключить на темную тему'}
+            >
+              {theme === 'dark' ? (
+                <>
+                  <Sun className="w-5 h-5" />
+                  <span>Светлая тема</span>
+                </>
+              ) : (
+                <>
+                  <Moon className="w-5 h-5" />
+                  <span>Темная тема</span>
+                </>
+              )}
+            </button>
             <Button
               variant="secondary"
               className="w-full justify-start"

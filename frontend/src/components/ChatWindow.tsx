@@ -3,10 +3,12 @@ import { useNavigate } from 'react-router-dom'
 import './ChatWindow.css'
 import './Chat/Chat.css'
 import { fetchHistory, sendMessage, SourceInfo, HistoryMessage, classifyDocuments, extractEntities, getTimeline, getAnalysisReport } from '../services/api'
+import { useWebSocketChat } from '../hooks/useWebSocketChat'
 import ReactMarkdown from 'react-markdown'
 import QuickButtons from './Chat/QuickButtons'
 import ConfidenceBadge from './Common/ConfidenceBadge'
 import CitationLink from './Chat/CitationLink'
+import MessageContent from './Chat/MessageContent'
 import Autocomplete from './Chat/Autocomplete'
 import StatisticsChart from './Chat/StatisticsChart'
 
@@ -52,10 +54,76 @@ const ChatWindow = ({ caseId, onDocumentClick }: ChatWindowProps) => {
   const [autocompleteSelectedIndex, setAutocompleteSelectedIndex] = useState(0)
   const [isDragging, setIsDragging] = useState(false)
   const [droppedFiles, setDroppedFiles] = useState<File[]>([])
+  const [streamingContent, setStreamingContent] = useState('')
+  const [streamingSources, setStreamingSources] = useState<SourceInfo[]>([])
+  const currentStreamingMessageRef = useRef<number | null>(null)
+  
+  // Placeholder rotation for Perplexity UX
+  const PLACEHOLDERS = [
+    'Задайте вопрос...',
+    'Объясни как 5-летнему...',
+    'Сравни документы...',
+    'Найди противоречия...',
+    'Что говорит договор о...',
+    'Какие сроки важны...',
+  ]
+  const [currentPlaceholderIndex, setCurrentPlaceholderIndex] = useState(0)
+  const [proSearchEnabled, setProSearchEnabled] = useState(false)
+
+  // WebSocket streaming hook
+  const { isConnected, isStreaming: isWebSocketStreaming, sendMessage: sendWebSocketMessage } = useWebSocketChat({
+    caseId,
+    onMessage: (content: string) => {
+      setStreamingContent(prev => prev + content)
+      // Auto-scroll during streaming
+      setTimeout(() => scrollToBottom(), 50)
+    },
+    onSources: (sources: any[]) => {
+      setStreamingSources(sources)
+    },
+    onError: (errorMsg: string) => {
+      setError(errorMsg)
+      setIsLoading(false)
+      setStreamingContent('')
+      setStreamingSources([])
+      if (currentStreamingMessageRef.current !== null) {
+        // Remove incomplete streaming message
+        setMessages(prev => prev.filter((_, idx) => idx !== currentStreamingMessageRef.current))
+        currentStreamingMessageRef.current = null
+      }
+    },
+    onComplete: () => {
+      // Finalize streaming message
+      if (currentStreamingMessageRef.current !== null && streamingContent) {
+        setMessages(prev => prev.map((msg, idx) => 
+          idx === currentStreamingMessageRef.current 
+            ? { ...msg, content: streamingContent, sources: streamingSources }
+            : msg
+        ))
+        currentStreamingMessageRef.current = null
+        setStreamingContent('')
+        setStreamingSources([])
+      }
+      setIsLoading(false)
+      setTimeout(() => scrollToBottom(), 200)
+    },
+    enabled: true,
+  })
 
   useEffect(() => {
     loadHistory()
   }, [caseId])
+
+  // Placeholder rotation effect
+  useEffect(() => {
+    if (inputValue) return // Don't rotate if user is typing
+    
+    const interval = setInterval(() => {
+      setCurrentPlaceholderIndex((prev) => (prev + 1) % PLACEHOLDERS.length)
+    }, 3000) // Rotate every 3 seconds
+    
+    return () => clearInterval(interval)
+  }, [inputValue])
 
   useEffect(() => {
     // Perplexity-style smooth scroll with delay for better UX
@@ -122,7 +190,7 @@ const ChatWindow = ({ caseId, onDocumentClick }: ChatWindowProps) => {
 
   const handleSend = async (customMessage?: string) => {
     const messageToSend = customMessage || inputValue
-    if (!messageToSend.trim() || isLoading) {
+    if (!messageToSend.trim() || isLoading || isWebSocketStreaming) {
       return
     }
 
@@ -144,31 +212,51 @@ const ChatWindow = ({ caseId, onDocumentClick }: ChatWindowProps) => {
     }, 150)
     
     setIsLoading(true)
+    setStreamingContent('')
+    setStreamingSources([])
 
-    try {
-      const response = await sendMessage(caseId, userMessage.content)
-      if (response.status === 'success' || response.status === 'task_planned') {
+    // Use WebSocket streaming if available, fallback to HTTP
+    if (isConnected) {
+      // Create placeholder assistant message for streaming
       const assistantMessage: Message = {
         role: 'assistant',
-        content: response.answer,
-        sources: response.sources || [],
+        content: '',
+        sources: [],
       }
-      setMessages((prev) => [...prev, assistantMessage])
+      const messageIndex = messages.length
+      setMessages(prev => [...prev, assistantMessage])
+      currentStreamingMessageRef.current = messageIndex
       
-      // Perplexity-style: smooth scroll after AI response
-      setTimeout(() => {
-        scrollToBottom()
-      }, 200)
-      } else {
-        setError('Ошибка при получении ответа')
+      // Send via WebSocket
+      const history = messages.map(m => ({ role: m.role, content: m.content }))
+      sendWebSocketMessage(trimmed, history, proSearchEnabled)
+    } else {
+      // Fallback to HTTP
+      try {
+        const response = await sendMessage(caseId, userMessage.content)
+        if (response.status === 'success' || response.status === 'task_planned') {
+          const assistantMessage: Message = {
+            role: 'assistant',
+            content: response.answer,
+            sources: response.sources || [],
+          }
+          setMessages((prev) => [...prev, assistantMessage])
+          
+          // Perplexity-style: smooth scroll after AI response
+          setTimeout(() => {
+            scrollToBottom()
+          }, 200)
+        } else {
+          setError('Ошибка при получении ответа')
+        }
+      } catch (err: any) {
+        setError(
+          err.response?.data?.detail ||
+            'Ошибка при отправке вопроса. Проверьте, что backend запущен.',
+        )
+      } finally {
+        setIsLoading(false)
       }
-    } catch (err: any) {
-      setError(
-        err.response?.data?.detail ||
-          'Ошибка при отправке вопроса. Проверьте, что backend запущен.',
-      )
-    } finally {
-      setIsLoading(false)
     }
   }
 
@@ -576,6 +664,11 @@ const ChatWindow = ({ caseId, onDocumentClick }: ChatWindowProps) => {
           const statistics = message.role === 'assistant' ? extractStatistics(message.content) : null
           const hasSources = message.sources && message.sources.length > 0
           const hasMultipleSources = hasSources && message.sources && message.sources.length > 1
+          
+          // Check if this is the streaming message
+          const isStreamingMessage = currentStreamingMessageRef.current === index && isWebSocketStreaming && streamingContent
+          const displayContent = isStreamingMessage ? streamingContent : message.content
+          const displaySources = isStreamingMessage ? streamingSources : (message.sources || [])
 
           return (
             <div
@@ -589,7 +682,12 @@ const ChatWindow = ({ caseId, onDocumentClick }: ChatWindowProps) => {
               )}
               <div className={`message-bubble ${message.role}`}>
                 <div className="message-text">
-                  <ReactMarkdown>{message.content}</ReactMarkdown>
+                  <MessageContent
+                    content={displayContent}
+                    sources={displaySources}
+                    onCitationClick={handleCitationClick}
+                    isStreaming={isStreamingMessage}
+                  />
                 </div>
                 
                 {statistics && (
@@ -605,11 +703,11 @@ const ChatWindow = ({ caseId, onDocumentClick }: ChatWindowProps) => {
                   </div>
                 )}
 
-                {hasSources && message.sources && (
+                {hasSources && displaySources && displaySources.length > 0 && (
                   <div className="chat-message-sources">
                     <div className="chat-message-sources-title">Источники:</div>
                     <div className="chat-message-sources-list">
-                      {message.sources.map((source, idx) => (
+                      {displaySources.map((source, idx) => (
                         <CitationLink
                           key={idx}
                           source={source}
@@ -668,7 +766,7 @@ const ChatWindow = ({ caseId, onDocumentClick }: ChatWindowProps) => {
           )
         })}
 
-        {isLoading && (
+        {isLoading && !isWebSocketStreaming && currentStreamingMessageRef.current === null && (
           <div className="message message-assistant" role="status" aria-live="polite">
             <div className="message-avatar assistant-avatar" aria-hidden="true">AI</div>
             <div className="message-bubble assistant loading-bubble">
@@ -710,7 +808,7 @@ const ChatWindow = ({ caseId, onDocumentClick }: ChatWindowProps) => {
             <div className="chat-input-container">
               <textarea
                 className="chat-input-textarea"
-                placeholder="Задайте вопрос..."
+                placeholder={PLACEHOLDERS[currentPlaceholderIndex]}
                 value={inputValue}
                 onChange={handleTextareaChange}
                 onKeyDown={handleKeyDown}
@@ -727,6 +825,17 @@ const ChatWindow = ({ caseId, onDocumentClick }: ChatWindowProps) => {
               />
             </div>
             <div className="chat-input-actions">
+              {/* Pro Search Toggle */}
+              <button
+                type="button"
+                onClick={() => setProSearchEnabled(!proSearchEnabled)}
+                className={`pro-search-toggle ${proSearchEnabled ? 'active' : ''}`}
+                title="Глубокий поиск (Pro)"
+              >
+                <span className="pro-search-badge"></span>
+                <span>Pro Search</span>
+              </button>
+              
               <input
                 type="file"
                 id="chat-file-input"
