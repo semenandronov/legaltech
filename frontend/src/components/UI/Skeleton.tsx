@@ -1,6 +1,6 @@
 import { cn } from "@/lib/utils"
 
-export interface SkeletonProps extends React.HTMLAttributes<HTMLDivElement> {
+interface SkeletonProps extends React.HTMLAttributes<HTMLDivElement> {
   variant?: string
   height?: number | string
 }
