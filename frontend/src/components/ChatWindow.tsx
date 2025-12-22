@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { Send, Paperclip, Zap } from 'lucide-react'
+import { Send, Paperclip } from 'lucide-react'
 import { motion, AnimatePresence } from 'framer-motion'
 import './ChatWindow.css'
 import './Chat/Chat.css'
@@ -132,7 +132,7 @@ const ChatWindow = ({ caseId, onDocumentClick }: ChatWindowProps) => {
 
   useEffect(() => {
     const timer = setTimeout(() => {
-      scrollToBottom()
+    scrollToBottom()
     }, 100)
     return () => clearTimeout(timer)
   }, [messages, isLoading])
@@ -224,28 +224,28 @@ const ChatWindow = ({ caseId, onDocumentClick }: ChatWindowProps) => {
       const history = messages.map(m => ({ role: m.role, content: m.content }))
       sendWebSocketMessage(trimmed, history, proSearchEnabled)
     } else {
-      try {
-        const response = await sendMessage(caseId, userMessage.content)
-        if (response.status === 'success' || response.status === 'task_planned') {
-          const assistantMessage: Message = {
-            role: 'assistant',
-            content: response.answer,
-            sources: response.sources || [],
-          }
-          setMessages((prev) => [...prev, assistantMessage])
+    try {
+      const response = await sendMessage(caseId, userMessage.content)
+      if (response.status === 'success' || response.status === 'task_planned') {
+      const assistantMessage: Message = {
+        role: 'assistant',
+        content: response.answer,
+        sources: response.sources || [],
+      }
+      setMessages((prev) => [...prev, assistantMessage])
           setTimeout(() => {
             scrollToBottom()
           }, 200)
-        } else {
-          setError('Ошибка при получении ответа')
-        }
-      } catch (err: any) {
-        setError(
-          err.response?.data?.detail ||
-            'Ошибка при отправке вопроса. Проверьте, что backend запущен.',
-        )
-      } finally {
-        setIsLoading(false)
+      } else {
+        setError('Ошибка при получении ответа')
+      }
+    } catch (err: any) {
+      setError(
+        err.response?.data?.detail ||
+          'Ошибка при отправке вопроса. Проверьте, что backend запущен.',
+      )
+    } finally {
+      setIsLoading(false)
       }
     }
   }
@@ -566,14 +566,14 @@ const ChatWindow = ({ caseId, onDocumentClick }: ChatWindowProps) => {
     <TooltipProvider>
       <div 
         className={cn("chat-container flex flex-col h-screen relative overflow-hidden", isDragging && "dragging")}
-        onDragEnter={handleDragEnter}
-        onDragLeave={handleDragLeave}
-        onDragOver={handleDragOver}
-        onDrop={handleDrop}
+      onDragEnter={handleDragEnter}
+      onDragLeave={handleDragLeave}
+      onDragOver={handleDragOver}
+      onDrop={handleDrop}
         style={{ backgroundColor: 'var(--color-bg)' }}
       >
         <AnimatePresence>
-          {isDragging && (
+      {isDragging && (
             <motion.div
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
@@ -591,39 +591,30 @@ const ChatWindow = ({ caseId, onDocumentClick }: ChatWindowProps) => {
           )}
         </AnimatePresence>
 
-        {!hasMessages && !isLoading && !historyError && (
-          <QuickButtons
-            onClassifyAll={handleClassifyAll}
-            onFindPrivilege={handleFindPrivilege}
-            onTimeline={handleTimeline}
-            onStatistics={handleStatistics}
-            onExtractEntities={handleExtractEntities}
-          />
-        )}
 
         <ScrollArea className="flex-1 w-full">
-          <div className="w-full max-w-3xl mx-auto px-6 py-20 pb-40">
-            {historyError && (
+          <div className="w-full max-w-3xl mx-auto px-6 py-20 pb-40 flex flex-col items-center">
+        {historyError && (
               <Alert variant="destructive" className="mb-4">
                 <AlertTitle>Ошибка</AlertTitle>
                 <AlertDescription className="flex items-center justify-between">
                   <span>{historyError}</span>
                   <Button variant="outline" size="sm" onClick={loadHistory}>
-                    Обновить
+              Обновить
                   </Button>
                 </AlertDescription>
               </Alert>
-            )}
+        )}
 
             {!hasMessages && !isLoading && !historyError && (
-              <div className="flex justify-center items-center min-h-[60vh] py-10">
-                <Card className="max-w-2xl w-full">
-                  <CardContent className="pt-6 text-center">
+              <div className="flex justify-center items-center min-h-[60vh] py-10 w-full">
+                <Card className="max-w-2xl w-full mx-auto">
+                  <CardContent className="pt-6 text-center px-6">
                     <Avatar className="h-20 w-20 mx-auto mb-6 bg-gradient-to-br from-primary to-primary/60">
                       <AvatarFallback className="text-3xl">⚖️</AvatarFallback>
                     </Avatar>
                     <h2 className="text-3xl font-bold mb-3">Legal AI</h2>
-                    <p className="text-muted-foreground mb-8 text-lg leading-relaxed">
+                    <p className="text-muted-foreground mb-8 text-lg leading-relaxed px-4">
                       Задайте вопрос по загруженным документам. AI проанализирует контракты, переписку и таблицы.
                     </p>
                     <Separator className="my-6" />
@@ -632,10 +623,10 @@ const ChatWindow = ({ caseId, onDocumentClick }: ChatWindowProps) => {
                         <Button
                           key={idx}
                           variant="outline"
-                          className="h-auto py-4 px-4 text-left justify-start hover:bg-accent transition-colors"
+                          className="h-auto py-4 px-4 text-left justify-start hover:bg-accent transition-colors break-words whitespace-normal"
                           onClick={() => handleRecommendedClick(q)}
                         >
-                          {q}
+                          <span className="break-words">{q}</span>
                         </Button>
                       ))}
                     </div>
@@ -645,16 +636,16 @@ const ChatWindow = ({ caseId, onDocumentClick }: ChatWindowProps) => {
             )}
 
             <AnimatePresence>
-              {messages.map((message, index) => {
-                const confidence = extractConfidence(message.content)
-                const statistics = message.role === 'assistant' ? extractStatistics(message.content) : null
-                const isStreamingMessage = currentStreamingMessageRef.current === index && isWebSocketStreaming && !!streamingContent
-                const displayContent = isStreamingMessage ? streamingContent : message.content
-                const displaySources = isStreamingMessage ? streamingSources : (message.sources || [])
+        {messages.map((message, index) => {
+          const confidence = extractConfidence(message.content)
+          const statistics = message.role === 'assistant' ? extractStatistics(message.content) : null
+          const isStreamingMessage = currentStreamingMessageRef.current === index && isWebSocketStreaming && !!streamingContent
+          const displayContent = isStreamingMessage ? streamingContent : message.content
+          const displaySources = isStreamingMessage ? streamingSources : (message.sources || [])
 
-                return (
+          return (
                   <motion.div
-                    key={index}
+              key={index}
                     initial={{ opacity: 0, y: 20 }}
                     animate={{ opacity: 1, y: 0 }}
                     transition={{ duration: 0.3 }}
@@ -662,59 +653,49 @@ const ChatWindow = ({ caseId, onDocumentClick }: ChatWindowProps) => {
                       "flex items-start gap-3 mb-6 w-full",
                       message.role === 'user' ? 'justify-end' : 'justify-start'
                     )}
-                  >
+            >
                     {message.role === 'assistant' && (
-                      <Tooltip>
-                        <TooltipTrigger asChild>
-                          <Avatar className="h-8 w-8 shrink-0 bg-gradient-to-br from-primary to-primary/60">
-                            <AvatarFallback className="text-xs font-semibold">AI</AvatarFallback>
-                          </Avatar>
-                        </TooltipTrigger>
-                        <TooltipContent>AI Assistant</TooltipContent>
-                      </Tooltip>
+                      <Avatar className="h-8 w-8 shrink-0 bg-gradient-to-br from-primary to-primary/60">
+                        <AvatarFallback className="text-xs font-semibold">⚖️</AvatarFallback>
+                      </Avatar>
                     )}
 
-                    {message.role === 'assistant' ? (
+              {message.role === 'assistant' ? (
                       <Card className="max-w-[85%] bg-card border shadow-sm">
                         <CardContent className="p-5">
                           <div className="text-base leading-relaxed">
-                            <MessageContent
-                              content={displayContent}
-                              sources={displaySources}
-                              onCitationClick={handleCitationClick}
-                              isStreaming={isStreamingMessage}
-                            />
+                    <MessageContent
+                      content={displayContent}
+                      sources={displaySources}
+                      onCitationClick={handleCitationClick}
+                      isStreaming={isStreamingMessage}
+                    />
                           </div>
-                          
-                          {statistics && (
+                  
+                  {statistics && (
                             <div className="mt-4">
-                              <StatisticsChart data={statistics} />
+                      <StatisticsChart data={statistics} />
                             </div>
-                          )}
-                          
-                          {confidence !== null && (
+                  )}
+                  
+                  {confidence !== null && (
                             <div className="flex items-center gap-2 mt-3">
                               <span className="text-xs text-muted-foreground">Уверенность:</span>
-                              <ConfidenceBadge confidence={confidence} />
+                      <ConfidenceBadge confidence={confidence} />
                             </div>
-                          )}
+                  )}
                         </CardContent>
-                      </Card>
-                    ) : (
+                </Card>
+              ) : (
                       <div className="flex items-start gap-3 max-w-[85%]">
                         <div
                           className="rounded-2xl rounded-tr-sm px-4 py-3 bg-primary text-primary-foreground shadow-sm"
                         >
                           <p className="text-base leading-relaxed">{message.content}</p>
                         </div>
-                        <Tooltip>
-                          <TooltipTrigger asChild>
-                            <Avatar className="h-8 w-8 shrink-0 bg-muted">
-                              <AvatarFallback className="text-xs font-semibold">You</AvatarFallback>
-                            </Avatar>
-                          </TooltipTrigger>
-                          <TooltipContent>You</TooltipContent>
-                        </Tooltip>
+                        <Avatar className="h-8 w-8 shrink-0 bg-muted">
+                          <AvatarFallback className="text-xs font-semibold">👤</AvatarFallback>
+                        </Avatar>
                       </div>
                     )}
                   </motion.div>
@@ -722,14 +703,14 @@ const ChatWindow = ({ caseId, onDocumentClick }: ChatWindowProps) => {
               })}
             </AnimatePresence>
 
-            {isLoading && !isWebSocketStreaming && currentStreamingMessageRef.current === null && (
+        {isLoading && !isWebSocketStreaming && currentStreamingMessageRef.current === null && (
               <motion.div
                 initial={{ opacity: 0 }}
                 animate={{ opacity: 1 }}
                 className="flex items-start gap-3 mb-6"
               >
                 <Avatar className="h-8 w-8 shrink-0 bg-gradient-to-br from-primary to-primary/60">
-                  <AvatarFallback className="text-xs font-semibold">AI</AvatarFallback>
+                  <AvatarFallback className="text-xs font-semibold">⚖️</AvatarFallback>
                 </Avatar>
                 <Card className="bg-card border shadow-sm">
                   <CardContent className="p-5">
@@ -739,7 +720,7 @@ const ChatWindow = ({ caseId, onDocumentClick }: ChatWindowProps) => {
                       <Skeleton className="h-2 w-2 rounded-full" />
                     </div>
                   </CardContent>
-                </Card>
+            </Card>
               </motion.div>
             )}
 
@@ -750,16 +731,16 @@ const ChatWindow = ({ caseId, onDocumentClick }: ChatWindowProps) => {
               </Alert>
             )}
 
-            <div ref={messagesEndRef} />
+        <div ref={messagesEndRef} />
           </div>
         </ScrollArea>
 
         <div 
-          className="fixed bottom-0 left-[260px] right-0 bg-background border-t z-50 transition-all duration-300"
+          className="fixed bottom-0 left-[260px] right-0 bg-background border-t z-50 transition-all duration-300 flex justify-center"
           style={{ backgroundColor: 'var(--color-bg)', borderColor: 'var(--color-border)' }}
         >
           {droppedFiles.length > 0 && (
-            <div className="flex flex-wrap gap-2 p-3 border-b bg-muted/50">
+            <div className="flex flex-wrap gap-2 p-3 border-b bg-muted/50 w-full max-w-3xl mx-auto">
               {droppedFiles.map((file, index) => (
                 <Badge key={index} variant="secondary" className="gap-2">
                   <Paperclip className="h-3 w-3" />
@@ -777,65 +758,50 @@ const ChatWindow = ({ caseId, onDocumentClick }: ChatWindowProps) => {
             </div>
           )}
           
-          <div className="max-w-3xl mx-auto px-6 py-6">
+          <div className="w-full max-w-3xl mx-auto px-6 py-6">
             <Card className="border-2 shadow-lg">
               <CardContent className="p-4">
                 <div className="flex items-end gap-3">
                   <div className="relative flex-1">
                     <Textarea
-                      ref={textareaRef}
-                      placeholder={PLACEHOLDERS[currentPlaceholderIndex]}
-                      value={inputValue}
-                      onChange={handleTextareaChange}
-                      onKeyDown={handleKeyDown}
+                ref={textareaRef}
+                placeholder={PLACEHOLDERS[currentPlaceholderIndex]}
+                value={inputValue}
+                onChange={handleTextareaChange}
+                onKeyDown={handleKeyDown}
                       disabled={isLoading || isWebSocketStreaming}
                       className="min-h-[24px] max-h-[200px] resize-none border-0 focus-visible:ring-0 focus-visible:ring-offset-0 bg-transparent"
-                      style={{
+                style={{
                         height: 'auto',
                       }}
-                    />
-                    <Autocomplete
-                      suggestions={autocompleteSuggestions}
-                      selectedIndex={autocompleteSelectedIndex}
-                      onSelect={handleAutocompleteSelect}
-                      visible={autocompleteVisible}
-                    />
+              />
+              <Autocomplete
+                suggestions={autocompleteSuggestions}
+                selectedIndex={autocompleteSelectedIndex}
+                onSelect={handleAutocompleteSelect}
+                visible={autocompleteVisible}
+              />
                   </div>
                   
                   <div className="flex items-center gap-2 shrink-0">
-                    <Tooltip>
-                      <TooltipTrigger asChild>
-                        <div className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-warning/10 border border-warning/20">
-                          <Switch
-                            checked={proSearchEnabled}
-                            onCheckedChange={setProSearchEnabled}
-                            className="scale-75"
-                          />
-                          <Zap className={cn("h-3.5 w-3.5", proSearchEnabled && "text-warning fill-warning")} />
-                          <span className="text-xs font-medium text-warning">Pro</span>
-                        </div>
-                      </TooltipTrigger>
-                      <TooltipContent>Глубокий поиск (Pro)</TooltipContent>
-                    </Tooltip>
-                    
-                    <input
-                      type="file"
-                      id="chat-file-input"
-                      multiple
-                      accept=".pdf,.docx,.txt,.xlsx"
-                      onChange={handleFileInput}
+              <input
+                type="file"
+                id="chat-file-input"
+                multiple
+                accept=".pdf,.docx,.txt,.xlsx"
+                onChange={handleFileInput}
                       className="hidden"
-                    />
+              />
                     <Tooltip>
                       <TooltipTrigger asChild>
                         <Button
-                          variant="ghost"
+                variant="ghost"
                           size="icon"
                           asChild
-                        >
+              >
                           <label htmlFor="chat-file-input" className="cursor-pointer">
                             <Paperclip className="h-5 w-5" />
-                          </label>
+                </label>
                         </Button>
                       </TooltipTrigger>
                       <TooltipContent>Прикрепить файл</TooltipContent>
@@ -846,9 +812,9 @@ const ChatWindow = ({ caseId, onDocumentClick }: ChatWindowProps) => {
                         <Button
                           size="icon"
                           onClick={(e: React.MouseEvent) => {
-                            e.preventDefault()
-                            handleSend()
-                          }}
+                  e.preventDefault()
+                  handleSend()
+                }}
                           disabled={isLoading || !inputValue.trim() || isOverLimit || isWebSocketStreaming}
                           className="bg-primary hover:bg-primary/90"
                         >
