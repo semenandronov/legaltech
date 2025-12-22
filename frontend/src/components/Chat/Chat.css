@@ -40,7 +40,10 @@
 /* Autocomplete Styles - Perplexity dark style */
 .chat-input-container {
   position: relative;
-  width: 100%;
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
 }
 
 .chat-autocomplete {

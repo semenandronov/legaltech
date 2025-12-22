@@ -127,7 +127,7 @@ const ChatWindow = ({ caseId, onDocumentClick }: ChatWindowProps) => {
   useEffect(() => {
     // Perplexity-style smooth scroll with delay for better UX
     const timer = setTimeout(() => {
-      scrollToBottom()
+    scrollToBottom()
     }, 100)
     return () => clearTimeout(timer)
   }, [messages, isLoading])
@@ -204,7 +204,7 @@ const ChatWindow = ({ caseId, onDocumentClick }: ChatWindowProps) => {
       setInputValue('')
     }
     setError(null)
-    
+
     // Perplexity-style: smooth scroll after user message
     setTimeout(() => {
       scrollToBottom()
@@ -231,30 +231,30 @@ const ChatWindow = ({ caseId, onDocumentClick }: ChatWindowProps) => {
       sendWebSocketMessage(trimmed, history, proSearchEnabled)
     } else {
       // Fallback to HTTP
-      try {
-        const response = await sendMessage(caseId, userMessage.content)
-        if (response.status === 'success' || response.status === 'task_planned') {
-          const assistantMessage: Message = {
-            role: 'assistant',
-            content: response.answer,
-            sources: response.sources || [],
-          }
-          setMessages((prev) => [...prev, assistantMessage])
-          
+    try {
+      const response = await sendMessage(caseId, userMessage.content)
+      if (response.status === 'success' || response.status === 'task_planned') {
+      const assistantMessage: Message = {
+        role: 'assistant',
+        content: response.answer,
+        sources: response.sources || [],
+      }
+      setMessages((prev) => [...prev, assistantMessage])
+      
           // Perplexity-style: smooth scroll after AI response
           setTimeout(() => {
             scrollToBottom()
           }, 200)
-        } else {
-          setError('Ошибка при получении ответа')
-        }
-      } catch (err: any) {
-        setError(
-          err.response?.data?.detail ||
-            'Ошибка при отправке вопроса. Проверьте, что backend запущен.',
-        )
-      } finally {
-        setIsLoading(false)
+      } else {
+        setError('Ошибка при получении ответа')
+      }
+    } catch (err: any) {
+      setError(
+        err.response?.data?.detail ||
+          'Ошибка при отправке вопроса. Проверьте, что backend запущен.',
+      )
+    } finally {
+      setIsLoading(false)
       }
     }
   }

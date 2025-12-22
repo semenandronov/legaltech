@@ -44,14 +44,14 @@ const InlineCitation: React.FC<InlineCitationProps> = ({
       onMouseLeave={() => setShowTooltip(false)}
     >
       [{index}]
-      {showTooltip && (
+      {showTooltip && source && (
         <div className="inline-citation-tooltip">
-          <div style={{ fontWeight: 600, marginBottom: '4px' }}>
+          <div style={{ fontWeight: 600, marginBottom: source.text_preview ? '3px' : '0' }}>
             {formatCitation(source)}
           </div>
           {source.text_preview && (
-            <div style={{ fontSize: '11px', color: 'var(--color-text-secondary)', maxWidth: '200px' }}>
-              {source.text_preview}
+            <div style={{ fontSize: '10px', color: 'var(--color-text-secondary)', lineHeight: '1.4' }}>
+              {source.text_preview.length > 150 ? source.text_preview.substring(0, 150) + '...' : source.text_preview}
             </div>
           )}
         </div>
