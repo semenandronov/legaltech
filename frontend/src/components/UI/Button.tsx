@@ -20,7 +20,8 @@ const buttonVariants = cva(
         link: "text-primary underline-offset-4 hover:underline",
         // Additional variants for backward compatibility
         primary: "bg-primary text-primary-foreground hover:bg-primary/90",
-        danger: "bg-destructive text-destructive-foreground hover:bg-destructive/90",      },
+        danger: "bg-destructive text-destructive-foreground hover:bg-destructive/90",
+      },
       size: {
         default: "h-10 px-4 py-2",
         sm: "h-9 rounded-md px-3",
@@ -39,17 +40,17 @@ export interface ButtonProps
   extends React.ButtonHTMLAttributes<HTMLButtonElement>,
     VariantProps<typeof buttonVariants> {
   asChild?: boolean
-}
   isLoading?: boolean
+}
 
 const Button = React.forwardRef<HTMLButtonElement, ButtonProps>(
   ({ className, variant, size, asChild = false, isLoading, disabled, children, ...props }, ref) => {
     const Comp = asChild ? Slot : "button"
     return (
-        disabled={disabled || isLoading}
       <Comp
         className={cn(buttonVariants({ variant, size, className }))}
         ref={ref}
+        disabled={disabled || isLoading}
         {...props}
       >
         {isLoading ? (
@@ -58,7 +59,7 @@ const Button = React.forwardRef<HTMLButtonElement, ButtonProps>(
             {children}
           </>
         ) : children}
-      </Comp>      />
+      </Comp>
     )
   }
 )
