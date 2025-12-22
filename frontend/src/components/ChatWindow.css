@@ -429,15 +429,16 @@
 
 .chat-input-main {
   display: flex;
-  align-items: center;
+  align-items: flex-end;
   gap: 12px;
   background-color: var(--color-surface);
   border: 1.5px solid var(--color-border);
   border-radius: 28px;
-  padding: 12px 16px;
+  padding: 12px 20px;
   transition: all 0.25s cubic-bezier(0.16, 1, 0.3, 1);
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
   min-height: 56px;
+  width: 100%;
 }
 
 .chat-input-main:focus-within {
@@ -461,6 +462,10 @@
   max-height: 200px;
   line-height: 1.6;
   overflow-y: auto;
+  overflow-x: hidden;
+  word-wrap: break-word;
+  white-space: pre-wrap;
+  width: 100%;
 }
 
 .chat-input-textarea::placeholder {
