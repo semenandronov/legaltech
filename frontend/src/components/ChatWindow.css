@@ -484,14 +484,6 @@
   word-break: break-word;
 }
 
-/* Prevent placeholder from wrapping */
-.chat-input-textarea::placeholder {
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  display: block;
-}
-
 .chat-input-textarea::placeholder {
   color: var(--color-text-muted);
   opacity: 1;
