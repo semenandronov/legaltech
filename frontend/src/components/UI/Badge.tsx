@@ -43,6 +43,5 @@ function Badge({ className, variant, ...props }: BadgeProps) {
   )
 }
 
-export type { BadgeVariant, BadgeProps }
 export { Badge, badgeVariants }
 export default Badge

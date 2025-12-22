@@ -2,7 +2,7 @@ import { LayoutGrid, List, Table2 } from 'lucide-react'
 import { CaseListItem } from '../../services/api'
 import CaseCard from './CaseCard'
 import Pagination from '../UI/Pagination'
-import { Skeleton } from '../UI/skeleton'
+import { Skeleton } from '../UI/Skeleton'
 import { Button } from '../UI/Button'
 import { CasesTable } from './CasesTable'
 

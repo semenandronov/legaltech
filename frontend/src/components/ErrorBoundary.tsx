@@ -1,4 +1,4 @@
-import React, { Component, ErrorInfo, ReactNode } from 'react'
+import { Component, ErrorInfo, ReactNode } from 'react'
 import { Alert, AlertDescription, AlertTitle } from '@/components/UI/alert'
 import { Button } from '@/components/UI/Button'
 import { logger } from '@/lib/logger'

@@ -38,7 +38,7 @@ const buttonVariants = cva(
 
 export type ButtonVariant = "default" | "destructive" | "outline" | "secondary" | "ghost" | "link" | "primary" | "danger"
 
-interface ButtonProps
+export interface ButtonProps
   extends Omit<React.ButtonHTMLAttributes<HTMLButtonElement>, "variant"> {
   asChild?: boolean
   isLoading?: boolean
@@ -68,6 +68,5 @@ const Button = React.forwardRef<HTMLButtonElement, ButtonProps>(
 )
 Button.displayName = "Button"
 
-export type { ButtonProps, ButtonVariant }
 export { Button, buttonVariants }
 export default Button

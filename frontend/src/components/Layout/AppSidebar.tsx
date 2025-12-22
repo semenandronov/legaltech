@@ -9,7 +9,6 @@ import {
   Database,
   FileText,
   BarChart3,
-  type LucideIcon,
 } from "lucide-react"
 
 import { NavDocuments } from "./NavDocuments"

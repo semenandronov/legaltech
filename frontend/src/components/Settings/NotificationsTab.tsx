@@ -48,7 +48,7 @@ const NotificationsTab = ({ settings, onUpdate }: NotificationsTabProps) => {
             <label className="settings-checkbox">
               <input
                 type="checkbox"
-                checked={formSettings.email_on_analysis_complete}
+                checked={formSettings.email_on_analysis_complete ?? false}
                 onChange={() => handleToggle('email_on_analysis_complete')}
               />
               <span>Когда анализ завершен</span>
@@ -56,7 +56,7 @@ const NotificationsTab = ({ settings, onUpdate }: NotificationsTabProps) => {
             <label className="settings-checkbox">
               <input
                 type="checkbox"
-                checked={formSettings.email_on_critical_discrepancies}
+                checked={formSettings.email_on_critical_discrepancies ?? false}
                 onChange={() => handleToggle('email_on_critical_discrepancies')}
               />
               <span>Когда найдены критичные противоречия</span>
@@ -64,7 +64,7 @@ const NotificationsTab = ({ settings, onUpdate }: NotificationsTabProps) => {
             <label className="settings-checkbox">
               <input
                 type="checkbox"
-                checked={formSettings.weekly_digest}
+                checked={formSettings.weekly_digest ?? false}
                 onChange={() => handleToggle('weekly_digest')}
               />
               <span>Еженедельный дайджест активности</span>
@@ -72,7 +72,7 @@ const NotificationsTab = ({ settings, onUpdate }: NotificationsTabProps) => {
             <label className="settings-checkbox">
               <input
                 type="checkbox"
-                checked={formSettings.reminders_for_important_dates}
+                checked={formSettings.reminders_for_important_dates ?? false}
                 onChange={() => handleToggle('reminders_for_important_dates')}
               />
               <span>Напоминания о важных датах в делах</span>
@@ -80,7 +80,7 @@ const NotificationsTab = ({ settings, onUpdate }: NotificationsTabProps) => {
             <label className="settings-checkbox">
               <input
                 type="checkbox"
-                checked={formSettings.news_and_updates}
+                checked={formSettings.news_and_updates ?? false}
                 onChange={() => handleToggle('news_and_updates')}
               />
               <span>Новости и обновления LEGALCHAIN</span>

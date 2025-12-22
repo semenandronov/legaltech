@@ -19,10 +19,17 @@ const TimelineEventComponent: React.FC<TimelineEventComponentProps> = ({
   const confidence = event.metadata?.confidence
     ? (typeof event.metadata.confidence === 'string'
         ? parseFloat(event.metadata.confidence)
-        : event.metadata.confidence * 100)
+        : (typeof event.metadata.confidence === 'number' ? event.metadata.confidence * 100 : null))
     : null
 
   const reasoning = event.metadata?.reasoning
+  const reasoningText: string = reasoning 
+    ? (typeof reasoning === 'string' 
+        ? reasoning 
+        : typeof reasoning === 'object' && reasoning !== null 
+          ? JSON.stringify(reasoning, null, 2)
+          : String(reasoning))
+    : ''
 
   return (
     <div
@@ -69,7 +76,7 @@ const TimelineEventComponent: React.FC<TimelineEventComponentProps> = ({
         )}
       </div>
 
-      {reasoning && (
+      {reasoningText && (
         <div className="timeline-event-reasoning">
           <button
             className="timeline-event-reasoning-toggle"
@@ -82,7 +89,7 @@ const TimelineEventComponent: React.FC<TimelineEventComponentProps> = ({
           </button>
           {showDetails && (
             <div className="timeline-event-reasoning-text">
-              {reasoning}
+              {reasoningText}
             </div>
           )}
         </div>

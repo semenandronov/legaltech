@@ -15,7 +15,7 @@ import {
 } from "@tanstack/react-table"
 import { ChevronDown, MoreHorizontal } from "lucide-react"
 
-import { Button } from "@/components/UI/button"
+import { Button } from "@/components/UI/Button"
 import {
   DropdownMenu,
   DropdownMenuCheckboxItem,
@@ -25,7 +25,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/UI/dropdown-menu"
-import { Input } from "@/components/UI/input"
+import Input from "@/components/UI/Input"
 import {
   Table,
   TableBody,
@@ -167,7 +167,7 @@ export function CasesTable({ data, loading }: CasesTableProps) {
         <Input
           placeholder="Поиск по названию..."
           value={(table.getColumn("title")?.getFilterValue() as string) ?? ""}
-          onChange={(event) =>
+          onChange={(event: React.ChangeEvent<HTMLInputElement>) =>
             table.getColumn("title")?.setFilterValue(event.target.value)
           }
           className="max-w-sm"

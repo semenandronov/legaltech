@@ -1,9 +1,9 @@
 "use client"
 
-import { CirclePlus, Mail, type LucideIcon } from "lucide-react"
+import { PlusCircle, Mail, type LucideIcon } from "lucide-react"
 import { useLocation } from "react-router-dom"
 import { NavLink } from "react-router-dom"
-import { Button } from "@/components/UI/button"
+import { Button } from "@/components/UI/Button"
 import {
   SidebarGroup,
   SidebarGroupContent,
@@ -37,7 +37,7 @@ export function NavMain({
               isActive={location.pathname === "/cases/new"}
             >
               <NavLink to="/cases/new">
-                <CirclePlus />
+                <PlusCircle />
                 <span>Быстрое создание</span>
               </NavLink>
             </SidebarMenuButton>

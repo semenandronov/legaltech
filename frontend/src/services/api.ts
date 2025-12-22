@@ -489,14 +489,29 @@ export interface UserProfile {
 }
 
 export interface NotificationSettings {
-  email_notifications?: boolean
-  case_updates?: boolean
-  analysis_complete?: boolean
-  [key: string]: unknown
+  email_on_analysis_complete?: boolean
+  email_on_critical_discrepancies?: boolean
+  weekly_digest?: boolean
+  reminders_for_important_dates?: boolean
+  news_and_updates?: boolean
+  [key: string]: boolean | undefined
+}
+
+export interface GoogleDriveSettings {
+  enabled: boolean
+  connected_account?: string | null
+}
+
+export interface SlackSettings {
+  enabled: boolean
+  workspace?: string | null
+  webhook_url?: string | null
 }
 
 export interface IntegrationSettings {
-  [key: string]: unknown
+  google_drive?: GoogleDriveSettings
+  slack?: SlackSettings
+  [key: string]: GoogleDriveSettings | SlackSettings | unknown
 }
 
 export const getProfile = async (): Promise<UserProfile> => {

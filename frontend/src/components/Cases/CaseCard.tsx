@@ -64,12 +64,7 @@ const CaseCard = ({ caseItem }: CaseCardProps) => {
   
   const statusInfo = getStatusBadge(caseItem.status)
   
-  const dropdownItems = [
-    { label: 'Открыть', onClick: () => navigate(`/cases/${caseItem.id}/workspace`) },
-    { label: 'Экспорт', onClick: () => console.log('Export') },
-    { label: 'Поделиться', onClick: () => console.log('Share') },
-    { label: 'Архивировать', onClick: () => console.log('Archive'), danger: true },
-  ]
+  // Removed unused dropdownItems
   
   return (
     <ContextMenu>

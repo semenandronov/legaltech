@@ -7,7 +7,7 @@ import {
   CardFooter,
   CardHeader,
   CardTitle,
-} from "@/components/UI/card"
+} from "@/components/UI/Card"
 
 interface SectionCardProps {
   title: string
@@ -23,7 +23,7 @@ interface SectionCardProps {
   }
 }
 
-const SectionCard = ({ title, description, value, trend, footer }: SectionCardProps) => {
+const SectionCard = ({ description, value, trend, footer }: SectionCardProps) => {
   return (
     <Card className="@container/card">
       <CardHeader>

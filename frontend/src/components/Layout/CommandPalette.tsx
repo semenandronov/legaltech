@@ -9,7 +9,6 @@ import {
   Settings,
   Smile,
   User,
-  Search,
   FileText,
   Home,
   BarChart3,

@@ -23,14 +23,11 @@ const IntegrationsTab = ({ settings, onUpdate }: IntegrationsTabProps) => {
   const handleDisconnect = async (service: string) => {
     setLoading(true)
     try {
-      const newSettings = { ...formSettings }
-      if (service === 'google_drive') {
-        newSettings.google_drive.enabled = false
-        newSettings.google_drive.connected_account = null
-      } else if (service === 'slack') {
-        newSettings.slack.enabled = false
-        newSettings.slack.workspace = null
-        newSettings.slack.webhook_url = null
+      const newSettings: IntegrationSettings = { ...formSettings }
+      if (service === 'google_drive' && newSettings.google_drive) {
+        newSettings.google_drive = { ...newSettings.google_drive, enabled: false, connected_account: null }
+      } else if (service === 'slack' && newSettings.slack) {
+        newSettings.slack = { ...newSettings.slack, enabled: false, workspace: null, webhook_url: null }
       }
       await updateIntegrations(newSettings)
       setFormSettings(newSettings)
@@ -55,14 +52,14 @@ const IntegrationsTab = ({ settings, onUpdate }: IntegrationsTabProps) => {
           <div className="settings-integration-info">
             <div className="settings-integration-name">Google Drive</div>
             <div className="settings-integration-status">
-              {formSettings.google_drive?.enabled ? (
+              {(formSettings.google_drive as { enabled?: boolean })?.enabled ? (
                 <>
                   <span className="settings-integration-status-badge connected">
                     ✅ Подключен
                   </span>
-                  {formSettings.google_drive.connected_account && (
+                  {(formSettings.google_drive as { connected_account?: string | null })?.connected_account && (
                     <span className="settings-integration-account">
-                      ({formSettings.google_drive.connected_account})
+                      ({(formSettings.google_drive as { connected_account?: string | null }).connected_account})
                     </span>
                   )}
                 </>
@@ -72,7 +69,7 @@ const IntegrationsTab = ({ settings, onUpdate }: IntegrationsTabProps) => {
             </div>
           </div>
           <div className="settings-integration-actions">
-            {formSettings.google_drive?.enabled ? (
+            {(formSettings.google_drive as { enabled?: boolean })?.enabled ? (
               <button
                 className="settings-integration-btn disconnect"
                 onClick={() => handleDisconnect('google_drive')}
@@ -95,14 +92,14 @@ const IntegrationsTab = ({ settings, onUpdate }: IntegrationsTabProps) => {
           <div className="settings-integration-info">
             <div className="settings-integration-name">Slack</div>
             <div className="settings-integration-status">
-              {formSettings.slack?.enabled ? (
+              {(formSettings.slack as { enabled?: boolean })?.enabled ? (
                 <>
                   <span className="settings-integration-status-badge connected">
                     ✅ Подключен
                   </span>
-                  {formSettings.slack.workspace && (
+                  {(formSettings.slack as { workspace?: string | null })?.workspace && (
                     <span className="settings-integration-account">
-                      (workspace: {formSettings.slack.workspace})
+                      (workspace: {(formSettings.slack as { workspace?: string | null }).workspace})
                     </span>
                   )}
                 </>
@@ -112,7 +109,7 @@ const IntegrationsTab = ({ settings, onUpdate }: IntegrationsTabProps) => {
             </div>
           </div>
           <div className="settings-integration-actions">
-            {formSettings.slack?.enabled ? (
+            {(formSettings.slack as { enabled?: boolean })?.enabled ? (
               <button
                 className="settings-integration-btn disconnect"
                 onClick={() => handleDisconnect('slack')}

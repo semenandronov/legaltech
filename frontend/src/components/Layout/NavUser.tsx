@@ -2,7 +2,7 @@
 
 import {
   CreditCard,
-  DotsVertical,
+  MoreVertical,
   LogOut,
   Bell,
   UserCircle,
@@ -12,7 +12,6 @@ import { useNavigate } from "react-router-dom"
 import {
   Avatar,
   AvatarFallback,
-  AvatarImage,
 } from "@/components/UI/avatar"
 import {
   DropdownMenu,
@@ -64,7 +63,7 @@ export function NavUser() {
                   {user.email}
                 </span>
               </div>
-              <DotsVertical className="ml-auto size-4" />
+              <MoreVertical className="ml-auto size-4" />
             </SidebarMenuButton>
           </DropdownMenuTrigger>
           <DropdownMenuContent

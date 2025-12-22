@@ -1,7 +1,7 @@
 "use client"
 
 import {
-  DotsHorizontal,
+  MoreHorizontal,
   Folder,
   Share2,
   Trash2,
@@ -54,7 +54,7 @@ export function NavDocuments({
                   showOnHover
                   className="data-[state=open]:bg-accent rounded-sm"
                 >
-                  <DotsHorizontal />
+                  <MoreHorizontal />
                   <span className="sr-only">Больше</span>
                 </SidebarMenuAction>
               </DropdownMenuTrigger>
@@ -82,7 +82,7 @@ export function NavDocuments({
         ))}
         <SidebarMenuItem>
           <SidebarMenuButton className="text-sidebar-foreground/70">
-            <DotsHorizontal className="text-sidebar-foreground/70" />
+            <MoreHorizontal className="text-sidebar-foreground/70" />
             <span>Больше</span>
           </SidebarMenuButton>
         </SidebarMenuItem>

@@ -1,6 +1,6 @@
 import { useState, useRef } from 'react'
 import './UploadArea.css'
-import { uploadFiles } from '../services/api'
+import { uploadFiles, AnalysisConfig } from '../services/api'
 import CaseInfoForm, { CaseInfo } from './Upload/CaseInfoForm'
 import AnalysisOptions, { AnalysisOptions as AnalysisOptionsType } from './Upload/AnalysisOptions'
 import ProcessingScreen from './Upload/ProcessingScreen'
@@ -88,7 +88,14 @@ const UploadArea = ({ onUpload }: UploadAreaProps) => {
 
     // Upload files with metadata
     try {
-      const result = await uploadFiles(files, caseInfo, options)
+      // Convert AnalysisOptions to AnalysisConfig
+      const analysisConfig: AnalysisConfig = {
+        enable_timeline: options.timeline,
+        enable_entities: options.key_facts,
+        enable_classification: options.discrepancies,
+        enable_privilege_check: options.risk_analysis,
+      }
+      const result = await uploadFiles(files, caseInfo, analysisConfig)
       setCaseId(result.caseId)
       // onUpload will be called after processing completes
     } catch (err: any) {

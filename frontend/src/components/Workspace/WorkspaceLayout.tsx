@@ -24,7 +24,7 @@ const WorkspaceLayout: React.FC<WorkspaceLayoutProps> = ({
   onToggleRightPanel
 }) => {
   return (
-    <ResizablePanelGroup direction="horizontal" className="workspace-layout h-full">
+    <ResizablePanelGroup orientation="horizontal" className="workspace-layout h-full">
       <ResizablePanel defaultSize={20} minSize={15} maxSize={30}>
         <div className="workspace-left-panel h-full">
           {leftPanel}
