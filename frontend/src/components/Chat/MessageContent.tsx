@@ -16,45 +16,6 @@ const MessageContent: React.FC<MessageContentProps> = ({
   onCitationClick,
   isStreaming = false
 }) => {
-  // Parse citations [1][2][3] and replace with components
-  const parseContent = (text: string): (string | React.ReactElement)[] => {
-    const parts: (string | React.ReactElement)[] = []
-    const citationRegex = /\[(\d+)\]/g
-    let lastIndex = 0
-    let match
-    let keyCounter = 0
-
-    while ((match = citationRegex.exec(text)) !== null) {
-      // Add text before citation
-      if (match.index > lastIndex) {
-        const textBefore = text.substring(lastIndex, match.index)
-        if (textBefore) {
-          parts.push(textBefore)
-        }
-      }
-
-      // Add citation component
-      const citationIndex = parseInt(match[1], 10)
-      parts.push(
-        <InlineCitation
-          key={`citation-${keyCounter++}`}
-          index={citationIndex}
-          sources={sources}
-          onClick={onCitationClick}
-        />
-      )
-
-      lastIndex = match.index + match[0].length
-    }
-
-    // Add remaining text
-    if (lastIndex < text.length) {
-      parts.push(text.substring(lastIndex))
-    }
-
-    return parts.length > 0 ? parts : [text]
-  }
-
   // Process content with inline citations
   // We need to replace citations before ReactMarkdown processes the text
   const processContent = (text: string) => {
@@ -64,7 +25,7 @@ const MessageContent: React.FC<MessageContentProps> = ({
     let placeholderCounter = 0
     
     // Replace citations with placeholders
-    processedText = processedText.replace(/\[(\d+)\]/g, (match, index) => {
+    processedText = processedText.replace(/\[(\d+)\]/g, (_match, index) => {
       const placeholder = `__CITATION_${placeholderCounter}__`
       citationPlaceholders[placeholder] = parseInt(index, 10)
       placeholderCounter++

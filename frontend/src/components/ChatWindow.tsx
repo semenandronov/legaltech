@@ -4,7 +4,6 @@ import './ChatWindow.css'
 import './Chat/Chat.css'
 import { fetchHistory, sendMessage, SourceInfo, HistoryMessage, classifyDocuments, extractEntities, getTimeline, getAnalysisReport } from '../services/api'
 import { useWebSocketChat } from '../hooks/useWebSocketChat'
-import ReactMarkdown from 'react-markdown'
 import QuickButtons from './Chat/QuickButtons'
 import ConfidenceBadge from './Common/ConfidenceBadge'
 import CitationLink from './Chat/CitationLink'
@@ -666,7 +665,7 @@ const ChatWindow = ({ caseId, onDocumentClick }: ChatWindowProps) => {
           const hasMultipleSources = hasSources && message.sources && message.sources.length > 1
           
           // Check if this is the streaming message
-          const isStreamingMessage = currentStreamingMessageRef.current === index && isWebSocketStreaming && streamingContent
+          const isStreamingMessage = currentStreamingMessageRef.current === index && isWebSocketStreaming && !!streamingContent
           const displayContent = isStreamingMessage ? streamingContent : message.content
           const displaySources = isStreamingMessage ? streamingSources : (message.sources || [])
 
