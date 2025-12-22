@@ -650,8 +650,8 @@ const ChatWindow = ({ caseId, onDocumentClick }: ChatWindowProps) => {
                     animate={{ opacity: 1, y: 0 }}
                     transition={{ duration: 0.3 }}
                     className={cn(
-                      "flex items-start gap-3 mb-6 w-full",
-                      message.role === 'user' ? 'justify-end' : 'justify-start'
+                      "flex items-start gap-3 mb-6 w-full max-w-3xl",
+                      message.role === 'user' ? 'justify-end ml-auto' : 'justify-start mr-auto'
                     )}
             >
                     {message.role === 'assistant' && (
