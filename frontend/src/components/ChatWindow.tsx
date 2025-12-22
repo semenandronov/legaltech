@@ -6,7 +6,6 @@ import { fetchHistory, sendMessage, SourceInfo, HistoryMessage, classifyDocument
 import { useWebSocketChat } from '../hooks/useWebSocketChat'
 import QuickButtons from './Chat/QuickButtons'
 import ConfidenceBadge from './Common/ConfidenceBadge'
-import CitationLink from './Chat/CitationLink'
 import MessageContent from './Chat/MessageContent'
 import Autocomplete from './Chat/Autocomplete'
 import StatisticsChart from './Chat/StatisticsChart'

@@ -22,7 +22,7 @@ const InlineCitation: React.FC<InlineCitationProps> = ({
 
   // Format citation like Perplexity: short name + number
   // Example: "habr +1", "sap +2", "document +1"
-  const formatCitationLabel = (source: SourceInfo, index: number): string => {
+  const formatCitationLabel = (source: SourceInfo): string => {
     // Extract short name from file (remove extension, take first part)
     let name = source.file.replace(/\.[^/.]+$/, '') // Remove extension
     name = name.split(/[_\-\s]/)[0] // Take first word/part
@@ -55,7 +55,7 @@ const InlineCitation: React.FC<InlineCitationProps> = ({
     }
   }
 
-  const label = formatCitationLabel(source, index)
+    const label = formatCitationLabel(source)
 
   return (
     <span
