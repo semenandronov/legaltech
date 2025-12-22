@@ -12,15 +12,24 @@ const ThemeContext = createContext<ThemeContextType | undefined>(undefined)
 
 export const ThemeProvider = ({ children }: { children: ReactNode }) => {
   const [theme, setThemeState] = useState<Theme>(() => {
-    // Check localStorage first, then system preference, default to light (Perplexity style)
+    // Check localStorage first, then default to dark (Perplexity style)
     const saved = localStorage.getItem('theme') as Theme | null
     if (saved) return saved
     
-    if (window.matchMedia('(prefers-color-scheme: dark)').matches) {
-      return 'dark'
-    }
-    return 'light'
+    // Default to dark theme (Perplexity style)
+    return 'dark'
   })
+
+  // Initialize theme on mount
+  useEffect(() => {
+    const root = document.documentElement
+    const saved = localStorage.getItem('theme') as Theme | null
+    const initialTheme = saved || 'dark'
+    root.setAttribute('data-theme', initialTheme)
+    if (!saved) {
+      localStorage.setItem('theme', initialTheme)
+    }
+  }, [])
 
   useEffect(() => {
     const root = document.documentElement

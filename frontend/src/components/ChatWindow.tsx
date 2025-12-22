@@ -299,10 +299,12 @@ const ChatWindow = ({ caseId, onDocumentClick }: ChatWindowProps) => {
     const value = e.target.value
     setInputValue(value)
     
-    // Auto-resize textarea
+    // Auto-resize textarea - only expand vertically, not horizontally
     const textarea = e.target
-    textarea.style.height = 'auto'
-    textarea.style.height = `${Math.min(textarea.scrollHeight, 200)}px`
+    // Reset height to get accurate scrollHeight
+    textarea.style.height = '24px'
+    const newHeight = Math.min(Math.max(textarea.scrollHeight, 24), 200)
+    textarea.style.height = `${newHeight}px`
     
     // Show autocomplete if user types "/" or starts typing a command
     if (value.startsWith('/') || value.length > 0) {
