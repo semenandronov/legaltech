@@ -1,37 +1,36 @@
-import { ReactNode } from 'react'
+import * as React from "react"
+import { cva, type VariantProps } from "class-variance-authority"
 
-type BadgeVariant = 'high-risk' | 'medium-risk' | 'low-risk' | 'contract' | 'email' | 'court' | 'compliance' | 'sanction' | 'pending' | 'completed' | 'flagged'
+import { cn } from "@/lib/utils"
 
-interface BadgeProps {
-  variant: BadgeVariant
-  children: ReactNode
-  icon?: ReactNode
-  className?: string
-}
-
-const Badge = ({ variant, children, icon, className = '' }: BadgeProps) => {
-  const variantClasses = {
-    'high-risk': 'bg-error text-white',
-    'medium-risk': 'bg-warning text-white',
-    'low-risk': 'bg-success text-white',
-    'contract': 'bg-doc-contract text-white',
-    'email': 'bg-doc-email text-white',
-    'court': 'bg-doc-court text-white',
-    'compliance': 'bg-doc-compliance text-white',
-    'sanction': 'bg-doc-sanction text-white',
-    'pending': 'bg-info text-white',
-    'completed': 'bg-success text-white',
-    'flagged': 'bg-warning text-white',
+const badgeVariants = cva(
+  "inline-flex items-center rounded-full border px-2.5 py-0.5 text-xs font-semibold transition-colors focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2",
+  {
+    variants: {
+      variant: {
+        default:
+          "border-transparent bg-primary text-primary-foreground hover:bg-primary/80",
+        secondary:
+          "border-transparent bg-secondary text-secondary-foreground hover:bg-secondary/80",
+        destructive:
+          "border-transparent bg-destructive text-destructive-foreground hover:bg-destructive/80",
+        outline: "text-foreground",
+      },
+    },
+    defaultVariants: {
+      variant: "default",
+    },
   }
-  
-  const baseClasses = 'inline-flex items-center gap-1.5 px-2 py-1 rounded text-small font-semibold'
-  
+)
+
+export interface BadgeProps
+  extends React.HTMLAttributes<HTMLDivElement>,
+    VariantProps<typeof badgeVariants> {}
+
+function Badge({ className, variant, ...props }: BadgeProps) {
   return (
-    <span className={`${baseClasses} ${variantClasses[variant]} ${className}`}>
-      {icon && <span className="flex items-center">{icon}</span>}
-      {children}
-    </span>
+    <div className={cn(badgeVariants({ variant }), className)} {...props} />
   )
 }
 
-export default Badge
+export { Badge, badgeVariants }

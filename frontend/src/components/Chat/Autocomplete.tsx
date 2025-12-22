@@ -1,5 +1,6 @@
 import React from 'react'
-import { Box, Text } from '@radix-ui/themes'
+import { Card, CardContent } from '@/components/ui/card'
+import { cn } from '@/lib/utils'
 import './Chat.css'
 
 interface AutocompleteProps {
@@ -20,64 +21,34 @@ const Autocomplete: React.FC<AutocompleteProps> = ({
   }
 
   return (
-    <Box 
-      className="chat-autocomplete"
-      style={{
-        position: 'absolute',
-        bottom: '100%',
-        left: 0,
-        right: 0,
-        marginBottom: '8px',
-        backgroundColor: 'var(--color-surface)',
-        border: '1px solid var(--color-border)',
-        borderRadius: '12px',
-        boxShadow: '0 8px 24px rgba(0, 0, 0, 0.4)',
-        zIndex: 100,
-        maxHeight: '200px',
-        overflowY: 'auto',
-      }}
-    >
-      <Box className="chat-autocomplete-list" style={{ display: 'flex', flexDirection: 'column' }}>
-        {suggestions.map((suggestion, index) => (
-          <Box
-            key={index}
-            className={`chat-autocomplete-item ${index === selectedIndex ? 'selected' : ''}`}
-            onClick={() => onSelect(suggestion)}
-            style={{
-              padding: '12px 16px',
-              cursor: 'pointer',
-              borderBottom: index < suggestions.length - 1 ? '1px solid var(--color-border)' : 'none',
-              transition: 'background-color 0.15s',
-              backgroundColor: index === selectedIndex ? 'var(--color-hover)' : 'transparent',
-            }}
-            onMouseEnter={(e) => {
-              if (index !== selectedIndex) {
-                e.currentTarget.style.backgroundColor = 'var(--color-hover)'
-              }
-            }}
-            onMouseLeave={(e) => {
-              if (index !== selectedIndex) {
-                e.currentTarget.style.backgroundColor = 'transparent'
-              }
-            }}
-          >
-            <Text 
-              className="chat-autocomplete-command"
-              size="3"
-              weight={index === selectedIndex ? 'medium' : 'regular'}
-              style={{
-                color: index === selectedIndex ? 'var(--color-primary)' : 'var(--color-text)',
+    <Card className="absolute bottom-full left-0 right-0 mb-2 border shadow-lg z-50 max-h-[200px] overflow-hidden">
+      <CardContent className="p-0">
+        <div className="flex flex-col">
+          {suggestions.map((suggestion, index) => (
+            <button
+              key={index}
+              className={cn(
+                "px-4 py-3 text-left text-sm transition-colors cursor-pointer",
+                "hover:bg-accent focus:bg-accent focus:outline-none",
+                index === selectedIndex && "bg-accent font-medium text-primary",
+                index < suggestions.length - 1 && "border-b"
+              )}
+              onClick={() => onSelect(suggestion)}
+              onMouseEnter={() => {
+                // Можно добавить логику для обновления selectedIndex при hover
               }}
             >
-              {suggestion}
-            </Text>
-          </Box>
-        ))}
-      </Box>
-    </Box>
+              <span className={cn(
+                index === selectedIndex ? "text-primary" : "text-foreground"
+              )}>
+                {suggestion}
+              </span>
+            </button>
+          ))}
+        </div>
+      </CardContent>
+    </Card>
   )
 }
 
 export default Autocomplete
-
-

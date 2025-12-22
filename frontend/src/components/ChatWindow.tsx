@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { Box, Flex, Text, TextArea, Button, IconButton, Card } from '@radix-ui/themes'
-import { Send, Paperclip } from 'lucide-react'
+import { Send, Paperclip, Zap } from 'lucide-react'
+import { motion, AnimatePresence } from 'framer-motion'
 import './ChatWindow.css'
 import './Chat/Chat.css'
 import { fetchHistory, sendMessage, SourceInfo, HistoryMessage, classifyDocuments, extractEntities, getTimeline, getAnalysisReport } from '../services/api'
@@ -11,6 +11,18 @@ import ConfidenceBadge from './Common/ConfidenceBadge'
 import MessageContent from './Chat/MessageContent'
 import Autocomplete from './Chat/Autocomplete'
 import StatisticsChart from './Chat/StatisticsChart'
+import { Button } from '@/components/ui/button'
+import { Card, CardContent } from '@/components/ui/card'
+import { Textarea } from '@/components/ui/textarea'
+import { Avatar, AvatarFallback } from '@/components/ui/avatar'
+import { Badge } from '@/components/ui/badge'
+import { Separator } from '@/components/ui/separator'
+import { ScrollArea } from '@/components/ui/scroll-area'
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
+import { Switch } from '@/components/ui/switch'
+import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
+import { Skeleton } from '@/components/ui/skeleton'
+import { cn } from '@/lib/utils'
 
 interface Message {
   role: 'user' | 'assistant'
@@ -21,7 +33,7 @@ interface Message {
 interface ChatWindowProps {
   caseId: string
   fileNames?: string[]
-  onDocumentClick?: (filename: string) => void  // Callback для открытия документа в viewer
+  onDocumentClick?: (filename: string) => void
 }
 
 const MAX_INPUT_CHARS = 5000
@@ -59,7 +71,6 @@ const ChatWindow = ({ caseId, onDocumentClick }: ChatWindowProps) => {
   const [streamingSources, setStreamingSources] = useState<SourceInfo[]>([])
   const currentStreamingMessageRef = useRef<number | null>(null)
   
-  // Placeholder rotation for Perplexity UX
   const PLACEHOLDERS = [
     'Задайте вопрос...',
     'Объясни как 5-летнему...',
@@ -71,12 +82,10 @@ const ChatWindow = ({ caseId, onDocumentClick }: ChatWindowProps) => {
   const [currentPlaceholderIndex, setCurrentPlaceholderIndex] = useState(0)
   const [proSearchEnabled, setProSearchEnabled] = useState(false)
 
-  // WebSocket streaming hook
   const { isConnected, isStreaming: isWebSocketStreaming, sendMessage: sendWebSocketMessage } = useWebSocketChat({
     caseId,
     onMessage: (content: string) => {
       setStreamingContent(prev => prev + content)
-      // Auto-scroll during streaming
       setTimeout(() => scrollToBottom(), 50)
     },
     onSources: (sources: any[]) => {
@@ -88,13 +97,11 @@ const ChatWindow = ({ caseId, onDocumentClick }: ChatWindowProps) => {
       setStreamingContent('')
       setStreamingSources([])
       if (currentStreamingMessageRef.current !== null) {
-        // Remove incomplete streaming message
         setMessages(prev => prev.filter((_, idx) => idx !== currentStreamingMessageRef.current))
         currentStreamingMessageRef.current = null
       }
     },
     onComplete: () => {
-      // Finalize streaming message
       if (currentStreamingMessageRef.current !== null && streamingContent) {
         setMessages(prev => prev.map((msg, idx) => 
           idx === currentStreamingMessageRef.current 
@@ -115,21 +122,17 @@ const ChatWindow = ({ caseId, onDocumentClick }: ChatWindowProps) => {
     loadHistory()
   }, [caseId])
 
-  // Placeholder rotation effect
   useEffect(() => {
-    if (inputValue) return // Don't rotate if user is typing
-    
+    if (inputValue) return
     const interval = setInterval(() => {
       setCurrentPlaceholderIndex((prev) => (prev + 1) % PLACEHOLDERS.length)
-    }, 3000) // Rotate every 3 seconds
-    
+    }, 3000)
     return () => clearInterval(interval)
   }, [inputValue])
 
   useEffect(() => {
-    // Perplexity-style smooth scroll with delay for better UX
     const timer = setTimeout(() => {
-    scrollToBottom()
+      scrollToBottom()
     }, 100)
     return () => clearTimeout(timer)
   }, [messages, isLoading])
@@ -143,12 +146,10 @@ const ChatWindow = ({ caseId, onDocumentClick }: ChatWindowProps) => {
     }
   }
 
-  // Type guard to check if source is SourceInfo
   const isSourceInfo = (source: string | SourceInfo): source is SourceInfo => {
     return typeof source === 'object' && source !== null && 'file' in source
   }
 
-  // Type guard to check if sources array contains SourceInfo
   const hasSourceInfo = (sources: (string | SourceInfo)[] | undefined): sources is SourceInfo[] => {
     if (!sources || sources.length === 0) return false
     return sources.every(s => isSourceInfo(s))
@@ -156,18 +157,13 @@ const ChatWindow = ({ caseId, onDocumentClick }: ChatWindowProps) => {
 
   const normalizeSources = (sources: (string | SourceInfo)[] | undefined): SourceInfo[] => {
     if (!sources || sources.length === 0) return []
-    
-    // If all sources are already SourceInfo, return as is
     if (hasSourceInfo(sources)) {
       return sources
     }
-    
-    // Convert string sources to SourceInfo
     return sources.map((s): SourceInfo => {
       if (isSourceInfo(s)) {
         return s
       }
-      // It's a string
       return { file: s as string }
     })
   }
@@ -207,7 +203,6 @@ const ChatWindow = ({ caseId, onDocumentClick }: ChatWindowProps) => {
     }
     setError(null)
 
-    // Perplexity-style: smooth scroll after user message
     setTimeout(() => {
       scrollToBottom()
     }, 150)
@@ -216,9 +211,7 @@ const ChatWindow = ({ caseId, onDocumentClick }: ChatWindowProps) => {
     setStreamingContent('')
     setStreamingSources([])
 
-    // Use WebSocket streaming if available, fallback to HTTP
     if (isConnected) {
-      // Create placeholder assistant message for streaming
       const assistantMessage: Message = {
         role: 'assistant',
         content: '',
@@ -228,35 +221,31 @@ const ChatWindow = ({ caseId, onDocumentClick }: ChatWindowProps) => {
       setMessages(prev => [...prev, assistantMessage])
       currentStreamingMessageRef.current = messageIndex
       
-      // Send via WebSocket
       const history = messages.map(m => ({ role: m.role, content: m.content }))
       sendWebSocketMessage(trimmed, history, proSearchEnabled)
     } else {
-      // Fallback to HTTP
-    try {
-      const response = await sendMessage(caseId, userMessage.content)
-      if (response.status === 'success' || response.status === 'task_planned') {
-      const assistantMessage: Message = {
-        role: 'assistant',
-        content: response.answer,
-        sources: response.sources || [],
-      }
-      setMessages((prev) => [...prev, assistantMessage])
-      
-          // Perplexity-style: smooth scroll after AI response
+      try {
+        const response = await sendMessage(caseId, userMessage.content)
+        if (response.status === 'success' || response.status === 'task_planned') {
+          const assistantMessage: Message = {
+            role: 'assistant',
+            content: response.answer,
+            sources: response.sources || [],
+          }
+          setMessages((prev) => [...prev, assistantMessage])
           setTimeout(() => {
             scrollToBottom()
           }, 200)
-      } else {
-        setError('Ошибка при получении ответа')
-      }
-    } catch (err: any) {
-      setError(
-        err.response?.data?.detail ||
-          'Ошибка при отправке вопроса. Проверьте, что backend запущен.',
-      )
-    } finally {
-      setIsLoading(false)
+        } else {
+          setError('Ошибка при получении ответа')
+        }
+      } catch (err: any) {
+        setError(
+          err.response?.data?.detail ||
+            'Ошибка при отправке вопроса. Проверьте, что backend запущен.',
+        )
+      } finally {
+        setIsLoading(false)
       }
     }
   }
@@ -301,14 +290,11 @@ const ChatWindow = ({ caseId, onDocumentClick }: ChatWindowProps) => {
     const value = e.target.value
     setInputValue(value)
     
-    // Auto-resize textarea - only expand vertically, not horizontally
     const textarea = e.target
-    // Reset height to get accurate scrollHeight
     textarea.style.height = '24px'
     const newHeight = Math.min(Math.max(textarea.scrollHeight, 24), 200)
     textarea.style.height = `${newHeight}px`
     
-    // Show autocomplete if user types "/" or starts typing a command
     if (value.startsWith('/') || value.length > 0) {
       const query = value.startsWith('/') ? value.slice(1).toLowerCase() : value.toLowerCase()
       const suggestions = COMMANDS
@@ -359,7 +345,6 @@ const ChatWindow = ({ caseId, onDocumentClick }: ChatWindowProps) => {
     const files = Array.from(e.dataTransfer.files)
     if (files.length === 0) return
 
-    // Filter allowed file types
     const allowedTypes = ['.pdf', '.docx', '.txt', '.xlsx']
     const validFiles = files.filter(file => {
       const ext = '.' + file.name.split('.').pop()?.toLowerCase()
@@ -373,7 +358,6 @@ const ChatWindow = ({ caseId, onDocumentClick }: ChatWindowProps) => {
 
     setDroppedFiles(validFiles)
     
-    // Automatically send message to analyze the file
     try {
       setIsLoading(true)
       const fileNames = validFiles.map(f => f.name).join(', ')
@@ -423,7 +407,6 @@ const ChatWindow = ({ caseId, onDocumentClick }: ChatWindowProps) => {
 
   const remainingChars = MAX_INPUT_CHARS - inputValue.length
   const isOverLimit = remainingChars < 0
-
   const hasMessages = messages.length > 0
 
   const handleClassifyAll = async () => {
@@ -515,17 +498,14 @@ const ChatWindow = ({ caseId, onDocumentClick }: ChatWindowProps) => {
     }
   }
 
-
   const handleCitationClick = (source: SourceInfo) => {
     if (onDocumentClick) {
       onDocumentClick(source.file)
     } else {
-      // Fallback: навигация к анализу
       navigate(`/cases/${caseId}/workspace`)
     }
   }
 
-  // Извлекаем confidence из ответа (если есть)
   const extractConfidence = (content: string): number | null => {
     const match = content.match(/(\d+)%?\s*(?:confidence|уверенность|conf)/i)
     if (match) {
@@ -534,10 +514,7 @@ const ChatWindow = ({ caseId, onDocumentClick }: ChatWindowProps) => {
     return null
   }
 
-  // Извлекаем статистику из ответа для отображения в chart
   const extractStatistics = (content: string): { type: 'bar' | 'pie', title?: string, data: Array<{ name: string, value: number }> } | null => {
-    // Попробуем найти числовые данные в ответе
-    // Примеры: "3 контракта", "28 документов", "5.0млн", "23.7млн"
     const numberMatches = content.matchAll(/(\d+(?:\.\d+)?)\s*(?:млн|тыс|контракт|документ|файл|сумма|руб)/gi)
     const data: Array<{ name: string, value: number }> = []
     
@@ -552,16 +529,14 @@ const ChatWindow = ({ caseId, onDocumentClick }: ChatWindowProps) => {
       }
     }
 
-    // Если нашли данные, создаем chart
     if (data.length > 0) {
       return {
         type: data.length <= 5 ? 'pie' : 'bar',
         title: 'Статистика',
-        data: data.slice(0, 10) // Ограничиваем до 10 элементов
+        data: data.slice(0, 10)
       }
     }
 
-    // Попробуем найти структурированные данные (списки с числами)
     const listMatches = content.match(/(?:•|[-*])\s*([^:]+):\s*(\d+(?:\.\d+)?)/gi)
     if (listMatches && listMatches.length > 0) {
       const chartData: Array<{ name: string, value: number }> = []
@@ -588,494 +563,309 @@ const ChatWindow = ({ caseId, onDocumentClick }: ChatWindowProps) => {
   }
 
   return (
-    <Box 
-      className={`chat-container ${isDragging ? 'dragging' : ''}`}
-      onDragEnter={handleDragEnter}
-      onDragLeave={handleDragLeave}
-      onDragOver={handleDragOver}
-      onDrop={handleDrop}
-      style={{ 
-        display: 'flex',
-        flexDirection: 'column',
-        height: '100vh',
-        backgroundColor: 'var(--color-bg)',
-        position: 'relative',
-        overflow: 'hidden'
-      }}
-    >
-      {isDragging && (
-        <div className="chat-drag-overlay">
-          <div className="chat-drag-overlay-content">
-            <div className="chat-drag-overlay-icon">📎</div>
-            <div className="chat-drag-overlay-text">Перетащите файлы сюда</div>
-            <div className="chat-drag-overlay-hint">PDF, DOCX, TXT, XLSX</div>
+    <TooltipProvider>
+      <div 
+        className={cn("chat-container flex flex-col h-screen relative overflow-hidden", isDragging && "dragging")}
+        onDragEnter={handleDragEnter}
+        onDragLeave={handleDragLeave}
+        onDragOver={handleDragOver}
+        onDrop={handleDrop}
+        style={{ backgroundColor: 'var(--color-bg)' }}
+      >
+        <AnimatePresence>
+          {isDragging && (
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              className="absolute inset-0 z-50 flex items-center justify-center bg-primary/10 border-2 border-dashed border-primary rounded-lg"
+            >
+              <Card className="p-8 text-center">
+                <CardContent className="pt-6">
+                  <div className="text-5xl mb-4">📎</div>
+                  <h3 className="text-xl font-semibold mb-2">Перетащите файлы сюда</h3>
+                  <p className="text-muted-foreground">PDF, DOCX, TXT, XLSX</p>
+                </CardContent>
+              </Card>
+            </motion.div>
+          )}
+        </AnimatePresence>
+
+        {!hasMessages && !isLoading && !historyError && (
+          <QuickButtons
+            onClassifyAll={handleClassifyAll}
+            onFindPrivilege={handleFindPrivilege}
+            onTimeline={handleTimeline}
+            onStatistics={handleStatistics}
+            onExtractEntities={handleExtractEntities}
+          />
+        )}
+
+        <ScrollArea className="flex-1 w-full">
+          <div className="w-full max-w-3xl mx-auto px-6 py-20 pb-40">
+            {historyError && (
+              <Alert variant="destructive" className="mb-4">
+                <AlertTitle>Ошибка</AlertTitle>
+                <AlertDescription className="flex items-center justify-between">
+                  <span>{historyError}</span>
+                  <Button variant="outline" size="sm" onClick={loadHistory}>
+                    Обновить
+                  </Button>
+                </AlertDescription>
+              </Alert>
+            )}
+
+            {!hasMessages && !isLoading && !historyError && (
+              <div className="flex justify-center items-center min-h-[60vh] py-10">
+                <Card className="max-w-2xl w-full">
+                  <CardContent className="pt-6 text-center">
+                    <Avatar className="h-20 w-20 mx-auto mb-6 bg-gradient-to-br from-primary to-primary/60">
+                      <AvatarFallback className="text-3xl">⚖️</AvatarFallback>
+                    </Avatar>
+                    <h2 className="text-3xl font-bold mb-3">Legal AI</h2>
+                    <p className="text-muted-foreground mb-8 text-lg leading-relaxed">
+                      Задайте вопрос по загруженным документам. AI проанализирует контракты, переписку и таблицы.
+                    </p>
+                    <Separator className="my-6" />
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3 max-w-2xl mx-auto">
+                      {RECOMMENDED_QUESTIONS.map((q, idx) => (
+                        <Button
+                          key={idx}
+                          variant="outline"
+                          className="h-auto py-4 px-4 text-left justify-start hover:bg-accent transition-colors"
+                          onClick={() => handleRecommendedClick(q)}
+                        >
+                          {q}
+                        </Button>
+                      ))}
+                    </div>
+                  </CardContent>
+                </Card>
+              </div>
+            )}
+
+            <AnimatePresence>
+              {messages.map((message, index) => {
+                const confidence = extractConfidence(message.content)
+                const statistics = message.role === 'assistant' ? extractStatistics(message.content) : null
+                const isStreamingMessage = currentStreamingMessageRef.current === index && isWebSocketStreaming && !!streamingContent
+                const displayContent = isStreamingMessage ? streamingContent : message.content
+                const displaySources = isStreamingMessage ? streamingSources : (message.sources || [])
+
+                return (
+                  <motion.div
+                    key={index}
+                    initial={{ opacity: 0, y: 20 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    transition={{ duration: 0.3 }}
+                    className={cn(
+                      "flex items-start gap-3 mb-6 w-full",
+                      message.role === 'user' ? 'justify-end' : 'justify-start'
+                    )}
+                  >
+                    {message.role === 'assistant' && (
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <Avatar className="h-8 w-8 shrink-0 bg-gradient-to-br from-primary to-primary/60">
+                            <AvatarFallback className="text-xs font-semibold">AI</AvatarFallback>
+                          </Avatar>
+                        </TooltipTrigger>
+                        <TooltipContent>AI Assistant</TooltipContent>
+                      </Tooltip>
+                    )}
+
+                    {message.role === 'assistant' ? (
+                      <Card className="max-w-[85%] bg-card border shadow-sm">
+                        <CardContent className="p-5">
+                          <div className="text-base leading-relaxed">
+                            <MessageContent
+                              content={displayContent}
+                              sources={displaySources}
+                              onCitationClick={handleCitationClick}
+                              isStreaming={isStreamingMessage}
+                            />
+                          </div>
+                          
+                          {statistics && (
+                            <div className="mt-4">
+                              <StatisticsChart data={statistics} />
+                            </div>
+                          )}
+                          
+                          {confidence !== null && (
+                            <div className="flex items-center gap-2 mt-3">
+                              <span className="text-xs text-muted-foreground">Уверенность:</span>
+                              <ConfidenceBadge confidence={confidence} />
+                            </div>
+                          )}
+                        </CardContent>
+                      </Card>
+                    ) : (
+                      <div className="flex items-start gap-3 max-w-[85%]">
+                        <div
+                          className="rounded-2xl rounded-tr-sm px-4 py-3 bg-primary text-primary-foreground shadow-sm"
+                        >
+                          <p className="text-base leading-relaxed">{message.content}</p>
+                        </div>
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <Avatar className="h-8 w-8 shrink-0 bg-muted">
+                              <AvatarFallback className="text-xs font-semibold">You</AvatarFallback>
+                            </Avatar>
+                          </TooltipTrigger>
+                          <TooltipContent>You</TooltipContent>
+                        </Tooltip>
+                      </div>
+                    )}
+                  </motion.div>
+                )
+              })}
+            </AnimatePresence>
+
+            {isLoading && !isWebSocketStreaming && currentStreamingMessageRef.current === null && (
+              <motion.div
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                className="flex items-start gap-3 mb-6"
+              >
+                <Avatar className="h-8 w-8 shrink-0 bg-gradient-to-br from-primary to-primary/60">
+                  <AvatarFallback className="text-xs font-semibold">AI</AvatarFallback>
+                </Avatar>
+                <Card className="bg-card border shadow-sm">
+                  <CardContent className="p-5">
+                    <div className="flex gap-2">
+                      <Skeleton className="h-2 w-2 rounded-full" />
+                      <Skeleton className="h-2 w-2 rounded-full" />
+                      <Skeleton className="h-2 w-2 rounded-full" />
+                    </div>
+                  </CardContent>
+                </Card>
+              </motion.div>
+            )}
+
+            {error && (
+              <Alert variant="destructive" className="mb-4">
+                <AlertTitle>Ошибка</AlertTitle>
+                <AlertDescription>{error}</AlertDescription>
+              </Alert>
+            )}
+
+            <div ref={messagesEndRef} />
+          </div>
+        </ScrollArea>
+
+        <div 
+          className="fixed bottom-0 left-[260px] right-0 bg-background border-t z-50 transition-all duration-300"
+          style={{ backgroundColor: 'var(--color-bg)', borderColor: 'var(--color-border)' }}
+        >
+          {droppedFiles.length > 0 && (
+            <div className="flex flex-wrap gap-2 p-3 border-b bg-muted/50">
+              {droppedFiles.map((file, index) => (
+                <Badge key={index} variant="secondary" className="gap-2">
+                  <Paperclip className="h-3 w-3" />
+                  <span>{file.name}</span>
+                  <button
+                    type="button"
+                    onClick={() => setDroppedFiles(prev => prev.filter((_, i) => i !== index))}
+                    className="ml-1 hover:text-destructive"
+                    aria-label="Удалить файл"
+                  >
+                    ×
+                  </button>
+                </Badge>
+              ))}
+            </div>
+          )}
+          
+          <div className="max-w-3xl mx-auto px-6 py-6">
+            <Card className="border-2 shadow-lg">
+              <CardContent className="p-4">
+                <div className="flex items-end gap-3">
+                  <div className="relative flex-1">
+                    <Textarea
+                      ref={textareaRef}
+                      placeholder={PLACEHOLDERS[currentPlaceholderIndex]}
+                      value={inputValue}
+                      onChange={handleTextareaChange}
+                      onKeyDown={handleKeyDown}
+                      disabled={isLoading || isWebSocketStreaming}
+                      className="min-h-[24px] max-h-[200px] resize-none border-0 focus-visible:ring-0 focus-visible:ring-offset-0 bg-transparent"
+                      style={{
+                        height: 'auto',
+                      }}
+                    />
+                    <Autocomplete
+                      suggestions={autocompleteSuggestions}
+                      selectedIndex={autocompleteSelectedIndex}
+                      onSelect={handleAutocompleteSelect}
+                      visible={autocompleteVisible}
+                    />
+                  </div>
+                  
+                  <div className="flex items-center gap-2 shrink-0">
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <div className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-warning/10 border border-warning/20">
+                          <Switch
+                            checked={proSearchEnabled}
+                            onCheckedChange={setProSearchEnabled}
+                            className="scale-75"
+                          />
+                          <Zap className={cn("h-3.5 w-3.5", proSearchEnabled && "text-warning fill-warning")} />
+                          <span className="text-xs font-medium text-warning">Pro</span>
+                        </div>
+                      </TooltipTrigger>
+                      <TooltipContent>Глубокий поиск (Pro)</TooltipContent>
+                    </Tooltip>
+                    
+                    <input
+                      type="file"
+                      id="chat-file-input"
+                      multiple
+                      accept=".pdf,.docx,.txt,.xlsx"
+                      onChange={handleFileInput}
+                      className="hidden"
+                    />
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          asChild
+                        >
+                          <label htmlFor="chat-file-input" className="cursor-pointer">
+                            <Paperclip className="h-5 w-5" />
+                          </label>
+                        </Button>
+                      </TooltipTrigger>
+                      <TooltipContent>Прикрепить файл</TooltipContent>
+                    </Tooltip>
+                    
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <Button
+                          size="icon"
+                          onClick={(e) => {
+                            e.preventDefault()
+                            handleSend()
+                          }}
+                          disabled={isLoading || !inputValue.trim() || isOverLimit || isWebSocketStreaming}
+                          className="bg-primary hover:bg-primary/90"
+                        >
+                          <Send className="h-4 w-4" />
+                        </Button>
+                      </TooltipTrigger>
+                      <TooltipContent>Отправить (Enter)</TooltipContent>
+                    </Tooltip>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
           </div>
         </div>
-      )}
-      {/* Header removed for Perplexity style */}
-
-      {!hasMessages && !isLoading && !historyError && (
-        <QuickButtons
-          onClassifyAll={handleClassifyAll}
-          onFindPrivilege={handleFindPrivilege}
-          onTimeline={handleTimeline}
-          onStatistics={handleStatistics}
-          onExtractEntities={handleExtractEntities}
-        />
-      )}
-
-      <Box 
-        className="chat-messages"
-        style={{
-          flex: 1,
-          overflowY: 'auto',
-          overflowX: 'hidden',
-          display: 'flex',
-          flexDirection: 'column',
-          alignItems: 'center',
-          padding: 0,
-          width: '100%',
-          backgroundColor: 'var(--color-bg)',
-          scrollBehavior: 'smooth',
-        }}
-      >
-        <Box 
-          className="chat-messages-wrapper"
-          style={{
-            width: '100%',
-            maxWidth: '768px',
-            margin: '0 auto',
-            padding: '80px 24px 140px',
-          }}
-        >
-        {historyError && (
-          <div className="error-message" style={{ padding: '12px', margin: '16px', background: '#fee2e2', color: '#ef4444', borderRadius: '6px' }}>
-            ⚠️ {historyError}
-            <button
-              onClick={loadHistory}
-              style={{
-                marginLeft: '12px',
-                padding: '4px 12px',
-                background: '#4299e1',
-                color: 'white',
-                border: 'none',
-                borderRadius: '4px',
-                cursor: 'pointer',
-                fontSize: '12px',
-              }}
-            >
-              Обновить
-            </button>
-          </div>
-        )}
-        {!hasMessages && !isLoading && !historyError && (
-          <Box 
-            className="empty-state"
-            style={{
-              display: 'flex',
-              justifyContent: 'center',
-              alignItems: 'center',
-              height: '100%',
-              padding: '40px 24px',
-            }}
-          >
-            <Card 
-              className="empty-card"
-              style={{
-                maxWidth: '640px',
-                width: '100%',
-                textAlign: 'center',
-                padding: '40px',
-              }}
-            >
-              <Box style={{ fontSize: '48px', marginBottom: '24px', opacity: 0.9 }}>⚖️</Box>
-              <Text size="7" weight="bold" style={{ marginBottom: '12px', display: 'block' }}>
-                Legal AI
-              </Text>
-              <Text size="3" color="gray" style={{ marginBottom: '40px', display: 'block', lineHeight: 1.6 }}>
-                Задайте вопрос по загруженным документам. AI проанализирует контракты, переписку и таблицы.
-              </Text>
-              <Box 
-                className="empty-questions-grid"
-                style={{
-                  display: 'grid',
-                  gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))',
-                  gap: '12px',
-                  maxWidth: '600px',
-                  margin: '0 auto',
-                }}
-              >
-                {RECOMMENDED_QUESTIONS.map((q) => (
-                  <Button
-                    key={q}
-                    variant="soft"
-                    size="3"
-                    onClick={() => handleRecommendedClick(q)}
-                    style={{
-                      textAlign: 'left',
-                      justifyContent: 'flex-start',
-                      height: 'auto',
-                      padding: '14px 18px',
-                      lineHeight: 1.5,
-                    }}
-                  >
-                    {q}
-                  </Button>
-                ))}
-              </Box>
-            </Card>
-          </Box>
-        )}
-
-        {messages.map((message, index) => {
-          const confidence = extractConfidence(message.content)
-          const statistics = message.role === 'assistant' ? extractStatistics(message.content) : null
-          
-          // Check if this is the streaming message
-          const isStreamingMessage = currentStreamingMessageRef.current === index && isWebSocketStreaming && !!streamingContent
-          const displayContent = isStreamingMessage ? streamingContent : message.content
-          const displaySources = isStreamingMessage ? streamingSources : (message.sources || [])
-
-          return (
-            <Flex
-              key={index}
-              className={`message ${message.role === 'user' ? 'message-user' : 'message-assistant'}`}
-              role="article"
-              aria-label={message.role === 'user' ? 'Сообщение пользователя' : 'Ответ ассистента'}
-              align="start"
-              gap="3"
-              style={{
-                width: '100%',
-                marginBottom: '24px',
-                justifyContent: message.role === 'user' ? 'flex-end' : 'flex-start',
-              }}
-            >
-              {message.role === 'assistant' && (
-                <Box 
-                  className="message-avatar assistant-avatar"
-                  style={{
-                    width: '32px',
-                    height: '32px',
-                    borderRadius: '8px',
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    fontSize: '13px',
-                    fontWeight: 600,
-                    flexShrink: 0,
-                    marginTop: '2px',
-                    background: 'linear-gradient(135deg, #00D4FF 0%, #00B8E6 100%)',
-                    color: '#0F0F23',
-                  }}
-                >
-                  AI
-                </Box>
-              )}
-              {message.role === 'assistant' ? (
-                <Card
-                  className={`message-bubble assistant`}
-                  style={{
-                    maxWidth: '768px',
-                    padding: '20px 24px',
-                    borderRadius: '16px',
-                    backgroundColor: 'var(--color-message-assistant)',
-                    boxShadow: '0 1px 3px rgba(0, 0, 0, 0.1)',
-                  }}
-                >
-                  <Text className="message-text" style={{ fontSize: '16px', lineHeight: 1.75, color: 'inherit', fontWeight: 400 }}>
-                    <MessageContent
-                      content={displayContent}
-                      sources={displaySources}
-                      onCitationClick={handleCitationClick}
-                      isStreaming={isStreamingMessage}
-                    />
-                  </Text>
-                  
-                  {statistics && (
-                    <Box style={{ marginTop: '16px' }}>
-                      <StatisticsChart data={statistics} />
-                    </Box>
-                  )}
-                  
-                  {confidence !== null && (
-                    <Flex align="center" gap="2" style={{ marginTop: '8px' }}>
-                      <Text size="1" color="gray">Уверенность: </Text>
-                      <ConfidenceBadge confidence={confidence} />
-                    </Flex>
-                  )}
-                </Card>
-              ) : (
-                <Box
-                  className={`message-bubble user`}
-                  style={{
-                    maxWidth: '85%',
-                    padding: '12px 16px',
-                    borderRadius: '18px 18px 4px 18px',
-                    marginLeft: 'auto',
-                    backgroundColor: 'var(--color-message-user)',
-                    color: '#0F0F23',
-                    fontWeight: 400,
-                  }}
-                >
-                  <Text style={{ fontSize: '16px', lineHeight: 1.75 }}>
-                    {message.content}
-                  </Text>
-                </Box>
-              )}
-              {message.role === 'user' && (
-                <Box 
-                  className="message-avatar user-avatar"
-                  style={{
-                    width: '32px',
-                    height: '32px',
-                    borderRadius: '8px',
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    fontSize: '13px',
-                    fontWeight: 600,
-                    flexShrink: 0,
-                    marginTop: '2px',
-                    backgroundColor: 'var(--color-border)',
-                    color: 'var(--color-text)',
-                  }}
-                >
-                  You
-                </Box>
-              )}
-            </Flex>
-          )
-        })}
-
-        {isLoading && !isWebSocketStreaming && currentStreamingMessageRef.current === null && (
-          <Flex
-            className="message message-assistant"
-            role="status"
-            aria-live="polite"
-            align="start"
-            gap="3"
-            style={{
-              width: '100%',
-              marginBottom: '24px',
-              justifyContent: 'flex-start',
-            }}
-          >
-            <Box 
-              className="message-avatar assistant-avatar"
-              aria-hidden="true"
-              style={{
-                width: '32px',
-                height: '32px',
-                borderRadius: '8px',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                fontSize: '13px',
-                fontWeight: 600,
-                flexShrink: 0,
-                marginTop: '2px',
-                background: 'linear-gradient(135deg, #00D4FF 0%, #00B8E6 100%)',
-                color: '#0F0F23',
-              }}
-            >
-              AI
-            </Box>
-            <Card
-              className="message-bubble assistant loading-bubble"
-              style={{
-                padding: '20px 24px',
-                borderRadius: '16px',
-                backgroundColor: 'var(--color-message-assistant)',
-              }}
-            >
-              <Box className="typing-indicator" aria-label="Генерация ответа" style={{ display: 'flex', gap: '4px' }}>
-                <Box className="typing-dot" style={{ width: '8px', height: '8px', borderRadius: '50%', backgroundColor: 'var(--color-primary)', animation: 'typingPulse 1.4s ease-in-out infinite' }}></Box>
-                <Box className="typing-dot" style={{ width: '8px', height: '8px', borderRadius: '50%', backgroundColor: 'var(--color-primary)', animation: 'typingPulse 1.4s ease-in-out infinite 0.2s' }}></Box>
-                <Box className="typing-dot" style={{ width: '8px', height: '8px', borderRadius: '50%', backgroundColor: 'var(--color-primary)', animation: 'typingPulse 1.4s ease-in-out infinite 0.4s' }}></Box>
-              </Box>
-            </Card>
-          </Flex>
-        )}
-
-        {error && <div className="error-message">{error}</div>}
-
-        <div ref={messagesEndRef} />
-        </Box>
-      </Box>
-
-      <Box 
-        className="chat-input-area"
-        style={{
-          position: 'fixed',
-          bottom: 0,
-          left: '260px',
-          right: 0,
-          backgroundColor: 'var(--color-bg)',
-          borderTop: '1px solid var(--color-border)',
-          padding: '24px 0',
-          zIndex: 100,
-          transition: 'left 0.3s ease',
-        }}
-      >
-        {droppedFiles.length > 0 && (
-          <div className="chat-dropped-files">
-            {droppedFiles.map((file, index) => (
-              <div key={index} className="chat-dropped-file">
-                <span className="chat-dropped-file-name">📎 {file.name}</span>
-                <button
-                  type="button"
-                  className="chat-dropped-file-remove"
-                  onClick={() => setDroppedFiles(prev => prev.filter((_, i) => i !== index))}
-                  aria-label="Удалить файл"
-                >
-                  ×
-                </button>
-              </div>
-            ))}
-          </div>
-        )}
-        <Box 
-          className="chat-input-wrapper"
-          style={{
-            maxWidth: '768px',
-            width: '100%',
-            margin: '0 auto',
-            padding: '0 24px',
-            boxSizing: 'border-box',
-          }}
-        >
-          <Flex
-            className="chat-input-main"
-            align="center"
-            gap="3"
-            style={{
-              backgroundColor: 'var(--color-surface)',
-              border: '1.5px solid var(--color-border)',
-              borderRadius: '26px',
-              padding: '12px 16px',
-              minHeight: '52px',
-              width: '100%',
-              boxSizing: 'border-box',
-            }}
-          >
-            <Box 
-              className="chat-input-container"
-              style={{
-                position: 'relative',
-                flex: 1,
-                minWidth: 0,
-                display: 'flex',
-                alignItems: 'center',
-              }}
-            >
-              <TextArea
-                ref={textareaRef}
-                placeholder={PLACEHOLDERS[currentPlaceholderIndex]}
-                value={inputValue}
-                onChange={handleTextareaChange}
-                onKeyDown={handleKeyDown}
-                disabled={isLoading}
-                resize="none"
-                style={{
-                  minHeight: '24px',
-                  maxHeight: '200px',
-                  lineHeight: 1.5,
-                  width: '100%',
-                  minWidth: 0,
-                  border: 'none',
-                  background: 'transparent',
-                  padding: 0,
-                  fontSize: '16px',
-                  fontFamily: 'inherit',
-                  outline: 'none',
-                }}
-                aria-label="Введите сообщение"
-                aria-describedby="input-help"
-              />
-              <Autocomplete
-                suggestions={autocompleteSuggestions}
-                selectedIndex={autocompleteSelectedIndex}
-                onSelect={handleAutocompleteSelect}
-                visible={autocompleteVisible}
-              />
-            </Box>
-            <Flex className="chat-input-actions" align="center" gap="2" style={{ flexShrink: 0 }}>
-              {/* Pro Search Toggle */}
-              <Button
-                variant="soft"
-                size="2"
-                onClick={() => setProSearchEnabled(!proSearchEnabled)}
-                className={proSearchEnabled ? 'active' : ''}
-                title="Глубокий поиск (Pro)"
-                style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: '6px',
-                  padding: '6px 12px',
-                  backgroundColor: proSearchEnabled ? 'rgba(255, 193, 7, 0.25)' : 'rgba(255, 193, 7, 0.12)',
-                  borderColor: proSearchEnabled ? '#FFC107' : 'rgba(255, 193, 7, 0.25)',
-                  color: '#FFC107',
-                  fontSize: '12px',
-                }}
-              >
-                <Box 
-                  className="pro-search-badge"
-                  style={{
-                    width: '5px',
-                    height: '5px',
-                    borderRadius: '50%',
-                    background: '#FFC107',
-                    boxShadow: '0 0 3px rgba(255, 193, 7, 0.6)',
-                    flexShrink: 0,
-                  }}
-                />
-                <Text size="2">Pro Search</Text>
-              </Button>
-              
-              <input
-                type="file"
-                id="chat-file-input"
-                multiple
-                accept=".pdf,.docx,.txt,.xlsx"
-                onChange={handleFileInput}
-                style={{ display: 'none' }}
-              />
-              <IconButton
-                asChild
-                variant="ghost"
-                size="2"
-                title="Прикрепить файл"
-              >
-                <label htmlFor="chat-file-input" style={{ cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                  <Paperclip size={20} />
-                </label>
-              </IconButton>
-              <IconButton
-                variant="solid"
-                size="2"
-                onClick={(e) => {
-                  e.preventDefault()
-                  handleSend()
-                }}
-                disabled={isLoading || !inputValue.trim() || isOverLimit}
-                title="Отправить (Enter)"
-                aria-label="Отправить сообщение"
-                style={{
-                  backgroundColor: 'var(--color-primary)',
-                  color: '#0F0F23',
-                  width: '32px',
-                  height: '32px',
-                }}
-              >
-                <Send size={16} />
-              </IconButton>
-            </Flex>
-          </Flex>
-        </Box>
-      </Box>
-    </Box>
+      </div>
+    </TooltipProvider>
   )
 }
 
 export default ChatWindow
-

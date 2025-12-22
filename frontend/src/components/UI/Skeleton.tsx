@@ -1,31 +1,15 @@
-import { HTMLAttributes } from 'react'
+import { cn } from "@/lib/utils"
 
-interface SkeletonProps extends HTMLAttributes<HTMLDivElement> {
-  variant?: 'text' | 'circular' | 'rectangular'
-  width?: string | number
-  height?: string | number
-}
-
-const Skeleton = ({ variant = 'text', width, height, className = '', ...props }: SkeletonProps) => {
-  const baseClasses = 'bg-tertiary animate-pulse rounded'
-  
-  const variantClasses = {
-    text: 'h-4 rounded',
-    circular: 'rounded-full',
-    rectangular: 'rounded-md',
-  }
-  
-  const style: React.CSSProperties = {}
-  if (width) style.width = typeof width === 'number' ? `${width}px` : width
-  if (height) style.height = typeof height === 'number' ? `${height}px` : height
-  
+function Skeleton({
+  className,
+  ...props
+}: React.HTMLAttributes<HTMLDivElement>) {
   return (
     <div
-      className={`${baseClasses} ${variantClasses[variant]} ${className}`}
-      style={style}
+      className={cn("animate-pulse rounded-md bg-muted", className)}
       {...props}
     />
   )
 }
 
-export default Skeleton
+export { Skeleton }

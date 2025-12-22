@@ -353,3 +353,5 @@ class YandexAssistantService:
 - [MCP Servers](https://mcpservers.org/)
 - [YandexGPT Concepts](https://yandex.cloud/en/docs/yandexgpt/concepts/)
 
+
+

@@ -29,12 +29,26 @@ export const ThemeProvider = ({ children }: { children: ReactNode }) => {
     if (!saved) {
       localStorage.setItem('theme', initialTheme)
     }
+    
+    // Add/remove dark class for shadcn-ui
+    if (initialTheme === 'dark') {
+      root.classList.add('dark')
+    } else {
+      root.classList.remove('dark')
+    }
   }, [])
 
   useEffect(() => {
     const root = document.documentElement
     root.setAttribute('data-theme', theme)
     localStorage.setItem('theme', theme)
+    
+    // Add/remove dark class for shadcn-ui
+    if (theme === 'dark') {
+      root.classList.add('dark')
+    } else {
+      root.classList.remove('dark')
+    }
   }, [theme])
 
   const toggleTheme = () => {

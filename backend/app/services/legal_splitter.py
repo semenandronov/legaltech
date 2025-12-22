@@ -108,3 +108,5 @@ class LegalTextSplitter(RecursiveCharacterTextSplitter):
         logger.debug(f"Split {len(text)} chars into {len(documents)} chunks for {filename}")
         return documents
 
+
+

@@ -47,7 +47,7 @@ const MessageContent: React.FC<MessageContentProps> = ({
         }
       }
       
-      // Add citation component
+      // Add citation component (Perplexity style)
       const citationIndex = parseInt(match[1], 10)
       parts.push(
         <InlineCitation
