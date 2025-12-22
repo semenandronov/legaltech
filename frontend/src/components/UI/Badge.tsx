@@ -26,7 +26,7 @@ const badgeVariants = cva(
 export type BadgeVariant = "default" | "secondary" | "destructive" | "outline" | "completed" | "pending" | "flagged" | "high-risk" | "medium-risk" | "low-risk"
 
 export interface BadgeProps
-  extends Omit<React.HTMLAttributes<HTMLDivElement>, \'variant\'> {
+  extends Omit<React.HTMLAttributes<HTMLDivElement>, "variant"> {
   variant?: BadgeVariant
 }
 
