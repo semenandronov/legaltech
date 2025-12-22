@@ -26,4 +26,3 @@ Switch.displayName = SwitchPrimitives.Root.displayName
 
 export { Switch }
 
-export default Uswitch
