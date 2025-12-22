@@ -300,53 +300,53 @@
   font-style: italic;
 }
 
-/* Inline Citations [1][2][3] - Perplexity style */
-.inline-citation {
-  display: inline;
-  color: var(--color-primary);
-  text-decoration: underline;
-  text-decoration-color: rgba(0, 212, 255, 0.5);
-  text-underline-offset: 2px;
+/* Inline Citations - Perplexity exact style (small grey tags) */
+.inline-citation-perplexity {
+  display: inline-block;
+  background-color: rgba(255, 255, 255, 0.08);
+  color: var(--color-text-secondary);
+  padding: 2px 6px;
+  margin: 0 4px 0 2px;
+  border-radius: 4px;
   cursor: pointer;
-  font-weight: 500;
-  padding: 0 1px;
-  margin: 0 1px;
-  border-radius: 2px;
+  font-weight: 400;
+  font-size: 13px;
+  line-height: 1.4;
   transition: all 0.15s ease;
   position: relative;
-  font-size: inherit;
-  line-height: inherit;
+  vertical-align: baseline;
+  border: 1px solid rgba(255, 255, 255, 0.1);
 }
 
-.inline-citation:hover {
-  background-color: rgba(0, 212, 255, 0.12);
-  text-decoration-color: var(--color-primary);
-  text-underline-offset: 3px;
+.inline-citation-perplexity:hover {
+  background-color: rgba(255, 255, 255, 0.15);
+  color: var(--color-text);
+  border-color: rgba(255, 255, 255, 0.2);
 }
 
-.inline-citation-tooltip {
+.inline-citation-tooltip-perplexity {
   position: absolute;
-  bottom: calc(100% + 6px);
+  bottom: calc(100% + 8px);
   left: 50%;
   transform: translateX(-50%);
-  padding: 6px 10px;
+  padding: 8px 12px;
   background: var(--color-surface);
   border: 1px solid var(--color-border);
-  border-radius: 6px;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.25);
-  font-size: 11px;
+  border-radius: 8px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+  font-size: 12px;
   color: var(--color-text);
   white-space: nowrap;
   z-index: 1000;
   opacity: 0;
   pointer-events: none;
-  transition: opacity 0.15s ease;
-  max-width: 250px;
+  transition: opacity 0.2s ease;
+  max-width: 300px;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 
-.inline-citation:hover .inline-citation-tooltip {
+.inline-citation-perplexity:hover .inline-citation-tooltip-perplexity {
   opacity: 1;
 }
 

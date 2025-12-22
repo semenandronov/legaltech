@@ -704,61 +704,7 @@ const ChatWindow = ({ caseId, onDocumentClick }: ChatWindowProps) => {
                   </div>
                 )}
 
-                {hasSources && displaySources && displaySources.length > 0 && (
-                  <div className="chat-message-sources">
-                    <div className="chat-message-sources-title">Источники:</div>
-                    <div className="chat-message-sources-list">
-                      {displaySources.map((source, idx) => (
-                        <CitationLink
-                          key={idx}
-                          source={source}
-                          onClick={handleCitationClick}
-                        />
-                      ))}
-                    </div>
-                    {hasMultipleSources && message.sources && (
-                      <div className="chat-batch-actions">
-                        <button
-                          className="chat-batch-action-btn"
-                          onClick={async () => {
-                            try {
-                              const fileIds = message.sources?.map(s => {
-                                // Extract file ID from filename if needed
-                                // This is a placeholder - actual implementation depends on your data structure
-                                return s.file
-                              }) || []
-                              
-                              // TODO: Call batch withhold API
-                              console.log('Withhold these', fileIds)
-                            } catch (err) {
-                              console.error('Error withholding documents:', err)
-                            }
-                          }}
-                        >
-                          🔒 Withhold эти {message.sources.length}
-                        </button>
-                        <button
-                          className="chat-batch-action-btn secondary"
-                          onClick={() => {
-                            // TODO: Реализовать export списка
-                            console.log('Export list', message.sources?.map(s => s.file))
-                          }}
-                        >
-                          📋 Экспорт список
-                        </button>
-                        <button
-                          className="chat-batch-action-btn secondary"
-                          onClick={() => {
-                            // TODO: Показать статистику
-                            handleStatistics()
-                          }}
-                        >
-                          📊 Статистика по типам
-                        </button>
-                      </div>
-                    )}
-                  </div>
-                )}
+                {/* Sources are now inline citations only - no separate block */}
               </div>
               {message.role === 'user' && (
                 <div className="message-avatar user-avatar">You</div>
