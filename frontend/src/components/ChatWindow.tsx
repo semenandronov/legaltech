@@ -11,17 +11,17 @@ import ConfidenceBadge from './Common/ConfidenceBadge'
 import MessageContent from './Chat/MessageContent'
 import Autocomplete from './Chat/Autocomplete'
 import StatisticsChart from './Chat/StatisticsChart'
-import { Button } from '@/components/ui/button'
-import { Card, CardContent } from '@/components/ui/card'
-import { Textarea } from '@/components/ui/textarea'
-import { Avatar, AvatarFallback } from '@/components/ui/avatar'
-import { Badge } from '@/components/ui/badge'
-import { Separator } from '@/components/ui/separator'
-import { ScrollArea } from '@/components/ui/scroll-area'
-import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
-import { Switch } from '@/components/ui/switch'
-import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
-import { Skeleton } from '@/components/ui/skeleton'
+import { Button } from '@/components/UI/Button'
+import { Card, CardContent } from '@/components/UI/Card'
+import { Textarea } from '@/components/UI/Textarea'
+import { Avatar, AvatarFallback } from '@/components/UI/avatar'
+import { Badge } from '@/components/UI/Badge'
+import { Separator } from '@/components/UI/separator'
+import { ScrollArea } from '@/components/UI/scroll-area'
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/UI/tooltip'
+import { Switch } from '@/components/UI/switch'
+import { Alert, AlertDescription, AlertTitle } from '@/components/UI/alert'
+import { Skeleton } from '@/components/UI/Skeleton'
 import { cn } from '@/lib/utils'
 
 interface Message {
@@ -845,7 +845,7 @@ const ChatWindow = ({ caseId, onDocumentClick }: ChatWindowProps) => {
                       <TooltipTrigger asChild>
                         <Button
                           size="icon"
-                          onClick={(e) => {
+                          onClick={(e: React.MouseEvent) => {
                             e.preventDefault()
                             handleSend()
                           }}

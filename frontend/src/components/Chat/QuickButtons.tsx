@@ -1,8 +1,7 @@
 import React from 'react'
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
-import { Button } from '@/components/ui/button'
-import { Separator } from '@/components/ui/separator'
-import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/UI/Card'
+import { Button } from '@/components/UI/Button'
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/UI/tooltip'
 import './Chat.css'
 
 interface QuickButtonsProps {
