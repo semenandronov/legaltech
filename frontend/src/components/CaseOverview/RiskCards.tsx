@@ -1,7 +1,7 @@
 import { FileText, ExternalLink } from 'lucide-react'
-import Card from '../UI/Card'
-import Badge from '../UI/Badge'
-import Button from '../UI/Button'
+import { Card } from '../UI/Card'
+import { Badge } from '../UI/Badge'
+import { Button } from '../UI/Button'
 
 interface Risk {
   id: string

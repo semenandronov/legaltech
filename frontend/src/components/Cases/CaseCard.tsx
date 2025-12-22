@@ -2,9 +2,9 @@ import React from 'react'
 import { useNavigate } from 'react-router-dom'
 import { FileText, Calendar, MoreVertical } from 'lucide-react'
 import { CaseListItem } from '../../services/api'
-import Card from '../UI/Card'
-import Badge from '../UI/Badge'
-import Button from '../UI/Button'
+import { Card } from '../UI/Card'
+import { Badge } from '../UI/Badge'
+import { Button } from '../UI/Button'
 import Dropdown from '../UI/Dropdown'
 
 interface CaseCardProps {

@@ -2,8 +2,8 @@ import { LayoutGrid, List } from 'lucide-react'
 import { CaseListItem } from '../../services/api'
 import CaseCard from './CaseCard'
 import Pagination from '../UI/Pagination'
-import Skeleton from '../UI/Skeleton'
-import Button from '../UI/Button'
+import { Skeleton } from '../UI/Skeleton'
+import { Button } from '../UI/Button'
 
 interface CasesGridProps {
   cases: CaseListItem[]

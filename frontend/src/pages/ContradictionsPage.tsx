@@ -5,8 +5,8 @@ import MainLayout from '../components/Layout/MainLayout'
 import CaseNavigation from '../components/CaseOverview/CaseNavigation'
 import ContradictionsSection from '../components/CaseOverview/ContradictionsSection'
 import Modal from '../components/UI/Modal'
-import Card from '../components/UI/Card'
-import Badge from '../components/UI/Badge'
+import { Card } from '../components/UI/Card'
+import { Badge } from '../components/UI/Badge'
 import Spinner from '../components/UI/Spinner'
 
 const ContradictionsPage = () => {

@@ -4,7 +4,7 @@ import { useAuth } from '../../contexts/AuthContext'
 import UploadArea from '../UploadArea'
 import ThemeToggle from '../UI/ThemeToggle'
 import Modal from '../UI/Modal'
-import Button from '../UI/Button'
+import { Button } from '../UI/Button'
 
 const Header = () => {
   const { user } = useAuth()

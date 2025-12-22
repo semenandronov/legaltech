@@ -3,7 +3,7 @@ import { NavLink, useNavigate, useLocation } from 'react-router-dom'
 import { ChevronLeft, ChevronRight, Home, Settings, LogOut, Moon, Sun } from 'lucide-react'
 import { useAuth } from '../../contexts/AuthContext'
 import { useTheme } from '../../contexts/ThemeContext'
-import Button from '../UI/Button'
+import { Button } from '../UI/Button'
 
 const Sidebar = () => {
   const { logout, user } = useAuth()

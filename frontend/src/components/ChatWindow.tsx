@@ -407,7 +407,8 @@ const ChatWindow = ({ caseId, onDocumentClick }: ChatWindowProps) => {
   const isOverLimit = remainingChars < 0
   const hasMessages = messages.length > 0
 
-  const handleClassifyAll = async () => {
+  // Removed unused handlers - QuickButtons component was removed
+  const _handleClassifyAll = async () => {
     try {
       setIsLoading(true)
       await classifyDocuments(caseId)
@@ -425,7 +426,7 @@ const ChatWindow = ({ caseId, onDocumentClick }: ChatWindowProps) => {
     }
   }
 
-  const handleFindPrivilege = async () => {
+  const _handleFindPrivilege = async () => {
     try {
       setIsLoading(true)
       const response = await sendMessage(caseId, 'Найди все привилегированные документы')
@@ -442,7 +443,7 @@ const ChatWindow = ({ caseId, onDocumentClick }: ChatWindowProps) => {
     }
   }
 
-  const handleTimeline = async () => {
+  const _handleTimeline = async () => {
     try {
       setIsLoading(true)
       const timeline = await getTimeline(caseId)
@@ -460,7 +461,7 @@ const ChatWindow = ({ caseId, onDocumentClick }: ChatWindowProps) => {
     }
   }
 
-  const handleStatistics = async () => {
+  const _handleStatistics = async () => {
     try {
       setIsLoading(true)
       const report = await getAnalysisReport(caseId)
@@ -478,7 +479,7 @@ const ChatWindow = ({ caseId, onDocumentClick }: ChatWindowProps) => {
     }
   }
 
-  const handleExtractEntities = async () => {
+  const _handleExtractEntities = async () => {
     try {
       setIsLoading(true)
       await extractEntities(caseId)

@@ -1,7 +1,7 @@
 import { AlertTriangle, CheckCircle, XCircle } from 'lucide-react'
-import Card from '../UI/Card'
-import Button from '../UI/Button'
-import Badge from '../UI/Badge'
+import { Card } from '../UI/Card'
+import { Button } from '../UI/Button'
+import { Badge } from '../UI/Badge'
 
 interface Contradiction {
   id: string

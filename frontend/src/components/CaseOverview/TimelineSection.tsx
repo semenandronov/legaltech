@@ -1,5 +1,5 @@
 import { Calendar, AlertCircle, FileText, CheckCircle } from 'lucide-react'
-import Card from '../UI/Card'
+import { Card } from '../UI/Card'
 
 interface TimelineEvent {
   id: string

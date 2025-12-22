@@ -1,8 +1,8 @@
 import { useNavigate } from 'react-router-dom'
 import { ArrowLeft, Settings, HelpCircle, User } from 'lucide-react'
 import { CaseResponse } from '../../services/api'
-import Badge from '../UI/Badge'
-import Button from '../UI/Button'
+import { Badge } from '../UI/Badge'
+import { Button } from '../UI/Button'
 import Breadcrumbs from '../UI/Breadcrumbs'
 
 interface CaseHeaderProps {

@@ -1,6 +1,6 @@
 import { FileText, Users, Clock } from 'lucide-react'
-import Card from '../UI/Card'
-import Button from '../UI/Button'
+import { Card } from '../UI/Card'
+import { Button } from '../UI/Button'
 
 interface QuickStatsProps {
   totalDocuments: number
