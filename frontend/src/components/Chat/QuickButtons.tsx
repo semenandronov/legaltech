@@ -1,5 +1,5 @@
 import React from 'react'
-import { Button, Flex, Text } from '@radix-ui/themes'
+import { Box, Button, Flex, Text } from '@radix-ui/themes'
 import './Chat.css'
 
 interface QuickButtonsProps {

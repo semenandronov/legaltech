@@ -730,7 +730,6 @@ const ChatWindow = ({ caseId, onDocumentClick }: ChatWindowProps) => {
         {messages.map((message, index) => {
           const confidence = extractConfidence(message.content)
           const statistics = message.role === 'assistant' ? extractStatistics(message.content) : null
-          const hasSources = message.sources && message.sources.length > 0
           
           // Check if this is the streaming message
           const isStreamingMessage = currentStreamingMessageRef.current === index && isWebSocketStreaming && !!streamingContent
