@@ -216,10 +216,10 @@ async def stream_chat(
                     "message": "🔍 Deep Research activated..."
                 })
             else:
-            await websocket.send_json({
-                "type": "processing",
-                "message": "Обработка запроса..."
-            })
+                await websocket.send_json({
+                    "type": "processing",
+                    "message": "Обработка запроса..."
+                })
             
             # Generate response with sources
             try:
