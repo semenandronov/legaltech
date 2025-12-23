@@ -13,7 +13,7 @@ import { useState, useEffect } from 'react'
 import ChatWindow from './components/ChatWindow'
 import Sidebar from './components/Layout/Sidebar'
 import { getCase } from './services/api'
-import { logger } from './lib/logger'
+import { logger } from '@/lib/logger'
 
 function App() {
   return (
