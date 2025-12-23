@@ -72,60 +72,18 @@ def timeline_agent_node(
             temperature=0.1
         )
         
-        # Try to extract JSON from response
-        timeline_data = None
-        try:
-            # Look for JSON in the response
-            if "```json" in response_text:
-                json_text = response_text.split("```json")[1].split("```")[0].strip()
-                timeline_data = json.loads(json_text)
-            elif "[" in response_text and "]" in response_text:
-                # Try to extract JSON array
-                start = response_text.find("[")
-                end = response_text.rfind("]") + 1
-                if start >= 0 and end > start:
-                    json_text = response_text[start:end]
-                    timeline_data = json.loads(json_text)
-        except Exception as e:
-            logger.warning(f"Could not parse JSON from timeline agent response: {e}")
+        # Извлекаем JSON из ответа и парсим события
+        timeline_data = extract_json_from_response(response_text)
         
-        # If we have timeline data, parse and save
         if timeline_data:
-            parsed_events = ParserService.parse_timeline_events(json.dumps(timeline_data) if isinstance(timeline_data, (list, dict)) else str(timeline_data))
+            # Парсим события из JSON
+            parsed_events = ParserService.parse_timeline_events(
+                json.dumps(timeline_data) if isinstance(timeline_data, (list, dict)) else str(timeline_data)
+            )
         else:
-            # Fallback: use RAG to extract timeline
-            if not rag_service:
-                raise ValueError("RAG service required for timeline extraction")
-            
-            query = "Найди все даты и события в хронологическом порядке с указанием источников"
-            relevant_docs = rag_service.retrieve_context(case_id, query, k=20)
-            
-            # Use LLM with structured output for timeline extraction
-            from langchain_core.prompts import ChatPromptTemplate
-            from app.services.langchain_parsers import TimelineEventModel
-            from typing import List
-            
-            sources_text = rag_service.format_sources_for_prompt(relevant_docs)
-            system_prompt = get_agent_prompt("timeline")
-            user_prompt = f"Извлеки все даты и события из следующих документов:\n\n{sources_text}"
-            
-            # Try to use structured output if supported
-            try:
-                # Use with_structured_output for guaranteed structured response
-                structured_llm = llm.with_structured_output(List[TimelineEventModel])
-                prompt = ChatPromptTemplate.from_messages([
-                    ("system", system_prompt),
-                    ("human", user_prompt)
-                ])
-                chain = prompt | structured_llm
-                parsed_events = chain.invoke({})
-            except Exception as e:
-                logger.warning(f"Structured output not supported, falling back to JSON parsing: {e}")
-                # Fallback to direct LLM call and parsing
-                from app.services.llm_service import LLMService
-                llm_service = LLMService()
-                response = llm_service.generate(system_prompt, user_prompt, temperature=0)
-                parsed_events = ParserService.parse_timeline_events(response)
+            # Если не удалось извлечь JSON, пробуем парсить весь текст
+            logger.warning(f"Could not extract JSON from timeline response, trying to parse full text")
+            parsed_events = ParserService.parse_timeline_events(response_text)
         
         # Save events to database
         saved_events = []

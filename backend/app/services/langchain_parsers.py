@@ -43,8 +43,8 @@ class TimelineEventModel(BaseModel):
     source_document: str = Field(description="Source document filename")
     source_page: Optional[int] = Field(None, description="Page number in source document")
     source_line: Optional[int] = Field(None, description="Line number in source document")
-    reasoning: str = Field(description="Объяснение почему это событие было извлечено из документа")
-    confidence: float = Field(description="Уверенность в извлечении события (0-1)", ge=0.0, le=1.0)
+    reasoning: Optional[str] = Field(None, description="Объяснение почему это событие было извлечено из документа")
+    confidence: Optional[float] = Field(0.8, description="Уверенность в извлечении события (0-1)", ge=0.0, le=1.0)
 
 
 class DiscrepancyModel(BaseModel):
@@ -176,6 +176,11 @@ class ParserService:
             events = []
             for item in data:
                 try:
+                    # Добавляем значения по умолчанию для опциональных полей
+                    if "reasoning" not in item:
+                        item["reasoning"] = None
+                    if "confidence" not in item:
+                        item["confidence"] = 0.8
                     event = TimelineEventModel(**item)
                     events.append(event)
                 except Exception as e:
