@@ -60,9 +60,8 @@ def summary_agent_node(
             raise ValueError("YANDEX_API_KEY/YANDEX_IAM_TOKEN и YANDEX_FOLDER_ID должны быть настроены")
         
         llm = ChatYandexGPT(
-            model_name=config.YANDEX_GPT_MODEL,
+            model=config.YANDEX_GPT_MODEL or "yandexgpt-lite",
             temperature=0.3,  # Creative задача, но все еще контролируемая
-            max_tokens=2000
         )
         
         # Get prompt

@@ -53,9 +53,8 @@ def key_facts_agent_node(
             raise ValueError("YANDEX_API_KEY/YANDEX_IAM_TOKEN и YANDEX_FOLDER_ID должны быть настроены")
         
         llm = ChatYandexGPT(
-            model_name=config.YANDEX_GPT_MODEL,
-            temperature=0,  # Детерминизм критичен для юридических задач
-            max_tokens=2000
+            model=config.YANDEX_GPT_MODEL or "yandexgpt-lite",
+            temperature=0.1,  # Низкая температура для детерминизма
         )
         
         # Get prompt

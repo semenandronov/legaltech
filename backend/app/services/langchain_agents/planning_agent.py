@@ -32,9 +32,8 @@ class PlanningAgent:
         
         try:
             self.llm = ChatYandexGPT(
-                model_name=config.YANDEX_GPT_MODEL,
+                model=config.YANDEX_GPT_MODEL or "yandexgpt-lite",
                 temperature=0.1,  # Низкая температура для консистентности
-                max_tokens=500
             )
             logger.info("✅ Using YandexGPT for planning")
         except Exception as e:

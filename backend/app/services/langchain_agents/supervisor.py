@@ -46,9 +46,8 @@ def create_supervisor_agent() -> Any:
         raise ValueError("YANDEX_API_KEY/YANDEX_IAM_TOKEN и YANDEX_FOLDER_ID должны быть настроены")
     
     llm = ChatYandexGPT(
-        model_name=config.YANDEX_GPT_MODEL,
-        temperature=0,  # Детерминизм критичен для маршрутизации
-        max_tokens=500
+        model=config.YANDEX_GPT_MODEL or "yandexgpt-lite",
+        temperature=0.1,  # Низкая температура для детерминизма
     )
     
     # Get supervisor prompt
