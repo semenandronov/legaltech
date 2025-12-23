@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
 import { useParams } from 'react-router-dom'
-import { getCase, getRisks, getDiscrepancies, getTimeline, CaseResponse, DiscrepancyItem, TimelineEvent } from '../services/api'
+import { getCase, getRisks, getDiscrepancies, getTimeline, startAnalysis, CaseResponse, DiscrepancyItem, TimelineEvent } from '../services/api'
 import CaseHeader from '../components/CaseOverview/CaseHeader'
 import CaseNavigation from '../components/CaseOverview/CaseNavigation'
 import RiskCards from '../components/CaseOverview/RiskCards'
@@ -9,6 +9,8 @@ import TimelineSection from '../components/CaseOverview/TimelineSection'
 import Spinner from '../components/UI/Spinner'
 import { Tabs, TabList, Tab, TabPanel } from '../components/UI/Tabs'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../components/UI/Card'
+import { Button } from '../components/UI/Button'
+import { Alert, AlertDescription, AlertTitle } from '../components/UI/alert'
 import { logger } from '@/lib/logger'
 
 const CaseOverviewPage = () => {
@@ -21,6 +23,7 @@ const CaseOverviewPage = () => {
   const [loadingRisks, setLoadingRisks] = useState(false)
   const [loadingContradictions, setLoadingContradictions] = useState(false)
   const [loadingTimeline, setLoadingTimeline] = useState(false)
+  const [startingAnalysis, setStartingAnalysis] = useState(false)
   
   useEffect(() => {
     if (caseId) {
@@ -42,6 +45,22 @@ const CaseOverviewPage = () => {
     }
   }
 
+  const handleStartAnalysis = async () => {
+    if (!caseId || startingAnalysis) return
+    setStartingAnalysis(true)
+    try {
+      await startAnalysis(caseId, ['timeline', 'discrepancies', 'risk_analysis'])
+      // Перезагружаем данные через 3 секунды
+      setTimeout(() => {
+        loadAnalysisData()
+      }, 3000)
+    } catch (error) {
+      logger.error('Ошибка при запуске анализа:', error)
+    } finally {
+      setStartingAnalysis(false)
+    }
+  }
+
   const loadAnalysisData = async () => {
     if (!caseId) return
     
@@ -50,7 +69,7 @@ const CaseOverviewPage = () => {
     try {
       const risksData = await getRisks(caseId)
       // Преобразуем данные из API в формат компонента
-      if (risksData.discrepancies && typeof risksData.discrepancies === 'object') {
+      if (risksData.discrepancies && typeof risksData.discrepancies === 'object' && Object.keys(risksData.discrepancies).length > 0) {
         const formattedRisks = Object.entries(risksData.discrepancies).map(([key, value]: [string, any]) => {
           const severity = value.severity || 'MEDIUM'
           return {
@@ -69,8 +88,11 @@ const CaseOverviewPage = () => {
       } else {
         setRisks([])
       }
-    } catch (error) {
-      logger.error('Ошибка при загрузке рисков:', error)
+    } catch (error: any) {
+      // Если анализ еще не выполнен, это нормально
+      if (error?.response?.status !== 404) {
+        logger.error('Ошибка при загрузке рисков:', error)
+      }
       setRisks([])
     } finally {
       setLoadingRisks(false)
@@ -80,19 +102,26 @@ const CaseOverviewPage = () => {
     setLoadingContradictions(true)
     try {
       const discrepanciesData = await getDiscrepancies(caseId)
-      const formattedContradictions = discrepanciesData.discrepancies.map((item: DiscrepancyItem) => ({
-        id: item.id,
-        type: item.type,
-        description: item.description,
-        document1: item.source_documents[0] || '',
-        document2: item.source_documents[1] || '',
-        location1: item.details?.location1 as string || '',
-        location2: item.details?.location2 as string || '',
-        status: 'review' as const,
-      }))
-      setContradictions(formattedContradictions)
-    } catch (error) {
-      logger.error('Ошибка при загрузке противоречий:', error)
+      if (discrepanciesData.discrepancies && discrepanciesData.discrepancies.length > 0) {
+        const formattedContradictions = discrepanciesData.discrepancies.map((item: DiscrepancyItem) => ({
+          id: item.id,
+          type: item.type,
+          description: item.description,
+          document1: item.source_documents?.[0] || '',
+          document2: item.source_documents?.[1] || '',
+          location1: (item.details as any)?.location1 || '',
+          location2: (item.details as any)?.location2 || '',
+          status: 'review' as const,
+        }))
+        setContradictions(formattedContradictions)
+      } else {
+        setContradictions([])
+      }
+    } catch (error: any) {
+      // Если анализ еще не выполнен, это нормально
+      if (error?.response?.status !== 404) {
+        logger.error('Ошибка при загрузке противоречий:', error)
+      }
       setContradictions([])
     } finally {
       setLoadingContradictions(false)
@@ -102,30 +131,37 @@ const CaseOverviewPage = () => {
     setLoadingTimeline(true)
     try {
       const timelineData = await getTimeline(caseId)
-      const formattedEvents = timelineData.events.map((event: TimelineEvent) => {
-        // Определяем иконку по типу события
-        let icon: 'calendar' | 'alert' | 'file' | 'check' = 'calendar'
-        if (event.event_type) {
-          const type = event.event_type.toLowerCase()
-          if (type.includes('alert') || type.includes('warning') || type.includes('due')) {
-            icon = 'alert'
-          } else if (type.includes('check') || type.includes('signed') || type.includes('completed')) {
-            icon = 'check'
-          } else if (type.includes('file') || type.includes('document')) {
-            icon = 'file'
+      if (timelineData.events && timelineData.events.length > 0) {
+        const formattedEvents = timelineData.events.map((event: TimelineEvent) => {
+          // Определяем иконку по типу события
+          let icon: 'calendar' | 'alert' | 'file' | 'check' = 'calendar'
+          if (event.event_type) {
+            const type = event.event_type.toLowerCase()
+            if (type.includes('alert') || type.includes('warning') || type.includes('due')) {
+              icon = 'alert'
+            } else if (type.includes('check') || type.includes('signed') || type.includes('completed')) {
+              icon = 'check'
+            } else if (type.includes('file') || type.includes('document')) {
+              icon = 'file'
+            }
           }
-        }
-        return {
-          id: event.id,
-          date: event.date,
-          type: event.event_type || '',
-          description: event.description,
-          icon,
-        }
-      })
-      setTimelineEvents(formattedEvents)
-    } catch (error) {
-      logger.error('Ошибка при загрузке временной линии:', error)
+          return {
+            id: event.id,
+            date: event.date,
+            type: event.event_type || '',
+            description: event.description,
+            icon,
+          }
+        })
+        setTimelineEvents(formattedEvents)
+      } else {
+        setTimelineEvents([])
+      }
+    } catch (error: any) {
+      // Если анализ еще не выполнен, это нормально
+      if (error?.response?.status !== 404) {
+        logger.error('Ошибка при загрузке временной линии:', error)
+      }
       setTimelineEvents([])
     } finally {
       setLoadingTimeline(false)
@@ -183,37 +219,118 @@ const CaseOverviewPage = () => {
               </TabPanel>
               
               <TabPanel id="risks" className="space-y-4">
-                <h2 className="text-h2 text-primary">
-                  Ключевые риски ({risks.length} выявлено)
-                </h2>
+                <div className="flex items-center justify-between">
+                  <h2 className="text-h2 text-primary">
+                    Ключевые риски ({risks.length} выявлено)
+                  </h2>
+                  {risks.length === 0 && !loadingRisks && (
+                    <Button 
+                      variant="primary" 
+                      onClick={handleStartAnalysis}
+                      disabled={startingAnalysis}
+                    >
+                      {startingAnalysis ? 'Запуск анализа...' : 'Запустить анализ рисков'}
+                    </Button>
+                  )}
+                </div>
                 {loadingRisks ? (
                   <div className="flex items-center justify-center py-8">
                     <Spinner size="lg" />
                   </div>
+                ) : risks.length === 0 ? (
+                  <Alert>
+                    <AlertTitle>Анализ не выполнен</AlertTitle>
+                    <AlertDescription>
+                      Для выявления рисков необходимо запустить анализ документов.
+                      <Button 
+                        variant="primary" 
+                        size="sm"
+                        className="mt-2"
+                        onClick={handleStartAnalysis}
+                        disabled={startingAnalysis}
+                      >
+                        {startingAnalysis ? 'Запуск...' : 'Запустить анализ'}
+                      </Button>
+                    </AlertDescription>
+                  </Alert>
                 ) : (
                   <RiskCards risks={risks} />
                 )}
               </TabPanel>
               
               <TabPanel id="contradictions" className="space-y-4">
-                <h2 className="text-h2 text-primary">
-                  Противоречия ({contradictions.length} найдено)
-                </h2>
+                <div className="flex items-center justify-between">
+                  <h2 className="text-h2 text-primary">
+                    Противоречия ({contradictions.length} найдено)
+                  </h2>
+                  {contradictions.length === 0 && !loadingContradictions && (
+                    <Button 
+                      variant="primary" 
+                      onClick={handleStartAnalysis}
+                      disabled={startingAnalysis}
+                    >
+                      {startingAnalysis ? 'Запуск анализа...' : 'Запустить анализ противоречий'}
+                    </Button>
+                  )}
+                </div>
                 {loadingContradictions ? (
                   <div className="flex items-center justify-center py-8">
                     <Spinner size="lg" />
                   </div>
+                ) : contradictions.length === 0 ? (
+                  <Alert>
+                    <AlertTitle>Анализ не выполнен</AlertTitle>
+                    <AlertDescription>
+                      Для поиска противоречий необходимо запустить анализ документов.
+                      <Button 
+                        variant="primary" 
+                        size="sm"
+                        className="mt-2"
+                        onClick={handleStartAnalysis}
+                        disabled={startingAnalysis}
+                      >
+                        {startingAnalysis ? 'Запуск...' : 'Запустить анализ'}
+                      </Button>
+                    </AlertDescription>
+                  </Alert>
                 ) : (
                   <ContradictionsSection contradictions={contradictions} />
                 )}
               </TabPanel>
               
               <TabPanel id="timeline" className="space-y-4">
-                <h2 className="text-h2 text-primary">Временная линия</h2>
+                <div className="flex items-center justify-between">
+                  <h2 className="text-h2 text-primary">Временная линия</h2>
+                  {timelineEvents.length === 0 && !loadingTimeline && (
+                    <Button 
+                      variant="primary" 
+                      onClick={handleStartAnalysis}
+                      disabled={startingAnalysis}
+                    >
+                      {startingAnalysis ? 'Запуск анализа...' : 'Запустить анализ временной линии'}
+                    </Button>
+                  )}
+                </div>
                 {loadingTimeline ? (
                   <div className="flex items-center justify-center py-8">
                     <Spinner size="lg" />
                   </div>
+                ) : timelineEvents.length === 0 ? (
+                  <Alert>
+                    <AlertTitle>Анализ не выполнен</AlertTitle>
+                    <AlertDescription>
+                      Для построения временной линии необходимо запустить анализ документов.
+                      <Button 
+                        variant="primary" 
+                        size="sm"
+                        className="mt-2"
+                        onClick={handleStartAnalysis}
+                        disabled={startingAnalysis}
+                      >
+                        {startingAnalysis ? 'Запуск...' : 'Запустить анализ'}
+                      </Button>
+                    </AlertDescription>
+                  </Alert>
                 ) : (
                   <TimelineSection events={timelineEvents} />
                 )}
