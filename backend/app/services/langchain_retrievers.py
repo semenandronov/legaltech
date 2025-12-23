@@ -90,8 +90,8 @@ class AdvancedRetrieverService:
         self.document_processor = document_processor
         # Use ChatYandexGPT instead of ChatOpenAI
         self.llm = ChatYandexGPT(
+            model=config.YANDEX_GPT_MODEL or "yandexgpt-lite",
             temperature=0.7,
-            max_tokens=500
         )
     
     def _get_base_documents(self, case_id: str, query: str, k: int = 5, db: Optional[Session] = None) -> List[Document]:

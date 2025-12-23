@@ -69,8 +69,8 @@ class ChainService:
         self.document_processor = document_processor or DocumentProcessor()
         # Use ChatYandexGPT instead of ChatOpenAI
         self.llm = ChatYandexGPT(
+            model=config.YANDEX_GPT_MODEL or "yandexgpt-lite",
             temperature=0.7,
-            max_tokens=2000
         )
     
     def create_retrieval_qa_chain(self, case_id: str, db: Optional[Session] = None) -> RetrievalQA:
