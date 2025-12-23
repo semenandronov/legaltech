@@ -45,6 +45,7 @@ class TimelineEvent(Base):
     __tablename__ = "timeline_events"
     
     id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    timelineId = Column(String, nullable=True)  # Старое поле для совместимости со старой схемой БД
     case_id = Column(String, ForeignKey("cases.id", ondelete="CASCADE"), nullable=True, index=True)  # nullable=True для совместимости
     date = Column(DateTime, nullable=False, index=True)  # Изменено с Date на DateTime для совместимости с БД
     event_type = Column(String(100), nullable=True)  # Тип события

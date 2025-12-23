@@ -103,6 +103,7 @@ def timeline_agent_node(
                     # Create timeline event with reasoning and confidence
                     event = TimelineEvent(
                         case_id=case_id,
+                        timelineId=case_id,  # Заполняем старое поле для совместимости со старой схемой БД
                         date=event_date,
                         event_type=event_model.event_type,
                         description=event_model.description,
@@ -122,7 +123,24 @@ def timeline_agent_node(
                     continue
             
             if saved_events:
-                db.commit()
+                try:
+                    db.commit()
+                    logger.info(f"Timeline agent: Successfully saved {len(saved_events)} events for case {case_id}")
+                except Exception as commit_error:
+                    logger.error(f"Ошибка при коммите событий: {commit_error}")
+                    try:
+                        db.rollback()
+                        # Повторяем попытку сохранения после rollback, убеждаясь что timelineId заполнен
+                        for event in saved_events:
+                            if event.timelineId is None:
+                                event.timelineId = case_id
+                            db.add(event)
+                        db.commit()
+                        logger.info(f"Timeline agent: Successfully saved {len(saved_events)} events after retry for case {case_id}")
+                    except Exception as retry_error:
+                        logger.error(f"Ошибка при повторном сохранении событий: {retry_error}")
+                        db.rollback()
+                        saved_events = []  # Очищаем список, если не удалось сохранить
         
         # Create result
         result_data = {
