@@ -118,12 +118,37 @@ def create_analysis_graph(
     graph.add_edge("privilege_check", "supervisor")
     graph.add_edge("relationship", "supervisor")
     
-    # Compile graph with checkpointer using context manager
-    # Use PostgreSQL checkpointer for production persistence
-    from app.utils.checkpointer_setup import get_checkpointer
+    # Compile graph with checkpointer
+    # Use PostgreSQL checkpointer for production persistence, fallback to MemorySaver
+    try:
+        from langgraph.checkpoint.postgres import PostgresSaver
+        from app.config import config
+        
+        # Convert DATABASE_URL to format required by PostgresSaver
+        db_url = config.DATABASE_URL
+        if db_url.startswith("postgresql+psycopg://"):
+            db_url = db_url.replace("postgresql+psycopg://", "postgresql://", 1)
+        
+        # Create PostgresSaver instance (not using context manager)
+        checkpointer = PostgresSaver.from_conn_string(db_url)
+        
+        # Setup tables once (idempotent)
+        try:
+            if hasattr(checkpointer, 'setup') and callable(checkpointer.setup):
+                checkpointer.setup()
+                logger.info("✅ PostgreSQL checkpointer tables initialized")
+        except Exception as setup_error:
+            logger.debug(f"Checkpointer setup note: {setup_error}")
+        
+        logger.info("✅ Using PostgreSQL checkpointer for state persistence")
+    except (ImportError, Exception) as e:
+        logger.warning(
+            f"PostgresSaver not available ({e}), "
+            "using MemorySaver. State will not persist across restarts."
+        )
+        checkpointer = MemorySaver()
     
-    with get_checkpointer() as checkpointer:
-        compiled_graph = graph.compile(checkpointer=checkpointer)
+    compiled_graph = graph.compile(checkpointer=checkpointer)
     
     logger.info("Created LangGraph for multi-agent analysis")
     

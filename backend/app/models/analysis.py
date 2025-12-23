@@ -33,8 +33,7 @@ class Discrepancy(Base):
     description = Column(Text, nullable=False)
     source_documents = Column(JSON, nullable=False)  # Список документов с противоречиями
     details = Column(JSON, nullable=True)  # Дополнительные детали (включает reasoning и confidence)
-    reasoning = Column(Text, nullable=True)  # Объяснение почему противоречие было обнаружено
-    confidence = Column(String(10), nullable=True)  # Уверенность 0-1 (хранится как строка для совместимости)
+    # reasoning и confidence удалены - хранятся в details (JSON) для совместимости с БД
     created_at = Column(DateTime, default=datetime.utcnow)
     
     # Relationship
