@@ -119,34 +119,28 @@ def create_analysis_graph(
     graph.add_edge("relationship", "supervisor")
     
     # Compile graph with checkpointer
-    # Use PostgreSQL checkpointer for production persistence, fallback to MemorySaver
-    try:
-        from langgraph.checkpoint.postgres import PostgresSaver
-        from app.config import config
-        
-        # Convert DATABASE_URL to format required by PostgresSaver
-        db_url = config.DATABASE_URL
-        if db_url.startswith("postgresql+psycopg://"):
-            db_url = db_url.replace("postgresql+psycopg://", "postgresql://", 1)
-        
-        # Create PostgresSaver instance (not using context manager)
-        checkpointer = PostgresSaver.from_conn_string(db_url)
-        
-        # Setup tables once (idempotent)
-        try:
-            if hasattr(checkpointer, 'setup') and callable(checkpointer.setup):
-                checkpointer.setup()
-                logger.info("✅ PostgreSQL checkpointer tables initialized")
-        except Exception as setup_error:
-            logger.debug(f"Checkpointer setup note: {setup_error}")
-        
-        logger.info("✅ Using PostgreSQL checkpointer for state persistence")
-    except (ImportError, Exception) as e:
-        logger.warning(
-            f"PostgresSaver not available ({e}), "
-            "using MemorySaver. State will not persist across restarts."
-        )
-        checkpointer = MemorySaver()
+    # NOTE: PostgresSaver.from_conn_string() returns a context manager in newer versions
+    # Using MemorySaver for now to avoid context manager issues
+    # TODO: Fix PostgresSaver integration when langgraph API stabilizes
+    checkpointer = MemorySaver()
+    logger.info("✅ Using MemorySaver for state persistence (PostgresSaver temporarily disabled)")
+    
+    # Alternative: Try PostgresSaver if needed (commented out due to context manager issues)
+    # try:
+    #     from langgraph.checkpoint.postgres import PostgresSaver
+    #     from app.config import config
+    #     
+    #     db_url = config.DATABASE_URL
+    #     if db_url.startswith("postgresql+psycopg://"):
+    #         db_url = db_url.replace("postgresql+psycopg://", "postgresql://", 1)
+    #     
+    #     # PostgresSaver.from_conn_string() may return a context manager
+    #     # This needs to be handled properly with async context manager
+    #     checkpointer = PostgresSaver.from_conn_string(db_url)
+    #     logger.info("✅ Using PostgreSQL checkpointer for state persistence")
+    # except (ImportError, Exception) as e:
+    #     logger.warning(f"PostgresSaver not available ({e}), using MemorySaver")
+    #     checkpointer = MemorySaver()
     
     compiled_graph = graph.compile(checkpointer=checkpointer)
     
