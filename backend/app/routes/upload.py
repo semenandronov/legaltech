@@ -249,17 +249,42 @@ async def upload_files(
         }
     )
     
+    # Убеждаемся, что full_text не пустой и не содержит NULL байты
+    sanitized_full_text = sanitize_text(full_text)
+    if not sanitized_full_text or not sanitized_full_text.strip():
+        raise HTTPException(
+            status_code=400,
+            detail="Не удалось извлечь текст из загруженных файлов"
+        )
+    
+    # Проверяем размер full_text (PostgreSQL Text может хранить до 1GB, но лучше ограничить)
+    MAX_TEXT_LENGTH = 100 * 1024 * 1024  # 100 MB
+    if len(sanitized_full_text) > MAX_TEXT_LENGTH:
+        logger.warning(f"Full text is very large: {len(sanitized_full_text)} bytes, truncating to {MAX_TEXT_LENGTH}")
+        sanitized_full_text = sanitized_full_text[:MAX_TEXT_LENGTH]
+    
+    # Убеждаемся, что file_names - это список
+    if not isinstance(file_names, list):
+        file_names = list(file_names) if file_names else []
+    
+    # Валидация: убеждаемся, что у нас есть хотя бы один файл
+    if not file_names:
+        raise HTTPException(
+            status_code=400,
+            detail="Не удалось обработать ни одного файла"
+        )
+    
     case = Case(
         id=case_id,
         user_id=current_user.id,
-        full_text=full_text,
+        full_text=sanitized_full_text,
         num_documents=len(file_names),
         file_names=file_names,
-        title=case_title,
-        description=case_description,
+        title=case_title[:255] if case_title else None,  # Ограничиваем длину title
+        description=sanitize_text(case_description) if case_description else None,
         case_type=case_type,
         status="pending",
-        analysis_config=analysis_config
+        analysis_config=analysis_config if analysis_config else None
     )
     
     try:
@@ -273,14 +298,50 @@ async def upload_files(
         document_processor = DocumentProcessor()
         
         for file_info in files_to_create:
-            file_model = FileModel(
-                case_id=case_id,
-                filename=file_info["filename"],
-                file_type=file_info["file_type"],
-                original_text=sanitize_text(file_info["original_text"]),
-            )
-            db.add(file_model)
-            db.flush()  # Flush to get file_model.id
+            # Убеждаемся, что original_text не пустой
+            sanitized_original_text = sanitize_text(file_info["original_text"])
+            if not sanitized_original_text or not sanitized_original_text.strip():
+                logger.warning(f"Skipping file {file_info['filename']} - empty text after sanitization")
+                continue
+            
+            # Проверяем размер original_text
+            MAX_FILE_TEXT_LENGTH = 50 * 1024 * 1024  # 50 MB per file
+            if len(sanitized_original_text) > MAX_FILE_TEXT_LENGTH:
+                logger.warning(
+                    f"File {file_info['filename']} text is very large: {len(sanitized_original_text)} bytes, "
+                    f"truncating to {MAX_FILE_TEXT_LENGTH}"
+                )
+                sanitized_original_text = sanitized_original_text[:MAX_FILE_TEXT_LENGTH]
+            
+            # Ограничиваем длину filename (String(255))
+            filename = file_info["filename"][:255] if len(file_info["filename"]) > 255 else file_info["filename"]
+            # Ограничиваем длину file_type (String(50))
+            file_type = file_info["file_type"][:50] if len(file_info["file_type"]) > 50 else file_info["file_type"]
+            
+            # Валидация обязательных полей
+            if not filename or not filename.strip():
+                logger.warning(f"Skipping file with empty filename")
+                continue
+            if not file_type or not file_type.strip():
+                logger.warning(f"Skipping file {filename} - empty file_type")
+                continue
+            
+            try:
+                file_model = FileModel(
+                    case_id=case_id,
+                    filename=filename,
+                    file_type=file_type,
+                    original_text=sanitized_original_text,
+                )
+                db.add(file_model)
+                db.flush()  # Flush to get file_model.id
+            except Exception as file_error:
+                logger.error(
+                    f"Error creating File model for {filename}: {file_error}",
+                    exc_info=True
+                )
+                # Продолжаем с другими файлами, но логируем ошибку
+                continue
             
             # ВАЖНО: LangChain больше НЕ используется для сохранения chunks в БД
             # LangChain использовался только для извлечения текста (уже сделано выше)
@@ -349,13 +410,29 @@ async def upload_files(
         }
     except Exception as e:
         db.rollback()
+        error_detail = str(e)
+        
+        # Проверяем, является ли это ошибкой SQLAlchemy
+        from sqlalchemy.exc import SQLAlchemyError, IntegrityError, OperationalError
+        if isinstance(e, IntegrityError):
+            error_detail = f"Ошибка целостности данных: {str(e.orig) if hasattr(e, 'orig') else str(e)}"
+        elif isinstance(e, OperationalError):
+            error_detail = f"Ошибка базы данных: {str(e.orig) if hasattr(e, 'orig') else str(e)}"
+        elif isinstance(e, SQLAlchemyError):
+            error_detail = f"Ошибка SQLAlchemy: {str(e)}"
+        
         logger.error(
-            f"Ошибка при сохранении дела {case_id} в БД: {e}",
-            extra={"case_id": case_id, "user_id": current_user.id},
+            f"Ошибка при сохранении дела {case_id} в БД: {error_detail}",
+            extra={
+                "case_id": case_id,
+                "user_id": current_user.id,
+                "error_type": type(e).__name__,
+                "error_detail": error_detail
+            },
             exc_info=True
         )
         raise HTTPException(
             status_code=500,
-            detail="Ошибка при сохранении дела. Попробуйте загрузить файлы снова."
+            detail=f"Ошибка при сохранении дела: {error_detail}. Попробуйте загрузить файлы снова."
         )
 
