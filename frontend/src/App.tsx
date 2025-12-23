@@ -11,7 +11,7 @@ import ReportsPage from './pages/ReportsPage'
 import SettingsPage from './pages/SettingsPage'
 import { useState, useEffect } from 'react'
 import ChatWindow from './components/ChatWindow'
-import Sidebar from './components/Layout/Sidebar'
+import CaseNavigation from './components/CaseOverview/CaseNavigation'
 import { getCase } from './services/api'
 import { logger } from '@/lib/logger'
 
@@ -118,12 +118,11 @@ const CaseChatPage = () => {
   }
 
   return (
-    <div className="dashboard-root">
-      <Sidebar />
-      <div className="dashboard-content chat-page-content">
-        {/* Hide header on chat page for ChatGPT-style */}
-        <main className="dashboard-main chat-page-main">
-          <div className="dashboard-chat-column">
+    <div className="flex h-screen bg-primary">
+      <CaseNavigation caseId={caseId || ''} />
+      <div className="flex-1 flex flex-col overflow-hidden">
+        <main className="flex-1 overflow-y-auto">
+          <div className="h-full">
             <ChatWindow caseId={caseId || ''} fileNames={fileNames} />
           </div>
         </main>

@@ -1,5 +1,5 @@
 import { useNavigate, useLocation } from 'react-router-dom'
-import { Home, MessageSquare, FileText, AlertTriangle, BarChart3, Settings } from 'lucide-react'
+import { Home, MessageSquare, FileText } from 'lucide-react'
 
 interface CaseNavigationProps {
   caseId: string
@@ -13,9 +13,6 @@ const CaseNavigation = ({ caseId }: CaseNavigationProps) => {
     { id: 'overview', label: 'Обзор', icon: Home, path: `/cases/${caseId}/workspace` },
     { id: 'chat', label: 'Ассистент', icon: MessageSquare, path: `/cases/${caseId}/chat` },
     { id: 'documents', label: 'Документы', icon: FileText, path: `/cases/${caseId}/documents` },
-    { id: 'contradictions', label: 'Противоречия', icon: AlertTriangle, path: `/cases/${caseId}/contradictions` },
-    { id: 'reports', label: 'Отчёты', icon: BarChart3, path: `/cases/${caseId}/reports` },
-    { id: 'settings', label: 'Настройки', icon: Settings, path: `/cases/${caseId}/settings` },
   ]
   
   const isActive = (path: string) => {
