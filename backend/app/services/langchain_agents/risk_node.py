@@ -97,6 +97,30 @@ def risk_agent_node(
         )
         
         # Save to database
+        # Преобразуем discrepancy_result в формат, ожидаемый фронтендом
+        # Фронтенд ожидает объект с ключами, а не массив
+        discrepancies_dict = {}
+        if discrepancy_result and isinstance(discrepancy_result, dict):
+            discrepancies_list = discrepancy_result.get("discrepancies", [])
+            if isinstance(discrepancies_list, list):
+                # Преобразуем массив в объект с ключами-индексами
+                for idx, disc in enumerate(discrepancies_list):
+                    disc_id = disc.get("id") if isinstance(disc, dict) else (disc.id if hasattr(disc, 'id') else str(idx))
+                    key = disc_id or f"risk_{idx}"
+                    discrepancies_dict[key] = {
+                        "id": disc_id,
+                        "type": disc.get("type") if isinstance(disc, dict) else (disc.type if hasattr(disc, 'type') else ""),
+                        "severity": disc.get("severity") if isinstance(disc, dict) else (disc.severity if hasattr(disc, 'severity') else "MEDIUM"),
+                        "title": disc.get("type") if isinstance(disc, dict) else (disc.type if hasattr(disc, 'type') else ""),
+                        "description": disc.get("description") if isinstance(disc, dict) else (disc.description if hasattr(disc, 'description') else ""),
+                        "location": disc.get("details", {}).get("location1", "") if isinstance(disc, dict) and isinstance(disc.get("details"), dict) else "",
+                        "document": (disc.get("source_documents", [])[0] if isinstance(disc.get("source_documents"), list) and len(disc.get("source_documents", [])) > 0 else "") if isinstance(disc, dict) else (disc.source_documents[0] if hasattr(disc, 'source_documents') and isinstance(disc.source_documents, list) and len(disc.source_documents) > 0 else ""),
+                        "page": disc.get("details", {}).get("source_page") if isinstance(disc, dict) and isinstance(disc.get("details"), dict) else None,
+                        "section": "",
+                        "analysis": disc.get("reasoning", "") if isinstance(disc, dict) else (disc.reasoning if hasattr(disc, 'reasoning') else ""),
+                        "reasoning": disc.get("reasoning", "") if isinstance(disc, dict) else (disc.reasoning if hasattr(disc, 'reasoning') else ""),
+                    }
+        
         result_id = None
         if db:
             risk_analysis_result = AnalysisResult(
@@ -104,7 +128,7 @@ def risk_agent_node(
                 analysis_type="risk_analysis",
                 result_data={
                     "analysis": response_text,
-                    "discrepancies": discrepancy_result
+                    "discrepancies": discrepancies_dict  # Теперь это объект, а не массив
                 },
                 status="completed"
             )
@@ -117,7 +141,7 @@ def risk_agent_node(
         # Create result
         result_data = {
             "analysis": response_text,
-            "discrepancies": discrepancy_result,
+            "discrepancies": discrepancies_dict,  # Теперь это объект
             "result_id": result_id
         }
         
