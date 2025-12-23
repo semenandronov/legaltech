@@ -1,7 +1,6 @@
 import { useState, useEffect } from 'react'
 import { useParams } from 'react-router-dom'
-import { getCase } from '../services/api'
-import { CaseResponse } from '../services/api'
+import { getCase, getRisks, getDiscrepancies, getTimeline, CaseResponse, DiscrepancyItem, TimelineEvent } from '../services/api'
 import CaseHeader from '../components/CaseOverview/CaseHeader'
 import CaseNavigation from '../components/CaseOverview/CaseNavigation'
 import RiskCards from '../components/CaseOverview/RiskCards'
@@ -10,77 +9,23 @@ import TimelineSection from '../components/CaseOverview/TimelineSection'
 import Spinner from '../components/UI/Spinner'
 import { Tabs, TabList, Tab, TabPanel } from '../components/UI/Tabs'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../components/UI/Card'
+import { logger } from '@/lib/logger'
 
 const CaseOverviewPage = () => {
   const { caseId } = useParams<{ caseId: string }>()
   const [caseData, setCaseData] = useState<CaseResponse | null>(null)
   const [loading, setLoading] = useState(true)
-  
-  // Mock data - в реальном приложении должно приходить с API
-  const [risks] = useState([
-    {
-      id: '1',
-      level: 'high-risk' as const,
-      title: 'Limit of Liability',
-      description: 'Condition found in contract page 3, section 4.2',
-      location: 'contract_main.docx, page 3',
-      document: 'contract_main.docx',
-      page: 3,
-      section: '4.2',
-      analysis: 'Limitation not allowed by law 152-FZ',
-    },
-    {
-      id: '2',
-      level: 'medium-risk' as const,
-      title: 'Penalty Clause',
-      description: 'Penalty clause exceeds reasonable limits',
-      location: 'letter_counterparty.pdf',
-      document: 'letter_counterparty.pdf',
-      analysis: 'Penalty sanctions exceed reasonable limits',
-    },
-  ])
-  
-  const [contradictions] = useState([
-    {
-      id: '1',
-      type: 'Payment Terms Mismatch',
-      description: 'Different payment timelines specified',
-      document1: 'contract_main.docx',
-      document2: 'addendum_spec.docx',
-      location1: 'Page 3, Section 4',
-      location2: 'Page 1, Section 2',
-      status: 'review' as const,
-    },
-  ])
-  
-  const [timelineEvents] = useState([
-    {
-      id: '1',
-      date: '2025-01-15',
-      type: 'Case created',
-      description: 'Дело создано',
-      icon: 'calendar' as const,
-    },
-    {
-      id: '2',
-      date: '2025-01-20',
-      type: 'Contract signed',
-      description: 'Контракт подписан',
-      icon: 'check' as const,
-    },
-    {
-      id: '3',
-      date: '2025-02-01',
-      type: 'Payment due',
-      description: 'Срок платежа',
-      icon: 'alert' as const,
-    },
-  ])
-  
+  const [risks, setRisks] = useState<any[]>([])
+  const [contradictions, setContradictions] = useState<any[]>([])
+  const [timelineEvents, setTimelineEvents] = useState<any[]>([])
+  const [loadingRisks, setLoadingRisks] = useState(false)
+  const [loadingContradictions, setLoadingContradictions] = useState(false)
+  const [loadingTimeline, setLoadingTimeline] = useState(false)
   
   useEffect(() => {
     if (caseId) {
       loadCase()
+      loadAnalysisData()
     }
   }, [caseId])
   
@@ -91,9 +36,99 @@ const CaseOverviewPage = () => {
       const data = await getCase(caseId)
       setCaseData(data)
     } catch (error) {
-      console.error('Ошибка при загрузке дела:', error)
+      logger.error('Ошибка при загрузке дела:', error)
     } finally {
       setLoading(false)
+    }
+  }
+
+  const loadAnalysisData = async () => {
+    if (!caseId) return
+    
+    // Загружаем риски
+    setLoadingRisks(true)
+    try {
+      const risksData = await getRisks(caseId)
+      // Преобразуем данные из API в формат компонента
+      if (risksData.discrepancies && typeof risksData.discrepancies === 'object') {
+        const formattedRisks = Object.entries(risksData.discrepancies).map(([key, value]: [string, any]) => {
+          const severity = value.severity || 'MEDIUM'
+          return {
+            id: key,
+            level: (severity === 'HIGH' ? 'high-risk' : severity === 'MEDIUM' ? 'medium-risk' : 'low-risk') as 'high-risk' | 'medium-risk' | 'low-risk',
+            title: value.title || value.type || key,
+            description: value.description || '',
+            location: value.location || '',
+            document: value.document || value.source_document || '',
+            page: value.page || value.source_page,
+            section: value.section,
+            analysis: value.analysis || value.reasoning || '',
+          }
+        })
+        setRisks(formattedRisks)
+      } else {
+        setRisks([])
+      }
+    } catch (error) {
+      logger.error('Ошибка при загрузке рисков:', error)
+      setRisks([])
+    } finally {
+      setLoadingRisks(false)
+    }
+
+    // Загружаем противоречия
+    setLoadingContradictions(true)
+    try {
+      const discrepanciesData = await getDiscrepancies(caseId)
+      const formattedContradictions = discrepanciesData.discrepancies.map((item: DiscrepancyItem) => ({
+        id: item.id,
+        type: item.type,
+        description: item.description,
+        document1: item.source_documents[0] || '',
+        document2: item.source_documents[1] || '',
+        location1: item.details?.location1 as string || '',
+        location2: item.details?.location2 as string || '',
+        status: 'review' as const,
+      }))
+      setContradictions(formattedContradictions)
+    } catch (error) {
+      logger.error('Ошибка при загрузке противоречий:', error)
+      setContradictions([])
+    } finally {
+      setLoadingContradictions(false)
+    }
+
+    // Загружаем временную линию
+    setLoadingTimeline(true)
+    try {
+      const timelineData = await getTimeline(caseId)
+      const formattedEvents = timelineData.events.map((event: TimelineEvent) => {
+        // Определяем иконку по типу события
+        let icon: 'calendar' | 'alert' | 'file' | 'check' = 'calendar'
+        if (event.event_type) {
+          const type = event.event_type.toLowerCase()
+          if (type.includes('alert') || type.includes('warning') || type.includes('due')) {
+            icon = 'alert'
+          } else if (type.includes('check') || type.includes('signed') || type.includes('completed')) {
+            icon = 'check'
+          } else if (type.includes('file') || type.includes('document')) {
+            icon = 'file'
+          }
+        }
+        return {
+          id: event.id,
+          date: event.date,
+          type: event.event_type || '',
+          description: event.description,
+          icon,
+        }
+      })
+      setTimelineEvents(formattedEvents)
+    } catch (error) {
+      logger.error('Ошибка при загрузке временной линии:', error)
+      setTimelineEvents([])
+    } finally {
+      setLoadingTimeline(false)
     }
   }
   
@@ -151,19 +186,37 @@ const CaseOverviewPage = () => {
                 <h2 className="text-h2 text-primary">
                   Ключевые риски ({risks.length} выявлено)
                 </h2>
-                <RiskCards risks={risks} />
+                {loadingRisks ? (
+                  <div className="flex items-center justify-center py-8">
+                    <Spinner size="lg" />
+                  </div>
+                ) : (
+                  <RiskCards risks={risks} />
+                )}
               </TabPanel>
               
               <TabPanel id="contradictions" className="space-y-4">
                 <h2 className="text-h2 text-primary">
                   Противоречия ({contradictions.length} найдено)
                 </h2>
-                <ContradictionsSection contradictions={contradictions} />
+                {loadingContradictions ? (
+                  <div className="flex items-center justify-center py-8">
+                    <Spinner size="lg" />
+                  </div>
+                ) : (
+                  <ContradictionsSection contradictions={contradictions} />
+                )}
               </TabPanel>
               
               <TabPanel id="timeline" className="space-y-4">
                 <h2 className="text-h2 text-primary">Временная линия</h2>
-                <TimelineSection events={timelineEvents} />
+                {loadingTimeline ? (
+                  <div className="flex items-center justify-center py-8">
+                    <Spinner size="lg" />
+                  </div>
+                ) : (
+                  <TimelineSection events={timelineEvents} />
+                )}
               </TabPanel>
             </Tabs>
           </div>
