@@ -1,10 +1,18 @@
-import { LayoutGrid, List, Table2 } from 'lucide-react'
+import { useState } from 'react'
+import { LayoutGrid, List, Table2, Plus } from 'lucide-react'
 import { CaseListItem } from '../../services/api'
 import CaseCard from './CaseCard'
 import Pagination from '../UI/Pagination'
 import { Skeleton } from '../UI/Skeleton'
 import { Button } from '../UI/Button'
 import { CasesTable } from './CasesTable'
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+} from '../UI/dialog'
+import UploadArea from '../UploadArea'
 
 interface CasesGridProps {
   cases: CaseListItem[]
@@ -25,8 +33,15 @@ const CasesGrid = ({
   viewMode,
   onViewModeChange,
 }: CasesGridProps) => {
+  const [isUploadDialogOpen, setIsUploadDialogOpen] = useState(false)
   const limit = 20
   const totalPages = Math.ceil(total / limit)
+
+  const handleUploadComplete = (_caseId: string, _fileNames: string[]) => {
+    setIsUploadDialogOpen(false)
+    // Перезагрузить список дел можно через обновление страницы или callback
+    window.location.reload()
+  }
   
   if (loading && cases.length === 0) {
     return (
@@ -42,12 +57,42 @@ const CasesGrid = ({
   
   if (cases.length === 0) {
     return (
-      <div className="flex-1 flex items-center justify-center">
-        <div className="text-center">
-          <div className="text-6xl mb-4">📁</div>
-          <h3 className="text-h3 text-primary mb-2">Нет дел</h3>
-          <p className="text-body text-secondary">Загрузите документы, чтобы создать первое дело</p>
+      <div className="flex-1 flex flex-col">
+        <div className="p-6 border-b border-border flex items-center justify-between">
+          <h2 className="text-h2 text-primary">
+            📋 Дела
+          </h2>
+          <Button
+            variant="primary"
+            size="sm"
+            onClick={() => setIsUploadDialogOpen(true)}
+          >
+            <Plus className="w-4 h-4 mr-2" />
+            Создать дело
+          </Button>
         </div>
+        <div className="flex-1 flex items-center justify-center">
+          <div className="text-center">
+            <div className="text-6xl mb-4">📁</div>
+            <h3 className="text-h3 text-primary mb-2">Нет дел</h3>
+            <p className="text-body text-secondary mb-4">Загрузите документы, чтобы создать первое дело</p>
+            <Button
+              variant="primary"
+              onClick={() => setIsUploadDialogOpen(true)}
+            >
+              <Plus className="w-4 h-4 mr-2" />
+              Создать первое дело
+            </Button>
+          </div>
+        </div>
+        <Dialog open={isUploadDialogOpen} onOpenChange={setIsUploadDialogOpen}>
+          <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
+            <DialogHeader>
+              <DialogTitle>Создать новое дело</DialogTitle>
+            </DialogHeader>
+            <UploadArea onUpload={handleUploadComplete} />
+          </DialogContent>
+        </Dialog>
       </div>
     )
   }
@@ -60,6 +105,14 @@ const CasesGrid = ({
           📋 Дела ({total} результатов)
         </h2>
         <div className="flex items-center gap-2">
+          <Button
+            variant="primary"
+            size="sm"
+            onClick={() => setIsUploadDialogOpen(true)}
+          >
+            <Plus className="w-4 h-4 mr-2" />
+            Создать дело
+          </Button>
           <Button
             variant={viewMode === 'grid' ? 'primary' : 'secondary'}
             size="sm"
@@ -113,6 +166,16 @@ const CasesGrid = ({
           />
         </div>
       )}
+
+      {/* Upload Dialog */}
+      <Dialog open={isUploadDialogOpen} onOpenChange={setIsUploadDialogOpen}>
+        <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>Создать новое дело</DialogTitle>
+          </DialogHeader>
+          <UploadArea onUpload={handleUploadComplete} />
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }
