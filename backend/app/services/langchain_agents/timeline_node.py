@@ -131,13 +131,13 @@ def timeline_agent_node(
                     logger.error(f"Ошибка при коммите событий: {commit_error}")
                     try:
                         db.rollback()
-                    # Повторяем попытку сохранения после rollback, убеждаясь что timelineId и order заполнены
-                    for idx, event in enumerate(saved_events):
-                        if event.timelineId is None:
-                            event.timelineId = case_id
-                        if not hasattr(event, 'order') or event.order is None:
-                            event.order = idx
-                        db.add(event)
+                        # Повторяем попытку сохранения после rollback, убеждаясь что timelineId и order заполнены
+                        for idx, event in enumerate(saved_events):
+                            if event.timelineId is None:
+                                event.timelineId = case_id
+                            if not hasattr(event, 'order') or event.order is None:
+                                event.order = idx
+                            db.add(event)
                         db.commit()
                         logger.info(f"Timeline agent: Successfully saved {len(saved_events)} events after retry for case {case_id}")
                     except Exception as retry_error:
