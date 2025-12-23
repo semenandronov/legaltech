@@ -130,12 +130,9 @@ def timeline_agent_node(
                         logger.debug(f"Table 'timelines' does not exist, skipping timeline record creation")
                         return False
                 except Exception as timeline_error:
-                    # Если таблицы timelines нет или произошла ошибка, откатываем транзакцию и продолжаем
+                    # Если таблицы timelines нет или произошла ошибка, логируем и возвращаем False
+                    # НЕ делаем rollback здесь, чтобы не прерывать транзакцию
                     logger.warning(f"Could not create timeline record (table may not exist or error): {timeline_error}")
-                    try:
-                        db.rollback()
-                    except:
-                        pass  # Игнорируем ошибки rollback
                     return False
             
             # Создаем запись в timelines перед сохранением событий
@@ -185,7 +182,22 @@ def timeline_agent_node(
                         # Если ошибка связана с внешним ключом, пытаемся создать запись в timelines
                         if "timeline_events_timelineId_fkey" in str(commit_error) or "timelines" in str(commit_error):
                             logger.info(f"Foreign key error detected, attempting to create timeline record before retry")
-                            ensure_timeline_record()
+                            timeline_created = ensure_timeline_record()
+                            if not timeline_created:
+                                # Если не удалось создать запись, пробуем еще раз с более агрессивным подходом
+                                logger.warning(f"Failed to create timeline record, trying direct INSERT")
+                                try:
+                                    from sqlalchemy import text
+                                    db.execute(text("""
+                                        INSERT INTO timelines (id, created_at)
+                                        VALUES (:case_id, NOW())
+                                        ON CONFLICT (id) DO NOTHING
+                                    """), {"case_id": case_id})
+                                    logger.info(f"Direct INSERT succeeded for timeline {case_id}")
+                                except Exception as direct_insert_error:
+                                    logger.error(f"Direct INSERT also failed: {direct_insert_error}")
+                                    # Если и это не помогло, возможно таблицы нет - продолжаем без timelineId
+                                    logger.warning(f"Will try to save events without timelineId")
                         
                         # Повторяем попытку сохранения после rollback, убеждаясь что timelineId и order заполнены
                         for idx, event in enumerate(saved_events):
