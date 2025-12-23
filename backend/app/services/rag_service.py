@@ -21,8 +21,8 @@ class RAGService:
         self.retriever_service = AdvancedRetrieverService(self.document_processor)
         self.memory_service = MemoryService()
         
-        # Using direct RAG with OpenRouter + pgvector
-        logger.info("✅ Using direct RAG with OpenRouter + pgvector")
+        # Using direct RAG with YandexGPT + pgvector
+        logger.info("✅ Using direct RAG with YandexGPT + pgvector")
     
     def retrieve_context(
         self,
@@ -201,8 +201,8 @@ class RAGService:
         db: Optional[Session],
         history: Optional[List[Dict[str, str]]]
     ) -> Tuple[str, List[Dict[str, Any]]]:
-        """Generate using direct RAG with pgvector + OpenRouter"""
-        from langchain_openai import ChatOpenAI
+        """Generate using direct RAG with pgvector + YandexGPT"""
+        from app.services.yandex_llm import ChatYandexGPT
         from langchain_core.prompts import ChatPromptTemplate
         from langchain_core.messages import HumanMessage, AIMessage, SystemMessage
         
@@ -246,15 +246,8 @@ class RAGService:
 Ответ (обязательно укажи источники):"""
         messages.append(HumanMessage(content=user_message))
         
-        # Generate answer using OpenRouter
-        llm = ChatOpenAI(
-            model=config.OPENROUTER_MODEL,
-            openai_api_key=config.OPENROUTER_API_KEY,
-            openai_api_base=config.OPENROUTER_BASE_URL,
-            temperature=0.7,
-            max_tokens=2000,
-            timeout=60.0
-        )
+        # Generate answer using YandexGPT
+        llm = ChatYandexGPT()
         response = llm.invoke(messages)
         answer = response.content if hasattr(response, 'content') else str(response)
         

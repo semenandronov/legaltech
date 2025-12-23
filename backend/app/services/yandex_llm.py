@@ -61,7 +61,7 @@ class ChatYandexGPT(BaseChatModel):
                 self.sdk = YCloudML(folder_id=self.folder_id, auth=auth)
             else:
                 # SDK требует folder_id - если не указан, не инициализируем
-                logger.warning("YANDEX_FOLDER_ID not set, YandexGPT will not work. Using OpenRouter fallback.")
+                logger.warning("YANDEX_FOLDER_ID not set, YandexGPT will not work.")
                 self.sdk = None
                 return
         except Exception as e:
