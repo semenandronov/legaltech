@@ -90,41 +90,51 @@ def timeline_agent_node(
         if db and parsed_events:
             from datetime import datetime
             
-            # Создаем запись в таблице timelines, если она существует (для внешнего ключа)
-            try:
-                # Проверяем, существует ли таблица timelines и создаем запись, если нужно
-                from sqlalchemy import text
-                result = db.execute(text("""
-                    SELECT EXISTS (
-                        SELECT FROM information_schema.tables 
-                        WHERE table_name = 'timelines'
-                    )
-                """))
-                timelines_exists = result.scalar()
-                
-                if timelines_exists:
-                    # Проверяем, есть ли уже запись с таким ID
+            # Функция для создания записи в таблице timelines (если она существует)
+            def ensure_timeline_record():
+                try:
+                    from sqlalchemy import text
+                    # Проверяем, существует ли таблица timelines
                     result = db.execute(text("""
                         SELECT EXISTS (
-                            SELECT FROM timelines 
-                            WHERE id = :case_id
+                            SELECT FROM information_schema.tables 
+                            WHERE table_schema = 'public' AND table_name = 'timelines'
                         )
-                    """), {"case_id": case_id})
-                    timeline_exists = result.scalar()
+                    """))
+                    timelines_exists = result.scalar()
                     
-                    if not timeline_exists:
-                        # Создаем запись в таблице timelines
-                        db.execute(text("""
-                            INSERT INTO timelines (id, case_id, created_at)
-                            VALUES (:case_id, :case_id, NOW())
-                            ON CONFLICT (id) DO NOTHING
+                    if timelines_exists:
+                        # Проверяем, есть ли уже запись с таким ID
+                        result = db.execute(text("""
+                            SELECT EXISTS (
+                                SELECT FROM timelines 
+                                WHERE id = :case_id
+                            )
                         """), {"case_id": case_id})
-                        db.commit()
-                        logger.info(f"Created timeline record for case {case_id}")
-            except Exception as timeline_error:
-                # Если таблицы timelines нет или произошла ошибка, продолжаем
-                logger.debug(f"Could not create timeline record (table may not exist): {timeline_error}")
-                db.rollback()
+                        timeline_exists = result.scalar()
+                        
+                        if not timeline_exists:
+                            # Создаем запись в таблице timelines (в той же транзакции)
+                            db.execute(text("""
+                                INSERT INTO timelines (id, case_id, created_at)
+                                VALUES (:case_id, :case_id, NOW())
+                                ON CONFLICT (id) DO NOTHING
+                            """), {"case_id": case_id})
+                            logger.info(f"Created timeline record for case {case_id} in same transaction")
+                            return True
+                        else:
+                            logger.debug(f"Timeline record already exists for case {case_id}")
+                            return True
+                    else:
+                        logger.debug(f"Table 'timelines' does not exist, skipping timeline record creation")
+                        return False
+                except Exception as timeline_error:
+                    # Если таблицы timelines нет или произошла ошибка, продолжаем
+                    logger.warning(f"Could not create timeline record (table may not exist or error): {timeline_error}")
+                    return False
+            
+            # Создаем запись в timelines перед сохранением событий
+            ensure_timeline_record()
             
             for idx, event_model in enumerate(parsed_events):
                 try:
@@ -167,6 +177,11 @@ def timeline_agent_node(
                     logger.error(f"Ошибка при коммите событий: {commit_error}")
                     try:
                         db.rollback()
+                        # Если ошибка связана с внешним ключом, пытаемся создать запись в timelines
+                        if "timeline_events_timelineId_fkey" in str(commit_error) or "timelines" in str(commit_error):
+                            logger.info(f"Foreign key error detected, attempting to create timeline record before retry")
+                            ensure_timeline_record()
+                        
                         # Повторяем попытку сохранения после rollback, убеждаясь что timelineId и order заполнены
                         for idx, event in enumerate(saved_events):
                             if event.timelineId is None:
