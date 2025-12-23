@@ -52,38 +52,25 @@ def discrepancy_agent_node(
         if not (config.YANDEX_API_KEY or config.YANDEX_IAM_TOKEN) or not config.YANDEX_FOLDER_ID:
             raise ValueError("YANDEX_API_KEY/YANDEX_IAM_TOKEN и YANDEX_FOLDER_ID должны быть настроены")
         
-        llm = ChatYandexGPT(
-            model_name=config.YANDEX_GPT_MODEL,
-            temperature=0,  # Детерминизм критичен для юридических задач
-            max_tokens=2000
-        )
+        # YandexGPT не поддерживает инструменты, используем прямой RAG подход
+        if not rag_service:
+            raise ValueError("RAG service required for discrepancy finding")
         
-        # Get prompt
+        # Используем helper для прямого вызова LLM с RAG
+        from app.services.langchain_agents.llm_helper import direct_llm_call_with_rag, extract_json_from_response
+        
         prompt = get_agent_prompt("discrepancy")
+        user_query = f"Найди все противоречия и несоответствия между документами дела {case_id}."
         
-        # Create agent
-        agent = create_legal_agent(llm, tools, system_prompt=prompt)
-        
-        # Create initial message
-        from langchain_core.messages import HumanMessage
-        initial_message = HumanMessage(
-            content=f"Найди все противоречия и несоответствия между документами дела {case_id}. Используй retrieve_documents_tool для поиска документов."
+        response_text = direct_llm_call_with_rag(
+            case_id=case_id,
+            system_prompt=prompt,
+            user_query=user_query,
+            rag_service=rag_service,
+            db=db,
+            k=30,
+            temperature=0.1
         )
-        
-        # Run agent with safe invoke (handles tool use errors)
-        from app.services.langchain_agents.agent_factory import safe_agent_invoke
-        result = safe_agent_invoke(
-            agent,
-            llm,
-            {
-                "messages": [initial_message],
-                "case_id": case_id
-            },
-            config={"recursion_limit": 25}
-        )
-        
-        # Extract discrepancies from response
-        response_text = result.get("messages", [])[-1].content if isinstance(result, dict) else str(result)
         
         # Try to extract JSON from response
         discrepancy_data = None

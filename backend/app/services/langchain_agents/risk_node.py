@@ -60,17 +60,12 @@ def risk_agent_node(
         if not (config.YANDEX_API_KEY or config.YANDEX_IAM_TOKEN) or not config.YANDEX_FOLDER_ID:
             raise ValueError("YANDEX_API_KEY/YANDEX_IAM_TOKEN и YANDEX_FOLDER_ID должны быть настроены")
         
-        llm = ChatYandexGPT(
-            model_name=config.YANDEX_GPT_MODEL,
-            temperature=0.1,  # Немного выше для аналитической задачи, но все еще детерминистично
-            max_tokens=2000
-        )
+        # YandexGPT не поддерживает инструменты, используем прямой RAG подход
+        if not rag_service:
+            raise ValueError("RAG service required for risk analysis")
         
-        # Get prompt
-        prompt = get_agent_prompt("risk")
-        
-        # Create agent
-        agent = create_legal_agent(llm, tools, system_prompt=prompt)
+        # Используем helper для прямого вызова LLM с RAG
+        from app.services.langchain_agents.llm_helper import direct_llm_call_with_rag
         
         # Get case info
         case_info = ""
@@ -79,11 +74,9 @@ def risk_agent_node(
             if case:
                 case_info = f"Тип дела: {case.case_type or 'Не указан'}\nОписание: {case.description or 'Нет описания'}\n"
         
-        # Create initial message with discrepancy data
-        from langchain_core.messages import HumanMessage
+        # Формируем запрос с данными о противоречиях
         discrepancies_text = json.dumps(discrepancy_result.get("discrepancies", []), ensure_ascii=False, indent=2)
-        initial_message = HumanMessage(
-            content=f"""Проанализируй риски следующего дела:
+        user_query = f"""Проанализируй риски следующего дела:
 
 {case_info}
 
@@ -91,22 +84,17 @@ def risk_agent_node(
 {discrepancies_text}
 
 Оцени риски по категориям: юридические, финансовые, репутационные, процессуальные."""
-        )
         
-        # Run agent with safe invoke (handles tool use errors)
-        from app.services.langchain_agents.agent_factory import safe_agent_invoke
-        result = safe_agent_invoke(
-            agent,
-            llm,
-            {
-                "messages": [initial_message],
-                "case_id": case_id
-            },
-            config={"recursion_limit": 25}
+        prompt = get_agent_prompt("risk")
+        response_text = direct_llm_call_with_rag(
+            case_id=case_id,
+            system_prompt=prompt,
+            user_query=user_query,
+            rag_service=rag_service,
+            db=db,
+            k=20,
+            temperature=0.1
         )
-        
-        # Extract risk analysis from response
-        response_text = result.get("messages", [])[-1].content if isinstance(result, dict) else str(result)
         
         # Save to database
         result_id = None

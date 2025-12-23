@@ -28,7 +28,7 @@ const CaseCard = ({ caseItem }: CaseCardProps) => {
     <Card hoverable className="cursor-pointer" onClick={() => navigate(`/cases/${caseItem.id}/workspace`)}>
       <div className="space-y-4">
         {/* Название */}
-        <h3 className="text-h3 text-primary">{caseItem.title || 'Без названия'}</h3>
+              <h3 className="text-h3 text-primary">{caseItem.title || 'Без названия'}</h3>
         
         {/* Статистика */}
         <div className="flex items-center gap-6 text-small text-secondary">
