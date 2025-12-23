@@ -88,14 +88,23 @@ def safe_agent_invoke(
         return result
     except Exception as e:
         error_msg = str(e)
+        error_type = type(e).__name__
+        
         # Check if error is related to tool use not being supported
-        if any(keyword in error_msg.lower() for keyword in [
-            "tool use", "404", "no endpoints found", "not support", 
-            "function calling", "tools not available"
-        ]):
+        # YandexGPT doesn't support bind_tools(), which raises NotImplementedError
+        is_tool_error = (
+            error_type == "NotImplementedError" or
+            "bind_tools" in error_msg or
+            any(keyword in error_msg.lower() for keyword in [
+                "tool use", "404", "no endpoints found", "not support", 
+                "notimplemented", "function calling", "tools not available"
+            ])
+        )
+        
+        if is_tool_error:
             logger.warning(
-                f"Model does not support tool use (error: {error_msg[:200]}). "
-                "Falling back to direct LLM call."
+                f"Model does not support tool use (error: {error_type}: {error_msg[:200]}). "
+                "Falling back to direct LLM call without tools."
             )
             # Fallback: use LLM directly without tools
             messages = input_data.get("messages", [])
@@ -125,4 +134,5 @@ def safe_agent_invoke(
             }
         else:
             # Re-raise if it's a different error
+            logger.error(f"Agent invoke error (not tool-related): {error_type}: {error_msg}")
             raise
