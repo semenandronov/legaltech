@@ -103,7 +103,7 @@ def timeline_agent_node(
                     # Create timeline event with reasoning and confidence
                     event = TimelineEvent(
                         case_id=case_id,
-                        timelineId=case_id,  # Заполняем старое поле для совместимости со старой схемой БД
+                        timelineId=None,  # Не заполняем timelineId, так как это внешний ключ на несуществующую таблицу timelines
                         date=event_date,
                         event_type=event_model.event_type,
                         description=event_model.description,
@@ -131,10 +131,9 @@ def timeline_agent_node(
                     logger.error(f"Ошибка при коммите событий: {commit_error}")
                     try:
                         db.rollback()
-                        # Повторяем попытку сохранения после rollback, убеждаясь что timelineId и order заполнены
+                        # Повторяем попытку сохранения после rollback, убеждаясь что order заполнен
                         for idx, event in enumerate(saved_events):
-                            if event.timelineId is None:
-                                event.timelineId = case_id
+                            # Не заполняем timelineId - это внешний ключ на несуществующую таблицу
                             if not hasattr(event, 'order') or event.order is None:
                                 event.order = idx
                             db.add(event)
