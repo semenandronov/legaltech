@@ -1,6 +1,5 @@
 import { useState, useEffect } from 'react'
 import { getCasesList, CasesListResponse } from '../services/api'
-import MainLayout from '../components/Layout/MainLayout'
 import CasesFilters, { FilterState } from '../components/Cases/CasesFilters'
 import CasesGrid from '../components/Cases/CasesGrid'
 
@@ -50,20 +49,18 @@ const CasesListPage = () => {
   }
   
   return (
-    <MainLayout>
-      <div className="flex h-full">
-        <CasesFilters onFiltersChange={handleFiltersChange} />
-        <CasesGrid
-          cases={cases}
-          total={total}
-          loading={loading}
-          currentPage={currentPage}
-          onPageChange={handlePageChange}
-          viewMode={viewMode}
-          onViewModeChange={setViewMode}
-        />
-      </div>
-    </MainLayout>
+    <div className="flex h-full">
+      <CasesFilters onFiltersChange={handleFiltersChange} />
+      <CasesGrid
+        cases={cases}
+        total={total}
+        loading={loading}
+        currentPage={currentPage}
+        onPageChange={handlePageChange}
+        viewMode={viewMode}
+        onViewModeChange={setViewMode}
+      />
+    </div>
   )
 }
 

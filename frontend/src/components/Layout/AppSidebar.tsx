@@ -2,21 +2,6 @@
 
 import * as React from "react"
 import {
-  Home,
-  Settings,
-  Search,
-  HelpCircle,
-  Database,
-  FileText,
-  BarChart3,
-} from "lucide-react"
-
-import { NavDocuments } from "./NavDocuments"
-import { NavMain } from "./NavMain"
-import { NavSecondary } from "./NavSecondary"
-import { NavUser } from "./NavUser"
-import { SearchForm } from "./SearchForm"
-import {
   Sidebar,
   SidebarContent,
   SidebarFooter,
@@ -25,55 +10,8 @@ import {
   SidebarMenuButton,
   SidebarMenuItem,
 } from "@/components/UI/sidebar"
-
-const data = {
-  navMain: [
-    {
-      title: "Дела",
-      url: "/cases",
-      icon: Home,
-    },
-    {
-      title: "Аналитика",
-      url: "/cases",
-      icon: BarChart3,
-    },
-    {
-      title: "Настройки",
-      url: "/settings",
-      icon: Settings,
-    },
-  ],
-  navDocuments: [
-    {
-      name: "Библиотека данных",
-      url: "#",
-      icon: Database,
-    },
-    {
-      name: "Отчеты",
-      url: "#",
-      icon: FileText,
-    },
-  ],
-  navSecondary: [
-    {
-      title: "Настройки",
-      url: "/settings",
-      icon: Settings,
-    },
-    {
-      title: "Помощь",
-      url: "#",
-      icon: HelpCircle,
-    },
-    {
-      title: "Поиск",
-      url: "#",
-      icon: Search,
-    },
-  ],
-}
+import { NavUser } from "./NavUser"
+import { SearchForm } from "./SearchForm"
 
 export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
   return (
@@ -95,9 +33,7 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
         <SearchForm />
       </SidebarHeader>
       <SidebarContent>
-        <NavMain items={data.navMain} />
-        <NavDocuments items={data.navDocuments} />
-        <NavSecondary items={data.navSecondary} className="mt-auto" />
+        {/* Меню удалено - показывается только когда выбрано дело */}
       </SidebarContent>
       <SidebarFooter>
         <NavUser />

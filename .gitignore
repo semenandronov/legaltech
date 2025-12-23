@@ -13,6 +13,7 @@ dist/
 downloads/
 eggs/
 .eggs/
+# lib/ - removed to allow frontend/src/lib/ files
 lib64/
 parts/
 sdist/
@@ -22,7 +23,6 @@ wheels/
 .installed.cfg
 *.egg
 MANIFEST
-# Note: lib/ removed to allow frontend/src/lib/ files
 
 # Virtual environments
 venv/
