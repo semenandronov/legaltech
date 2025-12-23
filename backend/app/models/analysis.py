@@ -54,6 +54,7 @@ class TimelineEvent(Base):
     source_page = Column(Integer, nullable=True)  # Номер страницы
     source_line = Column(Integer, nullable=True)  # Номер строки или диапазон
     event_metadata = Column(JSON, nullable=True)  # Дополнительные метаданные (включает reasoning и confidence)
+    order = Column(Integer, nullable=False, default=0)  # Порядок события для сортировки (обязательное поле в БД)
     # reasoning и confidence удалены - хранятся в event_metadata для совместимости с БД
     created_at = Column(DateTime, default=datetime.utcnow)
     

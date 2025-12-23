@@ -90,7 +90,7 @@ def timeline_agent_node(
         if db and parsed_events:
             from datetime import datetime
             
-            for event_model in parsed_events:
+            for idx, event_model in enumerate(parsed_events):
                 try:
                     # Parse date
                     date_str = event_model.date
@@ -110,6 +110,7 @@ def timeline_agent_node(
                         source_document=event_model.source_document,
                         source_page=event_model.source_page,
                         source_line=event_model.source_line,
+                        order=idx,  # Заполняем поле order для сортировки событий
                         event_metadata={
                             "parsed_from_agent": True,
                             "reasoning": event_model.reasoning,
@@ -130,11 +131,13 @@ def timeline_agent_node(
                     logger.error(f"Ошибка при коммите событий: {commit_error}")
                     try:
                         db.rollback()
-                        # Повторяем попытку сохранения после rollback, убеждаясь что timelineId заполнен
-                        for event in saved_events:
-                            if event.timelineId is None:
-                                event.timelineId = case_id
-                            db.add(event)
+                    # Повторяем попытку сохранения после rollback, убеждаясь что timelineId и order заполнены
+                    for idx, event in enumerate(saved_events):
+                        if event.timelineId is None:
+                            event.timelineId = case_id
+                        if not hasattr(event, 'order') or event.order is None:
+                            event.order = idx
+                        db.add(event)
                         db.commit()
                         logger.info(f"Timeline agent: Successfully saved {len(saved_events)} events after retry for case {case_id}")
                     except Exception as retry_error:
