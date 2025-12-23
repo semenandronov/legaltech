@@ -7,8 +7,6 @@ import CaseNavigation from '../components/CaseOverview/CaseNavigation'
 import RiskCards from '../components/CaseOverview/RiskCards'
 import ContradictionsSection from '../components/CaseOverview/ContradictionsSection'
 import TimelineSection from '../components/CaseOverview/TimelineSection'
-import IssueMap from '../components/CaseOverview/IssueMap'
-import QuickStats from '../components/CaseOverview/QuickStats'
 import Spinner from '../components/UI/Spinner'
 import { Tabs, TabList, Tab, TabPanel } from '../components/UI/Tabs'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../components/UI/Card'
@@ -79,14 +77,6 @@ const CaseOverviewPage = () => {
     },
   ])
   
-  const [issues] = useState([
-    { tag: 'Liability', count: 8 },
-    { tag: 'Confidentiality', count: 5 },
-    { tag: 'Payment', count: 6 },
-    { tag: 'IP Rights', count: 3 },
-    { tag: 'Disputes', count: 2 },
-    { tag: 'Compliance', count: 4 },
-  ])
   
   useEffect(() => {
     if (caseId) {
@@ -128,7 +118,6 @@ const CaseOverviewPage = () => {
                 <Tab id="risks">Риски</Tab>
                 <Tab id="contradictions">Противоречия</Tab>
                 <Tab id="timeline">Временная линия</Tab>
-                <Tab id="issues">Карта вопросов</Tab>
               </TabList>
               
               <TabPanel id="overview" className="space-y-6">
@@ -153,10 +142,6 @@ const CaseOverviewPage = () => {
                         <div className="text-2xl font-bold text-warning">{contradictions.length}</div>
                         <div className="text-sm text-muted-foreground">Противоречий</div>
                       </div>
-                      <div>
-                        <div className="text-2xl font-bold text-success">{issues.length}</div>
-                        <div className="text-sm text-muted-foreground">Вопросов</div>
-                      </div>
                     </div>
                   </CardContent>
                 </Card>
@@ -180,24 +165,10 @@ const CaseOverviewPage = () => {
                 <h2 className="text-h2 text-primary">Временная линия</h2>
                 <TimelineSection events={timelineEvents} />
               </TabPanel>
-              
-              <TabPanel id="issues" className="space-y-4">
-                <h2 className="text-h2 text-primary">Карта вопросов</h2>
-                <IssueMap issues={issues} />
-              </TabPanel>
             </Tabs>
           </div>
         </div>
       </div>
-      <QuickStats
-        totalDocuments={caseData.num_documents}
-        totalChunks={1234}
-        lastIndexed="2ч назад"
-        indexStatus="active"
-        risksIdentified={risks.length}
-        contradictions={contradictions.length}
-        teamMembers={2}
-      />
     </div>
   )
 }
