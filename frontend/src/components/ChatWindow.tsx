@@ -648,6 +648,7 @@ const ChatWindow = ({ caseId, onDocumentClick }: ChatWindowProps) => {
           const isStreamingMessage = currentStreamingMessageRef.current === index && isWebSocketStreaming && !!streamingContent
           const displayContent = isStreamingMessage ? streamingContent : message.content
           const displaySources = isStreamingMessage ? streamingSources : (message.sources || [])
+          const isAssistant = message.role === 'assistant'
 
           return (
                   <motion.div
@@ -660,23 +661,24 @@ const ChatWindow = ({ caseId, onDocumentClick }: ChatWindowProps) => {
                       message.role === 'user' ? 'justify-end ml-auto' : 'justify-start mr-auto'
                     )}
             >
-                    {message.role === 'assistant' && (
+                    {isAssistant && (
                       <Avatar className="h-8 w-8 shrink-0 bg-gradient-to-br from-primary to-primary/60">
                         <AvatarFallback className="text-xs font-semibold">⚖️</AvatarFallback>
                       </Avatar>
                     )}
 
-              {message.role === 'assistant' ? (
-                      <Card className="max-w-[85%] bg-card border shadow-sm">
-                        <CardContent className="p-5">
-                          <div className="text-base leading-relaxed">
+              <div className={cn(
+                "max-w-[85%] flex-1 sm:max-w-[75%]",
+                message.role === 'user' && 'flex items-end gap-3'
+              )}>
+                {isAssistant ? (
+                      <div className="bg-secondary text-foreground rounded-lg p-4 prose prose-sm max-w-none">
                     <MessageContent
                       content={displayContent}
                       sources={displaySources}
                       onCitationClick={handleCitationClick}
                       isStreaming={isStreamingMessage}
                     />
-                          </div>
                   
                   {statistics && (
                             <div className="mt-4">
@@ -690,19 +692,18 @@ const ChatWindow = ({ caseId, onDocumentClick }: ChatWindowProps) => {
                       <ConfidenceBadge confidence={confidence} />
                             </div>
                   )}
-                        </CardContent>
-                </Card>
-              ) : (
-                      <div className="flex items-start gap-3 max-w-[85%]">
-                        <div
-                          className="rounded-2xl rounded-tr-sm px-4 py-3 bg-primary text-primary-foreground shadow-sm"
-                        >
-                          <p className="text-base leading-relaxed">{message.content}</p>
-                        </div>
-                        <Avatar className="h-8 w-8 shrink-0 bg-muted">
-                          <AvatarFallback className="text-xs font-semibold">👤</AvatarFallback>
-                        </Avatar>
                       </div>
+                ) : (
+                        <div className="bg-primary text-primary-foreground rounded-lg px-4 py-3 shadow-sm">
+                          <p className="text-base leading-relaxed whitespace-pre-wrap">{message.content}</p>
+                        </div>
+                    )}
+              </div>
+
+                    {message.role === 'user' && (
+                      <Avatar className="h-8 w-8 shrink-0 bg-muted">
+                        <AvatarFallback className="text-xs font-semibold">👤</AvatarFallback>
+                      </Avatar>
                     )}
                   </motion.div>
                 )
