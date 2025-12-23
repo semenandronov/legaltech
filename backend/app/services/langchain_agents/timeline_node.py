@@ -115,9 +115,10 @@ def timeline_agent_node(
                         
                         if not timeline_exists:
                             # Создаем запись в таблице timelines (в той же транзакции)
+                            # В таблице timelines может не быть колонки case_id, используем только id
                             db.execute(text("""
-                                INSERT INTO timelines (id, case_id, created_at)
-                                VALUES (:case_id, :case_id, NOW())
+                                INSERT INTO timelines (id, created_at)
+                                VALUES (:case_id, NOW())
                                 ON CONFLICT (id) DO NOTHING
                             """), {"case_id": case_id})
                             logger.info(f"Created timeline record for case {case_id} in same transaction")
@@ -129,8 +130,12 @@ def timeline_agent_node(
                         logger.debug(f"Table 'timelines' does not exist, skipping timeline record creation")
                         return False
                 except Exception as timeline_error:
-                    # Если таблицы timelines нет или произошла ошибка, продолжаем
+                    # Если таблицы timelines нет или произошла ошибка, откатываем транзакцию и продолжаем
                     logger.warning(f"Could not create timeline record (table may not exist or error): {timeline_error}")
+                    try:
+                        db.rollback()
+                    except:
+                        pass  # Игнорируем ошибки rollback
                     return False
             
             # Создаем запись в timelines перед сохранением событий
