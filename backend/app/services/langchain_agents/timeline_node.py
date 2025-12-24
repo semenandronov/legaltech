@@ -114,23 +114,29 @@ def timeline_agent_node(
                         timeline_exists = result.scalar()
                         
                         if not timeline_exists:
-                            # Получаем user_id из таблицы cases
+                            # Получаем user_id и full_text из таблицы cases
                             result = db.execute(text("""
-                                SELECT user_id FROM cases WHERE id = :case_id
+                                SELECT user_id, full_text FROM cases WHERE id = :case_id
                             """), {"case_id": case_id})
-                            user_id = result.scalar()
+                            row = result.fetchone()
+                            
+                            if row is None:
+                                logger.warning(f"Case {case_id} not found, cannot create timeline record")
+                                return False
+                            
+                            user_id, source_text = row
                             
                             if user_id is None:
                                 logger.warning(f"Case {case_id} has no user_id, cannot create timeline record")
                                 return False
                             
                             # Создаем запись в таблице timelines (в той же транзакции)
-                            # В таблице timelines есть обязательные поля: id и userId
+                            # В таблице timelines есть обязательные поля: id, userId и sourceText
                             db.execute(text("""
-                                INSERT INTO timelines (id, "userId")
-                                VALUES (:case_id, :user_id)
+                                INSERT INTO timelines (id, "userId", "sourceText")
+                                VALUES (:case_id, :user_id, :source_text)
                                 ON CONFLICT (id) DO NOTHING
-                            """), {"case_id": case_id, "user_id": user_id})
+                            """), {"case_id": case_id, "user_id": user_id, "source_text": source_text or ""})
                             logger.info(f"Created timeline record for case {case_id} with user_id {user_id} in same transaction")
                             return True
                         else:
@@ -215,24 +221,29 @@ def timeline_agent_node(
                                     timeline_exists = result.scalar()
                                     
                                     if not timeline_exists:
-                                        # Получаем user_id из таблицы cases
+                                        # Получаем user_id и full_text из таблицы cases
                                         result = db.execute(text("""
-                                            SELECT user_id FROM cases WHERE id = :case_id
+                                            SELECT user_id, full_text FROM cases WHERE id = :case_id
                                         """), {"case_id": case_id})
-                                        user_id = result.scalar()
+                                        row = result.fetchone()
                                         
-                                        if user_id is None:
-                                            logger.warning(f"Case {case_id} has no user_id, cannot create timeline record")
+                                        if row is None:
+                                            logger.warning(f"Case {case_id} not found, cannot create timeline record")
                                         else:
-                                            # Создаем запись и коммитим отдельно
-                                            # В таблице timelines есть обязательные поля: id и userId
-                                            db.execute(text("""
-                                                INSERT INTO timelines (id, "userId")
-                                                VALUES (:case_id, :user_id)
-                                                ON CONFLICT (id) DO NOTHING
-                                            """), {"case_id": case_id, "user_id": user_id})
-                                            db.commit()  # Коммитим создание записи в timelines
-                                            logger.info(f"Created and committed timeline record for case {case_id} with user_id {user_id}")
+                                            user_id, source_text = row
+                                            
+                                            if user_id is None:
+                                                logger.warning(f"Case {case_id} has no user_id, cannot create timeline record")
+                                            else:
+                                                # Создаем запись и коммитим отдельно
+                                                # В таблице timelines есть обязательные поля: id, userId и sourceText
+                                                db.execute(text("""
+                                                    INSERT INTO timelines (id, "userId", "sourceText")
+                                                    VALUES (:case_id, :user_id, :source_text)
+                                                    ON CONFLICT (id) DO NOTHING
+                                                """), {"case_id": case_id, "user_id": user_id, "source_text": source_text or ""})
+                                                db.commit()  # Коммитим создание записи в timelines
+                                                logger.info(f"Created and committed timeline record for case {case_id} with user_id {user_id}")
                                     else:
                                         logger.info(f"Timeline record already exists for case {case_id}")
                                 else:
