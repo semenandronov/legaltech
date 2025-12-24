@@ -179,38 +179,95 @@ def timeline_agent_node(
                     logger.error(f"Ошибка при коммите событий: {commit_error}")
                     try:
                         db.rollback()
-                        # Если ошибка связана с внешним ключом, пытаемся создать запись в timelines
-                        if "timeline_events_timelineId_fkey" in str(commit_error) or "timelines" in str(commit_error):
-                            logger.info(f"Foreign key error detected, attempting to create timeline record before retry")
-                            timeline_created = ensure_timeline_record()
-                            if not timeline_created:
-                                # Если не удалось создать запись, пробуем еще раз с более агрессивным подходом
-                                logger.warning(f"Failed to create timeline record, trying direct INSERT")
-                                try:
-                                    from sqlalchemy import text
-                                    db.execute(text("""
-                                        INSERT INTO timelines (id, created_at)
-                                        VALUES (:case_id, NOW())
-                                        ON CONFLICT (id) DO NOTHING
-                                    """), {"case_id": case_id})
-                                    logger.info(f"Direct INSERT succeeded for timeline {case_id}")
-                                except Exception as direct_insert_error:
-                                    logger.error(f"Direct INSERT also failed: {direct_insert_error}")
-                                    # Если и это не помогло, возможно таблицы нет - продолжаем без timelineId
-                                    logger.warning(f"Will try to save events without timelineId")
                         
-                        # Повторяем попытку сохранения после rollback, убеждаясь что timelineId и order заполнены
-                        for idx, event in enumerate(saved_events):
-                            if event.timelineId is None:
-                                event.timelineId = case_id
-                            if not hasattr(event, 'order') or event.order is None:
-                                event.order = idx
-                            db.add(event)
-                        db.commit()
-                        logger.info(f"Timeline agent: Successfully saved {len(saved_events)} events after retry for case {case_id}")
+                        # Если ошибка связана с внешним ключом, создаем запись в timelines в НОВОЙ транзакции
+                        if "timeline_events_timelineId_fkey" in str(commit_error) or "timelines" in str(commit_error) or "InFailedSqlTransaction" in str(commit_error):
+                            logger.info(f"Foreign key or transaction error detected, creating timeline record in new transaction")
+                            try:
+                                from sqlalchemy import text
+                                # Сначала проверяем, существует ли таблица
+                                result = db.execute(text("""
+                                    SELECT EXISTS (
+                                        SELECT FROM information_schema.tables 
+                                        WHERE table_schema = 'public' AND table_name = 'timelines'
+                                    )
+                                """))
+                                timelines_exists = result.scalar()
+                                
+                                if timelines_exists:
+                                    # Проверяем, есть ли уже запись
+                                    result = db.execute(text("""
+                                        SELECT EXISTS (
+                                            SELECT FROM timelines 
+                                            WHERE id = :case_id
+                                        )
+                                    """), {"case_id": case_id})
+                                    timeline_exists = result.scalar()
+                                    
+                                    if not timeline_exists:
+                                        # Создаем запись и коммитим отдельно
+                                        db.execute(text("""
+                                            INSERT INTO timelines (id, created_at)
+                                            VALUES (:case_id, NOW())
+                                            ON CONFLICT (id) DO NOTHING
+                                        """), {"case_id": case_id})
+                                        db.commit()  # Коммитим создание записи в timelines
+                                        logger.info(f"Created and committed timeline record for case {case_id}")
+                                    else:
+                                        logger.info(f"Timeline record already exists for case {case_id}")
+                                else:
+                                    logger.warning(f"Table 'timelines' does not exist")
+                            except Exception as timeline_error:
+                                logger.error(f"Failed to create timeline record: {timeline_error}")
+                                db.rollback()
+                        
+                        # Теперь создаем НОВЫЕ объекты событий (старые привязаны к старой транзакции)
+                        new_saved_events = []
+                        for idx, event_model in enumerate(parsed_events):
+                            try:
+                                # Parse date
+                                date_str = event_model.date
+                                try:
+                                    event_date = datetime.strptime(date_str, "%Y-%m-%d").date()
+                                except:
+                                    event_date = datetime.now().date()
+                                
+                                # Создаем НОВЫЙ объект события
+                                event = TimelineEvent(
+                                    case_id=case_id,
+                                    timelineId=case_id,
+                                    date=event_date,
+                                    event_type=event_model.event_type,
+                                    description=event_model.description,
+                                    source_document=event_model.source_document,
+                                    source_page=event_model.source_page,
+                                    source_line=event_model.source_line,
+                                    order=idx,
+                                    event_metadata={
+                                        "parsed_from_agent": True,
+                                        "reasoning": event_model.reasoning,
+                                        "confidence": event_model.confidence
+                                    }
+                                )
+                                db.add(event)
+                                new_saved_events.append(event)
+                            except Exception as e:
+                                logger.warning(f"Ошибка при создании нового события: {e}")
+                                continue
+                        
+                        if new_saved_events:
+                            db.commit()
+                            saved_events = new_saved_events  # Обновляем список сохраненных событий
+                            logger.info(f"Timeline agent: Successfully saved {len(saved_events)} events after retry for case {case_id}")
+                        else:
+                            logger.warning(f"No events were saved after retry")
+                            saved_events = []
                     except Exception as retry_error:
                         logger.error(f"Ошибка при повторном сохранении событий: {retry_error}")
-                        db.rollback()
+                        try:
+                            db.rollback()
+                        except:
+                            pass
                         saved_events = []  # Очищаем список, если не удалось сохранить
         
         # Create result
