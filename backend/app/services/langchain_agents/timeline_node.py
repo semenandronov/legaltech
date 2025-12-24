@@ -1,5 +1,6 @@
 """Timeline agent node for LangGraph"""
 from typing import Dict, Any
+from datetime import datetime
 from app.services.yandex_llm import ChatYandexGPT
 from app.services.langchain_agents.agent_factory import create_legal_agent
 from app.config import config
@@ -131,12 +132,13 @@ def timeline_agent_node(
                                 return False
                             
                             # Создаем запись в таблице timelines (в той же транзакции)
-                            # В таблице timelines есть обязательные поля: id, userId и sourceText
+                            # В таблице timelines есть обязательные поля: id, userId, sourceText и updatedAt
+                            current_time = datetime.now()
                             db.execute(text("""
-                                INSERT INTO timelines (id, "userId", "sourceText")
-                                VALUES (:case_id, :user_id, :source_text)
+                                INSERT INTO timelines (id, "userId", "sourceText", "updatedAt")
+                                VALUES (:case_id, :user_id, :source_text, :updated_at)
                                 ON CONFLICT (id) DO NOTHING
-                            """), {"case_id": case_id, "user_id": user_id, "source_text": source_text or ""})
+                            """), {"case_id": case_id, "user_id": user_id, "source_text": source_text or "", "updated_at": current_time})
                             logger.info(f"Created timeline record for case {case_id} with user_id {user_id} in same transaction")
                             return True
                         else:
@@ -236,12 +238,13 @@ def timeline_agent_node(
                                                 logger.warning(f"Case {case_id} has no user_id, cannot create timeline record")
                                             else:
                                                 # Создаем запись и коммитим отдельно
-                                                # В таблице timelines есть обязательные поля: id, userId и sourceText
+                                                # В таблице timelines есть обязательные поля: id, userId, sourceText и updatedAt
+                                                current_time = datetime.now()
                                                 db.execute(text("""
-                                                    INSERT INTO timelines (id, "userId", "sourceText")
-                                                    VALUES (:case_id, :user_id, :source_text)
+                                                    INSERT INTO timelines (id, "userId", "sourceText", "updatedAt")
+                                                    VALUES (:case_id, :user_id, :source_text, :updated_at)
                                                     ON CONFLICT (id) DO NOTHING
-                                                """), {"case_id": case_id, "user_id": user_id, "source_text": source_text or ""})
+                                                """), {"case_id": case_id, "user_id": user_id, "source_text": source_text or "", "updated_at": current_time})
                                                 db.commit()  # Коммитим создание записи в timelines
                                                 logger.info(f"Created and committed timeline record for case {case_id} with user_id {user_id}")
                                     else:
