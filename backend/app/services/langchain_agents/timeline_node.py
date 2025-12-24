@@ -115,10 +115,10 @@ def timeline_agent_node(
                         
                         if not timeline_exists:
                             # Создаем запись в таблице timelines (в той же транзакции)
-                            # В таблице timelines может не быть колонки case_id, используем только id
+                            # В таблице timelines есть только колонка id (без created_at)
                             db.execute(text("""
-                                INSERT INTO timelines (id, created_at)
-                                VALUES (:case_id, NOW())
+                                INSERT INTO timelines (id)
+                                VALUES (:case_id)
                                 ON CONFLICT (id) DO NOTHING
                             """), {"case_id": case_id})
                             logger.info(f"Created timeline record for case {case_id} in same transaction")
@@ -206,9 +206,10 @@ def timeline_agent_node(
                                     
                                     if not timeline_exists:
                                         # Создаем запись и коммитим отдельно
+                                        # В таблице timelines есть только колонка id (без created_at)
                                         db.execute(text("""
-                                            INSERT INTO timelines (id, created_at)
-                                            VALUES (:case_id, NOW())
+                                            INSERT INTO timelines (id)
+                                            VALUES (:case_id)
                                             ON CONFLICT (id) DO NOTHING
                                         """), {"case_id": case_id})
                                         db.commit()  # Коммитим создание записи в timelines
