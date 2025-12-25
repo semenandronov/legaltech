@@ -144,12 +144,20 @@ def ensure_schema():
     except Exception as e:
         logger.warning(f"Could not create pgvector indexes: {e}. Search may be slower.")
     
-    # Ensure tabular_review tables exist
+    # Ensure tabular_review tables exist with correct schema
     try:
         inspector = inspect(engine)
         table_names = inspector.get_table_names()
         
-        if "tabular_reviews" not in table_names:
+        if "tabular_reviews" in table_names:
+            # Check if table has correct columns
+            columns = [col['name'] for col in inspector.get_columns("tabular_reviews")]
+            if "case_id" not in columns:
+                logger.warning("tabular_reviews table exists but has wrong schema. It should be recreated manually.")
+                logger.warning("Please run: backend/migrations/fix_tabular_reviews_table.sql")
+            else:
+                logger.debug("Tabular review tables exist with correct schema")
+        else:
             logger.info("Creating tabular_review tables...")
             # Import models to ensure they're registered
             from app.models.tabular_review import (
@@ -163,8 +171,6 @@ def ensure_schema():
             TabularColumnTemplate.__table__.create(bind=engine, checkfirst=True)
             TabularDocumentStatus.__table__.create(bind=engine, checkfirst=True)
             logger.info("✅ Tabular review tables created")
-        else:
-            logger.debug("Tabular review tables already exist")
     except Exception as e:
         logger.warning(f"Could not ensure tabular_review tables: {e}", exc_info=True)
 
@@ -183,6 +189,25 @@ def init_db():
         TabularReview, TabularColumn, TabularCell,
         TabularColumnTemplate, TabularDocumentStatus
     )
+    
+    # Check if tabular_reviews table exists with wrong schema and fix it
+    try:
+        inspector = inspect(engine)
+        if "tabular_reviews" in inspector.get_table_names():
+            columns = [col['name'] for col in inspector.get_columns("tabular_reviews")]
+            if "case_id" not in columns:
+                logger.warning("⚠️  tabular_reviews table has wrong schema. Attempting to fix...")
+                # Drop and recreate the tables
+                with engine.connect() as conn:
+                    conn.execute(text("DROP TABLE IF EXISTS tabular_cells CASCADE"))
+                    conn.execute(text("DROP TABLE IF EXISTS tabular_columns CASCADE"))
+                    conn.execute(text("DROP TABLE IF EXISTS tabular_document_statuses CASCADE"))
+                    conn.execute(text("DROP TABLE IF EXISTS tabular_column_templates CASCADE"))
+                    conn.execute(text("DROP TABLE IF EXISTS tabular_reviews CASCADE"))
+                    conn.commit()
+                logger.info("Dropped old tabular_review tables. Creating new ones...")
+    except Exception as e:
+        logger.warning(f"Could not check/fix tabular_reviews table: {e}")
     
     # Create all tables
     Base.metadata.create_all(bind=engine)
