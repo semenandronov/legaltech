@@ -468,7 +468,7 @@ class TabularReviewService:
             ws.title = "Tabular Review"
             
             # Write header
-            header = ["Document"] + [col["label"] for col in data["columns"]]
+            header = ["Document"] + [col["column_label"] for col in data["columns"]]
             for col_num, value in enumerate(header, start=1):
                 cell = ws.cell(row=1, column=col_num, value=value)
                 cell.font = Font(bold=True)

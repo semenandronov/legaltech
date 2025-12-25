@@ -126,10 +126,10 @@ export const tabularReviewApi = {
     }
   },
 
-  // Get tabular review details
+  // Get tabular review details (use table-data endpoint for consistency)
   async getReview(reviewId: string): Promise<TableData> {
     try {
-      const response = await apiClient.get(`/api/tabular-review/${reviewId}`)
+      const response = await apiClient.get(`/api/tabular-review/${reviewId}/table-data`)
       return response.data
     } catch (error) {
       throw new Error(extractErrorMessage(error))
