@@ -5,6 +5,7 @@ from app.config import config
 from app.models.case import Base, Case, ChatMessage, File  # Import models to register them
 from app.models.user import User, UserSession  # Import user models to register them
 from app.models.analysis import AnalysisResult, Discrepancy, TimelineEvent, DocumentChunk  # Import analysis models to register them
+from app.models.tabular_review import TabularReview, TabularColumn, TabularCell, TabularColumnTemplate, TabularDocumentStatus  # Import tabular review models to register them
 import logging
 
 logger = logging.getLogger(__name__)

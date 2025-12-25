@@ -9,6 +9,7 @@ import DocumentsPage from './pages/DocumentsPage'
 import AnalysisPage from './pages/AnalysisPage'
 import ReportsPage from './pages/ReportsPage'
 import SettingsPage from './pages/SettingsPage'
+import TabularReviewPage from './pages/TabularReviewPage'
 import { useState, useEffect } from 'react'
 import ChatWindow from './components/ChatWindow'
 import CaseNavigation from './components/CaseOverview/CaseNavigation'
@@ -81,6 +82,14 @@ function App() {
         element={
           <ProtectedRoute>
             <ReportsPage />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/cases/:caseId/tabular-review/:reviewId?"
+        element={
+          <ProtectedRoute>
+            <TabularReviewPage />
           </ProtectedRoute>
         }
       />
