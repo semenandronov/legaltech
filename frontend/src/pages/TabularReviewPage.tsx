@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react"
+import React, { useState, useEffect, useRef } from "react"
 import { useParams, useNavigate } from "react-router-dom"
 import MainLayout from "../components/Layout/MainLayout"
 import { TabularReviewTable } from "../components/TabularReview/TabularReviewTable"
@@ -36,11 +36,12 @@ const TabularReviewPage: React.FC = () => {
     }
   } | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const loadingRef = useRef(false)
 
   useEffect(() => {
-    if (reviewId) {
+    if (reviewId && !loadingRef.current) {
       loadReviewData()
-    } else if (caseId) {
+    } else if (caseId && !reviewId && !loadingRef.current) {
       // If no reviewId, create a new review
       createNewReview()
     }
@@ -90,22 +91,26 @@ const TabularReviewPage: React.FC = () => {
   }
 
   const loadReviewData = async () => {
-    if (!reviewId) return
+    if (!reviewId || loadingRef.current) return
     
     try {
+      loadingRef.current = true
       setLoading(true)
+      setError(null)
       const data = await tabularReviewApi.getTableData(reviewId)
       setTableData(data)
       // Load selected file IDs from review
       if (data.review.selected_file_ids) {
         setSelectedFileIds(data.review.selected_file_ids)
       }
-      setError(null)
     } catch (err: any) {
+      console.error("Error loading review data:", err)
       setError(err.message || "Ошибка при загрузке данных")
-      toast.error("Не удалось загрузить данные")
+      toast.error("Не удалось загрузить данные: " + (err.message || "Неизвестная ошибка"))
+      setTableData(null) // Clear table data on error
     } finally {
       setLoading(false)
+      loadingRef.current = false
     }
   }
 
@@ -217,10 +222,49 @@ const TabularReviewPage: React.FC = () => {
   }
 
   if (!tableData || !reviewId) {
+    // Show loading only if we're actually loading, not if there's an error
+    if (loading) {
+      return (
+        <MainLayout>
+          <div className="flex items-center justify-center h-full">
+            <Spinner size="lg" />
+          </div>
+        </MainLayout>
+      )
+    }
+    // If not loading but no data, show error or empty state
+    if (error) {
+      return (
+        <MainLayout>
+          <Card className="p-6">
+            <div className="text-center">
+              <h2 className="text-xl font-semibold mb-2">Ошибка</h2>
+              <p className="text-muted-foreground mb-4">{error}</p>
+              <div className="flex gap-2 justify-center">
+                <Button onClick={() => loadReviewData()}>
+                  Попробовать снова
+                </Button>
+                <Button variant="outline" onClick={() => navigate(`/cases/${caseId}`)}>
+                  Вернуться к делу
+                </Button>
+              </div>
+            </div>
+          </Card>
+        </MainLayout>
+      )
+    }
+    // If no error but no data, show empty state
     return (
       <MainLayout>
         <div className="flex items-center justify-center h-full">
-          <Spinner size="lg" />
+          <Card className="p-6">
+            <div className="text-center">
+              <p className="text-muted-foreground mb-4">Нет данных для отображения</p>
+              <Button onClick={() => navigate(`/cases/${caseId}`)}>
+                Вернуться к делу
+              </Button>
+            </div>
+          </Card>
         </div>
       </MainLayout>
     )
