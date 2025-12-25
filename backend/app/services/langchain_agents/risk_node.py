@@ -64,8 +64,10 @@ def risk_agent_node(
         if not rag_service:
             raise ValueError("RAG service required for risk analysis")
         
-        # Используем helper для прямого вызова LLM с RAG
-        from app.services.langchain_agents.llm_helper import direct_llm_call_with_rag
+        # Используем helper для прямого вызова LLM с RAG и структурированного парсинга
+        from app.services.langchain_agents.llm_helper import direct_llm_call_with_rag, extract_json_from_response, parse_with_fixing
+        from app.services.langchain_parsers import ParserService, RiskModel
+        from typing import List
         
         # Get case info
         case_info = ""
@@ -83,7 +85,12 @@ def risk_agent_node(
 Найденные противоречия:
 {discrepancies_text}
 
-Оцени риски по категориям: юридические, финансовые, репутационные, процессуальные."""
+Извлеки конкретные риски с обоснованием. Верни результат в формате JSON массива объектов с полями: risk_name, risk_category, probability, impact, description, evidence, recommendation, reasoning, confidence."""
+        
+        from app.services.langchain_agents.callbacks import AnalysisCallbackHandler
+        
+        # Create callback for logging
+        callback = AnalysisCallbackHandler(agent_name="risk")
         
         prompt = get_agent_prompt("risk")
         response_text = direct_llm_call_with_rag(
@@ -93,17 +100,68 @@ def risk_agent_node(
             rag_service=rag_service,
             db=db,
             k=20,
-            temperature=0.1
+            temperature=0.1,
+            callbacks=[callback]
         )
+        
+        # Parse risks with fixing parser
+        parsed_risks = None
+        try:
+            # Try to use structured parsing with fixing
+            llm = ChatYandexGPT(
+                model=config.YANDEX_GPT_MODEL or "yandexgpt-lite",
+                temperature=0.1,
+            )
+            parsed_risks = parse_with_fixing(response_text, RiskModel, llm=llm, max_retries=3, is_list=True)
+        except Exception as e:
+            logger.warning(f"Could not parse risks with fixing parser: {e}, trying manual parsing")
+        
+        # Fallback to manual parsing
+        if not parsed_risks:
+            try:
+                risk_data = extract_json_from_response(response_text)
+                if risk_data:
+                    parsed_risks = ParserService.parse_risks(
+                        json.dumps(risk_data) if isinstance(risk_data, (list, dict)) else str(risk_data)
+                    )
+                else:
+                    parsed_risks = ParserService.parse_risks(response_text)
+            except Exception as e:
+                logger.error(f"Error parsing risks: {e}")
+                parsed_risks = []
         
         # Save to database
         result_id = None
         if db:
+            # Convert risks to dict for storage
+            risks_data = []
+            if parsed_risks:
+                for risk in parsed_risks:
+                    if hasattr(risk, 'dict'):
+                        risks_data.append(risk.dict())
+                    elif hasattr(risk, 'model_dump'):
+                        risks_data.append(risk.model_dump())
+                    elif isinstance(risk, dict):
+                        risks_data.append(risk)
+                    else:
+                        risks_data.append({
+                            "risk_name": getattr(risk, 'risk_name', ''),
+                            "risk_category": getattr(risk, 'risk_category', ''),
+                            "probability": getattr(risk, 'probability', 'MEDIUM'),
+                            "impact": getattr(risk, 'impact', 'MEDIUM'),
+                            "description": getattr(risk, 'description', ''),
+                            "evidence": getattr(risk, 'evidence', []),
+                            "recommendation": getattr(risk, 'recommendation', ''),
+                            "reasoning": getattr(risk, 'reasoning', ''),
+                            "confidence": getattr(risk, 'confidence', 0.8)
+                        })
+            
             risk_analysis_result = AnalysisResult(
                 case_id=case_id,
                 analysis_type="risk_analysis",
                 result_data={
-                    "analysis": response_text,
+                    "risks": risks_data,
+                    "total_risks": len(risks_data),
                     "discrepancies": discrepancy_result
                 },
                 status="completed"
@@ -112,11 +170,25 @@ def risk_agent_node(
             db.commit()
             result_id = risk_analysis_result.id
         
-        logger.info(f"Risk agent: Completed analysis for case {case_id}")
+        logger.info(f"Risk agent: Completed analysis for case {case_id}, found {len(parsed_risks) if parsed_risks else 0} risks")
         
         # Create result
         result_data = {
-            "analysis": response_text,
+            "risks": [
+                {
+                    "risk_name": r.risk_name if hasattr(r, 'risk_name') else r.get('risk_name', ''),
+                    "risk_category": r.risk_category if hasattr(r, 'risk_category') else r.get('risk_category', ''),
+                    "probability": r.probability if hasattr(r, 'probability') else r.get('probability', 'MEDIUM'),
+                    "impact": r.impact if hasattr(r, 'impact') else r.get('impact', 'MEDIUM'),
+                    "description": r.description if hasattr(r, 'description') else r.get('description', ''),
+                    "evidence": r.evidence if hasattr(r, 'evidence') else r.get('evidence', []),
+                    "recommendation": r.recommendation if hasattr(r, 'recommendation') else r.get('recommendation', ''),
+                    "reasoning": r.reasoning if hasattr(r, 'reasoning') else r.get('reasoning', ''),
+                    "confidence": r.confidence if hasattr(r, 'confidence') else r.get('confidence', 0.8)
+                }
+                for r in (parsed_risks if parsed_risks else [])
+            ],
+            "total_risks": len(parsed_risks) if parsed_risks else 0,
             "discrepancies": discrepancy_result,
             "result_id": result_id
         }

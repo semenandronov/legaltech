@@ -58,6 +58,10 @@ def discrepancy_agent_node(
         
         # Используем helper для прямого вызова LLM с RAG
         from app.services.langchain_agents.llm_helper import direct_llm_call_with_rag, extract_json_from_response
+        from app.services.langchain_agents.callbacks import AnalysisCallbackHandler
+        
+        # Create callback for logging
+        callback = AnalysisCallbackHandler(agent_name="discrepancy")
         
         prompt = get_agent_prompt("discrepancy")
         user_query = f"Найди все противоречия и несоответствия между документами дела {case_id}."
@@ -69,7 +73,8 @@ def discrepancy_agent_node(
             rag_service=rag_service,
             db=db,
             k=30,
-            temperature=0.1
+            temperature=0.1,
+            callbacks=[callback]
         )
         
         # Try to extract JSON from response
@@ -125,6 +130,15 @@ def discrepancy_agent_node(
                 llm_service = LLMService()
                 response = llm_service.generate(system_prompt, user_prompt, temperature=0)
                 parsed_discrepancies = ParserService.parse_discrepancies(response)
+        
+        # Deduplicate discrepancies
+        if parsed_discrepancies:
+            from app.services.deduplication import deduplicate_discrepancies
+            try:
+                parsed_discrepancies = deduplicate_discrepancies(parsed_discrepancies, similarity_threshold=0.80)
+                logger.info(f"After deduplication: {len(parsed_discrepancies)} discrepancies")
+            except Exception as e:
+                logger.warning(f"Error during deduplication: {e}, continuing with original discrepancies")
         
         # Save discrepancies to database
         saved_discrepancies = []

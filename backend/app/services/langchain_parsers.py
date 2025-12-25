@@ -1,10 +1,12 @@
 """LangChain output parsers for Legal AI Vault"""
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, Annotated
 import logging
 
 from langchain_core.prompts import PromptTemplate
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator, model_validator, BeforeValidator
 from datetime import datetime
+
+from app.services.date_validator import parse_and_normalize_date, validate_date_sequence
 
 logger = logging.getLogger(__name__)
 
@@ -35,9 +37,14 @@ except ImportError:
 
 
 # Pydantic models for structured outputs
+
+# Annotated type for date validation
+DateStr = Annotated[str, BeforeValidator(parse_and_normalize_date)]
+
+
 class TimelineEventModel(BaseModel):
-    """Model for timeline event"""
-    date: str = Field(description="Date of the event in YYYY-MM-DD format or description")
+    """Model for timeline event with date validation"""
+    date: DateStr = Field(description="Date of the event in YYYY-MM-DD format or description")
     event_type: str = Field(description="Type of event (e.g., 'contract_signed', 'payment', 'deadline')")
     description: str = Field(description="Description of the event")
     source_document: str = Field(description="Source document filename")
@@ -45,6 +52,60 @@ class TimelineEventModel(BaseModel):
     source_line: Optional[int] = Field(None, description="Line number in source document")
     reasoning: Optional[str] = Field(None, description="Объяснение почему это событие было извлечено из документа")
     confidence: Optional[float] = Field(0.8, description="Уверенность в извлечении события (0-1)", ge=0.0, le=1.0)
+    
+    @field_validator('date')
+    @classmethod
+    def validate_date_format(cls, v: str) -> str:
+        """
+        Validate and normalize date format.
+        
+        Ensures date is in YYYY-MM-DD format after parsing.
+        """
+        if not v:
+            raise ValueError("Date cannot be empty")
+        
+        # Check if already in correct format
+        try:
+            datetime.strptime(v, "%Y-%m-%d")
+            return v
+        except ValueError:
+            # Try to normalize
+            try:
+                normalized = parse_and_normalize_date(v)
+                # Verify normalized date
+                datetime.strptime(normalized, "%Y-%m-%d")
+                return normalized
+            except Exception as e:
+                logger.warning(f"Could not normalize date '{v}': {e}")
+                # Return as-is, will be caught by model validator
+                return v
+    
+    @field_validator('date')
+    @classmethod
+    def validate_date_reasonable(cls, v: str) -> str:
+        """
+        Validate that date is within reasonable bounds.
+        """
+        try:
+            event_date = datetime.strptime(v, "%Y-%m-%d").date()
+            if event_date.year < 1900:
+                raise ValueError(f"Date {v} is before 1900 (likely parsing error)")
+            if event_date.year > 2100:
+                raise ValueError(f"Date {v} is after 2100 (likely parsing error)")
+        except ValueError as e:
+            if "parsing error" in str(e) or "after 2100" in str(e):
+                raise
+            # If it's a format error, let it pass (will be caught elsewhere)
+            pass
+        return v
+    
+    @model_validator(mode='after')
+    def validate_date_context(self):
+        """
+        Validate date in context of other fields.
+        Can be used for cross-field validation if needed.
+        """
+        return self
 
 
 class DiscrepancyModel(BaseModel):
@@ -102,6 +163,60 @@ class PrivilegeCheckModel(BaseModel):
     withhold_recommendation: bool = Field(description="Рекомендация не раскрывать документ")
 
 
+class RiskModel(BaseModel):
+    """Model for risk analysis with Pydantic validators"""
+    risk_name: str = Field(description="Название риска")
+    risk_category: str = Field(description="Категория риска: legal, financial, reputational, procedural")
+    probability: str = Field(description="Вероятность риска: HIGH, MEDIUM, LOW")
+    impact: str = Field(description="Влияние риска: HIGH, MEDIUM, LOW")
+    description: str = Field(description="Описание риска")
+    evidence: List[str] = Field(description="Список документов-доказательств риска")
+    recommendation: str = Field(description="Рекомендации по митигации риска")
+    reasoning: str = Field(description="Обоснование риска с ссылками на документы")
+    confidence: float = Field(description="Уверенность в оценке риска (0-1)", ge=0.0, le=1.0)
+    
+    @field_validator('risk_category')
+    @classmethod
+    def validate_category(cls, v: str) -> str:
+        """Validate risk category"""
+        valid_categories = ['legal', 'financial', 'reputational', 'procedural']
+        v_lower = v.lower()
+        if v_lower not in valid_categories:
+            logger.warning(f"Invalid risk category '{v}', using 'legal' as default")
+            return 'legal'
+        return v_lower
+    
+    @field_validator('probability')
+    @classmethod
+    def validate_probability(cls, v: str) -> str:
+        """Validate probability level"""
+        valid_levels = ['HIGH', 'MEDIUM', 'LOW']
+        v_upper = v.upper()
+        if v_upper not in valid_levels:
+            logger.warning(f"Invalid probability '{v}', using 'MEDIUM' as default")
+            return 'MEDIUM'
+        return v_upper
+    
+    @field_validator('impact')
+    @classmethod
+    def validate_impact(cls, v: str) -> str:
+        """Validate impact level"""
+        valid_levels = ['HIGH', 'MEDIUM', 'LOW']
+        v_upper = v.upper()
+        if v_upper not in valid_levels:
+            logger.warning(f"Invalid impact '{v}', using 'MEDIUM' as default")
+            return 'MEDIUM'
+        return v_upper
+    
+    @field_validator('evidence')
+    @classmethod
+    def validate_evidence_not_empty(cls, v: List[str]) -> List[str]:
+        """Validate that evidence list is not empty"""
+        if not v or len(v) == 0:
+            raise ValueError("Evidence list cannot be empty - risk must be supported by documents")
+        return v
+
+
 class ParserService:
     """Service for output parsing"""
     
@@ -128,6 +243,14 @@ class ParserService:
             logger.warning("PydanticOutputParser not available")
             return None
         return PydanticOutputParser(pydantic_object=KeyFactModel)
+    
+    @staticmethod
+    def create_risk_parser() -> Optional[PydanticOutputParser]:
+        """Create parser for risks"""
+        if PydanticOutputParser is None:
+            logger.warning("PydanticOutputParser not available")
+            return None
+        return PydanticOutputParser(pydantic_object=RiskModel)
     
     @staticmethod
     def create_list_parser() -> Optional[CommaSeparatedListOutputParser]:
@@ -405,6 +528,53 @@ class ParserService:
             logger.error(f"Error parsing key facts: {e}")
             # Fallback: try to parse with parser if available
             parser = ParserService.create_key_facts_parser()
+            if parser is not None:
+                try:
+                    parsed = parser.parse(text)
+                    if isinstance(parsed, list):
+                        return parsed
+                    return [parsed]
+                except:
+                    pass
+            return []
+    
+    @staticmethod
+    def parse_risks(text: str) -> List[RiskModel]:
+        """
+        Parse risks from LLM output
+        
+        Args:
+            text: LLM output text
+            
+        Returns:
+            List of RiskModel objects
+        """
+        try:
+            import json
+            # Extract JSON from text
+            if "```json" in text:
+                text = text.split("```json")[1].split("```")[0].strip()
+            elif "```" in text:
+                text = text.split("```")[1].split("```")[0].strip()
+            
+            data = json.loads(text)
+            
+            if isinstance(data, dict):
+                data = [data]
+            
+            risks = []
+            for item in data:
+                try:
+                    risk = RiskModel(**item)
+                    risks.append(risk)
+                except Exception as e:
+                    logger.warning(f"Failed to parse risk: {e}, data: {item}")
+            
+            return risks
+        except Exception as e:
+            logger.error(f"Error parsing risks: {e}")
+            # Fallback: try to parse with parser if available
+            parser = ParserService.create_risk_parser()
             if parser is not None:
                 try:
                     parsed = parser.parse(text)

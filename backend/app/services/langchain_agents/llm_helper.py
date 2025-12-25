@@ -1,6 +1,9 @@
 """Helper functions for direct LLM calls without agents (YandexGPT doesn't support tools)"""
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, Type
 from langchain_core.messages import SystemMessage, HumanMessage
+from langchain_core.output_parsers import OutputFixingParser, RetryOutputParser, PydanticOutputParser
+from langchain_core.exceptions import OutputParserException
+from pydantic import BaseModel
 from app.services.yandex_llm import ChatYandexGPT
 from app.services.rag_service import RAGService
 from app.config import config
@@ -19,7 +22,8 @@ def direct_llm_call_with_rag(
     db: Optional[Session] = None,
     k: int = 20,
     temperature: float = 0.1,
-    model: Optional[str] = None
+    model: Optional[str] = None,
+    callbacks: Optional[List[Any]] = None
 ) -> str:
     """
     Прямой вызов LLM с RAG контекстом (без агентов и инструментов)
@@ -55,13 +59,32 @@ def direct_llm_call_with_rag(
         ]
     else:
         # Формируем промпт с контекстом
-        sources_text = rag_service.format_sources_for_prompt(relevant_docs)
+        # Filter documents by relevance if similarity_score is available
+        filtered_docs = []
+        for doc in relevant_docs:
+            metadata = doc.metadata if hasattr(doc, 'metadata') else {}
+            similarity_score = metadata.get('similarity_score', 0.0)
+            # Keep documents with similarity > 0.5 or if no score is available
+            if similarity_score is None or similarity_score > 0.5:
+                filtered_docs.append(doc)
+        
+        # Use filtered docs or all docs if filtering removed everything
+        docs_to_use = filtered_docs if filtered_docs else relevant_docs
+        
+        # Format sources with improved structure
+        sources_text = rag_service.format_sources_for_prompt(docs_to_use)
+        
+        # Improved prompt structure
         full_user_prompt = f"""{user_query}
 
-Контекст из документов:
+=== КОНТЕКСТ ИЗ ДОКУМЕНТОВ ===
 {sources_text}
 
-Верни результат в формате JSON, если это требуется задачей."""
+=== ИНСТРУКЦИИ ===
+- Внимательно проанализируй контекст из документов выше
+- Извлекай информацию только из предоставленного контекста
+- Указывай точные источники (файл, страница, строка) для каждого факта
+- Верни результат в формате JSON, если это требуется задачей"""
         
         messages = [
             SystemMessage(content=system_prompt),
@@ -70,7 +93,10 @@ def direct_llm_call_with_rag(
     
     # Прямой вызов LLM
     try:
-        response = llm.invoke(messages)
+        if callbacks:
+            response = llm.invoke(messages, config={"callbacks": callbacks})
+        else:
+            response = llm.invoke(messages)
         response_text = response.content if hasattr(response, 'content') else str(response)
         return response_text
     except Exception as e:
@@ -121,5 +147,111 @@ def extract_json_from_response(response_text: str) -> Optional[Any]:
         return json.loads(response_text.strip())
     except Exception as e:
         logger.debug(f"Could not extract JSON from response: {e}")
+        return None
+
+
+def create_fixing_parser(
+    pydantic_model: Type[BaseModel],
+    llm: Optional[ChatYandexGPT] = None,
+    max_retries: int = 3
+) -> RetryOutputParser:
+    """
+    Create a parser with automatic error fixing and retry logic.
+    
+    Args:
+        pydantic_model: Pydantic model class for structured output
+        llm: LLM instance for fixing errors (if None, creates new one)
+        max_retries: Maximum number of retry attempts
+        
+    Returns:
+        RetryOutputParser with OutputFixingParser wrapper
+    """
+    if llm is None:
+        llm = ChatYandexGPT(
+            model=config.YANDEX_GPT_MODEL or "yandexgpt-lite",
+            temperature=0.1,
+        )
+    
+    # Create base parser
+    base_parser = PydanticOutputParser(pydantic_object=pydantic_model)
+    
+    # Wrap in fixing parser (uses LLM to fix parsing errors)
+    try:
+        fixing_parser = OutputFixingParser.from_llm(parser=base_parser, llm=llm)
+    except Exception as e:
+        logger.warning(f"Could not create OutputFixingParser, using base parser: {e}")
+        fixing_parser = base_parser
+    
+    # Wrap in retry parser (retries on errors)
+    try:
+        retry_parser = RetryOutputParser.from_llm(
+            parser=fixing_parser,
+            llm=llm,
+            max_retries=max_retries
+        )
+    except Exception as e:
+        logger.warning(f"Could not create RetryOutputParser, using fixing parser: {e}")
+        retry_parser = fixing_parser
+    
+    return retry_parser
+
+
+def parse_with_fixing(
+    response_text: str,
+    pydantic_model: Type[BaseModel],
+    llm: Optional[ChatYandexGPT] = None,
+    max_retries: int = 3,
+    is_list: bool = True
+) -> Optional[Any]:
+    """
+    Parse LLM response with automatic error fixing and retry.
+    
+    Args:
+        response_text: LLM response text
+        pydantic_model: Pydantic model class for structured output
+        llm: LLM instance for fixing errors
+        max_retries: Maximum number of retry attempts
+        is_list: Whether to expect a list of models (default: True)
+        
+    Returns:
+        Parsed Pydantic model instance(s) or None if parsing failed
+        Returns list if is_list=True, single instance if is_list=False
+    """
+    try:
+        if is_list:
+            # For list models, we need to parse as list
+            from typing import List
+            from langchain_core.output_parsers import PydanticOutputParser
+            list_parser = PydanticOutputParser(pydantic_object=List[pydantic_model])
+            fixing_parser = OutputFixingParser.from_llm(parser=list_parser, llm=llm) if llm else list_parser
+            retry_parser = RetryOutputParser.from_llm(parser=fixing_parser, llm=llm, max_retries=max_retries) if llm else fixing_parser
+            return retry_parser.parse(response_text)
+        else:
+            parser = create_fixing_parser(pydantic_model, llm, max_retries)
+            return parser.parse(response_text)
+    except OutputParserException as e:
+        logger.warning(f"Parser error after retries: {e}")
+        # Fallback to manual JSON extraction
+        json_data = extract_json_from_response(response_text)
+        if json_data:
+            try:
+                if isinstance(json_data, list):
+                    if is_list:
+                        # Return list of parsed models
+                        return [pydantic_model(**item if isinstance(item, dict) else item) for item in json_data]
+                    else:
+                        # Return first item
+                        return pydantic_model(**json_data[0] if isinstance(json_data[0], dict) else json_data[0])
+                elif isinstance(json_data, dict):
+                    if is_list:
+                        # Single dict, wrap in list
+                        return [pydantic_model(**json_data)]
+                    else:
+                        return pydantic_model(**json_data)
+            except Exception as parse_error:
+                logger.error(f"Failed to parse JSON data into model: {parse_error}")
+        return None
+    except Exception as e:
+        logger.error(f"Unexpected error in parse_with_fixing: {e}", exc_info=True)
         return None
 

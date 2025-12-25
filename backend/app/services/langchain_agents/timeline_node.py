@@ -59,6 +59,10 @@ def timeline_agent_node(
         
         # Используем helper для прямого вызова LLM с RAG
         from app.services.langchain_agents.llm_helper import direct_llm_call_with_rag, extract_json_from_response
+        from app.services.langchain_agents.callbacks import AnalysisCallbackHandler
+        
+        # Create callback for logging
+        callback = AnalysisCallbackHandler(agent_name="timeline")
         
         prompt = get_agent_prompt("timeline")
         user_query = f"Извлеки все даты и события из документов дела {case_id}. Верни результат в формате JSON массива событий с полями: date, event_type, description, source_document, source_page."
@@ -69,8 +73,9 @@ def timeline_agent_node(
             user_query=user_query,
             rag_service=rag_service,
             db=db,
-            k=20,
-            temperature=0.1
+            k=30,  # Increased from 20 to 30 for better context
+            temperature=0.1,
+            callbacks=[callback]
         )
         
         # Извлекаем JSON из ответа и парсим события
@@ -85,6 +90,22 @@ def timeline_agent_node(
             # Если не удалось извлечь JSON, пробуем парсить весь текст
             logger.warning(f"Could not extract JSON from timeline response, trying to parse full text")
             parsed_events = ParserService.parse_timeline_events(response_text)
+        
+        # Validate dates
+        if parsed_events:
+            from app.services.date_validator import validate_date_sequence
+            validation_errors = validate_date_sequence(parsed_events)
+            if validation_errors:
+                logger.warning(f"Date validation errors found: {validation_errors}")
+        
+        # Deduplicate events
+        if parsed_events:
+            from app.services.deduplication import deduplicate_timeline_events
+            try:
+                parsed_events = deduplicate_timeline_events(parsed_events, similarity_threshold=0.85)
+                logger.info(f"After deduplication: {len(parsed_events)} events")
+            except Exception as e:
+                logger.warning(f"Error during deduplication: {e}, continuing with original events")
         
         # Save events to database
         saved_events = []

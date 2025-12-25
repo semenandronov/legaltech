@@ -39,6 +39,7 @@ class Case(Base):
     document_classifications = relationship("DocumentClassification", back_populates="case", cascade="all, delete-orphan")
     extracted_entities = relationship("ExtractedEntity", back_populates="case", cascade="all, delete-orphan")
     privilege_checks = relationship("PrivilegeCheck", back_populates="case", cascade="all, delete-orphan")
+    risks = relationship("Risk", back_populates="case", cascade="all, delete-orphan")
 
 
 class ChatMessage(Base):

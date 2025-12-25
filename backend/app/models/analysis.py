@@ -185,3 +185,24 @@ class RelationshipEdge(Base):
     
     # Relationships
     case = relationship("Case")
+
+
+class Risk(Base):
+    """Risk model - stores identified risks for a case"""
+    __tablename__ = "risks"
+    
+    id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    case_id = Column(String, ForeignKey("cases.id", ondelete="CASCADE"), nullable=False, index=True)
+    risk_name = Column(String(255), nullable=False)  # Название риска
+    risk_category = Column(String(50), nullable=False)  # legal, financial, reputational, procedural
+    probability = Column(String(20), nullable=False)  # HIGH, MEDIUM, LOW
+    impact = Column(String(20), nullable=False)  # HIGH, MEDIUM, LOW
+    description = Column(Text, nullable=False)  # Описание риска
+    evidence = Column(JSON, nullable=False)  # Список документов-доказательств
+    recommendation = Column(Text, nullable=False)  # Рекомендации по митигации
+    reasoning = Column(Text, nullable=False)  # Обоснование риска
+    confidence = Column(String(10), nullable=True)  # Уверенность (0-1)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    
+    # Relationship
+    case = relationship("Case", back_populates="risks")
