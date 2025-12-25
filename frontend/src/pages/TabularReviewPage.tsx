@@ -28,7 +28,7 @@ const TabularReviewPage: React.FC = () => {
       // If no reviewId, create a new review
       createNewReview()
     }
-  }, [reviewId, caseId])
+  }, [reviewId, caseId]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const createNewReview = async () => {
     if (!caseId) return

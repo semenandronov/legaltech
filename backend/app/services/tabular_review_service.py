@@ -177,8 +177,8 @@ class TabularReviewService:
             "columns": [
                 {
                     "id": col.id,
-                    "label": col.column_label,
-                    "type": col.column_type,
+                    "column_label": col.column_label,
+                    "column_type": col.column_type,
                     "prompt": col.prompt,
                     "order_index": col.order_index,
                 }
@@ -440,7 +440,7 @@ class TabularReviewService:
         writer = csv.writer(output)
         
         # Write header
-        header = ["Document"] + [col["label"] for col in data["columns"]]
+        header = ["Document"] + [col["column_label"] for col in data["columns"]]
         writer.writerow(header)
         
         # Write rows
