@@ -143,11 +143,51 @@ def ensure_schema():
                         
     except Exception as e:
         logger.warning(f"Could not create pgvector indexes: {e}. Search may be slower.")
+    
+    # Ensure tabular_review tables exist
+    try:
+        inspector = inspect(engine)
+        table_names = inspector.get_table_names()
+        
+        if "tabular_reviews" not in table_names:
+            logger.info("Creating tabular_review tables...")
+            # Import models to ensure they're registered
+            from app.models.tabular_review import (
+                TabularReview, TabularColumn, TabularCell,
+                TabularColumnTemplate, TabularDocumentStatus
+            )
+            # Create only tabular_review tables
+            TabularReview.__table__.create(bind=engine, checkfirst=True)
+            TabularColumn.__table__.create(bind=engine, checkfirst=True)
+            TabularCell.__table__.create(bind=engine, checkfirst=True)
+            TabularColumnTemplate.__table__.create(bind=engine, checkfirst=True)
+            TabularDocumentStatus.__table__.create(bind=engine, checkfirst=True)
+            logger.info("✅ Tabular review tables created")
+        else:
+            logger.debug("Tabular review tables already exist")
+    except Exception as e:
+        logger.warning(f"Could not ensure tabular_review tables: {e}", exc_info=True)
 
 
 def init_db():
     """Initialize database tables"""
+    # Import all models to ensure they are registered with Base
+    from app.models.case import Case, ChatMessage, File
+    from app.models.user import User, UserSession
+    from app.models.analysis import (
+        AnalysisResult, Discrepancy, TimelineEvent, DocumentChunk,
+        DocumentClassification, ExtractedEntity, PrivilegeCheck,
+        RelationshipNode, RelationshipEdge, Risk
+    )
+    from app.models.tabular_review import (
+        TabularReview, TabularColumn, TabularCell,
+        TabularColumnTemplate, TabularDocumentStatus
+    )
+    
+    # Create all tables
     Base.metadata.create_all(bind=engine)
+    logger.info("✅ All database tables created")
+    
     ensure_schema()
     
     # Setup LangGraph checkpointer tables
