@@ -198,16 +198,15 @@ def init_db():
             if "case_id" not in columns:
                 logger.warning("⚠️  tabular_reviews table has wrong schema. Attempting to fix...")
                 # Drop and recreate the tables
-                with engine.connect() as conn:
+                with engine.begin() as conn:
                     conn.execute(text("DROP TABLE IF EXISTS tabular_cells CASCADE"))
                     conn.execute(text("DROP TABLE IF EXISTS tabular_columns CASCADE"))
                     conn.execute(text("DROP TABLE IF EXISTS tabular_document_statuses CASCADE"))
                     conn.execute(text("DROP TABLE IF EXISTS tabular_column_templates CASCADE"))
                     conn.execute(text("DROP TABLE IF EXISTS tabular_reviews CASCADE"))
-                    conn.commit()
                 logger.info("Dropped old tabular_review tables. Creating new ones...")
     except Exception as e:
-        logger.warning(f"Could not check/fix tabular_reviews table: {e}")
+        logger.warning(f"Could not check/fix tabular_reviews table: {e}", exc_info=True)
     
     # Create all tables
     Base.metadata.create_all(bind=engine)
