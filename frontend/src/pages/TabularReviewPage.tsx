@@ -19,7 +19,7 @@ const TabularReviewPage: React.FC = () => {
   const navigate = useNavigate()
   
   const [tableData, setTableData] = useState<TableData | null>(null)
-  const [loading, setLoading] = useState(true)
+  const [loading, setLoading] = useState(false) // Start with false, will be set to true when actually loading
   const [processing, setProcessing] = useState(false)
   const [showColumnBuilder, setShowColumnBuilder] = useState(false)
   const [showDocumentSelector, setShowDocumentSelector] = useState(false)
@@ -42,8 +42,13 @@ const TabularReviewPage: React.FC = () => {
     if (reviewId && !loadingRef.current) {
       loadReviewData()
     } else if (caseId && !reviewId && !loadingRef.current) {
-      // If no reviewId, create a new review
+      // If no reviewId, show document selector to create new review
+      setLoading(false) // No loading needed for new review creation
       createNewReview()
+    } else if (!caseId) {
+      // No caseId, can't do anything
+      setLoading(false)
+      setError("Case ID не найден")
     }
   }, [reviewId, caseId]) // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -221,8 +226,57 @@ const TabularReviewPage: React.FC = () => {
     )
   }
 
+  // If no reviewId, show interface to create new review
+  if (!reviewId && caseId) {
+    return (
+      <MainLayout>
+        <div className="flex flex-col h-full">
+          <div className="border-b bg-background p-4">
+            <div className="flex items-center gap-4">
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => navigate(`/cases/${caseId}`)}
+              >
+                <ArrowLeft className="w-4 h-4 mr-2" />
+                Назад к делу
+              </Button>
+              <h1 className="text-2xl font-bold">Создать Tabular Review</h1>
+            </div>
+          </div>
+          <div className="flex-1 flex items-center justify-center p-8">
+            <Card className="p-6 max-w-md w-full">
+              <div className="text-center">
+                <h3 className="text-lg font-semibold mb-2">
+                  Выберите документы для таблицы
+                </h3>
+                <p className="text-muted-foreground mb-4">
+                  Выберите документы из дела, которые будут включены в Tabular Review
+                </p>
+                <Button onClick={() => setShowDocumentSelector(true)}>
+                  Выбрать документы
+                </Button>
+              </div>
+            </Card>
+          </div>
+          {caseId && (
+            <DocumentSelector
+              isOpen={showDocumentSelector}
+              onClose={() => setShowDocumentSelector(false)}
+              onConfirm={handleDocumentSelectorConfirm}
+              reviewId=""
+              initialSelectedIds={[]}
+              caseId={caseId}
+            />
+          )}
+        </div>
+      </MainLayout>
+    )
+  }
+
+  // If we have reviewId but no tableData yet
   if (!tableData || !reviewId) {
-    // Show loading only if we're actually loading, not if there's an error
+    // Show loading only if we're actually loading
     if (loading) {
       return (
         <MainLayout>
