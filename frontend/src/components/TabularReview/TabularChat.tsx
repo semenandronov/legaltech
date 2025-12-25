@@ -24,7 +24,7 @@ interface TabularChatProps {
 
 export const TabularChat: React.FC<TabularChatProps> = ({
   reviewId,
-  caseId,
+  caseId: _caseId,
   tableData,
   onDocumentClick,
 }) => {

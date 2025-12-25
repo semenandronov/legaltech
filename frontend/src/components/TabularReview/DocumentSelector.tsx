@@ -30,7 +30,7 @@ export const DocumentSelector: React.FC<DocumentSelectorProps> = ({
   onConfirm,
   reviewId,
   initialSelectedIds = [],
-  caseId,
+  caseId: _caseId,
 }) => {
   const [documents, setDocuments] = useState<Document[]>([])
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set(initialSelectedIds))

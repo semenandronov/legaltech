@@ -27,7 +27,7 @@ export const TabularDocumentViewer: React.FC<TabularDocumentViewerProps> = ({
   caseId,
   fileType: propFileType,
   cellData,
-  onClose,
+  onClose: _onClose,
 }) => {
   const [documentText, setDocumentText] = useState<string>("")
   const [loading, setLoading] = useState(true)
