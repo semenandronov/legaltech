@@ -1,7 +1,6 @@
-// Import the existing apiClient from api.ts
-// We'll use axios directly here since api.ts exports functions, not the client
-import axios, { AxiosError } from 'axios'
+// Import the existing extractErrorMessage from api.ts
 import { extractErrorMessage } from './api'
+import axios from 'axios'
 
 const BASE_URL = import.meta.env.VITE_API_URL || ''
 
@@ -12,7 +11,7 @@ const apiClient = axios.create({
 // Add auth token to requests
 apiClient.interceptors.request.use((config) => {
   const token = localStorage.getItem('access_token')
-  if (token) {
+  if (token && config.headers) {
     config.headers.Authorization = `Bearer ${token}`
   }
   return config
@@ -21,7 +20,7 @@ apiClient.interceptors.request.use((config) => {
 // Response interceptor for error handling
 apiClient.interceptors.response.use(
   (response) => response,
-  async (error: AxiosError) => {
+  async (error) => {
     if (error.response?.status === 401) {
       // Try to refresh token
       const refreshToken = localStorage.getItem('refresh_token')
@@ -35,6 +34,9 @@ apiClient.interceptors.response.use(
           
           // Retry original request
           if (error.config) {
+            if (!error.config.headers) {
+              error.config.headers = {}
+            }
             error.config.headers.Authorization = `Bearer ${access_token}`
             return apiClient(error.config)
           }
@@ -49,7 +51,6 @@ apiClient.interceptors.response.use(
     return Promise.reject(error)
   }
 )
-import { extractErrorMessage } from './api'
 
 // Types
 export interface TabularReview {

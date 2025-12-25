@@ -13,16 +13,13 @@ import {
   getSortedRowModel,
   useReactTable,
 } from "@tanstack/react-table"
-import { ArrowUpDown, ChevronDown, MoreHorizontal, FileText, Expand } from "lucide-react"
+import { ArrowUpDown, ChevronDown, FileText, Expand } from "lucide-react"
 
 import { Button } from "@/components/UI/Button"
 import {
   DropdownMenu,
   DropdownMenuCheckboxItem,
   DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuLabel,
-  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/UI/dropdown-menu"
 import Input from "@/components/UI/Input"
@@ -51,10 +48,9 @@ interface TabularReviewTableProps {
     columns: TabularColumn[]
     rows: TabularRow[]
   }
-  onRefresh?: () => void
 }
 
-export function TabularReviewTable({ reviewId, tableData, onRefresh }: TabularReviewTableProps) {
+export function TabularReviewTable({ reviewId, tableData }: TabularReviewTableProps) {
   const [sorting, setSorting] = React.useState<SortingState>([])
   const [columnFilters, setColumnFilters] = React.useState<ColumnFiltersState>([])
   const [columnVisibility, setColumnVisibility] = React.useState<VisibilityState>({})

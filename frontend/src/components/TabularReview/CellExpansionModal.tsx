@@ -1,4 +1,3 @@
-import React from "react"
 import Modal from "@/components/UI/Modal"
 import { TabularCell, CellDetails } from "@/services/tabularReviewApi"
 import { Badge } from "@/components/UI/Badge"

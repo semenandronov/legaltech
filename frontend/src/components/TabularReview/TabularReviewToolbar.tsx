@@ -1,4 +1,3 @@
-import React from "react"
 import { Button } from "@/components/UI/Button"
 import {
   DropdownMenu,
@@ -16,7 +15,6 @@ import {
 } from "lucide-react"
 
 interface TabularReviewToolbarProps {
-  reviewId: string
   onAddDocuments?: () => void
   onAddColumns?: () => void
   onRunAll?: () => void
@@ -26,7 +24,6 @@ interface TabularReviewToolbarProps {
 }
 
 export function TabularReviewToolbar({
-  reviewId,
   onAddDocuments,
   onAddColumns,
   onRunAll,

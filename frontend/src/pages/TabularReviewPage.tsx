@@ -216,7 +216,6 @@ const TabularReviewPage: React.FC = () => {
 
         {/* Toolbar */}
         <TabularReviewToolbar
-          reviewId={reviewId}
           onAddDocuments={handleAddDocuments}
           onAddColumns={() => setShowColumnBuilder(true)}
           onRunAll={handleRunAll}
@@ -245,7 +244,6 @@ const TabularReviewPage: React.FC = () => {
             <TabularReviewTable
               reviewId={reviewId}
               tableData={tableData}
-              onRefresh={loadReviewData}
             />
           )}
         </div>
