@@ -157,6 +157,17 @@ def ensure_schema():
                 logger.warning("Please run: backend/migrations/fix_tabular_reviews_table.sql")
             else:
                 logger.debug("Tabular review tables exist with correct schema")
+                # Check and add selected_file_ids column if missing
+                if "selected_file_ids" not in columns:
+                    logger.info("Adding selected_file_ids column to tabular_reviews table...")
+                    try:
+                        with engine.begin() as conn:
+                            conn.execute(
+                                text("ALTER TABLE tabular_reviews ADD COLUMN IF NOT EXISTS selected_file_ids JSON")
+                            )
+                        logger.info("✅ Added selected_file_ids column to tabular_reviews")
+                    except Exception as e:
+                        logger.warning(f"Could not add selected_file_ids column: {e}")
         else:
             logger.info("Creating tabular_review tables...")
             # Import models to ensure they're registered
