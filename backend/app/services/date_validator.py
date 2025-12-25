@@ -1,5 +1,5 @@
 """Date validation and parsing utilities for timeline events"""
-from typing import Optional, List
+from typing import Optional, List, Any
 from datetime import datetime, date, timedelta
 import re
 import logging
