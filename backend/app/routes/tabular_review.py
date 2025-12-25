@@ -19,6 +19,7 @@ class TabularReviewCreateRequest(BaseModel):
     case_id: str
     name: str
     description: Optional[str] = None
+    selected_file_ids: Optional[List[str]] = None
 
 
 class ColumnCreateRequest(BaseModel):
@@ -52,7 +53,8 @@ async def create_review(
             case_id=request.case_id,
             user_id=current_user.id,
             name=request.name,
-            description=request.description
+            description=request.description,
+            selected_file_ids=request.selected_file_ids
         )
         return {
             "id": review.id,
@@ -164,7 +166,7 @@ async def get_cell_details(
 ):
     """Get cell details with verbatim extract and reasoning"""
     try:
-        from app.models.tabular_review import TabularCell
+        from app.models.tabular_review import TabularCell, TabularColumn
         
         cell = db.query(TabularCell).filter(
             TabularCell.tabular_review_id == review_id,
@@ -175,6 +177,19 @@ async def get_cell_details(
         if not cell:
             raise HTTPException(status_code=404, detail="Cell not found")
         
+        # Get column to determine column_type
+        column = db.query(TabularColumn).filter(TabularColumn.id == column_id).first()
+        column_type = column.column_type if column else None
+        
+        # Determine highlight mode
+        has_verbatim = bool(cell.verbatim_extract)
+        if has_verbatim:
+            highlight_mode = 'verbatim'
+        elif cell.source_page or cell.source_section:
+            highlight_mode = 'page'
+        else:
+            highlight_mode = 'none'
+        
         return {
             "id": cell.id,
             "cell_value": cell.cell_value,
@@ -184,6 +199,9 @@ async def get_cell_details(
             "source_page": cell.source_page,
             "source_section": cell.source_section,
             "status": cell.status,
+            "column_type": column_type,
+            "has_verbatim": has_verbatim,
+            "highlight_mode": highlight_mode,
         }
     except HTTPException:
         raise
@@ -328,4 +346,109 @@ async def save_template(
     except Exception as e:
         logger.error(f"Error saving template: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail="Failed to save template")
+
+
+class UpdateSelectedFilesRequest(BaseModel):
+    file_ids: List[str]
+
+
+@router.post("/{review_id}/files")
+async def update_selected_files(
+    review_id: str,
+    request: UpdateSelectedFilesRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """Update selected files for a tabular review"""
+    try:
+        service = TabularReviewService(db)
+        review = service.update_selected_files(
+            review_id=review_id,
+            file_ids=request.file_ids,
+            user_id=current_user.id
+        )
+        return {
+            "id": review.id,
+            "selected_file_ids": review.selected_file_ids,
+            "message": f"Updated selected files: {len(request.file_ids)} files"
+        }
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        logger.error(f"Error updating selected files: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Failed to update selected files")
+
+
+@router.get("/{review_id}/available-files")
+async def get_available_files(
+    review_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """Get all available files for a case (for selecting files for tabular review)"""
+    try:
+        from app.models.case import Case, File as FileModel
+        from sqlalchemy import and_
+        
+        service = TabularReviewService(db)
+        from app.models.tabular_review import TabularReview
+        
+        # Verify review belongs to user
+        review = db.query(TabularReview).filter(
+            and_(TabularReview.id == review_id, TabularReview.user_id == current_user.id)
+        ).first()
+        
+        if not review:
+            raise HTTPException(status_code=404, detail="Tabular review not found or access denied")
+        
+        # Get all files for the case
+        files = db.query(FileModel).filter(FileModel.case_id == review.case_id).all()
+        
+        return {
+            "files": [
+                {
+                    "id": file.id,
+                    "filename": file.filename,
+                    "file_type": file.file_type,
+                    "created_at": file.created_at.isoformat() if file.created_at else None
+                }
+                for file in files
+            ],
+            "total": len(files),
+            "selected_count": len(review.selected_file_ids) if review.selected_file_ids else 0
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error getting available files: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Failed to get available files")
+
+
+class TabularChatRequest(BaseModel):
+    question: str
+
+
+@router.post("/{review_id}/chat")
+async def chat_over_table(
+    review_id: str,
+    request: TabularChatRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """Chat over table - ask questions about table data"""
+    try:
+        from app.services.tabular_chat_service import TabularChatService
+        
+        service = TabularChatService(db)
+        result = await service.analyze_table(
+            review_id=review_id,
+            question=request.question,
+            user_id=current_user.id
+        )
+        return result
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        logger.error(f"Error in chat over table: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Failed to analyze table")
 

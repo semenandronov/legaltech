@@ -12,11 +12,13 @@ import {
   Download,
   Share2,
   ChevronDown,
+  FolderOpen,
 } from "lucide-react"
 
 interface TabularReviewToolbarProps {
   onAddDocuments?: () => void
   onAddColumns?: () => void
+  onUpdateDocuments?: () => void
   onRunAll?: () => void
   onDownload?: (format: "csv" | "excel") => void
   onShare?: () => void
@@ -26,6 +28,7 @@ interface TabularReviewToolbarProps {
 export function TabularReviewToolbar({
   onAddDocuments,
   onAddColumns,
+  onUpdateDocuments,
   onRunAll,
   onDownload,
   onShare,
@@ -43,6 +46,17 @@ export function TabularReviewToolbar({
           <Plus className="w-4 h-4 mr-2" />
           Add documents
         </Button>
+        {onUpdateDocuments && (
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={onUpdateDocuments}
+            disabled={processing}
+          >
+            <FolderOpen className="w-4 h-4 mr-2" />
+            Изменить документы
+          </Button>
+        )}
         <Button
           variant="outline"
           size="sm"

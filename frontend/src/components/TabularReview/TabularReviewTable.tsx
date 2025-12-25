@@ -48,9 +48,16 @@ interface TabularReviewTableProps {
     columns: TabularColumn[]
     rows: TabularRow[]
   }
+  onCellClick?: (fileId: string, cellData: {
+    verbatimExtract?: string | null
+    sourcePage?: number | null
+    sourceSection?: string | null
+    columnType?: string
+    highlightMode?: 'verbatim' | 'page' | 'none'
+  }) => void
 }
 
-export function TabularReviewTable({ reviewId, tableData }: TabularReviewTableProps) {
+export function TabularReviewTable({ reviewId, tableData, onCellClick }: TabularReviewTableProps) {
   const [sorting, setSorting] = React.useState<SortingState>([])
   const [columnFilters, setColumnFilters] = React.useState<ColumnFiltersState>([])
   const [columnVisibility, setColumnVisibility] = React.useState<VisibilityState>({})
@@ -148,7 +155,7 @@ export function TabularReviewTable({ reviewId, tableData }: TabularReviewTablePr
         
         return (
           <div
-            className="cursor-pointer hover:bg-muted/50 p-2 rounded"
+            className="cursor-pointer hover:bg-muted/70 p-3 rounded transition-colors min-h-[44px] flex items-center"
             onClick={async () => {
               setSelectedCell({
                 fileId: row.original.file_id,
@@ -167,6 +174,25 @@ export function TabularReviewTable({ reviewId, tableData }: TabularReviewTablePr
                   col.id
                 )
                 setCellDetails(details)
+                
+                // Determine highlight mode
+                let highlightMode: 'verbatim' | 'page' | 'none' = 'none'
+                if (details.verbatim_extract) {
+                  highlightMode = 'verbatim'
+                } else if (details.source_page || details.source_section) {
+                  highlightMode = 'page'
+                }
+                
+                // Call onCellClick callback to open document
+                if (onCellClick) {
+                  onCellClick(row.original.file_id, {
+                    verbatimExtract: details.verbatim_extract,
+                    sourcePage: details.source_page,
+                    sourceSection: details.source_section,
+                    columnType: details.column_type,
+                    highlightMode,
+                  })
+                }
               } catch (error) {
                 console.error("Error loading cell details:", error)
                 setCellDetails(null)
@@ -175,15 +201,15 @@ export function TabularReviewTable({ reviewId, tableData }: TabularReviewTablePr
               }
             }}
           >
-            <div className="flex items-center gap-2">
-              <span className="text-sm">{cellValue}</span>
+            <div className="flex items-center gap-2 min-h-[24px]">
+              <span className="text-sm flex-1">{cellValue === "-" ? <span className="text-muted-foreground italic">—</span> : cellValue}</span>
               {cell?.verbatim_extract && (
-                <Expand className="w-3 h-3 text-muted-foreground" />
+                <Expand className="w-3 h-3 text-muted-foreground flex-shrink-0" />
               )}
             </div>
             {cell?.confidence_score && (
               <div className="text-xs text-muted-foreground mt-1">
-                Confidence: {Math.round(cell.confidence_score * 100)}%
+                Уверенность: {Math.round(cell.confidence_score * 100)}%
               </div>
             )}
           </div>
@@ -249,14 +275,14 @@ export function TabularReviewTable({ reviewId, tableData }: TabularReviewTablePr
           </DropdownMenuContent>
         </DropdownMenu>
       </div>
-      <div className="rounded-md border">
-        <Table>
+      <div className="rounded-md border overflow-hidden bg-background">
+        <Table className="tabular-review-table">
           <TableHeader>
             {table.getHeaderGroups().map((headerGroup) => (
-              <TableRow key={headerGroup.id}>
+              <TableRow key={headerGroup.id} className="border-b-2">
                 {headerGroup.headers.map((header) => {
                   return (
-                    <TableHead key={header.id}>
+                    <TableHead key={header.id} className="border-r last:border-r-0 bg-muted/50 font-semibold">
                       {header.isPlaceholder
                         ? null
                         : flexRender(
@@ -271,13 +297,17 @@ export function TabularReviewTable({ reviewId, tableData }: TabularReviewTablePr
           </TableHeader>
           <TableBody>
             {table.getRowModel().rows?.length ? (
-              table.getRowModel().rows.map((row) => (
+              table.getRowModel().rows.map((row, rowIndex) => (
                 <TableRow
                   key={row.id}
                   data-state={row.getIsSelected() && "selected"}
+                  className={`border-b ${rowIndex % 2 === 0 ? 'bg-background' : 'bg-muted/20'}`}
                 >
                   {row.getVisibleCells().map((cell) => (
-                    <TableCell key={cell.id}>
+                    <TableCell 
+                      key={cell.id}
+                      className="border-r last:border-r-0 p-0"
+                    >
                       {flexRender(
                         cell.column.columnDef.cell,
                         cell.getContext()

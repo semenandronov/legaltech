@@ -38,7 +38,8 @@ class TabularReviewService:
         case_id: str, 
         user_id: str,
         name: str, 
-        description: Optional[str] = None
+        description: Optional[str] = None,
+        selected_file_ids: Optional[List[str]] = None
     ) -> TabularReview:
         """Create a new tabular review"""
         # Verify case exists and belongs to user
@@ -49,19 +50,31 @@ class TabularReviewService:
         if not case:
             raise ValueError(f"Case {case_id} not found or access denied")
         
+        # Verify selected files belong to the case
+        if selected_file_ids:
+            files = self.db.query(File).filter(
+                and_(
+                    File.id.in_(selected_file_ids),
+                    File.case_id == case_id
+                )
+            ).all()
+            if len(files) != len(selected_file_ids):
+                raise ValueError("Some selected files do not belong to this case")
+        
         review = TabularReview(
             case_id=case_id,
             user_id=user_id,
             name=name,
             description=description,
-            status="draft"
+            status="draft",
+            selected_file_ids=selected_file_ids
         )
         
         self.db.add(review)
         self.db.commit()
         self.db.refresh(review)
         
-        logger.info(f"Created tabular review {review.id} for case {case_id}")
+        logger.info(f"Created tabular review {review.id} for case {case_id} with {len(selected_file_ids) if selected_file_ids else 0} selected files")
         return review
     
     def add_column(
@@ -113,8 +126,11 @@ class TabularReviewService:
         if not review:
             raise ValueError(f"Tabular review {review_id} not found or access denied")
         
-        # Get files for the case
-        files = self.db.query(File).filter(File.case_id == review.case_id).all()
+        # Get files for the case, filtered by selected_file_ids if specified
+        files_query = self.db.query(File).filter(File.case_id == review.case_id)
+        if review.selected_file_ids:
+            files_query = files_query.filter(File.id.in_(review.selected_file_ids))
+        files = files_query.all()
         
         # Get columns
         columns = self.db.query(TabularColumn).filter(
@@ -173,6 +189,7 @@ class TabularReviewService:
                 "name": review.name,
                 "description": review.description,
                 "status": review.status,
+                "selected_file_ids": review.selected_file_ids,
             },
             "columns": [
                 {
@@ -386,6 +403,40 @@ class TabularReviewService:
             review.status = "draft"
             self.db.commit()
             raise
+    
+    def update_selected_files(
+        self,
+        review_id: str,
+        file_ids: List[str],
+        user_id: str
+    ) -> TabularReview:
+        """Update selected files for a tabular review"""
+        # Verify review belongs to user
+        review = self.db.query(TabularReview).filter(
+            and_(TabularReview.id == review_id, TabularReview.user_id == user_id)
+        ).first()
+        
+        if not review:
+            raise ValueError(f"Tabular review {review_id} not found or access denied")
+        
+        # Verify files belong to the case
+        if file_ids:
+            files = self.db.query(File).filter(
+                and_(
+                    File.id.in_(file_ids),
+                    File.case_id == review.case_id
+                )
+            ).all()
+            if len(files) != len(file_ids):
+                raise ValueError("Some selected files do not belong to this case")
+        
+        review.selected_file_ids = file_ids if file_ids else None
+        review.updated_at = datetime.utcnow()
+        self.db.commit()
+        self.db.refresh(review)
+        
+        logger.info(f"Updated selected files for review {review_id}: {len(file_ids) if file_ids else 0} files")
+        return review
     
     def mark_as_reviewed(
         self,

@@ -11,6 +11,7 @@ interface PDFViewerProps {
   fileId: string
   caseId: string
   filename: string
+  initialPage?: number
   onError?: (error: Error) => void
 }
 
@@ -18,10 +19,11 @@ const PDFViewer: React.FC<PDFViewerProps> = ({
   fileId,
   caseId,
   filename: _filename,
+  initialPage,
   onError
 }) => {
   const [numPages, setNumPages] = useState<number | null>(null)
-  const [pageNumber, setPageNumber] = useState(1)
+  const [pageNumber, setPageNumber] = useState(initialPage || 1)
   const [pdfUrl, setPdfUrl] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -72,7 +74,12 @@ const PDFViewer: React.FC<PDFViewerProps> = ({
 
   const onDocumentLoadSuccess = ({ numPages }: { numPages: number }) => {
     setNumPages(numPages)
-    setPageNumber(1)
+    // Set to initialPage if provided and valid, otherwise start at page 1
+    if (initialPage && initialPage >= 1 && initialPage <= numPages) {
+      setPageNumber(initialPage)
+    } else {
+      setPageNumber(1)
+    }
   }
 
   const onDocumentLoadError = (error: Error) => {

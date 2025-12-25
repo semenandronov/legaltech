@@ -4,12 +4,15 @@ import MainLayout from "../components/Layout/MainLayout"
 import { TabularReviewTable } from "../components/TabularReview/TabularReviewTable"
 import { TabularReviewToolbar } from "../components/TabularReview/TabularReviewToolbar"
 import { ColumnBuilder } from "../components/TabularReview/ColumnBuilder"
+import { DocumentSelector } from "../components/TabularReview/DocumentSelector"
+import { TabularDocumentViewer } from "../components/TabularReview/TabularDocumentViewer"
+import { TabularChat } from "../components/TabularReview/TabularChat"
 import { tabularReviewApi, TableData } from "../services/tabularReviewApi"
 import { Card } from "../components/UI/Card"
 import { Button } from "../components/UI/Button"
 import Spinner from "../components/UI/Spinner"
 import { toast } from "sonner"
-import { ArrowLeft, Edit2 } from "lucide-react"
+import { ArrowLeft, Edit2, X } from "lucide-react"
 
 const TabularReviewPage: React.FC = () => {
   const { reviewId, caseId } = useParams<{ reviewId?: string; caseId: string }>()
@@ -19,6 +22,19 @@ const TabularReviewPage: React.FC = () => {
   const [loading, setLoading] = useState(true)
   const [processing, setProcessing] = useState(false)
   const [showColumnBuilder, setShowColumnBuilder] = useState(false)
+  const [showDocumentSelector, setShowDocumentSelector] = useState(false)
+  const [selectedFileIds, setSelectedFileIds] = useState<string[]>([])
+  const [selectedDocument, setSelectedDocument] = useState<{
+    fileId: string
+    fileType?: string
+    cellData: {
+      verbatimExtract?: string | null
+      sourcePage?: number | null
+      sourceSection?: string | null
+      columnType?: string
+      highlightMode?: 'verbatim' | 'page' | 'none'
+    }
+  } | null>(null)
   const [error, setError] = useState<string | null>(null)
 
   useEffect(() => {
@@ -33,12 +49,23 @@ const TabularReviewPage: React.FC = () => {
   const createNewReview = async () => {
     if (!caseId) return
     
+    // Show document selector first
+    setShowDocumentSelector(true)
+  }
+
+  const handleDocumentSelectorConfirm = async (fileIds: string[]) => {
+    if (!caseId) return
+    
+    setShowDocumentSelector(false)
+    setSelectedFileIds(fileIds)
+    
     try {
       setLoading(true)
       const review = await tabularReviewApi.createReview(
         caseId,
         "Tabular Review",
-        "Automatic tabular review"
+        "Automatic tabular review",
+        fileIds
       )
       navigate(`/cases/${caseId}/tabular-review/${review.id}`, { replace: true })
     } catch (err: any) {
@@ -49,6 +76,19 @@ const TabularReviewPage: React.FC = () => {
     }
   }
 
+  const handleUpdateDocuments = async (fileIds: string[]) => {
+    if (!reviewId) return
+    
+    try {
+      await tabularReviewApi.updateSelectedFiles(reviewId, fileIds)
+      setSelectedFileIds(fileIds)
+      toast.success("Документы обновлены")
+      await loadReviewData()
+    } catch (err: any) {
+      toast.error("Не удалось обновить документы: " + (err.message || ""))
+    }
+  }
+
   const loadReviewData = async () => {
     if (!reviewId) return
     
@@ -56,6 +96,10 @@ const TabularReviewPage: React.FC = () => {
       setLoading(true)
       const data = await tabularReviewApi.getTableData(reviewId)
       setTableData(data)
+      // Load selected file IDs from review
+      if (data.review.selected_file_ids) {
+        setSelectedFileIds(data.review.selected_file_ids)
+      }
       setError(null)
     } catch (err: any) {
       setError(err.message || "Ошибка при загрузке данных")
@@ -217,6 +261,7 @@ const TabularReviewPage: React.FC = () => {
         {/* Toolbar */}
         <TabularReviewToolbar
           onAddDocuments={handleAddDocuments}
+          onUpdateDocuments={reviewId ? () => setShowDocumentSelector(true) : undefined}
           onAddColumns={() => setShowColumnBuilder(true)}
           onRunAll={handleRunAll}
           onDownload={handleDownload}
@@ -224,27 +269,109 @@ const TabularReviewPage: React.FC = () => {
           processing={processing}
         />
 
-        {/* Table */}
-        <div className="flex-1 overflow-auto p-4">
-          {tableData.columns.length === 0 ? (
-            <Card className="p-6">
-              <div className="text-center">
-                <h3 className="text-lg font-semibold mb-2">
-                  Нет колонок
-                </h3>
-                <p className="text-muted-foreground mb-4">
-                  Добавьте колонки для начала работы с Tabular Review
-                </p>
-                <Button onClick={() => setShowColumnBuilder(true)}>
-                  Добавить колонку
+        {/* Chat, Table and Document Split View */}
+        <div className="flex-1 overflow-hidden flex">
+          {/* Chat (Left Panel) */}
+          {reviewId && tableData && (
+            <div className="w-80 border-r shrink-0">
+              <TabularChat
+                reviewId={reviewId}
+                caseId={caseId || ""}
+                tableData={tableData}
+                onDocumentClick={(fileId) => {
+                  // Find row and open document
+                  const row = tableData.rows.find(r => r.file_id === fileId)
+                  if (row) {
+                    // Open first cell or just the document
+                    const firstColumn = tableData.columns[0]
+                    if (firstColumn) {
+                      const cell = row.cells[firstColumn.id]
+                      let highlightMode: 'verbatim' | 'page' | 'none' = 'none'
+                      if (cell?.verbatim_extract) {
+                        highlightMode = 'verbatim'
+                      } else if (cell?.source_page || cell?.source_section) {
+                        highlightMode = 'page'
+                      }
+                      setSelectedDocument({
+                        fileId,
+                        fileType: row.file_type,
+                        cellData: {
+                          verbatimExtract: cell?.verbatim_extract,
+                          sourcePage: cell?.source_page,
+                          sourceSection: cell?.source_section,
+                          columnType: firstColumn.column_type,
+                          highlightMode,
+                        }
+                      })
+                    } else {
+                      setSelectedDocument({
+                        fileId,
+                        fileType: row.file_type,
+                        cellData: { highlightMode: 'none' }
+                      })
+                    }
+                  }
+                }}
+              />
+            </div>
+          )}
+
+          {/* Table */}
+          <div className={`overflow-auto p-4 transition-all flex-1 ${selectedDocument ? 'w-1/2' : ''}`}>
+            {tableData.columns.length === 0 ? (
+              <Card className="p-6">
+                <div className="text-center">
+                  <h3 className="text-lg font-semibold mb-2">
+                    Нет колонок
+                  </h3>
+                  <p className="text-muted-foreground mb-4">
+                    Добавьте колонки для начала работы с Tabular Review
+                  </p>
+                  <Button onClick={() => setShowColumnBuilder(true)}>
+                    Добавить колонку
+                  </Button>
+                </div>
+              </Card>
+            ) : (
+              <TabularReviewTable
+                reviewId={reviewId}
+                tableData={tableData}
+                onCellClick={(fileId, cellData) => {
+                  // Find file type from table data
+                  const row = tableData.rows.find(r => r.file_id === fileId)
+                  setSelectedDocument({ 
+                    fileId, 
+                    fileType: row?.file_type,
+                    cellData 
+                  })
+                }}
+              />
+            )}
+          </div>
+
+          {/* Document Viewer */}
+          {selectedDocument && (
+            <div className="w-1/3 border-l bg-background flex flex-col shrink-0">
+              <div className="border-b p-2 flex items-center justify-between">
+                <span className="text-sm font-medium">Документ</span>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => setSelectedDocument(null)}
+                >
+                  <X className="w-4 h-4" />
                 </Button>
               </div>
-            </Card>
-          ) : (
-            <TabularReviewTable
-              reviewId={reviewId}
-              tableData={tableData}
-            />
+              <div className="flex-1 overflow-hidden">
+                <TabularDocumentViewer
+                  fileId={selectedDocument.fileId}
+                  caseId={caseId || ""}
+                  fileType={selectedDocument.fileType}
+                  cellData={selectedDocument.cellData}
+                  onClose={() => setSelectedDocument(null)}
+                />
+              </div>
+            </div>
           )}
         </div>
 
@@ -254,6 +381,18 @@ const TabularReviewPage: React.FC = () => {
           onClose={() => setShowColumnBuilder(false)}
           onSave={handleAddColumn}
         />
+
+        {/* Document Selector Modal */}
+        {caseId && (
+          <DocumentSelector
+            isOpen={showDocumentSelector}
+            onClose={() => setShowDocumentSelector(false)}
+            onConfirm={reviewId ? handleUpdateDocuments : handleDocumentSelectorConfirm}
+            reviewId={reviewId || ""}
+            initialSelectedIds={selectedFileIds}
+            caseId={caseId}
+          />
+        )}
       </div>
     </MainLayout>
   )

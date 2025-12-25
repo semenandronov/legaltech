@@ -1,0 +1,85 @@
+/* Tabular Review Table Styles */
+
+.tabular-review-table {
+  border-collapse: separate;
+  border-spacing: 0;
+  width: 100%;
+}
+
+.tabular-review-table thead {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+}
+
+.tabular-review-table th {
+  border-right: 1px solid hsl(var(--border));
+  padding: 12px 16px;
+  text-align: left;
+  font-weight: 600;
+  font-size: 0.875rem;
+}
+
+.tabular-review-table th:last-child {
+  border-right: none;
+}
+
+.tabular-review-table td {
+  border-right: 1px solid hsl(var(--border));
+  padding: 0;
+  font-size: 0.875rem;
+  transition: background-color 0.15s ease;
+}
+
+.tabular-review-table td:last-child {
+  border-right: none;
+}
+
+.tabular-review-table tbody tr {
+  transition: background-color 0.15s ease;
+  border-bottom: 1px solid hsl(var(--border));
+}
+
+.tabular-review-table tbody tr:last-child {
+  border-bottom: none;
+}
+
+.tabular-review-table tbody tr:hover {
+  background-color: hsl(var(--muted) / 0.5);
+}
+
+.tabular-review-table tbody tr:hover td {
+  background-color: hsl(var(--muted) / 0.5);
+}
+
+/* Alternate row colors for better readability */
+.tabular-review-table tbody tr:nth-child(even) {
+  background-color: hsl(var(--muted) / 0.1);
+}
+
+.tabular-review-table tbody tr:nth-child(even):hover {
+  background-color: hsl(var(--muted) / 0.5);
+}
+
+/* Cell with content */
+.tabular-review-table .cell-content {
+  min-height: 44px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 16px;
+}
+
+/* Empty cell */
+.tabular-review-table .cell-empty {
+  color: hsl(var(--muted-foreground));
+  font-style: italic;
+}
+
+/* Status badge in cell */
+.tabular-review-table .cell-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+

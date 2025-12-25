@@ -16,6 +16,7 @@ class TabularReview(Base):
     name = Column(String(255), nullable=False)
     description = Column(Text, nullable=True)
     status = Column(String(50), default="draft")  # draft, processing, completed
+    selected_file_ids = Column(JSON, nullable=True)  # Список выбранных file_id для этой таблицы
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     

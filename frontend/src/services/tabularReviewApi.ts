@@ -94,6 +94,7 @@ export interface TableData {
     name: string
     description?: string
     status: string
+    selected_file_ids?: string[]
   }
   columns: TabularColumn[]
   rows: TabularRow[]
@@ -108,17 +109,26 @@ export interface CellDetails {
   source_page?: number | null
   source_section?: string | null
   status: string
+  column_type?: string
+  has_verbatim?: boolean
+  highlight_mode?: 'verbatim' | 'page' | 'none'
 }
 
 // API functions
 export const tabularReviewApi = {
   // Create a new tabular review
-  async createReview(caseId: string, name: string, description?: string): Promise<TabularReview> {
+  async createReview(
+    caseId: string, 
+    name: string, 
+    description?: string,
+    selectedFileIds?: string[]
+  ): Promise<TabularReview> {
     try {
       const response = await apiClient.post('/api/tabular-review/', {
         case_id: caseId,
         name,
         description,
+        selected_file_ids: selectedFileIds,
       })
       return response.data
     } catch (error) {
@@ -273,6 +283,62 @@ export const tabularReviewApi = {
         description,
         columns,
         is_public: isPublic,
+      })
+      return response.data
+    } catch (error) {
+      throw new Error(extractErrorMessage(error))
+    }
+  },
+
+  // Update selected files
+  async updateSelectedFiles(
+    reviewId: string,
+    fileIds: string[]
+  ): Promise<{ id: string; selected_file_ids: string[]; message: string }> {
+    try {
+      const response = await apiClient.post(`/api/tabular-review/${reviewId}/files`, {
+        file_ids: fileIds,
+      })
+      return response.data
+    } catch (error) {
+      throw new Error(extractErrorMessage(error))
+    }
+  },
+
+  // Get available files
+  async getAvailableFiles(reviewId: string): Promise<{
+    files: Array<{
+      id: string
+      filename: string
+      file_type?: string
+      created_at?: string
+    }>
+    total: number
+    selected_count: number
+  }> {
+    try {
+      const response = await apiClient.get(`/api/tabular-review/${reviewId}/available-files`)
+      return response.data
+    } catch (error) {
+      throw new Error(extractErrorMessage(error))
+    }
+  },
+
+  // Chat over table
+  async chatOverTable(
+    reviewId: string,
+    question: string
+  ): Promise<{
+    answer: string
+    citations: Array<{ file: string; file_id: string }>
+    table_stats: {
+      total_rows: number
+      total_columns: number
+    }
+  }> {
+    try {
+      const response = await apiClient.post(`/api/tabular-review/${reviewId}/chat`, {
+        question,
       })
       return response.data
     } catch (error) {
