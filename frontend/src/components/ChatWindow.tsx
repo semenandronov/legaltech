@@ -10,6 +10,7 @@ import ConfidenceBadge from './Common/ConfidenceBadge'
 import MessageContent from './Chat/MessageContent'
 import Autocomplete from './Chat/Autocomplete'
 import StatisticsChart from './Chat/StatisticsChart'
+import SourceSelector, { DEFAULT_SOURCES } from './Chat/SourceSelector'
 import { Button } from '@/components/UI/Button'
 import { Card, CardContent } from '@/components/UI/Card'
 import { Textarea } from '@/components/UI/Textarea'
@@ -80,6 +81,7 @@ const ChatWindow = ({ caseId, onDocumentClick }: ChatWindowProps) => {
   ]
   const [currentPlaceholderIndex, setCurrentPlaceholderIndex] = useState(0)
   const [proSearchEnabled] = useState(false)
+  const [selectedSources, setSelectedSources] = useState<string[]>(['vault'])
 
   const { isConnected, isStreaming: isWebSocketStreaming, sendMessage: sendWebSocketMessage } = useWebSocketChat({
     caseId,
@@ -768,6 +770,15 @@ const ChatWindow = ({ caseId, onDocumentClick }: ChatWindowProps) => {
           <div className="w-full max-w-3xl mx-auto px-6 py-6">
             <Card className="border-2 shadow-lg">
               <CardContent className="p-4">
+                {/* Source selector above input */}
+                <div className="mb-3 pb-3 border-b">
+                  <SourceSelector
+                    sources={DEFAULT_SOURCES}
+                    selectedSources={selectedSources}
+                    onSourcesChange={setSelectedSources}
+                  />
+                </div>
+                
                 <div className="flex items-end gap-3">
                   <div className="relative flex-1">
                     <Textarea

@@ -64,6 +64,20 @@ class TaskRequest(BaseModel):
         return v
 
 
+class ImprovePromptRequest(BaseModel):
+    """Request model for prompt improvement"""
+    prompt: str = Field(..., min_length=1, max_length=5000, description="Prompt to improve")
+    context: Optional[Dict[str, Any]] = Field(None, description="Optional context for improvement")
+
+
+class ImprovePromptResponse(BaseModel):
+    """Response model for prompt improvement"""
+    original: str
+    improved: str
+    suggestions: List[str] = []
+    improvements_applied: List[str] = []
+
+
 class TaskResponse(BaseModel):
     """Response model for task execution"""
     plan: Dict[str, Any]  # Analysis plan
@@ -698,4 +712,36 @@ async def get_history(
             for msg in messages
         ]
     }
+
+
+@router.post("/improve-prompt", response_model=ImprovePromptResponse)
+async def improve_prompt_endpoint(
+    request: ImprovePromptRequest,
+    current_user: User = Depends(get_current_user)
+):
+    """
+    Improve a user's prompt using Magic Prompt feature
+    
+    Returns: original prompt, improved prompt, and suggestions
+    """
+    try:
+        from app.services.prompt_improver import improve_prompt
+        
+        result = await improve_prompt(request.prompt, request.context)
+        
+        return ImprovePromptResponse(
+            original=result.get("original", request.prompt),
+            improved=result.get("improved", request.prompt),
+            suggestions=result.get("suggestions", []),
+            improvements_applied=result.get("improvements_applied", [])
+        )
+    except Exception as e:
+        logger.error(f"Error improving prompt: {e}", exc_info=True)
+        # Return original prompt if improvement fails
+        return ImprovePromptResponse(
+            original=request.prompt,
+            improved=request.prompt,
+            suggestions=[],
+            improvements_applied=[]
+        )
 
