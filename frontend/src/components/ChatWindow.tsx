@@ -1,5 +1,4 @@
 import { useState, useEffect, useRef } from 'react'
-import { useNavigate } from 'react-router-dom'
 import { Send, Paperclip, Sparkles, Settings2, BookOpen, Wand2, Search, ChevronRight } from 'lucide-react'
 import { motion, AnimatePresence } from 'framer-motion'
 import './ChatWindow.css'
