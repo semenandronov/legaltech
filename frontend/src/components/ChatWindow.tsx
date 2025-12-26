@@ -55,7 +55,6 @@ const COMMANDS = [
 ]
 
 const ChatWindow = ({ caseId, onDocumentClick }: ChatWindowProps) => {
-  const navigate = useNavigate()
   const [messages, setMessages] = useState<Message[]>([])
   const [inputValue, setInputValue] = useState('')
   const [isLoading, setIsLoading] = useState(false)

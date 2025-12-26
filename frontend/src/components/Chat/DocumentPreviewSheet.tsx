@@ -13,16 +13,13 @@ import { Separator } from '@/components/UI/separator'
 import { 
   FileText, 
   Download, 
-  ExternalLink, 
   Copy, 
   Check,
   ChevronLeft,
   ChevronRight,
-  X,
   Maximize2
 } from 'lucide-react'
 import { SourceInfo } from '@/services/api'
-import { cn } from '@/lib/utils'
 
 interface DocumentPreviewSheetProps {
   isOpen: boolean
@@ -96,41 +93,6 @@ const DocumentPreviewSheet: React.FC<DocumentPreviewSheetProps> = ({
     }
   }
 
-  const highlightRelevantText = (content: string, preview?: string): React.ReactNode => {
-    if (!preview || !content) return content
-
-    // Find and highlight the preview text in the full content
-    const previewClean = preview.replace(/\.\.\./g, '').trim()
-    const index = content.toLowerCase().indexOf(previewClean.toLowerCase().substring(0, 50))
-    
-    if (index === -1) {
-      return (
-        <div>
-          {/* Highlighted relevant section */}
-          <div className="bg-yellow-500/20 border-l-4 border-yellow-500 p-4 rounded-r mb-4">
-            <div className="text-xs text-yellow-600 dark:text-yellow-400 font-medium mb-2">
-              📍 Релевантный фрагмент:
-            </div>
-            <p className="text-sm">{preview}</p>
-          </div>
-          <Separator className="my-4" />
-          <div className="text-sm whitespace-pre-wrap">{content}</div>
-        </div>
-      )
-    }
-
-    const before = content.substring(0, index)
-    const highlighted = content.substring(index, index + previewClean.length + 100)
-    const after = content.substring(index + previewClean.length + 100)
-
-    return (
-      <div className="text-sm whitespace-pre-wrap">
-        {before}
-        <mark className="bg-yellow-500/30 px-1 rounded">{highlighted}</mark>
-        {after}
-      </div>
-    )
-  }
 
   if (!source) return null
 
@@ -155,12 +117,12 @@ const DocumentPreviewSheet: React.FC<DocumentPreviewSheetProps> = ({
                       Стр. {source.page}
                     </Badge>
                   )}
-                  {source.relevance && (
+                  {source.similarity_score !== undefined && (
                     <Badge 
-                      variant={source.relevance > 0.7 ? "default" : "secondary"}
+                      variant={source.similarity_score > 0.7 ? "default" : "secondary"}
                       className="text-xs"
                     >
-                      {Math.round(source.relevance * 100)}% релевантность
+                      {Math.round(source.similarity_score * 100)}% релевантность
                     </Badge>
                   )}
                 </SheetDescription>

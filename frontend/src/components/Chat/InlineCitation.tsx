@@ -72,9 +72,9 @@ const InlineCitation: React.FC<InlineCitationProps> = ({
           {source.page && (
             <div className="tooltip-page">Страница {source.page}</div>
           )}
-          {source.relevance && (
+          {source.similarity_score !== undefined && (
             <div className="tooltip-relevance">
-              Релевантность: {Math.round(source.relevance * 100)}%
+              Релевантность: {Math.round(source.similarity_score * 100)}%
             </div>
           )}
           {source.text_preview && (
