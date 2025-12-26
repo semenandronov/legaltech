@@ -15,9 +15,10 @@ from app.models.analysis import (
 )
 from app.models.tabular_review import (
     TabularReview,
-    TabularReviewColumn,
-    TabularReviewRow,
+    TabularColumn,
+    TabularCell,
     TabularColumnTemplate,
+    TabularDocumentStatus,
 )
 from app.models.agent_interaction import AgentInteraction, AgentExecutionLog
 from app.models.prompt_library import PromptTemplate, PromptCategory
@@ -43,9 +44,10 @@ __all__ = [
     "Risk",
     # Tabular review
     "TabularReview",
-    "TabularReviewColumn",
-    "TabularReviewRow",
+    "TabularColumn",
+    "TabularCell",
     "TabularColumnTemplate",
+    "TabularDocumentStatus",
     # Agent interactions (Human-in-the-loop)
     "AgentInteraction",
     "AgentExecutionLog",
