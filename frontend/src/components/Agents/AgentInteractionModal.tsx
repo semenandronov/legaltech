@@ -8,11 +8,11 @@ import {
   DialogTitle,
 } from '@/components/UI/dialog'
 import { Button } from '@/components/UI/Button'
-import { Textarea } from '@/components/UI/textarea'
+import { Textarea } from '@/components/UI/Textarea'
 import { RadioGroup, RadioGroupItem } from '@/components/UI/radio-group'
 import { Label } from '@/components/UI/label'
 import { Badge } from '@/components/UI/Badge'
-import { Card, CardContent } from '@/components/UI/card'
+import { Card, CardContent } from '@/components/UI/Card'
 import { Bot, Clock, AlertCircle, CheckCircle2, XCircle } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { motion, AnimatePresence } from 'framer-motion'
@@ -191,7 +191,7 @@ export function AgentInteractionModal({
                 <Textarea
                   placeholder="Введите ваш ответ..."
                   value={response}
-                  onChange={(e) => setResponse(e.target.value)}
+                  onChange={(e: React.ChangeEvent<HTMLTextAreaElement>) => setResponse(e.target.value)}
                   className="min-h-[100px]"
                   autoFocus
                 />

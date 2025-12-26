@@ -825,4 +825,15 @@ export const getRelatedDocuments = async (caseId: string, fileId: string, limit?
   return response.data
 }
 
+// Default export for convenience
+const api = {
+  get: apiClient.get.bind(apiClient),
+  post: apiClient.post.bind(apiClient),
+  put: apiClient.put.bind(apiClient),
+  delete: apiClient.delete.bind(apiClient),
+  patch: apiClient.patch.bind(apiClient),
+}
+
+export default api
+
 

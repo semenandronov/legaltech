@@ -1,6 +1,6 @@
-import React, { useState, useEffect } from 'react'
+import React, { useState } from 'react'
 import { Button } from '@/components/UI/Button'
-import { Input } from '@/components/UI/input'
+import { Input } from '@/components/UI/Input'
 import { Badge } from '@/components/UI/Badge'
 import { ScrollArea } from '@/components/UI/scroll-area'
 import {
@@ -25,10 +25,8 @@ import {
   File,
   ChevronRight,
   ChevronDown,
-  MoreHorizontal,
   Pencil,
   Trash2,
-  Move,
   Star,
   StarOff,
 } from 'lucide-react'
@@ -373,10 +371,10 @@ export function FolderTree({
           </DialogHeader>
           <Input
             value={newFolderName}
-            onChange={(e) => setNewFolderName(e.target.value)}
+            onChange={(e: React.ChangeEvent<HTMLInputElement>) => setNewFolderName(e.target.value)}
             placeholder="Название папки"
             autoFocus
-            onKeyDown={(e) => e.key === 'Enter' && handleCreateFolder()}
+            onKeyDown={(e: React.KeyboardEvent<HTMLInputElement>) => e.key === 'Enter' && handleCreateFolder()}
           />
           <DialogFooter>
             <Button variant="outline" onClick={() => setIsCreateDialogOpen(false)}>
@@ -397,10 +395,10 @@ export function FolderTree({
           </DialogHeader>
           <Input
             value={newFolderName}
-            onChange={(e) => setNewFolderName(e.target.value)}
+            onChange={(e: React.ChangeEvent<HTMLInputElement>) => setNewFolderName(e.target.value)}
             placeholder="Новое название"
             autoFocus
-            onKeyDown={(e) => e.key === 'Enter' && handleRenameFolder()}
+            onKeyDown={(e: React.KeyboardEvent<HTMLInputElement>) => e.key === 'Enter' && handleRenameFolder()}
           />
           <DialogFooter>
             <Button variant="outline" onClick={() => setIsRenameDialogOpen(false)}>

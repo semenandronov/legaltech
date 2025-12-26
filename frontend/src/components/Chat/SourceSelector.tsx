@@ -1,4 +1,4 @@
-import React, { useState } from 'react'
+import { useState } from 'react'
 import { Badge } from '@/components/UI/Badge'
 import { Button } from '@/components/UI/Button'
 import {
@@ -6,7 +6,7 @@ import {
   PopoverContent,
   PopoverTrigger,
 } from '@/components/UI/popover'
-import { Checkbox } from '@/components/UI/checkbox'
+import { Checkbox } from '@/components/UI/Checkbox'
 import { ScrollArea } from '@/components/UI/scroll-area'
 import { 
   Globe, 

@@ -3,17 +3,15 @@ import {
   Dialog,
   DialogContent,
   DialogDescription,
-  DialogFooter,
   DialogHeader,
   DialogTitle,
   DialogTrigger,
 } from '@/components/UI/dialog'
 import { Button } from '@/components/UI/Button'
-import { Input } from '@/components/UI/input'
+import { Input } from '@/components/UI/Input'
 import { Badge } from '@/components/UI/Badge'
 import { ScrollArea } from '@/components/UI/scroll-area'
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/UI/tabs'
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/UI/card'
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/UI/Card'
 import { 
   BookOpen, 
   Search, 
@@ -26,7 +24,6 @@ import {
   FolderOpen,
   Copy,
   Play,
-  Plus,
   Sparkles
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
@@ -208,23 +205,38 @@ export function PromptLibrary({ onSelectPrompt, trigger }: PromptLibraryProps) {
                 <Input
                   placeholder="Поиск промптов..."
                   value={searchQuery}
-                  onChange={(e) => setSearchQuery(e.target.value)}
+                  onChange={(e: React.ChangeEvent<HTMLInputElement>) => setSearchQuery(e.target.value)}
                   className="pl-9"
                 />
               </div>
-              <Tabs value={activeTab} onValueChange={setActiveTab}>
-                <TabsList>
-                  <TabsTrigger value="all">Все</TabsTrigger>
-                  <TabsTrigger value="popular" className="gap-1">
-                    <Star className="h-3 w-3" />
-                    Популярные
-                  </TabsTrigger>
-                  <TabsTrigger value="my" className="gap-1">
-                    <Clock className="h-3 w-3" />
-                    Мои
-                  </TabsTrigger>
-                </TabsList>
-              </Tabs>
+              <div className="flex gap-1 border-b border-border">
+                <Button
+                  variant={activeTab === 'all' ? 'default' : 'ghost'}
+                  size="sm"
+                  onClick={() => setActiveTab('all')}
+                  className="rounded-b-none"
+                >
+                  Все
+                </Button>
+                <Button
+                  variant={activeTab === 'popular' ? 'default' : 'ghost'}
+                  size="sm"
+                  onClick={() => setActiveTab('popular')}
+                  className="rounded-b-none gap-1"
+                >
+                  <Star className="h-3 w-3" />
+                  Популярные
+                </Button>
+                <Button
+                  variant={activeTab === 'my' ? 'default' : 'ghost'}
+                  size="sm"
+                  onClick={() => setActiveTab('my')}
+                  className="rounded-b-none gap-1"
+                >
+                  <Clock className="h-3 w-3" />
+                  Мои
+                </Button>
+              </div>
             </div>
 
             {/* Prompt list or detail view */}
@@ -271,7 +283,7 @@ export function PromptLibrary({ onSelectPrompt, trigger }: PromptLibraryProps) {
                               </label>
                               <Input
                                 value={variableValues[variable.name] || ''}
-                                onChange={(e) => setVariableValues({
+                                onChange={(e: React.ChangeEvent<HTMLInputElement>) => setVariableValues({
                                   ...variableValues,
                                   [variable.name]: e.target.value
                                 })}

@@ -1,5 +1,4 @@
-import React from 'react'
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/UI/card'
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/UI/Card'
 import { Badge } from '@/components/UI/Badge'
 import { Progress } from '@/components/UI/progress'
 import { ScrollArea } from '@/components/UI/scroll-area'
@@ -10,7 +9,6 @@ import {
   Clock, 
   Loader2,
   AlertTriangle,
-  ArrowRight,
   ChevronRight
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
