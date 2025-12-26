@@ -1,21 +1,31 @@
 import React, { useState, useEffect } from 'react'
 import {
   Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
   DialogTitle,
-} from '@/components/UI/dialog'
-import { Button } from '@/components/UI/Button'
-import { Textarea } from '@/components/UI/Textarea'
-import { RadioGroup, RadioGroupItem } from '@/components/UI/radio-group'
-import { Label } from '@/components/UI/label'
-import { Badge } from '@/components/UI/Badge'
-import { Card, CardContent } from '@/components/UI/Card'
-import { Bot, Clock, AlertCircle, CheckCircle2, XCircle } from 'lucide-react'
-import { cn } from '@/lib/utils'
-import { motion, AnimatePresence } from 'framer-motion'
+  DialogContent,
+  DialogActions,
+  Button,
+  TextField,
+  RadioGroup,
+  FormControlLabel,
+  Radio,
+  Typography,
+  Box,
+  Stack,
+  LinearProgress,
+  Chip,
+  Card,
+  CardContent,
+  Fade,
+  Alert,
+} from '@mui/material'
+import {
+  Psychology as BotIcon,
+  AccessTime as ClockIcon,
+  ErrorOutline as AlertCircleIcon,
+  CheckCircleOutline as CheckCircleIcon,
+  Cancel as XCircleIcon,
+} from '@mui/icons-material'
 
 export interface AgentQuestion {
   request_id: string
@@ -45,15 +55,15 @@ const AGENT_NAMES: Record<string, string> = {
   supervisor: 'Координатор',
 }
 
-const AGENT_COLORS: Record<string, string> = {
-  timeline: 'bg-blue-500',
-  key_facts: 'bg-green-500',
-  discrepancy: 'bg-orange-500',
-  risk: 'bg-red-500',
-  summary: 'bg-purple-500',
-  entity_extraction: 'bg-cyan-500',
-  classification: 'bg-pink-500',
-  supervisor: 'bg-indigo-500',
+const AGENT_COLORS: Record<string, 'primary' | 'success' | 'warning' | 'error' | 'info'> = {
+  timeline: 'info',
+  key_facts: 'success',
+  discrepancy: 'warning',
+  risk: 'error',
+  summary: 'primary',
+  entity_extraction: 'info',
+  classification: 'primary',
+  supervisor: 'primary',
 }
 
 export function AgentInteractionModal({
@@ -80,11 +90,12 @@ export function AgentInteractionModal({
 
   // Countdown timer
   useEffect(() => {
-    if (!isOpen || timeLeft <= 0) return
+    if (!isOpen || !question) return
 
-    const timer = setInterval(() => {
+    const interval = setInterval(() => {
       setTimeLeft((prev) => {
         if (prev <= 1) {
+          clearInterval(interval)
           onClose()
           return 0
         }
@@ -92,31 +103,28 @@ export function AgentInteractionModal({
       })
     }, 1000)
 
-    return () => clearInterval(timer)
-  }, [isOpen, timeLeft, onClose])
-
-  const handleSubmit = async () => {
-    if (!question) return
-
-    setIsSubmitting(true)
-    
-    let finalResponse = response
-    if (question.question_type === 'choice' || question.question_type === 'confirmation') {
-      finalResponse = selectedOption
-    }
-
-    try {
-      await onSubmit(question.request_id, finalResponse)
-      onClose()
-    } finally {
-      setIsSubmitting(false)
-    }
-  }
+    return () => clearInterval(interval)
+  }, [isOpen, question, onClose])
 
   const formatTime = (seconds: number): string => {
     const mins = Math.floor(seconds / 60)
     const secs = seconds % 60
     return `${mins}:${secs.toString().padStart(2, '0')}`
+  }
+
+  const handleSubmit = async () => {
+    if (!question || !isValid()) return
+
+    setIsSubmitting(true)
+    try {
+      const finalResponse = question.question_type === 'clarification' ? response : selectedOption
+      await onSubmit(question.request_id, finalResponse)
+      onClose()
+    } catch (error) {
+      console.error('Error submitting response:', error)
+    } finally {
+      setIsSubmitting(false)
+    }
   }
 
   const isValid = () => {
@@ -129,152 +137,175 @@ export function AgentInteractionModal({
   if (!question) return null
 
   const agentName = AGENT_NAMES[question.agent_name] || question.agent_name
-  const agentColor = AGENT_COLORS[question.agent_name] || 'bg-gray-500'
+  const agentColor = AGENT_COLORS[question.agent_name] || 'primary'
+  const progress = (timeLeft / timeoutSeconds) * 100
 
   return (
-    <Dialog open={isOpen} onOpenChange={(open) => !open && onClose()}>
-      <DialogContent className="sm:max-w-[500px]">
-        <DialogHeader>
-          <div className="flex items-center gap-3 mb-2">
-            <div className={cn("p-2 rounded-full", agentColor)}>
-              <Bot className="h-5 w-5 text-white" />
-            </div>
-            <div>
-              <DialogTitle className="text-xl">Вопрос от агента</DialogTitle>
-              <Badge variant="outline" className="mt-1">
-                {agentName}
-              </Badge>
-            </div>
-          </div>
-          <DialogDescription className="sr-only">
-            Агент запрашивает дополнительную информацию
-          </DialogDescription>
-        </DialogHeader>
+    <Dialog open={isOpen} onClose={onClose} maxWidth="sm" fullWidth>
+      <DialogTitle>
+        <Stack direction="row" spacing={2} alignItems="center">
+          <Box
+            sx={{
+              p: 1,
+              borderRadius: '50%',
+              bgcolor: `${agentColor}.main`,
+              color: 'white',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+            }}
+          >
+            <BotIcon />
+          </Box>
+          <Box>
+            <Typography variant="h6">Вопрос от агента</Typography>
+            <Chip label={agentName} size="small" color={agentColor} sx={{ mt: 0.5 }} />
+          </Box>
+        </Stack>
+      </DialogTitle>
 
-        <div className="space-y-4 py-4">
+      <DialogContent>
+        <Stack spacing={3}>
           {/* Timer */}
-          <div className="flex items-center justify-end gap-2 text-sm text-muted-foreground">
-            <Clock className="h-4 w-4" />
-            <span className={cn(timeLeft < 60 && "text-destructive font-medium")}>
-              {formatTime(timeLeft)}
-            </span>
-          </div>
+          <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+            <Stack direction="row" spacing={1} alignItems="center">
+              <ClockIcon fontSize="small" color="action" />
+              <Typography
+                variant="body2"
+                color={timeLeft < 60 ? 'error' : 'text.secondary'}
+                fontWeight={timeLeft < 60 ? 600 : 400}
+              >
+                {formatTime(timeLeft)}
+              </Typography>
+            </Stack>
+            <LinearProgress
+              variant="determinate"
+              value={progress}
+              sx={{ width: 100 }}
+              color={timeLeft < 60 ? 'error' : 'primary'}
+            />
+          </Box>
 
           {/* Question */}
-          <Card>
-            <CardContent className="pt-4">
-              <p className="text-base leading-relaxed">{question.question_text}</p>
+          <Card variant="outlined">
+            <CardContent>
+              <Typography variant="body1" sx={{ lineHeight: 1.75 }}>
+                {question.question_text}
+              </Typography>
             </CardContent>
           </Card>
 
           {/* Context */}
           {question.context && (
-            <div className="bg-muted/50 rounded-lg p-3 text-sm">
-              <div className="flex items-start gap-2">
-                <AlertCircle className="h-4 w-4 mt-0.5 text-muted-foreground" />
-                <div>
-                  <p className="font-medium text-muted-foreground mb-1">Контекст</p>
-                  <p className="text-muted-foreground">{question.context}</p>
-                </div>
-              </div>
-            </div>
+            <Alert severity="info" icon={<AlertCircleIcon />}>
+              <Typography variant="subtitle2" sx={{ mb: 0.5, fontWeight: 600 }}>
+                Контекст
+              </Typography>
+              <Typography variant="body2">{question.context}</Typography>
+            </Alert>
           )}
 
           {/* Response Input */}
-          <AnimatePresence mode="wait">
-            {question.question_type === 'clarification' && (
-              <motion.div
-                initial={{ opacity: 0, y: 10 }}
-                animate={{ opacity: 1, y: 0 }}
-                exit={{ opacity: 0, y: -10 }}
-              >
-                <Textarea
+          <Fade in>
+            <Box>
+              {question.question_type === 'clarification' && (
+                <TextField
+                  fullWidth
+                  multiline
+                  rows={4}
                   placeholder="Введите ваш ответ..."
                   value={response}
-                  onChange={(e: React.ChangeEvent<HTMLTextAreaElement>) => setResponse(e.target.value)}
-                  className="min-h-[100px]"
+                  onChange={(e) => setResponse(e.target.value)}
                   autoFocus
                 />
-              </motion.div>
-            )}
+              )}
 
-            {question.question_type === 'confirmation' && (
-              <motion.div
-                initial={{ opacity: 0, y: 10 }}
-                animate={{ opacity: 1, y: 0 }}
-                exit={{ opacity: 0, y: -10 }}
-                className="flex gap-3"
-              >
-                <Button
-                  variant={selectedOption === 'yes' ? 'default' : 'outline'}
-                  className="flex-1 h-14"
-                  onClick={() => setSelectedOption('yes')}
-                >
-                  <CheckCircle2 className="mr-2 h-5 w-5" />
-                  Да
-                </Button>
-                <Button
-                  variant={selectedOption === 'no' ? 'destructive' : 'outline'}
-                  className="flex-1 h-14"
-                  onClick={() => setSelectedOption('no')}
-                >
-                  <XCircle className="mr-2 h-5 w-5" />
-                  Нет
-                </Button>
-              </motion.div>
-            )}
+              {question.question_type === 'confirmation' && (
+                <Stack direction="row" spacing={2}>
+                  <Button
+                    variant={selectedOption === 'yes' ? 'contained' : 'outlined'}
+                    fullWidth
+                    size="large"
+                    onClick={() => setSelectedOption('yes')}
+                    startIcon={<CheckCircleIcon />}
+                    color="success"
+                  >
+                    Да
+                  </Button>
+                  <Button
+                    variant={selectedOption === 'no' ? 'contained' : 'outlined'}
+                    fullWidth
+                    size="large"
+                    onClick={() => setSelectedOption('no')}
+                    startIcon={<XCircleIcon />}
+                    color="error"
+                  >
+                    Нет
+                  </Button>
+                </Stack>
+              )}
 
-            {question.question_type === 'choice' && question.options && (
-              <motion.div
-                initial={{ opacity: 0, y: 10 }}
-                animate={{ opacity: 1, y: 0 }}
-                exit={{ opacity: 0, y: -10 }}
-              >
+              {question.question_type === 'choice' && question.options && (
                 <RadioGroup
                   value={selectedOption}
-                  onValueChange={setSelectedOption}
-                  className="space-y-2"
+                  onChange={(e) => setSelectedOption(e.target.value)}
                 >
                   {question.options.map((option) => (
-                    <div
+                    <Card
                       key={option.id}
-                      className={cn(
-                        "flex items-start space-x-3 p-3 rounded-lg border cursor-pointer transition-colors",
-                        selectedOption === option.id
-                          ? "border-primary bg-primary/5"
-                          : "border-border hover:bg-muted/50"
-                      )}
+                      variant="outlined"
+                      sx={{
+                        mb: 1,
+                        cursor: 'pointer',
+                        borderColor: selectedOption === option.id ? 'primary.main' : 'divider',
+                        bgcolor: selectedOption === option.id ? 'action.selected' : 'background.paper',
+                        '&:hover': {
+                          bgcolor: 'action.hover',
+                        },
+                      }}
                       onClick={() => setSelectedOption(option.id)}
                     >
-                      <RadioGroupItem value={option.id} id={option.id} className="mt-0.5" />
-                      <Label htmlFor={option.id} className="flex-1 cursor-pointer">
-                        <div className="font-medium">{option.label}</div>
-                        {option.description && (
-                          <div className="text-sm text-muted-foreground mt-0.5">
-                            {option.description}
-                          </div>
-                        )}
-                      </Label>
-                    </div>
+                      <CardContent sx={{ p: 2, '&:last-child': { pb: 2 } }}>
+                        <FormControlLabel
+                          value={option.id}
+                          control={<Radio />}
+                          label={
+                            <Box>
+                              <Typography variant="body2" fontWeight={500}>
+                                {option.label}
+                              </Typography>
+                              {option.description && (
+                                <Typography variant="caption" color="text.secondary">
+                                  {option.description}
+                                </Typography>
+                              )}
+                            </Box>
+                          }
+                        />
+                      </CardContent>
+                    </Card>
                   ))}
                 </RadioGroup>
-              </motion.div>
-            )}
-          </AnimatePresence>
-        </div>
-
-        <DialogFooter>
-          <Button variant="outline" onClick={onClose} disabled={isSubmitting}>
-            Пропустить
-          </Button>
-          <Button onClick={handleSubmit} disabled={!isValid() || isSubmitting}>
-            {isSubmitting ? 'Отправка...' : 'Отправить'}
-          </Button>
-        </DialogFooter>
+              )}
+            </Box>
+          </Fade>
+        </Stack>
       </DialogContent>
+
+      <DialogActions>
+        <Button onClick={onClose} disabled={isSubmitting}>
+          Пропустить
+        </Button>
+        <Button
+          onClick={handleSubmit}
+          disabled={!isValid() || isSubmitting}
+          variant="contained"
+        >
+          {isSubmitting ? 'Отправка...' : 'Отправить'}
+        </Button>
+      </DialogActions>
     </Dialog>
   )
 }
 
 export default AgentInteractionModal
-

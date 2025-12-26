@@ -1,4 +1,7 @@
-import { createContext, useContext, useEffect, useState, ReactNode } from 'react'
+import { createContext, useContext, useEffect, useState, ReactNode, useMemo } from 'react'
+import { ThemeProvider as MUIThemeProvider, CssBaseline } from '@mui/material'
+import { createHarveyTheme } from '../theme/theme'
+import type { PaletteMode } from '@mui/material'
 
 type Theme = 'dark' | 'light'
 
@@ -12,13 +15,18 @@ const ThemeContext = createContext<ThemeContextType | undefined>(undefined)
 
 export const ThemeProvider = ({ children }: { children: ReactNode }) => {
   const [theme, setThemeState] = useState<Theme>(() => {
-    // Check localStorage first, then default to dark (Perplexity style)
+    // Check localStorage first, then default to dark (Harvey style)
     const saved = localStorage.getItem('theme') as Theme | null
     if (saved) return saved
     
-    // Default to dark theme (Perplexity style)
+    // Default to dark theme (Harvey style)
     return 'dark'
   })
+
+  // Create MUI theme based on current theme mode
+  const muiTheme = useMemo(() => {
+    return createHarveyTheme(theme as PaletteMode)
+  }, [theme])
 
   // Initialize theme on mount
   useEffect(() => {
@@ -30,7 +38,7 @@ export const ThemeProvider = ({ children }: { children: ReactNode }) => {
       localStorage.setItem('theme', initialTheme)
     }
     
-    // Add/remove dark class for shadcn-ui
+    // Add/remove dark class for shadcn-ui (for backward compatibility)
     if (initialTheme === 'dark') {
       root.classList.add('dark')
     } else {
@@ -43,7 +51,7 @@ export const ThemeProvider = ({ children }: { children: ReactNode }) => {
     root.setAttribute('data-theme', theme)
     localStorage.setItem('theme', theme)
     
-    // Add/remove dark class for shadcn-ui
+    // Add/remove dark class for shadcn-ui (for backward compatibility)
     if (theme === 'dark') {
       root.classList.add('dark')
     } else {
@@ -61,7 +69,10 @@ export const ThemeProvider = ({ children }: { children: ReactNode }) => {
 
   return (
     <ThemeContext.Provider value={{ theme, toggleTheme, setTheme }}>
-      {children}
+      <MUIThemeProvider theme={muiTheme}>
+        <CssBaseline />
+        {children}
+      </MUIThemeProvider>
     </ThemeContext.Provider>
   )
 }

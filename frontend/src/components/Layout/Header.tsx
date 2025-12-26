@@ -1,27 +1,49 @@
 import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { Search, Plus } from 'lucide-react'
+import {
+  AppBar,
+  Toolbar,
+  IconButton,
+  Button,
+  Avatar,
+  Menu,
+  MenuItem,
+  Divider,
+  Typography,
+  Box,
+  useMediaQuery,
+  useTheme,
+} from '@mui/material'
+import {
+  Search as SearchIcon,
+  Add as AddIcon,
+  Menu as MenuIcon,
+  Settings as SettingsIcon,
+  Logout as LogoutIcon,
+} from '@mui/icons-material'
 import { useAuth } from '../../contexts/AuthContext'
 import UploadArea from '../UploadArea'
 import ThemeToggle from '../UI/ThemeToggle'
-import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '../UI/dialog'
-import { Button } from '../UI/Button'
+import {
+  Dialog,
+  DialogContent,
+  DialogTitle,
+  Typography as DialogDescriptionTypography,
+} from '@mui/material'
 import { AppBreadcrumbs } from './Breadcrumbs'
 import { CommandPalette } from './CommandPalette'
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuLabel,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
-} from '@/components/UI/dropdown-menu'
-import { Avatar, AvatarFallback } from '@/components/UI/avatar'
 
-const Header = () => {
+interface HeaderProps {
+  onMenuClick?: () => void
+}
+
+const Header = ({ onMenuClick }: HeaderProps) => {
   const { user, logout } = useAuth()
   const [showUploadModal, setShowUploadModal] = useState(false)
+  const [anchorEl, setAnchorEl] = useState<null | HTMLElement>(null)
   const navigate = useNavigate()
+  const theme = useTheme()
+  const isMobile = useMediaQuery(theme.breakpoints.down('sm'))
 
   const handleUpload = (caseId: string, _fileNames: string[]) => {
     setShowUploadModal(false)
@@ -29,87 +51,150 @@ const Header = () => {
     window.location.reload()
   }
 
+  const handleMenuOpen = (event: React.MouseEvent<HTMLElement>) => {
+    setAnchorEl(event.currentTarget)
+  }
+
+  const handleMenuClose = () => {
+    setAnchorEl(null)
+  }
+
+  const handleSettings = () => {
+    handleMenuClose()
+    navigate('/settings')
+  }
+
+  const handleLogout = async () => {
+    handleMenuClose()
+    await logout()
+    navigate('/login')
+  }
+
+  const handleSearchClick = () => {
+    const event = new KeyboardEvent('keydown', {
+      key: 'k',
+      metaKey: true,
+      bubbles: true,
+    })
+    document.dispatchEvent(event)
+  }
+
+  const userInitials = user?.full_name?.[0]?.toUpperCase() || user?.email[0].toUpperCase() || 'U'
+
   return (
     <>
-      <header className="bg-secondary border-b border-border px-6 py-4">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-4 flex-1">
-            <AppBreadcrumbs />
-          </div>
-          <div className="flex items-center gap-2">
-            <Button
-              variant="outline"
-              size="icon"
-              onClick={() => {
-                const event = new KeyboardEvent('keydown', {
-                  key: 'k',
-                  metaKey: true,
-                  bubbles: true,
-                })
-                document.dispatchEvent(event)
-              }}
-              className="hidden sm:flex"
+      <AppBar
+        position="static"
+        elevation={0}
+        sx={{
+          backgroundColor: 'background.paper',
+          borderBottom: '1px solid',
+          borderColor: 'divider',
+        }}
+      >
+        <Toolbar sx={{ gap: 2 }}>
+          {onMenuClick && (
+            <IconButton
+              edge="start"
+              color="inherit"
+              onClick={onMenuClick}
+              sx={{ mr: 1 }}
             >
-              <Search className="h-4 w-4" />
-              <span className="sr-only">Поиск</span>
-            </Button>
-            <Button variant="primary" onClick={() => setShowUploadModal(true)}>
-              <Plus className="mr-2 h-4 w-4" />
-              <span className="hidden sm:inline">Загрузить новое дело</span>
-              <span className="sm:hidden">Новое</span>
-            </Button>
-            <ThemeToggle />
-            {user && (
-              <DropdownMenu>
-                <DropdownMenuTrigger asChild>
-                  <Button variant="ghost" className="relative h-8 w-8 rounded-full">
-                    <Avatar className="h-8 w-8">
-                      <AvatarFallback>
-                        {user.full_name?.[0]?.toUpperCase() || user.email[0].toUpperCase()}
-                      </AvatarFallback>
-                    </Avatar>
-                  </Button>
-                </DropdownMenuTrigger>
-                <DropdownMenuContent className="w-56" align="end" forceMount>
-                  <DropdownMenuLabel className="font-normal">
-                    <div className="flex flex-col space-y-1">
-                      <p className="text-sm font-medium leading-none">
-                        {user.full_name || user.email}
-                      </p>
-                      <p className="text-xs leading-none text-muted-foreground">
-                        {user.email}
-                      </p>
-                    </div>
-                  </DropdownMenuLabel>
-                  <DropdownMenuSeparator />
-                  <DropdownMenuItem onClick={() => navigate('/settings')}>
-                    Настройки
-                  </DropdownMenuItem>
-                  <DropdownMenuSeparator />
-                  <DropdownMenuItem onClick={async () => {
-                    await logout()
-                    navigate('/login')
-                  }}>
-                    Выйти
-                  </DropdownMenuItem>
-                </DropdownMenuContent>
-              </DropdownMenu>
-            )}
-          </div>
-        </div>
-      </header>
+              <MenuIcon />
+            </IconButton>
+          )}
 
-      <Dialog open={showUploadModal} onOpenChange={setShowUploadModal}>
-        <DialogContent className="sm:max-w-[600px]">
-          <DialogHeader>
-            <DialogTitle>Загрузить новое дело</DialogTitle>
-            <DialogDescription>
-              Загрузите документы для создания нового дела
-            </DialogDescription>
-          </DialogHeader>
+          <Box sx={{ flexGrow: 1, display: 'flex', alignItems: 'center', gap: 2 }}>
+            <AppBreadcrumbs />
+          </Box>
+
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+            {!isMobile && (
+              <IconButton
+                color="inherit"
+                onClick={handleSearchClick}
+                aria-label="Поиск"
+              >
+                <SearchIcon />
+              </IconButton>
+            )}
+
+            <Button
+              variant="contained"
+              startIcon={<AddIcon />}
+              onClick={() => setShowUploadModal(true)}
+              sx={{ textTransform: 'none' }}
+            >
+              {isMobile ? 'Новое' : 'Загрузить новое дело'}
+            </Button>
+
+            <ThemeToggle />
+
+            {user && (
+              <>
+                <IconButton
+                  onClick={handleMenuOpen}
+                  size="small"
+                  sx={{ ml: 1 }}
+                  aria-label="Меню пользователя"
+                >
+                  <Avatar sx={{ width: 32, height: 32, bgcolor: 'primary.main' }}>
+                    {userInitials}
+                  </Avatar>
+                </IconButton>
+                <Menu
+                  anchorEl={anchorEl}
+                  open={Boolean(anchorEl)}
+                  onClose={handleMenuClose}
+                  anchorOrigin={{
+                    vertical: 'bottom',
+                    horizontal: 'right',
+                  }}
+                  transformOrigin={{
+                    vertical: 'top',
+                    horizontal: 'right',
+                  }}
+                >
+                  <Box sx={{ px: 2, py: 1.5 }}>
+                    <Typography variant="body2" fontWeight={500}>
+                      {user.full_name || user.email}
+                    </Typography>
+                    <Typography variant="caption" color="text.secondary">
+                      {user.email}
+                    </Typography>
+                  </Box>
+                  <Divider />
+                  <MenuItem onClick={handleSettings}>
+                    <SettingsIcon sx={{ mr: 1, fontSize: 20 }} />
+                    Настройки
+                  </MenuItem>
+                  <Divider />
+                  <MenuItem onClick={handleLogout}>
+                    <LogoutIcon sx={{ mr: 1, fontSize: 20 }} />
+                    Выйти
+                  </MenuItem>
+                </Menu>
+              </>
+            )}
+          </Box>
+        </Toolbar>
+      </AppBar>
+
+      <Dialog
+        open={showUploadModal}
+        onClose={() => setShowUploadModal(false)}
+        maxWidth="sm"
+        fullWidth
+      >
+        <DialogTitle>Загрузить новое дело</DialogTitle>
+        <DialogContent>
+          <DialogDescriptionTypography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+            Загрузите документы для создания нового дела
+          </DialogDescriptionTypography>
           <UploadArea onUpload={handleUpload} />
         </DialogContent>
       </Dialog>
+
       <CommandPalette />
     </>
   )

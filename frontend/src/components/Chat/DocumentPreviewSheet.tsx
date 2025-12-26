@@ -1,24 +1,25 @@
 import React, { useState, useEffect } from 'react'
 import {
-  Sheet,
-  SheetContent,
-  SheetHeader,
-  SheetTitle,
-  SheetDescription,
-} from '@/components/UI/sheet'
-import { Button } from '@/components/UI/Button'
-import { Badge } from '@/components/UI/Badge'
-import { ScrollArea } from '@/components/UI/scroll-area'
-import { Separator } from '@/components/UI/separator'
-import { 
-  FileText, 
-  Download, 
-  Copy, 
-  Check,
-  ChevronLeft,
-  ChevronRight,
-  Maximize2
-} from 'lucide-react'
+  Drawer,
+  Box,
+  Typography,
+  IconButton,
+  Button,
+  Chip,
+  Divider,
+  Skeleton,
+  Stack,
+  Tooltip,
+} from '@mui/material'
+import {
+  FileText as FileTextIcon,
+  Download as DownloadIcon,
+  ContentCopy as CopyIcon,
+  Check as CheckIcon,
+  ChevronLeft as ChevronLeftIcon,
+  ChevronRight as ChevronRightIcon,
+  OpenInNew as MaximizeIcon,
+} from '@mui/icons-material'
 import { SourceInfo } from '@/services/api'
 
 interface DocumentPreviewSheetProps {
@@ -97,149 +98,202 @@ const DocumentPreviewSheet: React.FC<DocumentPreviewSheetProps> = ({
   if (!source) return null
 
   return (
-    <Sheet open={isOpen} onOpenChange={(open) => !open && onClose()}>
-      <SheetContent 
-        side="right" 
-        className="w-full sm:max-w-xl lg:max-w-2xl p-0 flex flex-col"
+    <Drawer
+      anchor="right"
+      open={isOpen}
+      onClose={onClose}
+      PaperProps={{
+        sx: {
+          width: { xs: '100%', sm: '500px', lg: '600px' },
+        },
+      }}
+    >
+      <Box
+        sx={{
+          display: 'flex',
+          flexDirection: 'column',
+          height: '100%',
+        }}
       >
         {/* Header */}
-        <div className="p-4 border-b bg-muted/30">
-          <SheetHeader>
-            <div className="flex items-start justify-between gap-4">
-              <div className="flex-1 min-w-0">
-                <SheetTitle className="text-base font-semibold truncate flex items-center gap-2">
-                  <FileText className="h-4 w-4 shrink-0 text-primary" />
-                  <span className="truncate">{source.file}</span>
-                </SheetTitle>
-                <SheetDescription className="mt-1 flex items-center gap-2 flex-wrap">
-                  {source.page && (
-                    <Badge variant="secondary" className="text-xs">
-                      Стр. {source.page}
-                    </Badge>
-                  )}
-                  {source.similarity_score !== undefined && (
-                    <Badge 
-                      variant={source.similarity_score > 0.7 ? "default" : "secondary"}
-                      className="text-xs"
-                    >
-                      {Math.round(source.similarity_score * 100)}% релевантность
-                    </Badge>
-                  )}
-                </SheetDescription>
-              </div>
-            </div>
-          </SheetHeader>
-          
+        <Box
+          sx={{
+            p: 2,
+            borderBottom: '1px solid',
+            borderColor: 'divider',
+            bgcolor: 'action.hover',
+          }}
+        >
+          <Box sx={{ display: 'flex', alignItems: 'flex-start', gap: 2, mb: 2 }}>
+            <FileTextIcon color="primary" sx={{ mt: 0.5 }} />
+            <Box sx={{ flex: 1, minWidth: 0 }}>
+              <Typography
+                variant="h6"
+                sx={{
+                  fontWeight: 600,
+                  overflow: 'hidden',
+                  textOverflow: 'ellipsis',
+                  whiteSpace: 'nowrap',
+                }}
+              >
+                {source.file}
+              </Typography>
+              <Stack direction="row" spacing={1} sx={{ mt: 1, flexWrap: 'wrap' }}>
+                {source.page && (
+                  <Chip
+                    label={`Стр. ${source.page}`}
+                    size="small"
+                    variant="outlined"
+                  />
+                )}
+                {source.similarity_score !== undefined && (
+                  <Chip
+                    label={`${Math.round(source.similarity_score * 100)}% релевантность`}
+                    size="small"
+                    color={source.similarity_score > 0.7 ? 'primary' : 'default'}
+                    variant="outlined"
+                  />
+                )}
+              </Stack>
+            </Box>
+          </Box>
+
           {/* Navigation & Actions */}
-          <div className="flex items-center justify-between mt-3 pt-3 border-t border-border/50">
-            <div className="flex items-center gap-1">
-              <Button
-                variant="ghost"
-                size="sm"
+          <Divider sx={{ my: 1.5 }} />
+          <Box
+            sx={{
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+            }}
+          >
+            <Stack direction="row" spacing={0.5} alignItems="center">
+              <IconButton
+                size="small"
                 onClick={handlePrev}
                 disabled={!hasPrev}
-                className="h-8 px-2"
               >
-                <ChevronLeft className="h-4 w-4" />
-              </Button>
-              <span className="text-xs text-muted-foreground px-2">
+                <ChevronLeftIcon />
+              </IconButton>
+              <Typography variant="caption" color="text.secondary" sx={{ px: 1 }}>
                 {currentIndex + 1} / {allSources.length}
-              </span>
-              <Button
-                variant="ghost"
-                size="sm"
+              </Typography>
+              <IconButton
+                size="small"
                 onClick={handleNext}
                 disabled={!hasNext}
-                className="h-8 px-2"
               >
-                <ChevronRight className="h-4 w-4" />
-              </Button>
-            </div>
-            
-            <div className="flex items-center gap-1">
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={handleCopy}
-                className="h-8 px-2"
-              >
-                {copied ? (
-                  <Check className="h-4 w-4 text-green-500" />
-                ) : (
-                  <Copy className="h-4 w-4" />
-                )}
-              </Button>
-              <Button
-                variant="ghost"
-                size="sm"
-                asChild
-                className="h-8 px-2"
-              >
-                <a 
+                <ChevronRightIcon />
+              </IconButton>
+            </Stack>
+
+            <Stack direction="row" spacing={0.5}>
+              <Tooltip title="Копировать">
+                <IconButton size="small" onClick={handleCopy}>
+                  {copied ? (
+                    <CheckIcon color="success" fontSize="small" />
+                  ) : (
+                    <CopyIcon fontSize="small" />
+                  )}
+                </IconButton>
+              </Tooltip>
+              <Tooltip title="Скачать">
+                <IconButton
+                  size="small"
+                  component="a"
                   href={`/api/cases/${caseId}/files/${encodeURIComponent(source.file)}/download`}
                   download
                 >
-                  <Download className="h-4 w-4" />
-                </a>
-              </Button>
-              <Button
-                variant="ghost"
-                size="sm"
-                asChild
-                className="h-8 px-2"
-              >
-                <a 
+                  <DownloadIcon fontSize="small" />
+                </IconButton>
+              </Tooltip>
+              <Tooltip title="Открыть в полном окне">
+                <IconButton
+                  size="small"
+                  component="a"
                   href={`/cases/${caseId}/workspace?file=${encodeURIComponent(source.file)}`}
                   target="_blank"
                   rel="noopener noreferrer"
                 >
-                  <Maximize2 className="h-4 w-4" />
-                </a>
-              </Button>
-            </div>
-          </div>
-        </div>
+                  <MaximizeIcon fontSize="small" />
+                </IconButton>
+              </Tooltip>
+            </Stack>
+          </Box>
+        </Box>
 
         {/* Content */}
-        <ScrollArea className="flex-1">
-          <div className="p-4">
-            {loading ? (
-              <div className="space-y-3">
-                <div className="h-4 bg-muted rounded animate-pulse" />
-                <div className="h-4 bg-muted rounded animate-pulse w-3/4" />
-                <div className="h-4 bg-muted rounded animate-pulse w-1/2" />
-              </div>
-            ) : (
-              <>
-                {source.text_preview && (
-                  <div className="bg-primary/5 border border-primary/20 rounded-lg p-4 mb-4">
-                    <div className="flex items-center gap-2 text-xs text-primary font-medium mb-2">
-                      <span className="inline-block w-2 h-2 rounded-full bg-primary animate-pulse" />
+        <Box
+          sx={{
+            flex: 1,
+            overflow: 'auto',
+            p: 2,
+          }}
+        >
+          {loading ? (
+            <Stack spacing={1}>
+              <Skeleton variant="text" width="100%" />
+              <Skeleton variant="text" width="75%" />
+              <Skeleton variant="text" width="50%" />
+            </Stack>
+          ) : (
+            <>
+              {source.text_preview && (
+                <Paper
+                  elevation={0}
+                  sx={{
+                    p: 2,
+                    mb: 2,
+                    bgcolor: 'primary.main',
+                    opacity: 0.05,
+                    border: '1px solid',
+                    borderColor: 'primary.main',
+                    borderRadius: 2,
+                  }}
+                >
+                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 1 }}>
+                    <Box
+                      sx={{
+                        width: 8,
+                        height: 8,
+                        borderRadius: '50%',
+                        bgcolor: 'primary.main',
+                        animation: 'pulse 2s infinite',
+                      }}
+                    />
+                    <Typography variant="caption" fontWeight={500} color="primary.main">
                       Цитируемый фрагмент
-                    </div>
-                    <p className="text-sm leading-relaxed">
-                      {source.text_preview}
-                    </p>
-                  </div>
-                )}
-                
-                {documentContent && documentContent !== source.text_preview && (
-                  <>
-                    <Separator className="my-4" />
-                    <div className="text-xs text-muted-foreground mb-2 font-medium">
-                      Полный текст документа:
-                    </div>
-                    <div className="text-sm leading-relaxed whitespace-pre-wrap text-muted-foreground">
-                      {documentContent}
-                    </div>
-                  </>
-                )}
-              </>
-            )}
-          </div>
-        </ScrollArea>
-      </SheetContent>
-    </Sheet>
+                    </Typography>
+                  </Box>
+                  <Typography variant="body2" sx={{ lineHeight: 1.75 }}>
+                    {source.text_preview}
+                  </Typography>
+                </Paper>
+              )}
+
+              {documentContent && documentContent !== source.text_preview && (
+                <>
+                  <Divider sx={{ my: 2 }} />
+                  <Typography variant="caption" fontWeight={500} color="text.secondary" sx={{ mb: 1, display: 'block' }}>
+                    Полный текст документа:
+                  </Typography>
+                  <Typography
+                    variant="body2"
+                    sx={{
+                      whiteSpace: 'pre-wrap',
+                      lineHeight: 1.75,
+                      color: 'text.secondary',
+                    }}
+                  >
+                    {documentContent}
+                  </Typography>
+                </>
+              )}
+            </>
+          )}
+        </Box>
+      </Box>
+    </Drawer>
   )
 }
 

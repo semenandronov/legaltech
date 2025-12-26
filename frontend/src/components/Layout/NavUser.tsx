@@ -1,41 +1,40 @@
-"use client"
-
+import React, { useState } from 'react'
+import { useNavigate } from 'react-router-dom'
 import {
-  CreditCard,
-  MoreVertical,
-  LogOut,
-  Bell,
-  UserCircle,
-} from "lucide-react"
-import { useNavigate } from "react-router-dom"
-
-import {
+  Box,
   Avatar,
-  AvatarFallback,
-} from "@/components/UI/avatar"
+  Typography,
+  IconButton,
+  Menu,
+  MenuItem,
+  ListItemIcon,
+  ListItemText,
+  Divider,
+} from '@mui/material'
 import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuGroup,
-  DropdownMenuItem,
-  DropdownMenuLabel,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
-} from "@/components/UI/dropdown-menu"
-import {
-  SidebarMenu,
-  SidebarMenuButton,
-  SidebarMenuItem,
-  useSidebar,
-} from "@/components/UI/sidebar"
-import { useAuth } from "@/contexts/AuthContext"
+  MoreVert as MoreVerticalIcon,
+  AccountCircle as UserCircleIcon,
+  CreditCard as CreditCardIcon,
+  Notifications as BellIcon,
+  Logout as LogoutIcon,
+} from '@mui/icons-material'
+import { useAuth } from '@/contexts/AuthContext'
 
 export function NavUser() {
   const { user, logout } = useAuth()
   const navigate = useNavigate()
-  const { isMobile } = useSidebar()
+  const [anchorEl, setAnchorEl] = useState<null | HTMLElement>(null)
+
+  const handleMenuOpen = (event: React.MouseEvent<HTMLElement>) => {
+    setAnchorEl(event.currentTarget)
+  }
+
+  const handleMenuClose = () => {
+    setAnchorEl(null)
+  }
 
   const handleLogout = async () => {
+    handleMenuClose()
     await logout()
     navigate('/login')
   }
@@ -46,75 +45,109 @@ export function NavUser() {
   const userName = user.full_name || user.email
 
   return (
-    <SidebarMenu>
-      <SidebarMenuItem>
-        <DropdownMenu>
-          <DropdownMenuTrigger asChild>
-            <SidebarMenuButton
-              size="lg"
-              className="data-[state=open]:bg-sidebar-accent data-[state=open]:text-sidebar-accent-foreground"
-            >
-              <Avatar className="h-8 w-8 rounded-lg grayscale">
-                <AvatarFallback className="rounded-lg">{userInitials}</AvatarFallback>
-              </Avatar>
-              <div className="grid flex-1 text-left text-sm leading-tight">
-                <span className="truncate font-medium">{userName}</span>
-                <span className="text-muted-foreground truncate text-xs">
-                  {user.email}
-                </span>
-              </div>
-              <MoreVertical className="ml-auto size-4" />
-            </SidebarMenuButton>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent
-            className="w-[--radix-dropdown-menu-trigger-width] min-w-56 rounded-lg"
-            side={isMobile ? "bottom" : "right"}
-            align="end"
-            sideOffset={4}
-          >
-            <DropdownMenuLabel className="p-0 font-normal">
-              <div className="flex items-center gap-2 px-1 py-1.5 text-left text-sm">
-                <Avatar className="h-8 w-8 rounded-lg">
-                  <AvatarFallback className="rounded-lg">{userInitials}</AvatarFallback>
-                </Avatar>
-                <div className="grid flex-1 text-left text-sm leading-tight">
-                  <span className="truncate font-medium">{userName}</span>
-                  <span className="text-muted-foreground truncate text-xs">
-                    {user.email}
-                  </span>
-                </div>
-              </div>
-            </DropdownMenuLabel>
-            <DropdownMenuSeparator />
-            <DropdownMenuGroup>
-              <DropdownMenuItem asChild>
-                <a href="/settings">
-                  <UserCircle />
-                  Аккаунт
-                </a>
-              </DropdownMenuItem>
-              <DropdownMenuItem asChild>
-                <a href="/settings">
-                  <CreditCard />
-                  Биллинг
-                </a>
-              </DropdownMenuItem>
-              <DropdownMenuItem asChild>
-                <a href="/settings">
-                  <Bell />
-                  Уведомления
-                </a>
-              </DropdownMenuItem>
-            </DropdownMenuGroup>
-            <DropdownMenuSeparator />
-            <DropdownMenuItem onClick={handleLogout}>
-              <LogOut />
-              Выйти
-            </DropdownMenuItem>
-          </DropdownMenuContent>
-        </DropdownMenu>
-      </SidebarMenuItem>
-    </SidebarMenu>
+    <Box
+      sx={{
+        display: 'flex',
+        alignItems: 'center',
+        gap: 1,
+        p: 1,
+        borderRadius: 1,
+        '&:hover': {
+          backgroundColor: 'action.hover',
+        },
+      }}
+    >
+      <Avatar
+        sx={{
+          width: 32,
+          height: 32,
+          bgcolor: 'primary.main',
+          fontSize: '0.875rem',
+        }}
+      >
+        {userInitials}
+      </Avatar>
+      <Box sx={{ flexGrow: 1, minWidth: 0 }}>
+        <Typography
+          variant="body2"
+          sx={{
+            fontWeight: 500,
+            overflow: 'hidden',
+            textOverflow: 'ellipsis',
+            whiteSpace: 'nowrap',
+          }}
+        >
+          {userName}
+        </Typography>
+        <Typography
+          variant="caption"
+          color="text.secondary"
+          sx={{
+            overflow: 'hidden',
+            textOverflow: 'ellipsis',
+            whiteSpace: 'nowrap',
+            display: 'block',
+          }}
+        >
+          {user.email}
+        </Typography>
+      </Box>
+      <IconButton
+        size="small"
+        onClick={handleMenuOpen}
+        aria-label="Меню пользователя"
+      >
+        <MoreVerticalIcon fontSize="small" />
+      </IconButton>
+      <Menu
+        anchorEl={anchorEl}
+        open={Boolean(anchorEl)}
+        onClose={handleMenuClose}
+        anchorOrigin={{
+          vertical: 'top',
+          horizontal: 'right',
+        }}
+        transformOrigin={{
+          vertical: 'bottom',
+          horizontal: 'right',
+        }}
+      >
+        <Box sx={{ px: 2, py: 1.5 }}>
+          <Typography variant="body2" fontWeight={500}>
+            {userName}
+          </Typography>
+          <Typography variant="caption" color="text.secondary">
+            {user.email}
+          </Typography>
+        </Box>
+        <Divider />
+        <MenuItem onClick={() => { handleMenuClose(); navigate('/settings') }}>
+          <ListItemIcon>
+            <UserCircleIcon fontSize="small" />
+          </ListItemIcon>
+          <ListItemText>Аккаунт</ListItemText>
+        </MenuItem>
+        <MenuItem onClick={() => { handleMenuClose(); navigate('/settings') }}>
+          <ListItemIcon>
+            <CreditCardIcon fontSize="small" />
+          </ListItemIcon>
+          <ListItemText>Биллинг</ListItemText>
+        </MenuItem>
+        <MenuItem onClick={() => { handleMenuClose(); navigate('/settings') }}>
+          <ListItemIcon>
+            <BellIcon fontSize="small" />
+          </ListItemIcon>
+          <ListItemText>Уведомления</ListItemText>
+        </MenuItem>
+        <Divider />
+        <MenuItem onClick={handleLogout}>
+          <ListItemIcon>
+            <LogoutIcon fontSize="small" />
+          </ListItemIcon>
+          <ListItemText>Выйти</ListItemText>
+        </MenuItem>
+      </Menu>
+    </Box>
   )
 }
 

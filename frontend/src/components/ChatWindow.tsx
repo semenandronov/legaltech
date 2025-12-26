@@ -1,6 +1,40 @@
 import { useState, useEffect, useRef } from 'react'
-import { Send, Paperclip, Sparkles, Settings2, BookOpen, Wand2, Search, ChevronRight } from 'lucide-react'
-import { motion, AnimatePresence } from 'framer-motion'
+import {
+  Box,
+  TextField,
+  IconButton,
+  Button,
+  Avatar,
+  Chip,
+  Paper,
+  Typography,
+  Alert,
+  AlertTitle,
+  Divider,
+  Tooltip,
+  Fade,
+  Slide,
+  LinearProgress,
+  Skeleton,
+  Stack,
+  Grid,
+  Card,
+  CardContent,
+  useTheme,
+  useMediaQuery,
+} from '@mui/material'
+import {
+  Send as SendIcon,
+  AttachFile as PaperclipIcon,
+  AutoAwesome as SparklesIcon,
+  Settings as SettingsIcon,
+  MenuBook as BookOpenIcon,
+  AutoFixHigh as WandIcon,
+  Search as SearchIcon,
+  ChevronRight as ChevronRightIcon,
+  Close as CloseIcon,
+} from '@mui/icons-material'
+import { useTheme as useAppTheme } from '../hooks/useTheme'
 import './ChatWindow.css'
 import './Chat/Chat.css'
 import { fetchHistory, sendMessage, SourceInfo, HistoryMessage, classifyDocuments, extractEntities, getTimeline, getAnalysisReport } from '../services/api'
@@ -11,17 +45,7 @@ import Autocomplete from './Chat/Autocomplete'
 import StatisticsChart from './Chat/StatisticsChart'
 import SourceSelector, { DEFAULT_SOURCES } from './Chat/SourceSelector'
 import DocumentPreviewSheet from './Chat/DocumentPreviewSheet'
-import { Button } from '@/components/UI/Button'
-import { Card, CardContent } from '@/components/UI/Card'
-import { Textarea } from '@/components/UI/Textarea'
-import { Avatar, AvatarFallback } from '@/components/UI/avatar'
-import { Badge } from '@/components/UI/Badge'
-import { Separator } from '@/components/UI/separator'
-import { ScrollArea } from '@/components/UI/scroll-area'
-import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/UI/tooltip'
-import { Alert, AlertDescription, AlertTitle } from '@/components/UI/alert'
-import { Skeleton } from '@/components/UI/Skeleton'
-import { cn } from '@/lib/utils'
+import ThemeToggle from './UI/ThemeToggle'
 import { logger } from '@/lib/logger'
 
 interface Message {
@@ -262,7 +286,7 @@ const ChatWindow = ({ caseId, onDocumentClick }: ChatWindowProps) => {
     }
   }
 
-  const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement | HTMLTextAreaElement>) => {
     if (autocompleteVisible && autocompleteSuggestions.length > 0) {
       if (e.key === 'ArrowDown') {
         e.preventDefault()
@@ -298,14 +322,9 @@ const ChatWindow = ({ caseId, onDocumentClick }: ChatWindowProps) => {
     }
   }
 
-  const handleTextareaChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
+  const handleTextareaChange = (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
     const value = e.target.value
     setInputValue(value)
-    
-    const textarea = e.target
-    textarea.style.height = '24px'
-    const newHeight = Math.min(Math.max(textarea.scrollHeight, 24), 200)
-    textarea.style.height = `${newHeight}px`
     
     if (value.startsWith('/') || value.length > 0) {
       const query = value.startsWith('/') ? value.slice(1).toLowerCase() : value.toLowerCase()
@@ -602,367 +621,564 @@ const ChatWindow = ({ caseId, onDocumentClick }: ChatWindowProps) => {
     return null
   }
 
+  const theme = useTheme()
+  const isMobile = useMediaQuery(theme.breakpoints.down('sm'))
+
   return (
-    <TooltipProvider>
-      <div 
-        className={cn("chat-container flex flex-col h-screen relative overflow-hidden", isDragging && "dragging")}
+    <Box
+      sx={{
+        display: 'flex',
+        flexDirection: 'column',
+        height: '100vh',
+        position: 'relative',
+        overflow: 'hidden',
+        bgcolor: 'background.default',
+      }}
       onDragEnter={handleDragEnter}
       onDragLeave={handleDragLeave}
       onDragOver={handleDragOver}
       onDrop={handleDrop}
-        style={{ backgroundColor: 'var(--color-bg)' }}
-      >
-        <AnimatePresence>
-      {isDragging && (
-            <motion.div
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              exit={{ opacity: 0 }}
-              className="absolute inset-0 z-50 flex items-center justify-center bg-primary/10 border-2 border-dashed border-primary rounded-lg"
-            >
-              <Card className="p-8 text-center">
-                <CardContent className="pt-6">
-                  <div className="text-5xl mb-4">📎</div>
-                  <h3 className="text-xl font-semibold mb-2">Перетащите файлы сюда</h3>
-                  <p className="text-muted-foreground">PDF, DOCX, TXT, XLSX</p>
-                </CardContent>
-              </Card>
-            </motion.div>
-          )}
-        </AnimatePresence>
-
-
-        <ScrollArea className="flex-1 w-full">
-          <div className="w-full max-w-3xl mx-auto px-6 py-20 pb-40 flex flex-col items-center">
-        {historyError && (
-              <Alert variant="destructive" className="mb-4">
-                <AlertTitle>Ошибка</AlertTitle>
-                <AlertDescription className="flex items-center justify-between">
-                  <span>{historyError}</span>
-                  <Button variant="outline" size="sm" onClick={loadHistory}>
-              Обновить
-                  </Button>
-                </AlertDescription>
-              </Alert>
-        )}
-
-            {!hasMessages && !isLoading && !historyError && (
-              <div className="flex flex-col justify-center items-center min-h-[50vh] py-8 w-full">
-                {/* Harvey-style welcome */}
-                <div className="text-center mb-10">
-                  <h1 className="text-4xl font-bold mb-3 bg-gradient-to-r from-blue-500 via-purple-500 to-pink-500 bg-clip-text text-transparent">
-                    Legal AI Assistant
-                  </h1>
-                  <p className="text-muted-foreground text-lg">
-                    Ваш интеллектуальный помощник для работы с документами
-                  </p>
-                </div>
-                
-                {/* Recommended workflows - Harvey style */}
-                <div className="w-full max-w-3xl mb-8">
-                  <div className="flex items-center justify-between mb-4">
-                    <span className="text-sm font-medium text-muted-foreground">Рекомендуемые процессы</span>
-                    <Button variant="ghost" size="sm" className="text-xs text-muted-foreground">
-                      Все <ChevronRight className="h-3 w-3 ml-1" />
-                    </Button>
-                  </div>
-                  <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-                    {WORKFLOWS.map((workflow) => (
-                      <button
-                        key={workflow.id}
-                        onClick={() => handleWorkflowClick(workflow.id)}
-                        className="group p-4 bg-card hover:bg-accent border rounded-xl text-left transition-all hover:shadow-md hover:border-primary/30"
-                      >
-                        <div className="text-2xl mb-2">{workflow.icon}</div>
-                        <div className="font-medium text-sm mb-1 group-hover:text-primary transition-colors">
-                          {workflow.title}
-                        </div>
-                        <div className="text-xs text-muted-foreground flex items-center gap-1">
-                          <Search className="h-3 w-3" />
-                          {workflow.steps} шага
-                        </div>
-                      </button>
-                    ))}
-                  </div>
-                </div>
-
-                {/* Quick questions */}
-                <div className="w-full max-w-3xl">
-                  <div className="text-sm font-medium text-muted-foreground mb-3">Быстрые вопросы</div>
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
-                    {RECOMMENDED_QUESTIONS.map((q, idx) => (
-                      <Button
-                        key={idx}
-                        variant="outline"
-                        className="h-auto py-3 px-4 text-left justify-start hover:bg-accent hover:border-primary/30 transition-all text-sm"
-                        onClick={() => handleRecommendedClick(q)}
-                      >
-                        <span className="break-words">{q}</span>
-                      </Button>
-                    ))}
-                  </div>
-                </div>
-              </div>
-            )}
-
-            <AnimatePresence>
-        {messages.map((message, index) => {
-          const confidence = extractConfidence(message.content)
-          const statistics = message.role === 'assistant' ? extractStatistics(message.content) : null
-          const isStreamingMessage = currentStreamingMessageRef.current === index && isWebSocketStreaming && !!streamingContent
-          const displayContent = isStreamingMessage ? streamingContent : message.content
-          const displaySources = isStreamingMessage ? streamingSources : (message.sources || [])
-          const isAssistant = message.role === 'assistant'
-
-          return (
-                  <motion.div
-              key={index}
-                    initial={{ opacity: 0, y: 20 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    transition={{ duration: 0.3 }}
-                    className={cn(
-                      "flex items-start gap-3 mb-6 w-full max-w-3xl",
-                      message.role === 'user' ? 'justify-end ml-auto' : 'justify-start mr-auto'
-                    )}
-            >
-                    {isAssistant && (
-                      <Avatar className="h-8 w-8 shrink-0 bg-gradient-to-br from-primary to-primary/60">
-                        <AvatarFallback className="text-xs font-semibold">⚖️</AvatarFallback>
-                      </Avatar>
-                    )}
-
-              <div className={cn(
-                "max-w-[85%] flex-1 sm:max-w-[75%]",
-                message.role === 'user' && 'flex items-end gap-3'
-              )}>
-                {isAssistant ? (
-                      <div className="bg-secondary text-foreground rounded-lg p-4 prose prose-sm max-w-none">
-                    <MessageContent
-                      content={displayContent}
-                      sources={displaySources}
-                      onCitationClick={handleCitationClick}
-                      isStreaming={isStreamingMessage}
-                    />
-                  
-                  {statistics && (
-                            <div className="mt-4">
-                      <StatisticsChart data={statistics} />
-                            </div>
-                  )}
-                  
-                  {confidence !== null && (
-                            <div className="flex items-center gap-2 mt-3">
-                              <span className="text-xs text-muted-foreground">Уверенность:</span>
-                      <ConfidenceBadge confidence={confidence} />
-                            </div>
-                  )}
-                      </div>
-                ) : (
-                        <div className="bg-primary text-primary-foreground rounded-lg px-4 py-3 shadow-sm">
-                          <p className="text-base leading-relaxed whitespace-pre-wrap">{message.content}</p>
-                        </div>
-                    )}
-              </div>
-
-                    {message.role === 'user' && (
-                      <Avatar className="h-8 w-8 shrink-0 bg-muted">
-                        <AvatarFallback className="text-xs font-semibold">👤</AvatarFallback>
-                      </Avatar>
-                    )}
-                  </motion.div>
-                )
-              })}
-            </AnimatePresence>
-
-        {isLoading && !isWebSocketStreaming && currentStreamingMessageRef.current === null && (
-              <motion.div
-                initial={{ opacity: 0 }}
-                animate={{ opacity: 1 }}
-                className="flex items-start gap-3 mb-6"
-              >
-                <Avatar className="h-8 w-8 shrink-0 bg-gradient-to-br from-primary to-primary/60">
-                  <AvatarFallback className="text-xs font-semibold">⚖️</AvatarFallback>
-                </Avatar>
-                <Card className="bg-card border shadow-sm">
-                  <CardContent className="p-5">
-                    <div className="flex gap-2">
-                      <Skeleton className="h-2 w-2 rounded-full" />
-                      <Skeleton className="h-2 w-2 rounded-full" />
-                      <Skeleton className="h-2 w-2 rounded-full" />
-                    </div>
-                  </CardContent>
-            </Card>
-              </motion.div>
-            )}
-
-            {error && (
-              <Alert variant="destructive" className="mb-4">
-                <AlertTitle>Ошибка</AlertTitle>
-                <AlertDescription>{error}</AlertDescription>
-              </Alert>
-            )}
-
-        <div ref={messagesEndRef} />
-          </div>
-        </ScrollArea>
-
-        <div 
-          className="fixed bottom-0 left-[260px] right-0 bg-background border-t z-50 transition-all duration-300 flex justify-center"
-          style={{ backgroundColor: 'var(--color-bg)', borderColor: 'var(--color-border)' }}
-        >
-          {droppedFiles.length > 0 && (
-            <div className="flex flex-wrap gap-2 p-3 border-b bg-muted/50 w-full max-w-3xl mx-auto">
-              {droppedFiles.map((file, index) => (
-                <Badge key={index} variant="secondary" className="gap-2">
-                  <Paperclip className="h-3 w-3" />
-                  <span>{file.name}</span>
-                  <button
-                    type="button"
-                    onClick={() => setDroppedFiles(prev => prev.filter((_, i) => i !== index))}
-                    className="ml-1 hover:text-destructive"
-                    aria-label="Удалить файл"
-                  >
-                    ×
-                  </button>
-                </Badge>
-              ))}
-            </div>
-          )}
-          
-          <div className="w-full max-w-3xl mx-auto px-4 py-4">
-            {/* Harvey-style input card */}
-            <Card className="border shadow-xl bg-card/95 backdrop-blur">
-              <CardContent className="p-0">
-                {/* Main input area */}
-                <div className="p-4">
-                  <div className="relative">
-                    <Textarea
-                      ref={textareaRef}
-                      placeholder={PLACEHOLDERS[currentPlaceholderIndex]}
-                      value={inputValue}
-                      onChange={handleTextareaChange}
-                      onKeyDown={handleKeyDown}
-                      disabled={isLoading || isWebSocketStreaming}
-                      className="min-h-[60px] max-h-[200px] resize-none border-0 focus-visible:ring-0 focus-visible:ring-offset-0 bg-transparent text-base pr-12"
-                      style={{ height: 'auto' }}
-                    />
-                    <Autocomplete
-                      suggestions={autocompleteSuggestions}
-                      selectedIndex={autocompleteSelectedIndex}
-                      onSelect={handleAutocompleteSelect}
-                      visible={autocompleteVisible}
-                    />
-                  </div>
-                </div>
-                
-                {/* Harvey-style toolbar */}
-                <div className="flex items-center justify-between px-4 py-3 border-t bg-muted/30">
-                  {/* Left side - feature buttons */}
-                  <div className="flex items-center gap-1">
-                    <input
-                      type="file"
-                      id="chat-file-input"
-                      multiple
-                      accept=".pdf,.docx,.txt,.xlsx"
-                      onChange={handleFileInput}
-                      className="hidden"
-                    />
-                    
-                    <Tooltip>
-                      <TooltipTrigger asChild>
-                        <Button variant="ghost" size="sm" className="h-8 gap-1.5 text-muted-foreground hover:text-foreground" asChild>
-                          <label htmlFor="chat-file-input" className="cursor-pointer flex items-center gap-1.5">
-                            <Paperclip className="h-4 w-4" />
-                            <span className="text-xs hidden sm:inline">Файлы</span>
-                          </label>
-                        </Button>
-                      </TooltipTrigger>
-                      <TooltipContent>Прикрепить файлы</TooltipContent>
-                    </Tooltip>
-                    
-                    <Separator orientation="vertical" className="h-5 mx-1" />
-                    
-                    <Tooltip>
-                      <TooltipTrigger asChild>
-                        <Button variant="ghost" size="sm" className="h-8 gap-1.5 text-muted-foreground hover:text-foreground">
-                          <BookOpen className="h-4 w-4" />
-                          <span className="text-xs hidden sm:inline">Промпты</span>
-                        </Button>
-                      </TooltipTrigger>
-                      <TooltipContent>Библиотека промптов</TooltipContent>
-                    </Tooltip>
-                    
-                    <Tooltip>
-                      <TooltipTrigger asChild>
-                        <Button variant="ghost" size="sm" className="h-8 gap-1.5 text-muted-foreground hover:text-foreground">
-                          <Settings2 className="h-4 w-4" />
-                          <span className="text-xs hidden sm:inline">Настроить</span>
-                        </Button>
-                      </TooltipTrigger>
-                      <TooltipContent>Настройки ответа</TooltipContent>
-                    </Tooltip>
-                    
-                    <Tooltip>
-                      <TooltipTrigger asChild>
-                        <Button variant="ghost" size="sm" className="h-8 gap-1.5 text-muted-foreground hover:text-foreground">
-                          <Wand2 className="h-4 w-4" />
-                          <span className="text-xs hidden sm:inline">Улучшить</span>
-                        </Button>
-                      </TooltipTrigger>
-                      <TooltipContent>Улучшить промпт с AI</TooltipContent>
-                    </Tooltip>
-                    
-                    <Separator orientation="vertical" className="h-5 mx-1" />
-                    
-                    {/* Source selector inline */}
-                    <SourceSelector
-                      sources={DEFAULT_SOURCES}
-                      selectedSources={selectedSources}
-                      onSourcesChange={setSelectedSources}
-                    />
-                  </div>
-                  
-                  {/* Right side - send button */}
-                  <div className="flex items-center gap-2">
-                    <Tooltip>
-                      <TooltipTrigger asChild>
-                        <Button variant="ghost" size="sm" className="h-8 gap-1.5 text-muted-foreground hover:text-foreground">
-                          <Sparkles className="h-4 w-4" />
-                          <span className="text-xs hidden sm:inline">Deep Research</span>
-                        </Button>
-                      </TooltipTrigger>
-                      <TooltipContent>Глубокое исследование</TooltipContent>
-                    </Tooltip>
-                    
-                    <Button
-                      onClick={(e: React.MouseEvent) => {
-                        e.preventDefault()
-                        handleSend()
-                      }}
-                      disabled={isLoading || !inputValue.trim() || isOverLimit || isWebSocketStreaming}
-                      className="h-8 px-4 bg-primary hover:bg-primary/90 gap-1.5"
-                    >
-                      <span className="text-sm">Спросить</span>
-                      <Send className="h-3.5 w-3.5" />
-                    </Button>
-                  </div>
-                </div>
+    >
+      <Fade in={isDragging}>
+        {isDragging ? (
+          <Box
+            sx={{
+              position: 'absolute',
+              inset: 0,
+              zIndex: 1300,
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              bgcolor: 'primary.main',
+              opacity: 0.1,
+              border: '2px dashed',
+              borderColor: 'primary.main',
+              borderRadius: 2,
+            }}
+          >
+            <Card sx={{ p: 4, textAlign: 'center' }}>
+              <CardContent>
+                <Typography variant="h2" sx={{ mb: 2 }}>
+                  📎
+                </Typography>
+                <Typography variant="h6" sx={{ mb: 1, fontWeight: 600 }}>
+                  Перетащите файлы сюда
+                </Typography>
+                <Typography variant="body2" color="text.secondary">
+                  PDF, DOCX, TXT, XLSX
+                </Typography>
               </CardContent>
             </Card>
-          </div>
-        </div>
-        
-        {/* Document Preview Sheet */}
-        <DocumentPreviewSheet
-          isOpen={previewOpen}
-          onClose={() => setPreviewOpen(false)}
-          source={previewSource}
-          caseId={caseId}
-          allSources={allCurrentSources}
-          onNavigate={(source) => setPreviewSource(source)}
-        />
-      </div>
-    </TooltipProvider>
+          </Box>
+        ) : null}
+      </Fade>
+
+
+      <Box
+        sx={{
+          flex: 1,
+          overflow: 'auto',
+          width: '100%',
+        }}
+      >
+        <Box
+          sx={{
+            width: '100%',
+            maxWidth: '900px',
+            mx: 'auto',
+            px: 3,
+            py: 5,
+            pb: 10,
+            display: 'flex',
+            flexDirection: 'column',
+            alignItems: 'center',
+          }}
+        >
+          {historyError && (
+            <Alert 
+              severity="error" 
+              sx={{ mb: 2, width: '100%' }}
+              action={
+                <Button color="inherit" size="small" onClick={loadHistory}>
+                  Обновить
+                </Button>
+              }
+            >
+              <AlertTitle>Ошибка</AlertTitle>
+              {historyError}
+            </Alert>
+          )}
+
+          {!hasMessages && !isLoading && !historyError && (
+            <Box
+              sx={{
+                display: 'flex',
+                flexDirection: 'column',
+                alignItems: 'center',
+                justifyContent: 'center',
+                minHeight: '50vh',
+                py: 4,
+                width: '100%',
+              }}
+            >
+              {/* Harvey-style welcome */}
+              <Box sx={{ textAlign: 'center', mb: 5 }}>
+                <Typography
+                  variant="h2"
+                  sx={{
+                    mb: 2,
+                    fontWeight: 700,
+                    background: 'linear-gradient(135deg, #3B82F6 0%, #8B5CF6 50%, #EC4899 100%)',
+                    backgroundClip: 'text',
+                    WebkitBackgroundClip: 'text',
+                    WebkitTextFillColor: 'transparent',
+                  }}
+                >
+                  Legal AI Assistant
+                </Typography>
+                <Typography variant="body1" color="text.secondary">
+                  Ваш интеллектуальный помощник для работы с документами
+                </Typography>
+              </Box>
+
+              {/* Recommended workflows - Harvey style */}
+              <Box sx={{ width: '100%', maxWidth: '900px', mb: 4 }}>
+                <Box
+                  sx={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
+                    mb: 2,
+                  }}
+                >
+                  <Typography variant="body2" fontWeight={500} color="text.secondary">
+                    Рекомендуемые процессы
+                  </Typography>
+                  <Button
+                    variant="text"
+                    size="small"
+                    endIcon={<ChevronRightIcon fontSize="small" />}
+                    sx={{ textTransform: 'none', fontSize: '0.75rem' }}
+                  >
+                    Все
+                  </Button>
+                </Box>
+                <Grid container spacing={2}>
+                  {WORKFLOWS.map((workflow) => (
+                    <Grid item xs={6} sm={3} key={workflow.id}>
+                      <Card
+                        component="button"
+                        onClick={() => handleWorkflowClick(workflow.id)}
+                        sx={{
+                          p: 2,
+                          textAlign: 'left',
+                          cursor: 'pointer',
+                          border: '1px solid',
+                          borderColor: 'divider',
+                          '&:hover': {
+                            borderColor: 'primary.main',
+                            boxShadow: 2,
+                            bgcolor: 'action.hover',
+                          },
+                        }}
+                      >
+                        <Typography variant="h4" sx={{ mb: 1 }}>
+                          {workflow.icon}
+                        </Typography>
+                        <Typography variant="body2" fontWeight={500} sx={{ mb: 0.5 }}>
+                          {workflow.title}
+                        </Typography>
+                        <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+                          <SearchIcon sx={{ fontSize: 12, opacity: 0.6 }} />
+                          <Typography variant="caption" color="text.secondary">
+                            {workflow.steps} шага
+                          </Typography>
+                        </Box>
+                      </Card>
+                    </Grid>
+                  ))}
+                </Grid>
+              </Box>
+
+              {/* Quick questions */}
+              <Box sx={{ width: '100%', maxWidth: '900px' }}>
+                <Typography variant="body2" fontWeight={500} color="text.secondary" sx={{ mb: 2 }}>
+                  Быстрые вопросы
+                </Typography>
+                <Grid container spacing={1}>
+                  {RECOMMENDED_QUESTIONS.map((q, idx) => (
+                    <Grid item xs={12} md={6} key={idx}>
+                      <Button
+                        variant="outlined"
+                        fullWidth
+                        onClick={() => handleRecommendedClick(q)}
+                        sx={{
+                          textAlign: 'left',
+                          justifyContent: 'flex-start',
+                          textTransform: 'none',
+                          py: 1.5,
+                          px: 2,
+                          whiteSpace: 'normal',
+                          '&:hover': {
+                            borderColor: 'primary.main',
+                            bgcolor: 'action.hover',
+                          },
+                        }}
+                      >
+                        {q}
+                      </Button>
+                    </Grid>
+                  ))}
+                </Grid>
+              </Box>
+            </Box>
+          )}
+
+          {messages.map((message, index) => {
+            const confidence = extractConfidence(message.content)
+            const statistics = message.role === 'assistant' ? extractStatistics(message.content) : null
+            const isStreamingMessage = currentStreamingMessageRef.current === index && isWebSocketStreaming && !!streamingContent
+            const displayContent = isStreamingMessage ? streamingContent : message.content
+            const displaySources = isStreamingMessage ? streamingSources : (message.sources || [])
+            const isAssistant = message.role === 'assistant'
+
+            return (
+              <Fade in key={index}>
+                <Box
+                  sx={{
+                    display: 'flex',
+                    alignItems: 'flex-start',
+                    gap: 1.5,
+                    mb: 3,
+                    width: '100%',
+                    justifyContent: message.role === 'user' ? 'flex-end' : 'flex-start',
+                  }}
+                >
+                  {isAssistant && (
+                    <Avatar
+                      sx={{
+                        width: 32,
+                        height: 32,
+                        bgcolor: 'primary.main',
+                        flexShrink: 0,
+                      }}
+                    >
+                      ⚖️
+                    </Avatar>
+                  )}
+
+                  <Box
+                    sx={{
+                      maxWidth: { xs: '85%', sm: '75%' },
+                      display: 'flex',
+                      flexDirection: message.role === 'user' ? 'row' : 'column',
+                      alignItems: message.role === 'user' ? 'flex-end' : 'flex-start',
+                      gap: message.role === 'user' ? 1.5 : 0,
+                    }}
+                  >
+                    {isAssistant ? (
+                      <Paper
+                        elevation={0}
+                        sx={{
+                          p: 2,
+                          bgcolor: 'background.paper',
+                          borderRadius: 2,
+                          maxWidth: '100%',
+                        }}
+                      >
+                        <MessageContent
+                          content={displayContent}
+                          sources={displaySources}
+                          onCitationClick={handleCitationClick}
+                          isStreaming={isStreamingMessage}
+                        />
+
+                        {statistics && (
+                          <Box sx={{ mt: 2 }}>
+                            <StatisticsChart data={statistics} />
+                          </Box>
+                        )}
+
+                        {confidence !== null && (
+                          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mt: 2 }}>
+                            <Typography variant="caption" color="text.secondary">
+                              Уверенность:
+                            </Typography>
+                            <ConfidenceBadge confidence={confidence} />
+                          </Box>
+                        )}
+                      </Paper>
+                    ) : (
+                      <Paper
+                        elevation={0}
+                        sx={{
+                          px: 2,
+                          py: 1.5,
+                          bgcolor: 'primary.main',
+                          color: 'primary.contrastText',
+                          borderRadius: 2,
+                        }}
+                      >
+                        <Typography
+                          variant="body1"
+                          sx={{
+                            whiteSpace: 'pre-wrap',
+                            wordBreak: 'break-word',
+                          }}
+                        >
+                          {message.content}
+                        </Typography>
+                      </Paper>
+                    )}
+                  </Box>
+
+                  {message.role === 'user' && (
+                    <Avatar
+                      sx={{
+                        width: 32,
+                        height: 32,
+                        bgcolor: 'grey.300',
+                        flexShrink: 0,
+                      }}
+                    >
+                      👤
+                    </Avatar>
+                  )}
+                </Box>
+              </Fade>
+            )
+          })}
+
+          {isLoading && !isWebSocketStreaming && currentStreamingMessageRef.current === null && (
+            <Box sx={{ display: 'flex', alignItems: 'flex-start', gap: 1.5, mb: 3 }}>
+              <Avatar
+                sx={{
+                  width: 32,
+                  height: 32,
+                  bgcolor: 'primary.main',
+                  flexShrink: 0,
+                }}
+              >
+                ⚖️
+              </Avatar>
+              <Card sx={{ bgcolor: 'background.paper' }}>
+                <CardContent sx={{ p: 3 }}>
+                  <Box sx={{ display: 'flex', gap: 1 }}>
+                    <Skeleton variant="circular" width={8} height={8} />
+                    <Skeleton variant="circular" width={8} height={8} />
+                    <Skeleton variant="circular" width={8} height={8} />
+                  </Box>
+                </CardContent>
+              </Card>
+            </Box>
+          )}
+
+          {error && (
+            <Alert severity="error" sx={{ mb: 2, width: '100%' }}>
+              <AlertTitle>Ошибка</AlertTitle>
+              {error}
+            </Alert>
+          )}
+
+          <div ref={messagesEndRef} />
+        </Box>
+      </Box>
+
+      <Box
+        sx={{
+          position: 'fixed',
+          bottom: 0,
+          left: { xs: 0, md: '280px' },
+          right: 0,
+          bgcolor: 'background.default',
+          borderTop: '1px solid',
+          borderColor: 'divider',
+          zIndex: 1000,
+          display: 'flex',
+          justifyContent: 'center',
+          transition: 'all 0.3s',
+        }}
+      >
+        {droppedFiles.length > 0 && (
+          <Box
+            sx={{
+              display: 'flex',
+              flexWrap: 'wrap',
+              gap: 1,
+              p: 1.5,
+              borderBottom: '1px solid',
+              borderColor: 'divider',
+              bgcolor: 'action.hover',
+              width: '100%',
+              maxWidth: '900px',
+            }}
+          >
+            {droppedFiles.map((file, index) => (
+              <Chip
+                key={index}
+                icon={<PaperclipIcon />}
+                label={file.name}
+                onDelete={() => setDroppedFiles(prev => prev.filter((_, i) => i !== index))}
+                deleteIcon={<CloseIcon />}
+                variant="outlined"
+                size="small"
+              />
+            ))}
+          </Box>
+        )}
+
+        <Box
+          sx={{
+            width: '100%',
+            maxWidth: '900px',
+            px: 2,
+            py: 2,
+          }}
+        >
+          {/* Harvey-style input card */}
+          <Card
+            elevation={4}
+            sx={{
+              bgcolor: 'background.paper',
+              backdropFilter: 'blur(10px)',
+            }}
+          >
+            <CardContent sx={{ p: 0 }}>
+              {/* Main input area */}
+              <Box sx={{ p: 2 }}>
+                <TextField
+                  inputRef={textareaRef}
+                  placeholder={PLACEHOLDERS[currentPlaceholderIndex]}
+                  value={inputValue}
+                  onChange={handleTextareaChange}
+                  onKeyDown={handleKeyDown}
+                  disabled={isLoading || isWebSocketStreaming}
+                  multiline
+                  maxRows={8}
+                  fullWidth
+                  variant="standard"
+                  InputProps={{
+                    disableUnderline: true,
+                    sx: {
+                      fontSize: '1rem',
+                      minHeight: '60px',
+                    },
+                  }}
+                  sx={{
+                    '& .MuiInputBase-root': {
+                      bgcolor: 'transparent',
+                    },
+                  }}
+                />
+                <Autocomplete
+                  suggestions={autocompleteSuggestions}
+                  selectedIndex={autocompleteSelectedIndex}
+                  onSelect={handleAutocompleteSelect}
+                  visible={autocompleteVisible}
+                />
+              </Box>
+
+              {/* Harvey-style toolbar */}
+              <Divider />
+              <Box
+                sx={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'space-between',
+                  px: 2,
+                  py: 1.5,
+                  bgcolor: 'action.hover',
+                }}
+              >
+                {/* Left side - feature buttons */}
+                <Stack direction="row" spacing={0.5} alignItems="center">
+                  <input
+                    type="file"
+                    id="chat-file-input"
+                    multiple
+                    accept=".pdf,.docx,.txt,.xlsx"
+                    onChange={handleFileInput}
+                    style={{ display: 'none' }}
+                  />
+                  <Tooltip title="Прикрепить файлы">
+                    <label htmlFor="chat-file-input">
+                      <IconButton
+                        component="span"
+                        size="small"
+                        sx={{ textTransform: 'none' }}
+                      >
+                        <PaperclipIcon fontSize="small" />
+                      </IconButton>
+                    </label>
+                  </Tooltip>
+
+                  <Divider orientation="vertical" flexItem sx={{ mx: 0.5 }} />
+
+                  <Tooltip title="Библиотека промптов">
+                    <IconButton size="small">
+                      <BookOpenIcon fontSize="small" />
+                    </IconButton>
+                  </Tooltip>
+
+                  <Tooltip title="Настройки ответа">
+                    <IconButton size="small">
+                      <SettingsIcon fontSize="small" />
+                    </IconButton>
+                  </Tooltip>
+
+                  <Tooltip title="Улучшить промпт с AI">
+                    <IconButton size="small">
+                      <WandIcon fontSize="small" />
+                    </IconButton>
+                  </Tooltip>
+
+                  <Divider orientation="vertical" flexItem sx={{ mx: 0.5 }} />
+
+                  {/* Source selector inline */}
+                  <SourceSelector
+                    sources={DEFAULT_SOURCES}
+                    selectedSources={selectedSources}
+                    onSourcesChange={setSelectedSources}
+                  />
+                </Stack>
+
+                {/* Right side - send button */}
+                <Stack direction="row" spacing={1} alignItems="center">
+                  <Tooltip title="Глубокое исследование">
+                    <IconButton size="small">
+                      <SparklesIcon fontSize="small" />
+                    </IconButton>
+                  </Tooltip>
+
+                  <Button
+                    variant="contained"
+                    onClick={(e) => {
+                      e.preventDefault()
+                      handleSend()
+                    }}
+                    disabled={isLoading || !inputValue.trim() || isOverLimit || isWebSocketStreaming}
+                    startIcon={<SendIcon />}
+                    sx={{ textTransform: 'none' }}
+                  >
+                    Спросить
+                  </Button>
+                </Stack>
+              </Box>
+            </CardContent>
+          </Card>
+        </Box>
+      </Box>
+
+      {/* Document Preview Sheet */}
+      <DocumentPreviewSheet
+        isOpen={previewOpen}
+        onClose={() => setPreviewOpen(false)}
+        source={previewSource}
+        caseId={caseId}
+        allSources={allCurrentSources}
+        onNavigate={(source) => setPreviewSource(source)}
+      />
+    </Box>
   )
 }
 

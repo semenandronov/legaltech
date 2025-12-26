@@ -1,23 +1,19 @@
-"use client"
-
 import { useState } from 'react'
 import { useAuth } from '../../contexts/AuthContext'
-import { useForm } from 'react-hook-form'
+import { useForm, Controller } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import * as z from 'zod'
 import { toast } from 'sonner'
 import {
-  Form,
-  FormControl,
-  FormDescription,
-  FormField,
-  FormItem,
-  FormLabel,
-  FormMessage,
-} from '@/components/UI/form'
-import Input from '@/components/UI/Input'
-import { Button } from '@/components/UI/Button'
-import { Alert, AlertDescription } from '@/components/UI/alert'
+  TextField,
+  Button,
+  Alert,
+  Box,
+  Typography,
+  Stack,
+  Card,
+  CardContent,
+} from '@mui/material'
 
 const loginSchema = z.object({
   email: z.string().email('Некорректный email адрес'),
@@ -72,72 +68,85 @@ const LoginForm = () => {
   }
 
   return (
-    <div className="auth-container">
-      <div className="auth-card">
-        <h2 className="auth-title">Вход в систему</h2>
-        <p className="auth-subtitle">Войдите в свой аккаунт для продолжения</p>
+    <Box
+      sx={{
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        minHeight: '100vh',
+        bgcolor: 'background.default',
+        p: 2,
+      }}
+    >
+      <Card sx={{ maxWidth: 400, width: '100%' }}>
+        <CardContent sx={{ p: 4 }}>
+          <Stack spacing={3}>
+            <Box>
+              <Typography variant="h4" fontWeight={600} sx={{ mb: 1 }}>
+                Вход в систему
+              </Typography>
+              <Typography variant="body2" color="text.secondary">
+                Войдите в свой аккаунт для продолжения
+              </Typography>
+            </Box>
 
-        {error && (
-          <Alert variant="destructive" className="mb-4">
-            <AlertDescription>{error}</AlertDescription>
-          </Alert>
-        )}
+            {error && (
+              <Alert severity="error">{error}</Alert>
+            )}
 
-        <Form {...form}>
-          <form onSubmit={form.handleSubmit(handleSubmit)} className="auth-form space-y-4">
-            <FormField
-              control={form.control}
-              name="email"
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel>Email</FormLabel>
-                  <FormControl>
-                    <Input
-                      type="email"
-                      placeholder="your@email.com"
-                      disabled={form.formState.isSubmitting}
-                      {...field}
-                    />
-                  </FormControl>
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
-
-            <FormField
-              control={form.control}
-              name="password"
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel>Пароль</FormLabel>
-                  <FormControl>
-                    <Input
-                      type="password"
-                      placeholder="••••••••"
-                      disabled={form.formState.isSubmitting}
-                      {...field}
-                    />
-                  </FormControl>
-                  <FormDescription>
-                    Минимум 8 символов
-                  </FormDescription>
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
-
-            <Button
-              type="submit"
-              className="w-full"
-              disabled={form.formState.isSubmitting}
-              isLoading={form.formState.isSubmitting}
+            <Box
+              component="form"
+              onSubmit={form.handleSubmit(handleSubmit)}
+              sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}
             >
-              {form.formState.isSubmitting ? 'Вход...' : 'Войти'}
-            </Button>
-          </form>
-        </Form>
-      </div>
-    </div>
+              <Controller
+                name="email"
+                control={form.control}
+                render={({ field, fieldState }) => (
+                  <TextField
+                    {...field}
+                    label="Email"
+                    type="email"
+                    placeholder="your@email.com"
+                    disabled={form.formState.isSubmitting}
+                    error={!!fieldState.error}
+                    helperText={fieldState.error?.message}
+                    fullWidth
+                  />
+                )}
+              />
+
+              <Controller
+                name="password"
+                control={form.control}
+                render={({ field, fieldState }) => (
+                  <TextField
+                    {...field}
+                    label="Пароль"
+                    type="password"
+                    placeholder="••••••••"
+                    disabled={form.formState.isSubmitting}
+                    error={!!fieldState.error}
+                    helperText={fieldState.error?.message || 'Минимум 8 символов'}
+                    fullWidth
+                  />
+                )}
+              />
+
+              <Button
+                type="submit"
+                variant="contained"
+                fullWidth
+                disabled={form.formState.isSubmitting}
+                size="large"
+              >
+                {form.formState.isSubmitting ? 'Вход...' : 'Войти'}
+              </Button>
+            </Box>
+          </Stack>
+        </CardContent>
+      </Card>
+    </Box>
   )
 }
 

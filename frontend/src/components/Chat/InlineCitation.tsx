@@ -1,6 +1,7 @@
 import React, { useState } from 'react'
+import { Chip, Tooltip, Box, Typography, Stack } from '@mui/material'
+import { FileText as FileTextIcon, OpenInNew as ExternalLinkIcon } from '@mui/icons-material'
 import { SourceInfo } from '../../services/api'
-import { FileText, ExternalLink } from 'lucide-react'
 import './Chat.css'
 
 interface InlineCitationProps {
@@ -14,11 +15,17 @@ const InlineCitation: React.FC<InlineCitationProps> = ({
   sources,
   onClick
 }) => {
-  const [showTooltip, setShowTooltip] = useState(false)
   const source = sources[index - 1] // Citations are 1-indexed
 
   if (!source) {
-    return <span className="inline-citation-badge">[{index}]</span>
+    return (
+      <Chip
+        label={`[${index}]`}
+        size="small"
+        variant="outlined"
+        sx={{ opacity: 0.6 }}
+      />
+    )
   }
 
   // Format short document name
@@ -49,47 +56,67 @@ const InlineCitation: React.FC<InlineCitationProps> = ({
   const pageInfo = source.page ? ` стр.${source.page}` : ''
 
   return (
-    <span
-      className="inline-citation-clickable"
-      onClick={handleClick}
-      onMouseEnter={() => setShowTooltip(true)}
-      onMouseLeave={() => setShowTooltip(false)}
-      role="button"
-      tabIndex={0}
-      onKeyDown={(e) => e.key === 'Enter' && handleClick(e as any)}
-      aria-label={`Открыть документ: ${source.file}`}
-    >
-      <FileText className="inline-citation-icon" />
-      <span className="inline-citation-text">{shortName}{pageInfo}</span>
-      <ExternalLink className="inline-citation-link-icon" />
-      
-      {showTooltip && (
-        <div className="inline-citation-tooltip-modern">
-          <div className="tooltip-header">
-            <FileText size={14} />
-            <span className="tooltip-filename">{source.file}</span>
-          </div>
+    <Tooltip
+      title={
+        <Box>
+          <Stack direction="row" spacing={1} alignItems="center" sx={{ mb: 1 }}>
+            <FileTextIcon fontSize="small" />
+            <Typography variant="body2" fontWeight={600}>
+              {source.file}
+            </Typography>
+          </Stack>
           {source.page && (
-            <div className="tooltip-page">Страница {source.page}</div>
+            <Typography variant="caption" color="primary.main" sx={{ display: 'block', mb: 0.5 }}>
+              Страница {source.page}
+            </Typography>
           )}
           {source.similarity_score !== undefined && (
-            <div className="tooltip-relevance">
+            <Typography variant="caption" color="success.main" sx={{ display: 'block', mb: 1 }}>
               Релевантность: {Math.round(source.similarity_score * 100)}%
-            </div>
+            </Typography>
           )}
           {source.text_preview && (
-            <div className="tooltip-preview">
-              {source.text_preview.length > 200 
-                ? source.text_preview.substring(0, 200) + '...' 
+            <Typography
+              variant="caption"
+              sx={{
+                display: 'block',
+                mb: 1,
+                p: 1,
+                bgcolor: 'rgba(0, 0, 0, 0.2)',
+                borderRadius: 1,
+                maxHeight: '100px',
+                overflow: 'auto',
+              }}
+            >
+              {source.text_preview.length > 200
+                ? source.text_preview.substring(0, 200) + '...'
                 : source.text_preview}
-            </div>
+            </Typography>
           )}
-          <div className="tooltip-action">
+          <Typography variant="caption" color="primary.main" sx={{ display: 'block', textAlign: 'center' }}>
             Нажмите, чтобы открыть документ →
-          </div>
-        </div>
-      )}
-    </span>
+          </Typography>
+        </Box>
+      }
+      arrow
+      placement="top"
+    >
+      <Chip
+        icon={<FileTextIcon />}
+        label={`${shortName}${pageInfo}`}
+        size="small"
+        onClick={handleClick}
+        onDelete={() => {}}
+        deleteIcon={<ExternalLinkIcon fontSize="small" />}
+        sx={{
+          cursor: 'pointer',
+          '&:hover': {
+            bgcolor: 'action.hover',
+          },
+        }}
+        aria-label={`Открыть документ: ${source.file}`}
+      />
+    </Tooltip>
   )
 }
 

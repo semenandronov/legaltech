@@ -1,7 +1,17 @@
 import { useState, useEffect } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
-import Sidebar from '../components/Layout/Sidebar'
-import Header from '../components/Layout/Header'
+import {
+  Box,
+  Button,
+  Tabs,
+  Tab,
+  Alert,
+  CircularProgress,
+  Typography,
+  Stack,
+} from '@mui/material'
+import { ArrowBack as ArrowBackIcon } from '@mui/icons-material'
+import MainLayout from '../components/Layout/MainLayout'
 import TimelineTab from '../components/Analysis/TimelineTab'
 import DiscrepanciesTab from '../components/Analysis/DiscrepanciesTab'
 import KeyFactsTab from '../components/Analysis/KeyFactsTab'
@@ -26,7 +36,13 @@ const AnalysisPage = () => {
   }, [caseId])
 
   if (!caseId) {
-    return <div>Дело не найдено</div>
+    return (
+      <MainLayout>
+        <Box sx={{ p: 3 }}>
+          <Typography>Дело не найдено</Typography>
+        </Box>
+      </MainLayout>
+    )
   }
 
   const loadStatus = async () => {
@@ -68,64 +84,102 @@ const AnalysisPage = () => {
     { id: 'relationship', label: '🔗 Граф связей', icon: '🔗' },
   ]
 
+  const handleTabChange = (_event: React.SyntheticEvent, newValue: string) => {
+    setActiveTab(newValue)
+  }
+
   return (
-    <div className="analysis-page-root">
-      <Sidebar />
-      <div className="analysis-page-content" style={{ marginLeft: '250px' }}>
-        <Header />
-        <main className="analysis-page-main">
-          <div className="analysis-page-header">
-            <div className="analysis-page-header-left">
-              <button className="analysis-back-btn" onClick={() => navigate('/')}>
-                ← Назад к Dashboard
-              </button>
-              <h1 className="analysis-page-title">Анализ дела</h1>
-            </div>
-            <div className="analysis-page-header-right">
-              {error && (
-                <div style={{ marginRight: '16px', color: '#ef4444', fontSize: '14px' }}>
-                  ⚠️ {error}
-                </div>
-              )}
-              {success && (
-                <div style={{ marginRight: '16px', color: '#10b981', fontSize: '14px' }}>
-                  ✅ Анализ запущен
-                </div>
-              )}
-              <button
-                className="analysis-start-btn"
-                onClick={() => handleStartAnalysis(['timeline', 'discrepancies', 'key_facts', 'summary', 'risk_analysis'])}
-                disabled={loading}
-              >
-                {loading ? 'Запуск...' : 'Запустить полный анализ'}
-              </button>
-            </div>
-          </div>
+    <MainLayout>
+      <Box sx={{ p: 3 }}>
+        {/* Header */}
+        <Stack
+          direction={{ xs: 'column', sm: 'row' }}
+          spacing={2}
+          sx={{ mb: 3 }}
+          justifyContent="space-between"
+          alignItems={{ xs: 'flex-start', sm: 'center' }}
+        >
+          <Stack direction="row" spacing={2} alignItems="center">
+            <Button
+              startIcon={<ArrowBackIcon />}
+              onClick={() => navigate('/')}
+              variant="outlined"
+              size="small"
+            >
+              Назад к Dashboard
+            </Button>
+            <Typography variant="h4" fontWeight={600}>
+              Анализ дела
+            </Typography>
+          </Stack>
 
-          <div className="analysis-page-tabs">
-            {tabs.map((tab) => (
-              <button
-                key={tab.id}
-                className={`analysis-tab ${activeTab === tab.id ? 'active' : ''}`}
-                onClick={() => setActiveTab(tab.id)}
-              >
-                <span className="analysis-tab-icon">{tab.icon}</span>
-                <span className="analysis-tab-label">{tab.label}</span>
-              </button>
-            ))}
-          </div>
+          <Stack direction="row" spacing={2} alignItems="center">
+            {error && (
+              <Alert severity="error" sx={{ py: 0.5 }}>
+                {error}
+              </Alert>
+            )}
+            {success && (
+              <Alert severity="success" sx={{ py: 0.5 }}>
+                Анализ запущен
+              </Alert>
+            )}
+            <Button
+              variant="contained"
+              onClick={() =>
+                handleStartAnalysis([
+                  'timeline',
+                  'discrepancies',
+                  'key_facts',
+                  'summary',
+                  'risk_analysis',
+                ])
+              }
+              disabled={loading}
+              startIcon={loading ? <CircularProgress size={16} /> : null}
+            >
+              {loading ? 'Запуск...' : 'Запустить полный анализ'}
+            </Button>
+          </Stack>
+        </Stack>
 
-          <div className="analysis-page-content-area">
-            {activeTab === 'timeline' && caseId && <TimelineTab caseId={caseId} />}
-            {activeTab === 'discrepancies' && caseId && <DiscrepanciesTab caseId={caseId} />}
-            {activeTab === 'key_facts' && caseId && <KeyFactsTab caseId={caseId} />}
-            {activeTab === 'summary' && caseId && <SummaryTab caseId={caseId} />}
-            {activeTab === 'risks' && caseId && <RiskAnalysisTab caseId={caseId} />}
-            {activeTab === 'relationship' && caseId && <RelationshipGraphTab caseId={caseId} />}
-          </div>
-        </main>
-      </div>
-    </div>
+        {/* Tabs */}
+        <Tabs
+          value={activeTab}
+          onChange={handleTabChange}
+          variant="scrollable"
+          scrollButtons="auto"
+          sx={{ mb: 3, borderBottom: 1, borderColor: 'divider' }}
+        >
+          {tabs.map((tab) => (
+            <Tab
+              key={tab.id}
+              value={tab.id}
+              label={
+                <Stack direction="row" spacing={1} alignItems="center">
+                  <span>{tab.icon}</span>
+                  <span>{tab.label}</span>
+                </Stack>
+              }
+            />
+          ))}
+        </Tabs>
+
+        {/* Content */}
+        <Box>
+          {activeTab === 'timeline' && caseId && <TimelineTab caseId={caseId} />}
+          {activeTab === 'discrepancies' && caseId && (
+            <DiscrepanciesTab caseId={caseId} />
+          )}
+          {activeTab === 'key_facts' && caseId && <KeyFactsTab caseId={caseId} />}
+          {activeTab === 'summary' && caseId && <SummaryTab caseId={caseId} />}
+          {activeTab === 'risks' && caseId && <RiskAnalysisTab caseId={caseId} />}
+          {activeTab === 'relationship' && caseId && (
+            <RelationshipGraphTab caseId={caseId} />
+          )}
+        </Box>
+      </Box>
+    </MainLayout>
   )
 }
 

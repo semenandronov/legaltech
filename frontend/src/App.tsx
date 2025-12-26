@@ -1,20 +1,38 @@
+import { lazy, Suspense } from 'react'
 import { Routes, Route, Navigate, useParams } from 'react-router-dom'
+import { Box, CircularProgress } from '@mui/material'
 import ProtectedRoute from './components/ProtectedRoute'
 import LoginPage from './pages/LoginPage'
 import RegisterPage from './pages/RegisterPage'
-import CasesListPage from './pages/CasesListPage'
-import CaseOverviewPage from './pages/CaseOverviewPage'
-import ContradictionsPage from './pages/ContradictionsPage'
-import DocumentsPage from './pages/DocumentsPage'
-import AnalysisPage from './pages/AnalysisPage'
-import ReportsPage from './pages/ReportsPage'
-import SettingsPage from './pages/SettingsPage'
-import TabularReviewPage from './pages/TabularReviewPage'
-import { useState, useEffect } from 'react'
 import ChatWindow from './components/ChatWindow'
 import CaseNavigation from './components/CaseOverview/CaseNavigation'
 import { getCase } from './services/api'
 import { logger } from '@/lib/logger'
+import { useState, useEffect } from 'react'
+
+// Lazy load heavy pages
+const CasesListPage = lazy(() => import('./pages/CasesListPage'))
+const CaseOverviewPage = lazy(() => import('./pages/CaseOverviewPage'))
+const ContradictionsPage = lazy(() => import('./pages/ContradictionsPage'))
+const DocumentsPage = lazy(() => import('./pages/DocumentsPage'))
+const AnalysisPage = lazy(() => import('./pages/AnalysisPage'))
+const ReportsPage = lazy(() => import('./pages/ReportsPage'))
+const SettingsPage = lazy(() => import('./pages/SettingsPage'))
+const TabularReviewPage = lazy(() => import('./pages/TabularReviewPage'))
+
+// Loading fallback
+const PageLoader = () => (
+  <Box
+    sx={{
+      display: 'flex',
+      alignItems: 'center',
+      justifyContent: 'center',
+      height: '100vh',
+    }}
+  >
+    <CircularProgress />
+  </Box>
+)
 
 function App() {
   return (
@@ -33,7 +51,9 @@ function App() {
         path="/cases"
         element={
           <ProtectedRoute>
-            <CasesListPage />
+            <Suspense fallback={<PageLoader />}>
+              <CasesListPage />
+            </Suspense>
           </ProtectedRoute>
         }
       />
@@ -49,7 +69,9 @@ function App() {
         path="/cases/:caseId/workspace"
         element={
           <ProtectedRoute>
-            <CaseOverviewPage />
+            <Suspense fallback={<PageLoader />}>
+              <CaseOverviewPage />
+            </Suspense>
           </ProtectedRoute>
         }
       />
@@ -57,7 +79,9 @@ function App() {
         path="/cases/:caseId/documents"
         element={
           <ProtectedRoute>
-            <DocumentsPage />
+            <Suspense fallback={<PageLoader />}>
+              <DocumentsPage />
+            </Suspense>
           </ProtectedRoute>
         }
       />
@@ -65,7 +89,9 @@ function App() {
         path="/cases/:caseId/contradictions"
         element={
           <ProtectedRoute>
-            <ContradictionsPage />
+            <Suspense fallback={<PageLoader />}>
+              <ContradictionsPage />
+            </Suspense>
           </ProtectedRoute>
         }
       />
@@ -73,7 +99,9 @@ function App() {
         path="/cases/:caseId/analysis"
         element={
           <ProtectedRoute>
-            <AnalysisPage />
+            <Suspense fallback={<PageLoader />}>
+              <AnalysisPage />
+            </Suspense>
           </ProtectedRoute>
         }
       />
@@ -81,7 +109,9 @@ function App() {
         path="/cases/:caseId/reports"
         element={
           <ProtectedRoute>
-            <ReportsPage />
+            <Suspense fallback={<PageLoader />}>
+              <ReportsPage />
+            </Suspense>
           </ProtectedRoute>
         }
       />
@@ -89,7 +119,9 @@ function App() {
         path="/cases/:caseId/tabular-review/:reviewId?"
         element={
           <ProtectedRoute>
-            <TabularReviewPage />
+            <Suspense fallback={<PageLoader />}>
+              <TabularReviewPage />
+            </Suspense>
           </ProtectedRoute>
         }
       />
@@ -97,7 +129,9 @@ function App() {
         path="/settings"
         element={
           <ProtectedRoute>
-            <SettingsPage />
+            <Suspense fallback={<PageLoader />}>
+              <SettingsPage />
+            </Suspense>
           </ProtectedRoute>
         }
       />
