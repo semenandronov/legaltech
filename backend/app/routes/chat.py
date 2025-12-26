@@ -375,12 +375,12 @@ async def chat(
             
             try:
                 # Save user message
-                # Use case_id as session_id since DB requires non-null sessionId
+                # session_id is nullable - no need to create chat_sessions entry
                 user_message = ChatMessage(
                     case_id=request.case_id,
                     role="user",
                     content=request.question,
-                    session_id=request.case_id  # Use case_id as session_id
+                    session_id=None  # Nullable field, no foreign key constraint violation
                 )
                 db.add(user_message)
 
@@ -390,7 +390,7 @@ async def chat(
                     role="assistant",
                     content=answer,
                     source_references=[],
-                    session_id=request.case_id  # Use case_id as session_id
+                    session_id=None  # Nullable field, no foreign key constraint violation
                 )
                 db.add(assistant_message)
                 db.commit()
@@ -493,12 +493,12 @@ async def chat(
         
         try:
             # Save user message
-            # Use case_id as session_id since DB requires non-null sessionId
+            # session_id is nullable - no need to create chat_sessions entry
             user_message = ChatMessage(
                 case_id=request.case_id,
                 role="user",
                 content=request.question,
-                session_id=request.case_id  # Use case_id as session_id
+                session_id=None  # Nullable field, no foreign key constraint violation
             )
             db.add(user_message)
             
@@ -510,7 +510,7 @@ async def chat(
                 role="assistant",
                 content=answer,
                 source_references=source_file_names or [],
-                session_id=request.case_id  # Use case_id as session_id
+                session_id=None  # Nullable field, no foreign key constraint violation
             )
             db.add(assistant_message)
             
