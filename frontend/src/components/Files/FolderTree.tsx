@@ -1,6 +1,6 @@
 import React, { useState } from 'react'
 import { Button } from '@/components/UI/Button'
-import { Input } from '@/components/UI/Input'
+import Input from '@/components/UI/Input'
 import { Badge } from '@/components/UI/Badge'
 import { ScrollArea } from '@/components/UI/scroll-area'
 import {

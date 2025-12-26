@@ -6,7 +6,7 @@ import {
   PopoverContent,
   PopoverTrigger,
 } from '@/components/UI/popover'
-import { Checkbox } from '@/components/UI/Checkbox'
+import Checkbox from '@/components/UI/Checkbox'
 import { ScrollArea } from '@/components/UI/scroll-area'
 import { 
   Globe, 
