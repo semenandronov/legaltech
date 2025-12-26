@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { Send, Paperclip } from 'lucide-react'
+import { Send, Paperclip, Sparkles, Settings2, BookOpen, Wand2, Search, ChevronRight } from 'lucide-react'
 import { motion, AnimatePresence } from 'framer-motion'
 import './ChatWindow.css'
 import './Chat/Chat.css'
@@ -11,6 +11,7 @@ import MessageContent from './Chat/MessageContent'
 import Autocomplete from './Chat/Autocomplete'
 import StatisticsChart from './Chat/StatisticsChart'
 import SourceSelector, { DEFAULT_SOURCES } from './Chat/SourceSelector'
+import DocumentPreviewSheet from './Chat/DocumentPreviewSheet'
 import { Button } from '@/components/UI/Button'
 import { Card, CardContent } from '@/components/UI/Card'
 import { Textarea } from '@/components/UI/Textarea'
@@ -72,8 +73,7 @@ const ChatWindow = ({ caseId, onDocumentClick }: ChatWindowProps) => {
   const currentStreamingMessageRef = useRef<number | null>(null)
   
   const PLACEHOLDERS = [
-    'Задайте вопрос...',
-    'Объясни как 5-летнему...',
+    'Спросите что угодно...',
     'Сравни документы...',
     'Найди противоречия...',
     'Что говорит договор о...',
@@ -82,6 +82,19 @@ const ChatWindow = ({ caseId, onDocumentClick }: ChatWindowProps) => {
   const [currentPlaceholderIndex, setCurrentPlaceholderIndex] = useState(0)
   const [proSearchEnabled] = useState(false)
   const [selectedSources, setSelectedSources] = useState<string[]>(['vault'])
+  
+  // Document preview state
+  const [previewOpen, setPreviewOpen] = useState(false)
+  const [previewSource, setPreviewSource] = useState<SourceInfo | null>(null)
+  const [allCurrentSources, setAllCurrentSources] = useState<SourceInfo[]>([])
+  
+  // Recommended workflows (Harvey style)
+  const WORKFLOWS = [
+    { id: 'timeline', icon: '📅', title: 'Хронология событий', description: 'Извлечь ключевые даты', steps: 2 },
+    { id: 'summary', icon: '📋', title: 'Краткое изложение', description: 'Сводка по делу', steps: 3 },
+    { id: 'risks', icon: '⚠️', title: 'Анализ рисков', description: 'Найти проблемы', steps: 4 },
+    { id: 'compare', icon: '🔄', title: 'Сравнить документы', description: 'Найти расхождения', steps: 2 },
+  ]
 
   const { isConnected, isStreaming: isWebSocketStreaming, sendMessage: sendWebSocketMessage } = useWebSocketChat({
     caseId,
@@ -507,10 +520,31 @@ const ChatWindow = ({ caseId, onDocumentClick }: ChatWindowProps) => {
   }
 
   const handleCitationClick = (source: SourceInfo) => {
+    // Open document preview sheet
+    setPreviewSource(source)
+    // Collect all sources from messages for navigation
+    const allSources = messages
+      .filter(m => m.role === 'assistant' && m.sources)
+      .flatMap(m => m.sources || [])
+    setAllCurrentSources(allSources)
+    setPreviewOpen(true)
+    
+    // Also call external handler if provided
     if (onDocumentClick) {
       onDocumentClick(source.file)
-    } else {
-      navigate(`/cases/${caseId}/workspace`)
+    }
+  }
+  
+  const handleWorkflowClick = (workflowId: string) => {
+    const workflowQuestions: Record<string, string> = {
+      'timeline': 'Построй хронологию всех ключевых событий из документов дела',
+      'summary': 'Сделай краткое изложение дела на основе всех документов',
+      'risks': 'Проанализируй риски и найди потенциальные проблемы в документах',
+      'compare': 'Сравни все документы и найди расхождения или противоречия',
+    }
+    const question = workflowQuestions[workflowId]
+    if (question) {
+      handleSend(question)
     }
   }
 
@@ -615,31 +649,61 @@ const ChatWindow = ({ caseId, onDocumentClick }: ChatWindowProps) => {
         )}
 
             {!hasMessages && !isLoading && !historyError && (
-              <div className="flex justify-center items-center min-h-[60vh] py-10 w-full">
-                <Card className="max-w-2xl w-full mx-auto">
-                  <CardContent className="pt-6 text-center px-6">
-                    <Avatar className="h-20 w-20 mx-auto mb-6 bg-gradient-to-br from-primary to-primary/60">
-                      <AvatarFallback className="text-3xl">⚖️</AvatarFallback>
-                    </Avatar>
-                    <h2 className="text-3xl font-bold mb-3">Legal AI</h2>
-                    <p className="text-muted-foreground mb-8 text-lg leading-relaxed px-4">
-                      Задайте вопрос по загруженным документам. AI проанализирует контракты, переписку и таблицы.
-                    </p>
-                    <Separator className="my-6" />
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3 max-w-2xl mx-auto">
-                      {RECOMMENDED_QUESTIONS.map((q, idx) => (
-                        <Button
-                          key={idx}
-                          variant="outline"
-                          className="h-auto py-4 px-4 text-left justify-start hover:bg-accent transition-colors break-words whitespace-normal"
-                          onClick={() => handleRecommendedClick(q)}
-                        >
-                          <span className="break-words">{q}</span>
-                        </Button>
-                      ))}
-                    </div>
-                  </CardContent>
-                </Card>
+              <div className="flex flex-col justify-center items-center min-h-[50vh] py-8 w-full">
+                {/* Harvey-style welcome */}
+                <div className="text-center mb-10">
+                  <h1 className="text-4xl font-bold mb-3 bg-gradient-to-r from-blue-500 via-purple-500 to-pink-500 bg-clip-text text-transparent">
+                    Legal AI Assistant
+                  </h1>
+                  <p className="text-muted-foreground text-lg">
+                    Ваш интеллектуальный помощник для работы с документами
+                  </p>
+                </div>
+                
+                {/* Recommended workflows - Harvey style */}
+                <div className="w-full max-w-3xl mb-8">
+                  <div className="flex items-center justify-between mb-4">
+                    <span className="text-sm font-medium text-muted-foreground">Рекомендуемые процессы</span>
+                    <Button variant="ghost" size="sm" className="text-xs text-muted-foreground">
+                      Все <ChevronRight className="h-3 w-3 ml-1" />
+                    </Button>
+                  </div>
+                  <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                    {WORKFLOWS.map((workflow) => (
+                      <button
+                        key={workflow.id}
+                        onClick={() => handleWorkflowClick(workflow.id)}
+                        className="group p-4 bg-card hover:bg-accent border rounded-xl text-left transition-all hover:shadow-md hover:border-primary/30"
+                      >
+                        <div className="text-2xl mb-2">{workflow.icon}</div>
+                        <div className="font-medium text-sm mb-1 group-hover:text-primary transition-colors">
+                          {workflow.title}
+                        </div>
+                        <div className="text-xs text-muted-foreground flex items-center gap-1">
+                          <Search className="h-3 w-3" />
+                          {workflow.steps} шага
+                        </div>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Quick questions */}
+                <div className="w-full max-w-3xl">
+                  <div className="text-sm font-medium text-muted-foreground mb-3">Быстрые вопросы</div>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                    {RECOMMENDED_QUESTIONS.map((q, idx) => (
+                      <Button
+                        key={idx}
+                        variant="outline"
+                        className="h-auto py-3 px-4 text-left justify-start hover:bg-accent hover:border-primary/30 transition-all text-sm"
+                        onClick={() => handleRecommendedClick(q)}
+                      >
+                        <span className="break-words">{q}</span>
+                      </Button>
+                    ))}
+                  </div>
+                </div>
               </div>
             )}
 
@@ -767,86 +831,138 @@ const ChatWindow = ({ caseId, onDocumentClick }: ChatWindowProps) => {
             </div>
           )}
           
-          <div className="w-full max-w-3xl mx-auto px-6 py-6">
-            <Card className="border-2 shadow-lg">
-              <CardContent className="p-4">
-                {/* Source selector above input */}
-                <div className="mb-3 pb-3 border-b">
-                  <SourceSelector
-                    sources={DEFAULT_SOURCES}
-                    selectedSources={selectedSources}
-                    onSourcesChange={setSelectedSources}
-                  />
+          <div className="w-full max-w-3xl mx-auto px-4 py-4">
+            {/* Harvey-style input card */}
+            <Card className="border shadow-xl bg-card/95 backdrop-blur">
+              <CardContent className="p-0">
+                {/* Main input area */}
+                <div className="p-4">
+                  <div className="relative">
+                    <Textarea
+                      ref={textareaRef}
+                      placeholder={PLACEHOLDERS[currentPlaceholderIndex]}
+                      value={inputValue}
+                      onChange={handleTextareaChange}
+                      onKeyDown={handleKeyDown}
+                      disabled={isLoading || isWebSocketStreaming}
+                      className="min-h-[60px] max-h-[200px] resize-none border-0 focus-visible:ring-0 focus-visible:ring-offset-0 bg-transparent text-base pr-12"
+                      style={{ height: 'auto' }}
+                    />
+                    <Autocomplete
+                      suggestions={autocompleteSuggestions}
+                      selectedIndex={autocompleteSelectedIndex}
+                      onSelect={handleAutocompleteSelect}
+                      visible={autocompleteVisible}
+                    />
+                  </div>
                 </div>
                 
-                <div className="flex items-end gap-3">
-                  <div className="relative flex-1">
-                    <Textarea
-                ref={textareaRef}
-                placeholder={PLACEHOLDERS[currentPlaceholderIndex]}
-                value={inputValue}
-                onChange={handleTextareaChange}
-                onKeyDown={handleKeyDown}
-                      disabled={isLoading || isWebSocketStreaming}
-                      className="min-h-[24px] max-h-[200px] resize-none border-0 focus-visible:ring-0 focus-visible:ring-offset-0 bg-transparent"
-                style={{
-                        height: 'auto',
-                      }}
-              />
-              <Autocomplete
-                suggestions={autocompleteSuggestions}
-                selectedIndex={autocompleteSelectedIndex}
-                onSelect={handleAutocompleteSelect}
-                visible={autocompleteVisible}
-              />
-                  </div>
-                  
-                  <div className="flex items-center gap-2 shrink-0">
-              <input
-                type="file"
-                id="chat-file-input"
-                multiple
-                accept=".pdf,.docx,.txt,.xlsx"
-                onChange={handleFileInput}
+                {/* Harvey-style toolbar */}
+                <div className="flex items-center justify-between px-4 py-3 border-t bg-muted/30">
+                  {/* Left side - feature buttons */}
+                  <div className="flex items-center gap-1">
+                    <input
+                      type="file"
+                      id="chat-file-input"
+                      multiple
+                      accept=".pdf,.docx,.txt,.xlsx"
+                      onChange={handleFileInput}
                       className="hidden"
-              />
+                    />
+                    
                     <Tooltip>
                       <TooltipTrigger asChild>
-                        <Button
-                variant="ghost"
-                          size="icon"
-                          asChild
-              >
-                          <label htmlFor="chat-file-input" className="cursor-pointer">
-                            <Paperclip className="h-5 w-5" />
-                </label>
+                        <Button variant="ghost" size="sm" className="h-8 gap-1.5 text-muted-foreground hover:text-foreground" asChild>
+                          <label htmlFor="chat-file-input" className="cursor-pointer flex items-center gap-1.5">
+                            <Paperclip className="h-4 w-4" />
+                            <span className="text-xs hidden sm:inline">Файлы</span>
+                          </label>
                         </Button>
                       </TooltipTrigger>
-                      <TooltipContent>Прикрепить файл</TooltipContent>
+                      <TooltipContent>Прикрепить файлы</TooltipContent>
+                    </Tooltip>
+                    
+                    <Separator orientation="vertical" className="h-5 mx-1" />
+                    
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <Button variant="ghost" size="sm" className="h-8 gap-1.5 text-muted-foreground hover:text-foreground">
+                          <BookOpen className="h-4 w-4" />
+                          <span className="text-xs hidden sm:inline">Промпты</span>
+                        </Button>
+                      </TooltipTrigger>
+                      <TooltipContent>Библиотека промптов</TooltipContent>
                     </Tooltip>
                     
                     <Tooltip>
                       <TooltipTrigger asChild>
-                        <Button
-                          size="icon"
-                          onClick={(e: React.MouseEvent) => {
-                  e.preventDefault()
-                  handleSend()
-                }}
-                          disabled={isLoading || !inputValue.trim() || isOverLimit || isWebSocketStreaming}
-                          className="bg-primary hover:bg-primary/90"
-                        >
-                          <Send className="h-4 w-4" />
+                        <Button variant="ghost" size="sm" className="h-8 gap-1.5 text-muted-foreground hover:text-foreground">
+                          <Settings2 className="h-4 w-4" />
+                          <span className="text-xs hidden sm:inline">Настроить</span>
                         </Button>
                       </TooltipTrigger>
-                      <TooltipContent>Отправить (Enter)</TooltipContent>
+                      <TooltipContent>Настройки ответа</TooltipContent>
                     </Tooltip>
+                    
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <Button variant="ghost" size="sm" className="h-8 gap-1.5 text-muted-foreground hover:text-foreground">
+                          <Wand2 className="h-4 w-4" />
+                          <span className="text-xs hidden sm:inline">Улучшить</span>
+                        </Button>
+                      </TooltipTrigger>
+                      <TooltipContent>Улучшить промпт с AI</TooltipContent>
+                    </Tooltip>
+                    
+                    <Separator orientation="vertical" className="h-5 mx-1" />
+                    
+                    {/* Source selector inline */}
+                    <SourceSelector
+                      sources={DEFAULT_SOURCES}
+                      selectedSources={selectedSources}
+                      onSourcesChange={setSelectedSources}
+                    />
+                  </div>
+                  
+                  {/* Right side - send button */}
+                  <div className="flex items-center gap-2">
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <Button variant="ghost" size="sm" className="h-8 gap-1.5 text-muted-foreground hover:text-foreground">
+                          <Sparkles className="h-4 w-4" />
+                          <span className="text-xs hidden sm:inline">Deep Research</span>
+                        </Button>
+                      </TooltipTrigger>
+                      <TooltipContent>Глубокое исследование</TooltipContent>
+                    </Tooltip>
+                    
+                    <Button
+                      onClick={(e: React.MouseEvent) => {
+                        e.preventDefault()
+                        handleSend()
+                      }}
+                      disabled={isLoading || !inputValue.trim() || isOverLimit || isWebSocketStreaming}
+                      className="h-8 px-4 bg-primary hover:bg-primary/90 gap-1.5"
+                    >
+                      <span className="text-sm">Спросить</span>
+                      <Send className="h-3.5 w-3.5" />
+                    </Button>
                   </div>
                 </div>
               </CardContent>
             </Card>
           </div>
         </div>
+        
+        {/* Document Preview Sheet */}
+        <DocumentPreviewSheet
+          isOpen={previewOpen}
+          onClose={() => setPreviewOpen(false)}
+          source={previewSource}
+          caseId={caseId}
+          allSources={allCurrentSources}
+          onNavigate={(source) => setPreviewSource(source)}
+        />
       </div>
     </TooltipProvider>
   )

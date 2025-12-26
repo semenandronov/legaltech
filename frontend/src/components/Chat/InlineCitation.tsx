@@ -1,5 +1,6 @@
 import React, { useState } from 'react'
 import { SourceInfo } from '../../services/api'
+import { FileText, ExternalLink } from 'lucide-react'
 import './Chat.css'
 
 interface InlineCitationProps {
@@ -17,34 +18,23 @@ const InlineCitation: React.FC<InlineCitationProps> = ({
   const source = sources[index - 1] // Citations are 1-indexed
 
   if (!source) {
-    return <span className="inline-citation-perplexity">[{index}]</span>
+    return <span className="inline-citation-badge">[{index}]</span>
   }
 
-  // Format citation like Perplexity: short name + number
-  // Example: "habr +1", "sap +2", "document +1"
-  const formatCitationLabel = (source: SourceInfo): string => {
-    // Extract short name from file (remove extension, take first part)
-    let name = source.file.replace(/\.[^/.]+$/, '') // Remove extension
-    name = name.split(/[_\-\s]/)[0] // Take first word/part
-    name = name.substring(0, 8).toLowerCase() // Limit to 8 chars, lowercase
-    
-    // Count how many times this source appears (for +N notation)
-    const sameSourceCount = sources.filter(s => 
-      s.file.replace(/\.[^/.]+$/, '').split(/[_\-\s]/)[0].toLowerCase() === name
-    ).length
-    
-    if (sameSourceCount > 1) {
-      return `${name} +${sameSourceCount}`
+  // Format short document name
+  const formatShortName = (filename: string): string => {
+    let name = filename.replace(/\.[^/.]+$/, '') // Remove extension
+    // Take meaningful part - last segment if it contains date/type
+    const parts = name.split(/[_\-]/)
+    if (parts.length > 2) {
+      // Try to get date and type (e.g., "20170619_Opredelenie")
+      const dateMatch = parts.find(p => /^\d{8}$/.test(p))
+      const typeMatch = parts.find(p => p.length > 5 && !/^\d+$/.test(p))
+      if (dateMatch && typeMatch) {
+        return `${typeMatch.substring(0, 12)}`
+      }
     }
-    return name
-  }
-
-  const formatCitationTooltip = (source: SourceInfo): string => {
-    let citation = source.file
-    if (source.page) {
-      citation += `, стр. ${source.page}`
-    }
-    return citation
+    return name.substring(0, 15)
   }
 
   const handleClick = (e: React.MouseEvent) => {
@@ -55,26 +45,48 @@ const InlineCitation: React.FC<InlineCitationProps> = ({
     }
   }
 
-    const label = formatCitationLabel(source)
+  const shortName = formatShortName(source.file)
+  const pageInfo = source.page ? ` стр.${source.page}` : ''
 
   return (
     <span
-      className="inline-citation-perplexity"
+      className="inline-citation-clickable"
       onClick={handleClick}
       onMouseEnter={() => setShowTooltip(true)}
       onMouseLeave={() => setShowTooltip(false)}
+      role="button"
+      tabIndex={0}
+      onKeyDown={(e) => e.key === 'Enter' && handleClick(e as any)}
+      aria-label={`Открыть документ: ${source.file}`}
     >
-      {label}
-      {showTooltip && source && (
-        <div className="inline-citation-tooltip-perplexity">
-          <div style={{ fontWeight: 600, marginBottom: source.text_preview ? '3px' : '0' }}>
-            {formatCitationTooltip(source)}
+      <FileText className="inline-citation-icon" />
+      <span className="inline-citation-text">{shortName}{pageInfo}</span>
+      <ExternalLink className="inline-citation-link-icon" />
+      
+      {showTooltip && (
+        <div className="inline-citation-tooltip-modern">
+          <div className="tooltip-header">
+            <FileText size={14} />
+            <span className="tooltip-filename">{source.file}</span>
           </div>
-          {source.text_preview && (
-            <div style={{ fontSize: '10px', color: 'var(--color-text-secondary)', lineHeight: '1.4' }}>
-              {source.text_preview.length > 150 ? source.text_preview.substring(0, 150) + '...' : source.text_preview}
+          {source.page && (
+            <div className="tooltip-page">Страница {source.page}</div>
+          )}
+          {source.relevance && (
+            <div className="tooltip-relevance">
+              Релевантность: {Math.round(source.relevance * 100)}%
             </div>
           )}
+          {source.text_preview && (
+            <div className="tooltip-preview">
+              {source.text_preview.length > 200 
+                ? source.text_preview.substring(0, 200) + '...' 
+                : source.text_preview}
+            </div>
+          )}
+          <div className="tooltip-action">
+            Нажмите, чтобы открыть документ →
+          </div>
         </div>
       )}
     </span>

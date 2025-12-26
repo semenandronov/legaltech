@@ -272,3 +272,200 @@
 :root[data-theme="light"] .chat-statistics-chart-title {
   color: #0F1419;
 }
+
+/* ===== CLICKABLE CITATION STYLES - Harvey/Modern Style ===== */
+.inline-citation-clickable {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 10px 3px 8px;
+  margin: 0 3px;
+  background: linear-gradient(135deg, rgba(59, 130, 246, 0.12) 0%, rgba(139, 92, 246, 0.08) 100%);
+  border: 1px solid rgba(59, 130, 246, 0.25);
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 500;
+  color: #3B82F6;
+  transition: all 0.2s ease;
+  position: relative;
+  vertical-align: middle;
+  text-decoration: none;
+}
+
+.inline-citation-clickable:hover {
+  background: linear-gradient(135deg, rgba(59, 130, 246, 0.2) 0%, rgba(139, 92, 246, 0.15) 100%);
+  border-color: rgba(59, 130, 246, 0.5);
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(59, 130, 246, 0.25);
+}
+
+.inline-citation-clickable:active {
+  transform: translateY(0);
+}
+
+.inline-citation-icon {
+  width: 12px;
+  height: 12px;
+  flex-shrink: 0;
+}
+
+.inline-citation-text {
+  max-width: 150px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.inline-citation-link-icon {
+  width: 10px;
+  height: 10px;
+  opacity: 0.6;
+  flex-shrink: 0;
+  transition: opacity 0.2s;
+}
+
+.inline-citation-clickable:hover .inline-citation-link-icon {
+  opacity: 1;
+}
+
+/* Modern Tooltip */
+.inline-citation-tooltip-modern {
+  position: absolute;
+  bottom: calc(100% + 8px);
+  left: 50%;
+  transform: translateX(-50%);
+  min-width: 280px;
+  max-width: 360px;
+  padding: 14px;
+  background: var(--color-surface, #1A1A2E);
+  border: 1px solid var(--color-border, #2D2D44);
+  border-radius: 12px;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4), 0 0 0 1px rgba(255,255,255,0.05);
+  z-index: 1000;
+  animation: tooltipFadeIn 0.2s ease;
+}
+
+@keyframes tooltipFadeIn {
+  from {
+    opacity: 0;
+    transform: translateX(-50%) translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(-50%) translateY(0);
+  }
+}
+
+.inline-citation-tooltip-modern::after {
+  content: '';
+  position: absolute;
+  bottom: -6px;
+  left: 50%;
+  transform: translateX(-50%) rotate(45deg);
+  width: 12px;
+  height: 12px;
+  background: var(--color-surface, #1A1A2E);
+  border-right: 1px solid var(--color-border, #2D2D44);
+  border-bottom: 1px solid var(--color-border, #2D2D44);
+}
+
+.tooltip-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 600;
+  font-size: 13px;
+  color: var(--color-text, #FFFFFF);
+  margin-bottom: 8px;
+}
+
+.tooltip-filename {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tooltip-page {
+  font-size: 11px;
+  color: var(--color-primary, #3B82F6);
+  margin-bottom: 4px;
+}
+
+.tooltip-relevance {
+  font-size: 11px;
+  color: #10B981;
+  margin-bottom: 8px;
+}
+
+.tooltip-preview {
+  font-size: 12px;
+  color: var(--color-text-secondary, #94A3B8);
+  line-height: 1.5;
+  padding: 10px;
+  background: rgba(0, 0, 0, 0.2);
+  border-radius: 8px;
+  margin-bottom: 8px;
+  max-height: 100px;
+  overflow-y: auto;
+}
+
+.tooltip-action {
+  font-size: 11px;
+  color: #3B82F6;
+  font-weight: 500;
+  padding-top: 8px;
+  border-top: 1px solid var(--color-border, #2D2D44);
+  text-align: center;
+}
+
+/* Light theme */
+:root[data-theme="light"] .inline-citation-clickable {
+  background: linear-gradient(135deg, rgba(59, 130, 246, 0.08) 0%, rgba(139, 92, 246, 0.05) 100%);
+  border-color: rgba(59, 130, 246, 0.2);
+  color: #2563EB;
+}
+
+:root[data-theme="light"] .inline-citation-clickable:hover {
+  background: linear-gradient(135deg, rgba(59, 130, 246, 0.15) 0%, rgba(139, 92, 246, 0.1) 100%);
+  border-color: rgba(59, 130, 246, 0.4);
+  box-shadow: 0 4px 12px rgba(59, 130, 246, 0.2);
+}
+
+:root[data-theme="light"] .inline-citation-tooltip-modern {
+  background: #FFFFFF;
+  border-color: #E5E7EB;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.12);
+}
+
+:root[data-theme="light"] .inline-citation-tooltip-modern::after {
+  background: #FFFFFF;
+  border-color: #E5E7EB;
+}
+
+:root[data-theme="light"] .tooltip-header {
+  color: #1F2937;
+}
+
+:root[data-theme="light"] .tooltip-preview {
+  background: #F3F4F6;
+  color: #4B5563;
+}
+
+/* Legacy badge style (fallback) */
+.inline-citation-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 20px;
+  height: 20px;
+  padding: 0 6px;
+  margin: 0 2px;
+  background: rgba(59, 130, 246, 0.15);
+  border-radius: 4px;
+  font-size: 11px;
+  font-weight: 600;
+  color: #3B82F6;
+  vertical-align: middle;
+}
