@@ -1,13 +1,26 @@
 import { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
-import Sidebar from '../components/Layout/Sidebar'
-import Header from '../components/Layout/Header'
+import {
+  Box,
+  Button,
+  Typography,
+  Stack,
+  Paper,
+  Alert,
+  CircularProgress,
+  Tabs,
+  Tab,
+  Container,
+} from '@mui/material'
+import {
+  ArrowBack as ArrowBackIcon,
+} from '@mui/icons-material'
+import MainLayout from '../components/Layout/MainLayout'
 import ProfileTab from '../components/Settings/ProfileTab'
 import NotificationsTab from '../components/Settings/NotificationsTab'
 import IntegrationsTab from '../components/Settings/IntegrationsTab'
 import SecurityTab from '../components/Settings/SecurityTab'
 import { getProfile, getNotifications, getIntegrations, UserProfile, NotificationSettings, IntegrationSettings } from '../services/api'
-import './SettingsPage.css'
 
 const SettingsPage = () => {
   const navigate = useNavigate()
@@ -45,100 +58,129 @@ const SettingsPage = () => {
   }
 
   const tabs = [
-    { id: 'profile', label: '👤 Профиль', icon: '👤' },
-    { id: 'notifications', label: '🔔 Уведомления', icon: '🔔' },
-    { id: 'integrations', label: '🔗 Интеграции', icon: '🔗' },
-    { id: 'security', label: '🔒 Безопасность', icon: '🔒' },
+    { id: 'profile', label: 'Профиль', icon: '👤' },
+    { id: 'notifications', label: 'Уведомления', icon: '🔔' },
+    { id: 'integrations', label: 'Интеграции', icon: '🔗' },
+    { id: 'security', label: 'Безопасность', icon: '🔒' },
   ]
 
   if (loading) {
     return (
-      <div className="settings-page-root">
-        <Sidebar />
-        <div className="settings-page-content" style={{ marginLeft: '250px' }}>
-          <Header />
-          <main className="settings-page-main">
-            <div className="settings-loading">Загрузка настроек...</div>
-          </main>
-        </div>
-      </div>
+      <MainLayout>
+        <Box
+          sx={{
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            height: '100%',
+          }}
+        >
+          <CircularProgress />
+        </Box>
+      </MainLayout>
     )
   }
 
   return (
-    <div className="settings-page-root">
-      <Sidebar />
-      <div className="settings-page-content" style={{ marginLeft: '250px' }}>
-        <Header />
-        <main className="settings-page-main">
-          <div className="settings-page-header">
-            <button className="settings-back-btn" onClick={() => navigate('/')}>
-              ← Назад к Dashboard
-            </button>
-            <h1 className="settings-page-title">Настройки</h1>
-          </div>
-
-          {error && (
-            <div className="settings-error" style={{ marginBottom: '16px', padding: '12px', background: '#fee2e2', color: '#ef4444', borderRadius: '6px' }}>
-              ⚠️ {error}
-              <button
-                onClick={loadSettings}
-                style={{
-                  marginLeft: '12px',
-                  padding: '4px 12px',
-                  background: '#4299e1',
-                  color: 'white',
-                  border: 'none',
-                  borderRadius: '4px',
-                  cursor: 'pointer',
-                  fontSize: '12px',
-                }}
+    <MainLayout>
+      <Container maxWidth="lg" sx={{ py: 3 }}>
+        <Stack spacing={3}>
+          {/* Header */}
+          <Paper
+            elevation={0}
+            sx={{
+              p: 2,
+              borderBottom: '1px solid',
+              borderColor: 'divider',
+              bgcolor: 'background.paper',
+            }}
+          >
+            <Stack direction="row" spacing={2} alignItems="center">
+              <Button
+                startIcon={<ArrowBackIcon />}
+                onClick={() => navigate('/')}
+                variant="outlined"
+                size="small"
+                sx={{ textTransform: 'none' }}
               >
-                Обновить
-              </button>
-            </div>
+                Назад к Dashboard
+              </Button>
+              <Typography variant="h5" component="h1" sx={{ fontWeight: 600 }}>
+                Настройки
+              </Typography>
+            </Stack>
+          </Paper>
+
+          {/* Error Alert */}
+          {error && (
+            <Alert
+              severity="error"
+              action={
+                <Button color="inherit" size="small" onClick={loadSettings}>
+                  Обновить
+                </Button>
+              }
+            >
+              {error}
+            </Alert>
           )}
 
-          <div className="settings-page-tabs">
-            {tabs.map((tab) => (
-              <button
-                key={tab.id}
-                className={`settings-tab ${activeTab === tab.id ? 'active' : ''}`}
-                onClick={() => setActiveTab(tab.id)}
-              >
-                <span className="settings-tab-icon">{tab.icon}</span>
-                <span className="settings-tab-label">{tab.label}</span>
-              </button>
-            ))}
-          </div>
+          {/* Tabs */}
+          <Paper elevation={0} sx={{ border: '1px solid', borderColor: 'divider' }}>
+            <Tabs
+              value={activeTab}
+              onChange={(_, newValue) => setActiveTab(newValue)}
+              variant="scrollable"
+              scrollButtons="auto"
+              sx={{
+                borderBottom: 1,
+                borderColor: 'divider',
+              }}
+            >
+              {tabs.map((tab) => (
+                <Tab
+                  key={tab.id}
+                  value={tab.id}
+                  label={
+                    <Stack direction="row" spacing={1} alignItems="center">
+                      <span>{tab.icon}</span>
+                      <span>{tab.label}</span>
+                    </Stack>
+                  }
+                  sx={{ textTransform: 'none' }}
+                />
+              ))}
+            </Tabs>
 
-          <div className="settings-page-content-area">
-            {activeTab === 'profile' && profile && (
-              <ProfileTab profile={profile} onUpdate={loadSettings} />
-            )}
-            {activeTab === 'notifications' && notifications && (
-              <NotificationsTab
-                settings={notifications}
-                onUpdate={(newSettings) => {
-                  setNotifications(newSettings)
-                }}
-              />
-            )}
-            {activeTab === 'integrations' && integrations && (
-              <IntegrationsTab
-                settings={integrations}
-                onUpdate={(newSettings) => {
-                  setIntegrations(newSettings)
-                }}
-              />
-            )}
-            {activeTab === 'security' && (
-              <SecurityTab onUpdate={loadSettings} />
-            )}
-          </div>
-        </main>
-      </div>
-    </div>
+            {/* Tab Content */}
+            <Box sx={{ p: 3 }}>
+              {activeTab === 'profile' && profile && (
+                <ProfileTab profile={profile} onUpdate={loadSettings} />
+              )}
+              {activeTab === 'notifications' && notifications && (
+                <NotificationsTab
+                  settings={notifications}
+                  onUpdate={(newSettings) => {
+                    setNotifications(newSettings)
+                  }}
+                />
+              )}
+              {activeTab === 'integrations' && integrations && (
+                <IntegrationsTab
+                  settings={integrations}
+                  onUpdate={(newSettings) => {
+                    setIntegrations(newSettings)
+                  }}
+                />
+              )}
+              {activeTab === 'security' && (
+                <SecurityTab onUpdate={loadSettings} />
+              )}
+            </Box>
+          </Paper>
+        </Stack>
+      </Container>
+    </MainLayout>
   )
 }
 

@@ -1,4 +1,6 @@
 import { useState, useEffect } from 'react'
+import { Grid, Container } from '@mui/material'
+import MainLayout from '../components/Layout/MainLayout'
 import { getCasesList, CasesListResponse } from '../services/api'
 import CasesFilters, { FilterState } from '../components/Cases/CasesFilters'
 import CasesGrid from '../components/Cases/CasesGrid'
@@ -49,18 +51,26 @@ const CasesListPage = () => {
   }
   
   return (
-    <div className="flex h-full">
-      <CasesFilters onFiltersChange={handleFiltersChange} />
-      <CasesGrid
-        cases={cases}
-        total={total}
-        loading={loading}
-        currentPage={currentPage}
-        onPageChange={handlePageChange}
-        viewMode={viewMode}
-        onViewModeChange={setViewMode}
-      />
-    </div>
+    <MainLayout>
+      <Container maxWidth={false} sx={{ height: '100%', py: 3 }}>
+        <Grid container spacing={3} sx={{ height: '100%' }}>
+          <Grid item xs={12} md={3}>
+            <CasesFilters onFiltersChange={handleFiltersChange} />
+          </Grid>
+          <Grid item xs={12} md={9}>
+            <CasesGrid
+              cases={cases}
+              total={total}
+              loading={loading}
+              currentPage={currentPage}
+              onPageChange={handlePageChange}
+              viewMode={viewMode}
+              onViewModeChange={setViewMode}
+            />
+          </Grid>
+        </Grid>
+      </Container>
+    </MainLayout>
   )
 }
 

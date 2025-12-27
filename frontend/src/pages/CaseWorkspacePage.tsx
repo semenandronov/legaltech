@@ -1,7 +1,19 @@
 import React, { useState, useEffect } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
-import Sidebar from '../components/Layout/Sidebar'
-import Header from '../components/Layout/Header'
+import {
+  Box,
+  Button,
+  Typography,
+  Stack,
+  Paper,
+  Alert,
+  CircularProgress,
+  Container,
+} from '@mui/material'
+import {
+  ArrowBack as ArrowBackIcon,
+} from '@mui/icons-material'
+import MainLayout from '../components/Layout/MainLayout'
 import WorkspaceLayout from '../components/Workspace/WorkspaceLayout'
 import DocumentOverview from '../components/Documents/DocumentOverview'
 import DocumentFilters, { DocumentFiltersState } from '../components/Documents/DocumentFilters'
@@ -20,7 +32,6 @@ import {
   DocumentClassification,
   PrivilegeCheck
 } from '../services/api'
-import './CaseWorkspacePage.css'
 
 const CaseWorkspacePage: React.FC = () => {
   const { caseId } = useParams<{ caseId: string }>()
@@ -254,29 +265,30 @@ const CaseWorkspacePage: React.FC = () => {
 
   if (loading && documents.length === 0) {
     return (
-      <div className="dashboard-root">
-        <Sidebar />
-        <div className="dashboard-content">
-          <Header />
-          <main className="dashboard-main">
-            <div className="loading-state">Загрузка документов...</div>
-          </main>
-        </div>
-      </div>
+      <MainLayout>
+        <Box
+          sx={{
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            height: '100%',
+          }}
+        >
+          <CircularProgress />
+        </Box>
+      </MainLayout>
     )
   }
 
   if (error) {
     return (
-      <div className="dashboard-root">
-        <Sidebar />
-        <div className="dashboard-content">
-          <Header />
-          <main className="dashboard-main">
-            <div className="error-state">Ошибка: {error}</div>
-          </main>
-        </div>
-      </div>
+      <MainLayout>
+        <Container>
+          <Alert severity="error" sx={{ mt: 2 }}>
+            Ошибка: {error}
+          </Alert>
+        </Container>
+      </MainLayout>
     )
   }
 
@@ -292,7 +304,15 @@ const CaseWorkspacePage: React.FC = () => {
 
   // Левая панель
   const leftPanel = (
-    <div className="workspace-left-content">
+    <Stack
+      spacing={2}
+      sx={{
+        height: '100%',
+        overflow: 'hidden',
+        display: 'flex',
+        flexDirection: 'column',
+      }}
+    >
       <DocumentOverview
         totalFiles={totalFiles}
         relevantCount={relevantCount}
@@ -306,15 +326,17 @@ const CaseWorkspacePage: React.FC = () => {
         onClearFilters={handleClearFilters}
         onSaveView={handleSaveView}
       />
-      <DocumentsList
-        documents={documents}
-        selectedDocuments={selectedDocuments}
-        onSelectDocument={handleSelectDocument}
-        onDocumentClick={handleDocumentClick}
-        onBatchAction={handleBatchAction}
-        sortBy="date"
-      />
-    </div>
+      <Box sx={{ flexGrow: 1, overflow: 'auto' }}>
+        <DocumentsList
+          documents={documents}
+          selectedDocuments={selectedDocuments}
+          onSelectDocument={handleSelectDocument}
+          onDocumentClick={handleDocumentClick}
+          onBatchAction={handleBatchAction}
+          sortBy="date"
+        />
+      </Box>
+    </Stack>
   )
 
   // Центральная панель
@@ -356,19 +378,36 @@ const CaseWorkspacePage: React.FC = () => {
   )
 
   return (
-    <div className="dashboard-root">
-      <Sidebar />
-      <div className="dashboard-content workspace-content">
-        <Header />
-        <main className="dashboard-main workspace-main">
-          <div className="workspace-header">
-            <button className="workspace-back-btn" onClick={() => navigate('/')}>
-              ← Назад к Dashboard
-            </button>
-            <h1 className="workspace-title">
+    <MainLayout>
+      <Box sx={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
+        {/* Header */}
+        <Paper
+          elevation={0}
+          sx={{
+            p: 2,
+            borderBottom: '1px solid',
+            borderColor: 'divider',
+            bgcolor: 'background.paper',
+          }}
+        >
+          <Stack direction="row" spacing={2} alignItems="center">
+            <Button
+              startIcon={<ArrowBackIcon />}
+              onClick={() => navigate('/')}
+              variant="outlined"
+              size="small"
+              sx={{ textTransform: 'none' }}
+            >
+              Назад к Dashboard
+            </Button>
+            <Typography variant="h5" component="h1" sx={{ fontWeight: 600 }}>
               {caseData?.title || `Дело #${caseId.slice(0, 8)}`}
-            </h1>
-          </div>
+            </Typography>
+          </Stack>
+        </Paper>
+
+        {/* Workspace Layout */}
+        <Box sx={{ flexGrow: 1, overflow: 'hidden' }}>
           <WorkspaceLayout
             leftPanel={leftPanel}
             centerPanel={centerPanel}
@@ -376,9 +415,9 @@ const CaseWorkspacePage: React.FC = () => {
             rightPanelCollapsed={rightPanelCollapsed}
             onToggleRightPanel={() => setRightPanelCollapsed(!rightPanelCollapsed)}
           />
-        </main>
-      </div>
-    </div>
+        </Box>
+      </Box>
+    </MainLayout>
   )
 }
 
