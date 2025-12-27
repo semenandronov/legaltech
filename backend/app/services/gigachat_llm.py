@@ -79,13 +79,23 @@ class ChatGigaChat(BaseChatModel):
         
         # Инициализируем GigaChat SDK
         try:
+            # Логируем настройки SSL для диагностики
+            logger.info(f"Initializing GigaChat with verify_ssl_certs={self.verify_ssl_certs}")
+            
             self._client = GigaChatSDK(
                 credentials=self.credentials,
                 verify_ssl_certs=self.verify_ssl_certs
             )
-            logger.info(f"✅ Initialized ChatGigaChat with model={self.model}")
+            logger.info(f"✅ Initialized ChatGigaChat with model={self.model}, verify_ssl={self.verify_ssl_certs}")
         except Exception as e:
             logger.error(f"Failed to initialize GigaChat: {e}", exc_info=True)
+            # Если ошибка связана с SSL, предлагаем решение
+            if "SSL" in str(e) or "certificate" in str(e).lower():
+                logger.error(
+                    "SSL certificate verification failed. "
+                    "Set GIGACHAT_VERIFY_SSL=false in environment variables to disable SSL verification. "
+                    "WARNING: This is less secure but may be necessary in some environments."
+                )
             raise
     
     @property
