@@ -259,6 +259,7 @@ def parse_with_fixing(
                     logger.warning(f"Could not create RetryOutputParser, using fixing parser: {e}")
                     retry_parser = fixing_parser
             else:
+                # RetryOutputParser not available, use fixing parser (or base parser)
                 retry_parser = fixing_parser
             return retry_parser.parse(response_text)
         else:
