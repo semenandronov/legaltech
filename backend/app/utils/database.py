@@ -42,13 +42,13 @@ def ensure_schema():
         # Add case_id column if missing (separate transaction)
         if "case_id" not in columns:
             try:
-        with engine.begin() as conn:
-                conn.execute(
-                    text(
-                        "ALTER TABLE chat_messages "
-                        "ADD COLUMN IF NOT EXISTS case_id TEXT REFERENCES cases(id) ON DELETE CASCADE"
+                with engine.begin() as conn:
+                    conn.execute(
+                        text(
+                            "ALTER TABLE chat_messages "
+                            "ADD COLUMN IF NOT EXISTS case_id TEXT REFERENCES cases(id) ON DELETE CASCADE"
+                        )
                     )
-                )
             except Exception as e:
                 logger.warning(f"Could not add case_id column to chat_messages: {e}")
         
@@ -56,19 +56,19 @@ def ensure_schema():
         columns = {col["name"]: col for col in inspector.get_columns("chat_messages")}
         
         # Check if sessionId column exists and if it's NOT NULL, make it nullable (separate transaction)
-            session_id_col_info = next((col for col in inspector.get_columns("chat_messages") if col["name"] == "sessionId"), None)
+        session_id_col_info = next((col for col in inspector.get_columns("chat_messages") if col["name"] == "sessionId"), None)
         if session_id_col_info and not session_id_col_info.get("nullable", True):
-                    logger.info("⚠️  Altering chat_messages.sessionId to be NULLABLE...")
-                    try:
+            logger.info("⚠️  Altering chat_messages.sessionId to be NULLABLE...")
+            try:
                 with engine.begin() as conn:
-                        conn.execute(text('ALTER TABLE chat_messages ALTER COLUMN "sessionId" DROP NOT NULL'))
-                        logger.info("✅ chat_messages.sessionId column altered to NULLABLE")
-                    except Exception as e:
-                        logger.warning(f"Could not alter sessionId column to NULLABLE: {e}")
+                    conn.execute(text('ALTER TABLE chat_messages ALTER COLUMN "sessionId" DROP NOT NULL'))
+                    logger.info("✅ chat_messages.sessionId column altered to NULLABLE")
+            except Exception as e:
+                logger.warning(f"Could not alter sessionId column to NULLABLE: {e}")
                 
         # Update any existing NULL sessionId values (separate transaction)
         if session_id_col_info:
-                try:
+            try:
                 with engine.begin() as conn:
                     conn.execute(
                         text(
@@ -77,18 +77,18 @@ def ensure_schema():
                             'WHERE "sessionId" IS NULL AND case_id IS NOT NULL'
                         )
                     )
-                except Exception as e:
-                    logger.warning(f"Could not update NULL sessionId values: {e}")
+            except Exception as e:
+                logger.warning(f"Could not update NULL sessionId values: {e}")
         
         # Create index (separate transaction)
         try:
             with engine.begin() as conn:
-            conn.execute(
-                text(
-                    "CREATE INDEX IF NOT EXISTS ix_chat_messages_case_id "
-                    "ON chat_messages(case_id)"
+                conn.execute(
+                    text(
+                        "CREATE INDEX IF NOT EXISTS ix_chat_messages_case_id "
+                        "ON chat_messages(case_id)"
+                    )
                 )
-            )
         except Exception as e:
             logger.warning(f"Could not create index ix_chat_messages_case_id: {e}")
     
