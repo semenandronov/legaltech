@@ -1,7 +1,15 @@
 """Helper functions for direct LLM calls without agents"""
 from typing import List, Dict, Any, Optional, Type
 from langchain_core.messages import SystemMessage, HumanMessage
-from langchain_core.output_parsers import OutputFixingParser, RetryOutputParser, PydanticOutputParser
+from langchain_core.output_parsers import RetryOutputParser, PydanticOutputParser
+
+# OutputFixingParser may not be available in all langchain_core versions
+try:
+    from langchain_core.output_parsers import OutputFixingParser
+    OUTPUT_FIXING_PARSER_AVAILABLE = True
+except ImportError:
+    OUTPUT_FIXING_PARSER_AVAILABLE = False
+    logger.warning("OutputFixingParser not available in langchain_core, will use RetryOutputParser only")
 from langchain_core.exceptions import OutputParserException
 from pydantic import BaseModel
 from app.services.llm_factory import create_llm
@@ -172,11 +180,15 @@ def create_fixing_parser(
     # Create base parser
     base_parser = PydanticOutputParser(pydantic_object=pydantic_model)
     
-    # Wrap in fixing parser (uses LLM to fix parsing errors)
-    try:
-        fixing_parser = OutputFixingParser.from_llm(parser=base_parser, llm=llm)
-    except Exception as e:
-        logger.warning(f"Could not create OutputFixingParser, using base parser: {e}")
+    # Wrap in fixing parser (uses LLM to fix parsing errors) if available
+    if OUTPUT_FIXING_PARSER_AVAILABLE:
+        try:
+            fixing_parser = OutputFixingParser.from_llm(parser=base_parser, llm=llm)
+        except Exception as e:
+            logger.warning(f"Could not create OutputFixingParser, using base parser: {e}")
+            fixing_parser = base_parser
+    else:
+        # OutputFixingParser not available, use base parser directly
         fixing_parser = base_parser
     
     # Wrap in retry parser (retries on errors)
@@ -220,7 +232,14 @@ def parse_with_fixing(
             from typing import List
             from langchain_core.output_parsers import PydanticOutputParser
             list_parser = PydanticOutputParser(pydantic_object=List[pydantic_model])
-            fixing_parser = OutputFixingParser.from_llm(parser=list_parser, llm=llm) if llm else list_parser
+            if OUTPUT_FIXING_PARSER_AVAILABLE and llm:
+                try:
+                    fixing_parser = OutputFixingParser.from_llm(parser=list_parser, llm=llm)
+                except Exception as e:
+                    logger.warning(f"Could not create OutputFixingParser, using base parser: {e}")
+                    fixing_parser = list_parser
+            else:
+                fixing_parser = list_parser
             retry_parser = RetryOutputParser.from_llm(parser=fixing_parser, llm=llm, max_retries=max_retries) if llm else fixing_parser
             return retry_parser.parse(response_text)
         else:
