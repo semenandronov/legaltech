@@ -97,7 +97,7 @@ def key_facts_agent_node(
             if not rag_service:
                 raise ValueError("RAG service required for key facts extraction")
             
-            logger.info("Using direct RAG approach (YandexGPT or GigaChat without tools)")
+            logger.info("Using direct RAG approach (GigaChat without tools)")
             
             # Используем helper для прямого вызова LLM с RAG
             from app.services.langchain_agents.llm_helper import direct_llm_call_with_rag, extract_json_from_response
