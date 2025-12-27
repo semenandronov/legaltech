@@ -87,6 +87,7 @@ def create_analysis_graph(
         Human feedback wait node - checks if feedback has been received.
         If feedback received, integrates it into state for agent retry.
         If not, returns to supervisor to wait.
+        Has timeout to prevent infinite loops.
         """
         case_id = state.get("case_id", "unknown")
         current_request = state.get("current_feedback_request")
@@ -123,9 +124,31 @@ def create_analysis_graph(
             
             return new_state
         else:
-            # Still waiting for response
-            logger.info(f"[HumanFeedback] Still waiting for response to request {request_id}")
-            return state
+            # Still waiting for response - but check timeout to prevent infinite loops
+            # Track number of wait attempts
+            human_feedback_attempts = state.get("human_feedback_attempts", 0)
+            MAX_HUMAN_FEEDBACK_ATTEMPTS = 3  # Maximum attempts before skipping
+            
+            if human_feedback_attempts >= MAX_HUMAN_FEEDBACK_ATTEMPTS:
+                logger.warning(
+                    f"[HumanFeedback] Timeout waiting for response to request {request_id} "
+                    f"after {human_feedback_attempts} attempts. Skipping human feedback and continuing."
+                )
+                # Skip human feedback and continue
+                new_state = dict(state)
+                new_state["waiting_for_human"] = False
+                new_state["current_feedback_request"] = None
+                new_state["human_feedback_attempts"] = 0
+                return new_state
+            else:
+                # Increment attempt counter
+                new_state = dict(state)
+                new_state["human_feedback_attempts"] = human_feedback_attempts + 1
+                logger.info(
+                    f"[HumanFeedback] Still waiting for response to request {request_id} "
+                    f"(attempt {new_state['human_feedback_attempts']}/{MAX_HUMAN_FEEDBACK_ATTEMPTS})"
+                )
+                return new_state
     
     def parallel_independent_agents_node(state: AnalysisState) -> AnalysisState:
         """

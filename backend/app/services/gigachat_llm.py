@@ -13,10 +13,12 @@ logger = logging.getLogger(__name__)
 try:
     from gigachat import GigaChat as GigaChatSDK
     from gigachat.models import Chat, Messages, MessagesRole
+    from gigachat.exceptions import ResponseError
     GIGACHAT_AVAILABLE = True
 except ImportError:
     GIGACHAT_AVAILABLE = False
     logger.warning("gigachat package not installed. Install with: pip install gigachat")
+    ResponseError = None
 
 
 class ChatGigaChat(BaseChatModel):
