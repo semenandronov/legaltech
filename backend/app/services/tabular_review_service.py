@@ -24,11 +24,11 @@ class TabularReviewService:
         """Initialize tabular review service"""
         self.db = db
         # Initialize LLM for extraction
-        if config.YANDEX_API_KEY or config.YANDEX_IAM_TOKEN:
+        try:
             self.llm = create_llm(temperature=0.1)  # Low temperature for deterministic extraction
-        else:
+        except Exception as e:
             self.llm = None
-            logger.warning("GigaChat not configured, extraction will not work")
+            logger.warning(f"GigaChat not configured: {e}, extraction will not work")
     
     def create_tabular_review(
         self, 

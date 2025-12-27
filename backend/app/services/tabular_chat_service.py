@@ -19,11 +19,11 @@ class TabularChatService:
         self.tabular_service = TabularReviewService(db)
         
         # Initialize LLM
-        if config.YANDEX_API_KEY or config.YANDEX_IAM_TOKEN:
+        try:
             self.llm = create_llm(temperature=0.3)  # Slightly higher for more natural responses
-        else:
+        except Exception as e:
             self.llm = None
-            logger.warning("GigaChat not configured, tabular chat will not work")
+            logger.warning(f"GigaChat not configured: {e}, tabular chat will not work")
     
     def format_table_data_for_llm(self, table_data: Dict[str, Any]) -> str:
         """Format table data as text for LLM context"""
