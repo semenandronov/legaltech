@@ -180,32 +180,10 @@ async def classify_request(question: str, llm) -> bool:
         logger.info(f"LLM classified '{question[:50]}...' as QUESTION (result: {result_clean})")
         return False
     except Exception as e:
-        logger.warning(f"Error in LLM classification: {e}, falling back to keyword-based detection")
-        # Fallback к простой проверке ключевых слов
-        return _fallback_task_detection(question)
-
-
-def _fallback_task_detection(question: str) -> bool:
-    """Простая проверка ключевых слов как fallback"""
-    question_lower = question.lower().strip()
-    
-    # Явные команды выполнения
-    explicit_commands = [
-        "проанализируй", "анализируй", "выполни", "извлеки все",
-        "создай отчет", "сделай анализ", "запусти анализ",
-        "проведи анализ", "найди все", "составь хронологию",
-        "создай хронологию", "хронология событий", "хронология",
-        "составь timeline", "timeline событий", "извлеки даты",
-        "найди противоречия", "найди риски", "проанализируй риски",
-        "извлеки ключевые факты", "ключевые факты", "создай резюме",
-        "резюме дела", "сводка", "summary"
-    ]
-    
-    for command in explicit_commands:
-        if command in question_lower:
-            return True
-    
-    return False
+        logger.error(f"Error in LLM classification: {e}")
+        # Если классификация не работает, по умолчанию считаем это вопросом
+        logger.warning("LLM classification failed, defaulting to QUESTION")
+        return False
 
 
 @router.post("/", response_model=ChatResponse, include_in_schema=True)
