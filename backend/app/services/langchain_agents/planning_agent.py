@@ -114,6 +114,9 @@ class PlanningAgent:
             # Проверяем, поддерживает ли LLM function calling
             use_tools = hasattr(self.llm, 'bind_tools') and config.LLM_PROVIDER.lower() == "gigachat"
             
+            if use_tools:
+                logger.info("Planning agent: Using GigaChat with function calling - agent can use retrieve_documents_tool")
+            
             # Если есть RAG service и LLM не поддерживает tools (YandexGPT), используем прямой RAG
             if self.rag_service and not use_tools:
                 logger.info("Planning agent: Using direct RAG approach (YandexGPT without function calling)")
