@@ -67,16 +67,28 @@ def ensure_schema():
                 logger.warning(f"Could not alter sessionId column to NULLABLE: {e}")
                 
         # Update any existing NULL sessionId values (separate transaction)
+        # Only update if sessionId doesn't have foreign key constraint or if sessions exist
         if session_id_col_info:
             try:
                 with engine.begin() as conn:
-                    conn.execute(
-                        text(
-                            'UPDATE chat_messages '
-                            'SET "sessionId" = case_id '
-                            'WHERE "sessionId" IS NULL AND case_id IS NOT NULL'
+                    # Check if sessionId has foreign key constraint
+                    fk_constraints = inspector.get_foreign_keys("chat_messages")
+                    has_session_fk = any(fk.get("referred_table") == "chat_sessions" for fk in fk_constraints)
+                    
+                    if has_session_fk:
+                        # If foreign key exists, only update if corresponding session exists
+                        # For now, skip update to avoid ForeignKeyViolation
+                        logger.info("⚠️  sessionId has foreign key to chat_sessions, skipping auto-update")
+                    else:
+                        # No foreign key, safe to update
+                        conn.execute(
+                            text(
+                                'UPDATE chat_messages '
+                                'SET "sessionId" = case_id '
+                                'WHERE "sessionId" IS NULL AND case_id IS NOT NULL'
+                            )
                         )
-                    )
+                        logger.info("✅ Updated NULL sessionId values to case_id")
             except Exception as e:
                 logger.warning(f"Could not update NULL sessionId values: {e}")
         
@@ -110,17 +122,24 @@ def ensure_schema():
         with engine.begin() as conn:
             # Check if langchain_pg_embedding table exists (created by langchain-postgres)
             if "langchain_pg_embedding" in inspector.get_table_names():
-                # Create GIN index on case_id in metadata for fast filtering
-                try:
-                    conn.execute(
-                        text("""
-                            CREATE INDEX IF NOT EXISTS idx_embeddings_case_id 
-                            ON langchain_pg_embedding USING GIN ((cmetadata->>'case_id'))
-                        """)
-                    )
-                    logger.info("✅ Created GIN index on case_id metadata")
-                except Exception as e:
-                    logger.warning(f"Could not create case_id index: {e}")
+                # Check if cmetadata column exists before creating index
+                embedding_cols = inspector.get_columns("langchain_pg_embedding")
+                has_cmetadata = any(col["name"] == "cmetadata" for col in embedding_cols)
+                
+                if has_cmetadata:
+                    # Create GIN index on case_id in metadata for fast filtering
+                    try:
+                        conn.execute(
+                            text("""
+                                CREATE INDEX IF NOT EXISTS idx_embeddings_case_id 
+                                ON langchain_pg_embedding USING GIN ((cmetadata->>'case_id'))
+                            """)
+                        )
+                        logger.info("✅ Created GIN index on case_id metadata")
+                    except Exception as e:
+                        logger.warning(f"Could not create case_id index: {e}")
+                else:
+                    logger.info("⚠️  langchain_pg_embedding table exists but cmetadata column not found, skipping index creation")
                 
                 # Create HNSW index on embedding vector for fast similarity search (if pgvector supports it)
                 # Note: HNSW index requires pgvector >= 0.5.0 and may need specific configuration
