@@ -1,7 +1,7 @@
 """Discrepancy agent node for LangGraph"""
 from typing import Dict, Any
-from app.services.yandex_llm import ChatYandexGPT
-from app.services.langchain_agents.agent_factory import create_legal_agent
+from app.services.llm_factory import create_llm
+from app.services.langchain_agents.agent_factory import create_legal_agent, safe_agent_invoke
 from app.config import config
 from app.services.langchain_agents.state import AnalysisState
 from app.services.langchain_agents.tools import get_all_tools, initialize_tools
@@ -11,6 +11,7 @@ from app.services.document_processor import DocumentProcessor
 from app.services.langchain_parsers import ParserService
 from sqlalchemy.orm import Session
 from app.models.analysis import Discrepancy
+from langchain_core.messages import HumanMessage
 import logging
 import json
 
@@ -47,50 +48,80 @@ def discrepancy_agent_node(
         # Get tools
         tools = get_all_tools()
         
-        # Initialize LLM with temperature=0 for deterministic detection
-        # Только YandexGPT, без fallback
-        if not (config.YANDEX_API_KEY or config.YANDEX_IAM_TOKEN) or not config.YANDEX_FOLDER_ID:
-            raise ValueError("YANDEX_API_KEY/YANDEX_IAM_TOKEN и YANDEX_FOLDER_ID должны быть настроены")
+        # Initialize LLM через factory (поддерживает YandexGPT и GigaChat)
+        llm = create_llm(temperature=0.1)
         
-        # YandexGPT не поддерживает инструменты, используем прямой RAG подход
-        if not rag_service:
-            raise ValueError("RAG service required for discrepancy finding")
+        # Проверяем, поддерживает ли LLM function calling (GigaChat)
+        use_tools = hasattr(llm, 'bind_tools') and config.LLM_PROVIDER.lower() == "gigachat"
         
-        # Используем helper для прямого вызова LLM с RAG
-        from app.services.langchain_agents.llm_helper import direct_llm_call_with_rag, extract_json_from_response
-        from app.services.langchain_agents.callbacks import AnalysisCallbackHandler
+        if use_tools and rag_service:
+            # GigaChat с function calling - агент сам вызовет retrieve_documents_tool
+            logger.info("Using GigaChat with function calling for discrepancy agent")
+            
+            prompt = get_agent_prompt("discrepancy")
+            
+            # Создаем агента с tools
+            agent = create_legal_agent(llm, tools, system_prompt=prompt)
+            
+            # Создаем запрос для агента
+            user_query = f"Найди все противоречия и несоответствия между документами дела {case_id}. Используй retrieve_documents_tool для поиска и сравнения документов. Верни результат в формате JSON массива противоречий с полями: type, severity, description, source_documents, details, reasoning, confidence."
+            
+            initial_message = HumanMessage(content=user_query)
+            
+            # Вызываем агента (он сам решит, когда вызывать tools)
+            from app.services.langchain_agents.callbacks import AnalysisCallbackHandler
+            callback = AnalysisCallbackHandler(agent_name="discrepancy")
+            
+            result = safe_agent_invoke(
+                agent,
+                llm,
+                {
+                    "messages": [initial_message],
+                    "case_id": case_id
+                },
+                config={"recursion_limit": 15, "callbacks": [callback]}
+            )
+            
+            # Извлекаем ответ
+            if isinstance(result, dict):
+                messages = result.get("messages", [])
+                if messages:
+                    response_message = messages[-1]
+                    response_text = response_message.content if hasattr(response_message, 'content') else str(response_message)
+                else:
+                    response_text = str(result)
+            else:
+                response_text = str(result)
+        else:
+            # YandexGPT или GigaChat без tools - используем прямой RAG подход
+            if not rag_service:
+                raise ValueError("RAG service required for discrepancy finding")
+            
+            logger.info("Using direct RAG approach (YandexGPT or GigaChat without tools)")
+            
+            # Используем helper для прямого вызова LLM с RAG
+            from app.services.langchain_agents.llm_helper import direct_llm_call_with_rag, extract_json_from_response
+            from app.services.langchain_agents.callbacks import AnalysisCallbackHandler
+            
+            # Create callback for logging
+            callback = AnalysisCallbackHandler(agent_name="discrepancy")
+            
+            prompt = get_agent_prompt("discrepancy")
+            user_query = f"Найди все противоречия и несоответствия между документами дела {case_id}."
+            
+            response_text = direct_llm_call_with_rag(
+                case_id=case_id,
+                system_prompt=prompt,
+                user_query=user_query,
+                rag_service=rag_service,
+                db=db,
+                k=30,
+                temperature=0.1,
+                callbacks=[callback]
+            )
         
-        # Create callback for logging
-        callback = AnalysisCallbackHandler(agent_name="discrepancy")
-        
-        prompt = get_agent_prompt("discrepancy")
-        user_query = f"Найди все противоречия и несоответствия между документами дела {case_id}."
-        
-        response_text = direct_llm_call_with_rag(
-            case_id=case_id,
-            system_prompt=prompt,
-            user_query=user_query,
-            rag_service=rag_service,
-            db=db,
-            k=30,
-            temperature=0.1,
-            callbacks=[callback]
-        )
-        
-        # Try to extract JSON from response
-        discrepancy_data = None
-        try:
-            if "```json" in response_text:
-                json_text = response_text.split("```json")[1].split("```")[0].strip()
-                discrepancy_data = json.loads(json_text)
-            elif "[" in response_text and "]" in response_text:
-                start = response_text.find("[")
-                end = response_text.rfind("]") + 1
-                if start >= 0 and end > start:
-                    json_text = response_text[start:end]
-                    discrepancy_data = json.loads(json_text)
-        except Exception as e:
-            logger.warning(f"Could not parse JSON from discrepancy agent response: {e}")
+        # Извлекаем JSON из ответа
+        discrepancy_data = extract_json_from_response(response_text)
         
         # If we have discrepancy data, parse it
         if discrepancy_data:

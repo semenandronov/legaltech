@@ -1,6 +1,6 @@
 """Document classifier agent node for LangGraph"""
 from typing import Dict, Any, Optional
-from app.services.yandex_llm import ChatYandexGPT
+from app.services.llm_factory import create_llm
 from langchain_core.prompts import ChatPromptTemplate
 from app.config import config
 from app.services.langchain_agents.state import AnalysisState
@@ -70,17 +70,10 @@ def document_classifier_agent_node(
             except Exception as e:
                 logger.warning(f"Failed to initialize Yandex classifier: {e}, falling back to LLM")
         
-        # Initialize LLM with temperature=0 for deterministic classification (fallback)
-        # Только YandexGPT, без fallback на OpenRouter
+        # Initialize LLM через factory (fallback если Yandex classifier недоступен)
         llm = None
         if not yandex_classifier:
-            if not (config.YANDEX_API_KEY or config.YANDEX_IAM_TOKEN) or not config.YANDEX_FOLDER_ID:
-                raise ValueError("YANDEX_API_KEY/YANDEX_IAM_TOKEN и YANDEX_FOLDER_ID должны быть настроены")
-            
-            llm = ChatYandexGPT(
-                model=config.YANDEX_GPT_MODEL or "yandexgpt-lite",
-                temperature=0.1,  # Низкая температура для детерминизма
-            )
+            llm = create_llm(temperature=0.1)  # Низкая температура для детерминизма
         
         # Get classifier prompt (для LLM fallback)
         from app.services.langchain_agents.prompts import get_agent_prompt

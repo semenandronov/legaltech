@@ -6,7 +6,7 @@ from app.services.langchain_agents.state import (
     PlanStepStatus,
     AdaptationRecord
 )
-from app.services.yandex_llm import ChatYandexGPT
+from app.services.llm_factory import create_llm
 from app.config import config
 import logging
 
@@ -21,12 +21,10 @@ class AdaptationEngine:
     
     def __init__(self):
         """Initialize adaptation engine"""
-        if config.YANDEX_API_KEY or config.YANDEX_IAM_TOKEN:
-            self.llm = ChatYandexGPT(
-                model=config.YANDEX_GPT_MODEL or "yandexgpt-lite",
-                temperature=0.2,
-            )
-        else:
+        try:
+            self.llm = create_llm(temperature=0.2)
+        except Exception as e:
+            logger.warning(f"Failed to initialize LLM for adaptation engine: {e}")
             self.llm = None
     
     def should_adapt(

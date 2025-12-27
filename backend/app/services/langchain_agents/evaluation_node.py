@@ -1,7 +1,7 @@
 """Evaluation node for assessing agent results and triggering adaptation"""
 from typing import Dict, Any, Optional
 from app.services.langchain_agents.state import AnalysisState
-from app.services.yandex_llm import ChatYandexGPT
+from app.services.llm_factory import create_llm
 from app.config import config
 import logging
 
@@ -18,12 +18,10 @@ class ResultEvaluator:
     
     def __init__(self):
         """Initialize evaluator"""
-        if config.YANDEX_API_KEY or config.YANDEX_IAM_TOKEN:
-            self.llm = ChatYandexGPT(
-                model=config.YANDEX_GPT_MODEL or "yandexgpt-lite",
-                temperature=0.1,
-            )
-        else:
+        try:
+            self.llm = create_llm(temperature=0.1)
+        except Exception as e:
+            logger.warning(f"Failed to initialize LLM for evaluator: {e}")
             self.llm = None
     
     def evaluate_step_result(

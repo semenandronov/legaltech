@@ -1,7 +1,7 @@
 """Risk analysis agent node for LangGraph"""
 from typing import Dict, Any
-from app.services.yandex_llm import ChatYandexGPT
-from app.services.langchain_agents.agent_factory import create_legal_agent
+from app.services.llm_factory import create_llm
+from app.services.langchain_agents.agent_factory import create_legal_agent, safe_agent_invoke
 from app.config import config
 from app.services.langchain_agents.state import AnalysisState
 from app.services.langchain_agents.tools import get_all_tools, initialize_tools
@@ -11,6 +11,7 @@ from app.services.document_processor import DocumentProcessor
 from sqlalchemy.orm import Session
 from app.models.analysis import AnalysisResult
 from app.models.case import Case
+from langchain_core.messages import HumanMessage
 import logging
 import json
 
@@ -55,19 +56,11 @@ def risk_agent_node(
         # Get tools
         tools = get_all_tools()
         
-        # Initialize LLM with temperature=0.1 for risk analysis (slightly higher for analysis task)
-        # Только YandexGPT, без fallback
-        if not (config.YANDEX_API_KEY or config.YANDEX_IAM_TOKEN) or not config.YANDEX_FOLDER_ID:
-            raise ValueError("YANDEX_API_KEY/YANDEX_IAM_TOKEN и YANDEX_FOLDER_ID должны быть настроены")
+        # Initialize LLM через factory (поддерживает YandexGPT и GigaChat)
+        llm = create_llm(temperature=0.1)
         
-        # YandexGPT не поддерживает инструменты, используем прямой RAG подход
-        if not rag_service:
-            raise ValueError("RAG service required for risk analysis")
-        
-        # Используем helper для прямого вызова LLM с RAG и структурированного парсинга
-        from app.services.langchain_agents.llm_helper import direct_llm_call_with_rag, extract_json_from_response, parse_with_fixing
-        from app.services.langchain_parsers import ParserService, RiskModel
-        from typing import List
+        # Проверяем, поддерживает ли LLM function calling (GigaChat)
+        use_tools = hasattr(llm, 'bind_tools') and config.LLM_PROVIDER.lower() == "gigachat"
         
         # Get case info
         case_info = ""
@@ -78,7 +71,68 @@ def risk_agent_node(
         
         # Формируем запрос с данными о противоречиях
         discrepancies_text = json.dumps(discrepancy_result.get("discrepancies", []), ensure_ascii=False, indent=2)
-        user_query = f"""Проанализируй риски следующего дела:
+        
+        if use_tools and rag_service:
+            # GigaChat с function calling - агент сам вызовет retrieve_documents_tool
+            logger.info("Using GigaChat with function calling for risk agent")
+            
+            prompt = get_agent_prompt("risk")
+            
+            # Создаем агента с tools
+            agent = create_legal_agent(llm, tools, system_prompt=prompt)
+            
+            # Создаем запрос для агента
+            user_query = f"""Проанализируй риски следующего дела:
+
+{case_info}
+
+Найденные противоречия:
+{discrepancies_text}
+
+Используй retrieve_documents_tool для поиска дополнительных документов, если нужно. Извлеки конкретные риски с обоснованием. Верни результат в формате JSON массива объектов с полями: risk_name, risk_category, probability, impact, description, evidence, recommendation, reasoning, confidence."""
+            
+            initial_message = HumanMessage(content=user_query)
+            
+            # Вызываем агента (он сам решит, когда вызывать tools)
+            from app.services.langchain_agents.callbacks import AnalysisCallbackHandler
+            callback = AnalysisCallbackHandler(agent_name="risk")
+            
+            result = safe_agent_invoke(
+                agent,
+                llm,
+                {
+                    "messages": [initial_message],
+                    "case_id": case_id
+                },
+                config={"recursion_limit": 15, "callbacks": [callback]}
+            )
+            
+            # Извлекаем ответ
+            if isinstance(result, dict):
+                messages = result.get("messages", [])
+                if messages:
+                    response_message = messages[-1]
+                    response_text = response_message.content if hasattr(response_message, 'content') else str(response_message)
+                else:
+                    response_text = str(result)
+            else:
+                response_text = str(result)
+        else:
+            # YandexGPT или GigaChat без tools - используем прямой RAG подход
+            if not rag_service:
+                raise ValueError("RAG service required for risk analysis")
+            
+            logger.info("Using direct RAG approach (YandexGPT or GigaChat without tools)")
+            
+            # Используем helper для прямого вызова LLM с RAG
+            from app.services.langchain_agents.llm_helper import direct_llm_call_with_rag, extract_json_from_response, parse_with_fixing
+            from app.services.langchain_parsers import ParserService, RiskModel
+            from app.services.langchain_agents.callbacks import AnalysisCallbackHandler
+            
+            # Create callback for logging
+            callback = AnalysisCallbackHandler(agent_name="risk")
+            
+            user_query = f"""Проанализируй риски следующего дела:
 
 {case_info}
 
@@ -86,32 +140,26 @@ def risk_agent_node(
 {discrepancies_text}
 
 Извлеки конкретные риски с обоснованием. Верни результат в формате JSON массива объектов с полями: risk_name, risk_category, probability, impact, description, evidence, recommendation, reasoning, confidence."""
+            
+            prompt = get_agent_prompt("risk")
+            response_text = direct_llm_call_with_rag(
+                case_id=case_id,
+                system_prompt=prompt,
+                user_query=user_query,
+                rag_service=rag_service,
+                db=db,
+                k=20,
+                temperature=0.1,
+                callbacks=[callback]
+            )
         
-        from app.services.langchain_agents.callbacks import AnalysisCallbackHandler
+        # Parse risks
+        from app.services.langchain_agents.llm_helper import extract_json_from_response, parse_with_fixing
+        from app.services.langchain_parsers import ParserService, RiskModel
         
-        # Create callback for logging
-        callback = AnalysisCallbackHandler(agent_name="risk")
-        
-        prompt = get_agent_prompt("risk")
-        response_text = direct_llm_call_with_rag(
-            case_id=case_id,
-            system_prompt=prompt,
-            user_query=user_query,
-            rag_service=rag_service,
-            db=db,
-            k=20,
-            temperature=0.1,
-            callbacks=[callback]
-        )
-        
-        # Parse risks with fixing parser
         parsed_risks = None
         try:
             # Try to use structured parsing with fixing
-            llm = ChatYandexGPT(
-                model=config.YANDEX_GPT_MODEL or "yandexgpt-lite",
-                temperature=0.1,
-            )
             parsed_risks = parse_with_fixing(response_text, RiskModel, llm=llm, max_retries=3, is_list=True)
         except Exception as e:
             logger.warning(f"Could not parse risks with fixing parser: {e}, trying manual parsing")

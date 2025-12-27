@@ -1,6 +1,6 @@
 """Supervisor agent for LangGraph multi-agent system"""
 from typing import Dict, Any
-from app.services.yandex_llm import ChatYandexGPT
+from app.services.llm_factory import create_llm
 from app.services.langchain_agents.agent_factory import create_legal_agent
 from langchain_core.tools import Tool
 from app.config import config
@@ -40,15 +40,9 @@ def create_supervisor_agent() -> Any:
         create_handoff_tool("relationship"),
     ]
     
-    # Initialize LLM with temperature=0 for deterministic routing
-    # Только YandexGPT, без fallback
-    if not (config.YANDEX_API_KEY or config.YANDEX_IAM_TOKEN) or not config.YANDEX_FOLDER_ID:
-        raise ValueError("YANDEX_API_KEY/YANDEX_IAM_TOKEN и YANDEX_FOLDER_ID должны быть настроены")
-    
-    llm = ChatYandexGPT(
-        model=config.YANDEX_GPT_MODEL or "yandexgpt-lite",
-        temperature=0.1,  # Низкая температура для детерминизма
-    )
+    # Initialize LLM через factory (поддерживает YandexGPT и GigaChat)
+    # Для supervisor можно использовать любой провайдер, но YandexGPT обычно достаточно
+    llm = create_llm(temperature=0.1)  # Низкая температура для детерминизма
     
     # Get supervisor prompt
     prompt = get_agent_prompt("supervisor")
@@ -78,6 +72,7 @@ def route_to_agent(state: AnalysisState) -> str:
         Name of the next agent to execute, or "end" if done
     """
     # Check if waiting for human feedback
+    case_id = state.get("case_id", "unknown")
     if state.get("waiting_for_human", False):
         current_request = state.get("current_feedback_request")
         if current_request:

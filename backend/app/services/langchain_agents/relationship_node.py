@@ -1,6 +1,6 @@
 """Relationship extraction agent node for LangGraph - builds relationship graph"""
 from typing import Dict, Any, Optional, List
-from app.services.yandex_llm import ChatYandexGPT
+from app.services.llm_factory import create_llm
 from langchain_core.prompts import ChatPromptTemplate
 from app.config import config
 from app.services.langchain_agents.state import AnalysisState
@@ -71,14 +71,8 @@ def relationship_agent_node(
             new_state["relationship_result"] = None
             return new_state
         
-        # Initialize LLM
-        if not (config.YANDEX_API_KEY or config.YANDEX_IAM_TOKEN) or not config.YANDEX_FOLDER_ID:
-            raise ValueError("YANDEX_API_KEY/YANDEX_IAM_TOKEN и YANDEX_FOLDER_ID должны быть настроены")
-        
-        llm = ChatYandexGPT(
-            model=config.YANDEX_GPT_MODEL or "yandexgpt-lite",
-            temperature=0.1,
-        )
+        # Initialize LLM через factory (поддерживает YandexGPT и GigaChat)
+        llm = create_llm(temperature=0.1)
         
         # Get relationship extraction prompt
         system_prompt = """Ты эксперт по извлечению связей между сущностями из юридических документов.

@@ -1,7 +1,7 @@
 """Key facts agent node for LangGraph"""
 from typing import Dict, Any
-from app.services.yandex_llm import ChatYandexGPT
-from app.services.langchain_agents.agent_factory import create_legal_agent
+from app.services.llm_factory import create_llm
+from app.services.langchain_agents.agent_factory import create_legal_agent, safe_agent_invoke
 from app.config import config
 from app.services.langchain_agents.state import AnalysisState
 from app.services.langchain_agents.tools import get_all_tools, initialize_tools
@@ -11,6 +11,7 @@ from app.services.document_processor import DocumentProcessor
 from app.services.langchain_parsers import ParserService
 from sqlalchemy.orm import Session
 from app.models.analysis import AnalysisResult
+from langchain_core.messages import HumanMessage
 import logging
 import json
 
@@ -47,57 +48,83 @@ def key_facts_agent_node(
         # Get tools
         tools = get_all_tools()
         
-        # Initialize LLM with temperature=0 for deterministic extraction
-        # Только YandexGPT, без fallback
-        if not (config.YANDEX_API_KEY or config.YANDEX_IAM_TOKEN) or not config.YANDEX_FOLDER_ID:
-            raise ValueError("YANDEX_API_KEY/YANDEX_IAM_TOKEN и YANDEX_FOLDER_ID должны быть настроены")
+        # Initialize LLM через factory (поддерживает YandexGPT и GigaChat)
+        llm = create_llm(temperature=0.1)
         
-        llm = ChatYandexGPT(
-            model=config.YANDEX_GPT_MODEL or "yandexgpt-lite",
-            temperature=0.1,  # Низкая температура для детерминизма
-        )
+        # Проверяем, поддерживает ли LLM function calling (GigaChat)
+        use_tools = hasattr(llm, 'bind_tools') and config.LLM_PROVIDER.lower() == "gigachat"
         
-        # Get prompt
-        prompt = get_agent_prompt("key_facts")
+        if use_tools and rag_service:
+            # GigaChat с function calling - агент сам вызовет retrieve_documents_tool
+            logger.info("Using GigaChat with function calling for key_facts agent")
+            
+            prompt = get_agent_prompt("key_facts")
+            
+            # Создаем агента с tools
+            agent = create_legal_agent(llm, tools, system_prompt=prompt)
+            
+            # Создаем запрос для агента
+            user_query = f"Извлеки ключевые факты из документов дела {case_id}. Используй retrieve_documents_tool для поиска релевантных документов. Верни результат в формате JSON массива фактов с полями: fact_type, value, description, source_document, source_page, confidence, reasoning."
+            
+            initial_message = HumanMessage(content=user_query)
+            
+            # Вызываем агента (он сам решит, когда вызывать tools)
+            from app.services.langchain_agents.callbacks import AnalysisCallbackHandler
+            callback = AnalysisCallbackHandler(agent_name="key_facts")
+            
+            result = safe_agent_invoke(
+                agent,
+                llm,
+                {
+                    "messages": [initial_message],
+                    "case_id": case_id
+                },
+                config={"recursion_limit": 15, "callbacks": [callback]}
+            )
+            
+            # Извлекаем ответ
+            if isinstance(result, dict):
+                messages = result.get("messages", [])
+                if messages:
+                    response_message = messages[-1]
+                    response_text = response_message.content if hasattr(response_message, 'content') else str(response_message)
+                else:
+                    response_text = str(result)
+            else:
+                response_text = str(result)
+        else:
+            # YandexGPT или GigaChat без tools - используем прямой RAG подход
+            if not rag_service:
+                raise ValueError("RAG service required for key facts extraction")
+            
+            logger.info("Using direct RAG approach (YandexGPT or GigaChat without tools)")
+            
+            # Используем helper для прямого вызова LLM с RAG
+            from app.services.langchain_agents.llm_helper import direct_llm_call_with_rag, extract_json_from_response
+            from app.services.langchain_agents.callbacks import AnalysisCallbackHandler
+            
+            # Create callback for logging
+            callback = AnalysisCallbackHandler(agent_name="key_facts")
+            
+            prompt = get_agent_prompt("key_facts")
+            user_query = f"Извлеки ключевые факты из документов дела {case_id}. Верни результат в формате JSON массива фактов с полями: fact_type, value, description, source_document, source_page, confidence, reasoning."
+            
+            response_text = direct_llm_call_with_rag(
+                case_id=case_id,
+                system_prompt=prompt,
+                user_query=user_query,
+                rag_service=rag_service,
+                db=db,
+                k=30,
+                temperature=0.1,
+                callbacks=[callback]
+            )
         
-        # Create agent
-        agent = create_legal_agent(llm, tools, system_prompt=prompt)
-        
-        # Create initial message
-        from langchain_core.messages import HumanMessage
-        initial_message = HumanMessage(
-            content=f"Извлеки ключевые факты из документов дела {case_id}. Используй retrieve_documents_tool для поиска документов."
-        )
-        
-        # Run agent with safe invoke (handles tool use errors)
-        from app.services.langchain_agents.agent_factory import safe_agent_invoke
-        result = safe_agent_invoke(
-            agent,
-            llm,
-            {
-                "messages": [initial_message],
-                "case_id": case_id
-            },
-            config={"recursion_limit": 25}
-        )
-        
-        # Extract key facts from response
-        response_text = result.get("messages", [])[-1].content if isinstance(result, dict) else str(result)
+        # Извлекаем JSON из ответа
+        from app.services.langchain_agents.llm_helper import extract_json_from_response
         
         # Try to extract JSON from response
-        key_facts_data = None
-        try:
-            if "```json" in response_text:
-                json_text = response_text.split("```json")[1].split("```")[0].strip()
-                key_facts_data = json.loads(json_text)
-            elif "[" in response_text and "]" in response_text:
-                start = response_text.find("[")
-                end = response_text.rfind("]") + 1
-                if start >= 0 and end > start:
-                    json_text = response_text[start:end]
-                    key_facts_data = json.loads(json_text)
-        except Exception as e:
-            logger.warning(f"Could not parse JSON from key facts agent response: {e}")
+        key_facts_data = extract_json_from_response(response_text)
         
         # If we have key facts data, parse it
         if key_facts_data:

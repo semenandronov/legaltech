@@ -1,7 +1,7 @@
 """Summary agent node for LangGraph"""
 from typing import Dict, Any
-from app.services.yandex_llm import ChatYandexGPT
-from app.services.langchain_agents.agent_factory import create_legal_agent
+from app.services.llm_factory import create_llm
+from app.services.langchain_agents.agent_factory import create_legal_agent, safe_agent_invoke
 from app.config import config
 from app.services.langchain_agents.state import AnalysisState
 from app.services.langchain_agents.tools import get_all_tools, initialize_tools
@@ -10,6 +10,7 @@ from app.services.rag_service import RAGService
 from app.services.document_processor import DocumentProcessor
 from sqlalchemy.orm import Session
 from app.models.analysis import AnalysisResult
+from langchain_core.messages import HumanMessage
 import logging
 import json
 
@@ -54,27 +55,76 @@ def summary_agent_node(
         # Get tools
         tools = get_all_tools()
         
-        # Initialize LLM with temperature=0.3 for creative summary (creative task)
-        # Только YandexGPT, без fallback
-        if not (config.YANDEX_API_KEY or config.YANDEX_IAM_TOKEN) or not config.YANDEX_FOLDER_ID:
-            raise ValueError("YANDEX_API_KEY/YANDEX_IAM_TOKEN и YANDEX_FOLDER_ID должны быть настроены")
+        # Initialize LLM через factory (поддерживает YandexGPT и GigaChat)
+        llm = create_llm(temperature=0.3)  # Creative задача, но все еще контролируемая
         
-        llm = ChatYandexGPT(
-            model=config.YANDEX_GPT_MODEL or "yandexgpt-lite",
-            temperature=0.3,  # Creative задача, но все еще контролируемая
-        )
+        # Проверяем, поддерживает ли LLM function calling (GigaChat)
+        use_tools = hasattr(llm, 'bind_tools') and config.LLM_PROVIDER.lower() == "gigachat"
         
-        # Get prompt
-        prompt = get_agent_prompt("summary")
-        
-        # Create agent
-        agent = create_legal_agent(llm, tools, system_prompt=prompt)
-        
-        # Create initial message with key facts
-        from langchain_core.messages import HumanMessage
         key_facts_text = json.dumps(key_facts_result.get("facts", {}), ensure_ascii=False, indent=2)
-        initial_message = HumanMessage(
-            content=f"""Создай краткое резюме дела на основе следующих ключевых фактов:
+        
+        if use_tools and rag_service:
+            # GigaChat с function calling - агент может вызвать retrieve_documents_tool для уточнения
+            logger.info("Using GigaChat with function calling for summary agent")
+            
+            prompt = get_agent_prompt("summary")
+            
+            # Создаем агента с tools
+            agent = create_legal_agent(llm, tools, system_prompt=prompt)
+            
+            # Создаем запрос для агента
+            user_query = f"""Создай краткое резюме дела на основе следующих ключевых фактов:
+
+{key_facts_text}
+
+Если нужно больше информации, используй retrieve_documents_tool для поиска дополнительных документов.
+
+Создай структурированное резюме с разделами:
+1. Суть дела
+2. Стороны спора
+3. Ключевые факты
+4. Основные даты
+5. Текущий статус"""
+            
+            initial_message = HumanMessage(content=user_query)
+            
+            # Вызываем агента (он сам решит, когда вызывать tools)
+            from app.services.langchain_agents.callbacks import AnalysisCallbackHandler
+            callback = AnalysisCallbackHandler(agent_name="summary")
+            
+            result = safe_agent_invoke(
+                agent,
+                llm,
+                {
+                    "messages": [initial_message],
+                    "case_id": case_id
+                },
+                config={"recursion_limit": 15, "callbacks": [callback]}
+            )
+            
+            # Извлекаем ответ
+            if isinstance(result, dict):
+                messages = result.get("messages", [])
+                if messages:
+                    response_message = messages[-1]
+                    summary_text = response_message.content if hasattr(response_message, 'content') else str(response_message)
+                else:
+                    summary_text = str(result)
+            else:
+                summary_text = str(result)
+        else:
+            # YandexGPT или GigaChat без tools - используем прямой подход
+            logger.info("Using direct approach (YandexGPT or GigaChat without tools)")
+            
+            # Используем helper для прямого вызова LLM
+            from app.services.langchain_agents.llm_helper import direct_llm_call_with_rag
+            from app.services.langchain_agents.callbacks import AnalysisCallbackHandler
+            
+            # Create callback for logging
+            callback = AnalysisCallbackHandler(agent_name="summary")
+            
+            prompt = get_agent_prompt("summary")
+            user_query = f"""Создай краткое резюме дела на основе следующих ключевых фактов:
 
 {key_facts_text}
 
@@ -84,22 +134,27 @@ def summary_agent_node(
 3. Ключевые факты
 4. Основные даты
 5. Текущий статус"""
-        )
-        
-        # Run agent with safe invoke (handles tool use errors)
-        from app.services.langchain_agents.agent_factory import safe_agent_invoke
-        result = safe_agent_invoke(
-            agent,
-            llm,
-            {
-                "messages": [initial_message],
-                "case_id": case_id
-            },
-            config={"recursion_limit": 25}
-        )
-        
-        # Extract summary from response
-        summary_text = result.get("messages", [])[-1].content if isinstance(result, dict) else str(result)
+            
+            # Для summary можем использовать RAG, если нужно, но обычно достаточно key_facts
+            if rag_service:
+                summary_text = direct_llm_call_with_rag(
+                    case_id=case_id,
+                    system_prompt=prompt,
+                    user_query=user_query,
+                    rag_service=rag_service,
+                    db=db,
+                    k=10,  # Меньше документов для summary
+                    temperature=0.3,
+                    callbacks=[callback]
+                )
+            else:
+                # Прямой вызов без RAG (используем только key_facts)
+                messages = [
+                    {"role": "system", "content": prompt},
+                    {"role": "user", "content": user_query}
+                ]
+                response = llm.invoke([HumanMessage(content=user_query)])
+                summary_text = response.content if hasattr(response, 'content') else str(response)
         
         # Save to database
         result_id = None

@@ -1,6 +1,6 @@
 """Planning agent for natural language task understanding and analysis planning"""
 from typing import Dict, Any, List, Optional
-from app.services.yandex_llm import ChatYandexGPT
+from app.services.llm_factory import create_llm
 from app.services.langchain_agents.agent_factory import create_legal_agent
 from app.services.langchain_agents.planning_tools import get_planning_tools, AVAILABLE_ANALYSES
 from app.services.langchain_agents.prompts import get_agent_prompt
@@ -18,27 +18,14 @@ class PlanningAgent:
     
     def __init__(self):
         """Initialize planning agent"""
-        # Initialize LLM - только YandexGPT, без fallback
-        if not (config.YANDEX_API_KEY or config.YANDEX_IAM_TOKEN):
-            raise ValueError(
-                "YANDEX_API_KEY или YANDEX_IAM_TOKEN должны быть настроены. "
-                "OpenRouter больше не используется."
-            )
-        
-        if not config.YANDEX_FOLDER_ID:
-            raise ValueError(
-                "YANDEX_FOLDER_ID должен быть настроен для работы YandexGPT."
-            )
-        
+        # Initialize LLM через factory (поддерживает YandexGPT и GigaChat)
         try:
-            self.llm = ChatYandexGPT(
-                model=config.YANDEX_GPT_MODEL or "yandexgpt-lite",
-                temperature=0.1,  # Низкая температура для консистентности
-            )
-            logger.info("✅ Using YandexGPT for planning")
+            self.llm = create_llm(temperature=0.1)  # Низкая температура для консистентности
+            provider = config.LLM_PROVIDER.lower() if config.LLM_PROVIDER else "yandex"
+            logger.info(f"✅ Using {provider} for planning")
         except Exception as e:
-            logger.error(f"Failed to initialize YandexGPT: {e}")
-            raise ValueError(f"Ошибка инициализации YandexGPT: {str(e)}")
+            logger.error(f"Failed to initialize LLM: {e}")
+            raise ValueError(f"Ошибка инициализации LLM: {str(e)}")
         
         # Get planning tools
         self.tools = get_planning_tools()
