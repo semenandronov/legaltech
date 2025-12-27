@@ -78,7 +78,18 @@ class AgentCoordinator:
             # Use PlanningAgent if user_task provided
             if user_task and self.planning_agent:
                 try:
-                    plan = self.planning_agent.plan_analysis(user_task, case_id)
+                    # Get case info to pass document information
+                    from app.models.case import Case
+                    case = self.db.query(Case).filter(Case.id == case_id).first()
+                    num_documents = case.num_documents if case else 0
+                    file_names = case.file_names if case and case.file_names else []
+                    
+                    plan = self.planning_agent.plan_analysis(
+                        user_task, 
+                        case_id,
+                        available_documents=file_names[:10] if file_names else None,
+                        num_documents=num_documents
+                    )
                     analysis_types = plan.get("analysis_types", analysis_types)
                     logger.info(f"PlanningAgent created plan: {analysis_types}, reasoning: {plan.get('reasoning', '')[:100]}")
                     
