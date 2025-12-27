@@ -1,15 +1,23 @@
 """Helper functions for direct LLM calls without agents"""
 from typing import List, Dict, Any, Optional, Type
 from langchain_core.messages import SystemMessage, HumanMessage
-from langchain_core.output_parsers import RetryOutputParser, PydanticOutputParser
+from langchain_core.output_parsers import PydanticOutputParser
 
-# OutputFixingParser may not be available in all langchain_core versions
+# OutputFixingParser and RetryOutputParser may not be available in all langchain_core versions
+OUTPUT_FIXING_PARSER_AVAILABLE = False
+RETRY_OUTPUT_PARSER_AVAILABLE = False
+
 try:
     from langchain_core.output_parsers import OutputFixingParser
     OUTPUT_FIXING_PARSER_AVAILABLE = True
 except ImportError:
-    OUTPUT_FIXING_PARSER_AVAILABLE = False
-    logger.warning("OutputFixingParser not available in langchain_core, will use RetryOutputParser only")
+    logger.warning("OutputFixingParser not available in langchain_core")
+
+try:
+    from langchain_core.output_parsers import RetryOutputParser
+    RETRY_OUTPUT_PARSER_AVAILABLE = True
+except ImportError:
+    logger.warning("RetryOutputParser not available in langchain_core, will use PydanticOutputParser only")
 from langchain_core.exceptions import OutputParserException
 from pydantic import BaseModel
 from app.services.llm_factory import create_llm
@@ -240,7 +248,15 @@ def parse_with_fixing(
                     fixing_parser = list_parser
             else:
                 fixing_parser = list_parser
-            retry_parser = RetryOutputParser.from_llm(parser=fixing_parser, llm=llm, max_retries=max_retries) if llm else fixing_parser
+            
+            if RETRY_OUTPUT_PARSER_AVAILABLE and llm:
+                try:
+                    retry_parser = RetryOutputParser.from_llm(parser=fixing_parser, llm=llm, max_retries=max_retries)
+                except Exception as e:
+                    logger.warning(f"Could not create RetryOutputParser, using fixing parser: {e}")
+                    retry_parser = fixing_parser
+            else:
+                retry_parser = fixing_parser
             return retry_parser.parse(response_text)
         else:
             parser = create_fixing_parser(pydantic_model, llm, max_retries)

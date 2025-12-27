@@ -338,8 +338,10 @@ def evaluation_node(
     if not agent_name or not result:
         # Find the first agent with a result that hasn't been evaluated
         # We check by looking for results that exist but weren't in previous evaluation
-        previous_eval = state.get("evaluation_result", {})
-        previous_agent = previous_eval.get("agent_name")
+        previous_eval = state.get("evaluation_result")
+        if previous_eval is None:
+            previous_eval = {}
+        previous_agent = previous_eval.get("agent_name") if isinstance(previous_eval, dict) else None
         
         for agent, key in agent_result_keys:
             if state.get(key) is not None:
