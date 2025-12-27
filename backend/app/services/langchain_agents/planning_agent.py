@@ -103,9 +103,13 @@ class PlanningAgent:
                     docs_preview += f" и еще {len(available_documents) - 5} документов"
                 task_message += f"\n\nПримеры документов в деле: {docs_preview}."
             
-            # Если есть RAG service, предлагаем использовать retrieve_documents_tool
+            # Если есть RAG service, ОБЯЗАТЕЛЬНО предлагаем использовать retrieve_documents_tool
             if self.rag_service:
-                task_message += "\n\nВАЖНО: Документы уже загружены в систему. Если нужно увидеть содержимое документов, используй retrieve_documents_tool для поиска релевантных документов по запросу пользователя."
+                # Для задач про хронологию/события - обязательно использовать tool
+                if any(keyword in user_task.lower() for keyword in ["хронология", "события", "даты", "timeline", "расположить", "временной"]):
+                    task_message += f"\n\nКРИТИЧНО: Для понимания задачи используй retrieve_documents_tool с запросом про даты и события для дела {case_id}. Это покажет, какие документы есть и что в них содержится. Затем создай план анализа."
+                else:
+                    task_message += "\n\nВАЖНО: Документы уже загружены в систему. Если нужно увидеть содержимое документов для понимания задачи, используй retrieve_documents_tool для поиска релевантных документов."
             
             message = HumanMessage(content=task_message)
             
