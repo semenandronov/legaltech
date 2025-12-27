@@ -44,7 +44,9 @@ class ChatGigaChat(BaseChatModel):
         Initialize GigaChat
         
         Args:
-            credentials: Authorization token (base64 encoded)
+            credentials: Authorization key (base64 encoded ClientID:ClientSecret)
+                       SDK автоматически получает токен доступа из ключа авторизации.
+                       Токен действителен 30 минут и автоматически обновляется.
             model: Model name (default: GigaChat)
             temperature: Temperature for generation
             verify_ssl_certs: Verify SSL certificates

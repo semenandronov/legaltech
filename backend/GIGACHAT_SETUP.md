@@ -1,6 +1,55 @@
 # Настройка GigaChat для тестирования
 
-## Шаг 1: Установка зависимостей
+## Шаг 1: Регистрация и получение ключа авторизации
+
+### 1.1. Регистрация в личном кабинете
+
+Если вы еще не зарегистрированы, создайте учетную запись в личном кабинете Sber Developer Studio и создайте новый проект GigaChat API.
+
+**Документация:** [Регистрация в личном кабинете](https://developers.sber.ru/docs/ru/gigachat/quickstart/ind-create-project)
+
+### 1.2. Получение ключа авторизации
+
+Для начала работы вам потребуется **ключ авторизации (Authorization Key)**. Этот ключ используется для получения токена доступа к API.
+
+**Как получить:**
+1. Войдите в личный кабинет вашего проекта GigaChat API
+2. Перейдите в раздел **Настройки API**
+3. Нажмите кнопку **Получить ключ**, чтобы сгенерировать и скачать:
+   - `Client ID`
+   - `Client Secret`
+   - **Ключ авторизации** (Authorization Key) - это то, что нужно!
+
+**Документация:** [Получение ключа авторизации](https://developers.sber.ru/docs/ru/gigachat/quickstart/ind-get-auth-key)
+
+**Важно:** Ключ авторизации имеет формат `base64(ClientID:ClientSecret)`, например:
+```
+MDE5YjVmNmUtOTg5OS03YzUyLTgxNWUtM2JiMDhmNjAwZTJiOjMwNmVkOTlkLThiNjctNGFmMy1hNTRjLWI1YjA2ODhkOGQyZA==
+```
+
+### 1.3. Получение токена доступа (опционально)
+
+GigaChat SDK автоматически получает токен доступа из ключа авторизации при первом запросе. Токен действителен **30 минут** и автоматически обновляется SDK.
+
+Если вы хотите получить токен вручную (для тестирования):
+
+```bash
+curl -L -X POST 'https://ngw.devices.sberbank.ru:9443/api/v2/oauth' \
+-H 'Content-Type: application/x-www-form-urlencoded' \
+-H 'Accept: application/json' \
+-H 'RqUID: <уникальный_идентификатор>' \
+-H 'Authorization: Basic <ключ_авторизации>' \
+--data-urlencode 'scope=GIGACHAT_API_PERS'
+```
+
+**Документация:** [Получение токена доступа](https://developers.sber.ru/docs/ru/gigachat/api/reference/rest/post-token)
+
+**Важно:**
+- Токен доступа действителен **30 минут**
+- Запросы на получение токена можно отправлять до **10 раз в секунду**
+- SDK автоматически обновляет токен при необходимости
+
+## Шаг 2: Установка зависимостей
 
 ```bash
 cd backend
@@ -12,12 +61,14 @@ pip install gigachat
 gigachat>=0.1.0
 ```
 
-## Шаг 2: Настройка переменных окружения
+## Шаг 3: Настройка переменных окружения
 
 Добавьте в файл `.env` в корне проекта:
 
 ```bash
 # GigaChat (Сбер)
+# ВАЖНО: Используйте ключ авторизации (Authorization Key), а не токен доступа!
+# SDK автоматически получит токен доступа из ключа авторизации
 GIGACHAT_CREDENTIALS=MDE5YjVmNmUtOTg5OS03YzUyLTgxNWUtM2JiMDhmNjAwZTJiOjMwNmVkOTlkLThiNjctNGFmMy1hNTRjLWI1YjA2ODhkOGQyZA==
 GIGACHAT_MODEL=GigaChat
 GIGACHAT_VERIFY_SSL=true
@@ -26,7 +77,11 @@ GIGACHAT_VERIFY_SSL=true
 LLM_PROVIDER=gigachat  # или "yandex" для переключения обратно
 ```
 
-## Шаг 3: Тестирование
+**Примечание:** 
+- `GIGACHAT_CREDENTIALS` должен содержать **ключ авторизации** (Authorization Key), а не токен доступа
+- SDK автоматически получает и обновляет токен доступа при необходимости
+
+## Шаг 4: Тестирование
 
 ### Базовый тест
 

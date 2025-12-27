@@ -7,6 +7,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'backend'))
 
 from app.services.gigachat_llm import ChatGigaChat
 from app.services.langchain_agents.tools import retrieve_documents_tool
+from app.services.gigachat_token_helper import test_gigachat_credentials, get_gigachat_access_token
 from langchain_core.messages import HumanMessage, SystemMessage
 from app.config import config
 
@@ -114,20 +115,63 @@ def test_llm_factory():
         return False
 
 
+def test_token_helper():
+    """Test GigaChat token helper"""
+    print("\n" + "=" * 60)
+    print("Test 0: GigaChat Token Helper")
+    print("=" * 60)
+    
+    try:
+        # Test credentials validation
+        print("Testing credentials validation...")
+        is_valid = test_gigachat_credentials()
+        
+        if is_valid:
+            print("✅ Credentials are valid!")
+            
+            # Try to get access token
+            print("\nTesting access token retrieval...")
+            token = get_gigachat_access_token()
+            if token:
+                print(f"✅ Access token obtained: {token[:20]}...")
+                print("   (Token is valid for 30 minutes)")
+            else:
+                print("⚠️ Could not get access token (but credentials are valid)")
+        else:
+            print("❌ Credentials are invalid or token retrieval failed")
+            print("   Check your GIGACHAT_CREDENTIALS in .env file")
+            print("   Make sure you're using Authorization Key, not Access Token")
+        
+        return is_valid
+    except Exception as e:
+        print(f"❌ Error: {e}")
+        import traceback
+        traceback.print_exc()
+        return False
+
+
 if __name__ == "__main__":
     print("🧪 Testing GigaChat Integration\n")
     
     # Check credentials
     if not config.GIGACHAT_CREDENTIALS:
         print("❌ GIGACHAT_CREDENTIALS not set in config!")
-        print("Set it in .env file: GIGACHAT_CREDENTIALS=your_token")
+        print("Set it in .env file: GIGACHAT_CREDENTIALS=your_authorization_key")
+        print("\nTo get authorization key:")
+        print("1. Go to https://developers.sber.ru/studio")
+        print("2. Create a GigaChat API project")
+        print("3. Go to 'Настройки API' → 'Получить ключ'")
+        print("4. Copy the Authorization Key (not Access Token!)")
         sys.exit(1)
     
     print(f"✅ GIGACHAT_CREDENTIALS found: {config.GIGACHAT_CREDENTIALS[:20]}...")
     print(f"✅ LLM_PROVIDER: {config.LLM_PROVIDER}\n")
+    print("ℹ️  Note: GIGACHAT_CREDENTIALS should be Authorization Key (not Access Token)")
+    print("   SDK will automatically get and refresh Access Token as needed.\n")
     
     # Run tests
     results = []
+    results.append(("Token helper", test_token_helper()))
     results.append(("Basic call", test_gigachat_basic()))
     results.append(("Function calling", test_gigachat_with_tools()))
     results.append(("LLM Factory", test_llm_factory()))

@@ -65,9 +65,10 @@ class Config:
     YANDEX_EMBEDDING_MODEL_URI: str = os.getenv("YANDEX_EMBEDDING_MODEL_URI", "")
     
     # GigaChat (Сбер) - с поддержкой function calling
-    GIGACHAT_CREDENTIALS: str = os.getenv("GIGACHAT_CREDENTIALS", "")
+    GIGACHAT_CREDENTIALS: str = os.getenv("GIGACHAT_CREDENTIALS", "")  # Authorization Key (base64 encoded ClientID:ClientSecret)
     GIGACHAT_MODEL: str = os.getenv("GIGACHAT_MODEL", "GigaChat")
     GIGACHAT_VERIFY_SSL: bool = os.getenv("GIGACHAT_VERIFY_SSL", "true").lower() == "true"
+    GIGACHAT_SCOPE: str = os.getenv("GIGACHAT_SCOPE", "GIGACHAT_API_PERS")  # Scope для получения токена (GIGACHAT_API_PERS для физических лиц)
     
     # Выбор LLM провайдера для агентов (yandex или gigachat)
     LLM_PROVIDER: str = os.getenv("LLM_PROVIDER", "yandex")  # "yandex" или "gigachat"
