@@ -33,3 +33,6 @@ yandex-cloud-ml-sdk==0.17.1  # Официальный SDK для YandexGPT и Em
 yandexcloud>=0.359.0  # Обновлено для совместимости с yandex-cloud-ml-sdk (требует >=0.359.0)
 requests>=2.32.5  # Обновлено для совместимости с langchain-community
 
+# GigaChat (Сбер)
+gigachat>=0.1.0  # Официальный SDK для GigaChat с поддержкой function calling
+

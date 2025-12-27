@@ -66,15 +66,64 @@ def route_to_agent(state: AnalysisState) -> str:
     Работает как "бригадир" - координирует работу специализированных агентов
     с reasoning и логированием решений.
     
+    Учитывает:
+    - Результаты evaluation (needs_replanning, confidence)
+    - Адаптации плана (current_plan)
+    - Human feedback (waiting_for_human)
+    
     Args:
         state: Current graph state
     
     Returns:
         Name of the next agent to execute, or "end" if done
     """
+    # Check if waiting for human feedback
+    if state.get("waiting_for_human", False):
+        current_request = state.get("current_feedback_request")
+        if current_request:
+            request_id = current_request.get("request_id")
+            feedback_responses = state.get("feedback_responses", {})
+            if request_id not in feedback_responses:
+                # Still waiting, return to human_feedback_wait
+                logger.info(f"[Супервизор] Дело {case_id}: Ожидание human feedback для запроса {request_id}")
+                return "human_feedback_wait"
+    
+    # Check if we have an adapted plan
+    current_plan = state.get("current_plan", [])
+    needs_replanning = state.get("needs_replanning", False)
+    
+    # Use current_plan if available and needs_replanning is True
+    if current_plan and needs_replanning:
+        # Find next pending step in adapted plan
+        from app.services.langchain_agents.state import PlanStepStatus
+        completed_steps = set(state.get("completed_steps", []))
+        
+        for step in current_plan:
+            step_id = step.get("step_id")
+            step_status = step.get("status")
+            agent_name = step.get("agent_name")
+            
+            if step_status == PlanStepStatus.PENDING.value and step_id not in completed_steps:
+                logger.info(f"[Супервизор] Using adapted plan: next step is {agent_name} (step_id: {step_id})")
+                return agent_name
+        
+        # All steps in plan completed, reset needs_replanning
+        new_state = dict(state)
+        new_state["needs_replanning"] = False
+        state.update(new_state)
+    
+    # Fall back to original analysis_types
     analysis_types = state.get("analysis_types", [])
     requested_types = set(analysis_types)
     case_id = state.get("case_id", "unknown")
+    
+    # Check evaluation results for retry needs
+    evaluation_result = state.get("evaluation_result", {})
+    if evaluation_result.get("needs_retry", False):
+        agent_name = evaluation_result.get("agent_name")
+        if agent_name:
+            logger.info(f"[Супервизор] Retrying agent {agent_name} based on evaluation")
+            return agent_name
     
     # Check what's already done
     completed = set()
@@ -149,6 +198,24 @@ def route_to_agent(state: AnalysisState) -> str:
             next_agent = "entity_extraction" if "entity_extraction" in requested_types else "supervisor"
     
     # 4. Независимые агенты могут работать параллельно
+    # Check if we have multiple independent agents to run
+    independent_agents = ["timeline", "key_facts", "discrepancy", "entity_extraction"]
+    pending_independent = [
+        agent for agent in independent_agents
+        if agent in requested_types and agent not in completed
+    ]
+    
+    if len(pending_independent) > 1:
+        # Multiple independent agents - use parallel execution
+        reasoning_parts.append(f"Найдено {len(pending_independent)} независимых агентов для параллельного выполнения: {', '.join(pending_independent)}")
+        next_agent = "parallel_independent"
+        logger.info(f"[Супервизор] Дело {case_id}: → Параллельное выполнение {len(pending_independent)} агентов")
+    elif len(pending_independent) == 1:
+        # Single independent agent - run directly
+        agent_name = pending_independent[0]
+        reasoning_parts.append(f"{agent_name} агент независим, выполняется отдельно")
+        next_agent = agent_name
+        logger.info(f"[Супервизор] Дело {case_id}: → {agent_name}: выполняется отдельно")
     elif "timeline" in requested_types and "timeline" not in completed:
         reasoning_parts.append("Timeline агент независим, может работать параллельно")
         next_agent = "timeline"

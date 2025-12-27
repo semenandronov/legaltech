@@ -305,32 +305,64 @@ def evaluation_node(
     evaluator = ResultEvaluator()
     new_state = dict(state)
     
-    # Get the current step that was just completed
-    current_step_id = state.get("current_step_id")
+    # Determine which agent was just executed by checking which result was updated
+    # Check results in order of execution priority
+    agent_result_keys = [
+        ("document_classifier", "classification_result"),
+        ("privilege_check", "privilege_result"),
+        ("entity_extraction", "entities_result"),
+        ("timeline", "timeline_result"),
+        ("key_facts", "key_facts_result"),
+        ("discrepancy", "discrepancy_result"),
+        ("relationship", "relationship_result"),
+        ("risk", "risk_result"),
+        ("summary", "summary_result"),
+    ]
     
-    if not current_step_id:
-        # No step to evaluate, check overall progress
+    # Find the agent that was just executed (has result but wasn't evaluated yet)
+    agent_name = None
+    result = None
+    result_key = None
+    
+    # Check if we have a current_step_id from state
+    current_step_id = state.get("current_step_id")
+    if current_step_id:
+        # Find the step in current plan
+        current_plan = state.get("current_plan", [])
+        for step in current_plan:
+            if step.get("step_id") == current_step_id:
+                agent_name = step.get("agent_name", "")
+                result_key = f"{agent_name}_result"
+                result = state.get(result_key)
+                break
+    
+    # If no current_step_id, try to determine from results
+    if not agent_name or not result:
+        # Find the first agent with a result that hasn't been evaluated
+        # We check by looking for results that exist but weren't in previous evaluation
+        previous_eval = state.get("evaluation_result", {})
+        previous_agent = previous_eval.get("agent_name")
+        
+        for agent, key in agent_result_keys:
+            if state.get(key) is not None:
+                # If this is a new result (different from previous evaluation), evaluate it
+                if agent != previous_agent:
+                    agent_name = agent
+                    result_key = key
+                    result = state.get(key)
+                    break
+    
+    if not agent_name or result is None:
+        # No specific agent to evaluate, check overall progress
         overall_eval = evaluator.evaluate_overall_progress(state)
         new_state["evaluation_result"] = overall_eval
         logger.info(f"[Evaluation] Overall progress: {overall_eval['progress']:.1%}")
         return new_state
     
-    # Find the step in current plan
-    current_plan = state.get("current_plan", [])
-    step_info = None
-    for step in current_plan:
-        if step.get("step_id") == current_step_id:
-            step_info = step
-            break
-    
-    if not step_info:
-        logger.warning(f"[Evaluation] Step {current_step_id} not found in plan")
-        return new_state
-    
-    # Get the result for this agent
-    agent_name = step_info.get("agent_name", "")
-    result_key = f"{agent_name}_result"
-    result = state.get(result_key)
+    # Generate step_id if not present
+    if not current_step_id:
+        current_step_id = f"{agent_name}_{case_id}"
+        new_state["current_step_id"] = current_step_id
     
     # Evaluate the step
     step_evaluation = evaluator.evaluate_step_result(
@@ -353,6 +385,39 @@ def evaluation_node(
     # Update state
     new_state["evaluation_result"] = step_evaluation
     new_state["needs_replanning"] = step_evaluation.get("needs_adaptation", False)
+    
+    # Check if human feedback is needed (low confidence)
+    confidence = step_evaluation.get("confidence", 1.0)
+    HUMAN_FEEDBACK_THRESHOLD = 0.5
+    
+    if confidence < HUMAN_FEEDBACK_THRESHOLD and not step_evaluation.get("needs_retry", False):
+        # Create human feedback request
+        from app.services.langchain_agents.state import HumanFeedbackRequest
+        import uuid
+        from datetime import datetime
+        
+        feedback_request = HumanFeedbackRequest(
+            request_id=str(uuid.uuid4()),
+            agent_name=agent_name,
+            question_type="clarification",
+            question_text=f"Агент {agent_name} получил низкую уверенность ({confidence:.2f}) в результате. "
+                         f"Проблемы: {', '.join(step_evaluation.get('issues', ['Неизвестно']))}. "
+                         f"Можете уточнить задачу или подтвердить, что результат приемлем?",
+            context=f"Результат агента {agent_name} для дела {case_id}. Confidence: {confidence:.2f}",
+            status="pending"
+        )
+        
+        # Add to pending feedback
+        pending_feedback = list(state.get("pending_feedback", []))
+        pending_feedback.append(feedback_request.to_dict())
+        new_state["pending_feedback"] = pending_feedback
+        new_state["waiting_for_human"] = True
+        new_state["current_feedback_request"] = feedback_request.to_dict()
+        
+        logger.info(
+            f"[Evaluation] Low confidence ({confidence:.2f}) for {agent_name}, "
+            f"requesting human feedback: {feedback_request.request_id}"
+        )
     
     if step_evaluation["success"]:
         # Mark step as completed

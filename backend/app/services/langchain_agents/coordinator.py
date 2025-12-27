@@ -2,7 +2,9 @@
 from typing import Dict, Any, List, Optional
 from sqlalchemy.orm import Session
 from app.services.langchain_agents.graph import create_analysis_graph
-from app.services.langchain_agents.state import AnalysisState
+from app.services.langchain_agents.state import AnalysisState, create_initial_state
+from app.services.langchain_agents.planning_agent import PlanningAgent
+from app.services.langchain_agents.human_feedback import get_feedback_service
 from app.services.rag_service import RAGService
 from app.services.document_processor import DocumentProcessor
 from langchain_core.messages import HumanMessage
@@ -36,20 +38,34 @@ class AgentCoordinator:
         
         # Create graph
         self.graph = create_analysis_graph(db, rag_service, document_processor)
+        
+        # Initialize planning agent
+        try:
+            self.planning_agent = PlanningAgent()
+        except Exception as e:
+            logger.warning(f"Failed to initialize PlanningAgent: {e}, will use analysis_types directly")
+            self.planning_agent = None
+        
+        # Initialize human feedback service
+        self.feedback_service = get_feedback_service(db)
     
     def run_analysis(
         self,
         case_id: str,
         analysis_types: List[str],
-        config: Optional[Dict[str, Any]] = None
+        user_task: Optional[str] = None,
+        config: Optional[Dict[str, Any]] = None,
+        websocket_callback: Optional[Any] = None
     ) -> Dict[str, Any]:
         """
         Run analysis using multi-agent system
         
         Args:
             case_id: Case identifier
-            analysis_types: List of analysis types to run
+            analysis_types: List of analysis types to run (if user_task not provided)
+            user_task: Optional natural language task description (will use PlanningAgent)
             config: Optional configuration for graph execution
+            websocket_callback: Optional async callback for sending messages via WebSocket
         
         Returns:
             Dictionary with analysis results
@@ -59,23 +75,45 @@ class AgentCoordinator:
         try:
             logger.info(f"Starting multi-agent analysis for case {case_id}, types: {analysis_types}")
             
-            # Initialize state
-            initial_state: AnalysisState = {
-                "case_id": case_id,
-                "messages": [],
-                "timeline_result": None,
-                "key_facts_result": None,
-                "discrepancy_result": None,
-                "risk_result": None,
-                "summary_result": None,
-                "classification_result": None,
-                "entities_result": None,
-                "privilege_result": None,
-                "relationship_result": None,
-                "analysis_types": analysis_types,
-                "errors": [],
-                "metadata": {}
-            }
+            # Use PlanningAgent if user_task provided
+            if user_task and self.planning_agent:
+                try:
+                    plan = self.planning_agent.plan_analysis(user_task, case_id)
+                    analysis_types = plan.get("analysis_types", analysis_types)
+                    logger.info(f"PlanningAgent created plan: {analysis_types}, reasoning: {plan.get('reasoning', '')[:100]}")
+                    
+                    # Create initial plan steps
+                    from app.services.langchain_agents.state import PlanStep, PlanStepStatus
+                    current_plan = []
+                    for idx, agent_name in enumerate(analysis_types):
+                        step = PlanStep(
+                            step_id=f"{agent_name}_{case_id}_{idx}",
+                            agent_name=agent_name,
+                            description=f"Execute {agent_name} analysis",
+                            status=PlanStepStatus.PENDING,
+                            result_key=f"{agent_name}_result"
+                        )
+                        current_plan.append(step.to_dict())
+                except Exception as e:
+                    logger.warning(f"PlanningAgent failed: {e}, using provided analysis_types")
+                    current_plan = []
+            else:
+                current_plan = []
+            
+            # Register WebSocket callback for human feedback if provided
+            if websocket_callback:
+                self.feedback_service.register_websocket_callback(case_id, websocket_callback)
+            
+            # Initialize state using create_initial_state helper
+            initial_state = create_initial_state(
+                case_id=case_id,
+                analysis_types=analysis_types,
+                metadata={"planning_used": user_task is not None and self.planning_agent is not None}
+            )
+            
+            # Add current_plan if created
+            if current_plan:
+                initial_state["current_plan"] = current_plan
             
             # Create thread config for graph execution with increased recursion limit
             thread_config = config or {"configurable": {"thread_id": f"case_{case_id}"}}
@@ -133,8 +171,14 @@ class AgentCoordinator:
                 "privilege": final_state.get("privilege_result") if final_state else None,
                 "errors": final_state.get("errors", []) if final_state else [],
                 "execution_time": execution_time,
-                "metadata": final_state.get("metadata", {}) if final_state else {}
+                "metadata": final_state.get("metadata", {}) if final_state else {},
+                "adaptation_history": final_state.get("adaptation_history", []) if final_state else [],
+                "evaluation_results": final_state.get("evaluation_result") if final_state else None
             }
+            
+            # Unregister WebSocket callback
+            if websocket_callback:
+                self.feedback_service.unregister_websocket_callback(case_id)
             
             return results
             

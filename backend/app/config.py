@@ -63,6 +63,14 @@ class Config:
     # Формат: gpt://<folder-id>/yandexgpt-lite/latest или emb://<folder-id>/text-search-query/latest
     YANDEX_GPT_MODEL_URI: str = os.getenv("YANDEX_GPT_MODEL_URI", "")
     YANDEX_EMBEDDING_MODEL_URI: str = os.getenv("YANDEX_EMBEDDING_MODEL_URI", "")
+    
+    # GigaChat (Сбер) - с поддержкой function calling
+    GIGACHAT_CREDENTIALS: str = os.getenv("GIGACHAT_CREDENTIALS", "")
+    GIGACHAT_MODEL: str = os.getenv("GIGACHAT_MODEL", "GigaChat")
+    GIGACHAT_VERIFY_SSL: bool = os.getenv("GIGACHAT_VERIFY_SSL", "true").lower() == "true"
+    
+    # Выбор LLM провайдера для агентов (yandex или gigachat)
+    LLM_PROVIDER: str = os.getenv("LLM_PROVIDER", "yandex")  # "yandex" или "gigachat"
     # Yandex Index prefix - removed (Yandex Vector Store no longer used)
     # YANDEX_INDEX_PREFIX: str = os.getenv("YANDEX_INDEX_PREFIX", "legal_ai_vault")
     
