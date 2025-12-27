@@ -250,7 +250,6 @@ async def chat(
     
     try:
         classification_llm = ChatYandexGPT(
-            model_name=config.YANDEX_GPT_MODEL,
             temperature=0.0,  # Нулевая температура для консистентности
             max_tokens=10
         )

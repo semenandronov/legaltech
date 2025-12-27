@@ -43,12 +43,19 @@ class ChatYandexGPT(LangChainChatYandexGPT):
             model_name = model
         elif config.YANDEX_GPT_MODEL_URI:
             # Если указан полный URI, извлекаем короткое имя
-            model_name = config.YANDEX_GPT_MODEL_URI.split("/")[-2] if "/" in config.YANDEX_GPT_MODEL_URI else config.YANDEX_GPT_MODEL
+            # Формат: gpt://folder-id/yandexgpt-lite/latest -> yandexgpt-lite
+            uri_parts = config.YANDEX_GPT_MODEL_URI.split("/")
+            if len(uri_parts) >= 2:
+                # Берем предпоследнюю часть (имя модели)
+                model_name = uri_parts[-2] if uri_parts[-1] == "latest" else uri_parts[-1]
+            else:
+                model_name = config.YANDEX_GPT_MODEL or "yandexgpt-lite"
         else:
             model_name = config.YANDEX_GPT_MODEL or "yandexgpt-lite"
         
         # Убираем /latest если есть (langchain-community сам добавит)
         if "/" in model_name:
+            # Если модель указана как "yandexgpt-lite/latest", берем только имя
             model_name = model_name.split("/")[0]
         
         if not api_key:
