@@ -29,7 +29,7 @@ class ChatGigaChat(BaseChatModel):
     credentials: str
     model: str = "GigaChat"
     temperature: float = 0.1
-    verify_ssl_certs: bool = True
+    verify_ssl_certs: bool = False  # Default to False for compatibility with Render/proxy environments
     _functions: Optional[List[Dict[str, Any]]] = None
     
     def __init__(
@@ -37,7 +37,7 @@ class ChatGigaChat(BaseChatModel):
         credentials: Optional[str] = None,
         model: Optional[str] = None,
         temperature: float = 0.1,
-        verify_ssl_certs: bool = True,
+        verify_ssl_certs: bool = False,  # Default to False for compatibility with Render/proxy environments
         **kwargs
     ):
         """
