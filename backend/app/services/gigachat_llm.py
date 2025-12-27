@@ -57,18 +57,25 @@ class ChatGigaChat(BaseChatModel):
                 "Install it with: pip install gigachat"
             )
         
-        super().__init__(**kwargs)
-        
         # Используем credentials из config или переданные
         # Проверяем, что credentials не пустая строка
-        self.credentials = credentials if credentials else config.GIGACHAT_CREDENTIALS
-        self.model = model or config.GIGACHAT_MODEL or "GigaChat"
-        self.temperature = temperature
-        self.verify_ssl_certs = verify_ssl_certs
-        self._functions = None
+        final_credentials = credentials if credentials else config.GIGACHAT_CREDENTIALS
+        final_model = model or config.GIGACHAT_MODEL or "GigaChat"
         
-        if not self.credentials:
+        if not final_credentials:
             raise ValueError("GIGACHAT_CREDENTIALS not set. Set GIGACHAT_CREDENTIALS in environment variables.")
+        
+        # Передаем все поля в super().__init__() для Pydantic валидации
+        super().__init__(
+            credentials=final_credentials,
+            model=final_model,
+            temperature=temperature,
+            verify_ssl_certs=verify_ssl_certs,
+            **kwargs
+        )
+        
+        # Дополнительные поля, не входящие в Pydantic модель
+        self._functions = None
         
         # Инициализируем GigaChat SDK
         try:
