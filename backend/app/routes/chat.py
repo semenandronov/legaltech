@@ -251,13 +251,21 @@ async def chat(
         try:
             logger.info(f"Detected task request for case {request.case_id}: {request.question[:100]}...")
             
+            # Get case info to pass document count to planning agent
+            from app.models.case import Case
+            case = db.query(Case).filter(Case.id == request.case_id).first()
+            num_documents = case.num_documents if case else 0
+            file_names = case.file_names if case and case.file_names else []
+            
             # Create Planning Agent
             planning_agent = PlanningAgent()
             
-            # Create analysis plan
+            # Create analysis plan with document information
             plan = planning_agent.plan_analysis(
                 user_task=request.question,
-                case_id=request.case_id
+                case_id=request.case_id,
+                available_documents=file_names[:10] if file_names else None,  # Первые 10 для промпта
+                num_documents=num_documents
             )
             
             analysis_types = plan["analysis_types"]

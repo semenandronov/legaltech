@@ -113,8 +113,8 @@ def route_to_agent(state: AnalysisState) -> str:
     case_id = state.get("case_id", "unknown")
     
     # Check evaluation results for retry needs
-    evaluation_result = state.get("evaluation_result", {})
-    if evaluation_result.get("needs_retry", False):
+    evaluation_result = state.get("evaluation_result")
+    if evaluation_result and evaluation_result.get("needs_retry", False):
         agent_name = evaluation_result.get("agent_name")
         if agent_name:
             logger.info(f"[Супервизор] Retrying agent {agent_name} based on evaluation")

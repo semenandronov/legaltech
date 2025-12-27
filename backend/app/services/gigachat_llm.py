@@ -60,14 +60,15 @@ class ChatGigaChat(BaseChatModel):
         super().__init__(**kwargs)
         
         # Используем credentials из config или переданные
-        self.credentials = credentials or config.GIGACHAT_CREDENTIALS
+        # Проверяем, что credentials не пустая строка
+        self.credentials = credentials if credentials else config.GIGACHAT_CREDENTIALS
         self.model = model or config.GIGACHAT_MODEL or "GigaChat"
         self.temperature = temperature
         self.verify_ssl_certs = verify_ssl_certs
         self._functions = None
         
         if not self.credentials:
-            logger.warning("GIGACHAT_CREDENTIALS not set. GigaChat will not work.")
+            raise ValueError("GIGACHAT_CREDENTIALS not set. Set GIGACHAT_CREDENTIALS in environment variables.")
         
         # Инициализируем GigaChat SDK
         try:

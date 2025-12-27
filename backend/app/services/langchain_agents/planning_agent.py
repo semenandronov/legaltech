@@ -42,7 +42,8 @@ class PlanningAgent:
         self, 
         user_task: str, 
         case_id: str,
-        available_documents: Optional[List[str]] = None
+        available_documents: Optional[List[str]] = None,
+        num_documents: Optional[int] = None
     ) -> Dict[str, Any]:
         """
         Создает план анализа на основе задачи пользователя
@@ -51,6 +52,7 @@ class PlanningAgent:
             user_task: Задача пользователя на естественном языке
             case_id: Идентификатор дела
             available_documents: Список доступных документов (опционально)
+            num_documents: Количество документов в деле (опционально)
         
         Returns:
             Dictionary с планом анализа:
@@ -63,11 +65,23 @@ class PlanningAgent:
         try:
             logger.info(f"Planning analysis for task: {user_task[:100]}... (case_id: {case_id})")
             
-            # Формируем сообщение для агента
-            task_message = f"Задача пользователя: {user_task}\n\nДокументы загружены для дела {case_id}. Определи, какие анализы нужно выполнить."
+            # Формируем сообщение для агента с информацией о документах
+            task_message = f"Задача пользователя: {user_task}\n\n"
             
-            if available_documents:
-                task_message += f"\n\nДоступные документы: {', '.join(available_documents)}"
+            # Добавляем информацию о количестве документов
+            if num_documents is not None and num_documents > 0:
+                task_message += f"В деле {case_id} загружено {num_documents} документов. "
+            else:
+                task_message += f"Для дела {case_id} "
+            
+            task_message += "Определи, какие анализы нужно выполнить для выполнения задачи пользователя."
+            
+            # Добавляем примеры документов, если есть
+            if available_documents and len(available_documents) > 0:
+                docs_preview = ', '.join(available_documents[:5])  # Первые 5 документов
+                if len(available_documents) > 5:
+                    docs_preview += f" и еще {len(available_documents) - 5} документов"
+                task_message += f"\n\nПримеры документов в деле: {docs_preview}."
             
             message = HumanMessage(content=task_message)
             
