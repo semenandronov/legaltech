@@ -9,15 +9,9 @@ import {
 } from "@mui/x-data-grid"
 import {
   Box,
-  TextField,
-  Menu,
-  MenuItem,
-  IconButton,
   Chip,
   Typography,
-  Stack,
 } from "@mui/material"
-import { MoreVert as MoreHorizontalIcon } from "@mui/icons-material"
 import { CaseListItem } from "@/services/api"
 import { useNavigate } from "react-router-dom"
 
@@ -30,7 +24,6 @@ export function CasesTable({ data, loading }: CasesTableProps) {
   const navigate = useNavigate()
   const [filterModel, setFilterModel] = React.useState<GridFilterModel>({ items: [] })
   const [sortModel, setSortModel] = React.useState<GridSortModel>([])
-  const [quickFilter, setQuickFilter] = React.useState("")
 
   const statusMap: Record<string, { color: 'default' | 'primary' | 'success' | 'warning' | 'error', label: string }> = {
     'review': { color: 'warning', label: 'Review' },
@@ -135,22 +128,16 @@ export function CasesTable({ data, loading }: CasesTableProps) {
     },
   ]
 
-  const rows = data.map((item, index) => ({
-    id: item.id || index.toString(),
-    ...item,
-  }))
+  const rows = data.map((item, index) => {
+    const { id: originalId, ...rest } = item
+    return {
+      ...rest,
+      id: originalId || index.toString(),
+    }
+  })
 
   return (
     <Box sx={{ width: "100%", height: 600 }}>
-      <Box sx={{ mb: 2 }}>
-        <TextField
-          placeholder="Поиск по названию..."
-          value={quickFilter}
-          onChange={(e) => setQuickFilter(e.target.value)}
-          size="small"
-          sx={{ maxWidth: 300 }}
-        />
-      </Box>
       <DataGrid
         rows={rows}
         columns={columns}
@@ -159,7 +146,6 @@ export function CasesTable({ data, loading }: CasesTableProps) {
         onFilterModelChange={setFilterModel}
         sortModel={sortModel}
         onSortModelChange={setSortModel}
-        quickFilterText={quickFilter}
         pageSizeOptions={[10, 25, 50, 100]}
         initialState={{
           pagination: {

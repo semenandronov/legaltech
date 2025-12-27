@@ -1,4 +1,3 @@
-import React from 'react'
 import { Drawer, Box, Typography, Divider, DrawerProps } from '@mui/material'
 import { NavUser } from './NavUser'
 import { SearchForm } from './SearchForm'

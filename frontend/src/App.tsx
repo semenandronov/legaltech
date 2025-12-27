@@ -4,8 +4,8 @@ import { Box, CircularProgress } from '@mui/material'
 import ProtectedRoute from './components/ProtectedRoute'
 import LoginPage from './pages/LoginPage'
 import RegisterPage from './pages/RegisterPage'
-import ChatWindow from './components/ChatWindow'
-import CaseNavigation from './components/CaseOverview/CaseNavigation'
+const ChatWindow = lazy(() => import('./components/ChatWindow'))
+const CaseNavigation = lazy(() => import('./components/CaseOverview/CaseNavigation'))
 import { getCase } from './services/api'
 import { logger } from '@/lib/logger'
 import { useState, useEffect } from 'react'
@@ -161,16 +161,18 @@ const CaseChatPage = () => {
   }
 
   return (
-    <div className="flex h-screen bg-primary">
-      <CaseNavigation caseId={caseId || ''} />
-      <div className="flex-1 flex flex-col overflow-hidden">
-        <main className="flex-1 overflow-y-auto">
-          <div className="h-full">
-            <ChatWindow caseId={caseId || ''} fileNames={fileNames} />
-          </div>
-        </main>
+    <Suspense fallback={<PageLoader />}>
+      <div className="flex h-screen bg-primary">
+        <CaseNavigation caseId={caseId || ''} />
+        <div className="flex-1 flex flex-col overflow-hidden">
+          <main className="flex-1 overflow-y-auto">
+            <div className="h-full">
+              <ChatWindow caseId={caseId || ''} fileNames={fileNames} />
+            </div>
+          </main>
+        </div>
       </div>
-    </div>
+    </Suspense>
   )
 }
 

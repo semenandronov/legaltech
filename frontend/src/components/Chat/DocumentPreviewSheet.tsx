@@ -1,18 +1,18 @@
-import React, { useState, useEffect } from 'react'
+import { useState, useEffect } from 'react'
 import {
   Drawer,
   Box,
   Typography,
   IconButton,
-  Button,
   Chip,
   Divider,
   Skeleton,
   Stack,
   Tooltip,
+  Paper,
 } from '@mui/material'
 import {
-  FileText as FileTextIcon,
+  Description as DescriptionIcon,
   Download as DownloadIcon,
   ContentCopy as CopyIcon,
   Check as CheckIcon,
@@ -31,14 +31,14 @@ interface DocumentPreviewSheetProps {
   onNavigate?: (source: SourceInfo) => void
 }
 
-const DocumentPreviewSheet: React.FC<DocumentPreviewSheetProps> = ({
+const DocumentPreviewSheet = ({
   isOpen,
   onClose,
   source,
   caseId,
   allSources = [],
   onNavigate
-}) => {
+}: DocumentPreviewSheetProps) => {
   const [copied, setCopied] = useState(false)
   const [documentContent, setDocumentContent] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
@@ -125,7 +125,7 @@ const DocumentPreviewSheet: React.FC<DocumentPreviewSheetProps> = ({
           }}
         >
           <Box sx={{ display: 'flex', alignItems: 'flex-start', gap: 2, mb: 2 }}>
-            <FileTextIcon color="primary" sx={{ mt: 0.5 }} />
+            <DescriptionIcon color="primary" sx={{ mt: 0.5 }} />
             <Box sx={{ flex: 1, minWidth: 0 }}>
               <Typography
                 variant="h6"

@@ -1,18 +1,23 @@
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/UI/Card'
-import { Badge } from '@/components/UI/Badge'
-import { Progress } from '@/components/UI/progress'
-import { ScrollArea } from '@/components/UI/scroll-area'
-import { 
-  Bot, 
-  CheckCircle2, 
-  XCircle, 
-  Clock, 
-  Loader2,
-  AlertTriangle,
-  ChevronRight
-} from 'lucide-react'
-import { cn } from '@/lib/utils'
-import { motion, AnimatePresence } from 'framer-motion'
+import {
+  Card,
+  CardContent,
+  CardHeader,
+  Typography,
+  Box,
+  Stack,
+  LinearProgress,
+  Chip,
+  Fade,
+} from '@mui/material'
+import {
+  Psychology as BotIcon,
+  CheckCircle as CheckCircleIcon,
+  Cancel as XCircleIcon,
+  AccessTime as ClockIcon,
+  ErrorOutline as AlertTriangleIcon,
+  ChevronRight as ChevronRightIcon,
+  Refresh as Loader2Icon,
+} from '@mui/icons-material'
 
 export interface PlanStep {
   step_id: string
@@ -52,33 +57,33 @@ const AGENT_NAMES: Record<string, string> = {
 
 const STATUS_CONFIG = {
   pending: {
-    icon: Clock,
-    color: 'text-muted-foreground',
-    bg: 'bg-muted',
+    icon: ClockIcon,
+    color: 'text.secondary',
+    bgcolor: 'action.hover',
     label: 'Ожидает',
   },
   in_progress: {
-    icon: Loader2,
-    color: 'text-blue-500',
-    bg: 'bg-blue-500/10',
+    icon: Loader2Icon,
+    color: 'primary.main',
+    bgcolor: 'primary.light',
     label: 'Выполняется',
   },
   completed: {
-    icon: CheckCircle2,
-    color: 'text-green-500',
-    bg: 'bg-green-500/10',
+    icon: CheckCircleIcon,
+    color: 'success.main',
+    bgcolor: 'success.light',
     label: 'Завершено',
   },
   failed: {
-    icon: XCircle,
-    color: 'text-red-500',
-    bg: 'bg-red-500/10',
+    icon: XCircleIcon,
+    color: 'error.main',
+    bgcolor: 'error.light',
     label: 'Ошибка',
   },
   skipped: {
-    icon: AlertTriangle,
-    color: 'text-orange-500',
-    bg: 'bg-orange-500/10',
+    icon: AlertTriangleIcon,
+    color: 'warning.main',
+    bgcolor: 'warning.light',
     label: 'Пропущено',
   },
 }
@@ -95,127 +100,180 @@ export function AgentProgressView({
   const progress = totalCount > 0 ? (completedCount / totalCount) * 100 : 0
 
   return (
-    <Card className={cn("w-full", className)}>
-      <CardHeader className="pb-3">
-        <div className="flex items-center justify-between">
-          <CardTitle className="text-lg flex items-center gap-2">
-            <Bot className="h-5 w-5" />
-            Прогресс анализа
-          </CardTitle>
-          {isRunning && (
-            <Badge variant="secondary" className="gap-1">
-              <Loader2 className="h-3 w-3 animate-spin" />
-              Выполняется
-            </Badge>
-          )}
-        </div>
-        <div className="space-y-1">
-          <div className="flex justify-between text-sm text-muted-foreground">
-            <span>{completedCount} из {totalCount} шагов</span>
-            <span>{Math.round(progress)}%</span>
-          </div>
-          <Progress value={progress} className="h-2" />
-        </div>
-      </CardHeader>
+    <Card sx={{ width: '100%', ...(className ? {} : {}) }} className={className}>
+      <CardHeader
+        title={
+          <Stack direction="row" spacing={1} alignItems="center">
+            <BotIcon />
+            <Typography variant="h6">Прогресс анализа</Typography>
+          </Stack>
+        }
+        action={
+          isRunning && (
+            <Chip
+              icon={<Loader2Icon sx={{ animation: 'spin 1s linear infinite' }} />}
+              label="Выполняется"
+              size="small"
+              color="primary"
+              variant="outlined"
+            />
+          )
+        }
+      />
+      <CardContent>
+        <Stack spacing={1} sx={{ mb: 2 }}>
+          <Stack direction="row" justifyContent="space-between">
+            <Typography variant="body2" color="text.secondary">
+              {completedCount} из {totalCount} шагов
+            </Typography>
+            <Typography variant="body2" color="text.secondary">
+              {Math.round(progress)}%
+            </Typography>
+          </Stack>
+          <LinearProgress variant="determinate" value={progress} />
+        </Stack>
 
-      <CardContent className="pt-0">
-        <ScrollArea className="max-h-[400px]">
-          <div className="space-y-2">
-            <AnimatePresence>
-              {steps.map((step, index) => {
-                const config = STATUS_CONFIG[step.status]
-                const Icon = config.icon
-                const isActive = step.step_id === currentStepId
-                const agentName = AGENT_NAMES[step.agent_name] || step.agent_name
+        <Box sx={{ maxHeight: 400, overflow: 'auto' }}>
+          <Stack spacing={1}>
+            {steps.map((step, index) => {
+              const config = STATUS_CONFIG[step.status]
+              const Icon = config.icon
+              const isActive = step.step_id === currentStepId
+              const agentName = AGENT_NAMES[step.agent_name] || step.agent_name
 
-                return (
-                  <motion.div
-                    key={step.step_id}
-                    initial={{ opacity: 0, x: -20 }}
-                    animate={{ opacity: 1, x: 0 }}
-                    transition={{ delay: index * 0.05 }}
-                    className={cn(
-                      "flex items-start gap-3 p-3 rounded-lg border transition-colors",
-                      isActive && "border-primary bg-primary/5",
-                      !isActive && config.bg
-                    )}
+              return (
+                <Fade
+                  key={step.step_id}
+                  in
+                  style={{
+                    transitionDelay: `${index * 50}ms`,
+                  }}
+                >
+                  <Box
+                    sx={{
+                      display: 'flex',
+                      alignItems: 'flex-start',
+                      gap: 1.5,
+                      p: 1.5,
+                      borderRadius: 1,
+                      border: 1,
+                      borderColor: isActive ? 'primary.main' : 'divider',
+                      bgcolor: isActive
+                        ? 'primary.light'
+                        : config.bgcolor,
+                    }}
                   >
-                    <div className={cn(
-                      "flex-shrink-0 mt-0.5",
-                      config.color,
-                      step.status === 'in_progress' && "animate-spin"
-                    )}>
-                      <Icon className="h-5 w-5" />
-                    </div>
-                    
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-2 flex-wrap">
-                        <span className="font-medium">{agentName}</span>
-                        <Badge variant="outline" className="text-xs">
-                          {config.label}
-                        </Badge>
-                      </div>
-                      <p className="text-sm text-muted-foreground mt-0.5 line-clamp-2">
+                    <Box
+                      sx={{
+                        flexShrink: 0,
+                        mt: 0.5,
+                        color: config.color,
+                      }}
+                    >
+                      <Icon
+                        sx={{
+                          fontSize: 20,
+                          ...(step.status === 'in_progress' ? {
+                            animation: 'spin 1s linear infinite',
+                            '@keyframes spin': {
+                              '0%': { transform: 'rotate(0deg)' },
+                              '100%': { transform: 'rotate(360deg)' },
+                            },
+                          } : {}),
+                        }}
+                      />
+                    </Box>
+
+                    <Box sx={{ flex: 1, minWidth: 0 }}>
+                      <Stack direction="row" spacing={1} alignItems="center" flexWrap="wrap" sx={{ mb: 0.5 }}>
+                        <Typography variant="body2" fontWeight={500}>
+                          {agentName}
+                        </Typography>
+                        <Chip label={config.label} size="small" variant="outlined" />
+                      </Stack>
+                      <Typography
+                        variant="body2"
+                        color="text.secondary"
+                        sx={{
+                          display: '-webkit-box',
+                          WebkitLineClamp: 2,
+                          WebkitBoxOrient: 'vertical',
+                          overflow: 'hidden',
+                        }}
+                      >
                         {step.description}
-                      </p>
+                      </Typography>
                       {step.error && (
-                        <p className="text-sm text-destructive mt-1">
+                        <Typography variant="body2" color="error.main" sx={{ mt: 0.5 }}>
                           {step.error}
-                        </p>
+                        </Typography>
                       )}
                       {step.reasoning && (
-                        <p className="text-xs text-muted-foreground mt-1 italic">
+                        <Typography
+                          variant="caption"
+                          color="text.secondary"
+                          sx={{ mt: 0.5, display: 'block', fontStyle: 'italic' }}
+                        >
                           {step.reasoning}
-                        </p>
+                        </Typography>
                       )}
-                    </div>
+                    </Box>
 
                     {index < steps.length - 1 && (
-                      <ChevronRight className="h-4 w-4 text-muted-foreground flex-shrink-0" />
+                      <ChevronRightIcon fontSize="small" color="action" sx={{ flexShrink: 0, mt: 0.5 }} />
                     )}
-                  </motion.div>
-                )
-              })}
-            </AnimatePresence>
-          </div>
+                  </Box>
+                </Fade>
+              )
+            })}
+          </Stack>
 
           {/* Logs section */}
           {logs.length > 0 && (
-            <div className="mt-4 pt-4 border-t">
-              <h4 className="text-sm font-medium mb-2 text-muted-foreground">
+            <Box sx={{ mt: 2, pt: 2, borderTop: 1, borderColor: 'divider' }}>
+              <Typography variant="body2" fontWeight={500} color="text.secondary" sx={{ mb: 1 }}>
                 Журнал выполнения
-              </h4>
-              <div className="space-y-1">
+              </Typography>
+              <Stack spacing={0.5}>
                 {logs.slice(-10).map((log) => (
-                  <div
+                  <Stack
                     key={log.id}
-                    className="flex items-start gap-2 text-xs"
+                    direction="row"
+                    spacing={1}
+                    alignItems="flex-start"
+                    flexWrap="wrap"
                   >
-                    <span className="text-muted-foreground whitespace-nowrap">
+                    <Typography variant="caption" color="text.secondary" sx={{ whiteSpace: 'nowrap' }}>
                       {new Date(log.timestamp).toLocaleTimeString()}
-                    </span>
-                    <Badge 
-                      variant="outline" 
-                      className="text-[10px] px-1 py-0"
+                    </Typography>
+                    <Chip
+                      label={AGENT_NAMES[log.agent_name] || log.agent_name}
+                      size="small"
+                      variant="outlined"
+                      sx={{ height: 18, fontSize: '0.65rem' }}
+                    />
+                    <Typography
+                      variant="caption"
+                      sx={{
+                        color:
+                          log.log_type === 'error'
+                            ? 'error.main'
+                            : log.log_type === 'decision'
+                            ? 'primary.main'
+                            : 'text.primary',
+                      }}
                     >
-                      {AGENT_NAMES[log.agent_name] || log.agent_name}
-                    </Badge>
-                    <span className={cn(
-                      log.log_type === 'error' && 'text-destructive',
-                      log.log_type === 'decision' && 'text-blue-500'
-                    )}>
                       {log.message}
-                    </span>
-                  </div>
+                    </Typography>
+                  </Stack>
                 ))}
-              </div>
-            </div>
+              </Stack>
+            </Box>
           )}
-        </ScrollArea>
+        </Box>
       </CardContent>
     </Card>
   )
 }
 
 export default AgentProgressView
-

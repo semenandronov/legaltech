@@ -1,37 +1,36 @@
 import React, { useState } from 'react'
-import { Button } from '@/components/UI/Button'
-import Input from '@/components/UI/Input'
-import { Badge } from '@/components/UI/Badge'
-import { ScrollArea } from '@/components/UI/scroll-area'
 import {
-  ContextMenu,
-  ContextMenuContent,
-  ContextMenuItem,
-  ContextMenuSeparator,
-  ContextMenuTrigger,
-} from '@/components/UI/context-menu'
-import {
+  Button,
+  TextField,
+  Chip,
+  Box,
+  Typography,
   Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
   DialogTitle,
-} from '@/components/UI/dialog'
+  DialogContent,
+  DialogActions,
+  IconButton,
+  ListItemButton,
+  ListItemIcon,
+  ListItemText,
+  Menu,
+  MenuItem,
+  Divider,
+  Collapse,
+} from '@mui/material'
 import {
-  Folder,
-  FolderPlus,
-  FolderOpen,
-  File,
-  ChevronRight,
-  ChevronDown,
-  Pencil,
-  Trash2,
-  Star,
-  StarOff,
-} from 'lucide-react'
-import { cn } from '@/lib/utils'
-import { motion, AnimatePresence } from 'framer-motion'
+  Folder as FolderIcon,
+  CreateNewFolder as FolderPlusIcon,
+  FolderOpen as FolderOpenIcon,
+  Description as FileIcon,
+  ChevronRight as ChevronRightIcon,
+  ExpandMore as ExpandMoreIcon,
+  Edit as PencilIcon,
+  Delete as TrashIcon,
+  Star as StarIcon,
+  StarBorder as StarOffIcon,
+  CreateNewFolder as CreateFolderIcon,
+} from '@mui/icons-material'
 import api from '@/services/api'
 
 export interface FolderItem {
@@ -66,7 +65,7 @@ interface FolderTreeProps {
   className?: string
 }
 
-export function FolderTree({
+export const FolderTree = React.memo(({
   caseId,
   folders,
   files,
@@ -77,13 +76,14 @@ export function FolderTree({
   onFoldersChange,
   onFilesChange,
   className,
-}: FolderTreeProps) {
+}: FolderTreeProps) => {
   const [expandedFolders, setExpandedFolders] = useState<Set<string>>(new Set())
   const [isCreateDialogOpen, setIsCreateDialogOpen] = useState(false)
   const [isRenameDialogOpen, setIsRenameDialogOpen] = useState(false)
   const [newFolderName, setNewFolderName] = useState('')
   const [editingFolder, setEditingFolder] = useState<FolderItem | null>(null)
   const [createInFolder, setCreateInFolder] = useState<string | null>(null)
+  const [contextMenu, setContextMenu] = useState<{ mouseX: number; mouseY: number; folderId: string } | null>(null)
 
   const toggleFolder = (folderId: string) => {
     setExpandedFolders((prev) => {
@@ -158,10 +158,28 @@ export function FolderTree({
     setEditingFolder(folder)
     setNewFolderName(folder.name)
     setIsRenameDialogOpen(true)
+    setContextMenu(null)
   }
 
   const getFilesInFolder = (folderId: string | null) => {
     return files.filter((f) => f.folder_id === folderId)
+  }
+
+  const handleContextMenu = (event: React.MouseEvent, folderId: string) => {
+    event.preventDefault()
+    setContextMenu(
+      contextMenu === null
+        ? {
+            mouseX: event.clientX + 2,
+            mouseY: event.clientY - 6,
+            folderId,
+          }
+        : null,
+    )
+  }
+
+  const handleCloseContextMenu = () => {
+    setContextMenu(null)
   }
 
   const renderFolder = (folder: FolderItem, depth: number = 0) => {
@@ -171,87 +189,112 @@ export function FolderTree({
     const hasChildren = (folder.children && folder.children.length > 0) || folderFiles.length > 0
 
     return (
-      <div key={folder.id}>
-        <ContextMenu>
-          <ContextMenuTrigger>
-            <div
-              className={cn(
-                'flex items-center gap-2 px-2 py-1.5 rounded-md cursor-pointer transition-colors',
-                'hover:bg-muted/50',
-                isSelected && 'bg-primary/10 text-primary'
-              )}
-              style={{ paddingLeft: `${8 + depth * 16}px` }}
-              onClick={() => onSelectFolder(folder.id)}
-            >
-              <button
-                className="p-0.5 hover:bg-muted rounded"
-                onClick={(e) => {
-                  e.stopPropagation()
-                  toggleFolder(folder.id)
-                }}
-              >
-                {hasChildren ? (
-                  isExpanded ? (
-                    <ChevronDown className="h-4 w-4" />
-                  ) : (
-                    <ChevronRight className="h-4 w-4" />
-                  )
-                ) : (
-                  <div className="w-4" />
-                )}
-              </button>
-              {isExpanded ? (
-                <FolderOpen className="h-4 w-4 text-muted-foreground" />
+      <Box key={folder.id}>
+        <ListItemButton
+          selected={isSelected}
+          onContextMenu={(e) => handleContextMenu(e, folder.id)}
+          onClick={() => onSelectFolder(folder.id)}
+          sx={{
+            pl: 1 + depth * 2,
+            py: 0.5,
+            minHeight: 32,
+          }}
+        >
+          <IconButton
+            size="small"
+            onClick={(e) => {
+              e.stopPropagation()
+              toggleFolder(folder.id)
+            }}
+            sx={{ mr: 0.5 }}
+          >
+            {hasChildren ? (
+              isExpanded ? (
+                <ExpandMoreIcon fontSize="small" />
               ) : (
-                <Folder className="h-4 w-4 text-muted-foreground" />
-              )}
-              <span className="flex-1 truncate text-sm">{folder.name}</span>
-              {folder.file_count > 0 && (
-                <Badge variant="secondary" className="text-xs">
-                  {folder.file_count}
-                </Badge>
-              )}
-            </div>
-          </ContextMenuTrigger>
-          <ContextMenuContent>
-            <ContextMenuItem onClick={() => openCreateDialog(folder.id)}>
-              <FolderPlus className="mr-2 h-4 w-4" />
-              Создать подпапку
-            </ContextMenuItem>
-            <ContextMenuItem onClick={() => openRenameDialog(folder)}>
-              <Pencil className="mr-2 h-4 w-4" />
-              Переименовать
-            </ContextMenuItem>
-            <ContextMenuSeparator />
-            <ContextMenuItem
-              className="text-destructive"
-              onClick={() => handleDeleteFolder(folder.id)}
-            >
-              <Trash2 className="mr-2 h-4 w-4" />
-              Удалить
-            </ContextMenuItem>
-          </ContextMenuContent>
-        </ContextMenu>
+                <ChevronRightIcon fontSize="small" />
+              )
+            ) : (
+              <Box sx={{ width: 24 }} />
+            )}
+          </IconButton>
+          <ListItemIcon sx={{ minWidth: 32 }}>
+            {isExpanded ? (
+              <FolderOpenIcon fontSize="small" color="action" />
+            ) : (
+              <FolderIcon fontSize="small" color="action" />
+            )}
+          </ListItemIcon>
+          <ListItemText
+            primary={folder.name}
+            primaryTypographyProps={{
+              variant: 'body2',
+              noWrap: true,
+            }}
+          />
+          {folder.file_count > 0 && (
+            <Chip label={folder.file_count} size="small" sx={{ ml: 1, height: 20 }} />
+          )}
+        </ListItemButton>
 
         {/* Children */}
-        <AnimatePresence>
-          {isExpanded && (
-            <motion.div
-              initial={{ height: 0, opacity: 0 }}
-              animate={{ height: 'auto', opacity: 1 }}
-              exit={{ height: 0, opacity: 0 }}
-              transition={{ duration: 0.15 }}
-              className="overflow-hidden"
-            >
-              {/* Subfolders */}
-              {folder.children?.map((child) => renderFolder(child, depth + 1))}
+        <Collapse in={isExpanded} timeout="auto" unmountOnExit>
+          <Box sx={{ pl: 2 }}>
+            {/* Subfolders */}
+            {folder.children?.map((child) => renderFolder(child, depth + 1))}
 
-              {/* Files in folder */}
-              {folderFiles.map((file) => renderFile(file, depth + 1))}
-            </motion.div>
-          )}
-        </AnimatePresence>
-      </div>
+            {/* Files in folder */}
+            {folderFiles.map((file) => renderFile(file, depth + 1))}
+          </Box>
+        </Collapse>
+
+        {/* Context Menu */}
+        <Menu
+          open={contextMenu?.folderId === folder.id}
+          onClose={handleCloseContextMenu}
+          anchorReference="anchorPosition"
+          anchorPosition={
+            contextMenu !== null
+              ? { top: contextMenu.mouseY, left: contextMenu.mouseX }
+              : undefined
+          }
+        >
+          <MenuItem
+            onClick={() => {
+              openCreateDialog(folder.id)
+              handleCloseContextMenu()
+            }}
+          >
+            <ListItemIcon>
+              <CreateFolderIcon fontSize="small" />
+            </ListItemIcon>
+            <ListItemText>Создать подпапку</ListItemText>
+          </MenuItem>
+          <MenuItem
+            onClick={() => {
+              openRenameDialog(folder)
+            }}
+          >
+            <ListItemIcon>
+              <PencilIcon fontSize="small" />
+            </ListItemIcon>
+            <ListItemText>Переименовать</ListItemText>
+          </MenuItem>
+          <Divider />
+          <MenuItem
+            onClick={() => {
+              handleDeleteFolder(folder.id)
+              handleCloseContextMenu()
+            }}
+            sx={{ color: 'error.main' }}
+          >
+            <ListItemIcon>
+              <TrashIcon fontSize="small" sx={{ color: 'error.main' }} />
+            </ListItemIcon>
+            <ListItemText>Удалить</ListItemText>
+          </MenuItem>
+        </Menu>
+      </Box>
     )
   }
 
@@ -259,14 +302,9 @@ export function FolderTree({
     const isSelected = selectedFileIds.includes(file.id)
 
     return (
-      <div
+      <ListItemButton
         key={file.id}
-        className={cn(
-          'flex items-center gap-2 px-2 py-1.5 rounded-md cursor-pointer transition-colors',
-          'hover:bg-muted/50',
-          isSelected && 'bg-primary/10'
-        )}
-        style={{ paddingLeft: `${24 + depth * 16}px` }}
+        selected={isSelected}
         onClick={() => {
           if (isSelected) {
             onSelectFiles(selectedFileIds.filter((id) => id !== file.id))
@@ -274,23 +312,37 @@ export function FolderTree({
             onSelectFiles([...selectedFileIds, file.id])
           }
         }}
+        sx={{
+          pl: 3 + depth * 2,
+          py: 0.5,
+          minHeight: 32,
+        }}
       >
-        <File className="h-4 w-4 text-muted-foreground" />
-        <span className="flex-1 truncate text-sm">{file.filename}</span>
-        <button
-          className="p-0.5 hover:bg-muted rounded opacity-0 group-hover:opacity-100 transition-opacity"
+        <ListItemIcon sx={{ minWidth: 32 }}>
+          <FileIcon fontSize="small" color="action" />
+        </ListItemIcon>
+        <ListItemText
+          primary={file.filename}
+          primaryTypographyProps={{
+            variant: 'body2',
+            noWrap: true,
+          }}
+        />
+        <IconButton
+          size="small"
           onClick={(e) => {
             e.stopPropagation()
             handleToggleStar(file.id, file.starred || false)
           }}
+          sx={{ ml: 1 }}
         >
           {file.starred ? (
-            <Star className="h-4 w-4 text-yellow-500 fill-yellow-500" />
+            <StarIcon fontSize="small" sx={{ color: 'warning.main' }} />
           ) : (
-            <StarOff className="h-4 w-4 text-muted-foreground" />
+            <StarOffIcon fontSize="small" color="action" />
           )}
-        </button>
-      </div>
+        </IconButton>
+      </ListItemButton>
     )
   }
 
@@ -299,120 +351,144 @@ export function FolderTree({
   const rootFiles = getFilesInFolder(null)
 
   return (
-    <div className={cn('flex flex-col', className)}>
+    <Box sx={{ display: 'flex', flexDirection: 'column', height: '100%', ...(className ? {} : {}) }} className={className}>
       {/* Header */}
-      <div className="flex items-center justify-between px-3 py-2 border-b">
-        <span className="text-sm font-medium">Файлы</span>
-        <Button
-          variant="ghost"
-          size="sm"
-          className="h-7 w-7 p-0"
+      <Box
+        sx={{
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          px: 2,
+          py: 1,
+          borderBottom: 1,
+          borderColor: 'divider',
+        }}
+      >
+        <Typography variant="body2" fontWeight={500}>
+          Файлы
+        </Typography>
+        <IconButton
+          size="small"
           onClick={() => openCreateDialog(null)}
+          sx={{ width: 28, height: 28 }}
         >
-          <FolderPlus className="h-4 w-4" />
-        </Button>
-      </div>
+          <FolderPlusIcon fontSize="small" />
+        </IconButton>
+      </Box>
 
       {/* Tree */}
-      <ScrollArea className="flex-1">
-        <div className="p-2">
-          {/* All files option */}
-          <div
-            className={cn(
-              'flex items-center gap-2 px-2 py-1.5 rounded-md cursor-pointer transition-colors',
-              'hover:bg-muted/50',
-              selectedFolderId === null && 'bg-primary/10 text-primary'
-            )}
-            onClick={() => onSelectFolder(null)}
-          >
-            <Folder className="h-4 w-4" />
-            <span className="text-sm">Все файлы</span>
-            <Badge variant="secondary" className="ml-auto text-xs">
-              {files.length}
-            </Badge>
-          </div>
+      <Box sx={{ flex: 1, overflow: 'auto', p: 1 }}>
+        {/* All files option */}
+        <ListItemButton
+          selected={selectedFolderId === null}
+          onClick={() => onSelectFolder(null)}
+          sx={{ borderRadius: 1, mb: 0.5 }}
+        >
+          <ListItemIcon sx={{ minWidth: 32 }}>
+            <FolderIcon fontSize="small" color="action" />
+          </ListItemIcon>
+          <ListItemText
+            primary="Все файлы"
+            primaryTypographyProps={{
+              variant: 'body2',
+            }}
+          />
+          <Chip label={files.length} size="small" sx={{ ml: 1, height: 20 }} />
+        </ListItemButton>
 
-          {/* Starred files */}
-          {files.some((f) => f.starred) && (
-            <div
-              className={cn(
-                'flex items-center gap-2 px-2 py-1.5 rounded-md cursor-pointer transition-colors',
-                'hover:bg-muted/50'
-              )}
-            >
-              <Star className="h-4 w-4 text-yellow-500" />
-              <span className="text-sm">Избранное</span>
-              <Badge variant="secondary" className="ml-auto text-xs">
-                {files.filter((f) => f.starred).length}
-              </Badge>
-            </div>
-          )}
+        {/* Starred files */}
+        {files.some((f) => f.starred) && (
+          <ListItemButton sx={{ borderRadius: 1, mb: 0.5 }}>
+            <ListItemIcon sx={{ minWidth: 32 }}>
+              <StarIcon fontSize="small" sx={{ color: 'warning.main' }} />
+            </ListItemIcon>
+            <ListItemText
+              primary="Избранное"
+              primaryTypographyProps={{
+                variant: 'body2',
+              }}
+            />
+            <Chip
+              label={files.filter((f) => f.starred).length}
+              size="small"
+              sx={{ ml: 1, height: 20 }}
+            />
+          </ListItemButton>
+        )}
 
-          <div className="h-px bg-border my-2" />
+        <Divider sx={{ my: 1 }} />
 
-          {/* Folders */}
-          {rootFolders.map((folder) => renderFolder(folder))}
+        {/* Folders */}
+        {rootFolders.map((folder) => renderFolder(folder))}
 
-          {/* Root files */}
-          {selectedFolderId === null && rootFiles.map((file) => renderFile(file))}
-        </div>
-      </ScrollArea>
+        {/* Root files */}
+        {selectedFolderId === null && rootFiles.map((file) => renderFile(file))}
+      </Box>
 
       {/* Create Folder Dialog */}
-      <Dialog open={isCreateDialogOpen} onOpenChange={setIsCreateDialogOpen}>
+      <Dialog open={isCreateDialogOpen} onClose={() => setIsCreateDialogOpen(false)} maxWidth="sm" fullWidth>
+        <DialogTitle>Создать папку</DialogTitle>
+        <Typography variant="body2" color="text.secondary" sx={{ px: 3, pb: 2 }}>
+          {createInFolder
+            ? 'Создание подпапки'
+            : 'Создание папки в корне проекта'}
+        </Typography>
         <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Создать папку</DialogTitle>
-            <DialogDescription>
-              {createInFolder
-                ? 'Создание подпапки'
-                : 'Создание папки в корне проекта'}
-            </DialogDescription>
-          </DialogHeader>
-          <Input
+          <TextField
+            autoFocus
+            fullWidth
+            label="Название папки"
             value={newFolderName}
             onChange={(e: React.ChangeEvent<HTMLInputElement>) => setNewFolderName(e.target.value)}
-            placeholder="Название папки"
-            autoFocus
-            onKeyDown={(e: React.KeyboardEvent<HTMLInputElement>) => e.key === 'Enter' && handleCreateFolder()}
+            onKeyDown={(e: React.KeyboardEvent<HTMLInputElement>) => {
+              if (e.key === 'Enter') {
+                handleCreateFolder()
+              }
+            }}
+            margin="normal"
           />
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setIsCreateDialogOpen(false)}>
-              Отмена
-            </Button>
-            <Button onClick={handleCreateFolder} disabled={!newFolderName.trim()}>
-              Создать
-            </Button>
-          </DialogFooter>
         </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setIsCreateDialogOpen(false)} variant="outlined">
+            Отмена
+          </Button>
+          <Button onClick={handleCreateFolder} disabled={!newFolderName.trim()} variant="contained">
+            Создать
+          </Button>
+        </DialogActions>
       </Dialog>
 
       {/* Rename Folder Dialog */}
-      <Dialog open={isRenameDialogOpen} onOpenChange={setIsRenameDialogOpen}>
+      <Dialog open={isRenameDialogOpen} onClose={() => setIsRenameDialogOpen(false)} maxWidth="sm" fullWidth>
+        <DialogTitle>Переименовать папку</DialogTitle>
         <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Переименовать папку</DialogTitle>
-          </DialogHeader>
-          <Input
+          <TextField
+            autoFocus
+            fullWidth
+            label="Новое название"
             value={newFolderName}
             onChange={(e: React.ChangeEvent<HTMLInputElement>) => setNewFolderName(e.target.value)}
-            placeholder="Новое название"
-            autoFocus
-            onKeyDown={(e: React.KeyboardEvent<HTMLInputElement>) => e.key === 'Enter' && handleRenameFolder()}
+            onKeyDown={(e: React.KeyboardEvent<HTMLInputElement>) => {
+              if (e.key === 'Enter') {
+                handleRenameFolder()
+              }
+            }}
+            margin="normal"
           />
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setIsRenameDialogOpen(false)}>
-              Отмена
-            </Button>
-            <Button onClick={handleRenameFolder} disabled={!newFolderName.trim()}>
-              Сохранить
-            </Button>
-          </DialogFooter>
         </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setIsRenameDialogOpen(false)} variant="outlined">
+            Отмена
+          </Button>
+          <Button onClick={handleRenameFolder} disabled={!newFolderName.trim()} variant="contained">
+            Сохранить
+          </Button>
+        </DialogActions>
       </Dialog>
-    </div>
+    </Box>
   )
-}
+})
+
+FolderTree.displayName = 'FolderTree'
 
 export default FolderTree
-

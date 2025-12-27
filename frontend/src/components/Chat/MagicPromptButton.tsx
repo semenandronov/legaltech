@@ -1,20 +1,24 @@
 import { useState } from 'react'
-import { Button } from '@/components/UI/Button'
 import {
+  Button,
   Popover,
-  PopoverContent,
-  PopoverTrigger,
-} from '@/components/UI/popover'
+  Box,
+  Typography,
+  Stack,
+  Divider,
+  Chip,
+  CircularProgress,
+  Alert,
+  Fade,
+  Grow,
+} from '@mui/material'
 import {
-  Tooltip,
-  TooltipContent,
-  TooltipTrigger,
-} from '@/components/UI/tooltip'
-import { Badge } from '@/components/UI/Badge'
-import { Separator } from '@/components/UI/separator'
-import { Sparkles, Check, X, Loader2, Lightbulb, ArrowRight } from 'lucide-react'
-import { cn } from '@/lib/utils'
-import { motion, AnimatePresence } from 'framer-motion'
+  AutoAwesome as SparklesIcon,
+  Check as CheckIcon,
+  Close as CloseIcon,
+  Lightbulb as LightbulbIcon,
+  ArrowForward as ArrowRightIcon,
+} from '@mui/icons-material'
 import api from '@/services/api'
 
 interface MagicPromptButtonProps {
@@ -37,12 +41,22 @@ export function MagicPromptButton({
   disabled = false,
   className,
 }: MagicPromptButtonProps) {
-  const [isOpen, setIsOpen] = useState(false)
+  const [anchorEl, setAnchorEl] = useState<HTMLElement | null>(null)
   const [isLoading, setIsLoading] = useState(false)
   const [result, setResult] = useState<ImprovementResult | null>(null)
   const [error, setError] = useState<string | null>(null)
 
-  const handleImprove = async () => {
+  const isOpen = Boolean(anchorEl)
+  const isDisabled = disabled || !prompt.trim()
+
+  const handleClick = async (event: React.MouseEvent<HTMLElement>) => {
+    if (isOpen) {
+      setAnchorEl(null)
+      return
+    }
+
+    setAnchorEl(event.currentTarget)
+
     if (!prompt.trim() || isLoading) return
 
     setIsLoading(true)
@@ -62,187 +76,235 @@ export function MagicPromptButton({
     }
   }
 
+  const handleClose = () => {
+    setAnchorEl(null)
+    setResult(null)
+    setError(null)
+  }
+
   const handleAccept = () => {
     if (result?.improved_prompt) {
       onImprovedPrompt(result.improved_prompt)
-      setIsOpen(false)
-      setResult(null)
+      handleClose()
     }
   }
 
-  const handleReject = () => {
-    setIsOpen(false)
-    setResult(null)
-  }
-
-  const isDisabled = disabled || !prompt.trim()
-
   return (
-    <Popover open={isOpen} onOpenChange={setIsOpen}>
-      <Tooltip>
-        <TooltipTrigger asChild>
-          <PopoverTrigger asChild>
-            <Button
-              variant="ghost"
-              size="icon"
-              disabled={isDisabled}
-              className={cn(
-                "transition-all",
-                !isDisabled && "hover:bg-primary/10 hover:text-primary",
-                className
-              )}
-              onClick={() => {
-                if (!isOpen) handleImprove()
-              }}
-            >
-              {isLoading ? (
-                <Loader2 className="h-4 w-4 animate-spin" />
-              ) : (
-                <Sparkles className="h-4 w-4" />
-              )}
-            </Button>
-          </PopoverTrigger>
-        </TooltipTrigger>
-        <TooltipContent side="top">
-          <p>Улучшить запрос</p>
-        </TooltipContent>
-      </Tooltip>
+    <>
+      <Button
+        variant="text"
+        size="small"
+        disabled={isDisabled}
+        onClick={handleClick}
+        sx={{
+          minWidth: 'auto',
+          ...(className ? {} : {}),
+        }}
+        className={className}
+      >
+        {isLoading ? (
+          <CircularProgress size={16} />
+        ) : (
+          <SparklesIcon fontSize="small" />
+        )}
+      </Button>
 
-      <PopoverContent className="w-96 p-0" align="end" side="top">
-        <AnimatePresence mode="wait">
+      <Popover
+        open={isOpen}
+        anchorEl={anchorEl}
+        onClose={handleClose}
+        anchorOrigin={{
+          vertical: 'top',
+          horizontal: 'right',
+        }}
+        transformOrigin={{
+          vertical: 'bottom',
+          horizontal: 'right',
+        }}
+        PaperProps={{
+          sx: {
+            width: 384,
+            p: 0,
+          },
+        }}
+      >
+        <Box>
           {isLoading ? (
-            <motion.div
-              key="loading"
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              exit={{ opacity: 0 }}
-              className="p-6 text-center"
-            >
-              <Loader2 className="h-8 w-8 animate-spin mx-auto mb-3 text-primary" />
-              <p className="text-sm text-muted-foreground">
-                Анализируем и улучшаем запрос...
-              </p>
-            </motion.div>
+            <Fade in={isLoading}>
+              <Box sx={{ p: 3, textAlign: 'center' }}>
+                <CircularProgress sx={{ mb: 2 }} />
+                <Typography variant="body2" color="text.secondary">
+                  Анализируем и улучшаем запрос...
+                </Typography>
+              </Box>
+            </Fade>
           ) : error ? (
-            <motion.div
-              key="error"
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              exit={{ opacity: 0 }}
-              className="p-6 text-center"
-            >
-              <X className="h-8 w-8 mx-auto mb-3 text-destructive" />
-              <p className="text-sm text-destructive mb-4">{error}</p>
-              <Button variant="outline" size="sm" onClick={() => setError(null)}>
-                Попробовать снова
-              </Button>
-            </motion.div>
+            <Fade in={!!error}>
+              <Box sx={{ p: 3, textAlign: 'center' }}>
+                <Alert severity="error" sx={{ mb: 2 }}>
+                  {error}
+                </Alert>
+                <Button
+                  variant="outlined"
+                  size="small"
+                  onClick={() => setError(null)}
+                >
+                  Попробовать снова
+                </Button>
+              </Box>
+            </Fade>
           ) : result ? (
-            <motion.div
-              key="result"
-              initial={{ opacity: 0, y: 10 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -10 }}
-            >
-              {/* Header */}
-              <div className="p-4 border-b bg-gradient-to-r from-primary/5 to-transparent">
-                <div className="flex items-center gap-2">
-                  <Sparkles className="h-5 w-5 text-primary" />
-                  <h4 className="font-semibold">Улучшенный запрос</h4>
-                </div>
-              </div>
-
-              {/* Original vs Improved */}
-              <div className="p-4 space-y-3">
-                {/* Original */}
-                <div className="space-y-1">
-                  <span className="text-xs font-medium text-muted-foreground">
-                    Исходный запрос
-                  </span>
-                  <div className="bg-muted/50 rounded-md p-2 text-sm line-clamp-2">
-                    {prompt}
-                  </div>
-                </div>
-
-                <div className="flex justify-center">
-                  <ArrowRight className="h-4 w-4 text-muted-foreground" />
-                </div>
-
-                {/* Improved */}
-                <div className="space-y-1">
-                  <span className="text-xs font-medium text-primary">
-                    Улучшенный запрос
-                  </span>
-                  <div className="bg-primary/5 border border-primary/20 rounded-md p-2 text-sm">
-                    {result.improved_prompt}
-                  </div>
-                </div>
-
-                {/* Improvements made */}
-                {result.improvements_made.length > 0 && (
-                  <div className="space-y-1">
-                    <span className="text-xs font-medium text-muted-foreground">
-                      Что изменилось
-                    </span>
-                    <div className="flex flex-wrap gap-1">
-                      {result.improvements_made.map((imp, idx) => (
-                        <Badge key={idx} variant="secondary" className="text-xs">
-                          {imp}
-                        </Badge>
-                      ))}
-                    </div>
-                  </div>
-                )}
-
-                {/* Suggestions */}
-                {result.suggestions.length > 0 && (
-                  <>
-                    <Separator />
-                    <div className="space-y-2">
-                      <div className="flex items-center gap-1 text-xs font-medium text-muted-foreground">
-                        <Lightbulb className="h-3 w-3" />
-                        Рекомендации
-                      </div>
-                      <ul className="text-xs text-muted-foreground space-y-1">
-                        {result.suggestions.map((sug, idx) => (
-                          <li key={idx} className="flex items-start gap-1">
-                            <span className="text-primary">•</span>
-                            {sug}
-                          </li>
-                        ))}
-                      </ul>
-                    </div>
-                  </>
-                )}
-              </div>
-
-              {/* Actions */}
-              <div className="p-3 border-t bg-muted/30 flex gap-2">
-                <Button
-                  variant="outline"
-                  size="sm"
-                  className="flex-1"
-                  onClick={handleReject}
+            <Grow in={!!result}>
+              <Box>
+                {/* Header */}
+                <Box
+                  sx={{
+                    p: 2,
+                    borderBottom: 1,
+                    borderColor: 'divider',
+                    bgcolor: (theme) => theme.palette.mode === 'dark'
+                      ? 'rgba(138, 36, 170, 0.1)'
+                      : 'rgba(138, 36, 170, 0.05)',
+                  }}
                 >
-                  <X className="mr-1 h-3 w-3" />
-                  Отменить
-                </Button>
-                <Button
-                  size="sm"
-                  className="flex-1"
-                  onClick={handleAccept}
+                  <Stack direction="row" spacing={1} alignItems="center">
+                    <SparklesIcon color="primary" />
+                    <Typography variant="subtitle2" fontWeight={600}>
+                      Улучшенный запрос
+                    </Typography>
+                  </Stack>
+                </Box>
+
+                {/* Original vs Improved */}
+                <Box sx={{ p: 2 }}>
+                  <Stack spacing={2}>
+                    {/* Original */}
+                    <Box>
+                      <Typography variant="caption" fontWeight={500} color="text.secondary" sx={{ mb: 0.5, display: 'block' }}>
+                        Исходный запрос
+                      </Typography>
+                      <Box
+                        sx={{
+                          bgcolor: 'action.hover',
+                          borderRadius: 1,
+                          p: 1.5,
+                        }}
+                      >
+                        <Typography
+                          variant="body2"
+                          sx={{
+                            display: '-webkit-box',
+                            WebkitLineClamp: 2,
+                            WebkitBoxOrient: 'vertical',
+                            overflow: 'hidden',
+                          }}
+                        >
+                          {prompt}
+                        </Typography>
+                      </Box>
+                    </Box>
+
+                    <Box sx={{ display: 'flex', justifyContent: 'center' }}>
+                      <ArrowRightIcon fontSize="small" color="action" />
+                    </Box>
+
+                    {/* Improved */}
+                    <Box>
+                      <Typography variant="caption" fontWeight={500} color="primary.main" sx={{ mb: 0.5, display: 'block' }}>
+                        Улучшенный запрос
+                      </Typography>
+                      <Box
+                        sx={{
+                          bgcolor: (theme) => theme.palette.mode === 'dark'
+                            ? 'rgba(138, 36, 170, 0.1)'
+                            : 'rgba(138, 36, 170, 0.05)',
+                          border: 1,
+                          borderColor: 'primary.main',
+                          borderRadius: 1,
+                          p: 1.5,
+                        }}
+                      >
+                        <Typography variant="body2">
+                          {result.improved_prompt}
+                        </Typography>
+                      </Box>
+                    </Box>
+
+                    {/* Improvements made */}
+                    {result.improvements_made.length > 0 && (
+                      <Box>
+                        <Typography variant="caption" fontWeight={500} color="text.secondary" sx={{ mb: 0.5, display: 'block' }}>
+                          Что изменилось
+                        </Typography>
+                        <Stack direction="row" spacing={0.5} flexWrap="wrap">
+                          {result.improvements_made.map((imp, idx) => (
+                            <Chip key={idx} label={imp} size="small" variant="outlined" />
+                          ))}
+                        </Stack>
+                      </Box>
+                    )}
+
+                    {/* Suggestions */}
+                    {result.suggestions.length > 0 && (
+                      <>
+                        <Divider />
+                        <Box>
+                          <Stack direction="row" spacing={0.5} alignItems="center" sx={{ mb: 1 }}>
+                            <LightbulbIcon fontSize="small" color="action" />
+                            <Typography variant="caption" fontWeight={500} color="text.secondary">
+                              Рекомендации
+                            </Typography>
+                          </Stack>
+                          <Stack spacing={0.5} component="ul" sx={{ pl: 2, m: 0 }}>
+                            {result.suggestions.map((sug, idx) => (
+                              <Typography key={idx} variant="caption" color="text.secondary" component="li">
+                                {sug}
+                              </Typography>
+                            ))}
+                          </Stack>
+                        </Box>
+                      </>
+                    )}
+                  </Stack>
+                </Box>
+
+                {/* Actions */}
+                <Box
+                  sx={{
+                    p: 1.5,
+                    borderTop: 1,
+                    borderColor: 'divider',
+                    bgcolor: 'action.hover',
+                  }}
                 >
-                  <Check className="mr-1 h-3 w-3" />
-                  Применить
-                </Button>
-              </div>
-            </motion.div>
+                  <Stack direction="row" spacing={1}>
+                    <Button
+                      variant="outlined"
+                      size="small"
+                      fullWidth
+                      startIcon={<CloseIcon />}
+                      onClick={handleClose}
+                    >
+                      Отменить
+                    </Button>
+                    <Button
+                      variant="contained"
+                      size="small"
+                      fullWidth
+                      startIcon={<CheckIcon />}
+                      onClick={handleAccept}
+                    >
+                      Применить
+                    </Button>
+                  </Stack>
+                </Box>
+              </Box>
+            </Grow>
           ) : null}
-        </AnimatePresence>
-      </PopoverContent>
-    </Popover>
+        </Box>
+      </Popover>
+    </>
   )
 }
 
 export default MagicPromptButton
-

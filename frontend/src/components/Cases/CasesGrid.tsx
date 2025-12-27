@@ -9,9 +9,8 @@ import { CasesTable } from './CasesTable'
 import {
   Dialog,
   DialogContent,
-  DialogHeader,
   DialogTitle,
-} from '../UI/dialog'
+} from '@mui/material'
 import UploadArea from '../UploadArea'
 
 interface CasesGridProps {
@@ -85,11 +84,14 @@ const CasesGrid = ({
             </Button>
           </div>
         </div>
-        <Dialog open={isUploadDialogOpen} onOpenChange={setIsUploadDialogOpen}>
-          <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
-            <DialogHeader>
-              <DialogTitle>Создать новое дело</DialogTitle>
-            </DialogHeader>
+        <Dialog 
+          open={isUploadDialogOpen} 
+          onClose={() => setIsUploadDialogOpen(false)}
+          maxWidth="lg"
+          fullWidth
+        >
+          <DialogTitle>Создать новое дело</DialogTitle>
+          <DialogContent sx={{ maxHeight: '90vh', overflowY: 'auto' }}>
             <UploadArea onUpload={handleUploadComplete} />
           </DialogContent>
         </Dialog>
@@ -168,11 +170,14 @@ const CasesGrid = ({
       )}
 
       {/* Upload Dialog */}
-      <Dialog open={isUploadDialogOpen} onOpenChange={setIsUploadDialogOpen}>
-        <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
-          <DialogHeader>
-            <DialogTitle>Создать новое дело</DialogTitle>
-          </DialogHeader>
+      <Dialog 
+        open={isUploadDialogOpen} 
+        onClose={() => setIsUploadDialogOpen(false)}
+        maxWidth="lg"
+        fullWidth
+      >
+        <DialogTitle>Создать новое дело</DialogTitle>
+        <DialogContent sx={{ maxHeight: '90vh', overflowY: 'auto' }}>
           <UploadArea onUpload={handleUploadComplete} />
         </DialogContent>
       </Dialog>

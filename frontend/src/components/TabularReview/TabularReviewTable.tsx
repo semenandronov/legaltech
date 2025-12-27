@@ -13,25 +13,32 @@ import {
   getSortedRowModel,
   useReactTable,
 } from "@tanstack/react-table"
-import { ArrowUpDown, ChevronDown, FileText, Expand } from "lucide-react"
-
-import { Button } from "@/components/UI/Button"
 import {
-  DropdownMenu,
-  DropdownMenuCheckboxItem,
-  DropdownMenuContent,
-  DropdownMenuTrigger,
-} from "@/components/UI/dropdown-menu"
-import Input from "@/components/UI/Input"
-import {
+  Box,
+  TextField,
+  Button,
+  Chip,
   Table,
   TableBody,
   TableCell,
+  TableContainer,
   TableHead,
-  TableHeader,
   TableRow,
-} from "@/components/UI/table"
-import { Badge } from "@/components/UI/Badge"
+  Paper,
+  Stack,
+  Menu,
+  MenuItem,
+  Checkbox,
+  Typography,
+} from '@mui/material'
+import {
+  SwapVert as ArrowUpDownIcon,
+  ExpandMore as ExpandMoreIcon,
+  Description as FileTextIcon,
+  ExpandMore as ExpandIcon,
+  ChevronLeft as ChevronLeftIcon,
+  ChevronRight as ChevronRightIcon,
+} from '@mui/icons-material'
 import { TabularRow, TabularColumn, TabularCell, CellDetails } from "@/services/tabularReviewApi"
 import { tabularReviewApi } from "@/services/tabularReviewApi"
 import { CellExpansionModal } from "./CellExpansionModal"
@@ -57,7 +64,7 @@ interface TabularReviewTableProps {
   }) => void
 }
 
-export function TabularReviewTable({ reviewId, tableData, onCellClick }: TabularReviewTableProps) {
+export const TabularReviewTable = React.memo(({ reviewId, tableData, onCellClick }: TabularReviewTableProps) => {
   const [sorting, setSorting] = React.useState<SortingState>([])
   const [columnFilters, setColumnFilters] = React.useState<ColumnFiltersState>([])
   const [columnVisibility, setColumnVisibility] = React.useState<VisibilityState>({})
@@ -70,6 +77,7 @@ export function TabularReviewTable({ reviewId, tableData, onCellClick }: Tabular
   } | null>(null)
   const [cellDetails, setCellDetails] = React.useState<CellDetails | null>(null)
   const [loadingCell, setLoadingCell] = React.useState(false)
+  const [anchorEl, setAnchorEl] = React.useState<null | HTMLElement>(null)
 
   // Transform data for table
   const tableRows = React.useMemo(() => {
@@ -101,19 +109,22 @@ export function TabularReviewTable({ reviewId, tableData, onCellClick }: Tabular
         header: ({ column }) => {
           return (
             <Button
-              variant="ghost"
+              variant="text"
               onClick={() => column.toggleSorting(column.getIsSorted() === "asc")}
+              endIcon={<ArrowUpDownIcon />}
+              sx={{ textTransform: 'none', fontWeight: 600 }}
             >
               Document
-              <ArrowUpDown className="ml-2 h-4 w-4" />
             </Button>
           )
         },
         cell: ({ row }) => (
-          <div className="flex items-center gap-2">
-            <FileText className="w-4 h-4 text-muted-foreground" />
-            <span className="font-medium">{row.getValue("file_name")}</span>
-          </div>
+          <Stack direction="row" spacing={1} alignItems="center">
+            <FileTextIcon fontSize="small" color="action" />
+            <Typography variant="body2" fontWeight={500}>
+              {row.getValue("file_name")}
+            </Typography>
+          </Stack>
         ),
       },
       {
@@ -121,14 +132,14 @@ export function TabularReviewTable({ reviewId, tableData, onCellClick }: Tabular
         header: "Status",
         cell: ({ row }) => {
           const status = row.getValue("status") as string
-          const statusMap: Record<string, { variant: 'pending' | 'completed' | 'flagged', label: string }> = {
-            'reviewed': { variant: 'completed', label: 'Reviewed' },
-            'flagged': { variant: 'flagged', label: 'Flagged' },
-            'pending_clarification': { variant: 'flagged', label: 'Pending' },
-            'not_reviewed': { variant: 'pending', label: 'Not Reviewed' },
+          const statusMap: Record<string, { color: 'default' | 'success' | 'error' | 'warning', label: string }> = {
+            'reviewed': { color: 'success', label: 'Reviewed' },
+            'flagged': { color: 'error', label: 'Flagged' },
+            'pending_clarification': { color: 'warning', label: 'Pending' },
+            'not_reviewed': { color: 'default', label: 'Not Reviewed' },
           }
-          const statusInfo = statusMap[status] || { variant: 'pending' as const, label: status }
-          return <Badge variant={statusInfo.variant}>{statusInfo.label}</Badge>
+          const statusInfo = statusMap[status] || { color: 'default' as const, label: status }
+          return <Chip label={statusInfo.label} color={statusInfo.color} size="small" />
         },
       },
     ]
@@ -138,15 +149,16 @@ export function TabularReviewTable({ reviewId, tableData, onCellClick }: Tabular
       accessorKey: col.id,
       header: ({ column }) => {
         return (
-          <div className="flex items-center gap-2">
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
             <Button
-              variant="ghost"
+              variant="text"
               onClick={() => column.toggleSorting(column.getIsSorted() === "asc")}
+              endIcon={<ArrowUpDownIcon />}
+              sx={{ textTransform: 'none', fontWeight: 600 }}
             >
               {col.column_label}
-              <ArrowUpDown className="ml-2 h-4 w-4" />
             </Button>
-          </div>
+          </Box>
         )
       },
       cell: ({ row }) => {
@@ -154,8 +166,21 @@ export function TabularReviewTable({ reviewId, tableData, onCellClick }: Tabular
         const cellValue = cell?.cell_value || "-"
         
         return (
-          <div
-            className="cursor-pointer hover:bg-muted/70 p-3 rounded transition-colors min-h-[44px] flex items-center"
+          <Box
+            sx={{
+              cursor: 'pointer',
+              p: 1.5,
+              borderRadius: 1,
+              minHeight: 44,
+              display: 'flex',
+              alignItems: 'center',
+              transition: (theme) => theme.transitions.create('background-color', {
+                duration: theme.transitions.duration.shorter,
+              }),
+              '&:hover': {
+                bgcolor: 'action.hover',
+              },
+            }}
             onClick={async () => {
               setSelectedCell({
                 fileId: row.original.file_id,
@@ -201,24 +226,35 @@ export function TabularReviewTable({ reviewId, tableData, onCellClick }: Tabular
               }
             }}
           >
-            <div className="flex items-center gap-2 min-h-[24px]">
-              <span className="text-sm flex-1">{cellValue === "-" ? <span className="text-muted-foreground italic">—</span> : cellValue}</span>
-              {cell?.verbatim_extract && (
-                <Expand className="w-3 h-3 text-muted-foreground flex-shrink-0" />
+            <Stack spacing={0.5} sx={{ flex: 1, minWidth: 0 }}>
+              <Stack direction="row" spacing={1} alignItems="center" sx={{ minHeight: 24 }}>
+                <Typography
+                  variant="body2"
+                  sx={{
+                    flex: 1,
+                    fontStyle: cellValue === "-" ? 'italic' : 'normal',
+                    color: cellValue === "-" ? 'text.secondary' : 'text.primary',
+                  }}
+                >
+                  {cellValue === "-" ? "—" : cellValue}
+                </Typography>
+                {cell?.verbatim_extract && (
+                  <ExpandIcon fontSize="small" color="action" />
+                )}
+              </Stack>
+              {cell?.confidence_score && (
+                <Typography variant="caption" color="text.secondary">
+                  Уверенность: {Math.round(cell.confidence_score * 100)}%
+                </Typography>
               )}
-            </div>
-            {cell?.confidence_score && (
-              <div className="text-xs text-muted-foreground mt-1">
-                Уверенность: {Math.round(cell.confidence_score * 100)}%
-              </div>
-            )}
-          </div>
+            </Stack>
+          </Box>
         )
       },
     }))
 
     return [...baseColumns, ...dynamicColumns]
-  }, [tableData.columns, reviewId])
+  }, [tableData.columns, reviewId, onCellClick])
 
   const table = useReactTable({
     data: tableRows,
@@ -237,76 +273,101 @@ export function TabularReviewTable({ reviewId, tableData, onCellClick }: Tabular
     },
   })
 
+  const handleMenuOpen = React.useCallback((event: React.MouseEvent<HTMLElement>) => {
+    setAnchorEl(event.currentTarget)
+  }, [])
+
+  const handleMenuClose = React.useCallback(() => {
+    setAnchorEl(null)
+  }, [])
+
   return (
-    <div className="w-full">
-      <div className="flex items-center py-4">
-        <Input
+    <Box sx={{ width: '100%' }}>
+      <Stack direction="row" spacing={2} alignItems="center" sx={{ py: 2 }}>
+        <TextField
           placeholder="Поиск по документам..."
           value={(table.getColumn("file_name")?.getFilterValue() as string) ?? ""}
           onChange={(event: React.ChangeEvent<HTMLInputElement>) =>
             table.getColumn("file_name")?.setFilterValue(event.target.value)
           }
-          className="max-w-sm"
+          size="small"
+          sx={{ maxWidth: 300 }}
         />
-        <DropdownMenu>
-          <DropdownMenuTrigger asChild>
-            <Button variant="outline" className="ml-auto">
-              Колонки <ChevronDown className="ml-2 h-4 w-4" />
-            </Button>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="end">
-            {table
-              .getAllColumns()
-              .filter((column) => column.getCanHide())
-              .map((column) => {
-                return (
-                  <DropdownMenuCheckboxItem
-                    key={column.id}
-                    className="capitalize"
-                    checked={column.getIsVisible()}
-                    onCheckedChange={(value) =>
-                      column.toggleVisibility(!!value)
-                    }
-                  >
-                    {column.id}
-                  </DropdownMenuCheckboxItem>
-                )
-              })}
-          </DropdownMenuContent>
-        </DropdownMenu>
-      </div>
-      <div className="rounded-md border overflow-hidden bg-background">
-        <Table className="tabular-review-table">
-          <TableHeader>
+        <Button
+          variant="outlined"
+          endIcon={<ExpandMoreIcon />}
+          onClick={handleMenuOpen}
+          sx={{ ml: 'auto' }}
+        >
+          Колонки
+        </Button>
+        <Menu
+          anchorEl={anchorEl}
+          open={Boolean(anchorEl)}
+          onClose={handleMenuClose}
+        >
+          {table
+            .getAllColumns()
+            .filter((column) => column.getCanHide())
+            .map((column) => (
+              <MenuItem key={column.id} onClick={() => column.toggleVisibility(!column.getIsVisible())}>
+                <Checkbox checked={column.getIsVisible()} />
+                <Typography sx={{ textTransform: 'capitalize' }}>
+                  {column.id}
+                </Typography>
+              </MenuItem>
+            ))}
+        </Menu>
+      </Stack>
+      <TableContainer component={Paper} variant="outlined">
+        <Table>
+          <TableHead>
             {table.getHeaderGroups().map((headerGroup) => (
-              <TableRow key={headerGroup.id} className="border-b-2">
-                {headerGroup.headers.map((header) => {
-                  return (
-                    <TableHead key={header.id} className="border-r last:border-r-0 bg-muted/50 font-semibold">
-                      {header.isPlaceholder
-                        ? null
-                        : flexRender(
-                            header.column.columnDef.header,
-                            header.getContext()
-                          )}
-                    </TableHead>
-                  )
-                })}
+              <TableRow key={headerGroup.id}>
+                {headerGroup.headers.map((header) => (
+                  <TableCell
+                    key={header.id}
+                    sx={{
+                      borderRight: 1,
+                      borderColor: 'divider',
+                      bgcolor: 'action.hover',
+                      fontWeight: 600,
+                      '&:last-child': {
+                        borderRight: 'none',
+                      },
+                    }}
+                  >
+                    {header.isPlaceholder
+                      ? null
+                      : flexRender(
+                          header.column.columnDef.header,
+                          header.getContext()
+                        )}
+                  </TableCell>
+                ))}
               </TableRow>
             ))}
-          </TableHeader>
+          </TableHead>
           <TableBody>
             {table.getRowModel().rows?.length ? (
               table.getRowModel().rows.map((row, rowIndex) => (
                 <TableRow
                   key={row.id}
-                  data-state={row.getIsSelected() && "selected"}
-                  className={`border-b ${rowIndex % 2 === 0 ? 'bg-background' : 'bg-muted/20'}`}
+                  sx={{
+                    bgcolor: rowIndex % 2 === 0 ? 'background.paper' : 'action.hover',
+                  }}
                 >
                   {row.getVisibleCells().map((cell) => (
-                    <TableCell 
+                    <TableCell
                       key={cell.id}
-                      className="border-r last:border-r-0 p-0"
+                      sx={{
+                        borderRight: 1,
+                        borderColor: 'divider',
+                        p: 0,
+                        '&:last-child': {
+                          borderRight: 'none',
+                        },
+                      }}
                     >
                       {flexRender(
                         cell.column.columnDef.cell,
@@ -320,38 +381,43 @@ export function TabularReviewTable({ reviewId, tableData, onCellClick }: Tabular
               <TableRow>
                 <TableCell
                   colSpan={columns.length}
-                  className="h-24 text-center"
+                  align="center"
+                  sx={{ height: 96 }}
                 >
-                  Нет результатов.
+                  <Typography color="text.secondary">
+                    Нет результатов.
+                  </Typography>
                 </TableCell>
               </TableRow>
             )}
           </TableBody>
         </Table>
-      </div>
-      <div className="flex items-center justify-end space-x-2 py-4">
-        <div className="flex-1 text-sm text-muted-foreground">
+      </TableContainer>
+      <Stack direction="row" spacing={2} alignItems="center" justifyContent="space-between" sx={{ py: 2 }}>
+        <Typography variant="body2" color="text.secondary">
           {table.getFilteredRowModel().rows.length} строк показано
-        </div>
-        <div className="space-x-2">
+        </Typography>
+        <Stack direction="row" spacing={1}>
           <Button
-            variant="outline"
-            size="sm"
+            variant="outlined"
+            size="small"
+            startIcon={<ChevronLeftIcon />}
             onClick={() => table.previousPage()}
             disabled={!table.getCanPreviousPage()}
           >
             Назад
           </Button>
           <Button
-            variant="outline"
-            size="sm"
+            variant="outlined"
+            size="small"
+            endIcon={<ChevronRightIcon />}
             onClick={() => table.nextPage()}
             disabled={!table.getCanNextPage()}
           >
             Вперед
           </Button>
-        </div>
-      </div>
+        </Stack>
+      </Stack>
       
       {/* Cell Expansion Modal */}
       {selectedCell && (
@@ -368,7 +434,8 @@ export function TabularReviewTable({ reviewId, tableData, onCellClick }: Tabular
           loading={loadingCell}
         />
       )}
-    </div>
+    </Box>
   )
-}
+})
 
+TabularReviewTable.displayName = 'TabularReviewTable'

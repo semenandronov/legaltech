@@ -1,7 +1,18 @@
 import Modal from "@/components/UI/Modal"
 import { TabularCell, CellDetails } from "@/services/tabularReviewApi"
-import { Badge } from "@/components/UI/Badge"
-import { FileText, AlertCircle, CheckCircle2 } from "lucide-react"
+import {
+  Box,
+  Typography,
+  Chip,
+  LinearProgress,
+  Stack,
+  Divider,
+} from '@mui/material'
+import {
+  Description as FileTextIcon,
+  ErrorOutline as AlertCircleIcon,
+  CheckCircleOutline as CheckCircleIcon,
+} from '@mui/icons-material'
 
 interface CellExpansionModalProps {
   isOpen: boolean
@@ -33,110 +44,190 @@ export function CellExpansionModal({
     status: cell.status,
   }
 
+  const confidencePercentage = details.confidence_score !== null && details.confidence_score !== undefined
+    ? Math.round(details.confidence_score * 100)
+    : 0
+
+  const confidenceColor = details.confidence_score !== null && details.confidence_score !== undefined
+    ? details.confidence_score >= 0.9
+      ? 'success'
+      : details.confidence_score >= 0.7
+      ? 'warning'
+      : 'error'
+    : 'primary'
+
+  const statusColor = details.status === "completed" || details.status === "reviewed"
+    ? 'success'
+    : details.status === "processing"
+    ? 'warning'
+    : 'primary'
+
   return (
     <Modal isOpen={isOpen} onClose={onClose} title={columnLabel} size="lg">
-      <div className="space-y-6">
+      <Stack spacing={3}>
         {/* Source Document */}
-        <div>
-          <div className="flex items-center gap-2 mb-2">
-            <FileText className="w-4 h-4 text-muted-foreground" />
-            <span className="text-sm font-medium text-muted-foreground">Источник</span>
-          </div>
-          <p className="text-sm">{fileName}</p>
+        <Box>
+          <Stack direction="row" spacing={1} alignItems="center" sx={{ mb: 1 }}>
+            <FileTextIcon fontSize="small" color="action" />
+            <Typography variant="caption" fontWeight={500} color="text.secondary">
+              Источник
+            </Typography>
+          </Stack>
+          <Typography variant="body2">{fileName}</Typography>
           {details.source_page && (
-            <p className="text-xs text-muted-foreground mt-1">
+            <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 0.5 }}>
               Страница: {details.source_page}
               {details.source_section && `, Раздел: ${details.source_section}`}
-            </p>
+            </Typography>
           )}
-        </div>
+        </Box>
+
+        <Divider />
 
         {/* Answer */}
-        <div>
-          <h4 className="text-sm font-medium mb-2">Ответ</h4>
-          <div className="bg-muted/50 rounded-md p-3">
-            <p className="text-sm">{details.cell_value || "N/A"}</p>
-          </div>
-        </div>
+        <Box>
+          <Typography variant="subtitle2" fontWeight={500} sx={{ mb: 1 }}>
+            Ответ
+          </Typography>
+          <Box
+            sx={{
+              bgcolor: 'action.hover',
+              borderRadius: 1,
+              p: 2,
+            }}
+          >
+            <Typography variant="body2">{details.cell_value || "N/A"}</Typography>
+          </Box>
+        </Box>
 
         {/* Verbatim Extract */}
         {details.verbatim_extract && (
-          <div>
-            <h4 className="text-sm font-medium mb-2">Точная цитата (Verbatim)</h4>
-            <div className="bg-blue-50 dark:bg-blue-950/20 rounded-md p-3 border border-blue-200 dark:border-blue-900">
-              <p className="text-sm font-mono">{details.verbatim_extract}</p>
-            </div>
-          </div>
+          <Box>
+            <Typography variant="subtitle2" fontWeight={500} sx={{ mb: 1 }}>
+              Точная цитата (Verbatim)
+            </Typography>
+            <Box
+              sx={{
+                bgcolor: (theme) => theme.palette.mode === 'dark' 
+                  ? 'rgba(33, 150, 243, 0.1)'
+                  : 'rgba(33, 150, 243, 0.05)',
+                borderRadius: 1,
+                p: 2,
+                border: 1,
+                borderColor: (theme) => theme.palette.mode === 'dark'
+                  ? 'rgba(33, 150, 243, 0.3)'
+                  : 'rgba(33, 150, 243, 0.2)',
+              }}
+            >
+              <Typography
+                variant="body2"
+                component="pre"
+                sx={{
+                  fontFamily: 'monospace',
+                  whiteSpace: 'pre-wrap',
+                  wordBreak: 'break-word',
+                  m: 0,
+                }}
+              >
+                {details.verbatim_extract}
+              </Typography>
+            </Box>
+          </Box>
         )}
 
         {/* Reasoning */}
         {details.reasoning && (
-          <div>
-            <h4 className="text-sm font-medium mb-2">Объяснение (Reasoning)</h4>
-            <div className="bg-muted/50 rounded-md p-3">
-              <p className="text-sm text-muted-foreground">{details.reasoning}</p>
-            </div>
-          </div>
+          <Box>
+            <Typography variant="subtitle2" fontWeight={500} sx={{ mb: 1 }}>
+              Объяснение (Reasoning)
+            </Typography>
+            <Box
+              sx={{
+                bgcolor: 'action.hover',
+                borderRadius: 1,
+                p: 2,
+              }}
+            >
+              <Typography variant="body2" color="text.secondary">
+                {details.reasoning}
+              </Typography>
+            </Box>
+          </Box>
         )}
 
         {/* Confidence Score */}
         {details.confidence_score !== null && details.confidence_score !== undefined && (
-          <div>
-            <h4 className="text-sm font-medium mb-2">Уверенность (Confidence)</h4>
-            <div className="flex items-center gap-3">
-              <div className="flex-1 bg-muted rounded-full h-2">
-                <div
-                  className="bg-primary h-2 rounded-full transition-all"
-                  style={{ width: `${details.confidence_score * 100}%` }}
+          <Box>
+            <Typography variant="subtitle2" fontWeight={500} sx={{ mb: 1 }}>
+              Уверенность (Confidence)
+            </Typography>
+            <Stack direction="row" spacing={2} alignItems="center">
+              <Box sx={{ flexGrow: 1 }}>
+                <LinearProgress
+                  variant="determinate"
+                  value={confidencePercentage}
+                  color={confidenceColor}
+                  sx={{
+                    height: 8,
+                    borderRadius: 4,
+                    bgcolor: 'action.hover',
+                  }}
                 />
-              </div>
-              <span className="text-sm font-medium">
-                {Math.round(details.confidence_score * 100)}%
-              </span>
+              </Box>
+              <Typography variant="body2" fontWeight={500}>
+                {confidencePercentage}%
+              </Typography>
               {details.confidence_score >= 0.9 ? (
-                <Badge variant="completed">
-                  <CheckCircle2 className="w-3 h-3 mr-1" />
-                  Высокая
-                </Badge>
+                <Chip
+                  icon={<CheckCircleIcon />}
+                  label="Высокая"
+                  color="success"
+                  size="small"
+                />
               ) : details.confidence_score >= 0.7 ? (
-                <Badge variant="pending">Средняя</Badge>
+                <Chip
+                  label="Средняя"
+                  color="warning"
+                  size="small"
+                />
               ) : (
-                <Badge variant="flagged">
-                  <AlertCircle className="w-3 h-3 mr-1" />
-                  Низкая
-                </Badge>
+                <Chip
+                  icon={<AlertCircleIcon />}
+                  label="Низкая"
+                  color="error"
+                  size="small"
+                />
               )}
-            </div>
-          </div>
+            </Stack>
+          </Box>
         )}
 
         {/* Status */}
-        <div>
-          <h4 className="text-sm font-medium mb-2">Статус</h4>
-          <Badge
-            variant={
+        <Box>
+          <Typography variant="subtitle2" fontWeight={500} sx={{ mb: 1 }}>
+            Статус
+          </Typography>
+          <Chip
+            label={
               details.status === "completed" || details.status === "reviewed"
-                ? "completed"
+                ? "Завершено"
                 : details.status === "processing"
-                ? "pending"
-                : "pending"
+                ? "Обработка"
+                : "Ожидание"
             }
-          >
-            {details.status === "completed" || details.status === "reviewed"
-              ? "Завершено"
-              : details.status === "processing"
-              ? "Обработка"
-              : "Ожидание"}
-          </Badge>
-        </div>
+            color={statusColor}
+            size="small"
+          />
+        </Box>
 
         {loading && (
-          <div className="text-center py-4">
-            <p className="text-sm text-muted-foreground">Загрузка деталей...</p>
-          </div>
+          <Box sx={{ textAlign: 'center', py: 2 }}>
+            <Typography variant="body2" color="text.secondary">
+              Загрузка деталей...
+            </Typography>
+          </Box>
         )}
-      </div>
+      </Stack>
     </Modal>
   )
 }
-

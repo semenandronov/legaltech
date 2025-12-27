@@ -1,5 +1,26 @@
 import React, { useState } from 'react'
-import './Export.css'
+import {
+  Dialog,
+  DialogTitle,
+  DialogContent,
+  DialogActions,
+  Button,
+  FormGroup,
+  FormControlLabel,
+  Checkbox,
+  RadioGroup,
+  Radio,
+  Typography,
+  Box,
+  Stack,
+  CircularProgress,
+  Alert,
+} from '@mui/material'
+import {
+  FileDownload as DownloadIcon,
+  Email as EmailIcon,
+  CloudUpload as CloudIcon,
+} from '@mui/icons-material'
 
 export type ExportFormat = 'REL' | 'PDF' | 'CSV' | 'JSON' | 'EDRM_XML'
 
@@ -21,11 +42,13 @@ interface ExportDialogProps {
   caseId?: string
   onClose: () => void
   onExport: (options: ExportOptions) => Promise<void>
+  open: boolean
 }
 
 const ExportDialog: React.FC<ExportDialogProps> = ({
   onClose,
-  onExport
+  onExport,
+  open,
 }) => {
   const [formats, setFormats] = useState<ExportFormat[]>(['REL'])
   const [includeAuditLog, setIncludeAuditLog] = useState(true)
@@ -33,6 +56,7 @@ const ExportDialog: React.FC<ExportDialogProps> = ({
   const [includeChainOfCustody, setIncludeChainOfCustody] = useState(false)
   const [destination, setDestination] = useState<'download' | 'email' | 's3'>('download')
   const [loading, setLoading] = useState(false)
+  const [error, setError] = useState<string | null>(null)
 
   const handleFormatToggle = (format: ExportFormat) => {
     setFormats(prev => {
@@ -45,10 +69,11 @@ const ExportDialog: React.FC<ExportDialogProps> = ({
 
   const handleExport = async () => {
     if (formats.length === 0) {
-      alert('Выберите хотя бы один формат')
+      setError('Выберите хотя бы один формат')
       return
     }
 
+    setError(null)
     setLoading(true)
     try {
       await onExport({
@@ -61,154 +86,160 @@ const ExportDialog: React.FC<ExportDialogProps> = ({
       onClose()
     } catch (err) {
       console.error('Export error:', err)
-      alert('Ошибка при экспорте')
+      setError('Ошибка при экспорте')
     } finally {
       setLoading(false)
     }
   }
 
+  const formatLabels: Record<ExportFormat, string> = {
+    REL: 'REL format (для суда)',
+    PDF: 'PDF report (with bates numbers)',
+    CSV: 'CSV (with metadata)',
+    JSON: 'JSON (для API integration)',
+    EDRM_XML: 'EDRM XML',
+  }
+
   return (
-    <div className="export-dialog-overlay" onClick={onClose}>
-      <div className="export-dialog-modal" onClick={(e) => e.stopPropagation()}>
-        <div className="export-dialog-header">
-          <h2>Export Documents</h2>
-          <button className="export-dialog-close" onClick={onClose} aria-label="Закрыть">
-            ×
-          </button>
-        </div>
+    <Dialog open={open} onClose={onClose} maxWidth="md" fullWidth>
+      <DialogTitle>
+        <Typography variant="h6">Export Documents</Typography>
+      </DialogTitle>
+      <DialogContent dividers>
+        <Stack spacing={3}>
+          {error && (
+            <Alert severity="error" onClose={() => setError(null)}>
+              {error}
+            </Alert>
+          )}
 
-        <div className="export-dialog-content">
-          <div className="export-dialog-section">
-            <h3>Formats</h3>
-            <div className="export-dialog-formats">
-              <label className="export-dialog-checkbox">
-                <input
-                  type="checkbox"
-                  checked={formats.includes('REL')}
-                  onChange={() => handleFormatToggle('REL')}
+          {/* Formats */}
+          <Box>
+            <Typography variant="subtitle1" fontWeight={600} sx={{ mb: 2 }}>
+              Formats
+            </Typography>
+            <FormGroup>
+              {(Object.keys(formatLabels) as ExportFormat[]).map((format) => (
+                <FormControlLabel
+                  key={format}
+                  control={
+                    <Checkbox
+                      checked={formats.includes(format)}
+                      onChange={() => handleFormatToggle(format)}
+                      size="small"
+                    />
+                  }
+                  label={formatLabels[format]}
                 />
-                <span>☑ REL format (для суда)</span>
-              </label>
-              <label className="export-dialog-checkbox">
-                <input
-                  type="checkbox"
-                  checked={formats.includes('PDF')}
-                  onChange={() => handleFormatToggle('PDF')}
-                />
-                <span>☑ PDF report (with bates numbers)</span>
-              </label>
-              <label className="export-dialog-checkbox">
-                <input
-                  type="checkbox"
-                  checked={formats.includes('CSV')}
-                  onChange={() => handleFormatToggle('CSV')}
-                />
-                <span>☑ CSV (with metadata)</span>
-              </label>
-              <label className="export-dialog-checkbox">
-                <input
-                  type="checkbox"
-                  checked={formats.includes('JSON')}
-                  onChange={() => handleFormatToggle('JSON')}
-                />
-                <span>☑ JSON (для API integration)</span>
-              </label>
-              <label className="export-dialog-checkbox">
-                <input
-                  type="checkbox"
-                  checked={formats.includes('EDRM_XML')}
-                  onChange={() => handleFormatToggle('EDRM_XML')}
-                />
-                <span>☑ EDRM XML</span>
-              </label>
-            </div>
-          </div>
+              ))}
+            </FormGroup>
+          </Box>
 
-          <div className="export-dialog-section">
-            <h3>Options</h3>
-            <div className="export-dialog-options">
-              <label className="export-dialog-checkbox required">
-                <input
-                  type="checkbox"
-                  checked={includeAuditLog}
-                  onChange={(e) => setIncludeAuditLog(e.target.checked)}
-                />
-                <span>☑ Include audit log (REQUIRED!)</span>
-              </label>
-              <label className="export-dialog-checkbox">
-                <input
-                  type="checkbox"
-                  checked={includeCertification}
-                  onChange={(e) => setIncludeCertification(e.target.checked)}
-                />
-                <span>☑ Certification statement</span>
-              </label>
-              <label className="export-dialog-checkbox">
-                <input
-                  type="checkbox"
-                  checked={includeChainOfCustody}
-                  onChange={(e) => setIncludeChainOfCustody(e.target.checked)}
-                />
-                <span>☑ Chain of custody</span>
-              </label>
-            </div>
-          </div>
+          {/* Options */}
+          <Box>
+            <Typography variant="subtitle1" fontWeight={600} sx={{ mb: 2 }}>
+              Options
+            </Typography>
+            <FormGroup>
+              <FormControlLabel
+                control={
+                  <Checkbox
+                    checked={includeAuditLog}
+                    onChange={(e) => setIncludeAuditLog(e.target.checked)}
+                    size="small"
+                    required
+                  />
+                }
+                label={
+                  <Typography>
+                    Include audit log <Typography component="span" color="error.main">(REQUIRED!)</Typography>
+                  </Typography>
+                }
+              />
+              <FormControlLabel
+                control={
+                  <Checkbox
+                    checked={includeCertification}
+                    onChange={(e) => setIncludeCertification(e.target.checked)}
+                    size="small"
+                  />
+                }
+                label="Certification statement"
+              />
+              <FormControlLabel
+                control={
+                  <Checkbox
+                    checked={includeChainOfCustody}
+                    onChange={(e) => setIncludeChainOfCustody(e.target.checked)}
+                    size="small"
+                  />
+                }
+                label="Chain of custody"
+              />
+            </FormGroup>
+          </Box>
 
-          <div className="export-dialog-section">
-            <h3>Destination</h3>
-            <div className="export-dialog-destination">
-              <label className="export-dialog-radio">
-                <input
-                  type="radio"
-                  name="destination"
-                  value="download"
-                  checked={destination === 'download'}
-                  onChange={() => setDestination('download')}
-                />
-                <span>Download</span>
-              </label>
-              <label className="export-dialog-radio">
-                <input
-                  type="radio"
-                  name="destination"
-                  value="email"
-                  checked={destination === 'email'}
-                  onChange={() => setDestination('email')}
-                />
-                <span>Email</span>
-              </label>
-              <label className="export-dialog-radio">
-                <input
-                  type="radio"
-                  name="destination"
-                  value="s3"
-                  checked={destination === 's3'}
-                  onChange={() => setDestination('s3')}
-                />
-                <span>S3</span>
-              </label>
-            </div>
-          </div>
-        </div>
-
-        <div className="export-dialog-actions">
-          <button
-            className="export-dialog-cancel"
-            onClick={onClose}
-            disabled={loading}
-          >
-            Cancel
-          </button>
-          <button
-            className="export-dialog-export"
-            onClick={handleExport}
-            disabled={loading || formats.length === 0}
-          >
-            {loading ? 'Exporting...' : 'Export'}
-          </button>
-        </div>
-      </div>
-    </div>
+          {/* Destination */}
+          <Box>
+            <Typography variant="subtitle1" fontWeight={600} sx={{ mb: 2 }}>
+              Destination
+            </Typography>
+            <RadioGroup
+              value={destination}
+              onChange={(e) => setDestination(e.target.value as 'download' | 'email' | 's3')}
+            >
+              <FormControlLabel
+                value="download"
+                control={<Radio size="small" />}
+                label={
+                  <Stack direction="row" spacing={1} alignItems="center">
+                    <DownloadIcon fontSize="small" />
+                    <Typography>Download</Typography>
+                  </Stack>
+                }
+              />
+              <FormControlLabel
+                value="email"
+                control={<Radio size="small" />}
+                label={
+                  <Stack direction="row" spacing={1} alignItems="center">
+                    <EmailIcon fontSize="small" />
+                    <Typography>Email</Typography>
+                  </Stack>
+                }
+              />
+              <FormControlLabel
+                value="s3"
+                control={<Radio size="small" />}
+                label={
+                  <Stack direction="row" spacing={1} alignItems="center">
+                    <CloudIcon fontSize="small" />
+                    <Typography>S3</Typography>
+                  </Stack>
+                }
+              />
+            </RadioGroup>
+          </Box>
+        </Stack>
+      </DialogContent>
+      <DialogActions sx={{ px: 3, py: 2 }}>
+        <Button
+          onClick={onClose}
+          disabled={loading}
+          variant="outlined"
+        >
+          Cancel
+        </Button>
+        <Button
+          onClick={handleExport}
+          disabled={loading || formats.length === 0}
+          variant="contained"
+          startIcon={loading ? <CircularProgress size={16} /> : <DownloadIcon />}
+        >
+          {loading ? 'Exporting...' : 'Export'}
+        </Button>
+      </DialogActions>
+    </Dialog>
   )
 }
 

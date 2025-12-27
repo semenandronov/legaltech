@@ -15,7 +15,7 @@ import {
   Button,
   Stack,
 } from '@mui/material'
-import { FileText as FileTextIcon } from '@mui/icons-material'
+import { Description as DescriptionIcon } from '@mui/icons-material'
 import MainLayout from '../components/Layout/MainLayout'
 import CaseNavigation from '../components/CaseOverview/CaseNavigation'
 
@@ -110,7 +110,7 @@ const DocumentsPage = () => {
                   <CardContent>
                     <Stack spacing={2}>
                       <Stack direction="row" spacing={1} alignItems="center">
-                        <FileTextIcon color="primary" />
+                        <DescriptionIcon color="primary" />
                         <Typography
                           variant="h6"
                           sx={{

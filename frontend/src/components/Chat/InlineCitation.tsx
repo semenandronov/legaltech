@@ -1,6 +1,6 @@
-import React, { useState } from 'react'
+import React from 'react'
 import { Chip, Tooltip, Box, Typography, Stack } from '@mui/material'
-import { FileText as FileTextIcon, OpenInNew as ExternalLinkIcon } from '@mui/icons-material'
+import { Description as DescriptionIcon, OpenInNew as ExternalLinkIcon } from '@mui/icons-material'
 import { SourceInfo } from '../../services/api'
 import './Chat.css'
 
@@ -60,7 +60,7 @@ const InlineCitation: React.FC<InlineCitationProps> = ({
       title={
         <Box>
           <Stack direction="row" spacing={1} alignItems="center" sx={{ mb: 1 }}>
-            <FileTextIcon fontSize="small" />
+            <DescriptionIcon fontSize="small" />
             <Typography variant="body2" fontWeight={600}>
               {source.file}
             </Typography>
@@ -102,7 +102,7 @@ const InlineCitation: React.FC<InlineCitationProps> = ({
       placement="top"
     >
       <Chip
-        icon={<FileTextIcon />}
+        icon={<DescriptionIcon />}
         label={`${shortName}${pageInfo}`}
         size="small"
         onClick={handleClick}

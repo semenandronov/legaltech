@@ -13,15 +13,11 @@ import {
   Divider,
   Tooltip,
   Fade,
-  Slide,
-  LinearProgress,
   Skeleton,
   Stack,
   Grid,
   Card,
   CardContent,
-  useTheme,
-  useMediaQuery,
 } from '@mui/material'
 import {
   Send as SendIcon,
@@ -34,7 +30,6 @@ import {
   ChevronRight as ChevronRightIcon,
   Close as CloseIcon,
 } from '@mui/icons-material'
-import { useTheme as useAppTheme } from '../hooks/useTheme'
 import './ChatWindow.css'
 import './Chat/Chat.css'
 import { fetchHistory, sendMessage, SourceInfo, HistoryMessage, classifyDocuments, extractEntities, getTimeline, getAnalysisReport } from '../services/api'
@@ -45,7 +40,6 @@ import Autocomplete from './Chat/Autocomplete'
 import StatisticsChart from './Chat/StatisticsChart'
 import SourceSelector, { DEFAULT_SOURCES } from './Chat/SourceSelector'
 import DocumentPreviewSheet from './Chat/DocumentPreviewSheet'
-import ThemeToggle from './UI/ThemeToggle'
 import { logger } from '@/lib/logger'
 
 interface Message {
@@ -77,6 +71,14 @@ const COMMANDS = [
   { command: 'Извлеки сущности', full: 'Извлеки все сущности из документов' },
 ]
 
+const PLACEHOLDERS = [
+  'Спросите что угодно...',
+  'Сравни документы...',
+  'Найди противоречия...',
+  'Что говорит договор о...',
+  'Какие сроки важны...',
+]
+
 const ChatWindow = ({ caseId, onDocumentClick }: ChatWindowProps) => {
   const [messages, setMessages] = useState<Message[]>([])
   const [inputValue, setInputValue] = useState('')
@@ -93,14 +95,6 @@ const ChatWindow = ({ caseId, onDocumentClick }: ChatWindowProps) => {
   const [streamingContent, setStreamingContent] = useState('')
   const [streamingSources, setStreamingSources] = useState<SourceInfo[]>([])
   const currentStreamingMessageRef = useRef<number | null>(null)
-  
-  const PLACEHOLDERS = [
-    'Спросите что угодно...',
-    'Сравни документы...',
-    'Найди противоречия...',
-    'Что говорит договор о...',
-    'Какие сроки важны...',
-  ]
   const [currentPlaceholderIndex, setCurrentPlaceholderIndex] = useState(0)
   const [proSearchEnabled] = useState(false)
   const [selectedSources, setSelectedSources] = useState<string[]>(['vault'])
@@ -286,41 +280,6 @@ const ChatWindow = ({ caseId, onDocumentClick }: ChatWindowProps) => {
     }
   }
 
-  const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement | HTMLTextAreaElement>) => {
-    if (autocompleteVisible && autocompleteSuggestions.length > 0) {
-      if (e.key === 'ArrowDown') {
-        e.preventDefault()
-        setAutocompleteSelectedIndex(prev => 
-          prev < autocompleteSuggestions.length - 1 ? prev + 1 : prev
-        )
-        return
-      }
-      if (e.key === 'ArrowUp') {
-        e.preventDefault()
-        setAutocompleteSelectedIndex(prev => prev > 0 ? prev - 1 : 0)
-        return
-      }
-      if (e.key === 'Enter' && !e.shiftKey) {
-        e.preventDefault()
-        const selected = autocompleteSuggestions[autocompleteSelectedIndex]
-        if (selected) {
-          const fullCommand = COMMANDS.find(c => c.command === selected)?.full || selected
-          handleSend(fullCommand)
-          setAutocompleteVisible(false)
-        }
-        return
-      }
-      if (e.key === 'Escape') {
-        setAutocompleteVisible(false)
-        return
-      }
-    }
-    
-    if (e.key === 'Enter' && !e.shiftKey) {
-      e.preventDefault()
-      handleSend()
-    }
-  }
 
   const handleTextareaChange = (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
     const value = e.target.value
@@ -540,9 +499,9 @@ const ChatWindow = ({ caseId, onDocumentClick }: ChatWindowProps) => {
     // Open document preview sheet
     setPreviewSource(source)
     // Collect all sources from messages for navigation
-    const allSources = messages
+    const allSources: SourceInfo[] = messages
       .filter(m => m.role === 'assistant' && m.sources)
-      .flatMap(m => m.sources || [])
+      .flatMap(m => (m.sources || []) as SourceInfo[])
     setAllCurrentSources(allSources)
     setPreviewOpen(true)
     
@@ -621,9 +580,6 @@ const ChatWindow = ({ caseId, onDocumentClick }: ChatWindowProps) => {
     return null
   }
 
-  const theme = useTheme()
-  const isMobile = useMediaQuery(theme.breakpoints.down('sm'))
-
   return (
     <Box
       sx={{
@@ -639,8 +595,8 @@ const ChatWindow = ({ caseId, onDocumentClick }: ChatWindowProps) => {
       onDragOver={handleDragOver}
       onDrop={handleDrop}
     >
-      <Fade in={isDragging}>
-        {isDragging ? (
+      {isDragging && (
+        <Fade in={isDragging}>
           <Box
             sx={{
               position: 'absolute',
@@ -670,8 +626,8 @@ const ChatWindow = ({ caseId, onDocumentClick }: ChatWindowProps) => {
               </CardContent>
             </Card>
           </Box>
-        ) : null}
-      </Fade>
+        </Fade>
+      )}
 
 
       <Box
@@ -1051,7 +1007,40 @@ const ChatWindow = ({ caseId, onDocumentClick }: ChatWindowProps) => {
                   placeholder={PLACEHOLDERS[currentPlaceholderIndex]}
                   value={inputValue}
                   onChange={handleTextareaChange}
-                  onKeyDown={handleKeyDown}
+                  onKeyDown={(e) => {
+                    if (autocompleteVisible && autocompleteSuggestions.length > 0) {
+                      if (e.key === 'ArrowDown') {
+                        e.preventDefault()
+                        setAutocompleteSelectedIndex(prev => 
+                          prev < autocompleteSuggestions.length - 1 ? prev + 1 : prev
+                        )
+                        return
+                      }
+                      if (e.key === 'ArrowUp') {
+                        e.preventDefault()
+                        setAutocompleteSelectedIndex(prev => prev > 0 ? prev - 1 : 0)
+                        return
+                      }
+                      if (e.key === 'Enter' && !e.shiftKey) {
+                        e.preventDefault()
+                        const selected = autocompleteSuggestions[autocompleteSelectedIndex]
+                        if (selected) {
+                          const fullCommand = COMMANDS.find(c => c.command === selected)?.full || selected
+                          handleSend(fullCommand)
+                          setAutocompleteVisible(false)
+                        }
+                        return
+                      }
+                      if (e.key === 'Escape') {
+                        setAutocompleteVisible(false)
+                        return
+                      }
+                    }
+                    if (e.key === 'Enter' && !e.shiftKey) {
+                      e.preventDefault()
+                      handleSend()
+                    }
+                  }}
                   disabled={isLoading || isWebSocketStreaming}
                   multiline
                   maxRows={8}
@@ -1070,12 +1059,14 @@ const ChatWindow = ({ caseId, onDocumentClick }: ChatWindowProps) => {
                     },
                   }}
                 />
-                <Autocomplete
-                  suggestions={autocompleteSuggestions}
-                  selectedIndex={autocompleteSelectedIndex}
-                  onSelect={handleAutocompleteSelect}
-                  visible={autocompleteVisible}
-                />
+                {autocompleteVisible && (
+                  <Autocomplete
+                    suggestions={autocompleteSuggestions}
+                    selectedIndex={autocompleteSelectedIndex}
+                    onSelect={handleAutocompleteSelect}
+                    visible={autocompleteVisible}
+                  />
+                )}
               </Box>
 
               {/* Harvey-style toolbar */}
@@ -1176,7 +1167,7 @@ const ChatWindow = ({ caseId, onDocumentClick }: ChatWindowProps) => {
         source={previewSource}
         caseId={caseId}
         allSources={allCurrentSources}
-        onNavigate={(source) => setPreviewSource(source)}
+        onNavigate={(source: SourceInfo) => setPreviewSource(source)}
       />
     </Box>
   )

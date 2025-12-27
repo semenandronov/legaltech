@@ -1,9 +1,26 @@
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, useMemo } from 'react'
+import {
+  Box,
+  List,
+  ListItem,
+  ListItemButton,
+  ListItemIcon,
+  ListItemText,
+  Checkbox,
+  Chip,
+  Typography,
+  Stack,
+  Select,
+  MenuItem,
+  FormControl,
+  InputLabel,
+  Button,
+  Paper,
+} from '@mui/material'
 import { DocumentItem, DocumentClassification, PrivilegeCheck } from '../../services/api'
 import StatusIcon, { DocumentStatus } from '../Common/StatusIcon'
 import ConfidenceBadge from '../Common/ConfidenceBadge'
 import BatchActions from './BatchActions'
-import './Documents.css'
 
 export interface DocumentWithMetadata extends DocumentItem {
   classification?: DocumentClassification
@@ -24,7 +41,7 @@ interface DocumentsListProps {
   hasMore?: boolean
 }
 
-const DocumentsList: React.FC<DocumentsListProps> = ({
+const DocumentsList: React.FC<DocumentsListProps> = React.memo(({
   documents,
   selectedDocuments,
   onSelectDocument,
@@ -44,14 +61,10 @@ const DocumentsList: React.FC<DocumentsListProps> = ({
     return doc.status as DocumentStatus | undefined
   }
 
-  const getConfidenceClass = (confidence?: number) => {
-    if (!confidence) return ''
-    if (confidence > 90) return 'high'
-    if (confidence > 60) return 'medium'
-    return 'low'
-  }
+  const visibleDocuments = useMemo(() => {
+    return documents.slice(0, visibleRange)
+  }, [documents, visibleRange])
 
-  const visibleDocuments = documents.slice(0, visibleRange)
   const selectedCount = selectedDocuments.size
 
   useEffect(() => {
@@ -61,75 +74,120 @@ const DocumentsList: React.FC<DocumentsListProps> = ({
   }, [visibleRange, documents.length, hasMore, loadMore])
 
   return (
-    <div className="documents-list">
-      <div className="documents-list-header">
-        <div className="documents-list-header-info">
-          {documents.length} matching filters
-        </div>
-        <div className="documents-list-sort">
-          <span className="documents-list-sort-label">🎯 SORT:</span>
-          <select
-            className="documents-list-sort-select"
-            value={sortBy}
-            onChange={(e) => onSortChange?.(e.target.value as 'date' | 'name' | 'relevance')}
-            aria-label="Сортировка документов"
-          >
-            <option value="date">Date</option>
-            <option value="name">A-Z</option>
-            <option value="relevance">Rel%</option>
-          </select>
-        </div>
-      </div>
+    <Box>
+      {/* Header */}
+      <Paper sx={{ p: 2, mb: 1 }}>
+        <Stack direction="row" spacing={2} alignItems="center" justifyContent="space-between">
+          <Typography variant="body2" color="text.secondary">
+            {documents.length} matching filters
+          </Typography>
+          <FormControl size="small" sx={{ minWidth: 150 }}>
+            <InputLabel>🎯 SORT</InputLabel>
+            <Select
+              value={sortBy}
+              label="🎯 SORT"
+              onChange={(e) => onSortChange?.(e.target.value as 'date' | 'name' | 'relevance')}
+            >
+              <MenuItem value="date">Date</MenuItem>
+              <MenuItem value="name">A-Z</MenuItem>
+              <MenuItem value="relevance">Rel%</MenuItem>
+            </Select>
+          </FormControl>
+        </Stack>
+      </Paper>
 
-      <div className="documents-list-items">
+      {/* List */}
+      <List sx={{ bgcolor: 'background.paper', borderRadius: 1, overflow: 'hidden' }}>
         {visibleDocuments.map((doc) => {
           const isSelected = selectedDocuments.has(doc.id)
           const confidence = doc.confidence || doc.classification?.confidence || 0
           const relevanceScore = doc.classification?.relevance_score || 0
 
           return (
-            <div
+            <ListItem
               key={doc.id}
-              className={`document-item ${isSelected ? 'selected' : ''}`}
-              onClick={() => onDocumentClick(doc.id)}
+              disablePadding
+              secondaryAction={
+                relevanceScore > 0 && (
+                  <Stack direction="row" spacing={1} alignItems="center" sx={{ mr: 1 }}>
+                    <Typography variant="caption" color="text.secondary">
+                      {relevanceScore}%
+                    </Typography>
+                    <ConfidenceBadge confidence={confidence} showIcon={false} size="small" />
+                  </Stack>
+                )
+              }
             >
-              <input
-                type="checkbox"
-                className="document-item-checkbox"
-                checked={isSelected}
-                onChange={(e) => {
-                  e.stopPropagation()
-                  onSelectDocument(doc.id, !isSelected)
+              <ListItemButton
+                selected={isSelected}
+                onClick={() => onDocumentClick(doc.id)}
+                sx={{
+                  '&.Mui-selected': {
+                    bgcolor: 'primary.light',
+                    '&:hover': {
+                      bgcolor: 'primary.light',
+                    },
+                  },
                 }}
-                onClick={(e) => e.stopPropagation()}
-                aria-label={`Выбрать документ ${doc.filename}`}
-              />
-              
-              <div className="document-item-content">
-                <div className="document-item-header">
+              >
+                <ListItemIcon sx={{ minWidth: 40 }}>
+                  <Checkbox
+                    edge="start"
+                    checked={isSelected}
+                    tabIndex={-1}
+                    disableRipple
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      onSelectDocument(doc.id, !isSelected)
+                    }}
+                  />
+                </ListItemIcon>
+                <ListItemIcon sx={{ minWidth: 36 }}>
                   <StatusIcon status={getDocumentStatus(doc) || 'confirmed'} size="small" />
-                  <span className="document-item-name">{doc.filename}</span>
-                  {relevanceScore > 0 && (
-                    <span className={`document-item-confidence ${getConfidenceClass(confidence)}`}>
-                      {relevanceScore}% <ConfidenceBadge confidence={confidence} showIcon={false} size="small" />
-                    </span>
-                  )}
-                </div>
-                
-                <div className="document-item-meta">
-                  {doc.classification?.doc_type && (
-                    <span>{doc.classification.doc_type}</span>
-                  )}
-                  {doc.created_at && (
-                    <span>{new Date(doc.created_at).toLocaleDateString('ru-RU')}</span>
-                  )}
-                </div>
-              </div>
-            </div>
+                </ListItemIcon>
+                <ListItemText
+                  primary={doc.filename}
+                  secondary={
+                    <Stack direction="row" spacing={1} alignItems="center" sx={{ mt: 0.5 }}>
+                      {doc.classification?.doc_type && (
+                        <Chip label={doc.classification.doc_type} size="small" variant="outlined" />
+                      )}
+                      {doc.created_at && (
+                        <Typography variant="caption" color="text.secondary">
+                          {new Date(doc.created_at).toLocaleDateString('ru-RU')}
+                        </Typography>
+                      )}
+                    </Stack>
+                  }
+                />
+              </ListItemButton>
+            </ListItem>
           )
         })}
-      </div>
+      </List>
 
+      {/* Load More */}
+      {documents.length > visibleRange && (
+        <Box sx={{ display: 'flex', justifyContent: 'center', py: 2 }}>
+          <Button
+            variant="outlined"
+            onClick={() => setVisibleRange(prev => prev + 50)}
+          >
+            ─── LOAD MORE (50) ───
+          </Button>
+        </Box>
+      )}
+
+      {/* Empty State */}
+      {documents.length === 0 && (
+        <Paper sx={{ p: 4, textAlign: 'center' }}>
+          <Typography color="text.secondary">
+            Нет документов, соответствующих фильтрам
+          </Typography>
+        </Paper>
+      )}
+
+      {/* Batch Actions */}
       <BatchActions
         selectedCount={selectedCount}
         onConfirmAll={() => onBatchAction?.('confirm', Array.from(selectedDocuments))}
@@ -138,25 +196,10 @@ const DocumentsList: React.FC<DocumentsListProps> = ({
         onAutoReview={() => onBatchAction?.('auto-review', Array.from(selectedDocuments))}
         onExportSelected={() => onBatchAction?.('export', Array.from(selectedDocuments))}
       />
-
-      {documents.length > visibleRange && (
-        <div className="documents-list-load-more">
-          <button
-            className="documents-list-load-more-btn"
-            onClick={() => setVisibleRange(prev => prev + 50)}
-          >
-            ─── LOAD MORE (50) ───
-          </button>
-        </div>
-      )}
-
-      {documents.length === 0 && (
-        <div className="documents-list-empty">
-          <p>Нет документов, соответствующих фильтрам</p>
-        </div>
-      )}
-    </div>
+    </Box>
   )
-}
+})
+
+DocumentsList.displayName = 'DocumentsList'
 
 export default DocumentsList

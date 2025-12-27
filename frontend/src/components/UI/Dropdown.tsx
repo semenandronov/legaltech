@@ -1,5 +1,5 @@
-import { ReactNode, useState, useRef, useEffect } from 'react'
-import { motion, AnimatePresence } from 'framer-motion'
+import { ReactNode, useState, useRef } from 'react'
+import { Menu, MenuItem, ListItemIcon, ListItemText, Box } from '@mui/material'
 
 interface DropdownItem {
   label: string
@@ -17,71 +17,67 @@ interface DropdownProps {
 }
 
 const Dropdown = ({ trigger, items, align = 'right', className = '' }: DropdownProps) => {
-  const [isOpen, setIsOpen] = useState(false)
-  const dropdownRef = useRef<HTMLDivElement>(null)
-  
-  useEffect(() => {
-    const handleClickOutside = (event: MouseEvent) => {
-      if (dropdownRef.current && !dropdownRef.current.contains(event.target as Node)) {
-        setIsOpen(false)
-      }
-    }
-    
-    if (isOpen) {
-      document.addEventListener('mousedown', handleClickOutside)
-    }
-    
-    return () => {
-      document.removeEventListener('mousedown', handleClickOutside)
-    }
-  }, [isOpen])
-  
-  const alignClasses = {
-    left: 'left-0',
-    right: 'right-0',
+  const [anchorEl, setAnchorEl] = useState<HTMLElement | null>(null)
+  const triggerRef = useRef<HTMLDivElement>(null)
+  const isOpen = Boolean(anchorEl)
+
+  const handleClick = (event: React.MouseEvent<HTMLElement>) => {
+    setAnchorEl(event.currentTarget)
   }
-  
+
+  const handleClose = () => {
+    setAnchorEl(null)
+  }
+
+  const handleItemClick = (item: DropdownItem) => {
+    if (!item.disabled) {
+      item.onClick()
+      handleClose()
+    }
+  }
+
   return (
-    <div className={`relative ${className}`} ref={dropdownRef}>
-      <div onClick={() => setIsOpen(!isOpen)}>
+    <Box className={className} sx={{ position: 'relative', display: 'inline-block' }}>
+      <Box ref={triggerRef} onClick={handleClick} sx={{ cursor: 'pointer' }}>
         {trigger}
-      </div>
-      
-      <AnimatePresence>
-        {isOpen && (
-          <motion.div
-            initial={{ opacity: 0, y: -10 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: -10 }}
-            transition={{ duration: 0.2 }}
-            className={`absolute top-full mt-1 ${alignClasses[align]} bg-secondary border border-border rounded-md shadow-lg py-1 min-w-[200px] z-50`}
+      </Box>
+      <Menu
+        anchorEl={anchorEl}
+        open={isOpen}
+        onClose={handleClose}
+        anchorOrigin={{
+          vertical: 'bottom',
+          horizontal: align,
+        }}
+        transformOrigin={{
+          vertical: 'top',
+          horizontal: align,
+        }}
+        PaperProps={{
+          sx: {
+            minWidth: 200,
+            mt: 0.5,
+          },
+        }}
+      >
+        {items.map((item, index) => (
+          <MenuItem
+            key={index}
+            onClick={() => handleItemClick(item)}
+            disabled={item.disabled}
+            sx={{
+              color: item.danger ? 'error.main' : 'text.primary',
+              '&:hover': {
+                bgcolor: 'action.hover',
+              },
+            }}
           >
-            {items.map((item, index) => (
-              <button
-                key={index}
-                onClick={() => {
-                  if (!item.disabled) {
-                    item.onClick()
-                    setIsOpen(false)
-                  }
-                }}
-                disabled={item.disabled}
-                className={`w-full px-3 py-2 text-left text-body flex items-center gap-2 transition-colors ${
-                  item.disabled
-                    ? 'opacity-50 cursor-not-allowed'
-                    : item.danger
-                    ? 'text-error hover:bg-tertiary'
-                    : 'text-primary hover:bg-tertiary'
-                }`}
-              >
-                {item.icon && <span className="flex-shrink-0">{item.icon}</span>}
-                <span>{item.label}</span>
-              </button>
-            ))}
-          </motion.div>
-        )}
-      </AnimatePresence>
-    </div>
+            {item.icon && <ListItemIcon>{item.icon}</ListItemIcon>}
+            <ListItemText>{item.label}</ListItemText>
+          </MenuItem>
+        ))}
+      </Menu>
+    </Box>
   )
 }
 
