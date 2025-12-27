@@ -201,7 +201,24 @@ async def chat(
     
     Returns: answer, sources, status
     """
+    # #region agent log
+    import json
+    try:
+        with open('/Users/semyon_andronov04/Desktop/C ДВ/.cursor/debug.log', 'a') as f:
+            f.write(json.dumps({"sessionId":"debug-session","runId":"run1","hypothesisId":"A","location":"chat.py:204","message":"Function entry - checking Case availability","data":{"case_id":request.case_id,"Case_in_globals":"Case" in globals(),"Case_in_locals":"Case" in locals()},"timestamp":int(__import__('time').time()*1000)}) + '\n')
+    except: pass
+    # #endregion
+    
     # Get case and verify ownership
+    # #region agent log
+    try:
+        with open('/Users/semyon_andronov04/Desktop/C ДВ/.cursor/debug.log', 'a') as f:
+            f.write(json.dumps({"sessionId":"debug-session","runId":"run1","hypothesisId":"A","location":"chat.py:205","message":"Before Case usage","data":{"Case_type":str(type(Case)) if 'Case' in globals() else "NOT_IN_GLOBALS"},"timestamp":int(__import__('time').time()*1000)}) + '\n')
+    except Exception as e:
+        with open('/Users/semyon_andronov04/Desktop/C ДВ/.cursor/debug.log', 'a') as f:
+            f.write(json.dumps({"sessionId":"debug-session","runId":"run1","hypothesisId":"A","location":"chat.py:205","message":"Error checking Case","data":{"error":str(e)},"timestamp":int(__import__('time').time()*1000)}) + '\n')
+    # #endregion
+    
     case = db.query(Case).filter(
         Case.id == request.case_id,
         Case.user_id == current_user.id
@@ -240,7 +257,23 @@ async def chat(
             logger.info(f"Detected task request for case {request.case_id}: {request.question[:100]}...")
             
             # Get case info to pass document count to planning agent
-            from app.models.case import Case
+            # #region agent log
+            try:
+                with open('/Users/semyon_andronov04/Desktop/C ДВ/.cursor/debug.log', 'a') as f:
+                    f.write(json.dumps({"sessionId":"debug-session","runId":"run1","hypothesisId":"B","location":"chat.py:243","message":"Before local Case import","data":{"Case_in_globals_before":"Case" in globals()},"timestamp":int(__import__('time').time()*1000)}) + '\n')
+            except: pass
+            # #endregion
+            
+            # Case is already imported at top of file, no need to re-import
+            # from app.models.case import Case  # REMOVED: causes UnboundLocalError
+            
+            # #region agent log
+            try:
+                with open('/Users/semyon_andronov04/Desktop/C ДВ/.cursor/debug.log', 'a') as f:
+                    f.write(json.dumps({"sessionId":"debug-session","runId":"run1","hypothesisId":"B","location":"chat.py:245","message":"After removing local import","data":{"Case_in_globals_after":"Case" in globals()},"timestamp":int(__import__('time').time()*1000)}) + '\n')
+            except: pass
+            # #endregion
+            
             case = db.query(Case).filter(Case.id == request.case_id).first()
             num_documents = case.num_documents if case else 0
             file_names = case.file_names if case and case.file_names else []
