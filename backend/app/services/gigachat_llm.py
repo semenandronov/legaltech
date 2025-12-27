@@ -156,24 +156,58 @@ class ChatGigaChat(BaseChatModel):
             model=self.model
         )
         
-        # Добавляем functions если они есть (GigaChat поддерживает functions)
-        if self._functions:
-            # GigaChat SDK может принимать functions через отдельный параметр
-            # Проверяем документацию SDK для правильного формата
-            try:
-                # Попробуем передать functions в chat
-                response = self._client.chat(chat_obj, functions=self._functions)
-            except TypeError:
-                # Если не поддерживается через параметр, пробуем другой способ
-                logger.warning("Functions parameter not supported in this SDK version, trying without")
-                response = self._client.chat(chat_obj)
-        else:
-            response = self._client.chat(chat_obj)
+        # Вызываем GigaChat API with retry for rate limiting
+        import time
+        max_retries = 3
+        retry_delay = 2  # Start with 2 seconds
+        response = None
         
-        # Вызываем GigaChat API
+        for attempt in range(max_retries):
+            try:
+                # Make API call
+                if self._functions:
+                    # GigaChat SDK может принимать functions через отдельный параметр
+                    # Проверяем документацию SDK для правильного формата
+                    try:
+                        # Попробуем передать functions в chat
+                        response = self._client.chat(chat_obj, functions=self._functions)
+                    except TypeError:
+                        # Если не поддерживается через параметр, пробуем другой способ
+                        logger.warning("Functions parameter not supported in this SDK version, trying without")
+                        response = self._client.chat(chat_obj)
+                else:
+                    response = self._client.chat(chat_obj)
+                
+                # If successful, break out of retry loop
+                break
+                
+            except Exception as e:
+                # Check if it's a 429 rate limit error
+                is_rate_limit = (
+                    ResponseError and isinstance(e, ResponseError) and 
+                    hasattr(e, 'status_code') and e.status_code == 429
+                ) or (
+                    "429" in str(e) or "Too Many Requests" in str(e)
+                )
+                
+                if is_rate_limit and attempt < max_retries - 1:
+                    # Exponential backoff for rate limiting
+                    wait_time = retry_delay * (2 ** attempt)
+                    logger.warning(
+                        f"Rate limit (429) hit, retrying in {wait_time}s "
+                        f"(attempt {attempt + 1}/{max_retries})"
+                    )
+                    time.sleep(wait_time)
+                    continue
+                else:
+                    # Re-raise if not rate limit or out of retries
+                    raise
+        
+        # Извлекаем ответ
+        if response is None:
+            raise ValueError("Failed to get response from GigaChat after retries")
+        
         try:
-            
-            # Извлекаем ответ
             if response.choices and len(response.choices) > 0:
                 message = response.choices[0].message
                 content = message.content if hasattr(message, 'content') else ""
