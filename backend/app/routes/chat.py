@@ -8,6 +8,7 @@ from app.utils.auth import get_current_user
 from app.models.case import Case, ChatMessage, File as FileModel
 from app.models.user import User
 from app.services.rag_service import RAGService
+from app.services.document_processor import DocumentProcessor
 from app.services.langchain_memory import MemoryService
 from app.services.langchain_agents import PlanningAgent
 from app.services.analysis_service import AnalysisService
@@ -20,8 +21,9 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
-# Initialize RAG service
+# Initialize RAG service and document processor
 rag_service = RAGService()
+document_processor = DocumentProcessor()
 memory_service = MemoryService()
 
 
@@ -257,8 +259,8 @@ async def chat(
             num_documents = case.num_documents if case else 0
             file_names = case.file_names if case and case.file_names else []
             
-            # Create Planning Agent
-            planning_agent = PlanningAgent()
+            # Create Planning Agent with RAG service for document access
+            planning_agent = PlanningAgent(rag_service=rag_service, document_processor=document_processor)
             
             # Create analysis plan with document information
             plan = planning_agent.plan_analysis(

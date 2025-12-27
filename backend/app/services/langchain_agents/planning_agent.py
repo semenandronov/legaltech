@@ -4,8 +4,11 @@ from app.services.llm_factory import create_llm
 from app.services.langchain_agents.agent_factory import create_legal_agent
 from app.services.langchain_agents.planning_tools import get_planning_tools, AVAILABLE_ANALYSES
 from app.services.langchain_agents.prompts import get_agent_prompt
+from app.services.rag_service import RAGService
+from app.services.document_processor import DocumentProcessor
 from app.config import config
 from langchain_core.messages import HumanMessage
+from sqlalchemy.orm import Session
 import json
 import re
 import logging
@@ -16,8 +19,13 @@ logger = logging.getLogger(__name__)
 class PlanningAgent:
     """Agent that converts natural language tasks to analysis plans"""
     
-    def __init__(self):
-        """Initialize planning agent"""
+    def __init__(self, rag_service: Optional[RAGService] = None, document_processor: Optional[DocumentProcessor] = None):
+        """Initialize planning agent
+        
+        Args:
+            rag_service: Optional RAG service for document retrieval
+            document_processor: Optional document processor
+        """
         # Initialize LLM через factory (поддерживает YandexGPT и GigaChat)
         try:
             self.llm = create_llm(temperature=0.1)  # Низкая температура для консистентности
@@ -27,8 +35,20 @@ class PlanningAgent:
             logger.error(f"Failed to initialize LLM: {e}")
             raise ValueError(f"Ошибка инициализации LLM: {str(e)}")
         
+        # Store RAG service for document retrieval
+        self.rag_service = rag_service
+        self.document_processor = document_processor
+        
         # Get planning tools
-        self.tools = get_planning_tools()
+        planning_tools = get_planning_tools()
+        
+        # Add retrieve_documents_tool if RAG service is available
+        self.tools = planning_tools
+        if rag_service and document_processor:
+            from app.services.langchain_agents.tools import initialize_tools, retrieve_documents_tool
+            initialize_tools(rag_service, document_processor)
+            self.tools = planning_tools + [retrieve_documents_tool]
+            logger.info("✅ Planning agent has access to retrieve_documents_tool")
         
         # Get prompt
         prompt = get_agent_prompt("planning")
@@ -82,6 +102,10 @@ class PlanningAgent:
                 if len(available_documents) > 5:
                     docs_preview += f" и еще {len(available_documents) - 5} документов"
                 task_message += f"\n\nПримеры документов в деле: {docs_preview}."
+            
+            # Если есть RAG service, предлагаем использовать retrieve_documents_tool
+            if self.rag_service:
+                task_message += "\n\nВАЖНО: Документы уже загружены в систему. Если нужно увидеть содержимое документов, используй retrieve_documents_tool для поиска релевантных документов по запросу пользователя."
             
             message = HumanMessage(content=task_message)
             

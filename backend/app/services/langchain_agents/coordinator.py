@@ -39,9 +39,12 @@ class AgentCoordinator:
         # Create graph
         self.graph = create_analysis_graph(db, rag_service, document_processor)
         
-        # Initialize planning agent
+        # Initialize planning agent with RAG service for document access
         try:
-            self.planning_agent = PlanningAgent()
+            self.planning_agent = PlanningAgent(
+                rag_service=rag_service,
+                document_processor=document_processor
+            )
         except Exception as e:
             logger.warning(f"Failed to initialize PlanningAgent: {e}, will use analysis_types directly")
             self.planning_agent = None
