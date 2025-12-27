@@ -1,4 +1,4 @@
-"""Helper functions for direct LLM calls without agents (YandexGPT doesn't support tools)"""
+"""Helper functions for direct LLM calls without agents"""
 from typing import List, Dict, Any, Optional, Type
 from langchain_core.messages import SystemMessage, HumanMessage
 from langchain_core.output_parsers import OutputFixingParser, RetryOutputParser, PydanticOutputParser
@@ -41,7 +41,7 @@ def direct_llm_call_with_rag(
     Returns:
         LLM response text
     """
-    # Инициализируем LLM через factory (поддерживает YandexGPT и GigaChat)
+    # Инициализируем LLM через factory (GigaChat)
     llm = create_llm(
         model=model,
         temperature=temperature
@@ -152,7 +152,7 @@ def extract_json_from_response(response_text: str) -> Optional[Any]:
 
 def create_fixing_parser(
     pydantic_model: Type[BaseModel],
-    llm: Optional[Any] = None,  # Может быть ChatYandexGPT или GigaChat (langchain-gigachat)
+    llm: Optional[Any] = None,  # ChatGigaChat
     max_retries: int = 3
 ) -> RetryOutputParser:
     """
@@ -196,7 +196,7 @@ def create_fixing_parser(
 def parse_with_fixing(
     response_text: str,
     pydantic_model: Type[BaseModel],
-    llm: Optional[Any] = None,  # Может быть ChatYandexGPT или GigaChat (langchain-gigachat)
+    llm: Optional[Any] = None,  # ChatGigaChat
     max_retries: int = 3,
     is_list: bool = True
 ) -> Optional[Any]:

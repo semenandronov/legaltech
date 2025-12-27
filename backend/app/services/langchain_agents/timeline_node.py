@@ -49,11 +49,11 @@ def timeline_agent_node(
         # Get tools for timeline agent
         tools = get_all_tools()
         
-        # Initialize LLM через factory (поддерживает YandexGPT и GigaChat)
+        # Initialize LLM через factory (GigaChat)
         llm = create_llm(temperature=0.1)
         
-        # Проверяем, поддерживает ли LLM function calling (GigaChat)
-        use_tools = hasattr(llm, 'bind_tools') and config.LLM_PROVIDER.lower() == "gigachat"
+        # Проверяем, поддерживает ли LLM function calling
+        use_tools = hasattr(llm, 'bind_tools')
         
         if use_tools and rag_service:
             # GigaChat с function calling - агент сам вызовет retrieve_documents_tool
@@ -94,7 +94,7 @@ def timeline_agent_node(
             else:
                 response_text = str(result)
         else:
-            # YandexGPT или GigaChat без tools - используем прямой RAG подход
+            # GigaChat без tools - используем прямой RAG подход
             if not rag_service:
                 raise ValueError("RAG service required for timeline extraction")
             

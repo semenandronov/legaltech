@@ -70,8 +70,8 @@ class Config:
     GIGACHAT_VERIFY_SSL: bool = os.getenv("GIGACHAT_VERIFY_SSL", "true").lower() == "true"
     GIGACHAT_SCOPE: str = os.getenv("GIGACHAT_SCOPE", "GIGACHAT_API_PERS")  # Scope для получения токена (GIGACHAT_API_PERS для физических лиц)
     
-    # Выбор LLM провайдера для агентов (yandex или gigachat)
-    LLM_PROVIDER: str = os.getenv("LLM_PROVIDER", "yandex")  # "yandex" или "gigachat"
+    # Выбор LLM провайдера для агентов (только gigachat)
+    LLM_PROVIDER: str = os.getenv("LLM_PROVIDER", "gigachat")  # "gigachat"
     # Yandex Index prefix - removed (Yandex Vector Store no longer used)
     # YANDEX_INDEX_PREFIX: str = os.getenv("YANDEX_INDEX_PREFIX", "legal_ai_vault")
     

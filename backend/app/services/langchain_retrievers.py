@@ -7,7 +7,7 @@ from langchain_core.documents import Document
 from langchain_core.prompts import PromptTemplate
 from app.config import config
 from app.services.document_processor import DocumentProcessor
-from app.services.yandex_llm import ChatYandexGPT
+# Removed YandexGPT import - using GigaChat via llm_factory
 
 logger = logging.getLogger(__name__)
 
@@ -88,11 +88,9 @@ class AdvancedRetrieverService:
     def __init__(self, document_processor: DocumentProcessor):
         """Initialize retriever service"""
         self.document_processor = document_processor
-        # Use ChatYandexGPT instead of ChatOpenAI
-        self.llm = ChatYandexGPT(
-            model=config.YANDEX_GPT_MODEL or "yandexgpt-lite",
-            temperature=0.7,
-        )
+        # Use GigaChat via factory
+        from app.services.llm_factory import create_llm
+        self.llm = create_llm(temperature=0.7)
     
     def _get_base_documents(self, case_id: str, query: str, k: int = 5, db: Optional[Session] = None) -> List[Document]:
         """
@@ -210,7 +208,7 @@ class AdvancedRetrieverService:
         Retrieve documents using ContextualCompressionRetriever
         
         This compresses retrieved documents to only relevant parts using LLM.
-        Uses YandexGPT for compression to save tokens and improve relevance.
+        Uses GigaChat for compression to save tokens and improve relevance.
         
         Args:
             case_id: Case identifier
@@ -226,7 +224,7 @@ class AdvancedRetrieverService:
                 # Get base retriever from document processor
                 base_retriever = self.document_processor.vector_store.get_retriever(case_id, k=k*2)
                 
-                # Create compressor with YandexGPT
+                # Create compressor with GigaChat
                 compressor = LLMChainExtractor.from_llm(self.llm)
                 
                 # Create compression retriever

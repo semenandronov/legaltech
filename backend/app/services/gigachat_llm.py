@@ -23,7 +23,7 @@ class ChatGigaChat(BaseChatModel):
     """
     Wrapper для GigaChat с поддержкой function calling через LangChain
     
-    GigaChat поддерживает function calling, в отличие от YandexGPT!
+    GigaChat поддерживает function calling!
     """
     
     credentials: str

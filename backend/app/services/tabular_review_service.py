@@ -8,7 +8,7 @@ from app.models.tabular_review import (
 )
 from app.models.case import Case, File
 from app.models.user import User
-from app.services.yandex_llm import ChatYandexGPT
+from app.services.llm_factory import create_llm
 from app.config import config
 import logging
 import asyncio
@@ -25,13 +25,10 @@ class TabularReviewService:
         self.db = db
         # Initialize LLM for extraction
         if config.YANDEX_API_KEY or config.YANDEX_IAM_TOKEN:
-            self.llm = ChatYandexGPT(
-                model=config.YANDEX_GPT_MODEL or "yandexgpt-lite",
-                temperature=0.1,  # Low temperature for deterministic extraction
-            )
+            self.llm = create_llm(temperature=0.1)  # Low temperature for deterministic extraction
         else:
             self.llm = None
-            logger.warning("YandexGPT not configured, extraction will not work")
+            logger.warning("GigaChat not configured, extraction will not work")
     
     def create_tabular_review(
         self, 

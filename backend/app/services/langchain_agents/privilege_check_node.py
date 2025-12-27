@@ -57,7 +57,7 @@ def privilege_check_agent_node(
             new_state["privilege_result"] = None
             return new_state
         
-        # Initialize LLM через factory (поддерживает YandexGPT и GigaChat)
+        # Initialize LLM через factory (GigaChat)
         llm = create_llm(temperature=0.1)  # Низкая температура для детерминизма
         
         # Get privilege check prompt

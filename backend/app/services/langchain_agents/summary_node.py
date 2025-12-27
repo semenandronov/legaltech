@@ -55,11 +55,11 @@ def summary_agent_node(
         # Get tools
         tools = get_all_tools()
         
-        # Initialize LLM через factory (поддерживает YandexGPT и GigaChat)
+        # Initialize LLM через factory (GigaChat)
         llm = create_llm(temperature=0.3)  # Creative задача, но все еще контролируемая
         
-        # Проверяем, поддерживает ли LLM function calling (GigaChat)
-        use_tools = hasattr(llm, 'bind_tools') and config.LLM_PROVIDER.lower() == "gigachat"
+        # Проверяем, поддерживает ли LLM function calling
+        use_tools = hasattr(llm, 'bind_tools')
         
         key_facts_text = json.dumps(key_facts_result.get("facts", {}), ensure_ascii=False, indent=2)
         
@@ -113,8 +113,8 @@ def summary_agent_node(
             else:
                 summary_text = str(result)
         else:
-            # YandexGPT или GigaChat без tools - используем прямой подход
-            logger.info("Using direct approach (YandexGPT or GigaChat without tools)")
+            # GigaChat без tools - используем прямой подход
+            logger.info("Using direct approach (GigaChat without tools)")
             
             # Используем helper для прямого вызова LLM
             from app.services.langchain_agents.llm_helper import direct_llm_call_with_rag

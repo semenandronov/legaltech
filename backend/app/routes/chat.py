@@ -218,31 +218,17 @@ async def chat(
         )
     
     # Используем LLM для определения типа запроса (задача или вопрос)
-    # Только YandexGPT, без fallback на OpenRouter
-    from app.services.yandex_llm import ChatYandexGPT
-    
-    if not (config.YANDEX_API_KEY or config.YANDEX_IAM_TOKEN):
-        raise HTTPException(
-            status_code=500,
-            detail="Yandex API ключ не настроен. Пожалуйста, настройте YANDEX_API_KEY или YANDEX_IAM_TOKEN."
-        )
-    
-    if not config.YANDEX_FOLDER_ID:
-        raise HTTPException(
-            status_code=500,
-            detail="YANDEX_FOLDER_ID не настроен. Пожалуйста, настройте YANDEX_FOLDER_ID."
-        )
+    from app.services.llm_factory import create_llm
     
     try:
-        classification_llm = ChatYandexGPT(
+        classification_llm = create_llm(
             temperature=0.0,  # Нулевая температура для консистентности
-            max_tokens=10
         )
     except Exception as e:
-        logger.error(f"Failed to initialize YandexGPT for classification: {e}")
+        logger.error(f"Failed to initialize GigaChat for classification: {e}")
         raise HTTPException(
             status_code=500,
-            detail=f"Ошибка инициализации YandexGPT: {str(e)}"
+            detail=f"Ошибка инициализации GigaChat: {str(e)}. Убедитесь, что GIGACHAT_CREDENTIALS установлен."
         )
     
     # Классифицируем запрос через LLM

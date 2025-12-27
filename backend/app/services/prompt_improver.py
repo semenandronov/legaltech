@@ -5,7 +5,7 @@ Similar to Harvey's "Improve" feature that enhances user queries
 to be more effective for legal research and analysis.
 """
 from typing import Dict, Any, List, Optional
-from app.services.yandex_llm import ChatYandexGPT
+from app.services.llm_factory import create_llm
 from app.config import config
 from langchain_core.messages import SystemMessage, HumanMessage
 import logging
@@ -72,10 +72,7 @@ class PromptImprover:
     def __init__(self):
         """Initialize prompt improver"""
         if config.YANDEX_API_KEY or config.YANDEX_IAM_TOKEN:
-            self.llm = ChatYandexGPT(
-                model=config.YANDEX_GPT_MODEL or "yandexgpt-lite",
-                temperature=0.3,
-            )
+            self.llm = create_llm(temperature=0.3)
         else:
             self.llm = None
             logger.warning("Prompt Improver: LLM not configured")

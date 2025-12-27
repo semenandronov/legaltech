@@ -21,8 +21,8 @@ class RAGService:
         self.retriever_service = AdvancedRetrieverService(self.document_processor)
         self.memory_service = MemoryService()
         
-        # Using direct RAG with YandexGPT + pgvector
-        logger.info("✅ Using direct RAG with YandexGPT + pgvector")
+        # Using direct RAG with GigaChat + pgvector
+        logger.info("✅ Using direct RAG with GigaChat + pgvector")
     
     def retrieve_context(
         self,
@@ -162,7 +162,7 @@ class RAGService:
         """
         Generate answer with source references
         
-        Uses direct RAG with pgvector + YandexGPT (no Assistant API).
+        Uses direct RAG with pgvector + GigaChat (no Assistant API).
         
         Args:
             case_id: Case identifier
@@ -190,7 +190,7 @@ class RAGService:
             if query_lower == key or query_lower.startswith(key + " "):
                 return response, []
         
-        # Use direct RAG with pgvector + YandexGPT
+        # Use direct RAG with pgvector + GigaChat
         return self._generate_with_direct_rag(case_id, query, k, db, history)
     
     def _generate_with_direct_rag(
@@ -201,8 +201,8 @@ class RAGService:
         db: Optional[Session],
         history: Optional[List[Dict[str, str]]]
     ) -> Tuple[str, List[Dict[str, Any]]]:
-        """Generate using direct RAG with pgvector + YandexGPT"""
-        from app.services.yandex_llm import ChatYandexGPT
+        """Generate using direct RAG with pgvector + GigaChat"""
+        from app.services.llm_factory import create_llm
         from langchain_core.prompts import ChatPromptTemplate
         from langchain_core.messages import HumanMessage, AIMessage, SystemMessage
         
@@ -254,8 +254,8 @@ class RAGService:
 Ответ (обязательно укажи источники):"""
         messages.append(HumanMessage(content=user_message))
         
-        # Generate answer using YandexGPT
-        llm = ChatYandexGPT()
+        # Generate answer using GigaChat
+        llm = create_llm()
         response = llm.invoke(messages)
         answer = response.content if hasattr(response, 'content') else str(response)
         

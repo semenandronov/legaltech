@@ -91,7 +91,7 @@ def safe_agent_invoke(
         error_type = type(e).__name__
         
         # Check if error is related to tool use not being supported
-        # YandexGPT doesn't support bind_tools(), which raises NotImplementedError
+        # Check if error is related to tool use not being supported
         is_tool_error = (
             error_type == "NotImplementedError" or
             "bind_tools" in error_msg or

@@ -71,7 +71,7 @@ def relationship_agent_node(
             new_state["relationship_result"] = None
             return new_state
         
-        # Initialize LLM через factory (поддерживает YandexGPT и GigaChat)
+        # Initialize LLM через factory (GigaChat)
         llm = create_llm(temperature=0.1)
         
         # Get relationship extraction prompt

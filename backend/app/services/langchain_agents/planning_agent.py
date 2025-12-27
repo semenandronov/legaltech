@@ -26,11 +26,10 @@ class PlanningAgent:
             rag_service: Optional RAG service for document retrieval
             document_processor: Optional document processor
         """
-        # Initialize LLM через factory (поддерживает YandexGPT и GigaChat)
+        # Initialize LLM через factory (GigaChat)
         try:
             self.llm = create_llm(temperature=0.1)  # Низкая температура для консистентности
-            provider = config.LLM_PROVIDER.lower() if config.LLM_PROVIDER else "yandex"
-            logger.info(f"✅ Using {provider} for planning")
+            logger.info("✅ Using GigaChat for planning")
         except Exception as e:
             logger.error(f"Failed to initialize LLM: {e}")
             raise ValueError(f"Ошибка инициализации LLM: {str(e)}")
@@ -111,38 +110,37 @@ class PlanningAgent:
                 else:
                     task_message += "\n\nВАЖНО: Документы уже загружены в систему. Если нужно увидеть содержимое документов для понимания задачи, используй retrieve_documents_tool для поиска релевантных документов."
             
-            # Проверяем, поддерживает ли LLM function calling
-            use_tools = hasattr(self.llm, 'bind_tools') and config.LLM_PROVIDER.lower() == "gigachat"
+            # GigaChat поддерживает function calling
+            use_tools = hasattr(self.llm, 'bind_tools')
             
             if use_tools:
                 logger.info("Planning agent: Using GigaChat with function calling - agent can use retrieve_documents_tool")
-            
-            # Если есть RAG service и LLM не поддерживает tools (YandexGPT), используем прямой RAG
-            if self.rag_service and not use_tools:
-                logger.info("Planning agent: Using direct RAG approach (YandexGPT without function calling)")
-                from app.services.langchain_agents.llm_helper import direct_llm_call_with_rag
-                from app.utils.database import SessionLocal
-                
-                # Используем прямой RAG для получения контекста документов
-                db = SessionLocal()
-                try:
-                    # Получаем релевантные документы через RAG
-                    relevant_docs = self.rag_service.retrieve_context(
-                        case_id=case_id,
-                        query=user_task,
-                        k=10,  # Небольшое количество для планирования
-                        db=db
-                    )
+            else:
+                logger.warning("Planning agent: GigaChat bind_tools not available, using direct RAG approach")
+                # Fallback: используем прямой RAG если function calling недоступен
+                if self.rag_service:
+                    from app.utils.database import SessionLocal
                     
-                    if relevant_docs:
-                        # Форматируем документы для промпта
-                        sources_text = self.rag_service.format_sources_for_prompt(relevant_docs)
-                        task_message += f"\n\n=== КОНТЕКСТ ИЗ ДОКУМЕНТОВ ===\n{sources_text}\n\nИспользуй эту информацию для понимания задачи и создания плана анализа."
-                        logger.info(f"Planning agent: Retrieved {len(relevant_docs)} documents for context")
-                    else:
-                        logger.warning(f"Planning agent: No documents found via RAG for case {case_id}")
-                finally:
-                    db.close()
+                    # Используем прямой RAG для получения контекста документов
+                    db = SessionLocal()
+                    try:
+                        # Получаем релевантные документы через RAG
+                        relevant_docs = self.rag_service.retrieve_context(
+                            case_id=case_id,
+                            query=user_task,
+                            k=10,  # Небольшое количество для планирования
+                            db=db
+                        )
+                        
+                        if relevant_docs:
+                            # Форматируем документы для промпта
+                            sources_text = self.rag_service.format_sources_for_prompt(relevant_docs)
+                            task_message += f"\n\n=== КОНТЕКСТ ИЗ ДОКУМЕНТОВ ===\n{sources_text}\n\nИспользуй эту информацию для понимания задачи и создания плана анализа."
+                            logger.info(f"Planning agent: Retrieved {len(relevant_docs)} documents for context")
+                        else:
+                            logger.warning(f"Planning agent: No documents found via RAG for case {case_id}")
+                    finally:
+                        db.close()
             
             message = HumanMessage(content=task_message)
             

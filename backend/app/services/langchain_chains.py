@@ -7,7 +7,7 @@ from langchain_core.prompts import PromptTemplate, ChatPromptTemplate
 from langchain_core.documents import Document
 from app.config import config
 from app.services.document_processor import DocumentProcessor
-from app.services.yandex_llm import ChatYandexGPT
+from app.services.llm_factory import create_llm
 # YandexIndexRetriever removed - using pgvector retriever instead
 
 logger = logging.getLogger(__name__)
@@ -67,11 +67,8 @@ class ChainService:
     def __init__(self, document_processor: DocumentProcessor = None):
         """Initialize chain service"""
         self.document_processor = document_processor or DocumentProcessor()
-        # Use ChatYandexGPT instead of ChatOpenAI
-        self.llm = ChatYandexGPT(
-            model=config.YANDEX_GPT_MODEL or "yandexgpt-lite",
-            temperature=0.7,
-        )
+        # Use GigaChat via factory
+        self.llm = create_llm(temperature=0.7)
     
     def create_retrieval_qa_chain(self, case_id: str, db: Optional[Session] = None) -> RetrievalQA:
         """

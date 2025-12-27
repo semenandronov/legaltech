@@ -2,7 +2,7 @@
 from typing import Dict, Any, List
 from sqlalchemy.orm import Session
 from app.services.tabular_review_service import TabularReviewService
-from app.services.yandex_llm import ChatYandexGPT
+from app.services.llm_factory import create_llm
 from app.config import config
 import logging
 import json
@@ -20,13 +20,10 @@ class TabularChatService:
         
         # Initialize LLM
         if config.YANDEX_API_KEY or config.YANDEX_IAM_TOKEN:
-            self.llm = ChatYandexGPT(
-                model=config.YANDEX_GPT_MODEL or "yandexgpt-lite",
-                temperature=0.3,  # Slightly higher for more natural responses
-            )
+            self.llm = create_llm(temperature=0.3)  # Slightly higher for more natural responses
         else:
             self.llm = None
-            logger.warning("YandexGPT not configured, tabular chat will not work")
+            logger.warning("GigaChat not configured, tabular chat will not work")
     
     def format_table_data_for_llm(self, table_data: Dict[str, Any]) -> str:
         """Format table data as text for LLM context"""

@@ -40,8 +40,7 @@ def create_supervisor_agent() -> Any:
         create_handoff_tool("relationship"),
     ]
     
-    # Initialize LLM через factory (поддерживает YandexGPT и GigaChat)
-    # Для supervisor можно использовать любой провайдер, но YandexGPT обычно достаточно
+    # Initialize LLM через factory (GigaChat)
     llm = create_llm(temperature=0.1)  # Низкая температура для детерминизма
     
     # Get supervisor prompt
