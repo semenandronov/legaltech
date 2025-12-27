@@ -5,8 +5,8 @@ import sys
 # Add backend to path
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'backend'))
 
-# Используем официальную библиотеку langchain-gigachat от AI Forever
-from langchain_gigachat.chat_models import GigaChat
+# Используем наш кастомный wrapper (совместим с langchain-core 1.2.2)
+from app.services.gigachat_llm import ChatGigaChat
 from app.services.langchain_agents.tools import retrieve_documents_tool
 from app.services.gigachat_token_helper import test_gigachat_credentials, get_gigachat_access_token
 from langchain_core.messages import HumanMessage, SystemMessage
@@ -19,7 +19,7 @@ def test_gigachat_basic():
     print("=" * 60)
     
     try:
-        llm = GigaChat(
+        llm = ChatGigaChat(
             credentials=config.GIGACHAT_CREDENTIALS,
             temperature=0.1,
             verify_ssl_certs=config.GIGACHAT_VERIFY_SSL
@@ -47,7 +47,7 @@ def test_gigachat_with_tools():
     print("=" * 60)
     
     try:
-        llm = GigaChat(
+        llm = ChatGigaChat(
             credentials=config.GIGACHAT_CREDENTIALS,
             temperature=0.1,
             verify_ssl_certs=config.GIGACHAT_VERIFY_SSL

@@ -33,7 +33,8 @@ yandex-cloud-ml-sdk==0.17.1  # Официальный SDK для YandexGPT и Em
 yandexcloud>=0.359.0  # Обновлено для совместимости с yandex-cloud-ml-sdk (требует >=0.359.0)
 requests>=2.32.5  # Обновлено для совместимости с langchain-community
 
-# GigaChat (Сбер) - через GigaChain
-gigachat>=0.1.0  # Официальный SDK для GigaChat
-langchain-gigachat>=0.1.0  # Официальная интеграция GigaChat с LangChain от AI Forever
+# GigaChat (Сбер) - используем кастомный wrapper (совместим с langchain-core 1.2.2)
+# langchain-gigachat требует langchain-core<0.4, что несовместимо с нашими версиями
+gigachat>=0.1.0  # Официальный SDK для GigaChat (используется в нашем кастомном wrapper)
+# langchain-gigachat>=0.1.0  # Несовместим с langchain-core==1.2.2, используем кастомный wrapper
 

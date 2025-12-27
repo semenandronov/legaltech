@@ -29,8 +29,9 @@ def create_llm(
     
     if provider == "gigachat":
         try:
-            # Используем официальную библиотеку langchain-gigachat от AI Forever
-            from langchain_gigachat.chat_models import GigaChat
+            # Используем наш кастомный wrapper (совместим с langchain-core 1.2.2)
+            # langchain-gigachat требует langchain-core<0.4, что несовместимо с нашими версиями
+            from app.services.gigachat_llm import ChatGigaChat
             
             if not config.GIGACHAT_CREDENTIALS:
                 logger.warning(
@@ -39,8 +40,8 @@ def create_llm(
                 )
                 provider = "yandex"
             else:
-                logger.info("Using GigaChat LLM via langchain-gigachat (official, supports function calling)")
-                return GigaChat(
+                logger.info("Using GigaChat LLM via custom wrapper (supports function calling, compatible with langchain-core 1.2.2)")
+                return ChatGigaChat(
                     credentials=config.GIGACHAT_CREDENTIALS,
                     model=model or config.GIGACHAT_MODEL,
                     temperature=temperature,
@@ -49,8 +50,8 @@ def create_llm(
                 )
         except ImportError as e:
             logger.warning(
-                f"langchain-gigachat not available ({e}), falling back to YandexGPT. "
-                "Install with: pip install langchain-gigachat"
+                f"GigaChat SDK not available ({e}), falling back to YandexGPT. "
+                "Install with: pip install gigachat"
             )
             provider = "yandex"
         except Exception as e:
