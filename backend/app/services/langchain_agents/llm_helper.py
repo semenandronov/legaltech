@@ -2,6 +2,17 @@
 from typing import List, Dict, Any, Optional, Type
 from langchain_core.messages import SystemMessage, HumanMessage
 from langchain_core.output_parsers import PydanticOutputParser
+from langchain_core.exceptions import OutputParserException
+from pydantic import BaseModel
+from app.services.llm_factory import create_llm
+from app.services.rag_service import RAGService
+from app.config import config
+from sqlalchemy.orm import Session
+import logging
+import json
+
+# Initialize logger before using it in import error handlers
+logger = logging.getLogger(__name__)
 
 # OutputFixingParser and RetryOutputParser may not be available in all langchain_core versions
 OUTPUT_FIXING_PARSER_AVAILABLE = False
@@ -18,16 +29,6 @@ try:
     RETRY_OUTPUT_PARSER_AVAILABLE = True
 except ImportError:
     logger.warning("RetryOutputParser not available in langchain_core, will use PydanticOutputParser only")
-from langchain_core.exceptions import OutputParserException
-from pydantic import BaseModel
-from app.services.llm_factory import create_llm
-from app.services.rag_service import RAGService
-from app.config import config
-from sqlalchemy.orm import Session
-import logging
-import json
-
-logger = logging.getLogger(__name__)
 
 
 def direct_llm_call_with_rag(
