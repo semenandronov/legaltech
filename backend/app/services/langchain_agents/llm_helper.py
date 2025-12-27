@@ -170,7 +170,7 @@ def create_fixing_parser(
     pydantic_model: Type[BaseModel],
     llm: Optional[Any] = None,  # ChatGigaChat
     max_retries: int = 3
-) -> RetryOutputParser:
+):
     """
     Create a parser with automatic error fixing and retry logic.
     
@@ -180,7 +180,7 @@ def create_fixing_parser(
         max_retries: Maximum number of retry attempts
         
     Returns:
-        RetryOutputParser with OutputFixingParser wrapper
+        Parser instance (RetryOutputParser if available, otherwise PydanticOutputParser)
     """
     if llm is None:
         llm = create_llm(temperature=0.1)
@@ -199,18 +199,21 @@ def create_fixing_parser(
         # OutputFixingParser not available, use base parser directly
         fixing_parser = base_parser
     
-    # Wrap in retry parser (retries on errors)
-    try:
-        retry_parser = RetryOutputParser.from_llm(
-            parser=fixing_parser,
-            llm=llm,
-            max_retries=max_retries
-        )
-    except Exception as e:
-        logger.warning(f"Could not create RetryOutputParser, using fixing parser: {e}")
-        retry_parser = fixing_parser
-    
-    return retry_parser
+    # Wrap in retry parser (retries on errors) if available
+    if RETRY_OUTPUT_PARSER_AVAILABLE:
+        try:
+            retry_parser = RetryOutputParser.from_llm(
+                parser=fixing_parser,
+                llm=llm,
+                max_retries=max_retries
+            )
+            return retry_parser
+        except Exception as e:
+            logger.warning(f"Could not create RetryOutputParser, using fixing parser: {e}")
+            return fixing_parser
+    else:
+        # RetryOutputParser not available, return fixing parser (or base parser)
+        return fixing_parser
 
 
 def parse_with_fixing(
