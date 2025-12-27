@@ -22,14 +22,15 @@ def create_llm(
         **kwargs: Additional arguments
     
     Returns:
-        LLM instance (ChatYandexGPT or ChatGigaChat)
+        LLM instance (ChatYandexGPT or GigaChat from langchain-gigachat)
     """
     provider = provider or config.LLM_PROVIDER or "yandex"
     provider = provider.lower()
     
     if provider == "gigachat":
         try:
-            from app.services.gigachat_llm import ChatGigaChat
+            # Используем официальную библиотеку langchain-gigachat от AI Forever
+            from langchain_gigachat.chat_models import GigaChat
             
             if not config.GIGACHAT_CREDENTIALS:
                 logger.warning(
@@ -38,8 +39,8 @@ def create_llm(
                 )
                 provider = "yandex"
             else:
-                logger.info("Using GigaChat LLM (supports function calling)")
-                return ChatGigaChat(
+                logger.info("Using GigaChat LLM via langchain-gigachat (official, supports function calling)")
+                return GigaChat(
                     credentials=config.GIGACHAT_CREDENTIALS,
                     model=model or config.GIGACHAT_MODEL,
                     temperature=temperature,
@@ -47,7 +48,10 @@ def create_llm(
                     **kwargs
                 )
         except ImportError as e:
-            logger.warning(f"GigaChat not available ({e}), falling back to YandexGPT")
+            logger.warning(
+                f"langchain-gigachat not available ({e}), falling back to YandexGPT. "
+                "Install with: pip install langchain-gigachat"
+            )
             provider = "yandex"
         except Exception as e:
             logger.error(f"Failed to initialize GigaChat: {e}, falling back to YandexGPT")

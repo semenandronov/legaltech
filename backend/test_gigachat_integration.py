@@ -5,7 +5,8 @@ import sys
 # Add backend to path
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'backend'))
 
-from app.services.gigachat_llm import ChatGigaChat
+# Используем официальную библиотеку langchain-gigachat от AI Forever
+from langchain_gigachat.chat_models import GigaChat
 from app.services.langchain_agents.tools import retrieve_documents_tool
 from app.services.gigachat_token_helper import test_gigachat_credentials, get_gigachat_access_token
 from langchain_core.messages import HumanMessage, SystemMessage
@@ -18,9 +19,10 @@ def test_gigachat_basic():
     print("=" * 60)
     
     try:
-        llm = ChatGigaChat(
+        llm = GigaChat(
             credentials=config.GIGACHAT_CREDENTIALS,
-            temperature=0.1
+            temperature=0.1,
+            verify_ssl_certs=config.GIGACHAT_VERIFY_SSL
         )
         
         messages = [
@@ -45,9 +47,10 @@ def test_gigachat_with_tools():
     print("=" * 60)
     
     try:
-        llm = ChatGigaChat(
+        llm = GigaChat(
             credentials=config.GIGACHAT_CREDENTIALS,
-            temperature=0.1
+            temperature=0.1,
+            verify_ssl_certs=config.GIGACHAT_VERIFY_SSL
         )
         
         # Bind tools
@@ -93,19 +96,20 @@ def test_llm_factory():
         # Test with GigaChat
         llm = create_llm(provider="gigachat", temperature=0.1)
         print(f"✅ Created LLM: {type(llm).__name__}")
+        print(f"   Using: langchain-gigachat (official from AI Forever)")
         
         # Test basic call
         messages = [HumanMessage(content="Скажи 'Привет'")]
         response = llm.invoke(messages)
         print(f"✅ Response: {response.content[:100]}...")
         
-        # Test bind_tools
+        # Test bind_tools (langchain-gigachat должен поддерживать)
         if hasattr(llm, 'bind_tools'):
             tools = [retrieve_documents_tool]
             llm_with_tools = llm.bind_tools(tools)
             print(f"✅ bind_tools() работает! Bound {len(tools)} tools")
         else:
-            print("⚠️ bind_tools() не поддерживается")
+            print("⚠️ bind_tools() не поддерживается (может быть в другой версии)")
         
         return True
     except Exception as e:

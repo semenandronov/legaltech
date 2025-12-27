@@ -152,7 +152,7 @@ def extract_json_from_response(response_text: str) -> Optional[Any]:
 
 def create_fixing_parser(
     pydantic_model: Type[BaseModel],
-    llm: Optional[Any] = None,  # Может быть ChatYandexGPT или ChatGigaChat
+    llm: Optional[Any] = None,  # Может быть ChatYandexGPT или GigaChat (langchain-gigachat)
     max_retries: int = 3
 ) -> RetryOutputParser:
     """
@@ -196,7 +196,7 @@ def create_fixing_parser(
 def parse_with_fixing(
     response_text: str,
     pydantic_model: Type[BaseModel],
-    llm: Optional[Any] = None,  # Может быть ChatYandexGPT или ChatGigaChat
+    llm: Optional[Any] = None,  # Может быть ChatYandexGPT или GigaChat (langchain-gigachat)
     max_retries: int = 3,
     is_list: bool = True
 ) -> Optional[Any]:

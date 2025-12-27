@@ -53,13 +53,15 @@ curl -L -X POST 'https://ngw.devices.sberbank.ru:9443/api/v2/oauth' \
 
 ```bash
 cd backend
-pip install gigachat
+pip install langchain-gigachat
 ```
 
 Или добавьте в `requirements.txt`:
 ```
-gigachat>=0.1.0
+langchain-gigachat>=0.1.0
 ```
+
+**Примечание:** `langchain-gigachat` автоматически установит `gigachat` SDK как зависимость.
 
 ## Шаг 3: Настройка переменных окружения
 
@@ -101,23 +103,34 @@ python test_gigachat_integration.py
 
 ## Что изменилось
 
+### Используется официальная библиотека:
+- **`langchain-gigachat`** - Официальная интеграция GigaChat с LangChain от AI Forever (Сбер)
+- Полная поддержка LangChain и LangGraph
+- Нативная поддержка function calling
+
 ### Новые файлы:
-- `backend/app/services/gigachat_llm.py` - Wrapper для GigaChat
 - `backend/app/services/llm_factory.py` - Factory для выбора LLM провайдера
+- `backend/app/services/gigachat_token_helper.py` - Helper для управления токенами
 - `backend/test_gigachat_integration.py` - Тестовый скрипт
 
 ### Обновленные файлы:
 - `backend/app/config.py` - Добавлены настройки GigaChat
 - `backend/app/services/langchain_agents/timeline_node.py` - Использует `create_llm()` вместо прямого `ChatYandexGPT`
 - `backend/app/services/langchain_agents/llm_helper.py` - Использует `create_llm()` вместо прямого `ChatYandexGPT`
-- `backend/requirements.txt` - Добавлен `gigachat`
+- `backend/requirements.txt` - Добавлены `gigachat` и `langchain-gigachat`
 
-## Преимущества GigaChat
+### Устаревшие файлы (можно удалить после тестирования):
+- `backend/app/services/gigachat_llm.py` - Наш самописный wrapper (заменен на langchain-gigachat)
 
-1. ✅ **Function Calling** - Поддерживает `bind_tools()`, в отличие от YandexGPT
-2. ✅ **Автономность агентов** - LLM сам решает, когда вызывать инструменты
-3. ✅ **Итеративный поиск** - Многошаговые запросы с автоматическим выбором инструментов
-4. ✅ **Меньше токенов** - Только результаты вызовов в контексте, а не все документы
+## Преимущества GigaChat через langchain-gigachat
+
+1. ✅ **Официальная поддержка** - Библиотека от AI Forever (Сбер)
+2. ✅ **Function Calling** - Полная поддержка `bind_tools()` из коробки
+3. ✅ **Интеграция с LangChain** - Полная совместимость с LangChain и LangGraph
+4. ✅ **Автономность агентов** - LLM сам решает, когда вызывать инструменты
+5. ✅ **Итеративный поиск** - Многошаговые запросы с автоматическим выбором инструментов
+6. ✅ **Меньше токенов** - Только результаты вызовов в контексте, а не все документы
+7. ✅ **Автоматические обновления** - Обновления через PyPI
 
 ## Переключение между провайдерами
 
@@ -143,9 +156,10 @@ LLM_PROVIDER=gigachat
 
 2. **Проверьте доступность GigaChat:**
    ```python
-   from app.services.gigachat_llm import ChatGigaChat
-   llm = ChatGigaChat()
-   print(llm.is_available())  # Должно быть True
+   from langchain_gigachat.chat_models import GigaChat
+   from app.config import config
+   llm = GigaChat(credentials=config.GIGACHAT_CREDENTIALS)
+   # Если инициализация прошла успешно, GigaChat доступен
    ```
 
 3. **Проверьте логи:**
