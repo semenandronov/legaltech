@@ -491,14 +491,19 @@ def create_analysis_graph(
             db_url = db_url.replace("postgresql+psycopg2://", "postgresql://", 1)
         
         # PostgresSaver.from_conn_string() creates a checkpointer
-        # Note: In newer versions, this may require setup() to create tables
         checkpointer = PostgresSaver.from_conn_string(db_url)
         
-        # Try to setup tables if they don't exist (idempotent)
+        # Setup tables if they don't exist (idempotent)
+        # setup() may return a context manager in some versions, use it properly
         try:
-            checkpointer.setup()  # Creates checkpoint tables if they don't exist
+            setup_cm = checkpointer.setup()
+            # If setup() returns a context manager, use it
+            if hasattr(setup_cm, '__enter__') and hasattr(setup_cm, '__exit__'):
+                setup_cm.__enter__()
+                setup_cm.__exit__(None, None, None)
+            # Otherwise setup() was called directly
         except Exception as setup_error:
-            # Setup might fail if tables already exist, that's ok
+            # Setup might fail if tables already exist or if setup() works differently
             logger.debug(f"Checkpointer setup note: {setup_error}")
         
         logger.info("✅ Using PostgreSQL checkpointer for state persistence")
