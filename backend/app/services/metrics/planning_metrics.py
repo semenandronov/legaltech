@@ -46,7 +46,7 @@ class PlanningMetrics(Base):
     completed_at = Column(DateTime, nullable=True)
     
     # Additional metadata
-    metadata = Column(JSON, nullable=True)
+    metrics_metadata = Column("metadata", JSON, nullable=True)
 
 
 class MetricsCollector:
@@ -119,7 +119,7 @@ class MetricsCollector:
             tools_used=tools_used,
             sources_used=sources_used,
             total_steps=len(steps) if steps else len(plan.get("analysis_types", [])),
-            metadata={"plan": plan}
+            metrics_metadata={"plan": plan}
         )
         
         self.db.add(metrics)
