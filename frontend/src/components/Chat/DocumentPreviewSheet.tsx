@@ -58,16 +58,42 @@ const DocumentPreviewSheet = ({
     
     setLoading(true)
     try {
-      // Try to get document content from API
-      const response = await fetch(`/api/cases/${caseId}/files/${encodeURIComponent(source.file)}/content`)
-      if (response.ok) {
-        const data = await response.json()
-        setDocumentContent(data.content || source.text_preview || '')
+      // First, get list of files to find file_id by filename
+      const filesResponse = await fetch(`/api/cases/${caseId}/files`, {
+        headers: {
+          'Authorization': `Bearer ${localStorage.getItem('access_token')}`
+        }
+      })
+      
+      if (filesResponse.ok) {
+        const filesData = await filesResponse.json()
+        const file = filesData.documents?.find((f: any) => f.filename === source.file || f.id === source.file)
+        
+        if (file) {
+          // Try to get document content from API using file_id
+          const contentResponse = await fetch(`/api/cases/${caseId}/files/${file.id}/content`, {
+            headers: {
+              'Authorization': `Bearer ${localStorage.getItem('access_token')}`
+            }
+          })
+          
+          if (contentResponse.ok) {
+            const text = await contentResponse.text()
+            setDocumentContent(text || source.text_preview || '')
+          } else {
+            // Fallback to text_preview
+            setDocumentContent(source.text_preview || 'Содержимое документа недоступно для предпросмотра')
+          }
+        } else {
+          // File not found, use text_preview
+          setDocumentContent(source.text_preview || 'Содержимое документа недоступно для предпросмотра')
+        }
       } else {
         // Fallback to text_preview
         setDocumentContent(source.text_preview || 'Содержимое документа недоступно для предпросмотра')
       }
     } catch (error) {
+      console.error('Error loading document content:', error)
       setDocumentContent(source.text_preview || 'Ошибка загрузки содержимого')
     } finally {
       setLoading(false)

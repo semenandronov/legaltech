@@ -42,21 +42,17 @@ const DocumentsPage = () => {
     if (!caseId) return
     setLoading(true)
     try {
-      // TODO: implement API call when available
-      // const data = await getCaseFiles(caseId)
-      // setDocuments(data.files || [])
-      
-      // Mock data for now
-      setTimeout(() => {
-        setDocuments([
-          { id: '1', filename: 'contract_main.docx', file_type: 'Contract', status: 'Analyzed' },
-          { id: '2', filename: 'addendum_spec.docx', file_type: 'Contract', status: 'Analyzed' },
-          { id: '3', filename: 'letter_counterparty.pdf', file_type: 'Email', status: 'Pending' },
-        ])
-        setLoading(false)
-      }, 500)
+      const { getDocuments } = await import('../services/api')
+      const data = await getDocuments(caseId)
+      setDocuments(data.documents.map((doc: any) => ({
+        id: doc.id,
+        filename: doc.filename,
+        file_type: doc.file_type,
+        status: doc.status || 'Pending'
+      })))
     } catch (error) {
       console.error('Ошибка при загрузке документов:', error)
+    } finally {
       setLoading(false)
     }
   }

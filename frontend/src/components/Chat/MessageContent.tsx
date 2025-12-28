@@ -76,18 +76,29 @@ const MessageContent: React.FC<MessageContentProps> = ({
           // Render markdown for text parts - inline to preserve citations
           return (
             <ReactMarkdown key={`text-${idx}`} components={{
-              p: ({ children }) => <span style={{ display: 'inline' }}>{children}</span>,
-              h1: ({ children }) => <h1 style={{ fontSize: '28px', fontWeight: 600, color: 'var(--color-primary)', margin: '0 0 16px 0', display: 'block' }}>{children}</h1>,
-              h2: ({ children }) => <h2 style={{ fontSize: '24px', fontWeight: 600, color: 'var(--color-text)', margin: '24px 0 12px 0', display: 'block' }}>{children}</h2>,
-              h3: ({ children }) => <h3 style={{ fontSize: '20px', fontWeight: 600, color: 'var(--color-text)', margin: '20px 0 10px 0', display: 'block' }}>{children}</h3>,
-              ul: ({ children }) => <ul style={{ margin: '16px 0', paddingLeft: '24px', display: 'block' }}>{children}</ul>,
-              ol: ({ children }) => <ol style={{ margin: '16px 0', paddingLeft: '24px', display: 'block' }}>{children}</ol>,
-              li: ({ children }) => <li style={{ margin: '8px 0', display: 'list-item' }}>{children}</li>,
-              code: ({ children }) => <code style={{ backgroundColor: 'rgba(0, 212, 255, 0.15)', padding: '2px 6px', borderRadius: '4px', fontSize: '14px', fontFamily: "'Fira Code', 'Courier New', monospace", color: 'var(--color-primary)', display: 'inline' }}>{children}</code>,
+              p: ({ children }) => <p style={{ margin: '0 0 12px 0', lineHeight: 1.7, display: 'block' }}>{children}</p>,
+              h1: ({ children }) => <h1 style={{ fontSize: '24px', fontWeight: 700, color: 'inherit', margin: '24px 0 16px 0', display: 'block', lineHeight: 1.3 }}>{children}</h1>,
+              h2: ({ children }) => <h2 style={{ fontSize: '20px', fontWeight: 600, color: 'inherit', margin: '20px 0 12px 0', display: 'block', lineHeight: 1.4 }}>{children}</h2>,
+              h3: ({ children }) => <h3 style={{ fontSize: '18px', fontWeight: 600, color: 'inherit', margin: '16px 0 10px 0', display: 'block', lineHeight: 1.4 }}>{children}</h3>,
+              ul: ({ children }) => <ul style={{ margin: '12px 0', paddingLeft: '24px', display: 'block', lineHeight: 1.7 }}>{children}</ul>,
+              ol: ({ children }) => <ol style={{ margin: '12px 0', paddingLeft: '24px', display: 'block', lineHeight: 1.7 }}>{children}</ol>,
+              li: ({ children }) => <li style={{ margin: '6px 0', display: 'list-item', lineHeight: 1.7 }}>{children}</li>,
+              code: ({ children, className }) => {
+                const isInline = !className
+                return isInline ? (
+                  <code style={{ backgroundColor: 'rgba(0, 0, 0, 0.06)', padding: '2px 6px', borderRadius: '4px', fontSize: '0.9em', fontFamily: "'Fira Code', 'Courier New', monospace", color: 'inherit', display: 'inline' }}>{children}</code>
+                ) : (
+                  <code style={{ backgroundColor: 'rgba(0, 0, 0, 0.06)', padding: '12px', borderRadius: '6px', fontSize: '0.9em', fontFamily: "'Fira Code', 'Courier New', monospace", color: 'inherit', display: 'block', overflowX: 'auto', margin: '12px 0' }}>{children}</code>
+                )
+              },
+              pre: ({ children }) => <pre style={{ backgroundColor: 'rgba(0, 0, 0, 0.04)', padding: '12px', borderRadius: '6px', fontSize: '0.9em', fontFamily: "'Fira Code', 'Courier New', monospace", overflowX: 'auto', margin: '12px 0', display: 'block' }}>{children}</pre>,
               strong: ({ children }) => <strong style={{ fontWeight: 600, display: 'inline' }}>{children}</strong>,
-              em: ({ children }) => <em style={{ display: 'inline' }}>{children}</em>,
-              a: ({ children, href }) => <a href={href} style={{ color: 'var(--color-primary)', textDecoration: 'underline', textDecorationColor: 'rgba(0, 212, 255, 0.4)', display: 'inline' }}>{children}</a>,
-              blockquote: ({ children }) => <blockquote style={{ borderLeft: '4px solid var(--color-primary)', paddingLeft: '16px', margin: '16px 0', color: 'var(--color-text-secondary)', fontStyle: 'italic', display: 'block' }}>{children}</blockquote>,
+              em: ({ children }) => <em style={{ fontStyle: 'italic', display: 'inline' }}>{children}</em>,
+              a: ({ children, href }) => <a href={href} target="_blank" rel="noopener noreferrer" style={{ color: 'inherit', textDecoration: 'underline', textDecorationColor: 'rgba(0, 0, 0, 0.3)', display: 'inline' }}>{children}</a>,
+              blockquote: ({ children }) => <blockquote style={{ borderLeft: '3px solid rgba(0, 0, 0, 0.2)', paddingLeft: '16px', margin: '12px 0', color: 'inherit', fontStyle: 'normal', display: 'block', opacity: 0.8 }}>{children}</blockquote>,
+              table: ({ children }) => <table style={{ borderCollapse: 'collapse', width: '100%', margin: '12px 0', display: 'block', overflowX: 'auto' }}>{children}</table>,
+              th: ({ children }) => <th style={{ border: '1px solid rgba(0, 0, 0, 0.1)', padding: '8px 12px', textAlign: 'left', fontWeight: 600, backgroundColor: 'rgba(0, 0, 0, 0.04)' }}>{children}</th>,
+              td: ({ children }) => <td style={{ border: '1px solid rgba(0, 0, 0, 0.1)', padding: '8px 12px' }}>{children}</td>,
             }}>
               {part as string}
             </ReactMarkdown>

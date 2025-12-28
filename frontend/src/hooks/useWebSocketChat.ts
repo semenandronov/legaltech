@@ -126,7 +126,7 @@ export const useWebSocketChat = ({
     }
   }, [caseId, enabled, onMessage, onSources, onError, onComplete])
 
-  const sendMessage = useCallback((query: string, history: any[] = [], proSearch: boolean = false) => {
+  const sendMessage = useCallback((query: string, history: any[] = [], proSearch: boolean = false, deepThink: boolean = false) => {
     if (wsRef.current?.readyState === WebSocket.OPEN) {
       setIsStreaming(true)
       wsRef.current.send(
@@ -134,6 +134,7 @@ export const useWebSocketChat = ({
           query,
           history,
           pro_search: proSearch,
+          deep_think: deepThink,
         })
       )
     } else {

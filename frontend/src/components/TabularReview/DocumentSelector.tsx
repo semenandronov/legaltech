@@ -30,7 +30,7 @@ export const DocumentSelector: React.FC<DocumentSelectorProps> = ({
   onConfirm,
   reviewId,
   initialSelectedIds = [],
-  caseId: _caseId,
+  caseId,
 }) => {
   const [documents, setDocuments] = useState<Document[]>([])
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set(initialSelectedIds))
@@ -39,18 +39,34 @@ export const DocumentSelector: React.FC<DocumentSelectorProps> = ({
   const [error, setError] = useState<string | null>(null)
 
   useEffect(() => {
-    if (isOpen && reviewId) {
+    if (isOpen) {
       loadDocuments()
       setSelectedIds(new Set(initialSelectedIds))
     }
-  }, [isOpen, reviewId, initialSelectedIds])
+  }, [isOpen, reviewId, initialSelectedIds, caseId])
 
   const loadDocuments = async () => {
     try {
       setLoading(true)
       setError(null)
-      const response = await tabularReviewApi.getAvailableFiles(reviewId)
-      setDocuments(response.files || [])
+      
+      if (reviewId) {
+        // If reviewId exists, use tabular review API
+        const response = await tabularReviewApi.getAvailableFiles(reviewId)
+        setDocuments(response.files || [])
+      } else if (caseId) {
+        // If no reviewId but caseId exists, get files from case API
+        const { getDocuments } = await import('@/services/api')
+        const data = await getDocuments(caseId)
+        setDocuments(data.documents.map((doc: any) => ({
+          id: doc.id,
+          filename: doc.filename,
+          file_type: doc.file_type,
+          created_at: doc.created_at
+        })))
+      } else {
+        setError("Не указан caseId или reviewId")
+      }
     } catch (err: any) {
       setError(err.message || "Ошибка при загрузке документов")
     } finally {

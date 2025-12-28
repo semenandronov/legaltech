@@ -18,6 +18,10 @@ import {
   Grid,
   Card,
   CardContent,
+  Dialog,
+  DialogTitle,
+  DialogContent,
+  DialogActions,
 } from '@mui/material'
 import {
   Send as SendIcon,
@@ -44,6 +48,7 @@ import SourceSelector, { DEFAULT_SOURCES } from './Chat/SourceSelector'
 import DocumentPreviewSheet from './Chat/DocumentPreviewSheet'
 import { ChatHistoryPanel } from './Chat/ChatHistoryPanel'
 import { WelcomeScreen } from './Chat/WelcomeScreen'
+import { PromptLibrary } from './Chat/PromptLibrary'
 import { logger } from '@/lib/logger'
 
 interface Message {
@@ -114,6 +119,8 @@ const ChatWindow = ({ caseId, onDocumentClick }: ChatWindowProps) => {
   const [deepThinkEnabled, setDeepThinkEnabled] = useState(false)
   const [searchPlanSteps] = useState<Array<{ label: string; completed: boolean }>>([])
   const [historyPanelOpen, setHistoryPanelOpen] = useState(false)
+  const [promptLibraryOpen, setPromptLibraryOpen] = useState(false)
+  const [responseSettingsOpen, setResponseSettingsOpen] = useState(false)
   
   // Document preview state
   const [previewOpen, setPreviewOpen] = useState(false)
@@ -268,7 +275,7 @@ const ChatWindow = ({ caseId, onDocumentClick }: ChatWindowProps) => {
       currentStreamingMessageRef.current = messageIndex
       
       const history = messages.map(m => ({ role: m.role, content: m.content }))
-      sendWebSocketMessage(trimmed, history, proSearchEnabled)
+      sendWebSocketMessage(trimmed, history, proSearchEnabled, deepThinkEnabled)
     } else {
     try {
       const response = await sendMessage(caseId, userMessage.content)
@@ -1138,19 +1145,38 @@ const ChatWindow = ({ caseId, onDocumentClick }: ChatWindowProps) => {
                   </Tooltip>
 
                   <Tooltip title="Библиотека промптов">
-                    <IconButton size="small">
+                    <IconButton size="small" onClick={() => setPromptLibraryOpen(true)}>
                       <BookOpenIcon fontSize="small" />
                     </IconButton>
                   </Tooltip>
 
                   <Tooltip title="Настройки ответа">
-                    <IconButton size="small">
+                    <IconButton size="small" onClick={() => setResponseSettingsOpen(true)}>
                       <SettingsIcon fontSize="small" />
                     </IconButton>
                   </Tooltip>
 
                   <Tooltip title="Улучшить промпт с AI">
-                    <IconButton size="small">
+                    <IconButton 
+                      size="small" 
+                      onClick={async () => {
+                        if (!inputValue.trim()) return
+                        try {
+                          const apiModule = await import('@/services/api')
+                          const apiClient = apiModule.default
+                          const { getApiUrl } = apiModule
+                          const response = await apiClient.post(getApiUrl('/api/chat/improve-prompt'), {
+                            prompt: inputValue,
+                          })
+                          if (response.data?.improved) {
+                            setInputValue(response.data.improved)
+                          }
+                        } catch (err: any) {
+                          console.error('Error improving prompt:', err)
+                        }
+                      }}
+                      disabled={!inputValue.trim()}
+                    >
                       <WandIcon fontSize="small" />
                     </IconButton>
                   </Tooltip>
@@ -1278,6 +1304,47 @@ const ChatWindow = ({ caseId, onDocumentClick }: ChatWindowProps) => {
           window.location.href = `/cases/${selectedCaseId}`
         }}
       />
+
+      {/* Prompt Library */}
+      <PromptLibrary
+        isOpen={promptLibraryOpen}
+        onClose={() => setPromptLibraryOpen(false)}
+        onSelectPrompt={(prompt) => {
+          setInputValue(prompt)
+          setPromptLibraryOpen(false)
+        }}
+      />
+
+      {/* Response Settings Dialog */}
+      <Dialog open={responseSettingsOpen} onClose={() => setResponseSettingsOpen(false)} maxWidth="sm" fullWidth>
+        <DialogTitle>Настройки ответа</DialogTitle>
+        <DialogContent>
+          <Stack spacing={2} sx={{ mt: 1 }}>
+            <FormControlLabel
+              control={
+                <Switch
+                  checked={deepThinkEnabled}
+                  onChange={(e) => setDeepThinkEnabled(e.target.checked)}
+                />
+              }
+              label="Deep Think (глубокий анализ)"
+            />
+            <Typography variant="body2" color="text.secondary">
+              Включите для более детального анализа запросов с использованием расширенного поиска и рассуждений.
+            </Typography>
+            <Divider />
+            <Typography variant="subtitle2">Источники поиска:</Typography>
+            <SourceSelector
+              sources={DEFAULT_SOURCES}
+              selectedSources={selectedSources}
+              onSourcesChange={setSelectedSources}
+            />
+          </Stack>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setResponseSettingsOpen(false)}>Закрыть</Button>
+        </DialogActions>
+      </Dialog>
     </Box>
   )
 }

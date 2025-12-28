@@ -59,6 +59,8 @@ export interface PromptTemplate {
 interface PromptLibraryProps {
   onSelectPrompt: (prompt: string) => void
   trigger?: React.ReactNode
+  isOpen?: boolean
+  onClose?: () => void
 }
 
 const CATEGORY_ICONS: Record<string, React.ReactElement> = {
@@ -79,8 +81,10 @@ const CATEGORY_NAMES: Record<string, string> = {
   custom: 'Прочее',
 }
 
-export const PromptLibrary = React.memo(({ onSelectPrompt, trigger }: PromptLibraryProps) => {
-  const [isOpen, setIsOpen] = useState(false)
+export const PromptLibrary = React.memo(({ onSelectPrompt, trigger, isOpen: externalIsOpen, onClose: externalOnClose }: PromptLibraryProps) => {
+  const [internalIsOpen, setInternalIsOpen] = useState(false)
+  const isOpen = externalIsOpen !== undefined ? externalIsOpen : internalIsOpen
+  const setIsOpen = externalOnClose ? (() => externalOnClose()) : setInternalIsOpen
   const [prompts, setPrompts] = useState<PromptTemplate[]>([])
   const [searchQuery, setSearchQuery] = useState('')
   const [selectedCategory, setSelectedCategory] = useState<string | null>(null)
