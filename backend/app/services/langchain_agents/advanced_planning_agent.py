@@ -13,6 +13,46 @@ import json
 logger = logging.getLogger(__name__)
 
 
+class AdvancedPlanningAgent:
+    """Продвинутый планировщик с поддержкой подзадач и разбивкой сложных задач"""
+    
+    def __init__(
+        self,
+        rag_service: Optional[RAGService] = None,
+        document_processor: Optional[DocumentProcessor] = None
+    ):
+        """Initialize advanced planning agent
+        
+        Args:
+            rag_service: Optional RAG service for document retrieval
+            document_processor: Optional document processor
+        """
+        # Initialize base planning agent
+        self.base_planning_agent = PlanningAgent(
+            rag_service=rag_service,
+            document_processor=document_processor
+        )
+        
+        # Initialize LLM for subtask analysis
+        try:
+            self.llm = create_llm(temperature=0.2)  # Немного выше для творческого разбиения
+            logger.info("✅ Advanced Planning Agent initialized with GigaChat")
+        except Exception as e:
+            logger.error(f"Failed to initialize LLM: {e}")
+            raise
+        
+        self.rag_service = rag_service
+        self.document_processor = document_processor
+        self.validator = PlanningValidator()
+        
+        # Initialize Context Manager for learning from previous plans
+        try:
+            self.context_manager = ContextManager()
+            logger.info("✅ Context Manager initialized in AdvancedPlanningAgent")
+        except Exception as e:
+            logger.warning(f"Failed to initialize ContextManager: {e}")
+            self.context_manager = None
+    
     def plan_hierarchically(
         self,
         user_task: str,
@@ -229,44 +269,6 @@ logger = logging.getLogger(__name__)
             })
         
         return subtasks
-    """Продвинутый планировщик с поддержкой подзадач и разбивкой сложных задач"""
-    
-    def __init__(
-        self,
-        rag_service: Optional[RAGService] = None,
-        document_processor: Optional[DocumentProcessor] = None
-    ):
-        """Initialize advanced planning agent
-        
-        Args:
-            rag_service: Optional RAG service for document retrieval
-            document_processor: Optional document processor
-        """
-        # Initialize base planning agent
-        self.base_planning_agent = PlanningAgent(
-            rag_service=rag_service,
-            document_processor=document_processor
-        )
-        
-        # Initialize LLM for subtask analysis
-        try:
-            self.llm = create_llm(temperature=0.2)  # Немного выше для творческого разбиения
-            logger.info("✅ Advanced Planning Agent initialized with GigaChat")
-        except Exception as e:
-            logger.error(f"Failed to initialize LLM: {e}")
-            raise
-        
-        self.rag_service = rag_service
-        self.document_processor = document_processor
-        self.validator = PlanningValidator()
-        
-        # Initialize Context Manager for learning from previous plans
-        try:
-            self.context_manager = ContextManager()
-            logger.info("✅ Context Manager initialized in AdvancedPlanningAgent")
-        except Exception as e:
-            logger.warning(f"Failed to initialize ContextManager: {e}")
-            self.context_manager = None
     
     def plan_with_subtasks(
         self,
