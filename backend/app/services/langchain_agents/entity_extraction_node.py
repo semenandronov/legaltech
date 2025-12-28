@@ -166,6 +166,90 @@ def entity_extraction_agent_node(
             f"types: {list(entities_by_type.keys())}"
         )
         
+        # Save frequently occurring entities to LangGraph Store
+        if db and all_entities:
+            try:
+                from app.services.langchain_agents.store_service import LangGraphStoreService
+                from app.models.case import Case
+                import asyncio
+                
+                store_service = LangGraphStoreService(db)
+                
+                # Get case type for namespace
+                case = db.query(Case).filter(Case.id == case_id).first()
+                case_type = "general"
+                if case and case.case_type:
+                    case_type = case.case_type.lower().replace(" ", "_")
+                
+                # Save entities that appear frequently (more than once) or have high confidence
+                entity_counts = {}
+                for entity in all_entities:
+                    entity_text = entity.get("text", "")
+                    entity_type = entity.get("type", "")
+                    key = f"{entity_text}_{entity_type}"
+                    if key not in entity_counts:
+                        entity_counts[key] = {"count": 0, "entity": entity}
+                    entity_counts[key]["count"] += 1
+                
+                # Save entities that appear multiple times or have high confidence
+                saved_count = 0
+                for key, data in entity_counts.items():
+                    entity = data["entity"]
+                    count = data["count"]
+                    confidence = float(entity.get("confidence", 0.5))
+                    
+                    # Save if appears multiple times or has high confidence
+                    if count > 1 or confidence > 0.8:
+                        namespace = f"entities/{case_type}/{entity.get('type', 'unknown')}"
+                        entity_value = {
+                            "text": entity.get("text", ""),
+                            "type": entity.get("type", ""),
+                            "confidence": confidence,
+                            "context": entity.get("context", ""),
+                            "occurrence_count": count
+                        }
+                        
+                        metadata = {
+                            "case_id": case_id,
+                            "saved_at": datetime.now().isoformat(),
+                            "source": "entity_extraction_agent",
+                            "file_name": entity.get("file_name", "")
+                        }
+                        
+                        # Use asyncio.run for async call from sync function
+                        try:
+                            loop = asyncio.get_event_loop()
+                            if loop.is_running():
+                                # If loop is running, use create_task
+                                asyncio.create_task(store_service.save_pattern(
+                                    namespace=namespace,
+                                    key=entity.get("text", "")[:200],
+                                    value=entity_value,
+                                    metadata=metadata
+                                ))
+                            else:
+                                loop.run_until_complete(store_service.save_pattern(
+                                    namespace=namespace,
+                                    key=entity.get("text", "")[:200],
+                                    value=entity_value,
+                                    metadata=metadata
+                                ))
+                            saved_count += 1
+                        except RuntimeError:
+                            # No event loop, create new one
+                            asyncio.run(store_service.save_pattern(
+                                namespace=namespace,
+                                key=entity.get("text", "")[:200],
+                                value=entity_value,
+                                metadata=metadata
+                            ))
+                            saved_count += 1
+                
+                if saved_count > 0:
+                    logger.info(f"Saved {saved_count} frequently occurring entities to Store")
+            except Exception as e:
+                logger.warning(f"Failed to save entities to Store: {e}")
+        
         # Update state
         new_state = state.copy()
         new_state["entities_result"] = result_data

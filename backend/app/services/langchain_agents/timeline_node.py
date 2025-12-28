@@ -404,6 +404,18 @@ def timeline_agent_node(
         
         logger.info(f"Timeline agent: Extracted {len(parsed_events)} events for case {case_id}")
         
+        # Save context
+        try:
+            from app.services.langchain_agents.context_helper import save_agent_context
+            save_agent_context(
+                case_id=case_id,
+                agent_name="timeline",
+                result=result_data,
+                metadata={"events_count": len(parsed_events)}
+            )
+        except Exception as ctx_error:
+            logger.warning(f"Failed to save timeline context: {ctx_error}")
+        
         # Update state
         new_state = state.copy()
         new_state["timeline_result"] = result_data

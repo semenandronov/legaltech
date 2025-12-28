@@ -12,6 +12,7 @@ from sqlalchemy.orm import Session
 from app.models.analysis import AnalysisResult
 from app.models.case import Case
 from langchain_core.messages import HumanMessage
+from datetime import datetime
 import logging
 import json
 
@@ -53,8 +54,9 @@ def risk_agent_node(
         if rag_service and document_processor:
             initialize_tools(rag_service, document_processor)
         
-        # Get tools
-        tools = get_all_tools()
+        # Get tools - include iterative search tool for critical agents
+        from app.services.langchain_agents.tools import get_critical_agent_tools
+        tools = get_critical_agent_tools()
         
         # Initialize LLM через factory (GigaChat)
         llm = create_llm(temperature=0.1)
@@ -64,10 +66,44 @@ def risk_agent_node(
         
         # Get case info
         case_info = ""
+        case_type = "general"
         if db:
             case = db.query(Case).filter(Case.id == case_id).first()
             if case:
                 case_info = f"Тип дела: {case.case_type or 'Не указан'}\nОписание: {case.description or 'Нет описания'}\n"
+                case_type = case.case_type.lower().replace(" ", "_").replace("-", "_") if case.case_type else "general"
+        
+        # Загружаем сохраненные паттерны рисков для этого типа дела
+        known_risks_text = ""
+        try:
+            from app.services.langchain_agents.pattern_loader import PatternLoader
+            pattern_loader = PatternLoader(db)
+            
+            # Загружаем известные риски асинхронно
+            import asyncio
+            try:
+                loop = asyncio.get_event_loop()
+                if loop.is_running():
+                    # If loop is running, create task but don't await (fallback to sync)
+                    known_risks_patterns = []
+                else:
+                    known_risks_patterns = loop.run_until_complete(
+                        pattern_loader.load_risk_patterns(case_type, limit=20)
+                    )
+            except RuntimeError:
+                known_risks_patterns = asyncio.run(
+                    pattern_loader.load_risk_patterns(case_type, limit=20)
+                )
+            
+            if known_risks_patterns:
+                known_risks_text = pattern_loader.format_patterns_for_prompt(
+                    known_risks_patterns,
+                    pattern_type="risks"
+                )
+                logger.info(f"Loaded {len(known_risks_patterns)} known risk patterns for case type: {case_type}")
+        except Exception as e:
+            logger.warning(f"Failed to load risk patterns: {e}")
+            known_risks_text = ""
         
         # Формируем запрос с данными о противоречиях
         discrepancies_text = json.dumps(discrepancy_result.get("discrepancies", []), ensure_ascii=False, indent=2)
@@ -77,6 +113,10 @@ def risk_agent_node(
             logger.info("Using GigaChat with function calling for risk agent")
             
             prompt = get_agent_prompt("risk")
+            
+            # Добавляем известные риски в промпт, если они есть
+            if known_risks_text:
+                prompt = prompt + "\n\n" + known_risks_text
             
             # Создаем агента с tools
             agent = create_legal_agent(llm, tools, system_prompt=prompt)
@@ -89,7 +129,7 @@ def risk_agent_node(
 Найденные противоречия:
 {discrepancies_text}
 
-Используй retrieve_documents_tool для поиска дополнительных документов, если нужно. Извлеки конкретные риски с обоснованием. Верни результат в формате JSON массива объектов с полями: risk_name, risk_category, probability, impact, description, evidence, recommendation, reasoning, confidence."""
+Используй retrieve_documents_iterative_tool для поиска дополнительных документов, если нужно. Сначала проверь известные типичные риски (указаны в системном промпте), затем ищи новые, специфичные для данного дела. Извлеки конкретные риски с обоснованием. Верни результат в формате JSON массива объектов с полями: risk_name, risk_category, probability, impact, description, evidence, recommendation, reasoning, confidence."""
             
             initial_message = HumanMessage(content=user_query)
             
@@ -219,6 +259,74 @@ def risk_agent_node(
             result_id = risk_analysis_result.id
         
         logger.info(f"Risk agent: Completed analysis for case {case_id}, found {len(parsed_risks) if parsed_risks else 0} risks")
+        
+        # Save risks to LangGraph Store for future reference
+        if db and parsed_risks:
+            try:
+                from app.services.langchain_agents.store_service import LangGraphStoreService
+                import asyncio
+                
+                store_service = LangGraphStoreService(db)
+                
+                # Get case type for namespace
+                case_type = "general"
+                if db:
+                    case = db.query(Case).filter(Case.id == case_id).first()
+                    if case and case.case_type:
+                        case_type = case.case_type.lower().replace(" ", "_")
+                
+                # Save each risk pattern
+                for risk in parsed_risks:
+                    risk_name = risk.risk_name if hasattr(risk, 'risk_name') else risk.get('risk_name', 'Unknown Risk')
+                    namespace = f"risk_patterns/{case_type}"
+                    
+                    risk_value = {
+                        "risk_name": risk_name,
+                        "risk_category": risk.risk_category if hasattr(risk, 'risk_category') else risk.get('risk_category', ''),
+                        "probability": risk.probability if hasattr(risk, 'probability') else risk.get('probability', 'MEDIUM'),
+                        "impact": risk.impact if hasattr(risk, 'impact') else risk.get('impact', 'MEDIUM'),
+                        "description": risk.description if hasattr(risk, 'description') else risk.get('description', ''),
+                        "evidence": risk.evidence if hasattr(risk, 'evidence') else risk.get('evidence', []),
+                        "recommendation": risk.recommendation if hasattr(risk, 'recommendation') else risk.get('recommendation', ''),
+                        "confidence": risk.confidence if hasattr(risk, 'confidence') else risk.get('confidence', 0.8)
+                    }
+                    
+                    metadata = {
+                        "case_id": case_id,
+                        "saved_at": datetime.now().isoformat(),
+                        "source": "risk_agent"
+                    }
+                    
+                    # Use asyncio.run for async call from sync function
+                    try:
+                        loop = asyncio.get_event_loop()
+                        if loop.is_running():
+                            # If loop is running, use create_task
+                            asyncio.create_task(store_service.save_pattern(
+                                namespace=namespace,
+                                key=risk_name,
+                                value=risk_value,
+                                metadata=metadata
+                            ))
+                        else:
+                            loop.run_until_complete(store_service.save_pattern(
+                                namespace=namespace,
+                                key=risk_name,
+                                value=risk_value,
+                                metadata=metadata
+                            ))
+                    except RuntimeError:
+                        # No event loop, create new one
+                        asyncio.run(store_service.save_pattern(
+                            namespace=namespace,
+                            key=risk_name,
+                            value=risk_value,
+                            metadata=metadata
+                        ))
+                
+                logger.info(f"Saved {len(parsed_risks)} risk patterns to Store")
+            except Exception as e:
+                logger.warning(f"Failed to save risks to Store: {e}")
         
         # Create result
         result_data = {

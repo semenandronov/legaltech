@@ -11,6 +11,7 @@ from app.services.rag_service import RAGService
 from app.services.document_processor import DocumentProcessor
 from app.services.langchain_memory import MemoryService
 from app.services.langchain_agents import PlanningAgent
+from app.services.langchain_agents.advanced_planning_agent import AdvancedPlanningAgent
 from app.services.analysis_service import AnalysisService
 from app.config import config
 from datetime import datetime
@@ -85,6 +86,88 @@ class TaskResponse(BaseModel):
     plan: Dict[str, Any]  # Analysis plan
     status: str  # "planned", "executing"
     message: str
+
+
+def _format_plan_for_display(plan: Dict[str, Any], validation_result) -> str:
+    """Форматирует план для отображения пользователю (поддерживает подзадачи)"""
+    display = ""
+    
+    # Main task
+    main_task = plan.get("main_task", "")
+    if main_task:
+        display += f"**Задача:** {main_task}\n\n"
+    
+    # Goals
+    if "goals" in plan and plan["goals"]:
+        display += "**Цели:**\n"
+        for idx, goal in enumerate(plan["goals"], 1):
+            display += f"{idx}. {goal.get('description', '')}\n"
+        display += "\n"
+    
+    # Subtasks (приоритет над steps)
+    subtasks = plan.get("subtasks", [])
+    if subtasks:
+        display += f"**Подзадачи ({len(subtasks)}):**\n"
+        for idx, subtask in enumerate(subtasks, 1):
+            subtask_id = subtask.get("subtask_id", f"subtask_{idx}")
+            description = subtask.get("description", "")
+            agent_type = subtask.get("agent_type", "")
+            estimated_time = subtask.get("estimated_time", "")
+            dependencies = subtask.get("dependencies", [])
+            reasoning = subtask.get("reasoning", "")
+            
+            display += f"\n{idx}. **{description}**\n"
+            if agent_type:
+                display += f"   - Агент: {agent_type}\n"
+            if estimated_time:
+                display += f"   - Время: {estimated_time}\n"
+            if dependencies:
+                deps_str = ", ".join(dependencies)
+                display += f"   - Зависимости: {deps_str}\n"
+            if reasoning:
+                display += f"   - Обоснование: {reasoning}\n"
+        display += "\n"
+    else:
+        # Analysis types (fallback)
+        analysis_types = plan.get("analysis_types", [])
+        if analysis_types:
+            display += f"**Планируемые анализы:** {', '.join(analysis_types)}\n\n"
+        
+        # Steps (fallback)
+        if "steps" in plan and plan["steps"]:
+            display += "**Детали плана:**\n"
+            for idx, step in enumerate(plan["steps"][:5], 1):
+                step_desc = step.get("description", step.get("agent_name", "unknown"))
+                step_time = step.get("estimated_time", "")
+                display += f"{idx}. {step_desc}"
+                if step_time:
+                    display += f" (~{step_time})"
+                display += "\n"
+            if len(plan["steps"]) > 5:
+                display += f"... и еще {len(plan['steps']) - 5} шагов\n"
+            display += "\n"
+    
+    # Tables to create
+    tables_to_create = plan.get("tables_to_create", [])
+    if tables_to_create:
+        display += "**Таблицы для создания:**\n"
+        for table in tables_to_create:
+            display += f"- {table}\n"
+        display += "\n"
+    
+    # Estimated time
+    estimated_time = plan.get("estimated_time", plan.get("estimated_execution_time", ""))
+    if not estimated_time and validation_result:
+        estimated_time = validation_result.estimated_time
+    if estimated_time:
+        display += f"**Оценка времени:** {estimated_time}\n\n"
+    
+    # Reasoning
+    reasoning = plan.get("reasoning", "")
+    if reasoning:
+        display += f"**Обоснование плана:**\n{reasoning}\n\n"
+    
+    return display
 
 
 def format_source_reference(source: Dict[str, Any]) -> str:
@@ -245,25 +328,134 @@ async def chat(
             num_documents = case.num_documents if case else 0
             file_names = case.file_names if case and case.file_names else []
             
-            # Create Planning Agent with RAG service for document access
-            planning_agent = PlanningAgent(rag_service=rag_service, document_processor=document_processor)
+            # Use Advanced Planning Agent with subtask support
+            try:
+                advanced_planning_agent = AdvancedPlanningAgent(
+                    rag_service=rag_service,
+                    document_processor=document_processor
+                )
+                logger.info("Using Advanced Planning Agent with subtask support")
+                planning_agent = advanced_planning_agent
+                use_subtasks = True
+            except Exception as e:
+                logger.warning(f"Failed to initialize Advanced Planning Agent: {e}, using base PlanningAgent")
+                planning_agent = PlanningAgent(rag_service=rag_service, document_processor=document_processor)
+                use_subtasks = False
             
             # Create analysis plan with document information
-            plan = planning_agent.plan_analysis(
-                user_task=request.question,
-                case_id=request.case_id,
-                available_documents=file_names[:10] if file_names else None,  # Первые 10 для промпта
-                num_documents=num_documents
-            )
+            if use_subtasks:
+                plan = planning_agent.plan_with_subtasks(
+                    user_task=request.question,
+                    case_id=request.case_id,
+                    available_documents=file_names[:10] if file_names else None,
+                    num_documents=num_documents
+                )
+            else:
+                plan = planning_agent.plan_analysis(
+                    user_task=request.question,
+                    case_id=request.case_id,
+                    available_documents=file_names[:10] if file_names else None,
+                    num_documents=num_documents
+                )
             
-            analysis_types = plan["analysis_types"]
+            # Extract plan information
+            analysis_types = plan.get("analysis_types", [])
             reasoning = plan.get("reasoning", "План создан на основе задачи")
             confidence = plan.get("confidence", 0.8)
+            estimated_time = plan.get("estimated_time", plan.get("estimated_execution_time", "неизвестно"))
+            subtasks = plan.get("subtasks", [])
             
             logger.info(
-                f"Planning completed for case {request.case_id}: {analysis_types}, "
-                f"confidence: {confidence:.2f}"
+                f"Planning completed for case {request.case_id}: {len(subtasks) if subtasks else len(analysis_types)} steps, "
+                f"confidence: {confidence:.2f}, estimated_time: {estimated_time}"
             )
+            
+            # Проверяем валидность плана
+            from app.services.langchain_agents.planning_validator import PlanningValidator
+            validator = PlanningValidator()
+            validation_result = validator.validate_plan(plan, request.case_id)
+            
+            # ВСЕГДА показываем план для одобрения (убрано условие confidence < 0.7)
+            # Сохраняем план в БД
+            from app.models.analysis import AnalysisPlan
+            from datetime import datetime
+            import uuid
+            
+            plan_id = str(uuid.uuid4())
+            try:
+                analysis_plan = AnalysisPlan(
+                    id=plan_id,
+                    case_id=request.case_id,
+                    user_id=current_user.id,
+                    user_task=request.question,
+                    plan_data=plan,
+                    status="pending_approval",
+                    confidence=confidence,
+                    validation_result={
+                        "is_valid": validation_result.is_valid,
+                        "issues": validation_result.issues,
+                        "warnings": validation_result.warnings
+                    },
+                    tables_to_create=plan.get("tables_to_create", [])
+                )
+                db.add(analysis_plan)
+                db.commit()
+                logger.info(f"Plan saved to DB with id: {plan_id}")
+            except Exception as save_error:
+                db.rollback()
+                logger.error(f"Error saving plan to DB: {save_error}", exc_info=True)
+                # Продолжаем без сохранения в БД
+            
+            # ВСЕГДА показываем план для одобрения
+                # Форматируем план для показа
+                plan_display = _format_plan_for_display(plan, validation_result)
+                
+                # Форматируем план для показа
+                plan_display = _format_plan_for_display(plan, validation_result)
+                
+                answer = f"""Я составил план анализа. Пожалуйста, проверьте и подтвердите выполнение:
+
+{plan_display}
+
+**Уверенность:** {confidence:.0%}"""
+                
+                if validation_result and validation_result.issues:
+                    answer += f"\n\n**Проблемы:**\n" + "\n".join(f"- {issue}" for issue in validation_result.issues)
+                
+                if validation_result and validation_result.warnings:
+                    answer += f"\n\n**Предупреждения:**\n" + "\n".join(f"- {warning}" for warning in validation_result.warnings)
+                
+                answer += f"\n\n**ID плана:** `{plan_id}`\n\nПодтвердите выполнение или уточните задачу."
+                
+                try:
+                    # Save user message
+                    user_message = ChatMessage(
+                        case_id=request.case_id,
+                        role="user",
+                        content=request.question,
+                        session_id=None
+                    )
+                    db.add(user_message)
+                    
+                    # Save assistant message with plan ready status
+                    assistant_message = ChatMessage(
+                        case_id=request.case_id,
+                        role="assistant",
+                        content=answer,
+                        source_references=[],
+                        session_id=None
+                    )
+                    db.add(assistant_message)
+                    db.commit()
+                except Exception as commit_error:
+                    db.rollback()
+                    logger.error(f"Ошибка при сохранении сообщений: {commit_error}", exc_info=True)
+                
+                return ChatResponse(
+                    answer=answer,
+                    sources=[],
+                    status="plan_ready"  # Новый статус - план готов, ожидает подтверждения
+                )
             
             # Map analysis types to API format (discrepancy -> discrepancies, risk -> risk_analysis)
             api_analysis_types = []
@@ -339,17 +531,59 @@ async def chat(
                 logger.error(f"Ошибка при обновлении статуса дела {request.case_id}: {commit_error}", exc_info=True)
                 # Continue - analysis will still run in background
             
-            # Create response message
-            answer = f"""Я понял вашу задачу и запланировал следующие анализы:
+            # Create response message with multi-level plan details
+            answer = f"""Я понял вашу задачу и создал план анализа:
 
 **Планируемые анализы:**
-{', '.join(api_analysis_types)}
-
-**Объяснение:** {reasoning}
-
-**Уверенность:** {confidence:.0%}
-
-Анализ выполняется в фоне. Результаты будут доступны через несколько минут. Вы можете проверить статус анализа в разделе отчетов."""
+{', '.join(api_analysis_types)}"""
+            
+            # Add goals if present
+            if "goals" in plan and plan["goals"]:
+                answer += "\n\n**Цели анализа:**\n"
+                for idx, goal in enumerate(plan["goals"], 1):
+                    answer += f"{idx}. {goal.get('description', '')}\n"
+            
+            # Add strategy if present
+            if "strategy" in plan:
+                strategy_names = {
+                    "comprehensive_analysis": "Комплексный анализ",
+                    "parallel_optimized": "Параллельная оптимизация",
+                    "sequential_dependent": "Последовательное выполнение с зависимостями",
+                    "simple_sequential": "Простое последовательное выполнение",
+                    "dependent_sequential": "Последовательное выполнение зависимых анализов",
+                    "parallel_independent": "Параллельное выполнение независимых анализов"
+                }
+                strategy_display = strategy_names.get(plan["strategy"], plan["strategy"])
+                answer += f"\n**Стратегия:** {strategy_display}"
+            
+            # Add steps details if present
+            if "steps" in plan and plan["steps"]:
+                answer += "\n\n**Детали плана:**\n"
+                for idx, step in enumerate(plan["steps"][:5], 1):  # Показываем первые 5 шагов
+                    step_name = step.get("agent_name", "unknown")
+                    step_desc = step.get("description", "")
+                    step_time = step.get("estimated_time", "")
+                    answer += f"{idx}. {step_desc}"
+                    if step_time:
+                        answer += f" (~{step_time})"
+                    answer += "\n"
+                if len(plan["steps"]) > 5:
+                    answer += f"... и еще {len(plan['steps']) - 5} шагов\n"
+            
+            answer += f"\n**Объяснение:** {reasoning}\n\n**Уверенность:** {confidence:.0%}"
+            
+            # Add estimated time if available
+            estimated_time = plan.get("estimated_execution_time", "")
+            if estimated_time:
+                answer += f"\n**Оценка времени выполнения:** {estimated_time}"
+            
+            # Add alternative plans if present
+            if "alternative_plans" in plan and plan["alternative_plans"]:
+                answer += "\n\n**Альтернативные варианты:**\n"
+                for alt_plan in plan["alternative_plans"][:2]:  # Показываем первые 2 альтернативы
+                    answer += f"- {alt_plan.get('name', 'Альтернативный план')}: {', '.join(alt_plan.get('analysis_types', []))}\n"
+            
+            answer += "\n\nАнализ выполняется в фоне. Результаты будут доступны через несколько минут. Вы можете проверить статус анализа в разделе отчетов."
             
             try:
                 # Save user message
@@ -652,6 +886,161 @@ async def execute_task(
         raise HTTPException(
             status_code=500,
             detail=f"Ошибка при планировании задачи: {str(e)}"
+        )
+
+
+class ApprovePlanRequest(BaseModel):
+    """Request model for plan approval"""
+    plan_id: str = Field(..., description="Plan ID to approve")
+    approved: bool = Field(True, description="Whether to approve the plan")
+
+
+class ApprovePlanResponse(BaseModel):
+    """Response model for plan approval"""
+    success: bool
+    message: str
+    plan_id: str
+    status: str
+
+
+@router.post("/approve-plan", response_model=ApprovePlanResponse)
+async def approve_plan(
+    request: ApprovePlanRequest,
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """
+    Approve or reject an analysis plan
+    
+    Args:
+        request: Approval request with plan_id and approved flag
+        db: Database session
+        current_user: Current user
+        
+    Returns:
+        Approval response with status
+    """
+    try:
+        from app.models.analysis import AnalysisPlan
+        from app.services.analysis_service import AnalysisService
+        from app.utils.database import SessionLocal
+        
+        # Get plan from database
+        plan = db.query(AnalysisPlan).filter(
+            AnalysisPlan.id == request.plan_id,
+            AnalysisPlan.user_id == current_user.id
+        ).first()
+        
+        if not plan:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Plan {request.plan_id} not found"
+            )
+        
+        if plan.status != "pending_approval":
+            raise HTTPException(
+                status_code=400,
+                detail=f"Plan is already {plan.status}, cannot approve"
+            )
+        
+        if request.approved:
+            # Approve plan
+            plan.status = "approved"
+            plan.approved_at = datetime.utcnow()
+            db.commit()
+            
+            # Start execution in background
+            def execute_approved_plan():
+                """Execute approved plan in background"""
+                background_db = SessionLocal()
+                try:
+                    # Get plan data
+                    plan_data = plan.plan_data
+                    case_id = plan.case_id
+                    
+                    # Get analysis types from plan
+                    analysis_types = plan_data.get("analysis_types", [])
+                    subtasks = plan_data.get("subtasks", [])
+                    
+                    # If subtasks exist, use them
+                    if subtasks:
+                        analysis_types = [subtask.get("agent_type") for subtask in subtasks if subtask.get("agent_type")]
+                    
+                    # Map to API format
+                    api_analysis_types = []
+                    for at in analysis_types:
+                        if at == "discrepancy":
+                            api_analysis_types.append("discrepancies")
+                        elif at == "risk":
+                            api_analysis_types.append("risk_analysis")
+                        else:
+                            api_analysis_types.append(at)
+                    
+                    # Update plan status
+                    plan.status = "executing"
+                    plan.executed_at = datetime.utcnow()
+                    background_db.commit()
+                    
+                    # Execute analyses
+                    analysis_service = AnalysisService()
+                    for analysis_type in api_analysis_types:
+                        try:
+                            if analysis_type == "timeline":
+                                analysis_service.extract_timeline(case_id)
+                            elif analysis_type == "discrepancies":
+                                analysis_service.find_discrepancies(case_id)
+                            elif analysis_type == "key_facts":
+                                analysis_service.extract_key_facts(case_id)
+                            elif analysis_type == "summary":
+                                analysis_service.generate_summary(case_id)
+                            elif analysis_type == "risk_analysis":
+                                analysis_service.analyze_risks(case_id)
+                            elif analysis_type == "entity_extraction":
+                                analysis_service.extract_entities(case_id)
+                            elif analysis_type == "relationship":
+                                analysis_service.build_relationships(case_id)
+                        except Exception as e:
+                            logger.error(f"Error executing {analysis_type}: {e}", exc_info=True)
+                    
+                    # Mark plan as completed
+                    plan.status = "completed"
+                    background_db.commit()
+                    
+                except Exception as e:
+                    logger.error(f"Error in approved plan execution: {e}", exc_info=True)
+                    plan.status = "failed"
+                    background_db.commit()
+                finally:
+                    background_db.close()
+            
+            background_tasks.add_task(execute_approved_plan)
+            
+            return ApprovePlanResponse(
+                success=True,
+                message="Plan approved and execution started",
+                plan_id=plan.id,
+                status="executing"
+            )
+        else:
+            # Reject plan
+            plan.status = "rejected"
+            db.commit()
+            
+            return ApprovePlanResponse(
+                success=True,
+                message="Plan rejected",
+                plan_id=plan.id,
+                status="rejected"
+            )
+            
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error approving plan: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=500,
+            detail=f"Ошибка при подтверждении плана: {str(e)}"
         )
 
 

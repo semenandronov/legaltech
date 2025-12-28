@@ -106,6 +106,25 @@ def route_to_agent(state: AnalysisState) -> str:
         new_state["needs_replanning"] = False
         state.update(new_state)
     
+    # Check if we have subtasks to execute (from AdvancedPlanningAgent)
+    subtasks = state.get("subtasks", [])
+    if subtasks:
+        # Check if subagents have been spawned
+        subagent_results = state.get("subagent_results")
+        if not subagent_results:
+            # Need to spawn subagents
+            logger.info(f"[Супервизор] Routing to spawn_subagents for {len(subtasks)} subtasks")
+            return "spawn_subagents"
+        else:
+            # Subagents already executed, check if all completed
+            completed_subtasks = state.get("subtasks_completed", 0)
+            if completed_subtasks < len(subtasks):
+                # Some subtasks still pending, continue with regular agents
+                logger.info(f"[Супервизор] {completed_subtasks}/{len(subtasks)} subtasks completed, continuing with regular agents")
+            else:
+                # All subtasks completed, can proceed to evaluation
+                logger.info(f"[Супервизор] All {len(subtasks)} subtasks completed")
+    
     # Fall back to original analysis_types
     analysis_types = state.get("analysis_types", [])
     requested_types = set(analysis_types)
@@ -192,24 +211,62 @@ def route_to_agent(state: AnalysisState) -> str:
             next_agent = "entity_extraction" if "entity_extraction" in requested_types else "supervisor"
     
     # 4. Независимые агенты могут работать параллельно
-    # Check if we have multiple independent agents to run
-    independent_agents = ["timeline", "key_facts", "discrepancy", "entity_extraction"]
+    # Автоматическое определение независимых агентов (улучшенная версия)
+    INDEPENDENT_AGENTS = {
+        "timeline": [],
+        "key_facts": [],
+        "discrepancy": [],
+        "entity_extraction": [],
+        "document_classifier": []
+    }
+    
+    DEPENDENT_AGENTS = {
+        "risk": ["discrepancy"],
+        "summary": ["key_facts"],
+        "relationship": ["entity_extraction"],
+        "privilege_check": []  # Может быть независимым, но обычно выполняется отдельно
+    }
+    
+    # Находим все независимые агенты, которые запрошены и не завершены
     pending_independent = [
-        agent for agent in independent_agents
+        agent for agent in INDEPENDENT_AGENTS.keys()
         if agent in requested_types and agent not in completed
     ]
     
-    if len(pending_independent) > 1:
-        # Multiple independent agents - use parallel execution
-        reasoning_parts.append(f"Найдено {len(pending_independent)} независимых агентов для параллельного выполнения: {', '.join(pending_independent)}")
+    # Проверяем, есть ли зависимые агенты, которые готовы к выполнению
+    pending_dependent_ready = []
+    for agent, deps in DEPENDENT_AGENTS.items():
+        if agent in requested_types and agent not in completed:
+            # Проверяем, готовы ли все зависимости
+            deps_ready = all(
+                dep in completed or dep not in requested_types
+                for dep in deps
+            )
+            if deps_ready:
+                pending_dependent_ready.append(agent)
+    
+    # Приоритет 1: Если есть несколько независимых агентов - ВСЕГДА запускаем параллельно (даже если их 2)
+    if len(pending_independent) >= 2:
+        reasoning_parts.append(
+            f"Найдено {len(pending_independent)} независимых агентов для параллельного выполнения: {', '.join(pending_independent)}"
+        )
         next_agent = "parallel_independent"
-        logger.info(f"[Супервизор] Дело {case_id}: → Параллельное выполнение {len(pending_independent)} агентов")
+        logger.info(
+            f"[Супервизор] Дело {case_id}: → Параллельное выполнение {len(pending_independent)} агентов: {', '.join(pending_independent)}"
+        )
+    # Приоритет 2: Если есть один независимый агент - запускаем его отдельно
     elif len(pending_independent) == 1:
-        # Single independent agent - run directly
         agent_name = pending_independent[0]
         reasoning_parts.append(f"{agent_name} агент независим, выполняется отдельно")
         next_agent = agent_name
         logger.info(f"[Супервизор] Дело {case_id}: → {agent_name}: выполняется отдельно")
+    # Приоритет 3: Если есть готовые зависимые агенты - запускаем их
+    elif pending_dependent_ready:
+        agent_name = pending_dependent_ready[0]
+        reasoning_parts.append(f"{agent_name} агент готов к выполнению (зависимости выполнены)")
+        next_agent = agent_name
+        logger.info(f"[Супервизор] Дело {case_id}: → {agent_name}: зависимости готовы, запускаю")
+    # Приоритет 4: Fallback на отдельные независимые агенты (для обратной совместимости)
     elif "timeline" in requested_types and "timeline" not in completed:
         reasoning_parts.append("Timeline агент независим, может работать параллельно")
         next_agent = "timeline"

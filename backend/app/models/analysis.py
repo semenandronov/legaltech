@@ -206,3 +206,26 @@ class Risk(Base):
     
     # Relationship
     case = relationship("Case", back_populates="risks")
+
+
+class AnalysisPlan(Base):
+    """AnalysisPlan model - stores analysis plans for user approval"""
+    __tablename__ = "analysis_plans"
+    
+    id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    case_id = Column(String, ForeignKey("cases.id", ondelete="CASCADE"), nullable=False, index=True)
+    user_id = Column(String, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    user_task = Column(Text, nullable=False)  # Исходная задача пользователя
+    plan_data = Column(JSON, nullable=False)  # Полный план в JSON формате
+    status = Column(String(50), default="pending_approval")  # pending_approval, approved, rejected, executing, completed
+    confidence = Column(String(10), nullable=True)  # Уверенность плана (0-1)
+    validation_result = Column(JSON, nullable=True)  # Результаты валидации плана
+    tables_to_create = Column(JSON, nullable=True)  # Список таблиц для создания
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    approved_at = Column(DateTime, nullable=True)  # Время одобрения
+    executed_at = Column(DateTime, nullable=True)  # Время начала выполнения
+    
+    # Relationships
+    case = relationship("Case")
+    user = relationship("User")

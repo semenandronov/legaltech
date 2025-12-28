@@ -45,8 +45,9 @@ def discrepancy_agent_node(
         if rag_service and document_processor:
             initialize_tools(rag_service, document_processor)
         
-        # Get tools
-        tools = get_all_tools()
+        # Get tools - include iterative search tool for critical agents
+        from app.services.langchain_agents.tools import get_critical_agent_tools
+        tools = get_critical_agent_tools()
         
         # Initialize LLM через factory (GigaChat)
         llm = create_llm(temperature=0.1)
@@ -54,17 +55,59 @@ def discrepancy_agent_node(
         # Проверяем, поддерживает ли LLM function calling
         use_tools = hasattr(llm, 'bind_tools')
         
+        # Get case type for pattern loading
+        case_type = "general"
+        if db:
+            from app.models.case import Case
+            case = db.query(Case).filter(Case.id == case_id).first()
+            if case and case.case_type:
+                case_type = case.case_type.lower().replace(" ", "_").replace("-", "_")
+        
+        # Загружаем сохраненные паттерны противоречий для этого типа дела
+        known_discrepancies_text = ""
+        try:
+            from app.services.langchain_agents.pattern_loader import PatternLoader
+            pattern_loader = PatternLoader(db)
+            
+            import asyncio
+            try:
+                loop = asyncio.get_event_loop()
+                if loop.is_running():
+                    known_discrepancy_patterns = []
+                else:
+                    known_discrepancy_patterns = loop.run_until_complete(
+                        pattern_loader.load_discrepancy_patterns(case_type, limit=20)
+                    )
+            except RuntimeError:
+                known_discrepancy_patterns = asyncio.run(
+                    pattern_loader.load_discrepancy_patterns(case_type, limit=20)
+                )
+            
+            if known_discrepancy_patterns:
+                known_discrepancies_text = pattern_loader.format_patterns_for_prompt(
+                    known_discrepancy_patterns,
+                    pattern_type="discrepancies"
+                )
+                logger.info(f"Loaded {len(known_discrepancy_patterns)} known discrepancy patterns for case type: {case_type}")
+        except Exception as e:
+            logger.warning(f"Failed to load discrepancy patterns: {e}")
+            known_discrepancies_text = ""
+        
         if use_tools and rag_service:
             # GigaChat с function calling - агент сам вызовет retrieve_documents_tool
             logger.info("Using GigaChat with function calling for discrepancy agent")
             
             prompt = get_agent_prompt("discrepancy")
             
+            # Добавляем известные противоречия в промпт, если они есть
+            if known_discrepancies_text:
+                prompt = prompt + "\n\n" + known_discrepancies_text
+            
             # Создаем агента с tools
             agent = create_legal_agent(llm, tools, system_prompt=prompt)
             
             # Создаем запрос для агента
-            user_query = f"Найди все противоречия и несоответствия между документами дела {case_id}. Используй retrieve_documents_tool для поиска и сравнения документов. Верни результат в формате JSON массива противоречий с полями: type, severity, description, source_documents, details, reasoning, confidence."
+            user_query = f"Найди все противоречия и несоответствия между документами дела {case_id}. Используй retrieve_documents_iterative_tool для поиска и сравнения документов. Сначала проверь известные типичные противоречия (указаны в системном промпте), затем ищи новые. Верни результат в формате JSON массива противоречий с полями: type, severity, description, source_documents, details, reasoning, confidence."
             
             initial_message = HumanMessage(content=user_query)
             

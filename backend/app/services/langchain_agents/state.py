@@ -15,8 +15,25 @@ class PlanStepStatus(str, Enum):
 
 
 @dataclass
+class PlanGoal:
+    """High-level goal in the analysis plan"""
+    goal_id: str
+    description: str
+    priority: int = 1  # 1 = highest priority
+    related_steps: List[str] = field(default_factory=list)  # step_ids that contribute to this goal
+    
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "goal_id": self.goal_id,
+            "description": self.description,
+            "priority": self.priority,
+            "related_steps": self.related_steps,
+        }
+
+
+@dataclass
 class PlanStep:
-    """A step in the analysis plan"""
+    """A step in the analysis plan with execution parameters"""
     step_id: str
     agent_name: str
     description: str
@@ -25,6 +42,12 @@ class PlanStep:
     result_key: Optional[str] = None
     reasoning: Optional[str] = None
     error: Optional[str] = None
+    # New fields for multi-level planning
+    parameters: Dict[str, Any] = field(default_factory=dict)  # Execution parameters (depth, focus, etc.)
+    estimated_time: Optional[str] = None  # Estimated execution time (e.g., "5-10 мин")
+    goal_id: Optional[str] = None  # Which goal this step contributes to
+    tools: List[str] = field(default_factory=list)  # Tools to use for this step
+    sources: List[str] = field(default_factory=list)  # Data sources to use
     
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -36,6 +59,11 @@ class PlanStep:
             "result_key": self.result_key,
             "reasoning": self.reasoning,
             "error": self.error,
+            "parameters": self.parameters,
+            "estimated_time": self.estimated_time,
+            "goal_id": self.goal_id,
+            "tools": self.tools,
+            "sources": self.sources,
         }
 
 
@@ -114,6 +142,9 @@ class AnalysisState(TypedDict):
     
     # === NEW: Adaptive Agent Fields ===
     
+    # High-level goals for the analysis
+    plan_goals: List[Dict[str, Any]]  # List of PlanGoal.to_dict()
+    
     # Current execution plan with steps
     current_plan: List[Dict[str, Any]]  # List of PlanStep.to_dict()
     
@@ -179,6 +210,7 @@ def create_initial_state(
         errors=[],
         metadata=metadata or {},
         # Adaptive fields
+        plan_goals=[],
         current_plan=[],
         completed_steps=[],
         adaptation_history=[],

@@ -21,6 +21,15 @@ class RAGService:
         self.retriever_service = AdvancedRetrieverService(self.document_processor)
         self.memory_service = MemoryService()
         
+        # Initialize iterative RAG service
+        try:
+            from app.services.iterative_rag_service import IterativeRAGService
+            self.iterative_rag = IterativeRAGService(self)
+            logger.info("✅ Iterative RAG service initialized")
+        except Exception as e:
+            logger.warning(f"Failed to initialize IterativeRAGService: {e}")
+            self.iterative_rag = None
+        
         # Using direct RAG with GigaChat + pgvector
         logger.info("✅ Using direct RAG with GigaChat + pgvector")
     
@@ -30,7 +39,8 @@ class RAGService:
         query: str,
         k: int = 5,
         retrieval_strategy: str = "simple",
-        db: Optional[Session] = None
+        db: Optional[Session] = None,
+        use_iterative: bool = False
     ) -> List[Document]:
         """
         Retrieve relevant context for a query using Yandex Index
@@ -39,13 +49,28 @@ class RAGService:
             case_id: Case identifier
             query: User query
             k: Number of chunks to retrieve
-            retrieval_strategy: Strategy to use ('simple', 'multi_query', 'compression', 'ensemble')
+            retrieval_strategy: Strategy to use ('simple', 'multi_query', 'compression', 'ensemble', 'iterative')
             db: Optional database session
+            use_iterative: Use iterative search (overrides retrieval_strategy if True)
             
         Returns:
             List of relevant Document objects
         """
         try:
+            # Use iterative RAG if requested or if strategy is 'iterative'
+            if use_iterative or retrieval_strategy == "iterative":
+                if self.iterative_rag:
+                    return self.iterative_rag.retrieve_iteratively(
+                        case_id=case_id,
+                        query=query,
+                        max_iterations=3,
+                        initial_k=k,
+                        db=db
+                    )
+                else:
+                    logger.warning("Iterative RAG not available, falling back to multi_query")
+                    retrieval_strategy = "multi_query"
+            
             if retrieval_strategy == "multi_query":
                 docs = self.retriever_service.retrieve_with_multi_query(case_id, query, k=k, db=db)
             elif retrieval_strategy == "compression":
@@ -191,7 +216,8 @@ class RAGService:
                 return response, []
         
         # Use direct RAG with pgvector + GigaChat
-        return self._generate_with_direct_rag(case_id, query, k, db, history)
+        # Use iterative search for better results
+        return self._generate_with_direct_rag(case_id, query, k, db, history, use_iterative=True)
     
     def _generate_with_direct_rag(
         self,
@@ -199,15 +225,34 @@ class RAGService:
         query: str,
         k: int,
         db: Optional[Session],
-        history: Optional[List[Dict[str, str]]]
+        history: Optional[List[Dict[str, str]]],
+        use_iterative: bool = True
     ) -> Tuple[str, List[Dict[str, Any]]]:
-        """Generate using direct RAG with pgvector + GigaChat"""
+        """Generate using direct RAG with pgvector + GigaChat
+        
+        Args:
+            case_id: Case identifier
+            query: User query
+            k: Number of chunks to retrieve
+            db: Optional database session
+            history: Optional chat history
+            use_iterative: Use iterative search for better results
+        """
         from app.services.llm_factory import create_llm
         from langchain_core.prompts import ChatPromptTemplate
         from langchain_core.messages import HumanMessage, AIMessage, SystemMessage
         
-        # Retrieve relevant documents
-        documents = self.retrieve_context(case_id, query, k=k, db=db)
+        # Retrieve relevant documents (use iterative search by default)
+        if use_iterative and self.iterative_rag:
+            documents = self.iterative_rag.retrieve_iteratively(
+                case_id=case_id,
+                query=query,
+                max_iterations=3,
+                initial_k=k,
+                db=db
+            )
+        else:
+            documents = self.retrieve_context(case_id, query, k=k, db=db, retrieval_strategy="multi_query")
         
         if not documents:
             return "Извините, не удалось найти релевантные документы для вашего запроса.", []

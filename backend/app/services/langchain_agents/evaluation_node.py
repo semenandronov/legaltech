@@ -1,9 +1,13 @@
 """Evaluation node for assessing agent results and triggering adaptation"""
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, List
 from app.services.langchain_agents.state import AnalysisState
+from app.services.langchain_agents.evaluation_metrics import EvaluationMetrics
+from app.services.langchain_agents.multi_level_validator import MultiLevelValidator
 from app.services.llm_factory import create_llm
 from app.config import config
+from langchain_core.documents import Document
 import logging
+import asyncio
 
 logger = logging.getLogger(__name__)
 
@@ -23,6 +27,17 @@ class ResultEvaluator:
         except Exception as e:
             logger.warning(f"Failed to initialize LLM for evaluator: {e}")
             self.llm = None
+        
+        # Initialize metrics calculator
+        self.metrics = EvaluationMetrics()
+        
+        # Initialize multi-level validator
+        try:
+            self.validator = MultiLevelValidator()
+            logger.info("✅ Multi-Level Validator initialized in ResultEvaluator")
+        except Exception as e:
+            logger.warning(f"Failed to initialize Multi-Level Validator: {e}")
+            self.validator = None
     
     def evaluate_step_result(
         self,
@@ -67,7 +82,18 @@ class ResultEvaluator:
             evaluation["needs_retry"] = True
             return evaluation
         
-        # Evaluate based on agent type
+        # Calculate quality metrics
+        completeness = self.metrics.calculate_completeness(result, agent_name)
+        accuracy = self.metrics.calculate_accuracy(result, agent_name)
+        relevance = self.metrics.calculate_relevance(result, agent_name)
+        consistency = self.metrics.calculate_consistency(result, agent_name)
+        
+        # Aggregate metrics
+        quality_metrics = self.metrics.aggregate_metrics(
+            completeness, accuracy, relevance, consistency
+        )
+        
+        # Evaluate based on agent type (legacy method for backward compatibility)
         if agent_name == "timeline":
             evaluation = self._evaluate_timeline_result(evaluation, result)
         elif agent_name == "key_facts":
@@ -82,10 +108,116 @@ class ResultEvaluator:
             # Generic evaluation
             evaluation = self._evaluate_generic_result(evaluation, result)
         
+        # Update with quality metrics
+        evaluation["quality_metrics"] = quality_metrics
+        evaluation["completeness"] = quality_metrics["completeness"]
+        evaluation["accuracy"] = quality_metrics["accuracy"]
+        evaluation["relevance"] = quality_metrics["relevance"]
+        evaluation["consistency"] = quality_metrics["consistency"]
+        
+        # Use overall score for confidence if available
+        if quality_metrics["overall_score"] > 0:
+            evaluation["confidence"] = quality_metrics["overall_score"]
+        
+        # Multi-level validation for low-quality results
+        if quality_metrics["overall_score"] < 0.7 and self.validator:
+            try:
+                # Collect source documents from state if available
+                source_docs = []
+                # Note: rag_service is not available in this context, skip for now
+                # In production, this should be passed from evaluation_node
+                
+                # Collect other findings from state
+                other_findings = []
+                # This would be passed from evaluation_node if available
+                
+                # Perform multi-level validation (synchronous wrapper)
+                try:
+                    loop = asyncio.get_event_loop()
+                    if loop.is_running():
+                        # If loop is running, we can't use asyncio.run
+                        # Skip validation for now (can be improved with proper async handling)
+                        logger.debug("Event loop is running, skipping async validation")
+                        validation_result = None
+                    else:
+                        validation_result = loop.run_until_complete(
+                            self.validator.validate_finding(
+                                finding=result,
+                                source_docs=source_docs,
+                                other_findings=other_findings,
+                                verifying_agent="key_facts" if agent_name != "key_facts" else "timeline"
+                            )
+                        )
+                except RuntimeError:
+                    # No event loop, create new one
+                    validation_result = asyncio.run(
+                        self.validator.validate_finding(
+                            finding=result,
+                            source_docs=source_docs,
+                            other_findings=other_findings,
+                            verifying_agent="key_facts" if agent_name != "key_facts" else "timeline"
+                        )
+                    )
+                
+                # Add validation results to evaluation
+                if validation_result:
+                    evaluation["multi_level_validation"] = {
+                        "is_valid": validation_result.is_valid,
+                        "level_1_evidence": {
+                            "passed": validation_result.level_1.passed,
+                            "confidence": validation_result.level_1.confidence,
+                            "reasoning": validation_result.level_1.reasoning
+                        },
+                        "level_2_consistency": {
+                            "passed": validation_result.level_2.passed,
+                            "conflicts": len(validation_result.level_2.conflicts),
+                            "confidence": validation_result.level_2.confidence,
+                            "reasoning": validation_result.level_2.reasoning
+                        },
+                        "level_3_confidence": {
+                            "score": validation_result.level_3.score,
+                            "reasoning": validation_result.level_3.reasoning
+                        },
+                        "level_4_circular": {
+                            "confirmed": validation_result.level_4.confirmed,
+                            "agreement": validation_result.level_4.agreement_score,
+                            "reasoning": validation_result.level_4.reasoning
+                        },
+                        "overall_confidence": validation_result.overall_confidence,
+                        "issues": validation_result.issues,
+                        "recommendations": validation_result.recommendations
+                    }
+                    
+                    # Update evaluation based on validation
+                    if not validation_result.is_valid:
+                        evaluation["issues"].extend(validation_result.issues)
+                        evaluation["recommendations"].extend(validation_result.recommendations)
+                        evaluation["confidence"] = min(evaluation["confidence"], validation_result.overall_confidence)
+                    
+                    logger.info(f"Multi-level validation completed: valid={validation_result.is_valid}, confidence={validation_result.overall_confidence:.2f}")
+                
+            except Exception as e:
+                logger.warning(f"Multi-level validation failed: {e}")
+        
+        # LLM-based deep evaluation for low-quality results (fallback)
+        if quality_metrics["overall_score"] < 0.6:
+            try:
+                llm_eval = self.metrics.evaluate_with_llm(
+                    result=result,
+                    expected_output=f"Result from {agent_name} agent",
+                    context={"agent_name": agent_name, "step_id": step_id}
+                )
+                evaluation["llm_evaluation"] = llm_eval
+                if "recommendations" in llm_eval:
+                    evaluation["recommendations"].extend(llm_eval["recommendations"])
+            except Exception as e:
+                logger.warning(f"LLM evaluation failed: {e}")
+        
         # Determine if adaptation is needed
         evaluation["needs_adaptation"] = (
             evaluation["confidence"] < self.MIN_CONFIDENCE_THRESHOLD or
             evaluation["completeness"] < self.MIN_COMPLETENESS_THRESHOLD or
+            quality_metrics["overall_score"] < 0.6 or
             len(evaluation["issues"]) > 2
         )
         
@@ -284,6 +416,10 @@ def evaluation_node(
     rag_service=None,
     document_processor=None
 ) -> AnalysisState:
+    """
+    Evaluation node with multi-level validation support.
+    Now includes 4-level validation for systematic result checking.
+    """
     """
     Evaluation node for the analysis graph.
     Evaluates results and determines if adaptation is needed.

@@ -209,9 +209,10 @@ class HumanFeedbackService:
             await asyncio.wait_for(event.wait(), timeout=timeout)
             response = self._responses.get(request.request_id)
             
-            # Update database
+            # Update database (extract run_id from state if available)
+            run_id = state.get("metadata", {}).get("langsmith_run_id")
             if self.db and user_id:
-                self._update_response(request.request_id, response)
+                self._update_response(request.request_id, response, run_id=run_id)
             
             return response
             
@@ -229,7 +230,7 @@ class HumanFeedbackService:
             if request.request_id in self._responses:
                 del self._responses[request.request_id]
     
-    def receive_response(self, request_id: str, response: str) -> bool:
+    def receive_response(self, request_id: str, response: str, run_id: Optional[str] = None) -> bool:
         """
         Receive response from user (called by WebSocket handler)
         
@@ -276,8 +277,8 @@ class HumanFeedbackService:
             logger.error(f"Error persisting request: {e}")
             self.db.rollback()
     
-    def _update_response(self, request_id: str, response: str) -> None:
-        """Update response in database"""
+    def _update_response(self, request_id: str, response: str, run_id: Optional[str] = None) -> None:
+        """Update response in database and save feedback for learning"""
         try:
             interaction = self.db.query(AgentInteraction).filter(
                 AgentInteraction.id == request_id
@@ -288,6 +289,52 @@ class HumanFeedbackService:
                 interaction.status = "answered"
                 interaction.answered_at = datetime.utcnow()
                 self.db.commit()
+                
+                # Save feedback for continuous learning
+                try:
+                    from app.services.langchain_agents.learning_service import ContinuousLearningService
+                    learning_service = ContinuousLearningService(self.db)
+                    
+                    # Save feedback with traces asynchronously
+                    import asyncio
+                    try:
+                        loop = asyncio.get_event_loop()
+                        if loop.is_running():
+                            # If loop is running, create task but don't await
+                            asyncio.create_task(
+                                learning_service.save_feedback_with_traces(
+                                    case_id=interaction.case_id,
+                                    agent_name=interaction.agent_name,
+                                    feedback=response,
+                                    traces=None,
+                                    run_id=run_id
+                                )
+                            )
+                        else:
+                            loop.run_until_complete(
+                                learning_service.save_feedback_with_traces(
+                                    case_id=interaction.case_id,
+                                    agent_name=interaction.agent_name,
+                                    feedback=response,
+                                    traces=None,
+                                    run_id=run_id
+                                )
+                            )
+                    except RuntimeError:
+                        # No event loop, create new one
+                        asyncio.run(
+                            learning_service.save_feedback_with_traces(
+                                case_id=interaction.case_id,
+                                agent_name=interaction.agent_name,
+                                feedback=response,
+                                traces=None,
+                                run_id=run_id
+                            )
+                        )
+                    
+                    logger.debug(f"Saved feedback for learning: {request_id}")
+                except Exception as ls_error:
+                    logger.warning(f"Failed to save feedback for learning: {ls_error}")
         except Exception as e:
             logger.error(f"Error updating response: {e}")
             self.db.rollback()

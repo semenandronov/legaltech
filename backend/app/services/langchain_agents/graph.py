@@ -16,6 +16,7 @@ from app.services.langchain_agents.relationship_node import relationship_agent_n
 from app.services.langchain_agents.evaluation_node import evaluation_node
 from app.services.langchain_agents.adaptation_engine import adaptation_node
 from app.services.langchain_agents.human_feedback import get_feedback_service
+from app.services.langchain_agents.subagent_manager import SubAgentManager
 from sqlalchemy.orm import Session
 from app.services.rag_service import RAGService
 from app.services.document_processor import DocumentProcessor
@@ -41,6 +42,17 @@ def create_analysis_graph(
     Returns:
         Compiled LangGraph graph
     """
+    # Initialize SubAgent Manager for the graph
+    subagent_manager = None
+    try:
+        subagent_manager = SubAgentManager(
+            rag_service=rag_service,
+            document_processor=document_processor
+        )
+        logger.info("✅ SubAgent Manager initialized in graph")
+    except Exception as e:
+        logger.warning(f"Failed to initialize SubAgentManager in graph: {e}")
+    
     # Create wrapper functions that pass db and services
     def timeline_node(state: AnalysisState) -> AnalysisState:
         return timeline_agent_node(state, db, rag_service, document_processor)
@@ -81,6 +93,113 @@ def create_analysis_graph(
     def adaptation_wrapper(state: AnalysisState) -> AnalysisState:
         """Wrapper for adaptation node with services"""
         return adaptation_node(state, db, rag_service, document_processor)
+    
+    def spawn_subagents_node(state: AnalysisState) -> AnalysisState:
+        """
+        Spawn subagents node - creates and executes subagents for subtasks
+        
+        This node handles execution of subtasks from AdvancedPlanningAgent
+        using SubAgentManager.
+        """
+        if not subagent_manager:
+            logger.warning("[SpawnSubagents] SubAgentManager not available, skipping")
+            return state
+        
+        case_id = state.get("case_id", "unknown")
+        logger.info(f"[SpawnSubagents] Starting subagent execution for case {case_id}")
+        
+        new_state = dict(state)
+        
+        # Get subtasks from state (set by AdvancedPlanningAgent)
+        subtasks = state.get("subtasks", [])
+        if not subtasks:
+            logger.info("[SpawnSubagents] No subtasks found, skipping")
+            return new_state
+        
+        # Get context from state
+        context = state.get("context", {})
+        
+        # Execute subagents
+        subagent_results = []
+        errors = list(state.get("errors", []))
+        
+        for subtask in subtasks:
+            subtask_id = subtask.get("subtask_id")
+            dependencies = subtask.get("dependencies", [])
+            
+            # Check if dependencies are satisfied
+            if dependencies:
+                # Check if all dependencies are completed
+                all_deps_completed = True
+                for dep_id in dependencies:
+                    # Check if dependency result exists in state
+                    dep_completed = False
+                    for result in subagent_results:
+                        if result.get("subtask_id") == dep_id:
+                            dep_completed = True
+                            break
+                    
+                    if not dep_completed:
+                        all_deps_completed = False
+                        break
+                
+                if not all_deps_completed:
+                    logger.info(f"[SpawnSubagents] Subtask {subtask_id} waiting for dependencies: {dependencies}")
+                    continue
+            
+            try:
+                # Spawn subagent
+                subagent = subagent_manager.spawn_subagent(
+                    subtask=subtask,
+                    context=context,
+                    state=state
+                )
+                
+                # Execute subagent with retry
+                result = subagent.run(state, max_retries=2)
+                
+                # Store result
+                subagent_results.append({
+                    "subtask_id": subtask_id,
+                    "agent_type": subtask.get("agent_type"),
+                    "data": result,
+                    "status": "completed"
+                })
+                
+                logger.info(f"[SpawnSubagents] Subtask {subtask_id} completed successfully")
+                
+            except Exception as e:
+                logger.error(f"[SpawnSubagents] Error executing subtask {subtask_id}: {e}", exc_info=True)
+                errors.append({
+                    "subtask_id": subtask_id,
+                    "error": str(e)
+                })
+                subagent_results.append({
+                    "subtask_id": subtask_id,
+                    "agent_type": subtask.get("agent_type"),
+                    "status": "failed",
+                    "error": str(e)
+                })
+        
+        # Reconcile results if we have multiple subagents
+        if len(subagent_results) > 1:
+            try:
+                main_task = state.get("user_task", "Analysis task")
+                reconciled = subagent_manager.reconcile_results(subagent_results, main_task)
+                new_state["subagent_results"] = reconciled
+                new_state["reconciled_summary"] = reconciled.get("summary", "")
+                logger.info("[SpawnSubagents] Results reconciled successfully")
+            except Exception as e:
+                logger.error(f"[SpawnSubagents] Error reconciling results: {e}", exc_info=True)
+                new_state["subagent_results"] = {"subtask_results": {r.get("subtask_id"): r for r in subagent_results}}
+        else:
+            new_state["subagent_results"] = {"subtask_results": {r.get("subtask_id"): r for r in subagent_results}}
+        
+        new_state["errors"] = errors
+        new_state["subtasks_completed"] = len([r for r in subagent_results if r.get("status") == "completed"])
+        
+        logger.info(f"[SpawnSubagents] Completed {new_state['subtasks_completed']} subtasks for case {case_id}")
+        return new_state
     
     def human_feedback_wait_node(state: AnalysisState) -> AnalysisState:
         """
@@ -152,18 +271,20 @@ def create_analysis_graph(
     
     def parallel_independent_agents_node(state: AnalysisState) -> AnalysisState:
         """
-        Execute independent agents in parallel.
-        Independent agents: timeline, key_facts, discrepancy, entity_extraction
+        Execute independent agents in parallel with improved state merging, timeout, and error handling.
+        Independent agents: timeline, key_facts, discrepancy, entity_extraction, document_classifier
         """
         case_id = state.get("case_id", "unknown")
         analysis_types = state.get("analysis_types", [])
         
         # Define independent agents that can run in parallel
+        # Расширенный список независимых агентов (включая document_classifier)
         independent_agents = {
             "timeline": timeline_node,
             "key_facts": key_facts_node,
             "discrepancy": discrepancy_node,
             "entity_extraction": entity_extraction_node,
+            "document_classifier": document_classifier_node,
         }
         
         # Filter to only agents that are requested and not yet completed
@@ -181,30 +302,65 @@ def create_analysis_graph(
         
         logger.info(f"[Parallel] Running {len(agents_to_run)} independent agents in parallel for case {case_id}")
         
-        # Execute agents in parallel using ThreadPoolExecutor
+        # Execute agents in parallel using ThreadPoolExecutor with timeout
         new_state = dict(state)
         errors = list(state.get("errors", []))
         
+        # Timeout per agent (5 minutes default, can be configured)
+        DEFAULT_AGENT_TIMEOUT = 300  # 5 minutes
+        
         with ThreadPoolExecutor(max_workers=len(agents_to_run)) as executor:
-            # Submit all tasks
-            future_to_agent = {
-                executor.submit(agent_func, state): agent_name
-                for agent_name, agent_func in agents_to_run
-            }
+            # Submit all tasks - IMPORTANT: pass a copy of state to each agent to avoid conflicts
+            future_to_agent = {}
+            for agent_name, agent_func in agents_to_run:
+                # Create a deep copy of state for each agent to avoid race conditions
+                agent_state = dict(state)
+                future = executor.submit(agent_func, agent_state)
+                future_to_agent[future] = agent_name
             
-            # Collect results
-            for future in as_completed(future_to_agent):
+            # Collect results with timeout handling
+            completed_agents = set()
+            for future in as_completed(future_to_agent, timeout=DEFAULT_AGENT_TIMEOUT * len(agents_to_run)):
                 agent_name = future_to_agent[future]
                 try:
-                    result_state = future.result()
-                    # Merge results into new_state
+                    # Get result with individual timeout
+                    result_state = future.result(timeout=DEFAULT_AGENT_TIMEOUT)
+                    
+                    # Merge ALL state fields, not just the result
                     result_key = f"{agent_name}_result"
-                    if result_key in result_state:
+                    
+                    # Merge result
+                    if result_key in result_state and result_state[result_key] is not None:
                         new_state[result_key] = result_state[result_key]
-                    # Merge errors
+                    
+                    # Merge errors (deduplicate)
                     if "errors" in result_state:
-                        errors.extend(result_state["errors"])
-                    logger.info(f"[Parallel] Completed {agent_name} agent")
+                        existing_error_agents = {e.get("agent") for e in errors}
+                        for error in result_state["errors"]:
+                            if error.get("agent") not in existing_error_agents:
+                                errors.append(error)
+                    
+                    # Merge metadata (combine dictionaries)
+                    if "metadata" in result_state:
+                        if "metadata" not in new_state:
+                            new_state["metadata"] = {}
+                        new_state["metadata"].update(result_state["metadata"])
+                    
+                    # Merge completed_steps
+                    if "completed_steps" in result_state:
+                        existing_steps = set(new_state.get("completed_steps", []))
+                        new_steps = set(result_state["completed_steps"])
+                        new_state["completed_steps"] = list(existing_steps | new_steps)
+                    
+                    completed_agents.add(agent_name)
+                    logger.info(f"[Parallel] Completed {agent_name} agent successfully")
+                    
+                except TimeoutError:
+                    logger.error(f"[Parallel] Timeout ({DEFAULT_AGENT_TIMEOUT}s) for {agent_name} agent")
+                    errors.append({
+                        "agent": agent_name,
+                        "error": f"Timeout after {DEFAULT_AGENT_TIMEOUT} seconds"
+                    })
                 except Exception as e:
                     logger.error(f"[Parallel] Error in {agent_name} agent: {e}", exc_info=True)
                     errors.append({
@@ -212,7 +368,15 @@ def create_analysis_graph(
                         "error": str(e)
                     })
         
+        # Check if any agents didn't complete
+        for agent_name, _ in agents_to_run:
+            if agent_name not in completed_agents:
+                result_key = f"{agent_name}_result"
+                if result_key not in new_state or new_state[result_key] is None:
+                    logger.warning(f"[Parallel] Agent {agent_name} did not complete - no result")
+        
         new_state["errors"] = errors
+        logger.info(f"[Parallel] Completed {len(completed_agents)}/{len(agents_to_run)} agents for case {case_id}")
         return new_state
     
     # Create the graph
@@ -232,6 +396,7 @@ def create_analysis_graph(
     graph.add_node("evaluation", evaluation_wrapper)
     graph.add_node("adaptation", adaptation_wrapper)
     graph.add_node("parallel_independent", parallel_independent_agents_node)
+    graph.add_node("spawn_subagents", spawn_subagents_node)
     graph.add_node("human_feedback_wait", human_feedback_wait_node)
     
     # Add edges from START
@@ -252,6 +417,7 @@ def create_analysis_graph(
             "privilege_check": "privilege_check",
             "relationship": "relationship",
             "parallel_independent": "parallel_independent",
+            "spawn_subagents": "spawn_subagents",
             "human_feedback_wait": "human_feedback_wait",
             "end": END,
             "supervisor": "supervisor"  # Wait if dependencies not ready
@@ -271,6 +437,9 @@ def create_analysis_graph(
     
     # Parallel independent agents node also goes to evaluation
     graph.add_edge("parallel_independent", "evaluation")
+    
+    # Spawn subagents node goes to evaluation
+    graph.add_edge("spawn_subagents", "evaluation")
     
     # Evaluation node conditionally routes to adaptation, human_feedback, or supervisor
     def route_after_evaluation(state: AnalysisState) -> str:
@@ -308,28 +477,37 @@ def create_analysis_graph(
     graph.add_edge("adaptation", "supervisor")
     
     # Compile graph with checkpointer
-    # NOTE: PostgresSaver.from_conn_string() returns a context manager in newer versions
-    # Using MemorySaver for now to avoid context manager issues
-    # TODO: Fix PostgresSaver integration when langgraph API stabilizes
-    checkpointer = MemorySaver()
-    logger.info("✅ Using MemorySaver for state persistence (PostgresSaver temporarily disabled)")
-    
-    # Alternative: Try PostgresSaver if needed (commented out due to context manager issues)
-    # try:
-    #     from langgraph.checkpoint.postgres import PostgresSaver
-    #     from app.config import config
-    #     
-    #     db_url = config.DATABASE_URL
-    #     if db_url.startswith("postgresql+psycopg://"):
-    #         db_url = db_url.replace("postgresql+psycopg://", "postgresql://", 1)
-    #     
-    #     # PostgresSaver.from_conn_string() may return a context manager
-    #     # This needs to be handled properly with async context manager
-    #     checkpointer = PostgresSaver.from_conn_string(db_url)
-    #     logger.info("✅ Using PostgreSQL checkpointer for state persistence")
-    # except (ImportError, Exception) as e:
-    #     logger.warning(f"PostgresSaver not available ({e}), using MemorySaver")
-    #     checkpointer = MemorySaver()
+    # Try PostgresSaver first (for production persistence), fallback to MemorySaver
+    checkpointer = None
+    try:
+        from langgraph.checkpoint.postgres import PostgresSaver
+        from app.config import config
+        
+        db_url = config.DATABASE_URL
+        # Remove psycopg driver prefix if present (PostgresSaver expects standard postgresql://)
+        if db_url.startswith("postgresql+psycopg://"):
+            db_url = db_url.replace("postgresql+psycopg://", "postgresql://", 1)
+        elif db_url.startswith("postgresql+psycopg2://"):
+            db_url = db_url.replace("postgresql+psycopg2://", "postgresql://", 1)
+        
+        # PostgresSaver.from_conn_string() creates a checkpointer
+        # Note: In newer versions, this may require setup() to create tables
+        checkpointer = PostgresSaver.from_conn_string(db_url)
+        
+        # Try to setup tables if they don't exist (idempotent)
+        try:
+            checkpointer.setup()  # Creates checkpoint tables if they don't exist
+        except Exception as setup_error:
+            # Setup might fail if tables already exist, that's ok
+            logger.debug(f"Checkpointer setup note: {setup_error}")
+        
+        logger.info("✅ Using PostgreSQL checkpointer for state persistence")
+    except ImportError as e:
+        logger.warning(f"PostgresSaver not available (langgraph-checkpoint-postgres not installed): {e}, using MemorySaver")
+        checkpointer = MemorySaver()
+    except Exception as e:
+        logger.warning(f"Failed to initialize PostgresSaver ({e}), using MemorySaver as fallback")
+        checkpointer = MemorySaver()
     
     compiled_graph = graph.compile(checkpointer=checkpointer)
     

@@ -1,10 +1,21 @@
 """Planning tools for Planning Agent"""
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Optional
 from langchain_core.tools import tool
 import json
 import logging
 
 logger = logging.getLogger(__name__)
+
+# Global instances for document analysis tools
+_rag_service = None
+_document_processor = None
+
+
+def initialize_document_analysis_tools(rag_service, document_processor):
+    """Initialize global instances for document analysis tools"""
+    global _rag_service, _document_processor
+    _rag_service = rag_service
+    _document_processor = document_processor
 
 
 # Определение доступных анализов и их зависимостей
@@ -177,10 +188,201 @@ def validate_analysis_plan_tool(analysis_types: str) -> str:
         return json.dumps({"error": str(e)})
 
 
+@tool
+def analyze_document_structure_tool(case_id: str) -> str:
+    """
+    Анализирует структуру документов в деле для понимания контекста.
+    
+    Этот инструмент помогает понять:
+    - Какие типы документов есть в деле
+    - Общий объем информации
+    - Ключевые темы и категории документов
+    
+    Используй этот инструмент ПЕРЕД планированием, чтобы лучше понять контекст дела.
+    
+    Args:
+        case_id: Идентификатор дела
+    
+    Returns:
+        JSON строка с информацией о структуре документов
+    """
+    global _rag_service, _document_processor
+    
+    if not _rag_service or not _document_processor:
+        return json.dumps({
+            "error": "Document analysis tools not initialized",
+            "message": "RAG service or document processor not available"
+        })
+    
+    try:
+        from app.utils.database import SessionLocal
+        db = SessionLocal()
+        
+        try:
+            # Получаем список файлов
+            from app.models.case import File as FileModel
+            files = db.query(FileModel).filter(FileModel.case_id == case_id).all()
+            
+            if not files:
+                return json.dumps({
+                    "case_id": case_id,
+                    "file_count": 0,
+                    "message": "No documents found in case"
+                })
+            
+            # Анализируем типы файлов
+            file_types = {}
+            total_size = 0
+            for file in files:
+                file_type = file.file_type or "unknown"
+                file_types[file_type] = file_types.get(file_type, 0) + 1
+                total_size += file.file_size or 0
+            
+            # Получаем образцы документов для понимания содержания
+            sample_docs = []
+            for file in files[:5]:  # Первые 5 файлов
+                try:
+                    # Получаем релевантные chunks для понимания содержания
+                    chunks = _rag_service.retrieve_context(
+                        case_id=case_id,
+                        query=f"содержание документа {file.filename}",
+                        k=3,
+                        db=db
+                    )
+                    if chunks:
+                        sample_docs.append({
+                            "filename": file.filename,
+                            "type": file.file_type,
+                            "preview": chunks[0].get("content", "")[:200] if chunks else ""
+                        })
+                except Exception as e:
+                    logger.debug(f"Error analyzing file {file.filename}: {e}")
+            
+            result = {
+                "case_id": case_id,
+                "file_count": len(files),
+                "file_types": file_types,
+                "total_size_bytes": total_size,
+                "sample_documents": sample_docs,
+                "message": f"Found {len(files)} documents in case"
+            }
+            
+            logger.info(f"analyze_document_structure_tool: Analyzed {len(files)} documents for case {case_id}")
+            return json.dumps(result, ensure_ascii=False, indent=2)
+            
+        finally:
+            db.close()
+            
+    except Exception as e:
+        logger.error(f"Error in analyze_document_structure_tool: {e}")
+        return json.dumps({"error": str(e)})
+
+
+@tool
+def classify_case_type_tool(case_id: str) -> str:
+    """
+    Классифицирует тип дела на основе документов.
+    
+    Определяет тип юридического дела (договорное право, судебное разбирательство, 
+    корпоративное право, и т.д.) для лучшего планирования анализа.
+    
+    Args:
+        case_id: Идентификатор дела
+    
+    Returns:
+        JSON строка с классификацией типа дела
+    """
+    global _rag_service
+    
+    if not _rag_service:
+        return json.dumps({
+            "error": "RAG service not initialized",
+            "message": "Cannot classify case type without RAG service"
+        })
+    
+    try:
+        from app.utils.database import SessionLocal
+        db = SessionLocal()
+        
+        try:
+            # Получаем общий контекст дела
+            context_docs = _rag_service.retrieve_context(
+                case_id=case_id,
+                query="тип дела суть спора предмет договора",
+                k=10,
+                db=db
+            )
+            
+            if not context_docs:
+                return json.dumps({
+                    "case_id": case_id,
+                    "case_type": "unknown",
+                    "confidence": 0.0,
+                    "message": "Insufficient documents for classification"
+                })
+            
+            # Анализируем ключевые слова для классификации
+            content_text = " ".join([doc.get("content", "") for doc in context_docs[:5]])
+            content_lower = content_text.lower()
+            
+            # Определяем тип дела по ключевым словам
+            case_types = {
+                "contract_dispute": ["договор", "контракт", "соглашение", "обязательство", "исполнение"],
+                "litigation": ["иск", "суд", "судья", "заседание", "решение суда", "истец", "ответчик"],
+                "corporate": ["акции", "доля", "учредитель", "устав", "общее собрание"],
+                "labor": ["трудовой договор", "работник", "работодатель", "зарплата", "увольнение"],
+                "tax": ["налог", "налоговая", "НДС", "прибыль", "декларация"]
+            }
+            
+            detected_types = []
+            for case_type, keywords in case_types.items():
+                matches = sum(1 for keyword in keywords if keyword in content_lower)
+                if matches >= 2:
+                    detected_types.append({
+                        "type": case_type,
+                        "confidence": min(matches / len(keywords), 1.0),
+                        "matches": matches
+                    })
+            
+            # Сортируем по уверенности
+            detected_types.sort(key=lambda x: x["confidence"], reverse=True)
+            
+            primary_type = detected_types[0]["type"] if detected_types else "general"
+            confidence = detected_types[0]["confidence"] if detected_types else 0.5
+            
+            result = {
+                "case_id": case_id,
+                "case_type": primary_type,
+                "confidence": confidence,
+                "alternative_types": [dt["type"] for dt in detected_types[1:3]],
+                "indicators": [doc.get("content", "")[:100] for doc in context_docs[:3]],
+                "message": f"Classified as {primary_type} with {confidence:.0%} confidence"
+            }
+            
+            logger.info(f"classify_case_type_tool: Classified case {case_id} as {primary_type}")
+            return json.dumps(result, ensure_ascii=False, indent=2)
+            
+        finally:
+            db.close()
+            
+    except Exception as e:
+        logger.error(f"Error in classify_case_type_tool: {e}")
+        return json.dumps({"error": str(e)})
+
+
 def get_planning_tools() -> List:
     """Get all planning tools"""
-    return [
+    base_tools = [
         get_available_analyses_tool,
         check_analysis_dependencies_tool,
         validate_analysis_plan_tool,
     ]
+    
+    # Add document analysis tools if initialized
+    if _rag_service and _document_processor:
+        base_tools.extend([
+            analyze_document_structure_tool,
+            classify_case_type_tool,
+        ])
+    
+    return base_tools

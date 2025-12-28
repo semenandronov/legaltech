@@ -21,16 +21,18 @@ def initialize_tools(rag_service: RAGService, document_processor: DocumentProces
 
 
 @tool
-def retrieve_documents_tool(query: str, case_id: str, k: int = 20) -> str:
+def retrieve_documents_tool(query: str, case_id: str, k: int = 20, use_iterative: bool = False) -> str:
     """
     Retrieve relevant documents from the case using semantic search.
     
     Use this tool to find documents related to a specific query.
+    For critical analysis (risk, discrepancy), use_iterative=True for better relevance.
     
     Args:
         query: Search query describing what information you need
         case_id: Case identifier
         k: Number of document chunks to retrieve (default: 20)
+        use_iterative: If True, uses iterative search with query refinement (default: False)
     
     Returns:
         Formatted string with retrieved documents and their sources
@@ -39,13 +41,24 @@ def retrieve_documents_tool(query: str, case_id: str, k: int = 20) -> str:
         raise ValueError("RAG service not initialized. Call initialize_tools() first.")
     
     try:
-        # Retrieve relevant documents
-        documents = _rag_service.retrieve_context(
-            case_id=case_id,
-            query=query,
-            k=k,
-            retrieval_strategy="multi_query"
-        )
+        # Use iterative search if requested (better for critical agents)
+        if use_iterative:
+            logger.info(f"Using iterative search for query: {query[:50]}...")
+            documents = _rag_service.retrieve_context(
+                case_id=case_id,
+                query=query,
+                k=k,
+                retrieval_strategy="iterative",
+                use_iterative=True
+            )
+        else:
+            # Retrieve relevant documents with multi_query (better than simple search)
+            documents = _rag_service.retrieve_context(
+                case_id=case_id,
+                query=query,
+                k=k,
+                retrieval_strategy="multi_query"
+            )
         
         if not documents:
             return "No relevant documents found for the query."
@@ -53,7 +66,7 @@ def retrieve_documents_tool(query: str, case_id: str, k: int = 20) -> str:
         # Format documents for agent
         formatted_docs = _rag_service.format_sources_for_prompt(documents)
         
-        logger.info(f"Retrieved {len(documents)} documents for query: {query[:50]}...")
+        logger.info(f"Retrieved {len(documents)} documents for query: {query[:50]}... (iterative={use_iterative})")
         return formatted_docs
     except Exception as e:
         logger.error(f"Error retrieving documents: {e}")
@@ -192,13 +205,68 @@ def save_summary_tool(summary_data: str, case_id: str) -> str:
         return f"Error saving summary: {str(e)}"
 
 
+@tool
+def retrieve_documents_iterative_tool(query: str, case_id: str, k: int = 20) -> str:
+    """
+    Retrieve relevant documents using iterative search with query refinement.
+    
+    This tool automatically refines the search query and improves document relevance.
+    Use this for critical analysis tasks like risk assessment or discrepancy detection.
+    Better than retrieve_documents_tool for complex queries that need multiple refinement iterations.
+    
+    Args:
+        query: Search query describing what information you need
+        case_id: Case identifier
+        k: Number of document chunks to retrieve (default: 20)
+    
+    Returns:
+        Formatted string with retrieved documents and their sources
+    """
+    if not _rag_service:
+        raise ValueError("RAG service not initialized. Call initialize_tools() first.")
+    
+    try:
+        # Always use iterative search for this tool
+        logger.info(f"Using iterative search tool for query: {query[:50]}...")
+        documents = _rag_service.retrieve_context(
+            case_id=case_id,
+            query=query,
+            k=k,
+            retrieval_strategy="iterative",
+            use_iterative=True
+        )
+        
+        if not documents:
+            return "No relevant documents found for the query after iterative refinement."
+        
+        # Format documents for agent
+        formatted_docs = _rag_service.format_sources_for_prompt(documents)
+        
+        logger.info(f"Iterative search retrieved {len(documents)} documents for query: {query[:50]}...")
+        return formatted_docs
+    except Exception as e:
+        logger.error(f"Error in iterative document retrieval: {e}")
+        return f"Error retrieving documents with iterative search: {str(e)}"
+
+
 def get_all_tools() -> List:
     """Get all available tools for agents"""
     return [
         retrieve_documents_tool,
+        retrieve_documents_iterative_tool,
         save_timeline_tool,
         save_key_facts_tool,
         save_discrepancy_tool,
         save_risk_analysis_tool,
         save_summary_tool,
+    ]
+
+
+def get_critical_agent_tools() -> List:
+    """Get tools for critical agents (risk, discrepancy) - includes iterative search"""
+    return [
+        retrieve_documents_tool,
+        retrieve_documents_iterative_tool,  # Explicit iterative tool for critical agents
+        save_discrepancy_tool,
+        save_risk_analysis_tool,
     ]

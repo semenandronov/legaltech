@@ -553,4 +553,492 @@ class TabularReviewService:
             # Fallback to CSV if openpyxl not available
             csv_content = self.export_to_csv(review_id, user_id)
             return csv_content.encode('utf-8')
+    
+    def create_timeline_table_from_results(
+        self,
+        case_id: str,
+        user_id: str,
+        name: str = "Хронология событий"
+    ) -> TabularReview:
+        """Создает таблицу из результатов Timeline агента"""
+        from app.models.analysis import TimelineEvent
+        
+        # Get timeline events
+        events = self.db.query(TimelineEvent).filter(
+            TimelineEvent.case_id == case_id
+        ).order_by(TimelineEvent.date).all()
+        
+        if not events:
+            raise ValueError("No timeline events found for this case")
+        
+        # Create review
+        review = self.create_tabular_review(
+            case_id=case_id,
+            user_id=user_id,
+            name=name,
+            description="Автоматически созданная таблица из хронологии событий"
+        )
+        
+        # Add columns
+        self.add_column(
+            review_id=review.id,
+            column_label="Дата",
+            column_type="date",
+            prompt="Дата события",
+            user_id=user_id
+        )
+        
+        self.add_column(
+            review_id=review.id,
+            column_label="Тип события",
+            column_type="text",
+            prompt="Тип события",
+            user_id=user_id
+        )
+        
+        self.add_column(
+            review_id=review.id,
+            column_label="Описание",
+            column_type="text",
+            prompt="Описание события",
+            user_id=user_id
+        )
+        
+        self.add_column(
+            review_id=review.id,
+            column_label="Источник",
+            column_type="text",
+            prompt="Документ-источник",
+            user_id=user_id
+        )
+        
+        # Get files for events
+        from app.models.case import File
+        files_dict = {}
+        for event in events:
+            source_doc = event.source_document
+            if source_doc and source_doc not in files_dict:
+                file = self.db.query(File).filter(
+                    File.case_id == case_id,
+                    File.name == source_doc
+                ).first()
+                if file:
+                    files_dict[source_doc] = file
+        
+        # Create cells from events
+        for event in events:
+            file = files_dict.get(event.source_document)
+            if not file:
+                continue
+            
+            # Date cell
+            cell_date = TabularCell(
+                tabular_review_id=review.id,
+                file_id=file.id,
+                column_id=review.columns[0].id,
+                cell_value=event.date.strftime("%Y-%m-%d") if event.date else "",
+                confidence_score=0.9
+            )
+            self.db.add(cell_date)
+            
+            # Event type cell
+            cell_type = TabularCell(
+                tabular_review_id=review.id,
+                file_id=file.id,
+                column_id=review.columns[1].id,
+                cell_value=event.event_type or "",
+                confidence_score=0.9
+            )
+            self.db.add(cell_type)
+            
+            # Description cell
+            cell_desc = TabularCell(
+                tabular_review_id=review.id,
+                file_id=file.id,
+                column_id=review.columns[2].id,
+                cell_value=event.description,
+                confidence_score=0.9
+            )
+            self.db.add(cell_desc)
+            
+            # Source cell
+            cell_source = TabularCell(
+                tabular_review_id=review.id,
+                file_id=file.id,
+                column_id=review.columns[3].id,
+                cell_value=event.source_document,
+                confidence_score=1.0
+            )
+            self.db.add(cell_source)
+        
+        self.db.commit()
+        logger.info(f"Created timeline table {review.id} with {len(events)} events")
+        return review
+    
+    def create_entities_table_from_results(
+        self,
+        case_id: str,
+        user_id: str,
+        name: str = "Извлеченные сущности"
+    ) -> TabularReview:
+        """Создает таблицу из результатов Entity Extraction агента"""
+        from app.models.analysis import ExtractedEntity
+        
+        # Get entities
+        entities = self.db.query(ExtractedEntity).filter(
+            ExtractedEntity.case_id == case_id
+        ).all()
+        
+        if not entities:
+            raise ValueError("No entities found for this case")
+        
+        # Create review
+        review = self.create_tabular_review(
+            case_id=case_id,
+            user_id=user_id,
+            name=name,
+            description="Автоматически созданная таблица из извлеченных сущностей"
+        )
+        
+        # Add columns
+        self.add_column(
+            review_id=review.id,
+            column_label="Сущность",
+            column_type="text",
+            prompt="Название сущности",
+            user_id=user_id
+        )
+        
+        self.add_column(
+            review_id=review.id,
+            column_label="Тип",
+            column_type="text",
+            prompt="Тип сущности (PERSON, ORG, etc.)",
+            user_id=user_id
+        )
+        
+        self.add_column(
+            review_id=review.id,
+            column_label="Контекст",
+            column_type="text",
+            prompt="Контекст, в котором найдена сущность",
+            user_id=user_id
+        )
+        
+        self.add_column(
+            review_id=review.id,
+            column_label="Источник",
+            column_type="text",
+            prompt="Документ-источник",
+            user_id=user_id
+        )
+        
+        # Get files for entities
+        from app.models.case import File
+        files_dict = {}
+        for entity in entities:
+            if entity.file_id and entity.file_id not in files_dict:
+                file = self.db.query(File).filter(File.id == entity.file_id).first()
+                if file:
+                    files_dict[entity.file_id] = file
+        
+        # Create cells from entities
+        for entity in entities:
+            file = files_dict.get(entity.file_id) if entity.file_id else None
+            if not file:
+                continue
+            
+            # Entity text cell
+            cell_entity = TabularCell(
+                tabular_review_id=review.id,
+                file_id=file.id,
+                column_id=review.columns[0].id,
+                cell_value=entity.entity_text,
+                confidence_score=float(entity.confidence) if entity.confidence else 0.8
+            )
+            self.db.add(cell_entity)
+            
+            # Entity type cell
+            cell_type = TabularCell(
+                tabular_review_id=review.id,
+                file_id=file.id,
+                column_id=review.columns[1].id,
+                cell_value=entity.entity_type,
+                confidence_score=0.9
+            )
+            self.db.add(cell_type)
+            
+            # Context cell
+            cell_context = TabularCell(
+                tabular_review_id=review.id,
+                file_id=file.id,
+                column_id=review.columns[2].id,
+                cell_value=entity.context or "",
+                confidence_score=0.8
+            )
+            self.db.add(cell_context)
+            
+            # Source cell
+            cell_source = TabularCell(
+                tabular_review_id=review.id,
+                file_id=file.id,
+                column_id=review.columns[3].id,
+                cell_value=entity.source_document or file.name,
+                confidence_score=1.0
+            )
+            self.db.add(cell_source)
+        
+        self.db.commit()
+        logger.info(f"Created entities table {review.id} with {len(entities)} entities")
+        return review
+    
+    def create_discrepancies_table_from_results(
+        self,
+        case_id: str,
+        user_id: str,
+        name: str = "Найденные противоречия"
+    ) -> TabularReview:
+        """Создает таблицу из результатов Discrepancy агента"""
+        from app.models.analysis import Discrepancy
+        
+        # Get discrepancies
+        discrepancies = self.db.query(Discrepancy).filter(
+            Discrepancy.case_id == case_id
+        ).all()
+        
+        if not discrepancies:
+            raise ValueError("No discrepancies found for this case")
+        
+        # Create review
+        review = self.create_tabular_review(
+            case_id=case_id,
+            user_id=user_id,
+            name=name,
+            description="Автоматически созданная таблица из найденных противоречий"
+        )
+        
+        # Add columns
+        self.add_column(
+            review_id=review.id,
+            column_label="Тип противоречия",
+            column_type="text",
+            prompt="Тип противоречия",
+            user_id=user_id
+        )
+        
+        self.add_column(
+            review_id=review.id,
+            column_label="Серьезность",
+            column_type="text",
+            prompt="Уровень серьезности (HIGH, MEDIUM, LOW)",
+            user_id=user_id
+        )
+        
+        self.add_column(
+            review_id=review.id,
+            column_label="Описание",
+            column_type="text",
+            prompt="Описание противоречия",
+            user_id=user_id
+        )
+        
+        self.add_column(
+            review_id=review.id,
+            column_label="Документы",
+            column_type="text",
+            prompt="Документы с противоречиями",
+            user_id=user_id
+        )
+        
+        # Get files
+        from app.models.case import File
+        files = self.db.query(File).filter(File.case_id == case_id).all()
+        if not files:
+            raise ValueError("No files found for this case")
+        
+        # Create cells from discrepancies
+        for disc in discrepancies:
+            # Use first file as placeholder (discrepancies don't have direct file_id)
+            file = files[0]
+            
+            # Type cell
+            cell_type = TabularCell(
+                tabular_review_id=review.id,
+                file_id=file.id,
+                column_id=review.columns[0].id,
+                cell_value=disc.type,
+                confidence_score=0.9
+            )
+            self.db.add(cell_type)
+            
+            # Severity cell
+            cell_severity = TabularCell(
+                tabular_review_id=review.id,
+                file_id=file.id,
+                column_id=review.columns[1].id,
+                cell_value=disc.severity,
+                confidence_score=0.9
+            )
+            self.db.add(cell_severity)
+            
+            # Description cell
+            cell_desc = TabularCell(
+                tabular_review_id=review.id,
+                file_id=file.id,
+                column_id=review.columns[2].id,
+                cell_value=disc.description,
+                confidence_score=0.9
+            )
+            self.db.add(cell_desc)
+            
+            # Documents cell
+            source_docs = disc.source_documents
+            if isinstance(source_docs, list):
+                docs_str = ", ".join(source_docs)
+            else:
+                docs_str = str(source_docs)
+            
+            cell_docs = TabularCell(
+                tabular_review_id=review.id,
+                file_id=file.id,
+                column_id=review.columns[3].id,
+                cell_value=docs_str,
+                confidence_score=1.0
+            )
+            self.db.add(cell_docs)
+        
+        self.db.commit()
+        logger.info(f"Created discrepancies table {review.id} with {len(discrepancies)} discrepancies")
+        return review
+    
+    def create_risks_table_from_results(
+        self,
+        case_id: str,
+        user_id: str,
+        name: str = "Выявленные риски"
+    ) -> TabularReview:
+        """Создает таблицу из результатов Risk агента"""
+        from app.models.analysis import Risk
+        
+        # Get risks
+        risks = self.db.query(Risk).filter(
+            Risk.case_id == case_id
+        ).all()
+        
+        if not risks:
+            raise ValueError("No risks found for this case")
+        
+        # Create review
+        review = self.create_tabular_review(
+            case_id=case_id,
+            user_id=user_id,
+            name=name,
+            description="Автоматически созданная таблица из выявленных рисков"
+        )
+        
+        # Add columns
+        self.add_column(
+            review_id=review.id,
+            column_label="Название риска",
+            column_type="text",
+            prompt="Название риска",
+            user_id=user_id
+        )
+        
+        self.add_column(
+            review_id=review.id,
+            column_label="Категория",
+            column_type="text",
+            prompt="Категория риска",
+            user_id=user_id
+        )
+        
+        self.add_column(
+            review_id=review.id,
+            column_label="Вероятность",
+            column_type="text",
+            prompt="Вероятность (HIGH, MEDIUM, LOW)",
+            user_id=user_id
+        )
+        
+        self.add_column(
+            review_id=review.id,
+            column_label="Влияние",
+            column_type="text",
+            prompt="Влияние (HIGH, MEDIUM, LOW)",
+            user_id=user_id
+        )
+        
+        self.add_column(
+            review_id=review.id,
+            column_label="Описание",
+            column_type="text",
+            prompt="Описание риска",
+            user_id=user_id
+        )
+        
+        # Get files
+        from app.models.case import File
+        files = self.db.query(File).filter(File.case_id == case_id).all()
+        if not files:
+            raise ValueError("No files found for this case")
+        
+        # Create cells from risks
+        for risk in risks:
+            # Use first file as placeholder
+            file = files[0]
+            
+            # Name cell
+            cell_name = TabularCell(
+                tabular_review_id=review.id,
+                file_id=file.id,
+                column_id=review.columns[0].id,
+                cell_value=risk.risk_name,
+                confidence_score=0.9
+            )
+            self.db.add(cell_name)
+            
+            # Category cell
+            cell_category = TabularCell(
+                tabular_review_id=review.id,
+                file_id=file.id,
+                column_id=review.columns[1].id,
+                cell_value=risk.risk_category,
+                confidence_score=0.9
+            )
+            self.db.add(cell_category)
+            
+            # Probability cell
+            cell_prob = TabularCell(
+                tabular_review_id=review.id,
+                file_id=file.id,
+                column_id=review.columns[2].id,
+                cell_value=risk.probability,
+                confidence_score=0.9
+            )
+            self.db.add(cell_prob)
+            
+            # Impact cell
+            cell_impact = TabularCell(
+                tabular_review_id=review.id,
+                file_id=file.id,
+                column_id=review.columns[3].id,
+                cell_value=risk.impact,
+                confidence_score=0.9
+            )
+            self.db.add(cell_impact)
+            
+            # Description cell
+            cell_desc = TabularCell(
+                tabular_review_id=review.id,
+                file_id=file.id,
+                column_id=review.columns[4].id,
+                cell_value=risk.description,
+                confidence_score=0.9
+            )
+            self.db.add(cell_desc)
+        
+        self.db.commit()
+        logger.info(f"Created risks table {review.id} with {len(risks)} risks")
+        return review
 

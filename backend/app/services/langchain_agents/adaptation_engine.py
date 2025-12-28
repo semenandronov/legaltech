@@ -1,11 +1,12 @@
 """Adaptation engine for dynamic plan modification"""
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Optional
 from datetime import datetime
 from app.services.langchain_agents.state import (
     AnalysisState, 
     PlanStepStatus,
     AdaptationRecord
 )
+from app.services.langchain_agents.replanning_agent import ReplanningAgent
 from app.services.llm_factory import create_llm
 from app.config import config
 import logging
@@ -19,13 +20,28 @@ class AdaptationEngine:
     Implements the adaptation capability from Harvey Agents.
     """
     
-    def __init__(self):
+    def __init__(
+        self,
+        rag_service: Optional[Any] = None,
+        document_processor: Optional[Any] = None
+    ):
         """Initialize adaptation engine"""
         try:
             self.llm = create_llm(temperature=0.2)
         except Exception as e:
             logger.warning(f"Failed to initialize LLM for adaptation engine: {e}")
             self.llm = None
+        
+        # Initialize replanning agent for intelligent replanning
+        try:
+            self.replanning_agent = ReplanningAgent(
+                rag_service=rag_service,
+                document_processor=document_processor
+            )
+            logger.info("Replanning agent initialized for adaptation engine")
+        except Exception as e:
+            logger.warning(f"Failed to initialize replanning agent: {e}")
+            self.replanning_agent = None
     
     def should_adapt(
         self,
@@ -97,19 +113,32 @@ class AdaptationEngine:
         
         logger.info(f"[Adaptation] Applying strategy: {strategy}")
         
-        if strategy == "retry_failed":
-            new_plan = self._apply_retry_strategy(current_plan, state)
-        elif strategy == "skip_failed":
-            new_plan = self._apply_skip_strategy(current_plan, state)
-        elif strategy == "add_steps":
-            new_plan = self._apply_add_steps_strategy(current_plan, state, evaluation)
-        elif strategy == "reorder":
-            new_plan = self._apply_reorder_strategy(current_plan, state)
-        elif strategy == "simplify":
-            new_plan = self._apply_simplify_strategy(current_plan, state)
+        # Use intelligent replanning for complex failures
+        if self.replanning_agent and strategy in ["retry_failed", "alternative_approach", "simplify", "reorder"]:
+            try:
+                # Extract failure reason from evaluation
+                failure_reason = self._extract_failure_reason(evaluation, state)
+                context = {
+                    "agent_name": evaluation.get("agent_name", "unknown"),
+                    "evaluation": evaluation,
+                    "strategy": strategy
+                }
+                
+                # Use replanning agent for intelligent replanning
+                replanned = self.replanning_agent.replan(state, failure_reason, context)
+                
+                if replanned and replanned.get("steps"):
+                    logger.info(f"[Adaptation] Using intelligent replanning: {replanned.get('strategy')}")
+                    new_plan = replanned.get("steps", current_plan)
+                else:
+                    # Fallback to rule-based strategies
+                    new_plan = self._apply_rule_based_strategy(strategy, current_plan, state, evaluation)
+            except Exception as e:
+                logger.warning(f"Intelligent replanning failed: {e}, using rule-based")
+                new_plan = self._apply_rule_based_strategy(strategy, current_plan, state, evaluation)
         else:
-            # No adaptation needed
-            new_plan = current_plan
+            # Use rule-based strategies
+            new_plan = self._apply_rule_based_strategy(strategy, current_plan, state, evaluation)
         
         # Record adaptation
         if new_plan != current_plan:
@@ -127,6 +156,9 @@ class AdaptationEngine:
             new_state["adaptation_history"] = history
             new_state["current_plan"] = new_plan
             
+            # Learn from error patterns
+            self._learn_from_error(state, evaluation, new_plan)
+            
             logger.info(
                 f"[Adaptation] Plan adapted: {len(current_plan)} -> {len(new_plan)} steps"
             )
@@ -135,6 +167,46 @@ class AdaptationEngine:
         new_state["needs_replanning"] = False
         
         return new_state
+    
+    def _learn_from_error(
+        self,
+        state: AnalysisState,
+        evaluation: Dict[str, Any],
+        new_plan: List[Dict[str, Any]]
+    ) -> None:
+        """Learns from error patterns to prevent future failures"""
+        agent_name = evaluation.get("agent_name", "unknown")
+        failure_type = evaluation.get("issues", [])
+        
+        # Store error pattern in metadata for future reference
+        if "metadata" not in state:
+            state["metadata"] = {}
+        
+        if "error_patterns" not in state["metadata"]:
+            state["metadata"]["error_patterns"] = {}
+        
+        if agent_name not in state["metadata"]["error_patterns"]:
+            state["metadata"]["error_patterns"][agent_name] = {
+                "count": 0,
+                "common_issues": [],
+                "successful_adaptations": []
+            }
+        
+        pattern = state["metadata"]["error_patterns"][agent_name]
+        pattern["count"] = pattern["count"] + 1
+        
+        # Track common issues
+        for issue in failure_type[:3]:  # Top 3 issues
+            if issue not in pattern["common_issues"]:
+                pattern["common_issues"].append(issue)
+        
+        # Track successful adaptation strategy
+        if new_plan:
+            strategy = new_plan[0].get("reasoning", "") if isinstance(new_plan[0], dict) else ""
+            if strategy and strategy not in pattern["successful_adaptations"]:
+                pattern["successful_adaptations"].append(strategy[:100])  # Limit length
+        
+        logger.debug(f"Learned error pattern for {agent_name}: {pattern}")
     
     def _determine_strategy(
         self,
@@ -177,6 +249,44 @@ class AdaptationEngine:
             return "reorder"
         
         return "none"
+    
+    def _extract_failure_reason(
+        self,
+        evaluation: Dict[str, Any],
+        state: AnalysisState
+    ) -> str:
+        """Extracts failure reason from evaluation and state"""
+        issues = evaluation.get("issues", [])
+        errors = state.get("errors", [])
+        
+        if issues:
+            return "; ".join(issues[:3])  # First 3 issues
+        elif errors:
+            last_error = errors[-1] if errors else {}
+            return last_error.get("error", "Unknown error")
+        else:
+            return "Low quality result"
+    
+    def _apply_rule_based_strategy(
+        self,
+        strategy: str,
+        current_plan: List[Dict[str, Any]],
+        state: AnalysisState,
+        evaluation: Dict[str, Any]
+    ) -> List[Dict[str, Any]]:
+        """Applies rule-based adaptation strategy"""
+        if strategy == "retry_failed":
+            return self._apply_retry_strategy(current_plan, state)
+        elif strategy == "skip_failed":
+            return self._apply_skip_strategy(current_plan, state)
+        elif strategy == "add_steps":
+            return self._apply_add_steps_strategy(current_plan, state, evaluation)
+        elif strategy == "reorder":
+            return self._apply_reorder_strategy(current_plan, state)
+        elif strategy == "simplify":
+            return self._apply_simplify_strategy(current_plan, state)
+        else:
+            return current_plan
     
     def _apply_retry_strategy(
         self,
@@ -328,8 +438,8 @@ def adaptation_node(
     Args:
         state: Current analysis state
         db: Database session (unused)
-        rag_service: RAG service (unused)
-        document_processor: Document processor (unused)
+        rag_service: RAG service for replanning agent
+        document_processor: Document processor for replanning agent
         
     Returns:
         Updated state with adapted plan
@@ -337,7 +447,7 @@ def adaptation_node(
     case_id = state.get("case_id", "unknown")
     logger.info(f"[Adaptation] Starting adaptation for case {case_id}")
     
-    engine = AdaptationEngine()
+    engine = AdaptationEngine(rag_service=rag_service, document_processor=document_processor)
     evaluation = state.get("evaluation_result", {})
     
     # Check if adaptation is needed

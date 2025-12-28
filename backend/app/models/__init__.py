@@ -12,6 +12,7 @@ from app.models.analysis import (
     ExtractedEntity,
     PrivilegeCheck,
     Risk,
+    AnalysisPlan,
 )
 from app.models.tabular_review import (
     TabularReview,
@@ -42,6 +43,7 @@ __all__ = [
     "ExtractedEntity",
     "PrivilegeCheck",
     "Risk",
+    "AnalysisPlan",
     # Tabular review
     "TabularReview",
     "TabularColumn",
