@@ -10,7 +10,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/UI/Select"
-import { Button as MUIButton, IconButton, CircularProgress, Tooltip } from "@mui/material"
+import { Button as MUIButton, CircularProgress, Tooltip } from "@mui/material"
 import { AutoAwesome as AutoAwesomeIcon } from "@mui/icons-material"
 import { tabularReviewApi } from "@/services/tabularReviewApi"
 import { toast } from "sonner"

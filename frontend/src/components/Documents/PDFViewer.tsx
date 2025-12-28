@@ -7,7 +7,6 @@ import {
   IconButton,
   TextField,
   InputAdornment,
-  Button,
   Stack,
   Typography,
   Tabs,
@@ -153,9 +152,6 @@ const PDFViewer: React.FC<PDFViewerProps> = ({
     setScale(prev => Math.max(0.5, prev - 0.2))
   }
 
-  const handleZoomReset = () => {
-    setScale(1.2)
-  }
 
   const handleSearch = (query: string) => {
     setSearchQuery(query)
@@ -255,7 +251,7 @@ const PDFViewer: React.FC<PDFViewerProps> = ({
           scrollButtons="auto"
           sx={{ borderBottom: 1, borderColor: 'divider' }}
         >
-          {tabs.map((tab, idx) => (
+          {tabs.map((tab) => (
             <Tab key={tab.id} label={tab.label} />
           ))}
         </Tabs>

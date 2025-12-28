@@ -114,8 +114,6 @@ export const ChatHistoryPanel: React.FC<ChatHistoryPanelProps> = ({
       anchor="right"
       open={isOpen}
       onClose={onClose}
-      TransitionComponent={Slide}
-      TransitionProps={{ direction: 'left' }}
       PaperProps={{
         sx: { width: 400, maxWidth: '90vw' },
       }}

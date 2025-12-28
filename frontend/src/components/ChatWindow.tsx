@@ -18,7 +18,6 @@ import {
   Grid,
   Card,
   CardContent,
-  CircularProgress,
 } from '@mui/material'
 import {
   Send as SendIcon,
@@ -99,7 +98,6 @@ const ChatWindow = ({ caseId, onDocumentClick }: ChatWindowProps) => {
   const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [historyError, setHistoryError] = useState<string | null>(null)
-  const [isLoadingHistory, setIsLoadingHistory] = useState(false)
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const [autocompleteVisible, setAutocompleteVisible] = useState(false)
@@ -114,7 +112,7 @@ const ChatWindow = ({ caseId, onDocumentClick }: ChatWindowProps) => {
   const [proSearchEnabled] = useState(false)
   const [selectedSources, setSelectedSources] = useState<string[]>(['vault'])
   const [deepThinkEnabled, setDeepThinkEnabled] = useState(false)
-  const [searchPlanSteps, setSearchPlanSteps] = useState<Array<{ label: string; completed: boolean }>>([])
+  const [searchPlanSteps] = useState<Array<{ label: string; completed: boolean }>>([])
   const [historyPanelOpen, setHistoryPanelOpen] = useState(false)
   
   // Document preview state
@@ -219,7 +217,6 @@ const ChatWindow = ({ caseId, onDocumentClick }: ChatWindowProps) => {
   const loadHistory = async () => {
     try {
       setHistoryError(null)
-      setIsLoadingHistory(true)
       const history = await fetchHistory(caseId)
       setMessages(
         history.map((msg: HistoryMessage) => ({
@@ -231,8 +228,6 @@ const ChatWindow = ({ caseId, onDocumentClick }: ChatWindowProps) => {
     } catch (err: any) {
       logger.error('Ошибка при загрузке истории:', err)
       setHistoryError(err.response?.data?.detail || 'Ошибка при загрузке истории сообщений')
-    } finally {
-      setIsLoadingHistory(false)
     }
   }
 

@@ -13,13 +13,11 @@ import {
   Tab,
   Card,
   CardContent,
-  CardHeader,
   InputAdornment,
   Divider,
   CircularProgress,
   IconButton,
   Grid,
-  Slide,
   Fade,
 } from '@mui/material'
 import {
@@ -36,6 +34,9 @@ import {
 } from '@mui/icons-material'
 import { tabularReviewApi } from '@/services/tabularReviewApi'
 import { toast } from 'sonner'
+
+// Re-export for use in other components
+export { tabularReviewApi }
 
 export interface TabularTemplate {
   id: string
@@ -155,8 +156,6 @@ export const TemplatesModal: React.FC<TemplatesModalProps> = ({
       onClose={onClose} 
       maxWidth="md" 
       fullWidth
-      TransitionComponent={Slide}
-      TransitionProps={{ direction: 'up' }}
       PaperProps={{
         sx: { height: '80vh' }
       }}
@@ -337,8 +336,6 @@ export const TemplatesModal: React.FC<TemplatesModalProps> = ({
           onClose={() => setSelectedTemplate(null)}
           maxWidth="sm"
           fullWidth
-          TransitionComponent={Slide}
-          TransitionProps={{ direction: 'up' }}
         >
           <DialogTitle>
             <Stack direction="row" spacing={1} alignItems="center" justifyContent="space-between">

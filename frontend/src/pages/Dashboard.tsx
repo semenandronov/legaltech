@@ -14,6 +14,7 @@ import {
   Stack,
   List,
   ListItem,
+  ListItemButton,
   ListItemAvatar,
   ListItemText,
   IconButton,
@@ -36,7 +37,7 @@ import { tabularReviewApi } from '../services/tabularReviewApi'
 
 interface Case {
   id: string
-  name: string
+  title: string | null
   description?: string
   status: string
   created_at: string
@@ -93,7 +94,8 @@ const Dashboard: React.FC = () => {
     }
   }
 
-  const getInitials = (name: string): string => {
+  const getInitials = (name: string | null): string => {
+    if (!name) return '??'
     return name
       .split(' ')
       .map((n) => n[0])
@@ -220,11 +222,11 @@ const Dashboard: React.FC = () => {
                               <Stack spacing={2}>
                                 <Stack direction="row" spacing={2} alignItems="center">
                                   <Avatar sx={{ bgcolor: 'primary.main' }}>
-                                    {getInitials(caseItem.name)}
+                                    {getInitials(caseItem.title)}
                                   </Avatar>
                                   <Box sx={{ flex: 1, minWidth: 0 }}>
                                     <Typography variant="subtitle1" fontWeight={600} noWrap>
-                                      {caseItem.name}
+                                      {caseItem.title || `Дело ${caseItem.id.slice(0, 8)}`}
                                     </Typography>
                                     {caseItem.description && (
                                       <Typography
@@ -298,35 +300,36 @@ const Dashboard: React.FC = () => {
                     <List>
                       {recentReviews.map((review, idx) => (
                         <React.Fragment key={review.id}>
-                          <ListItem
-                            button
-                            onClick={() => navigate(`/cases/${review.case_id}/tabular-review/${review.id}`)}
-                            sx={{
-                              '&:hover': {
-                                bgcolor: 'action.hover',
-                              },
-                            }}
-                          >
-                            <ListItemAvatar>
-                              <Avatar sx={{ bgcolor: 'primary.main' }}>
-                                <TableChartIcon />
-                              </Avatar>
-                            </ListItemAvatar>
-                            <ListItemText
-                              primary={review.name}
-                              secondary={
-                                <Stack direction="row" spacing={1} alignItems="center" sx={{ mt: 0.5 }}>
-                                  <Chip
-                                    label={review.status}
-                                    size="small"
-                                    color={getStatusColor(review.status)}
-                                  />
-                                  <Typography variant="caption" color="text.secondary">
-                                    {formatDate(review.updated_at || review.created_at)}
-                                  </Typography>
-                                </Stack>
-                              }
-                            />
+                          <ListItem disablePadding>
+                            <ListItemButton
+                              onClick={() => navigate(`/cases/${review.case_id}/tabular-review/${review.id}`)}
+                              sx={{
+                                '&:hover': {
+                                  bgcolor: 'action.hover',
+                                },
+                              }}
+                            >
+                              <ListItemAvatar>
+                                <Avatar sx={{ bgcolor: 'primary.main' }}>
+                                  <TableChartIcon />
+                                </Avatar>
+                              </ListItemAvatar>
+                              <ListItemText
+                                primary={review.name}
+                                secondary={
+                                  <Stack direction="row" spacing={1} alignItems="center" sx={{ mt: 0.5 }}>
+                                    <Chip
+                                      label={review.status}
+                                      size="small"
+                                      color={getStatusColor(review.status)}
+                                    />
+                                    <Typography variant="caption" color="text.secondary">
+                                      {formatDate(review.updated_at || review.created_at)}
+                                    </Typography>
+                                  </Stack>
+                                }
+                              />
+                            </ListItemButton>
                           </ListItem>
                           {idx < recentReviews.length - 1 && <Divider variant="inset" component="li" />}
                         </React.Fragment>
