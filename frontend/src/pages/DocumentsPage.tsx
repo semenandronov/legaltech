@@ -41,16 +41,28 @@ const DocumentsPage = () => {
   const loadDocuments = async () => {
     if (!caseId) return
     setLoading(true)
+    // #region agent log
+    fetch('http://127.0.0.1:7242/ingest/2db1e09b-2b5d-4ee0-85d8-a551f942254c',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'DocumentsPage.tsx:loadDocuments',message:'Loading documents',data:{caseId},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'H2'})}).catch(()=>{});
+    // #endregion
     try {
       const { getDocuments } = await import('../services/api')
+      // #region agent log
+      fetch('http://127.0.0.1:7242/ingest/2db1e09b-2b5d-4ee0-85d8-a551f942254c',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'DocumentsPage.tsx:loadDocuments',message:'Calling getDocuments API',data:{caseId,apiUrl:`/api/cases/${caseId}/files`},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'H2'})}).catch(()=>{});
+      // #endregion
       const data = await getDocuments(caseId)
+      // #region agent log
+      fetch('http://127.0.0.1:7242/ingest/2db1e09b-2b5d-4ee0-85d8-a551f942254c',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'DocumentsPage.tsx:loadDocuments',message:'Documents received',data:{caseId,docCount:data.documents?.length||0,total:data.total||0},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'H2'})}).catch(()=>{});
+      // #endregion
       setDocuments(data.documents.map((doc: any) => ({
         id: doc.id,
         filename: doc.filename,
         file_type: doc.file_type,
         status: doc.status || 'Pending'
       })))
-    } catch (error) {
+    } catch (error: any) {
+      // #region agent log
+      fetch('http://127.0.0.1:7242/ingest/2db1e09b-2b5d-4ee0-85d8-a551f942254c',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'DocumentsPage.tsx:loadDocuments',message:'Error loading documents',data:{caseId,error:error?.message||String(error),status:error?.response?.status,statusText:error?.response?.statusText},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'H2'})}).catch(()=>{});
+      // #endregion
       console.error('Ошибка при загрузке документов:', error)
     } finally {
       setLoading(false)

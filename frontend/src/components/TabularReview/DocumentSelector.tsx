@@ -49,15 +49,30 @@ export const DocumentSelector: React.FC<DocumentSelectorProps> = ({
     try {
       setLoading(true)
       setError(null)
+      // #region agent log
+      fetch('http://127.0.0.1:7242/ingest/2db1e09b-2b5d-4ee0-85d8-a551f942254c',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'DocumentSelector.tsx:loadDocuments',message:'Loading documents',data:{reviewId,caseId},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'H3'})}).catch(()=>{});
+      // #endregion
       
       if (reviewId) {
         // If reviewId exists, use tabular review API
+        // #region agent log
+        fetch('http://127.0.0.1:7242/ingest/2db1e09b-2b5d-4ee0-85d8-a551f942254c',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'DocumentSelector.tsx:loadDocuments',message:'Using reviewId path',data:{reviewId,apiUrl:`/api/tabular-review/${reviewId}/available-files`},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'H3'})}).catch(()=>{});
+        // #endregion
         const response = await tabularReviewApi.getAvailableFiles(reviewId)
+        // #region agent log
+        fetch('http://127.0.0.1:7242/ingest/2db1e09b-2b5d-4ee0-85d8-a551f942254c',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'DocumentSelector.tsx:loadDocuments',message:'Review files received',data:{reviewId,fileCount:response.files?.length||0},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'H3'})}).catch(()=>{});
+        // #endregion
         setDocuments(response.files || [])
       } else if (caseId) {
         // If no reviewId but caseId exists, get files from case API
+        // #region agent log
+        fetch('http://127.0.0.1:7242/ingest/2db1e09b-2b5d-4ee0-85d8-a551f942254c',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'DocumentSelector.tsx:loadDocuments',message:'Using caseId path',data:{caseId,apiUrl:`/api/cases/${caseId}/files`},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'H3'})}).catch(()=>{});
+        // #endregion
         const { getDocuments } = await import('@/services/api')
         const data = await getDocuments(caseId)
+        // #region agent log
+        fetch('http://127.0.0.1:7242/ingest/2db1e09b-2b5d-4ee0-85d8-a551f942254c',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'DocumentSelector.tsx:loadDocuments',message:'Case files received',data:{caseId,docCount:data.documents?.length||0},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'H3'})}).catch(()=>{});
+        // #endregion
         setDocuments(data.documents.map((doc: any) => ({
           id: doc.id,
           filename: doc.filename,
@@ -65,9 +80,15 @@ export const DocumentSelector: React.FC<DocumentSelectorProps> = ({
           created_at: doc.created_at
         })))
       } else {
+        // #region agent log
+        fetch('http://127.0.0.1:7242/ingest/2db1e09b-2b5d-4ee0-85d8-a551f942254c',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'DocumentSelector.tsx:loadDocuments',message:'No caseId or reviewId',data:{reviewId,caseId},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'H3'})}).catch(()=>{});
+        // #endregion
         setError("Не указан caseId или reviewId")
       }
     } catch (err: any) {
+      // #region agent log
+      fetch('http://127.0.0.1:7242/ingest/2db1e09b-2b5d-4ee0-85d8-a551f942254c',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'DocumentSelector.tsx:loadDocuments',message:'Error loading documents',data:{reviewId,caseId,error:err?.message||String(err),status:err?.response?.status,statusText:err?.response?.statusText},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'H3'})}).catch(()=>{});
+      // #endregion
       setError(err.message || "Ошибка при загрузке документов")
     } finally {
       setLoading(false)

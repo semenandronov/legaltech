@@ -201,6 +201,21 @@ async def stream_chat(
             query = data.get("query", "")
             history = data.get("history", [])
             pro_search = data.get("pro_search", False)
+            deep_think = data.get("deep_think", False)
+            
+            # #region agent log
+            import json
+            with open('/Users/semyon_andronov04/Desktop/C ДВ/.cursor/debug.log', 'a') as f:
+                f.write(json.dumps({
+                    "sessionId": "debug-session",
+                    "runId": "run1",
+                    "hypothesisId": "H1",
+                    "location": "websocket.py:stream_chat",
+                    "message": "WebSocket message received",
+                    "data": {"case_id": case_id, "query": query[:100], "pro_search": pro_search, "deep_think": deep_think, "history_length": len(history)},
+                    "timestamp": int(__import__('time').time() * 1000)
+                }) + '\n')
+            # #endregion
             
             if not query:
                 await websocket.send_json({
@@ -210,7 +225,7 @@ async def stream_chat(
                 continue
             
             # Send acknowledgment
-            if pro_search:
+            if pro_search or deep_think:
                 await websocket.send_json({
                     "type": "processing",
                     "message": "🔍 Deep Research activated..."
@@ -223,8 +238,21 @@ async def stream_chat(
             
             # Generate response with sources
             try:
-                # Pro Search uses more sources and deeper analysis
-                k = 15 if pro_search else 5
+                # Pro Search or Deep Think uses more sources and deeper analysis
+                k = 15 if (pro_search or deep_think) else 5
+                
+                # #region agent log
+                with open('/Users/semyon_andronov04/Desktop/C ДВ/.cursor/debug.log', 'a') as f:
+                    f.write(json.dumps({
+                        "sessionId": "debug-session",
+                        "runId": "run1",
+                        "hypothesisId": "H1",
+                        "location": "websocket.py:stream_chat",
+                        "message": "Calling generate_with_sources",
+                        "data": {"case_id": case_id, "k": k, "deep_think": deep_think},
+                        "timestamp": int(__import__('time').time() * 1000)
+                    }) + '\n')
+                # #endregion
                 
                 answer, sources = rag_service.generate_with_sources(
                     case_id=case_id,
@@ -233,6 +261,19 @@ async def stream_chat(
                     db=db,
                     history=history
                 )
+                
+                # #region agent log
+                with open('/Users/semyon_andronov04/Desktop/C ДВ/.cursor/debug.log', 'a') as f:
+                    f.write(json.dumps({
+                        "sessionId": "debug-session",
+                        "runId": "run1",
+                        "hypothesisId": "H1",
+                        "location": "websocket.py:stream_chat",
+                        "message": "Answer generated",
+                        "data": {"case_id": case_id, "answer_length": len(answer), "answer_preview": answer[:200], "sources_count": len(sources) if sources else 0, "is_standard_response": "иногда генеративные языковые модели" in answer or "generative language models" in answer},
+                        "timestamp": int(__import__('time').time() * 1000)
+                    }) + '\n')
+                # #endregion
                 
                 # Stream tokens for Perplexity-style UX
                 # Split answer into tokens (words) and send progressively

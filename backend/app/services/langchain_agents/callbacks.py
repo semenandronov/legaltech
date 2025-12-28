@@ -69,3 +69,4 @@ class AnalysisCallbackHandler(BaseCallbackHandler):
         logger.error(f"[{self.agent_name}] Tool error: {error}", exc_info=True)
 
 
+

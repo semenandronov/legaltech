@@ -120,8 +120,8 @@ export function ColumnBuilder({ isOpen, onClose, onSave }: ColumnBuilderProps) {
         <div>
           <div className="flex items-center justify-between mb-2">
             <label className="text-sm font-medium">
-              Вопрос/Prompt для AI
-            </label>
+            Вопрос/Prompt для AI
+          </label>
             <Tooltip title="Сгенерировать промпт с помощью AI">
               <MUIButton
                 size="small"

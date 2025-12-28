@@ -378,26 +378,26 @@ const PDFViewer: React.FC<PDFViewerProps> = ({
       <Box sx={{ flex: 1, overflow: 'auto', position: 'relative', display: 'flex' }}>
         {/* PDF Viewer */}
         <Box sx={{ flex: 1, overflow: 'auto', p: 2, display: 'flex', justifyContent: 'center' }}>
-          <Document
-            file={pdfUrl}
-            onLoadSuccess={onDocumentLoadSuccess}
-            onLoadError={onDocumentLoadError}
-            loading={
+        <Document
+          file={pdfUrl}
+          onLoadSuccess={onDocumentLoadSuccess}
+          onLoadError={onDocumentLoadError}
+          loading={
               <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'center', p: 3 }}>
                 <Skeleton variant="rectangular" width={600} height={800} />
                 <Typography variant="body2" color="text.secondary" sx={{ mt: 2 }}>
                   Загрузка PDF...
                 </Typography>
               </Box>
-            }
-          >
-            <Page
-              pageNumber={pageNumber}
-              scale={scale}
-              renderTextLayer={true}
-              renderAnnotationLayer={true}
-            />
-          </Document>
+          }
+        >
+          <Page
+            pageNumber={pageNumber}
+            scale={scale}
+            renderTextLayer={true}
+            renderAnnotationLayer={true}
+          />
+        </Document>
         </Box>
 
         {/* About/Metadata Panel */}
