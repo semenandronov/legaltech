@@ -494,18 +494,14 @@ def create_analysis_graph(
         checkpointer = PostgresSaver.from_conn_string(db_url)
         
         # Setup tables if they don't exist (idempotent)
-        # Note: setup() may return a context manager - we need to use it properly
+        # Note: setup() should be called once to create tables
+        # According to langgraph docs, setup() is idempotent
         try:
             if hasattr(checkpointer, 'setup') and callable(checkpointer.setup):
-                # setup() returns a context manager - use it with 'with' statement
-                # But we need to ensure checkpointer remains the PostgresSaver instance
-                # So we call setup() but don't replace checkpointer
-                setup_result = checkpointer.setup()
-                if hasattr(setup_result, '__enter__'):
-                    # It's a context manager, enter and exit it
-                    with setup_result:
-                        pass  # Tables created on entry
-                # checkpointer remains the PostgresSaver instance
+                # Call setup() - it may return a context manager or None
+                # We just call it, don't store the result
+                checkpointer.setup()
+                logger.debug("Checkpointer tables setup completed")
         except Exception as setup_error:
             # Setup might fail if tables already exist or if setup() works differently
             logger.debug(f"Checkpointer setup note: {setup_error}")
