@@ -10,6 +10,10 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/UI/Select"
+import { Button as MUIButton, IconButton, CircularProgress, Tooltip } from "@mui/material"
+import { AutoAwesome as AutoAwesomeIcon } from "@mui/icons-material"
+import { tabularReviewApi } from "@/services/tabularReviewApi"
+import { toast } from "sonner"
 
 interface ColumnBuilderProps {
   isOpen: boolean
@@ -36,6 +40,26 @@ export function ColumnBuilder({ isOpen, onClose, onSave }: ColumnBuilderProps) {
   const [columnType, setColumnType] = useState("text")
   const [prompt, setPrompt] = useState("")
   const [saving, setSaving] = useState(false)
+  const [isGenerating, setIsGenerating] = useState(false)
+
+  const handleGeneratePrompt = async () => {
+    if (!columnLabel.trim()) {
+      toast.error("Введите название колонки для генерации промпта")
+      return
+    }
+
+    setIsGenerating(true)
+    try {
+      const result = await tabularReviewApi.generateColumnPrompt(columnLabel, columnType)
+      setPrompt(result.prompt)
+      toast.success("Промпт сгенерирован")
+    } catch (error: any) {
+      console.error("Error generating prompt:", error)
+      toast.error("Ошибка при генерации промпта: " + (error.message || "Неизвестная ошибка"))
+    } finally {
+      setIsGenerating(false)
+    }
+  }
 
   const handleSave = async () => {
     if (!columnLabel.trim() || !prompt.trim()) {
@@ -94,9 +118,23 @@ export function ColumnBuilder({ isOpen, onClose, onSave }: ColumnBuilderProps) {
         </div>
 
         <div>
-          <label className="text-sm font-medium mb-2 block">
-            Вопрос/Prompt для AI
-          </label>
+          <div className="flex items-center justify-between mb-2">
+            <label className="text-sm font-medium">
+              Вопрос/Prompt для AI
+            </label>
+            <Tooltip title="Сгенерировать промпт с помощью AI">
+              <MUIButton
+                size="small"
+                variant="outlined"
+                startIcon={isGenerating ? <CircularProgress size={16} /> : <AutoAwesomeIcon />}
+                onClick={handleGeneratePrompt}
+                disabled={isGenerating || !columnLabel.trim()}
+                sx={{ textTransform: 'none' }}
+              >
+                {isGenerating ? "Генерация..." : "AI Generate"}
+              </MUIButton>
+            </Tooltip>
+          </div>
           <Textarea
             value={prompt}
             onChange={(e) => setPrompt(e.target.value)}

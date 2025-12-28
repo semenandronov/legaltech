@@ -1044,6 +1044,64 @@ async def approve_plan(
         )
 
 
+@router.get("/sessions")
+async def get_chat_sessions(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """
+    Get list of chat sessions (grouped by case) for current user
+    
+    Returns: list of sessions with case_id, case_name, last_message, last_message_at, message_count
+    """
+    try:
+        from sqlalchemy import func, desc
+        
+        # Get all cases for current user
+        cases = db.query(Case).filter(
+            Case.user_id == current_user.id
+        ).all()
+        
+        sessions = []
+        for case in cases:
+            # Get last message for this case
+            last_message = db.query(ChatMessage).filter(
+                ChatMessage.case_id == case.id
+            ).order_by(desc(ChatMessage.created_at)).first()
+            
+            # Get message count
+            message_count = db.query(func.count(ChatMessage.id)).filter(
+                ChatMessage.case_id == case.id
+            ).scalar() or 0
+            
+            # Skip cases with no messages
+            if message_count == 0:
+                continue
+            
+            # Get last message preview (first 100 chars)
+            last_message_preview = ""
+            if last_message and last_message.content:
+                last_message_preview = last_message.content[:100]
+                if len(last_message.content) > 100:
+                    last_message_preview += "..."
+            
+            sessions.append({
+                "case_id": case.id,
+                "case_name": case.title or f"Дело {case.id[:8]}",
+                "last_message": last_message_preview,
+                "last_message_at": last_message.created_at.isoformat() if last_message and last_message.created_at else None,
+                "message_count": message_count
+            })
+        
+        # Sort by last_message_at DESC
+        sessions.sort(key=lambda x: x["last_message_at"] or "", reverse=True)
+        
+        return sessions
+    except Exception as e:
+        logger.error(f"Error getting chat sessions: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Failed to get chat sessions")
+
+
 @router.get("/{case_id}/history")
 async def get_history(
     case_id: str,

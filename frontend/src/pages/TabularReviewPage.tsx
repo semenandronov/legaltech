@@ -7,6 +7,8 @@ import { ColumnBuilder } from "../components/TabularReview/ColumnBuilder"
 import { DocumentSelector } from "../components/TabularReview/DocumentSelector"
 import { TabularDocumentViewer } from "../components/TabularReview/TabularDocumentViewer"
 import { TabularChat } from "../components/TabularReview/TabularChat"
+import { TemplatesModal } from "../components/TabularReview/TemplatesModal"
+import { FeaturedTemplatesCarousel } from "../components/TabularReview/FeaturedTemplatesCarousel"
 import { tabularReviewApi, TableData } from "../services/tabularReviewApi"
 import { Card } from "../components/UI/Card"
 import { Button } from "../components/UI/Button"
@@ -23,6 +25,7 @@ const TabularReviewPage: React.FC = () => {
   const [processing, setProcessing] = useState(false)
   const [showColumnBuilder, setShowColumnBuilder] = useState(false)
   const [showDocumentSelector, setShowDocumentSelector] = useState(false)
+  const [showTemplatesModal, setShowTemplatesModal] = useState(false)
   const [selectedFileIds, setSelectedFileIds] = useState<string[]>([])
   const [selectedDocument, setSelectedDocument] = useState<{
     fileId: string
@@ -361,11 +364,23 @@ const TabularReviewPage: React.FC = () => {
           onAddDocuments={handleAddDocuments}
           onUpdateDocuments={reviewId ? () => setShowDocumentSelector(true) : undefined}
           onAddColumns={() => setShowColumnBuilder(true)}
+          onTemplates={reviewId ? () => setShowTemplatesModal(true) : undefined}
           onRunAll={handleRunAll}
           onDownload={handleDownload}
           onShare={handleShare}
           processing={processing}
         />
+
+        {/* Featured Templates Carousel */}
+        {reviewId && tableData.columns.length === 0 && (
+          <div className="px-4">
+            <FeaturedTemplatesCarousel
+              reviewId={reviewId}
+              onTemplateApplied={loadReviewData}
+              onViewAll={() => setShowTemplatesModal(true)}
+            />
+          </div>
+        )}
 
         {/* Chat, Table and Document Split View */}
         <div className="flex-1 overflow-hidden flex">
@@ -489,6 +504,16 @@ const TabularReviewPage: React.FC = () => {
             reviewId={reviewId || ""}
             initialSelectedIds={selectedFileIds}
             caseId={caseId}
+          />
+        )}
+
+        {/* Templates Modal */}
+        {reviewId && (
+          <TemplatesModal
+            isOpen={showTemplatesModal}
+            onClose={() => setShowTemplatesModal(false)}
+            reviewId={reviewId}
+            onTemplateApplied={loadReviewData}
           />
         )}
       </div>

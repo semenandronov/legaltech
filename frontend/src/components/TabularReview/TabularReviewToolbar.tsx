@@ -13,6 +13,7 @@ import {
   Share2,
   ChevronDown,
   FolderOpen,
+  LayoutTemplate,
 } from "lucide-react"
 
 interface TabularReviewToolbarProps {
@@ -22,6 +23,7 @@ interface TabularReviewToolbarProps {
   onRunAll?: () => void
   onDownload?: (format: "csv" | "excel") => void
   onShare?: () => void
+  onTemplates?: () => void
   processing?: boolean
 }
 
@@ -32,6 +34,7 @@ export function TabularReviewToolbar({
   onRunAll,
   onDownload,
   onShare,
+  onTemplates,
   processing = false,
 }: TabularReviewToolbarProps) {
   return (
@@ -66,6 +69,17 @@ export function TabularReviewToolbar({
           <FileText className="w-4 h-4 mr-2" />
           Add columns
         </Button>
+        {onTemplates && (
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={onTemplates}
+            disabled={processing}
+          >
+            <LayoutTemplate className="w-4 h-4 mr-2" />
+            Templates
+          </Button>
+        )}
       </div>
       
       <div className="flex items-center gap-2">

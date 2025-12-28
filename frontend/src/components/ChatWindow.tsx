@@ -18,6 +18,7 @@ import {
   Grid,
   Card,
   CardContent,
+  CircularProgress,
 } from '@mui/material'
 import {
   Send as SendIcon,
@@ -29,7 +30,9 @@ import {
   Search as SearchIcon,
   ChevronRight as ChevronRightIcon,
   Close as CloseIcon,
+  History as HistoryIcon,
 } from '@mui/icons-material'
+import { FormControlLabel, Switch, Stepper, Step, StepLabel } from '@mui/material'
 import './ChatWindow.css'
 import './Chat/Chat.css'
 import { fetchHistory, sendMessage, SourceInfo, HistoryMessage, classifyDocuments, extractEntities, getTimeline, getAnalysisReport } from '../services/api'
@@ -40,6 +43,8 @@ import Autocomplete from './Chat/Autocomplete'
 import StatisticsChart from './Chat/StatisticsChart'
 import SourceSelector, { DEFAULT_SOURCES } from './Chat/SourceSelector'
 import DocumentPreviewSheet from './Chat/DocumentPreviewSheet'
+import { ChatHistoryPanel } from './Chat/ChatHistoryPanel'
+import { WelcomeScreen } from './Chat/WelcomeScreen'
 import { logger } from '@/lib/logger'
 
 interface Message {
@@ -61,6 +66,15 @@ const RECOMMENDED_QUESTIONS: string[] = [
   'Какие ключевые сроки и даты важны в этом деле?',
   'Есть ли нарушения условий контракта со стороны другой стороны?',
   'Каковы мои шансы выиграть спор в суде исходя из документов?',
+]
+
+const QUICK_PROMPTS: Array<{ id: string; label: string; prompt: string }> = [
+  { id: 'summarize', label: 'Краткое изложение', prompt: 'Сформулируй краткий обзор этого дела' },
+  { id: 'timeline', label: 'Хронология', prompt: 'Создай хронологию событий из документов' },
+  { id: 'nda-review', label: 'NDA Review', prompt: 'Проведи обзор NDA и выдели ключевые условия' },
+  { id: 'contradictions', label: 'Противоречия', prompt: 'Найди противоречия между документами' },
+  { id: 'risks', label: 'Риски', prompt: 'Проанализируй риски в документах' },
+  { id: 'entities', label: 'Сущности', prompt: 'Извлеки все важные сущности из документов' },
 ]
 
 const COMMANDS = [
@@ -85,6 +99,7 @@ const ChatWindow = ({ caseId, onDocumentClick }: ChatWindowProps) => {
   const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [historyError, setHistoryError] = useState<string | null>(null)
+  const [isLoadingHistory, setIsLoadingHistory] = useState(false)
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const [autocompleteVisible, setAutocompleteVisible] = useState(false)
@@ -98,6 +113,9 @@ const ChatWindow = ({ caseId, onDocumentClick }: ChatWindowProps) => {
   const [currentPlaceholderIndex, setCurrentPlaceholderIndex] = useState(0)
   const [proSearchEnabled] = useState(false)
   const [selectedSources, setSelectedSources] = useState<string[]>(['vault'])
+  const [deepThinkEnabled, setDeepThinkEnabled] = useState(false)
+  const [searchPlanSteps, setSearchPlanSteps] = useState<Array<{ label: string; completed: boolean }>>([])
+  const [historyPanelOpen, setHistoryPanelOpen] = useState(false)
   
   // Document preview state
   const [previewOpen, setPreviewOpen] = useState(false)
@@ -201,6 +219,7 @@ const ChatWindow = ({ caseId, onDocumentClick }: ChatWindowProps) => {
   const loadHistory = async () => {
     try {
       setHistoryError(null)
+      setIsLoadingHistory(true)
       const history = await fetchHistory(caseId)
       setMessages(
         history.map((msg: HistoryMessage) => ({
@@ -212,6 +231,8 @@ const ChatWindow = ({ caseId, onDocumentClick }: ChatWindowProps) => {
     } catch (err: any) {
       logger.error('Ошибка при загрузке истории:', err)
       setHistoryError(err.response?.data?.detail || 'Ошибка при загрузке истории сообщений')
+    } finally {
+      setIsLoadingHistory(false)
     }
   }
 
@@ -666,6 +687,16 @@ const ChatWindow = ({ caseId, onDocumentClick }: ChatWindowProps) => {
           )}
 
           {!hasMessages && !isLoading && !historyError && (
+            <WelcomeScreen
+              onQuickAction={(prompt) => {
+                setInputValue(prompt)
+                handleSend(prompt)
+              }}
+            />
+          )}
+
+          {/* Legacy welcome screen - keeping for reference but replaced by WelcomeScreen */}
+          {false && !hasMessages && !isLoading && !historyError && (
             <Box
               sx={{
                 display: 'flex',
@@ -799,7 +830,7 @@ const ChatWindow = ({ caseId, onDocumentClick }: ChatWindowProps) => {
             const isAssistant = message.role === 'assistant'
 
             return (
-              <Fade in key={index}>
+              <Fade in timeout={300} key={index}>
                 <Box
                   sx={{
                     display: 'flex',
@@ -1105,6 +1136,12 @@ const ChatWindow = ({ caseId, onDocumentClick }: ChatWindowProps) => {
 
                   <Divider orientation="vertical" flexItem sx={{ mx: 0.5 }} />
 
+                  <Tooltip title="История чатов">
+                    <IconButton size="small" onClick={() => setHistoryPanelOpen(true)}>
+                      <HistoryIcon fontSize="small" />
+                    </IconButton>
+                  </Tooltip>
+
                   <Tooltip title="Библиотека промптов">
                     <IconButton size="small">
                       <BookOpenIcon fontSize="small" />
@@ -1133,13 +1170,21 @@ const ChatWindow = ({ caseId, onDocumentClick }: ChatWindowProps) => {
                   />
                 </Stack>
 
-                {/* Right side - send button */}
+                {/* Right side - Deep Think toggle and send button */}
                 <Stack direction="row" spacing={1} alignItems="center">
-                  <Tooltip title="Глубокое исследование">
-                    <IconButton size="small">
-                      <SparklesIcon fontSize="small" />
-                    </IconButton>
-                  </Tooltip>
+                  <FormControlLabel
+                    control={
+                      <Switch
+                        size="small"
+                        checked={deepThinkEnabled}
+                        onChange={(e) => setDeepThinkEnabled(e.target.checked)}
+                        icon={<SparklesIcon fontSize="small" />}
+                        checkedIcon={<SparklesIcon fontSize="small" />}
+                      />
+                    }
+                    label="Deep Think"
+                    sx={{ mr: 1 }}
+                  />
 
                   <Button
                     variant="contained"
@@ -1157,6 +1202,64 @@ const ChatWindow = ({ caseId, onDocumentClick }: ChatWindowProps) => {
               </Box>
             </CardContent>
           </Card>
+
+          {/* Quick Prompts Carousel */}
+          {!hasMessages && (
+            <Box sx={{ px: 2, pb: 2 }}>
+              <Box
+                sx={{
+                  display: 'flex',
+                  gap: 1,
+                  overflowX: 'auto',
+                  scrollbarWidth: 'thin',
+                  '&::-webkit-scrollbar': {
+                    height: 6,
+                  },
+                  '&::-webkit-scrollbar-thumb': {
+                    backgroundColor: 'action.disabled',
+                    borderRadius: 3,
+                  },
+                  pb: 1,
+                }}
+              >
+                {QUICK_PROMPTS.map((prompt) => (
+                  <Chip
+                    key={prompt.id}
+                    label={prompt.label}
+                    onClick={() => {
+                      setInputValue(prompt.prompt)
+                      handleSend(prompt.prompt)
+                    }}
+                    sx={{
+                      cursor: 'pointer',
+                      '&:hover': {
+                        bgcolor: 'action.hover',
+                      },
+                    }}
+                    size="small"
+                  />
+                ))}
+              </Box>
+            </Box>
+          )}
+
+          {/* Search Plan Visualization */}
+          {searchPlanSteps.length > 0 && (
+            <Box sx={{ px: 2, pb: 2 }}>
+              <Paper variant="outlined" sx={{ p: 2 }}>
+                <Typography variant="subtitle2" sx={{ mb: 1 }}>
+                  План поиска
+                </Typography>
+                <Stepper activeStep={searchPlanSteps.findIndex(s => !s.completed)} orientation="horizontal">
+                  {searchPlanSteps.map((step, index) => (
+                    <Step key={index} completed={step.completed}>
+                      <StepLabel>{step.label}</StepLabel>
+                    </Step>
+                  ))}
+                </Stepper>
+              </Paper>
+            </Box>
+          )}
         </Box>
       </Box>
 
@@ -1168,6 +1271,17 @@ const ChatWindow = ({ caseId, onDocumentClick }: ChatWindowProps) => {
         caseId={caseId}
         allSources={allCurrentSources}
         onNavigate={(source: SourceInfo) => setPreviewSource(source)}
+      />
+
+      {/* Chat History Panel */}
+      <ChatHistoryPanel
+        isOpen={historyPanelOpen}
+        onClose={() => setHistoryPanelOpen(false)}
+        currentCaseId={caseId}
+        onSelectCase={(selectedCaseId) => {
+          // Navigate to the selected case
+          window.location.href = `/cases/${selectedCaseId}`
+        }}
       />
     </Box>
   )

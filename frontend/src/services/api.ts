@@ -227,6 +227,17 @@ export const fetchHistory = async (caseId: string): Promise<HistoryMessage[]> =>
   return response.data.messages || []
 }
 
+export const getChatSessions = async (): Promise<Array<{
+  case_id: string
+  case_name: string
+  last_message: string
+  last_message_at: string
+  message_count: number
+}>> => {
+  const response = await apiClient.get(getApiUrl('/api/chat/sessions'))
+  return response.data || []
+}
+
 // Dashboard API
 export interface DashboardStats {
   total_cases: number

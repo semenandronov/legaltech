@@ -116,6 +116,31 @@ export interface CellDetails {
 
 // API functions
 export const tabularReviewApi = {
+  // List tabular reviews
+  async listReviews(skip: number = 0, limit: number = 20): Promise<{
+    reviews: Array<{
+      id: string
+      case_id: string
+      name: string
+      description?: string
+      status: string
+      created_at?: string
+      updated_at?: string
+    }>
+    total: number
+    skip: number
+    limit: number
+  }> {
+    try {
+      const response = await apiClient.get('/api/tabular-review/', {
+        params: { skip, limit },
+      })
+      return response.data
+    } catch (error) {
+      throw new Error(extractErrorMessage(error))
+    }
+  },
+
   // Create a new tabular review
   async createReview(
     caseId: string, 
@@ -255,15 +280,43 @@ export const tabularReviewApi = {
   },
 
   // Get templates
-  async getTemplates(): Promise<Array<{
+  async getTemplates(params?: {
+    category?: string
+    featured?: boolean
+    search?: string
+  }): Promise<Array<{
     id: string
     name: string
     description?: string
     columns: any[]
     is_public: boolean
+    is_system?: boolean
+    is_featured?: boolean
+    category?: string
+    tags?: string[]
+    usage_count?: number
+    created_at?: string
   }>> {
     try {
-      const response = await apiClient.get('/api/tabular-review/templates')
+      const response = await apiClient.get('/api/tabular-review/templates', { params })
+      return response.data
+    } catch (error) {
+      throw new Error(extractErrorMessage(error))
+    }
+  },
+
+  // Apply template to review
+  async applyTemplate(
+    reviewId: string,
+    templateId: string
+  ): Promise<{
+    message: string
+    columns: Array<{ id: string; column_label: string; column_type: string }>
+  }> {
+    try {
+      const response = await apiClient.post(
+        `/api/tabular-review/${reviewId}/templates/apply?template_id=${templateId}`
+      )
       return response.data
     } catch (error) {
       throw new Error(extractErrorMessage(error))
@@ -275,14 +328,27 @@ export const tabularReviewApi = {
     name: string,
     description: string,
     columns: any[],
-    isPublic: boolean = false
-  ): Promise<{ id: string; name: string; columns: any[] }> {
+    isPublic: boolean = false,
+    category?: string,
+    tags?: string[],
+    isFeatured: boolean = false
+  ): Promise<{ 
+    id: string
+    name: string
+    columns: any[]
+    category?: string
+    tags?: string[]
+    is_featured?: boolean
+  }> {
     try {
       const response = await apiClient.post('/api/tabular-review/templates', {
         name,
         description,
         columns,
         is_public: isPublic,
+        category,
+        tags,
+        is_featured: isFeatured,
       })
       return response.data
     } catch (error) {
@@ -339,6 +405,22 @@ export const tabularReviewApi = {
     try {
       const response = await apiClient.post(`/api/tabular-review/${reviewId}/chat`, {
         question,
+      })
+      return response.data
+    } catch (error) {
+      throw new Error(extractErrorMessage(error))
+    }
+  },
+
+  // Generate column prompt using AI
+  async generateColumnPrompt(
+    columnLabel: string,
+    columnType: string
+  ): Promise<{ prompt: string }> {
+    try {
+      const response = await apiClient.post('/api/tabular-review/columns/generate-prompt', {
+        column_label: columnLabel,
+        column_type: columnType,
       })
       return response.data
     } catch (error) {

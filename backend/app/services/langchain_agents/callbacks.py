@@ -68,3 +68,4 @@ class AnalysisCallbackHandler(BaseCallbackHandler):
         """Called when a tool encounters an error"""
         logger.error(f"[{self.agent_name}] Tool error: {error}", exc_info=True)
 
+

@@ -83,7 +83,13 @@ class TabularColumnTemplate(Base):
     description = Column(Text, nullable=True)
     columns = Column(JSON, nullable=False)  # массив определений колонок
     is_public = Column(Boolean, default=False)
+    category = Column(String(100), nullable=True, index=True)  # "contract", "litigation", "due_diligence", etc.
+    tags = Column(JSON, nullable=True)  # массив тегов: ["Law firm", "In-house", "Dispute"]
+    is_system = Column(Boolean, default=False)  # системные шаблоны от Legora
+    is_featured = Column(Boolean, default=False)  # избранные шаблоны для carousel
+    usage_count = Column(Integer, default=0)  # счетчик использования
     created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     
     # Relationships
     user = relationship("User", backref="tabular_templates")

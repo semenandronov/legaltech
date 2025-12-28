@@ -1,6 +1,7 @@
 """Tabular Review routes for Legal AI Vault"""
 from fastapi import APIRouter, HTTPException, Depends, Query, Response
 from sqlalchemy.orm import Session
+from sqlalchemy import or_, and_
 from typing import Optional, List
 from pydantic import BaseModel
 from app.utils.database import get_db
@@ -38,6 +39,14 @@ class TemplateCreateRequest(BaseModel):
     description: Optional[str] = None
     columns: List[dict]
     is_public: bool = False
+    category: Optional[str] = None
+    tags: Optional[List[str]] = None
+    is_featured: bool = False
+
+
+class ColumnPromptGenerateRequest(BaseModel):
+    column_label: str
+    column_type: str  # text, date, currency, number, yes_no, tags, verbatim
 
 
 @router.post("/")
@@ -283,20 +292,88 @@ async def export_excel(
         raise HTTPException(status_code=500, detail="Failed to export Excel")
 
 
-@router.get("/templates")
-async def get_templates(
+@router.get("/")
+async def list_reviews(
+    skip: int = Query(0, ge=0),
+    limit: int = Query(20, ge=1, le=100),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
-    """Get available column templates"""
+    """Get list of tabular reviews for current user"""
+    try:
+        from app.models.tabular_review import TabularReview
+        from sqlalchemy import desc
+        
+        # Get reviews for current user, ordered by updated_at desc
+        reviews = db.query(TabularReview).filter(
+            TabularReview.user_id == current_user.id
+        ).order_by(desc(TabularReview.updated_at)).offset(skip).limit(limit).all()
+        
+        total = db.query(TabularReview).filter(
+            TabularReview.user_id == current_user.id
+        ).count()
+        
+        return {
+            "reviews": [
+                {
+                    "id": r.id,
+                    "case_id": r.case_id,
+                    "name": r.name,
+                    "description": r.description,
+                    "status": r.status,
+                    "created_at": r.created_at.isoformat() if r.created_at else None,
+                    "updated_at": r.updated_at.isoformat() if r.updated_at else None,
+                }
+                for r in reviews
+            ],
+            "total": total,
+            "skip": skip,
+            "limit": limit,
+        }
+    except Exception as e:
+        logger.error(f"Error listing tabular reviews: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Failed to list tabular reviews")
+
+
+@router.get("/templates")
+async def get_templates(
+    category: Optional[str] = Query(None),
+    featured: Optional[bool] = Query(None),
+    search: Optional[str] = Query(None),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """Get available column templates with filtering"""
     try:
         from app.models.tabular_review import TabularColumnTemplate
+        from sqlalchemy import and_
         
-        templates = db.query(TabularColumnTemplate).filter(
+        query = db.query(TabularColumnTemplate).filter(
             or_(
                 TabularColumnTemplate.user_id == current_user.id,
-                TabularColumnTemplate.is_public == True
+                TabularColumnTemplate.is_public == True,
+                TabularColumnTemplate.is_system == True
             )
+        )
+        
+        if category:
+            query = query.filter(TabularColumnTemplate.category == category)
+        
+        if featured is not None:
+            query = query.filter(TabularColumnTemplate.is_featured == featured)
+        
+        if search:
+            query = query.filter(
+                or_(
+                    TabularColumnTemplate.name.ilike(f"%{search}%"),
+                    TabularColumnTemplate.description.ilike(f"%{search}%")
+                )
+            )
+        
+        templates = query.order_by(
+            TabularColumnTemplate.is_featured.desc(),
+            TabularColumnTemplate.usage_count.desc(),
+            TabularColumnTemplate.created_at.desc()
         ).all()
         
         return [
@@ -306,12 +383,99 @@ async def get_templates(
                 "description": t.description,
                 "columns": t.columns,
                 "is_public": t.is_public,
+                "is_system": t.is_system,
+                "is_featured": t.is_featured,
+                "category": t.category,
+                "tags": t.tags or [],
+                "usage_count": t.usage_count,
+                "created_at": t.created_at.isoformat() if t.created_at else None,
             }
             for t in templates
         ]
     except Exception as e:
         logger.error(f"Error getting templates: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail="Failed to get templates")
+
+
+@router.post("/{review_id}/templates/apply")
+async def apply_template(
+    review_id: str,
+    template_id: str = Query(..., description="Template ID to apply"),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """Apply a template to a tabular review - adds all columns from template"""
+    try:
+        from app.models.tabular_review import TabularColumnTemplate
+        from app.services.tabular_review_service import TabularReviewService
+        
+        # Get template
+        template = db.query(TabularColumnTemplate).filter(
+            or_(
+                TabularColumnTemplate.id == template_id,
+                and_(
+                    TabularColumnTemplate.is_public == True,
+                    TabularColumnTemplate.id == template_id
+                ),
+                and_(
+                    TabularColumnTemplate.is_system == True,
+                    TabularColumnTemplate.id == template_id
+                )
+            )
+        ).first()
+        
+        if not template:
+            raise HTTPException(status_code=404, detail="Template not found")
+        
+        # Apply template columns to review
+        service = TabularReviewService(db)
+        
+        # Verify review exists and belongs to user
+        from app.models.tabular_review import TabularReview
+        review = db.query(TabularReview).filter(
+            and_(TabularReview.id == review_id, TabularReview.user_id == current_user.id)
+        ).first()
+        
+        if not review:
+            raise HTTPException(status_code=404, detail="Tabular review not found or access denied")
+        
+        # Get max order_index
+        from app.models.tabular_review import TabularColumn
+        max_order_result = db.query(TabularColumn.order_index).filter(
+            TabularColumn.tabular_review_id == review_id
+        ).order_by(TabularColumn.order_index.desc()).first()
+        max_order = max_order_result[0] if max_order_result else -1
+        
+        # Add all columns from template
+        added_columns = []
+        for idx, col_def in enumerate(template.columns):
+            column = service.add_column(
+                review_id=review_id,
+                column_label=col_def.get("column_label", f"Column {idx + 1}"),
+                column_type=col_def.get("column_type", "text"),
+                prompt=col_def.get("prompt", ""),
+                user_id=current_user.id
+            )
+            added_columns.append({
+                "id": column.id,
+                "column_label": column.column_label,
+                "column_type": column.column_type,
+            })
+        
+        # Refresh template usage count
+        template.usage_count = (template.usage_count or 0) + 1
+        db.commit()
+        
+        
+        return {
+            "message": f"Template applied: {len(added_columns)} columns added",
+            "columns": added_columns
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error applying template: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Failed to apply template")
 
 
 @router.post("/templates")
@@ -329,7 +493,10 @@ async def save_template(
             name=request.name,
             description=request.description,
             columns=request.columns,
-            is_public=request.is_public
+            is_public=request.is_public,
+            category=request.category,
+            tags=request.tags or [],
+            is_featured=request.is_featured
         )
         
         db.add(template)
@@ -342,6 +509,9 @@ async def save_template(
             "description": template.description,
             "columns": template.columns,
             "is_public": template.is_public,
+            "category": template.category,
+            "tags": template.tags or [],
+            "is_featured": template.is_featured,
         }
     except Exception as e:
         logger.error(f"Error saving template: {e}", exc_info=True)
