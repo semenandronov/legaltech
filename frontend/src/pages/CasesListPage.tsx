@@ -1,6 +1,5 @@
 import { useState, useEffect } from 'react'
-import { Grid, Container } from '@mui/material'
-import MainLayout from '../components/Layout/MainLayout'
+import { Grid, Container, Box } from '@mui/material'
 import { getCasesList, CasesListResponse } from '../services/api'
 import CasesFilters, { FilterState } from '../components/Cases/CasesFilters'
 import CasesGrid from '../components/Cases/CasesGrid'
@@ -51,8 +50,15 @@ const CasesListPage = () => {
   }
   
   return (
-    <MainLayout>
-      <Container maxWidth={false} sx={{ height: '100%', py: 3 }}>
+    <Box 
+      sx={{ 
+        height: '100vh',
+        display: 'flex',
+        bgcolor: 'background.default',
+        overflow: 'hidden',
+      }}
+    >
+      <Container maxWidth={false} sx={{ height: '100%', py: 3, px: 3 }}>
         <Grid container spacing={3} sx={{ height: '100%' }}>
           <Grid item xs={12} md={3}>
             <CasesFilters onFiltersChange={handleFiltersChange} />
@@ -70,7 +76,7 @@ const CasesListPage = () => {
           </Grid>
         </Grid>
       </Container>
-    </MainLayout>
+    </Box>
   )
 }
 

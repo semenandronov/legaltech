@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from "react"
 import { useParams, useNavigate } from "react-router-dom"
+import CaseNavigation from "../components/CaseOverview/CaseNavigation"
 import { TabularReviewTable } from "../components/TabularReview/TabularReviewTable"
 import { TabularReviewToolbar } from "../components/TabularReview/TabularReviewToolbar"
 import { ColumnBuilder } from "../components/TabularReview/ColumnBuilder"
@@ -321,8 +322,9 @@ const TabularReviewPage: React.FC = () => {
   }
 
   return (
-    <div className="h-screen bg-background flex flex-col">
-      <div className="flex flex-col h-full">
+    <div className="h-screen bg-background flex">
+      {caseId && <CaseNavigation caseId={caseId} />}
+      <div className="flex flex-col h-full flex-1">
         {/* Header */}
         <div className="border-b bg-background p-4">
           <div className="flex items-center justify-between mb-4">
