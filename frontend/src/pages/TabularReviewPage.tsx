@@ -205,24 +205,30 @@ const TabularReviewPage: React.FC = () => {
 
   if (loading && !tableData) {
     return (
-      <div className="flex items-center justify-center h-screen bg-background">
-        <Spinner size="lg" />
+      <div className="h-screen bg-background flex">
+        {caseId && <CaseNavigation caseId={caseId} />}
+        <div className="flex-1 flex items-center justify-center">
+          <Spinner size="lg" />
+        </div>
       </div>
     )
   }
 
   if (error && !tableData) {
     return (
-      <div className="h-screen bg-background flex items-center justify-center p-6">
-        <Card className="p-6">
-          <div className="text-center">
-            <h2 className="text-xl font-semibold mb-2">Ошибка</h2>
-            <p className="text-muted-foreground mb-4">{error}</p>
-            <Button onClick={() => navigate(`/cases/${caseId}`)}>
-              Вернуться к делу
-            </Button>
-          </div>
-        </Card>
+      <div className="h-screen bg-background flex">
+        {caseId && <CaseNavigation caseId={caseId} />}
+        <div className="flex-1 flex items-center justify-center p-6">
+          <Card className="p-6">
+            <div className="text-center">
+              <h2 className="text-xl font-semibold mb-2">Ошибка</h2>
+              <p className="text-muted-foreground mb-4">{error}</p>
+              <Button onClick={() => navigate(`/cases/${caseId}`)}>
+                Вернуться к делу
+              </Button>
+            </div>
+          </Card>
+        </div>
       </div>
     )
   }
@@ -230,8 +236,9 @@ const TabularReviewPage: React.FC = () => {
   // If no reviewId, show interface to create new review
   if (!reviewId && caseId) {
     return (
-      <div className="h-screen bg-background flex flex-col">
-        <div className="flex flex-col h-full">
+      <div className="h-screen bg-background flex">
+        {caseId && <CaseNavigation caseId={caseId} />}
+        <div className="flex-1 flex flex-col">
           <div className="border-b bg-background p-4">
             <div className="flex items-center gap-4">
               <Button
@@ -280,43 +287,52 @@ const TabularReviewPage: React.FC = () => {
     // Show loading only if we're actually loading
     if (loading) {
       return (
-        <div className="flex items-center justify-center h-screen bg-background">
-          <Spinner size="lg" />
+        <div className="h-screen bg-background flex">
+          {caseId && <CaseNavigation caseId={caseId} />}
+          <div className="flex-1 flex items-center justify-center">
+            <Spinner size="lg" />
+          </div>
         </div>
       )
     }
     // If not loading but no data, show error or empty state
     if (error) {
       return (
-        <div className="h-screen bg-background flex items-center justify-center p-6">
-          <Card className="p-6">
-            <div className="text-center">
-              <h2 className="text-xl font-semibold mb-2">Ошибка</h2>
-              <p className="text-muted-foreground mb-4">{error}</p>
-              <div className="flex gap-2 justify-center">
-                <Button onClick={() => loadReviewData()}>
-                  Попробовать снова
-                </Button>
-                <Button variant="outline" onClick={() => navigate(`/cases/${caseId}`)}>
-                  Вернуться к делу
-                </Button>
+        <div className="h-screen bg-background flex">
+          {caseId && <CaseNavigation caseId={caseId} />}
+          <div className="flex-1 flex items-center justify-center p-6">
+            <Card className="p-6">
+              <div className="text-center">
+                <h2 className="text-xl font-semibold mb-2">Ошибка</h2>
+                <p className="text-muted-foreground mb-4">{error}</p>
+                <div className="flex gap-2 justify-center">
+                  <Button onClick={() => loadReviewData()}>
+                    Попробовать снова
+                  </Button>
+                  <Button variant="outline" onClick={() => navigate(`/cases/${caseId}`)}>
+                    Вернуться к делу
+                  </Button>
+                </div>
               </div>
-            </div>
-          </Card>
+            </Card>
+          </div>
         </div>
       )
     }
     // If no error but no data, show empty state
     return (
-      <div className="h-screen bg-background flex items-center justify-center p-6">
-        <Card className="p-6">
-          <div className="text-center">
-            <p className="text-muted-foreground mb-4">Нет данных для отображения</p>
-            <Button onClick={() => navigate(`/cases/${caseId}`)}>
-              Вернуться к делу
-            </Button>
-          </div>
-        </Card>
+      <div className="h-screen bg-background flex">
+        {caseId && <CaseNavigation caseId={caseId} />}
+        <div className="flex-1 flex items-center justify-center p-6">
+          <Card className="p-6">
+            <div className="text-center">
+              <p className="text-muted-foreground mb-4">Нет данных для отображения</p>
+              <Button onClick={() => navigate(`/cases/${caseId}`)}>
+                Вернуться к делу
+              </Button>
+            </div>
+          </Card>
+        </div>
       </div>
     )
   }
