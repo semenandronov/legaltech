@@ -12,7 +12,7 @@ import logging
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/api/tabular-review", tags=["tabular-review"])
+router = APIRouter(tags=["tabular-review"])  # Prefix will be added in main.py
 
 
 # Request/Response models

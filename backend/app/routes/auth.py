@@ -349,19 +349,42 @@ async def logout(
 @router.get("/me", response_model=UserResponse)
 async def get_me(current_user: User = Depends(get_current_user)):
     """Get current user information"""
-    # Используем property для совместимости
-    user_full_name = current_user.full_name if hasattr(current_user, 'full_name') else (current_user.name if hasattr(current_user, 'name') else None)
-    user_company = current_user.company if hasattr(current_user, 'company') else None
-    user_created_at = current_user.created_at if hasattr(current_user, 'created_at') else (current_user.createdAt if hasattr(current_user, 'createdAt') else datetime.utcnow())
-    
-    return UserResponse(
-        id=current_user.id,
-        email=current_user.email,
-        full_name=user_full_name,
-        company=user_company,
-        role=current_user.role,
-        created_at=user_created_at.isoformat() if hasattr(user_created_at, 'isoformat') else str(user_created_at)
-    )
+    try:
+        # Используем property для совместимости
+        user_full_name = current_user.full_name if hasattr(current_user, 'full_name') else (current_user.name if hasattr(current_user, 'name') else None)
+        user_company = current_user.company if hasattr(current_user, 'company') else None
+        
+        # Безопасная обработка created_at
+        user_created_at = None
+        if hasattr(current_user, 'created_at') and current_user.created_at:
+            user_created_at = current_user.created_at
+        elif hasattr(current_user, 'createdAt') and current_user.createdAt:
+            user_created_at = current_user.createdAt
+        else:
+            user_created_at = datetime.utcnow()
+        
+        # Форматирование даты
+        if hasattr(user_created_at, 'isoformat'):
+            created_at_str = user_created_at.isoformat()
+        elif isinstance(user_created_at, datetime):
+            created_at_str = user_created_at.isoformat()
+        else:
+            created_at_str = str(user_created_at)
+        
+        return UserResponse(
+            id=current_user.id,
+            email=current_user.email,
+            full_name=user_full_name,
+            company=user_company,
+            role=current_user.role,
+            created_at=created_at_str
+        )
+    except Exception as e:
+        logger.error(f"Error in get_me endpoint: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Ошибка при получении информации о пользователе: {str(e)}"
+        )
 
 
 @router.post("/refresh")
