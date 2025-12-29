@@ -263,10 +263,10 @@ class PlanningAgent:
                     
                     # Ищем похожие успешные планы
                     similar_plans = run_async_safe(store_service.search_precedents(
-                        namespace="successful_plans",
-                        query=user_task[:100],  # Первые 100 символов задачи
-                        limit=3
-                    ))
+                                namespace="successful_plans",
+                                query=user_task[:100],  # Первые 100 символов задачи
+                            limit=3
+                        ))
                     
                     if similar_plans:
                         logger.info(f"Found {len(similar_plans)} similar successful plans in Store")
@@ -478,11 +478,11 @@ class PlanningAgent:
                     # Use run_async_safe for async call from sync function
                     from app.utils.async_utils import run_async_safe
                     run_async_safe(store_service.save_pattern(
-                        namespace="successful_plans",
-                        key=plan_key,
-                        value=plan_value,
-                        metadata=metadata
-                    ))
+                            namespace="successful_plans",
+                            key=plan_key,
+                            value=plan_value,
+                            metadata=metadata
+                        ))
                     
                     logger.info(f"Saved successful plan to Store: {plan_key}")
                 except Exception as e:

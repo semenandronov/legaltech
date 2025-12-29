@@ -494,23 +494,23 @@ class AgentCoordinator:
             else:
                 # Legacy format (backward compatibility)
                 logger.info(f"[Coordinator] Using legacy result format for case {case_id}")
-                results = {
-                    "case_id": case_id,
-                    "timeline": final_state.get("timeline_result") if final_state else None,
-                    "key_facts": final_state.get("key_facts_result") if final_state else None,
-                    "discrepancies": final_state.get("discrepancy_result") if final_state else None,
-                    "risk_analysis": final_state.get("risk_result") if final_state else None,
-                    "summary": final_state.get("summary_result") if final_state else None,
-                    "classification": final_state.get("classification_result") if final_state else None,
-                    "entities": final_state.get("entities_result") if final_state else None,
-                    "privilege": final_state.get("privilege_result") if final_state else None,
-                    "errors": final_state.get("errors", []) if final_state else [],
-                    "execution_time": execution_time,
-                    "metadata": final_state.get("metadata", {}) if final_state else {},
-                    "adaptation_history": final_state.get("adaptation_history", []) if final_state else [],
+            results = {
+                "case_id": case_id,
+                "timeline": final_state.get("timeline_result") if final_state else None,
+                "key_facts": final_state.get("key_facts_result") if final_state else None,
+                "discrepancies": final_state.get("discrepancy_result") if final_state else None,
+                "risk_analysis": final_state.get("risk_result") if final_state else None,
+                "summary": final_state.get("summary_result") if final_state else None,
+                "classification": final_state.get("classification_result") if final_state else None,
+                "entities": final_state.get("entities_result") if final_state else None,
+                "privilege": final_state.get("privilege_result") if final_state else None,
+                "errors": final_state.get("errors", []) if final_state else [],
+                "execution_time": execution_time,
+                "metadata": final_state.get("metadata", {}) if final_state else {},
+                "adaptation_history": final_state.get("adaptation_history", []) if final_state else [],
                     "evaluation_results": final_state.get("evaluation_result") if final_state else None,
                     "workflow": "legacy"  # Indicate legacy workflow was used
-                }
+            }
             
             # Apply fallback handling for failed agents
             if final_state:

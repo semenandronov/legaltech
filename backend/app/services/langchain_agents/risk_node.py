@@ -300,11 +300,11 @@ def risk_agent_node(
                     # Use run_async_safe for async call from sync function
                     from app.utils.async_utils import run_async_safe
                     run_async_safe(store_service.save_pattern(
-                        namespace=namespace,
-                        key=risk_name,
-                        value=risk_value,
-                        metadata=metadata
-                    ))
+                            namespace=namespace,
+                            key=risk_name,
+                            value=risk_value,
+                            metadata=metadata
+                        ))
                 
                 logger.info(f"Saved {len(parsed_risks)} risk patterns to Store")
             except Exception as e:

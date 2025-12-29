@@ -1041,7 +1041,7 @@ class TabularReviewService:
         self.db.commit()
         logger.info(f"Created risks table {review.id} with {len(risks)} risks")
         return review
-    
+
     def create_key_facts_table_from_results(
         self,
         case_id: str,

@@ -176,7 +176,7 @@ class AnalysisState(TypedDict):
     
     # Current feedback request (if waiting)
     current_feedback_request: Optional[Dict[str, Any]]
-    
+
     # === NEW: LEGORA Workflow Fields ===
     
     # Result of UNDERSTAND phase

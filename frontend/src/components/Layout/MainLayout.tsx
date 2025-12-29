@@ -95,8 +95,8 @@ const MainLayout = ({ children }: MainLayoutProps) => {
             maxWidth={false}
             sx={{
               height: '100%',
-              py: 3,
-              px: { xs: 2, sm: 3, md: 4 },
+              py: 1,
+              px: { xs: 1, sm: 2, md: 2 },
             }}
           >
             {children}
