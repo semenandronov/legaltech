@@ -216,6 +216,58 @@ def ensure_schema():
             TabularColumnTemplate.__table__.create(bind=engine, checkfirst=True)
             TabularDocumentStatus.__table__.create(bind=engine, checkfirst=True)
             logger.info("✅ Tabular review tables created")
+        
+        # Ensure tabular_column_templates has all required columns
+        if "tabular_column_templates" in table_names:
+            try:
+                columns = {col['name']: col for col in inspector.get_columns("tabular_column_templates")}
+                with engine.begin() as conn:
+                    # Add missing columns if they don't exist
+                    if "category" not in columns:
+                        logger.info("Adding category column to tabular_column_templates...")
+                        conn.execute(text("ALTER TABLE tabular_column_templates ADD COLUMN IF NOT EXISTS category VARCHAR(100)"))
+                        logger.info("✅ Added category column")
+                    
+                    if "tags" not in columns:
+                        logger.info("Adding tags column to tabular_column_templates...")
+                        conn.execute(text("ALTER TABLE tabular_column_templates ADD COLUMN IF NOT EXISTS tags JSON"))
+                        logger.info("✅ Added tags column")
+                    
+                    if "is_system" not in columns:
+                        logger.info("Adding is_system column to tabular_column_templates...")
+                        conn.execute(text("ALTER TABLE tabular_column_templates ADD COLUMN IF NOT EXISTS is_system BOOLEAN DEFAULT FALSE"))
+                        logger.info("✅ Added is_system column")
+                    
+                    if "is_featured" not in columns:
+                        logger.info("Adding is_featured column to tabular_column_templates...")
+                        conn.execute(text("ALTER TABLE tabular_column_templates ADD COLUMN IF NOT EXISTS is_featured BOOLEAN DEFAULT FALSE"))
+                        logger.info("✅ Added is_featured column")
+                    
+                    if "usage_count" not in columns:
+                        logger.info("Adding usage_count column to tabular_column_templates...")
+                        conn.execute(text("ALTER TABLE tabular_column_templates ADD COLUMN IF NOT EXISTS usage_count INTEGER DEFAULT 0"))
+                        logger.info("✅ Added usage_count column")
+                    
+                    if "updated_at" not in columns:
+                        logger.info("Adding updated_at column to tabular_column_templates...")
+                        conn.execute(text("ALTER TABLE tabular_column_templates ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP"))
+                        logger.info("✅ Added updated_at column")
+                    
+                    # Create indexes if they don't exist
+                    try:
+                        indexes = [idx['name'] for idx in inspector.get_indexes("tabular_column_templates")]
+                        if "idx_tabular_column_templates_category" not in indexes:
+                            conn.execute(text("CREATE INDEX IF NOT EXISTS idx_tabular_column_templates_category ON tabular_column_templates(category)"))
+                        if "idx_tabular_column_templates_featured" not in indexes:
+                            conn.execute(text("CREATE INDEX IF NOT EXISTS idx_tabular_column_templates_featured ON tabular_column_templates(is_featured)"))
+                        if "idx_tabular_column_templates_system" not in indexes:
+                            conn.execute(text("CREATE INDEX IF NOT EXISTS idx_tabular_column_templates_system ON tabular_column_templates(is_system)"))
+                    except Exception as idx_err:
+                        logger.warning(f"Could not create indexes: {idx_err}")
+                
+                logger.info("✅ Tabular column templates table schema verified")
+            except Exception as e:
+                logger.error(f"Error ensuring tabular_column_templates schema: {e}", exc_info=True)
     except Exception as e:
         logger.warning(f"Could not ensure tabular_review tables: {e}", exc_info=True)
     
