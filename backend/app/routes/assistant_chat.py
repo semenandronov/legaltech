@@ -98,8 +98,6 @@ async def stream_chat_response(
         # Note: GigaChat streaming support may vary
         # For now, we'll simulate streaming by chunking the response
         try:
-        # Try to get streaming response
-        try:
             # Check if LLM supports async streaming
             if hasattr(llm, 'astream'):
                 full_response = ""
@@ -145,12 +143,6 @@ async def stream_chat_response(
                 yield f"data: {json.dumps({'textDelta': chunk}, ensure_ascii=False)}\n\n"
                 await asyncio.sleep(0.05)
             
-            yield f"data: {json.dumps({'textDelta': ''})}\n\n"
-        
-        except Exception as e:
-            logger.error(f"Error streaming LLM response: {e}", exc_info=True)
-            error_msg = f"Ошибка при генерации ответа: {str(e)}"
-            yield f"data: {json.dumps({'textDelta': error_msg}, ensure_ascii=False)}\n\n"
             yield f"data: {json.dumps({'textDelta': ''})}\n\n"
     
     except Exception as e:
