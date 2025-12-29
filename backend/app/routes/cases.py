@@ -319,20 +319,6 @@ async def get_case_files(
     current_user: User = Depends(get_current_user)
 ):
     """Get list of files for a case"""
-    # #region agent log
-    import json
-    with open('/Users/semyon_andronov04/Desktop/C ДВ/.cursor/debug.log', 'a') as f:
-        f.write(json.dumps({
-            "sessionId": "debug-session",
-            "runId": "run1",
-            "hypothesisId": "H2",
-            "location": "cases.py:get_case_files",
-            "message": "Getting files for case",
-            "data": {"case_id": case_id, "user_id": current_user.id},
-            "timestamp": int(__import__('time').time() * 1000)
-        }) + '\n')
-    # #endregion
-    
     # Verify case ownership
     case = db.query(Case).filter(
         Case.id == case_id,
@@ -340,35 +326,10 @@ async def get_case_files(
     ).first()
     
     if not case:
-        # #region agent log
-        with open('/Users/semyon_andronov04/Desktop/C ДВ/.cursor/debug.log', 'a') as f:
-            f.write(json.dumps({
-                "sessionId": "debug-session",
-                "runId": "run1",
-                "hypothesisId": "H2",
-                "location": "cases.py:get_case_files",
-                "message": "Case not found",
-                "data": {"case_id": case_id, "user_id": current_user.id},
-                "timestamp": int(__import__('time').time() * 1000)
-            }) + '\n')
-        # #endregion
         raise HTTPException(status_code=404, detail="Дело не найдено")
     
     # Get all files for the case
     files = db.query(FileModel).filter(FileModel.case_id == case_id).all()
-    
-    # #region agent log
-    with open('/Users/semyon_andronov04/Desktop/C ДВ/.cursor/debug.log', 'a') as f:
-        f.write(json.dumps({
-            "sessionId": "debug-session",
-            "runId": "run1",
-            "hypothesisId": "H2",
-            "location": "cases.py:get_case_files",
-            "message": "Files retrieved",
-            "data": {"case_id": case_id, "file_count": len(files)},
-            "timestamp": int(__import__('time').time() * 1000)
-        }) + '\n')
-    # #endregion
     
     return {
         "documents": [
