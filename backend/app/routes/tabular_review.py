@@ -80,6 +80,64 @@ async def create_review(
         raise HTTPException(status_code=500, detail="Failed to create tabular review")
 
 
+@router.get("/templates")
+async def get_templates(
+    category: Optional[str] = Query(None),
+    featured: Optional[bool] = Query(None),
+    search: Optional[str] = Query(None),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """Get available column templates with filtering"""
+    try:
+        from app.models.tabular_review import TabularColumnTemplate
+        from sqlalchemy import and_
+        
+        query = db.query(TabularColumnTemplate).filter(
+            or_(
+                TabularColumnTemplate.user_id == current_user.id,
+                TabularColumnTemplate.is_public == True,
+                TabularColumnTemplate.is_system == True
+            )
+        )
+        
+        if category:
+            query = query.filter(TabularColumnTemplate.category == category)
+        
+        if featured is not None:
+            query = query.filter(TabularColumnTemplate.is_featured == featured)
+        
+        if search:
+            query = query.filter(
+                or_(
+                    TabularColumnTemplate.name.ilike(f"%{search}%"),
+                    TabularColumnTemplate.description.ilike(f"%{search}%")
+                )
+            )
+        
+        templates = query.all()
+        
+        return {
+            "templates": [
+                {
+                    "id": t.id,
+                    "name": t.name,
+                    "description": t.description,
+                    "category": t.category,
+                    "columns": t.columns if hasattr(t, 'columns') else [],
+                    "is_public": t.is_public,
+                    "is_featured": t.is_featured,
+                    "is_system": t.is_system,
+                    "created_at": t.created_at.isoformat() if hasattr(t, 'created_at') and t.created_at else None,
+                }
+                for t in templates
+            ]
+        }
+    except Exception as e:
+        logger.error(f"Error getting templates: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Failed to get templates")
+
+
 @router.get("/{review_id}")
 async def get_review(
     review_id: str,
@@ -333,68 +391,6 @@ async def list_reviews(
     except Exception as e:
         logger.error(f"Error listing tabular reviews: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail="Failed to list tabular reviews")
-
-
-@router.get("/templates")
-async def get_templates(
-    category: Optional[str] = Query(None),
-    featured: Optional[bool] = Query(None),
-    search: Optional[str] = Query(None),
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)
-):
-    """Get available column templates with filtering"""
-    try:
-        from app.models.tabular_review import TabularColumnTemplate
-        from sqlalchemy import and_
-        
-        query = db.query(TabularColumnTemplate).filter(
-            or_(
-                TabularColumnTemplate.user_id == current_user.id,
-                TabularColumnTemplate.is_public == True,
-                TabularColumnTemplate.is_system == True
-            )
-        )
-        
-        if category:
-            query = query.filter(TabularColumnTemplate.category == category)
-        
-        if featured is not None:
-            query = query.filter(TabularColumnTemplate.is_featured == featured)
-        
-        if search:
-            query = query.filter(
-                or_(
-                    TabularColumnTemplate.name.ilike(f"%{search}%"),
-                    TabularColumnTemplate.description.ilike(f"%{search}%")
-                )
-            )
-        
-        templates = query.order_by(
-            TabularColumnTemplate.is_featured.desc(),
-            TabularColumnTemplate.usage_count.desc(),
-            TabularColumnTemplate.created_at.desc()
-        ).all()
-        
-        return [
-            {
-                "id": t.id,
-                "name": t.name,
-                "description": t.description,
-                "columns": t.columns,
-                "is_public": t.is_public,
-                "is_system": t.is_system,
-                "is_featured": t.is_featured,
-                "category": t.category,
-                "tags": t.tags or [],
-                "usage_count": t.usage_count,
-                "created_at": t.created_at.isoformat() if t.created_at else None,
-            }
-            for t in templates
-        ]
-    except Exception as e:
-        logger.error(f"Error getting templates: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail="Failed to get templates")
 
 
 @router.post("/{review_id}/templates/apply")
