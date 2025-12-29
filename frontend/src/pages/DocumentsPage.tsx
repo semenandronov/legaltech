@@ -8,21 +8,21 @@ import {
   Typography,
   Chip,
   CircularProgress,
-  Dialog,
-  DialogTitle,
-  DialogContent,
-  DialogActions,
-  Button,
+  IconButton,
+  Drawer,
   Stack,
 } from '@mui/material'
-import { Description as DescriptionIcon } from '@mui/icons-material'
+import { Description as DescriptionIcon, Close as CloseIcon } from '@mui/icons-material'
 import CaseNavigation from '../components/CaseOverview/CaseNavigation'
+import DocumentViewer from '../components/Documents/DocumentViewer'
+import { DocumentWithMetadata } from '../components/Documents/DocumentsList'
 
 interface DocumentFile {
   id: string
   filename: string
   file_type?: string
   status?: string
+  created_at?: string
 }
 
 const DocumentsPage = () => {
@@ -30,6 +30,7 @@ const DocumentsPage = () => {
   const [documents, setDocuments] = useState<DocumentFile[]>([])
   const [loading, setLoading] = useState(true)
   const [selectedDocument, setSelectedDocument] = useState<DocumentFile | null>(null)
+  const [selectedDocumentIndex, setSelectedDocumentIndex] = useState<number | null>(null)
   
   useEffect(() => {
     if (caseId) {
@@ -117,7 +118,11 @@ const DocumentsPage = () => {
                       transform: 'translateY(-2px)',
                     },
                   }}
-                  onClick={() => setSelectedDocument(doc)}
+                  onClick={() => {
+                    const index = documents.findIndex(d => d.id === doc.id)
+                    setSelectedDocument(doc)
+                    setSelectedDocumentIndex(index)
+                  }}
                 >
                   <CardContent>
                     <Stack spacing={2}>
@@ -158,58 +163,80 @@ const DocumentsPage = () => {
           </Grid>
       </Box>
       
-      <Dialog
+      {/* Drawer для просмотра документа */}
+      <Drawer
+        anchor="right"
         open={!!selectedDocument}
-        onClose={() => setSelectedDocument(null)}
-        maxWidth="md"
-        fullWidth
+        onClose={() => {
+          setSelectedDocument(null)
+          setSelectedDocumentIndex(null)
+        }}
+        PaperProps={{
+          sx: {
+            width: '90%',
+            maxWidth: '1200px',
+          },
+        }}
       >
-        {selectedDocument && (
-          <>
-            <DialogTitle>{selectedDocument.filename}</DialogTitle>
-            <DialogContent>
-              <Stack spacing={3}>
-                <Box>
-                  <Typography variant="body2" fontWeight={500} sx={{ mb: 1 }}>
-                    Файл
-                  </Typography>
-                  <Typography variant="body1" color="text.secondary">
-                    {selectedDocument.filename}
-                  </Typography>
-                </Box>
+        {selectedDocument && caseId && (
+          <Box sx={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
+            {/* Header */}
+            <Box
+              sx={{
+                p: 2,
+                borderBottom: 1,
+                borderColor: 'divider',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+              }}
+            >
+              <Typography variant="h6" sx={{ fontWeight: 600 }}>
+                {selectedDocument.filename}
+              </Typography>
+              <IconButton
+                onClick={() => {
+                  setSelectedDocument(null)
+                  setSelectedDocumentIndex(null)
+                }}
+              >
+                <CloseIcon />
+              </IconButton>
+            </Box>
 
-                {selectedDocument.file_type && (
-                  <Box>
-                    <Typography variant="body2" fontWeight={500} sx={{ mb: 1 }}>
-                      Тип
-                    </Typography>
-                    <Chip
-                      label={selectedDocument.file_type}
-                      size="small"
-                      variant="outlined"
-                      color="primary"
-                    />
-                  </Box>
-                )}
-
-                {selectedDocument.status && (
-                  <Box>
-                    <Typography variant="body2" fontWeight={500} sx={{ mb: 1 }}>
-                      Статус
-                    </Typography>
-                    <Typography variant="body1" color="text.secondary">
-                      {selectedDocument.status}
-                    </Typography>
-                  </Box>
-                )}
-              </Stack>
-            </DialogContent>
-            <DialogActions>
-              <Button onClick={() => setSelectedDocument(null)}>Закрыть</Button>
-            </DialogActions>
-          </>
+            {/* Document Viewer */}
+            <Box sx={{ flex: 1, overflow: 'hidden' }}>
+              <DocumentViewer
+                document={
+                  selectedDocument
+                    ? {
+                        id: selectedDocument.id,
+                        filename: selectedDocument.filename,
+                        file_type: selectedDocument.file_type || 'pdf',
+                        created_at: selectedDocument.created_at,
+                      } as DocumentWithMetadata
+                    : null
+                }
+                caseId={caseId}
+                onNavigateNext={() => {
+                  if (selectedDocumentIndex !== null && selectedDocumentIndex < documents.length - 1) {
+                    const nextDoc = documents[selectedDocumentIndex + 1]
+                    setSelectedDocument(nextDoc)
+                    setSelectedDocumentIndex(selectedDocumentIndex + 1)
+                  }
+                }}
+                onNavigatePrev={() => {
+                  if (selectedDocumentIndex !== null && selectedDocumentIndex > 0) {
+                    const prevDoc = documents[selectedDocumentIndex - 1]
+                    setSelectedDocument(prevDoc)
+                    setSelectedDocumentIndex(selectedDocumentIndex - 1)
+                  }
+                }}
+              />
+            </Box>
+          </Box>
         )}
-      </Dialog>
+      </Drawer>
     </Box>
   )
 }
