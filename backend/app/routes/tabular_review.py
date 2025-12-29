@@ -236,6 +236,7 @@ async def get_templates(
                     "created_at": t.created_at.isoformat() if t.created_at else None,
                 })
             except Exception as e:
+                logger.error(f"Error processing template {t.id if hasattr(t, 'id') else 'unknown'}: {e}", exc_info=True)
                 # #region agent log
                 try:
                     with open(log_path, 'a', encoding='utf-8') as f:
@@ -245,6 +246,7 @@ async def get_templates(
                             "data": {
                                 "template_id": t.id if hasattr(t, 'id') else None,
                                 "error": str(e),
+                                "error_type": type(e).__name__
                                 "error_type": type(e).__name__
                             },
                             "timestamp": int(__import__('time').time() * 1000),
