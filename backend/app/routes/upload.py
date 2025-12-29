@@ -1,6 +1,7 @@
 """Upload route for Legal AI Vault"""
 import logging
 import json
+import os
 from fastapi import APIRouter, UploadFile, File, HTTPException, Depends, Form
 from pydantic import BaseModel, Field, field_validator
 from typing import List, Optional
@@ -108,7 +109,6 @@ async def upload_files(
     original_files: Dict[str, bytes] = {}  # Store original file content for Yandex Vector Store
     
     # Создаем директорию для сохранения оригинальных файлов
-    import os
     upload_dir = config.UPLOAD_DIR
     os.makedirs(upload_dir, exist_ok=True)
 
