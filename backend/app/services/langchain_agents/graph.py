@@ -361,24 +361,24 @@ def create_analysis_graph(
                     # Merge errors (deduplicate) - thread-safe
                     if "errors" in result_state:
                         with state_lock:
-                        existing_error_agents = {e.get("agent") for e in errors}
-                        for error in result_state["errors"]:
-                            if error.get("agent") not in existing_error_agents:
-                                errors.append(error)
+                            existing_error_agents = {e.get("agent") for e in errors}
+                            for error in result_state["errors"]:
+                                if error.get("agent") not in existing_error_agents:
+                                    errors.append(error)
                     
                     # Merge metadata (combine dictionaries) - thread-safe
                     if "metadata" in result_state:
                         with state_lock:
-                        if "metadata" not in new_state:
-                            new_state["metadata"] = {}
-                        new_state["metadata"].update(result_state["metadata"])
+                            if "metadata" not in new_state:
+                                new_state["metadata"] = {}
+                            new_state["metadata"].update(result_state["metadata"])
                     
                     # Merge completed_steps - thread-safe
                     if "completed_steps" in result_state:
                         with state_lock:
-                        existing_steps = set(new_state.get("completed_steps", []))
-                        new_steps = set(result_state["completed_steps"])
-                        new_state["completed_steps"] = list(existing_steps | new_steps)
+                            existing_steps = set(new_state.get("completed_steps", []))
+                            new_steps = set(result_state["completed_steps"])
+                            new_state["completed_steps"] = list(existing_steps | new_steps)
                     
                     completed_agents.add(agent_name)
                     logger.info(f"[Parallel] Completed {agent_name} agent successfully")
@@ -386,17 +386,17 @@ def create_analysis_graph(
                 except TimeoutError:
                     logger.error(f"[Parallel] Timeout ({DEFAULT_AGENT_TIMEOUT}s) for {agent_name} agent")
                     with state_lock:
-                    errors.append({
-                        "agent": agent_name,
-                        "error": f"Timeout after {DEFAULT_AGENT_TIMEOUT} seconds"
-                    })
+                        errors.append({
+                            "agent": agent_name,
+                            "error": f"Timeout after {DEFAULT_AGENT_TIMEOUT} seconds"
+                        })
                 except Exception as e:
                     logger.error(f"[Parallel] Error in {agent_name} agent: {e}", exc_info=True)
                     with state_lock:
-                    errors.append({
-                        "agent": agent_name,
-                        "error": str(e)
-                    })
+                        errors.append({
+                            "agent": agent_name,
+                            "error": str(e)
+                        })
         
         # Check if any agents didn't complete
         for agent_name, _ in agents_to_run:
@@ -467,7 +467,7 @@ def create_analysis_graph(
         graph.add_edge("plan", "supervisor")
     else:
         # Legacy workflow: START → supervisor
-    graph.add_edge(START, "supervisor")
+        graph.add_edge(START, "supervisor")
     
     # Add conditional edges from supervisor
     supervisor_routes = {
@@ -573,15 +573,15 @@ def create_analysis_graph(
         # Deliver goes to END
         graph.add_edge("deliver", END)
     else:
-    graph.add_conditional_edges(
-        "evaluation",
-        route_after_evaluation,
-        {
-            "adaptation": "adaptation",
-            "human_feedback": "human_feedback_wait",
-            "supervisor": "supervisor"
-        }
-    )
+        graph.add_conditional_edges(
+            "evaluation",
+            route_after_evaluation,
+            {
+                "adaptation": "adaptation",
+                "human_feedback": "human_feedback_wait",
+                "supervisor": "supervisor"
+            }
+        )
     
     # Human feedback wait node routes back to supervisor (which will check if feedback received)
     graph.add_edge("human_feedback_wait", "supervisor")
