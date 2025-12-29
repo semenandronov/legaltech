@@ -2,6 +2,7 @@ import { useState, useEffect, useRef, useCallback } from 'react'
 import { useParams } from 'react-router-dom'
 import { getApiUrl } from '@/services/api'
 import { logger } from '@/lib/logger'
+import { Globe, FileText } from 'lucide-react'
 
 interface Message {
   id: string
@@ -21,6 +22,8 @@ export const AssistantUIChat = ({ caseId, className }: AssistantUIChatProps) => 
   const [messages, setMessages] = useState<Message[]>([])
   const [input, setInput] = useState('')
   const [isLoading, setIsLoading] = useState(false)
+  const [webSearch, setWebSearch] = useState(false)
+  const [deepThink, setDeepThink] = useState(false)
   const abortControllerRef = useRef<AbortController | null>(null)
 
   // Auto-scroll to bottom
@@ -143,13 +146,13 @@ export const AssistantUIChat = ({ caseId, className }: AssistantUIChatProps) => 
   }
 
   return (
-    <div className={`flex flex-col h-full ${className || ''}`}>
+    <div className={`flex flex-col h-full bg-white ${className || ''}`}>
       {/* Messages area */}
-      <div className="flex-1 overflow-y-auto p-4 space-y-4">
+      <div className="flex-1 overflow-y-auto px-6 py-8 space-y-6">
         {messages.length === 0 && (
-          <div className="text-center text-muted-foreground py-8">
-            <p className="text-lg font-semibold mb-2">Начните диалог</p>
-            <p className="text-sm">Задайте вопрос о документах дела</p>
+          <div className="text-center py-16">
+            <p className="text-2xl font-semibold text-gray-800 mb-2">Начните диалог</p>
+            <p className="text-gray-500">Задайте вопрос о документах дела</p>
           </div>
         )}
 
@@ -159,13 +162,13 @@ export const AssistantUIChat = ({ caseId, className }: AssistantUIChatProps) => 
             className={`flex ${message.role === 'user' ? 'justify-end' : 'justify-start'}`}
           >
             <div
-              className={`max-w-[80%] rounded-lg p-3 ${
+              className={`max-w-[75%] rounded-2xl px-4 py-3 ${
                 message.role === 'user'
-                  ? 'bg-primary text-primary-foreground'
-                  : 'bg-muted'
+                  ? 'bg-blue-600 text-white'
+                  : 'bg-gray-100 text-gray-800'
               }`}
             >
-              <div className="whitespace-pre-wrap break-words">
+              <div className="whitespace-pre-wrap break-words text-sm leading-relaxed">
                 {message.content || (message.role === 'assistant' ? '...' : '')}
               </div>
             </div>
@@ -174,18 +177,18 @@ export const AssistantUIChat = ({ caseId, className }: AssistantUIChatProps) => 
 
         {isLoading && (
           <div className="flex justify-start">
-            <div className="bg-muted rounded-lg p-3">
-              <div className="flex space-x-1">
+            <div className="bg-gray-100 rounded-2xl px-4 py-3">
+              <div className="flex space-x-1.5">
                 <div
-                  className="w-2 h-2 bg-current rounded-full animate-bounce"
+                  className="w-2 h-2 bg-gray-400 rounded-full animate-bounce"
                   style={{ animationDelay: '0ms' }}
                 />
                 <div
-                  className="w-2 h-2 bg-current rounded-full animate-bounce"
+                  className="w-2 h-2 bg-gray-400 rounded-full animate-bounce"
                   style={{ animationDelay: '150ms' }}
                 />
                 <div
-                  className="w-2 h-2 bg-current rounded-full animate-bounce"
+                  className="w-2 h-2 bg-gray-400 rounded-full animate-bounce"
                   style={{ animationDelay: '300ms' }}
                 />
               </div>
@@ -196,24 +199,62 @@ export const AssistantUIChat = ({ caseId, className }: AssistantUIChatProps) => 
         <div ref={messagesEndRef} />
       </div>
 
-      {/* Input area */}
-      <div className="border-t p-4">
-        <form onSubmit={handleSubmit} className="flex gap-2">
+      {/* Input area - красивое большое поле как на скриншоте */}
+      <div className="border-t border-gray-200 bg-white px-6 py-4">
+        {/* Кнопки сверху */}
+        <div className="flex items-center gap-3 mb-3">
+          <button
+            type="button"
+            onClick={() => setWebSearch(!webSearch)}
+            className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
+              webSearch
+                ? 'bg-gray-900 text-white'
+                : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+            }`}
+          >
+            <Globe size={16} />
+            Web search
+          </button>
+          <button
+            type="button"
+            className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium bg-gray-100 text-gray-700 hover:bg-gray-200 transition-colors"
+          >
+            <FileText size={16} />
+            Prompt library
+          </button>
+        </div>
+
+        {/* Большое поле ввода */}
+        <form onSubmit={handleSubmit} className="relative">
           <input
             value={input}
             onChange={(e) => setInput(e.target.value)}
-            placeholder="Задайте вопрос о документах..."
-            className="flex-1 px-4 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-primary"
+            placeholder="Search the web"
+            className="w-full px-5 py-4 pr-12 text-base border-2 border-gray-300 rounded-xl focus:outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-200 transition-all disabled:bg-gray-50 disabled:cursor-not-allowed"
             disabled={isLoading || !actualCaseId}
+            autoFocus
           />
           <button
             type="submit"
             disabled={isLoading || !input.trim() || !actualCaseId}
-            className="px-6 py-2 bg-primary text-primary-foreground rounded-lg hover:bg-primary/90 disabled:opacity-50 disabled:cursor-not-allowed"
+            className="absolute right-3 top-1/2 -translate-y-1/2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors text-sm font-medium"
           >
             Отправить
           </button>
         </form>
+
+        {/* Переключатель Deep think */}
+        <div className="flex items-center gap-2 mt-3">
+          <label className="flex items-center gap-2 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={deepThink}
+              onChange={(e) => setDeepThink(e.target.checked)}
+              className="w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500"
+            />
+            <span className="text-sm text-gray-600">Deep think</span>
+          </label>
+        </div>
       </div>
     </div>
   )
