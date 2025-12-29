@@ -45,11 +45,12 @@ data: {"textDelta": ""}  // Пустой textDelta = конец потока
 ## Компоненты
 
 ### AssistantUIChat
-Основной компонент чата с assistant-ui:
-- Использует `useChat` hook из `@assistant-ui/react`
+Основной компонент чата:
+- Кастомная реализация с прямым подключением к SSE endpoint
 - Автоматическая прокрутка
 - Индикатор загрузки
 - Обработка ошибок
+- Поддержка streaming ответов через Server-Sent Events
 
 ### AssistantChatPage
 Страница-обертка для чата:

@@ -192,7 +192,7 @@ async def assistant_chat(
         # Create streaming response
         return StreamingResponse(
             stream_chat_response(
-                case_id=request.case_id,
+                case_id=case_id,
                 question=question,
                 db=db,
                 current_user=current_user
