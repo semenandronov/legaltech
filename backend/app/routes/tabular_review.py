@@ -115,25 +115,41 @@ async def get_templates(
     
     try:
         from app.models.tabular_review import TabularColumnTemplate
+        from sqlalchemy import inspect as sqlalchemy_inspect
         
         # #region agent log
         try:
+            # Check if table exists
+            inspector = sqlalchemy_inspect(db.bind)
+            table_exists = "tabular_column_templates" in inspector.get_table_names()
             with open(log_path, 'a', encoding='utf-8') as f:
                 f.write(json.dumps({
                     "location": "tabular_review.py:get_templates:before_query",
                     "message": "About to query TabularColumnTemplate",
                     "data": {
                         "model_imported": True,
-                        "has_table": hasattr(TabularColumnTemplate, '__table__')
+                        "has_table": hasattr(TabularColumnTemplate, '__table__'),
+                        "table_name": TabularColumnTemplate.__table__.name if hasattr(TabularColumnTemplate, '__table__') else None,
+                        "table_exists_in_db": table_exists
                     },
                     "timestamp": int(__import__('time').time() * 1000),
                     "sessionId": "debug-session",
                     "runId": "run1",
                     "hypothesisId": "A"
                 }) + '\n')
-        except Exception:
-            pass
+        except Exception as log_err:
+            logger.error(f"Error in debug log: {log_err}")
         # #endregion
+        
+        # Check if table exists, if not return empty list
+        try:
+            inspector = sqlalchemy_inspect(db.bind)
+            if "tabular_column_templates" not in inspector.get_table_names():
+                logger.warning("Table tabular_column_templates does not exist, returning empty list")
+                return []
+        except Exception as check_err:
+            logger.error(f"Error checking table existence: {check_err}", exc_info=True)
+            # Continue anyway, let the query fail if table doesn't exist
         
         query = db.query(TabularColumnTemplate).filter(
             or_(
@@ -163,7 +179,9 @@ async def get_templates(
                 f.write(json.dumps({
                     "location": "tabular_review.py:get_templates:before_all",
                     "message": "About to execute query.all()",
-                    "data": {},
+                    "data": {
+                        "query_str": str(query)
+                    },
                     "timestamp": int(__import__('time').time() * 1000),
                     "sessionId": "debug-session",
                     "runId": "run1",
