@@ -117,7 +117,7 @@ export interface CellDetails {
 // API functions
 export const tabularReviewApi = {
   // List tabular reviews
-  async listReviews(skip: number = 0, limit: number = 20): Promise<{
+  async listReviews(caseId?: string, skip: number = 0, limit: number = 20): Promise<{
     reviews: Array<{
       id: string
       case_id: string
@@ -132,8 +132,12 @@ export const tabularReviewApi = {
     limit: number
   }> {
     try {
+      const params: any = { skip, limit }
+      if (caseId) {
+        params.case_id = caseId
+      }
       const response = await apiClient.get('/api/tabular-review/', {
-        params: { skip, limit },
+        params,
       })
       return response.data
     } catch (error) {

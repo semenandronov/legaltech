@@ -233,8 +233,46 @@ const TabularReviewPage: React.FC = () => {
     )
   }
 
-  // If no reviewId, show interface to create new review
+  // If no reviewId, show interface to create new review or select existing
   if (!reviewId && caseId) {
+    const [existingReviews, setExistingReviews] = useState<Array<{
+      id: string
+      name: string
+      description?: string
+      status: string
+      created_at?: string
+      updated_at?: string
+    }>>([])
+    const [loadingReviews, setLoadingReviews] = useState(true)
+    const [showReviewSelector, setShowReviewSelector] = useState(true)
+
+    useEffect(() => {
+      const loadReviews = async () => {
+        try {
+          setLoadingReviews(true)
+          const data = await tabularReviewApi.listReviews(caseId)
+          setExistingReviews(data.reviews)
+        } catch (err: any) {
+          console.error("Error loading reviews:", err)
+          toast.error("Не удалось загрузить список таблиц")
+        } finally {
+          setLoadingReviews(false)
+        }
+      }
+      if (caseId) {
+        loadReviews()
+      }
+    }, [caseId])
+
+    const handleSelectReview = (selectedReviewId: string) => {
+      navigate(`/cases/${caseId}/tabular-review/${selectedReviewId}`, { replace: true })
+    }
+
+    const handleCreateNew = () => {
+      setShowReviewSelector(false)
+      setShowDocumentSelector(true)
+    }
+
     return (
       <div className="h-screen bg-background flex">
         {caseId && <CaseNavigation caseId={caseId} />}
@@ -249,28 +287,105 @@ const TabularReviewPage: React.FC = () => {
                 <ArrowLeft className="w-4 h-4 mr-2" />
                 Назад к делу
               </Button>
-              <h1 className="text-2xl font-bold">Создать Tabular Review</h1>
+              <h1 className="text-2xl font-bold">Tabular Review</h1>
             </div>
           </div>
-          <div className="flex-1 flex items-center justify-center p-8">
-            <Card className="p-6 max-w-md w-full">
-              <div className="text-center">
-                <h3 className="text-lg font-semibold mb-2">
-                  Выберите документы для таблицы
-                </h3>
-                <p className="text-muted-foreground mb-4">
-                  Выберите документы из дела, которые будут включены в Tabular Review
-                </p>
-                <Button onClick={() => setShowDocumentSelector(true)}>
-                  Выбрать документы
-                </Button>
+          <div className="flex-1 overflow-auto p-8">
+            {showReviewSelector ? (
+              <div className="max-w-4xl mx-auto">
+                <div className="flex items-center justify-between mb-6">
+                  <div>
+                    <h2 className="text-xl font-semibold mb-2">Выберите или создайте таблицу</h2>
+                    <p className="text-muted-foreground">
+                      Выберите существующую таблицу или создайте новую для этого дела
+                    </p>
+                  </div>
+                  <Button onClick={handleCreateNew}>
+                    Создать новую таблицу
+                  </Button>
+                </div>
+
+                {loadingReviews ? (
+                  <div className="flex items-center justify-center py-12">
+                    <Spinner size="lg" />
+                  </div>
+                ) : existingReviews.length === 0 ? (
+                  <Card className="p-8">
+                    <div className="text-center">
+                      <h3 className="text-lg font-semibold mb-2">
+                        Нет созданных таблиц
+                      </h3>
+                      <p className="text-muted-foreground mb-6">
+                        Создайте первую таблицу для этого дела
+                      </p>
+                      <Button onClick={handleCreateNew}>
+                        Создать таблицу
+                      </Button>
+                    </div>
+                  </Card>
+                ) : (
+                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                    {existingReviews.map((review) => (
+                      <Card
+                        key={review.id}
+                        className="p-4 cursor-pointer hover:bg-accent transition-colors"
+                        onClick={() => handleSelectReview(review.id)}
+                      >
+                        <div className="flex items-start justify-between mb-2">
+                          <h3 className="font-semibold text-lg">{review.name}</h3>
+                          <span className={`text-xs px-2 py-1 rounded ${
+                            review.status === 'completed' ? 'bg-green-100 text-green-800' :
+                            review.status === 'processing' ? 'bg-yellow-100 text-yellow-800' :
+                            'bg-gray-100 text-gray-800'
+                          }`}>
+                            {review.status}
+                          </span>
+                        </div>
+                        {review.description && (
+                          <p className="text-sm text-muted-foreground mb-3 line-clamp-2">
+                            {review.description}
+                          </p>
+                        )}
+                        {review.updated_at && (
+                          <p className="text-xs text-muted-foreground">
+                            Обновлено: {new Date(review.updated_at).toLocaleDateString('ru-RU')}
+                          </p>
+                        )}
+                      </Card>
+                    ))}
+                  </div>
+                )}
               </div>
-            </Card>
+            ) : (
+              <div className="max-w-md mx-auto">
+                <Card className="p-6">
+                  <div className="text-center">
+                    <h3 className="text-lg font-semibold mb-2">
+                      Выберите документы для таблицы
+                    </h3>
+                    <p className="text-muted-foreground mb-4">
+                      Выберите документы из дела, которые будут включены в Tabular Review
+                    </p>
+                    <div className="flex gap-2 justify-center">
+                      <Button variant="outline" onClick={() => setShowReviewSelector(true)}>
+                        Назад
+                      </Button>
+                      <Button onClick={() => setShowDocumentSelector(true)}>
+                        Выбрать документы
+                      </Button>
+                    </div>
+                  </div>
+                </Card>
+              </div>
+            )}
           </div>
           {caseId && (
             <DocumentSelector
               isOpen={showDocumentSelector}
-              onClose={() => setShowDocumentSelector(false)}
+              onClose={() => {
+                setShowDocumentSelector(false)
+                setShowReviewSelector(true)
+              }}
               onConfirm={handleDocumentSelectorConfirm}
               reviewId=""
               initialSelectedIds={[]}

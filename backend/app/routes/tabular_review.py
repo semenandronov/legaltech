@@ -183,7 +183,8 @@ async def get_templates(
                     "message": "Query executed successfully",
                     "data": {
                         "templates_count": len(templates) if templates else 0,
-                        "first_template_has_columns": hasattr(templates[0], 'columns') if templates and len(templates) > 0 else False
+                        "first_template_has_columns": hasattr(templates[0], 'columns') if templates and len(templates) > 0 else False,
+                        "first_template_columns_type": type(templates[0].columns).__name__ if templates and len(templates) > 0 and hasattr(templates[0], 'columns') else None
                     },
                     "timestamp": int(__import__('time').time() * 1000),
                     "sessionId": "debug-session",
@@ -194,22 +195,50 @@ async def get_templates(
             pass
         # #endregion
         
-        result = {
-            "templates": [
-                {
+        result = []
+        for t in templates:
+            try:
+                # columns is a JSON field, it should already be a list/dict
+                columns_data = t.columns if t.columns else []
+                # Ensure it's a list
+                if not isinstance(columns_data, list):
+                    columns_data = []
+                
+                result.append({
                     "id": t.id,
                     "name": t.name,
                     "description": t.description,
                     "category": t.category,
-                    "columns": t.columns if hasattr(t, 'columns') else [],
+                    "columns": columns_data,
                     "is_public": t.is_public,
                     "is_featured": t.is_featured,
                     "is_system": t.is_system,
-                    "created_at": t.created_at.isoformat() if hasattr(t, 'created_at') and t.created_at else None,
-                }
-                for t in templates
-            ]
-        }
+                    "tags": t.tags if t.tags else [],
+                    "usage_count": t.usage_count if hasattr(t, 'usage_count') else 0,
+                    "created_at": t.created_at.isoformat() if t.created_at else None,
+                })
+            except Exception as e:
+                # #region agent log
+                try:
+                    with open(log_path, 'a', encoding='utf-8') as f:
+                        f.write(json.dumps({
+                            "location": "tabular_review.py:get_templates:template_processing_error",
+                            "message": "Error processing template",
+                            "data": {
+                                "template_id": t.id if hasattr(t, 'id') else None,
+                                "error": str(e),
+                                "error_type": type(e).__name__
+                            },
+                            "timestamp": int(__import__('time').time() * 1000),
+                            "sessionId": "debug-session",
+                            "runId": "run1",
+                            "hypothesisId": "A"
+                        }) + '\n')
+                except Exception:
+                    pass
+                # #endregion
+                logger.warning(f"Error processing template {t.id}: {e}")
+                continue
         
         # #region agent log
         try:
@@ -468,24 +497,36 @@ async def export_excel(
 
 @router.get("/")
 async def list_reviews(
+    case_id: Optional[str] = Query(None, description="Filter by case_id"),
     skip: int = Query(0, ge=0),
     limit: int = Query(20, ge=1, le=100),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
-    """Get list of tabular reviews for current user"""
+    """Get list of tabular reviews for current user, optionally filtered by case_id"""
     try:
         from app.models.tabular_review import TabularReview
         from sqlalchemy import desc
         
-        # Get reviews for current user, ordered by updated_at desc
-        reviews = db.query(TabularReview).filter(
+        # Build query
+        query = db.query(TabularReview).filter(
             TabularReview.user_id == current_user.id
-        ).order_by(desc(TabularReview.updated_at)).offset(skip).limit(limit).all()
+        )
         
-        total = db.query(TabularReview).filter(
+        # Filter by case_id if provided
+        if case_id:
+            query = query.filter(TabularReview.case_id == case_id)
+        
+        # Get reviews ordered by updated_at desc
+        reviews = query.order_by(desc(TabularReview.updated_at)).offset(skip).limit(limit).all()
+        
+        # Count total
+        count_query = db.query(TabularReview).filter(
             TabularReview.user_id == current_user.id
-        ).count()
+        )
+        if case_id:
+            count_query = count_query.filter(TabularReview.case_id == case_id)
+        total = count_query.count()
         
         return {
             "reviews": [
