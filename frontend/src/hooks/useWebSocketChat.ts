@@ -133,9 +133,6 @@ export const useWebSocketChat = ({
   }, [caseId, enabled, onMessage, onSources, onError, onComplete])
 
   const sendMessage = useCallback((query: string, history: any[] = [], proSearch: boolean = false, deepThink: boolean = false) => {
-    // #region agent log
-    fetch('http://127.0.0.1:7242/ingest/2db1e09b-2b5d-4ee0-85d8-a551f942254c',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'useWebSocketChat.ts:sendMessage',message:'Sending WebSocket message',data:{query:query.substring(0,100),historyLength:history.length,proSearch,deepThink,wsState:wsRef.current?.readyState},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'H1'})}).catch(()=>{});
-    // #endregion
     if (wsRef.current?.readyState === WebSocket.OPEN) {
       setIsStreaming(true)
       wsRef.current.send(
@@ -147,9 +144,6 @@ export const useWebSocketChat = ({
         })
       )
     } else {
-      // #region agent log
-      fetch('http://127.0.0.1:7242/ingest/2db1e09b-2b5d-4ee0-85d8-a551f942254c',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'useWebSocketChat.ts:sendMessage',message:'WebSocket not connected',data:{wsState:wsRef.current?.readyState},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'H1'})}).catch(()=>{});
-      // #endregion
       onError('Соединение не установлено')
     }
   }, [onError])
