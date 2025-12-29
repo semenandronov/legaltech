@@ -150,7 +150,7 @@ async def stream_chat_response(
         yield f"data: {json.dumps({'error': str(e)})}\n\n"
 
 
-@router.post("/api/chat")
+@router.post("/api/assistant/chat")
 async def assistant_chat(
     request: Request,
     db: Session = Depends(get_db),

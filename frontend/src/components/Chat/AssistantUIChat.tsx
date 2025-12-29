@@ -61,7 +61,7 @@ export const AssistantUIChat = ({ caseId, className }: AssistantUIChatProps) => 
 
     try {
       const token = localStorage.getItem('access_token')
-      const response = await fetch(getApiUrl('/api/chat'), {
+      const response = await fetch(getApiUrl('/api/assistant/chat'), {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',

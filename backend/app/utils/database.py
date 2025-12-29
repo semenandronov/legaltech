@@ -220,30 +220,37 @@ def ensure_schema():
         logger.warning(f"Could not ensure tabular_review tables: {e}", exc_info=True)
     
     # Ensure files.file_path column exists
-    if "files" in inspector.get_table_names():
-        columns = {col["name"]: col for col in inspector.get_columns("files")}
-        
-        if "file_path" not in columns:
-            try:
-                with engine.begin() as conn:
-                    conn.execute(
-                        text(
-                            "ALTER TABLE files "
-                            "ADD COLUMN IF NOT EXISTS file_path VARCHAR(512)"
+    try:
+        if "files" in inspector.get_table_names():
+            columns = {col["name"]: col for col in inspector.get_columns("files")}
+            
+            if "file_path" not in columns:
+                logger.info("⚠️  file_path column not found in files table, adding it...")
+                try:
+                    with engine.begin() as conn:
+                        conn.execute(
+                            text(
+                                "ALTER TABLE files "
+                                "ADD COLUMN IF NOT EXISTS file_path VARCHAR(512)"
+                            )
                         )
-                    )
-                    logger.info("✅ Added file_path column to files table")
-                    
-                    # Create index for faster lookups
-                    conn.execute(
-                        text(
-                            "CREATE INDEX IF NOT EXISTS ix_files_file_path "
-                            "ON files(file_path) WHERE file_path IS NOT NULL"
+                        logger.info("✅ Added file_path column to files table")
+                        
+                        # Create index for faster lookups
+                        conn.execute(
+                            text(
+                                "CREATE INDEX IF NOT EXISTS ix_files_file_path "
+                                "ON files(file_path) WHERE file_path IS NOT NULL"
+                            )
                         )
-                    )
-                    logger.info("✅ Created index on files.file_path")
-            except Exception as e:
-                logger.warning(f"Could not add file_path column to files table: {e}")
+                        logger.info("✅ Created index on files.file_path")
+                except Exception as e:
+                    logger.error(f"❌ Could not add file_path column to files table: {e}", exc_info=True)
+                    raise
+            else:
+                logger.debug("✅ file_path column already exists in files table")
+    except Exception as e:
+        logger.error(f"Error checking/adding file_path column: {e}", exc_info=True)
 
 
 def init_db():
