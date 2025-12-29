@@ -1,5 +1,6 @@
 """Cases routes for Legal AI Vault"""
 import logging
+import os
 from fastapi import APIRouter, HTTPException, Depends, Query
 from pydantic import BaseModel, Field, field_validator
 from sqlalchemy.orm import Session
@@ -9,6 +10,7 @@ from app.utils.database import get_db
 from app.utils.auth import get_current_user
 from app.models.case import Case, File as FileModel
 from app.models.user import User
+from app.config import config
 from fastapi.responses import Response, StreamingResponse
 
 logger = logging.getLogger(__name__)
@@ -371,26 +373,42 @@ async def get_file_content(
     if not file:
         raise HTTPException(status_code=404, detail="Файл не найден")
     
-    # For now, return text content as plain text
-    # TODO: In future, store original files and return them for PDF/DOCX
-    # For PDF files, we would need to reconstruct PDF from text or store original
-    # For now, return text content with appropriate content type
-    
+    # Определяем content type
     content_type = "text/plain"
     if file.file_type == "pdf":
         content_type = "application/pdf"
-        # Note: Currently we only have text, not original PDF
-        # This will need to be enhanced to store original files
     elif file.file_type == "docx":
         content_type = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
     elif file.file_type == "xlsx":
         content_type = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     
-    # Return text content
-    # In future, if original files are stored, return the original file
+    # Если есть оригинальный файл, возвращаем его
+    if file.file_path:
+        import os
+        from app.config import config
+        
+        file_full_path = os.path.join(config.UPLOAD_DIR, file.file_path)
+        
+        if os.path.exists(file_full_path):
+            try:
+                with open(file_full_path, 'rb') as f:
+                    file_content = f.read()
+                
+                return Response(
+                    content=file_content,
+                    media_type=content_type,
+                    headers={
+                        "Content-Disposition": f'inline; filename="{file.filename}"'
+                    }
+                )
+            except Exception as e:
+                logger.error(f"Error reading original file {file_full_path}: {e}")
+                # Fallback to text if file read fails
+    
+    # Fallback: return text content if original file not available
     return Response(
         content=file.original_text.encode('utf-8'),
-        media_type=content_type,
+        media_type="text/plain",  # Always return as text/plain for text fallback
         headers={
             "Content-Disposition": f'inline; filename="{file.filename}"'
         }

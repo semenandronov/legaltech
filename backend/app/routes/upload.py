@@ -106,6 +106,11 @@ async def upload_files(
     total_text_len = 0
     files_to_create: List[dict] = []
     original_files: Dict[str, bytes] = {}  # Store original file content for Yandex Vector Store
+    
+    # Создаем директорию для сохранения оригинальных файлов
+    import os
+    upload_dir = config.UPLOAD_DIR
+    os.makedirs(upload_dir, exist_ok=True)
 
     # Генерируем case_id один раз, чтобы использовать его и для Case, и для File
     case_id = str(uuid.uuid4())
@@ -165,6 +170,17 @@ async def upload_files(
             # content уже прочитан выше (await file.read()), сохраняем его в original_files
             original_files[filename] = content
             
+            # Сохраняем оригинальный файл на диск для просмотра
+            # Создаем поддиректорию для case_id
+            case_upload_dir = os.path.join(upload_dir, case_id)
+            os.makedirs(case_upload_dir, exist_ok=True)
+            
+            # Сохраняем файл
+            file_path = os.path.join(case_upload_dir, filename)
+            with open(file_path, 'wb') as f:
+                f.write(content)
+            logger.info(f"Saved original file to {file_path}")
+            
             # Remove NULL bytes (PostgreSQL doesn't allow them in strings)
             text = text.replace('\x00', '')
             
@@ -185,12 +201,16 @@ async def upload_files(
             text_parts.append(f"[{filename}]\n{text}")
             file_names.append(filename)
 
+            # Путь к сохраненному файлу (относительно upload_dir)
+            relative_file_path = os.path.join(case_id, filename)
+            
             files_to_create.append(
                 {
                     "case_id": case_id,
                     "filename": filename,
                     "file_type": ext.lower(),
                     "original_text": sanitize_text(text),
+                    "file_path": relative_file_path,  # Сохраняем путь к оригинальному файлу
                 }
             )
         except ValueError as e:
@@ -327,11 +347,13 @@ async def upload_files(
                 continue
             
             try:
+                file_path = file_info.get("file_path")  # Путь к оригинальному файлу
                 file_model = FileModel(
                     case_id=case_id,
                     filename=filename,
                     file_type=file_type,
                     original_text=sanitized_original_text,
+                    file_path=file_path,  # Сохраняем путь к оригинальному файлу
                 )
                 db.add(file_model)
                 db.flush()  # Flush to get file_model.id

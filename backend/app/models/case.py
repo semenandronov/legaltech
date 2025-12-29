@@ -68,6 +68,7 @@ class File(Base):
     filename = Column(String(255), nullable=False)
     file_type = Column(String(50), nullable=False)
     original_text = Column(Text, nullable=False)
+    file_path = Column(String(512), nullable=True)  # Путь к оригинальному файлу на диске
     # metadata удалено - не существует в БД, используем другие поля для хранения метаданных
     created_at = Column(DateTime, default=datetime.utcnow)
 
