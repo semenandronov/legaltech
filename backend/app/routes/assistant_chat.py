@@ -71,56 +71,9 @@ async def stream_chat_response(
             )
         )
         
-        # #region agent log
-        import json
-        import os
-        log_path = '/Users/semyon_andronov04/Desktop/C ДВ/.cursor/debug.log'
-        try:
-            with open(log_path, 'a', encoding='utf-8') as f:
-                f.write(json.dumps({
-                    "location": "assistant_chat.py:stream_chat_response",
-                    "message": "Documents retrieved from RAG",
-                    "data": {
-                        "case_id": case_id,
-                        "documents_count": len(documents) if documents else 0,
-                        "first_doc_type": type(documents[0]).__name__ if documents and len(documents) > 0 else None,
-                        "first_doc_has_page_content": hasattr(documents[0], 'page_content') if documents and len(documents) > 0 else False,
-                        "first_doc_has_metadata": hasattr(documents[0], 'metadata') if documents and len(documents) > 0 else False,
-                    },
-                    "timestamp": int(__import__('time').time() * 1000),
-                    "sessionId": "debug-session",
-                    "runId": "run1",
-                    "hypothesisId": "A"
-                }) + '\n')
-        except Exception as e:
-            pass
-        # #endregion
-        
         # Build context from documents
         context_parts = []
         for i, doc in enumerate(documents[:5], 1):
-            # #region agent log
-            try:
-                with open(log_path, 'a', encoding='utf-8') as f:
-                    f.write(json.dumps({
-                        "location": "assistant_chat.py:stream_chat_response",
-                        "message": "Processing document",
-                        "data": {
-                            "doc_index": i,
-                            "doc_type": type(doc).__name__,
-                            "has_page_content": hasattr(doc, 'page_content'),
-                            "has_metadata": hasattr(doc, 'metadata'),
-                            "is_dict": isinstance(doc, dict),
-                        },
-                        "timestamp": int(__import__('time').time() * 1000),
-                        "sessionId": "debug-session",
-                        "runId": "run1",
-                        "hypothesisId": "A"
-                    }) + '\n')
-            except Exception as e:
-                pass
-            # #endregion
-            
             # Handle both Document objects and dicts
             if hasattr(doc, 'page_content'):
                 # LangChain Document object
