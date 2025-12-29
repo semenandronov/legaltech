@@ -69,7 +69,7 @@ const Dashboard: React.FC = () => {
       setLoading(true)
       const [casesData, reviewsData] = await Promise.all([
         getCasesList(0, 6), // Get first 6 cases
-        tabularReviewApi.listReviews(0, 5), // Get first 5 recent reviews
+        tabularReviewApi.listReviews(undefined, 0, 5), // Get first 5 recent reviews (no case filter)
       ])
       setCases(casesData.cases)
       setRecentReviews(reviewsData.reviews)

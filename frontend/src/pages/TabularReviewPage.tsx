@@ -40,6 +40,36 @@ const TabularReviewPage: React.FC = () => {
   } | null>(null)
   const [error, setError] = useState<string | null>(null)
   const loadingRef = useRef(false)
+  
+  // State for review selector (when no reviewId)
+  const [existingReviews, setExistingReviews] = useState<Array<{
+    id: string
+    name: string
+    description?: string
+    status: string
+    created_at?: string
+    updated_at?: string
+  }>>([])
+  const [loadingReviews, setLoadingReviews] = useState(false)
+  const [showReviewSelector, setShowReviewSelector] = useState(true)
+
+  // Load existing reviews when caseId is available but no reviewId
+  useEffect(() => {
+    const loadReviews = async () => {
+      if (!caseId || reviewId) return // Only load if we have caseId but no reviewId
+      try {
+        setLoadingReviews(true)
+        const data = await tabularReviewApi.listReviews(caseId)
+        setExistingReviews(data.reviews)
+      } catch (err: any) {
+        console.error("Error loading reviews:", err)
+        toast.error("Не удалось загрузить список таблиц")
+      } finally {
+        setLoadingReviews(false)
+      }
+    }
+    loadReviews()
+  }, [caseId, reviewId])
 
   useEffect(() => {
     if (reviewId && !loadingRef.current) {
@@ -235,35 +265,6 @@ const TabularReviewPage: React.FC = () => {
 
   // If no reviewId, show interface to create new review or select existing
   if (!reviewId && caseId) {
-    const [existingReviews, setExistingReviews] = useState<Array<{
-      id: string
-      name: string
-      description?: string
-      status: string
-      created_at?: string
-      updated_at?: string
-    }>>([])
-    const [loadingReviews, setLoadingReviews] = useState(true)
-    const [showReviewSelector, setShowReviewSelector] = useState(true)
-
-    useEffect(() => {
-      const loadReviews = async () => {
-        try {
-          setLoadingReviews(true)
-          const data = await tabularReviewApi.listReviews(caseId)
-          setExistingReviews(data.reviews)
-        } catch (err: any) {
-          console.error("Error loading reviews:", err)
-          toast.error("Не удалось загрузить список таблиц")
-        } finally {
-          setLoadingReviews(false)
-        }
-      }
-      if (caseId) {
-        loadReviews()
-      }
-    }, [caseId])
-
     const handleSelectReview = (selectedReviewId: string) => {
       navigate(`/cases/${caseId}/tabular-review/${selectedReviewId}`, { replace: true })
     }
