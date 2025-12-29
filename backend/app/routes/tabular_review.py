@@ -89,9 +89,51 @@ async def get_templates(
     current_user: User = Depends(get_current_user)
 ):
     """Get available column templates with filtering"""
+    # #region agent log
+    import json
+    import os
+    log_path = '/Users/semyon_andronov04/Desktop/C ДВ/.cursor/debug.log'
+    try:
+        with open(log_path, 'a', encoding='utf-8') as f:
+            f.write(json.dumps({
+                "location": "tabular_review.py:get_templates:entry",
+                "message": "Templates endpoint called",
+                "data": {
+                    "category": category,
+                    "featured": featured,
+                    "search": search,
+                    "user_id": current_user.id if current_user else None
+                },
+                "timestamp": int(__import__('time').time() * 1000),
+                "sessionId": "debug-session",
+                "runId": "run1",
+                "hypothesisId": "A"
+            }) + '\n')
+    except Exception:
+        pass
+    # #endregion
+    
     try:
         from app.models.tabular_review import TabularColumnTemplate
-        from sqlalchemy import and_
+        
+        # #region agent log
+        try:
+            with open(log_path, 'a', encoding='utf-8') as f:
+                f.write(json.dumps({
+                    "location": "tabular_review.py:get_templates:before_query",
+                    "message": "About to query TabularColumnTemplate",
+                    "data": {
+                        "model_imported": True,
+                        "has_table": hasattr(TabularColumnTemplate, '__table__')
+                    },
+                    "timestamp": int(__import__('time').time() * 1000),
+                    "sessionId": "debug-session",
+                    "runId": "run1",
+                    "hypothesisId": "A"
+                }) + '\n')
+        except Exception:
+            pass
+        # #endregion
         
         query = db.query(TabularColumnTemplate).filter(
             or_(
@@ -115,9 +157,44 @@ async def get_templates(
                 )
             )
         
+        # #region agent log
+        try:
+            with open(log_path, 'a', encoding='utf-8') as f:
+                f.write(json.dumps({
+                    "location": "tabular_review.py:get_templates:before_all",
+                    "message": "About to execute query.all()",
+                    "data": {},
+                    "timestamp": int(__import__('time').time() * 1000),
+                    "sessionId": "debug-session",
+                    "runId": "run1",
+                    "hypothesisId": "A"
+                }) + '\n')
+        except Exception:
+            pass
+        # #endregion
+        
         templates = query.all()
         
-        return {
+        # #region agent log
+        try:
+            with open(log_path, 'a', encoding='utf-8') as f:
+                f.write(json.dumps({
+                    "location": "tabular_review.py:get_templates:after_all",
+                    "message": "Query executed successfully",
+                    "data": {
+                        "templates_count": len(templates) if templates else 0,
+                        "first_template_has_columns": hasattr(templates[0], 'columns') if templates and len(templates) > 0 else False
+                    },
+                    "timestamp": int(__import__('time').time() * 1000),
+                    "sessionId": "debug-session",
+                    "runId": "run1",
+                    "hypothesisId": "A"
+                }) + '\n')
+        except Exception:
+            pass
+        # #endregion
+        
+        result = {
             "templates": [
                 {
                     "id": t.id,
@@ -133,9 +210,48 @@ async def get_templates(
                 for t in templates
             ]
         }
+        
+        # #region agent log
+        try:
+            with open(log_path, 'a', encoding='utf-8') as f:
+                f.write(json.dumps({
+                    "location": "tabular_review.py:get_templates:before_return",
+                    "message": "About to return result",
+                    "data": {
+                        "result_templates_count": len(result.get("templates", []))
+                    },
+                    "timestamp": int(__import__('time').time() * 1000),
+                    "sessionId": "debug-session",
+                    "runId": "run1",
+                    "hypothesisId": "A"
+                }) + '\n')
+        except Exception:
+            pass
+        # #endregion
+        
+        return result
     except Exception as e:
+        # #region agent log
+        try:
+            with open(log_path, 'a', encoding='utf-8') as f:
+                f.write(json.dumps({
+                    "location": "tabular_review.py:get_templates:error",
+                    "message": "Exception caught",
+                    "data": {
+                        "error_type": type(e).__name__,
+                        "error_message": str(e),
+                        "error_args": str(e.args) if hasattr(e, 'args') else None
+                    },
+                    "timestamp": int(__import__('time').time() * 1000),
+                    "sessionId": "debug-session",
+                    "runId": "run1",
+                    "hypothesisId": "A"
+                }) + '\n')
+        except Exception:
+            pass
+        # #endregion
         logger.error(f"Error getting templates: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail="Failed to get templates")
+        raise HTTPException(status_code=500, detail=f"Failed to get templates: {str(e)}")
 
 
 @router.get("/{review_id}")
