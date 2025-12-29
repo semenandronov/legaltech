@@ -16,7 +16,6 @@ import {
   Stack,
 } from '@mui/material'
 import { Description as DescriptionIcon } from '@mui/icons-material'
-import MainLayout from '../components/Layout/MainLayout'
 import CaseNavigation from '../components/CaseOverview/CaseNavigation'
 
 interface DocumentFile {
@@ -71,32 +70,37 @@ const DocumentsPage = () => {
   
   if (loading) {
     return (
-      <MainLayout>
-        <Box
-          sx={{
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            height: '100%',
-          }}
-        >
-          <CircularProgress />
-        </Box>
-      </MainLayout>
+      <Box
+        sx={{
+          height: '100vh',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          bgcolor: 'background.default',
+        }}
+      >
+        <CircularProgress />
+      </Box>
     )
   }
 
   return (
-    <MainLayout>
-      <Box sx={{ display: 'flex', height: '100%' }}>
-        {caseId && <CaseNavigation caseId={caseId} />}
-        <Box
-          sx={{
-            flex: 1,
-            overflow: 'auto',
-            p: 3,
-          }}
-        >
+    <Box 
+      sx={{ 
+        height: '100vh',
+        display: 'flex', 
+        bgcolor: 'background.default',
+        overflow: 'hidden',
+      }}
+    >
+      {caseId && <CaseNavigation caseId={caseId} />}
+      <Box
+        sx={{
+          flex: 1,
+          overflow: 'auto',
+          p: 3,
+        }}
+      >
           <Typography variant="h4" sx={{ mb: 3, fontWeight: 600 }}>
             Документы ({documents.length})
           </Typography>
@@ -152,7 +156,6 @@ const DocumentsPage = () => {
               </Grid>
             ))}
           </Grid>
-        </Box>
       </Box>
       
       <Dialog
@@ -207,7 +210,7 @@ const DocumentsPage = () => {
           </>
         )}
       </Dialog>
-    </MainLayout>
+    </Box>
   )
 }
 

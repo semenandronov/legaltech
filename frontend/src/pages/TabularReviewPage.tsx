@@ -1,6 +1,5 @@
 import React, { useState, useEffect, useRef } from "react"
 import { useParams, useNavigate } from "react-router-dom"
-import MainLayout from "../components/Layout/MainLayout"
 import { TabularReviewTable } from "../components/TabularReview/TabularReviewTable"
 import { TabularReviewToolbar } from "../components/TabularReview/TabularReviewToolbar"
 import { ColumnBuilder } from "../components/TabularReview/ColumnBuilder"
@@ -205,17 +204,15 @@ const TabularReviewPage: React.FC = () => {
 
   if (loading && !tableData) {
     return (
-      <MainLayout>
-        <div className="flex items-center justify-center h-full">
-          <Spinner size="lg" />
-        </div>
-      </MainLayout>
+      <div className="flex items-center justify-center h-screen bg-background">
+        <Spinner size="lg" />
+      </div>
     )
   }
 
   if (error && !tableData) {
     return (
-      <MainLayout>
+      <div className="h-screen bg-background flex items-center justify-center p-6">
         <Card className="p-6">
           <div className="text-center">
             <h2 className="text-xl font-semibold mb-2">Ошибка</h2>
@@ -225,14 +222,14 @@ const TabularReviewPage: React.FC = () => {
             </Button>
           </div>
         </Card>
-      </MainLayout>
+      </div>
     )
   }
 
   // If no reviewId, show interface to create new review
   if (!reviewId && caseId) {
     return (
-      <MainLayout>
+      <div className="h-screen bg-background flex flex-col">
         <div className="flex flex-col h-full">
           <div className="border-b bg-background p-4">
             <div className="flex items-center gap-4">
@@ -273,7 +270,7 @@ const TabularReviewPage: React.FC = () => {
             />
           )}
         </div>
-      </MainLayout>
+      </div>
     )
   }
 
@@ -282,17 +279,15 @@ const TabularReviewPage: React.FC = () => {
     // Show loading only if we're actually loading
     if (loading) {
       return (
-        <MainLayout>
-          <div className="flex items-center justify-center h-full">
-            <Spinner size="lg" />
-          </div>
-        </MainLayout>
+        <div className="flex items-center justify-center h-screen bg-background">
+          <Spinner size="lg" />
+        </div>
       )
     }
     // If not loading but no data, show error or empty state
     if (error) {
       return (
-        <MainLayout>
+        <div className="h-screen bg-background flex items-center justify-center p-6">
           <Card className="p-6">
             <div className="text-center">
               <h2 className="text-xl font-semibold mb-2">Ошибка</h2>
@@ -307,28 +302,26 @@ const TabularReviewPage: React.FC = () => {
               </div>
             </div>
           </Card>
-        </MainLayout>
+        </div>
       )
     }
     // If no error but no data, show empty state
     return (
-      <MainLayout>
-        <div className="flex items-center justify-center h-full">
-          <Card className="p-6">
-            <div className="text-center">
-              <p className="text-muted-foreground mb-4">Нет данных для отображения</p>
-              <Button onClick={() => navigate(`/cases/${caseId}`)}>
-                Вернуться к делу
-              </Button>
-            </div>
-          </Card>
-        </div>
-      </MainLayout>
+      <div className="h-screen bg-background flex items-center justify-center p-6">
+        <Card className="p-6">
+          <div className="text-center">
+            <p className="text-muted-foreground mb-4">Нет данных для отображения</p>
+            <Button onClick={() => navigate(`/cases/${caseId}`)}>
+              Вернуться к делу
+            </Button>
+          </div>
+        </Card>
+      </div>
     )
   }
 
   return (
-    <MainLayout>
+    <div className="h-screen bg-background flex flex-col">
       <div className="flex flex-col h-full">
         {/* Header */}
         <div className="border-b bg-background p-4">
@@ -517,7 +510,7 @@ const TabularReviewPage: React.FC = () => {
           />
         )}
       </div>
-    </MainLayout>
+    </div>
   )
 }
 
