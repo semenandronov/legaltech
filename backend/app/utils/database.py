@@ -218,6 +218,32 @@ def ensure_schema():
             logger.info("✅ Tabular review tables created")
     except Exception as e:
         logger.warning(f"Could not ensure tabular_review tables: {e}", exc_info=True)
+    
+    # Ensure files.file_path column exists
+    if "files" in inspector.get_table_names():
+        columns = {col["name"]: col for col in inspector.get_columns("files")}
+        
+        if "file_path" not in columns:
+            try:
+                with engine.begin() as conn:
+                    conn.execute(
+                        text(
+                            "ALTER TABLE files "
+                            "ADD COLUMN IF NOT EXISTS file_path VARCHAR(512)"
+                        )
+                    )
+                    logger.info("✅ Added file_path column to files table")
+                    
+                    # Create index for faster lookups
+                    conn.execute(
+                        text(
+                            "CREATE INDEX IF NOT EXISTS ix_files_file_path "
+                            "ON files(file_path) WHERE file_path IS NOT NULL"
+                        )
+                    )
+                    logger.info("✅ Created index on files.file_path")
+            except Exception as e:
+                logger.warning(f"Could not add file_path column to files table: {e}")
 
 
 def init_db():
