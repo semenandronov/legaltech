@@ -297,32 +297,14 @@ def risk_agent_node(
                         "source": "risk_agent"
                     }
                     
-                    # Use asyncio.run for async call from sync function
-                    try:
-                        loop = asyncio.get_event_loop()
-                        if loop.is_running():
-                            # If loop is running, use create_task
-                            asyncio.create_task(store_service.save_pattern(
-                                namespace=namespace,
-                                key=risk_name,
-                                value=risk_value,
-                                metadata=metadata
-                            ))
-                        else:
-                            loop.run_until_complete(store_service.save_pattern(
-                                namespace=namespace,
-                                key=risk_name,
-                                value=risk_value,
-                                metadata=metadata
-                            ))
-                    except RuntimeError:
-                        # No event loop, create new one
-                        asyncio.run(store_service.save_pattern(
-                            namespace=namespace,
-                            key=risk_name,
-                            value=risk_value,
-                            metadata=metadata
-                        ))
+                    # Use run_async_safe for async call from sync function
+                    from app.utils.async_utils import run_async_safe
+                    run_async_safe(store_service.save_pattern(
+                        namespace=namespace,
+                        key=risk_name,
+                        value=risk_value,
+                        metadata=metadata
+                    ))
                 
                 logger.info(f"Saved {len(parsed_risks)} risk patterns to Store")
             except Exception as e:

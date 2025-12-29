@@ -132,25 +132,9 @@ class ResultEvaluator:
                 # This would be passed from evaluation_node if available
                 
                 # Perform multi-level validation (synchronous wrapper)
+                from app.utils.async_utils import run_async_safe
                 try:
-                    loop = asyncio.get_event_loop()
-                    if loop.is_running():
-                        # If loop is running, we can't use asyncio.run
-                        # Skip validation for now (can be improved with proper async handling)
-                        logger.debug("Event loop is running, skipping async validation")
-                        validation_result = None
-                    else:
-                        validation_result = loop.run_until_complete(
-                            self.validator.validate_finding(
-                                finding=result,
-                                source_docs=source_docs,
-                                other_findings=other_findings,
-                                verifying_agent="key_facts" if agent_name != "key_facts" else "timeline"
-                            )
-                        )
-                except RuntimeError:
-                    # No event loop, create new one
-                    validation_result = asyncio.run(
+                    validation_result = run_async_safe(
                         self.validator.validate_finding(
                             finding=result,
                             source_docs=source_docs,
@@ -158,6 +142,9 @@ class ResultEvaluator:
                             verifying_agent="key_facts" if agent_name != "key_facts" else "timeline"
                         )
                     )
+                except Exception as e:
+                    logger.warning(f"Multi-level validation failed: {e}")
+                    validation_result = None
                 
                 # Add validation results to evaluation
                 if validation_result:

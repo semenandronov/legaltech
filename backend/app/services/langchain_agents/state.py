@@ -176,6 +176,20 @@ class AnalysisState(TypedDict):
     
     # Current feedback request (if waiting)
     current_feedback_request: Optional[Dict[str, Any]]
+    
+    # === NEW: LEGORA Workflow Fields ===
+    
+    # Result of UNDERSTAND phase
+    understanding_result: Optional[Dict[str, Any]]  # Result from understand_node
+    
+    # Result of DELIVER phase
+    delivery_result: Optional[Dict[str, Any]]  # Result from deliver_node (tables, reports, formatted output)
+    
+    # Table results from DELIVER phase
+    table_results: Optional[Dict[str, Any]]  # Dictionary of analysis_type -> table_id or table_path
+    
+    # Result of Deep Analysis phase
+    deep_analysis_result: Optional[Dict[str, Any]]  # Result from deep_analysis_node
 
 
 def create_initial_state(

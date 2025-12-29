@@ -1041,4 +1041,158 @@ class TabularReviewService:
         self.db.commit()
         logger.info(f"Created risks table {review.id} with {len(risks)} risks")
         return review
+    
+    def create_key_facts_table_from_results(
+        self,
+        case_id: str,
+        user_id: str,
+        name: str = "Ключевые факты"
+    ) -> TabularReview:
+        """Создает таблицу из результатов Key Facts агента"""
+        from app.models.analysis import AnalysisResult
+        
+        # Get key_facts from AnalysisResult
+        key_facts_result = self.db.query(AnalysisResult).filter(
+            AnalysisResult.case_id == case_id,
+            AnalysisResult.analysis_type == "key_facts"
+        ).order_by(AnalysisResult.created_at.desc()).first()
+        
+        if not key_facts_result or not key_facts_result.result_data:
+            raise ValueError("No key_facts found for this case")
+        
+        result_data = key_facts_result.result_data
+        
+        # Create review
+        review = self.create_tabular_review(
+            case_id=case_id,
+            user_id=user_id,
+            name=name,
+            description="Автоматически созданная таблица из ключевых фактов"
+        )
+        
+        # Add columns based on key_facts structure
+        # Обычно key_facts содержит: parties, amounts, dates, key_terms, etc.
+        self.add_column(
+            review_id=review.id,
+            column_label="Категория",
+            column_type="text",
+            prompt="Категория факта",
+            user_id=user_id
+        )
+        
+        self.add_column(
+            review_id=review.id,
+            column_label="Значение",
+            column_type="text",
+            prompt="Значение факта",
+            user_id=user_id
+        )
+        
+        self.add_column(
+            review_id=review.id,
+            column_label="Описание",
+            column_type="text",
+            prompt="Описание факта",
+            user_id=user_id
+        )
+        
+        # Get files
+        from app.models.case import File
+        files = self.db.query(File).filter(File.case_id == case_id).all()
+        if not files:
+            raise ValueError("No files found for this case")
+        
+        # Use first file as placeholder (key_facts are case-level, not file-level)
+        file = files[0]
+        
+        # Extract key facts from result_data
+        facts_to_add = []
+        
+        # Parties
+        if result_data.get("parties"):
+            parties = result_data["parties"]
+            if isinstance(parties, dict):
+                for role, name in parties.items():
+                    facts_to_add.append({
+                        "category": f"Сторона: {role}",
+                        "value": str(name),
+                        "description": f"Сторона дела: {role}"
+                    })
+        
+        # Amounts
+        if result_data.get("amounts"):
+            amounts = result_data["amounts"]
+            if isinstance(amounts, dict):
+                for key, value in amounts.items():
+                    facts_to_add.append({
+                        "category": f"Сумма: {key}",
+                        "value": str(value),
+                        "description": f"Финансовая информация: {key}"
+                    })
+        
+        # Dates
+        if result_data.get("dates"):
+            dates = result_data["dates"]
+            if isinstance(dates, dict):
+                for key, value in dates.items():
+                    facts_to_add.append({
+                        "category": f"Дата: {key}",
+                        "value": str(value),
+                        "description": f"Важная дата: {key}"
+                    })
+        
+        # Key terms
+        if result_data.get("key_terms"):
+            key_terms = result_data["key_terms"]
+            if isinstance(key_terms, list):
+                for term in key_terms:
+                    facts_to_add.append({
+                        "category": "Ключевой термин",
+                        "value": str(term),
+                        "description": "Важный термин из документов"
+                    })
+        
+        # If no structured data, add summary
+        if not facts_to_add and result_data.get("summary"):
+            facts_to_add.append({
+                "category": "Резюме",
+                "value": result_data["summary"][:500],
+                "description": "Общее резюме ключевых фактов"
+            })
+        
+        # Create cells from facts
+        for fact in facts_to_add:
+            # Category cell
+            cell_category = TabularCell(
+                tabular_review_id=review.id,
+                file_id=file.id,
+                column_id=review.columns[0].id,
+                cell_value=fact["category"],
+                confidence_score=0.9
+            )
+            self.db.add(cell_category)
+            
+            # Value cell
+            cell_value = TabularCell(
+                tabular_review_id=review.id,
+                file_id=file.id,
+                column_id=review.columns[1].id,
+                cell_value=fact["value"],
+                confidence_score=0.9
+            )
+            self.db.add(cell_value)
+            
+            # Description cell
+            cell_desc = TabularCell(
+                tabular_review_id=review.id,
+                file_id=file.id,
+                column_id=review.columns[2].id,
+                cell_value=fact["description"],
+                confidence_score=0.9
+            )
+            self.db.add(cell_desc)
+        
+        self.db.commit()
+        logger.info(f"Created key_facts table {review.id} with {len(facts_to_add)} facts")
+        return review
 

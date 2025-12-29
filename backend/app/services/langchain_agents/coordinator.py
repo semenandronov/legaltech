@@ -28,7 +28,8 @@ class AgentCoordinator:
         self,
         db: Session,
         rag_service: RAGService = None,
-        document_processor: DocumentProcessor = None
+        document_processor: DocumentProcessor = None,
+        use_legora_workflow: bool = True
     ):
         """
         Initialize agent coordinator
@@ -37,13 +38,20 @@ class AgentCoordinator:
             db: Database session
             rag_service: RAG service instance
             document_processor: Document processor instance
+            use_legora_workflow: Whether to use LEGORA workflow (understand → plan → execute → verify → deliver)
         """
         self.db = db
         self.rag_service = rag_service
         self.document_processor = document_processor
+        self.use_legora_workflow = use_legora_workflow
         
-        # Create graph
-        self.graph = create_analysis_graph(db, rag_service, document_processor)
+        # Create graph with LEGORA workflow flag
+        self.graph = create_analysis_graph(
+            db, 
+            rag_service, 
+            document_processor,
+            use_legora_workflow=use_legora_workflow
+        )
         
         # Initialize planning agents with RAG service for document access
         try:
@@ -123,6 +131,37 @@ class AgentCoordinator:
         Returns:
             Dictionary with analysis results
         """
+        # ВАЛИДАЦИЯ ВХОДНЫХ ДАННЫХ
+        from app.services.langchain_agents.planning_tools import AVAILABLE_ANALYSES
+        
+        # Проверка case_id
+        if not case_id or not isinstance(case_id, str) or not case_id.strip():
+            raise ValueError("case_id must be a non-empty string")
+        
+        # Проверка analysis_types
+        if not analysis_types or not isinstance(analysis_types, list):
+            raise ValueError("analysis_types must be a non-empty list")
+        
+        # Проверка валидности типов анализов
+        valid_types = set(AVAILABLE_ANALYSES.keys())
+        # Добавить дополнительные типы, которые используются в коде
+        valid_types.update(["document_classifier", "entity_extraction", "privilege_check", "relationship"])
+        
+        invalid_types = [t for t in analysis_types if t not in valid_types]
+        if invalid_types:
+            raise ValueError(f"Invalid analysis types: {invalid_types}. Valid types: {sorted(valid_types)}")
+        
+        # Проверка user_task (если передан)
+        if user_task is not None:
+            if not isinstance(user_task, str) or not user_task.strip():
+                raise ValueError("user_task must be a non-empty string if provided")
+        
+        # Проверка существования case в БД
+        from app.models.case import Case
+        case = self.db.query(Case).filter(Case.id == case_id).first()
+        if not case:
+            raise ValueError(f"Case {case_id} not found in database")
+        
         start_time = time.time()
         planning_start_time = time.time()
         metrics_id = None
@@ -424,23 +463,54 @@ class AgentCoordinator:
                 except Exception as e:
                     logger.warning(f"Failed to save patterns for continuous learning: {e}")
             
-            # Extract results and handle fallbacks for failed agents
-            results = {
-                "case_id": case_id,
-                "timeline": final_state.get("timeline_result") if final_state else None,
-                "key_facts": final_state.get("key_facts_result") if final_state else None,
-                "discrepancies": final_state.get("discrepancy_result") if final_state else None,
-                "risk_analysis": final_state.get("risk_result") if final_state else None,
-                "summary": final_state.get("summary_result") if final_state else None,
-                "classification": final_state.get("classification_result") if final_state else None,
-                "entities": final_state.get("entities_result") if final_state else None,
-                "privilege": final_state.get("privilege_result") if final_state else None,
-                "errors": final_state.get("errors", []) if final_state else [],
-                "execution_time": execution_time,
-                "metadata": final_state.get("metadata", {}) if final_state else {},
-                "adaptation_history": final_state.get("adaptation_history", []) if final_state else [],
-                "evaluation_results": final_state.get("evaluation_result") if final_state else None
-            }
+            # Check if DELIVER phase was executed (LEGORA workflow)
+            delivery_result = final_state.get("delivery_result") if final_state else None
+            
+            if delivery_result:
+                # Use delivery_result from DELIVER phase (LEGORA workflow)
+                logger.info(f"[Coordinator] Using delivery_result from DELIVER phase for case {case_id}")
+                results = {
+                    "case_id": case_id,
+                    "delivery": delivery_result,
+                    "tables": delivery_result.get("tables", {}),
+                    "reports": delivery_result.get("reports", {}),
+                    "summary": delivery_result.get("summary", ""),
+                    # Also include raw results for backward compatibility
+                    "timeline": final_state.get("timeline_result") if final_state else None,
+                    "key_facts": final_state.get("key_facts_result") if final_state else None,
+                    "discrepancies": final_state.get("discrepancy_result") if final_state else None,
+                    "risk_analysis": final_state.get("risk_result") if final_state else None,
+                    "summary": final_state.get("summary_result") if final_state else None,
+                    "classification": final_state.get("classification_result") if final_state else None,
+                    "entities": final_state.get("entities_result") if final_state else None,
+                    "privilege": final_state.get("privilege_result") if final_state else None,
+                    "errors": final_state.get("errors", []) if final_state else [],
+                    "execution_time": execution_time,
+                    "metadata": final_state.get("metadata", {}) if final_state else {},
+                    "adaptation_history": final_state.get("adaptation_history", []) if final_state else [],
+                    "evaluation_results": final_state.get("evaluation_result") if final_state else None,
+                    "workflow": "legora"  # Indicate LEGORA workflow was used
+                }
+            else:
+                # Legacy format (backward compatibility)
+                logger.info(f"[Coordinator] Using legacy result format for case {case_id}")
+                results = {
+                    "case_id": case_id,
+                    "timeline": final_state.get("timeline_result") if final_state else None,
+                    "key_facts": final_state.get("key_facts_result") if final_state else None,
+                    "discrepancies": final_state.get("discrepancy_result") if final_state else None,
+                    "risk_analysis": final_state.get("risk_result") if final_state else None,
+                    "summary": final_state.get("summary_result") if final_state else None,
+                    "classification": final_state.get("classification_result") if final_state else None,
+                    "entities": final_state.get("entities_result") if final_state else None,
+                    "privilege": final_state.get("privilege_result") if final_state else None,
+                    "errors": final_state.get("errors", []) if final_state else [],
+                    "execution_time": execution_time,
+                    "metadata": final_state.get("metadata", {}) if final_state else {},
+                    "adaptation_history": final_state.get("adaptation_history", []) if final_state else [],
+                    "evaluation_results": final_state.get("evaluation_result") if final_state else None,
+                    "workflow": "legacy"  # Indicate legacy workflow was used
+                }
             
             # Apply fallback handling for failed agents
             if final_state:
@@ -491,6 +561,15 @@ class AgentCoordinator:
                 exc_info=True
             )
             
+            # Определить тип ошибки
+            error_type = "fatal"
+            if isinstance(e, ValueError):
+                error_type = "validation"
+            elif isinstance(e, TimeoutError):
+                error_type = "timeout"
+            elif isinstance(e, ConnectionError):
+                error_type = "connection"
+            
             return {
                 "case_id": case_id,
                 "timeline": None,
@@ -501,7 +580,11 @@ class AgentCoordinator:
                 "classification": None,
                 "entities": None,
                 "privilege": None,
-                "errors": [{"coordinator": str(e)}],
+                "errors": [{
+                    "coordinator": str(e),
+                    "type": error_type,
+                    "recoverable": error_type in ["timeout", "connection"]
+                }],
                 "execution_time": execution_time,
-                "metadata": {}
+                "metadata": {"error_type": error_type}
             }

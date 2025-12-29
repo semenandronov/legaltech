@@ -17,10 +17,15 @@ from app.services.langchain_agents.evaluation_node import evaluation_node
 from app.services.langchain_agents.adaptation_engine import adaptation_node
 from app.services.langchain_agents.human_feedback import get_feedback_service
 from app.services.langchain_agents.subagent_manager import SubAgentManager
+from app.services.langchain_agents.understand_node import understand_node
+from app.services.langchain_agents.plan_node import plan_node
+from app.services.langchain_agents.deliver_node import deliver_node
+from app.services.langchain_agents.deep_analysis_node import deep_analysis_node
 from sqlalchemy.orm import Session
 from app.services.rag_service import RAGService
 from app.services.document_processor import DocumentProcessor
 from concurrent.futures import ThreadPoolExecutor, as_completed
+import threading
 import logging
 
 logger = logging.getLogger(__name__)
@@ -29,7 +34,8 @@ logger = logging.getLogger(__name__)
 def create_analysis_graph(
     db: Session = None,
     rag_service: RAGService = None,
-    document_processor: DocumentProcessor = None
+    document_processor: DocumentProcessor = None,
+    use_legora_workflow: bool = True
 ) -> StateGraph:
     """
     Create LangGraph for multi-agent analysis
@@ -80,6 +86,22 @@ def create_analysis_graph(
     
     def relationship_node(state: AnalysisState) -> AnalysisState:
         return relationship_agent_node(state, db, rag_service, document_processor)
+    
+    def understand_wrapper(state: AnalysisState) -> AnalysisState:
+        """Wrapper for understand node with services"""
+        return understand_node(state, db, rag_service, document_processor)
+    
+    def plan_wrapper(state: AnalysisState) -> AnalysisState:
+        """Wrapper for plan node with services"""
+        return plan_node(state, db, rag_service, document_processor)
+    
+    def deliver_wrapper(state: AnalysisState) -> AnalysisState:
+        """Wrapper for deliver node with services"""
+        return deliver_node(state, db, rag_service, document_processor)
+    
+    def deep_analysis_wrapper(state: AnalysisState) -> AnalysisState:
+        """Wrapper for deep analysis node with services"""
+        return deep_analysis_node(state, db, rag_service, document_processor)
     
     def supervisor_node(state: AnalysisState) -> AnalysisState:
         """Supervisor node - routes to appropriate agent"""
@@ -306,6 +328,9 @@ def create_analysis_graph(
         new_state = dict(state)
         errors = list(state.get("errors", []))
         
+        # Thread safety: Lock for protecting shared state modifications
+        state_lock = threading.Lock()
+        
         # Timeout per agent (5 minutes default, can be configured)
         DEFAULT_AGENT_TIMEOUT = 300  # 5 minutes
         
@@ -333,40 +358,45 @@ def create_analysis_graph(
                     if result_key in result_state and result_state[result_key] is not None:
                         new_state[result_key] = result_state[result_key]
                     
-                    # Merge errors (deduplicate)
+                    # Merge errors (deduplicate) - thread-safe
                     if "errors" in result_state:
-                        existing_error_agents = {e.get("agent") for e in errors}
-                        for error in result_state["errors"]:
-                            if error.get("agent") not in existing_error_agents:
-                                errors.append(error)
+                        with state_lock:
+                            existing_error_agents = {e.get("agent") for e in errors}
+                            for error in result_state["errors"]:
+                                if error.get("agent") not in existing_error_agents:
+                                    errors.append(error)
                     
-                    # Merge metadata (combine dictionaries)
+                    # Merge metadata (combine dictionaries) - thread-safe
                     if "metadata" in result_state:
-                        if "metadata" not in new_state:
-                            new_state["metadata"] = {}
-                        new_state["metadata"].update(result_state["metadata"])
+                        with state_lock:
+                            if "metadata" not in new_state:
+                                new_state["metadata"] = {}
+                            new_state["metadata"].update(result_state["metadata"])
                     
-                    # Merge completed_steps
+                    # Merge completed_steps - thread-safe
                     if "completed_steps" in result_state:
-                        existing_steps = set(new_state.get("completed_steps", []))
-                        new_steps = set(result_state["completed_steps"])
-                        new_state["completed_steps"] = list(existing_steps | new_steps)
+                        with state_lock:
+                            existing_steps = set(new_state.get("completed_steps", []))
+                            new_steps = set(result_state["completed_steps"])
+                            new_state["completed_steps"] = list(existing_steps | new_steps)
                     
                     completed_agents.add(agent_name)
                     logger.info(f"[Parallel] Completed {agent_name} agent successfully")
                     
                 except TimeoutError:
                     logger.error(f"[Parallel] Timeout ({DEFAULT_AGENT_TIMEOUT}s) for {agent_name} agent")
-                    errors.append({
-                        "agent": agent_name,
-                        "error": f"Timeout after {DEFAULT_AGENT_TIMEOUT} seconds"
-                    })
+                    with state_lock:
+                        errors.append({
+                            "agent": agent_name,
+                            "error": f"Timeout after {DEFAULT_AGENT_TIMEOUT} seconds"
+                        })
                 except Exception as e:
                     logger.error(f"[Parallel] Error in {agent_name} agent: {e}", exc_info=True)
-                    errors.append({
-                        "agent": agent_name,
-                        "error": str(e)
-                    })
+                    with state_lock:
+                        errors.append({
+                            "agent": agent_name,
+                            "error": str(e)
+                        })
         
         # Check if any agents didn't complete
         for agent_name, _ in agents_to_run:
@@ -381,6 +411,14 @@ def create_analysis_graph(
     
     # Create the graph
     graph = StateGraph(AnalysisState)
+    
+    # Add LEGORA workflow nodes if enabled
+    if use_legora_workflow:
+        graph.add_node("understand", understand_wrapper)
+        graph.add_node("plan", plan_wrapper)
+        graph.add_node("deliver", deliver_wrapper)
+        graph.add_node("deep_analysis", deep_analysis_wrapper)
+        logger.info("✅ LEGORA workflow nodes added (understand, plan, deliver, deep_analysis)")
     
     # Add nodes
     graph.add_node("supervisor", supervisor_node)
@@ -400,28 +438,63 @@ def create_analysis_graph(
     graph.add_node("human_feedback_wait", human_feedback_wait_node)
     
     # Add edges from START
-    graph.add_edge(START, "supervisor")
+    if use_legora_workflow:
+        # LEGORA workflow: START → understand → plan → supervisor
+        graph.add_edge(START, "understand")
+        
+        # Conditional routing from understand to plan (skip plan for simple tasks)
+        def route_after_understand(state: AnalysisState) -> str:
+            """Route after understand: plan or supervisor"""
+            understanding_result = state.get("understanding_result", {})
+            needs_planning = understanding_result.get("needs_planning", True)
+            if needs_planning:
+                return "plan"
+            else:
+                # For simple tasks, skip plan and go directly to supervisor
+                logger.info("[Graph] Simple task detected, skipping plan phase")
+                return "supervisor"
+        
+        graph.add_conditional_edges(
+            "understand",
+            route_after_understand,
+            {
+                "plan": "plan",
+                "supervisor": "supervisor"
+            }
+        )
+        
+        # Plan always goes to supervisor
+        graph.add_edge("plan", "supervisor")
+    else:
+        # Legacy workflow: START → supervisor
+        graph.add_edge(START, "supervisor")
     
     # Add conditional edges from supervisor
+    supervisor_routes = {
+        "timeline": "timeline",
+        "key_facts": "key_facts",
+        "discrepancy": "discrepancy",
+        "risk": "risk",
+        "summary": "summary",
+        "document_classifier": "document_classifier",
+        "entity_extraction": "entity_extraction",
+        "privilege_check": "privilege_check",
+        "relationship": "relationship",
+        "parallel_independent": "parallel_independent",
+        "spawn_subagents": "spawn_subagents",
+        "human_feedback_wait": "human_feedback_wait",
+        "end": END,
+        "supervisor": "supervisor"  # Wait if dependencies not ready
+    }
+    
+    # Add deep_analysis route if LEGORA workflow is enabled
+    if use_legora_workflow:
+        supervisor_routes["deep_analysis"] = "deep_analysis"
+    
     graph.add_conditional_edges(
         "supervisor",
         route_to_agent,
-        {
-            "timeline": "timeline",
-            "key_facts": "key_facts",
-            "discrepancy": "discrepancy",
-            "risk": "risk",
-            "summary": "summary",
-            "document_classifier": "document_classifier",
-            "entity_extraction": "entity_extraction",
-            "privilege_check": "privilege_check",
-            "relationship": "relationship",
-            "parallel_independent": "parallel_independent",
-            "spawn_subagents": "spawn_subagents",
-            "human_feedback_wait": "human_feedback_wait",
-            "end": END,
-            "supervisor": "supervisor"  # Wait if dependencies not ready
-        }
+        supervisor_routes
     )
     
     # All agent nodes go to evaluation first, then supervisor
@@ -435,15 +508,19 @@ def create_analysis_graph(
     graph.add_edge("privilege_check", "evaluation")
     graph.add_edge("relationship", "evaluation")
     
+    # Deep analysis node also goes to evaluation
+    if use_legora_workflow:
+        graph.add_edge("deep_analysis", "evaluation")
+    
     # Parallel independent agents node also goes to evaluation
     graph.add_edge("parallel_independent", "evaluation")
     
     # Spawn subagents node goes to evaluation
     graph.add_edge("spawn_subagents", "evaluation")
     
-    # Evaluation node conditionally routes to adaptation, human_feedback, or supervisor
+    # Evaluation node conditionally routes to adaptation, human_feedback, deliver, or supervisor
     def route_after_evaluation(state: AnalysisState) -> str:
-        """Route after evaluation: adaptation, human_feedback, or supervisor"""
+        """Route after evaluation: adaptation, human_feedback, deliver, or supervisor"""
         needs_adaptation = state.get("needs_replanning", False)
         evaluation_result = state.get("evaluation_result", {})
         waiting_for_human = state.get("waiting_for_human", False)
@@ -457,18 +534,54 @@ def create_analysis_graph(
         if needs_adaptation or evaluation_result.get("needs_adaptation", False):
             logger.info(f"[Graph] Routing to adaptation after evaluation for case {state.get('case_id', 'unknown')}")
             return "adaptation"
-        else:
-            return "supervisor"
+        
+        # Check if all work is done (supervisor says "end")
+        # If LEGORA workflow is enabled, go to deliver
+        if use_legora_workflow:
+            # Check if supervisor has finished all tasks
+            # This is a simple check - in production, supervisor should set a flag
+            completed_steps = state.get("completed_steps", [])
+            analysis_types = state.get("analysis_types", [])
+            
+            # If we have results for all requested analyses, go to deliver
+            has_results = any([
+                state.get("timeline_result"),
+                state.get("key_facts_result"),
+                state.get("discrepancy_result"),
+                state.get("risk_result"),
+                state.get("summary_result")
+            ])
+            
+            if has_results and not needs_adaptation:
+                logger.info(f"[Graph] Routing to deliver after evaluation for case {state.get('case_id', 'unknown')}")
+                return "deliver"
+        
+        return "supervisor"
     
-    graph.add_conditional_edges(
-        "evaluation",
-        route_after_evaluation,
-        {
-            "adaptation": "adaptation",
-            "human_feedback": "human_feedback_wait",
-            "supervisor": "supervisor"
-        }
-    )
+    if use_legora_workflow:
+        graph.add_conditional_edges(
+            "evaluation",
+            route_after_evaluation,
+            {
+                "adaptation": "adaptation",
+                "human_feedback": "human_feedback_wait",
+                "deliver": "deliver",
+                "supervisor": "supervisor"
+            }
+        )
+        
+        # Deliver goes to END
+        graph.add_edge("deliver", END)
+    else:
+        graph.add_conditional_edges(
+            "evaluation",
+            route_after_evaluation,
+            {
+                "adaptation": "adaptation",
+                "human_feedback": "human_feedback_wait",
+                "supervisor": "supervisor"
+            }
+        )
     
     # Human feedback wait node routes back to supervisor (which will check if feedback received)
     graph.add_edge("human_feedback_wait", "supervisor")

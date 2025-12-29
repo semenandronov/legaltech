@@ -257,29 +257,16 @@ class PlanningAgent:
             if db:
                 try:
                     from app.services.langchain_agents.store_service import LangGraphStoreService
-                    import asyncio
+                    from app.utils.async_utils import run_async_safe
                     
                     store_service = LangGraphStoreService(db)
                     
                     # Ищем похожие успешные планы
-                    try:
-                        loop = asyncio.get_event_loop()
-                        if loop.is_running():
-                            # If loop is running, we can't use await, skip for now
-                            pass
-                        else:
-                            similar_plans = loop.run_until_complete(store_service.search_precedents(
-                                namespace="successful_plans",
-                                query=user_task[:100],  # Первые 100 символов задачи
-                                limit=3
-                            ))
-                    except RuntimeError:
-                        # No event loop, create new one
-                        similar_plans = asyncio.run(store_service.search_precedents(
-                            namespace="successful_plans",
-                            query=user_task[:100],
-                            limit=3
-                        ))
+                    similar_plans = run_async_safe(store_service.search_precedents(
+                        namespace="successful_plans",
+                        query=user_task[:100],  # Первые 100 символов задачи
+                        limit=3
+                    ))
                     
                     if similar_plans:
                         logger.info(f"Found {len(similar_plans)} similar successful plans in Store")
@@ -488,32 +475,14 @@ class PlanningAgent:
                         "source": "planning_agent"
                     }
                     
-                    # Use asyncio.run for async call from sync function
-                    try:
-                        loop = asyncio.get_event_loop()
-                        if loop.is_running():
-                            # If loop is running, use create_task
-                            asyncio.create_task(store_service.save_pattern(
-                                namespace="successful_plans",
-                                key=plan_key,
-                                value=plan_value,
-                                metadata=metadata
-                            ))
-                        else:
-                            loop.run_until_complete(store_service.save_pattern(
-                                namespace="successful_plans",
-                                key=plan_key,
-                                value=plan_value,
-                                metadata=metadata
-                            ))
-                    except RuntimeError:
-                        # No event loop, create new one
-                        asyncio.run(store_service.save_pattern(
-                            namespace="successful_plans",
-                            key=plan_key,
-                            value=plan_value,
-                            metadata=metadata
-                        ))
+                    # Use run_async_safe for async call from sync function
+                    from app.utils.async_utils import run_async_safe
+                    run_async_safe(store_service.save_pattern(
+                        namespace="successful_plans",
+                        key=plan_key,
+                        value=plan_value,
+                        metadata=metadata
+                    ))
                     
                     logger.info(f"Saved successful plan to Store: {plan_key}")
                 except Exception as e:
@@ -538,13 +507,10 @@ class PlanningAgent:
         # Убираем лишние пробелы
         response_text = response_text.strip()
         
-        # Пытаемся найти JSON в разных форматах
+        # Метод 1: Попытка найти JSON в markdown code blocks
         json_patterns = [
-            # JSON в markdown code block
             r'```json\s*(\{.*?\})\s*```',
             r'```\s*(\{.*?\})\s*```',
-            # JSON объект напрямую
-            r'(\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\})',
         ]
         
         for pattern in json_patterns:
@@ -555,14 +521,34 @@ class PlanningAgent:
                     plan = json.loads(json_text)
                     # Принимаем как базовый план (с analysis_types) или многоуровневый (со steps)
                     if "analysis_types" in plan or "steps" in plan:
-                        logger.debug("Successfully parsed JSON from agent response")
+                        logger.debug("Successfully parsed JSON from agent response (method 1: markdown)")
                         return plan
                 except json.JSONDecodeError as e:
                     logger.debug(f"JSON decode error with pattern {pattern}: {e}")
                     continue
         
-        # Если не нашли JSON, пытаемся извлечь список типов из текста
-        logger.warning("Could not parse JSON from agent response, trying text extraction")
+        # Метод 2: Найти первый валидный JSON объект в тексте
+        # Ищем открывающую скобку и пытаемся найти закрывающую
+        brace_start = response_text.find('{')
+        if brace_start != -1:
+            brace_count = 0
+            for i in range(brace_start, len(response_text)):
+                if response_text[i] == '{':
+                    brace_count += 1
+                elif response_text[i] == '}':
+                    brace_count -= 1
+                    if brace_count == 0:
+                        try:
+                            json_text = response_text[brace_start:i+1]
+                            plan = json.loads(json_text)
+                            if "analysis_types" in plan or "steps" in plan:
+                                logger.debug("Successfully parsed JSON from agent response (method 2: brace matching)")
+                                return plan
+                        except json.JSONDecodeError:
+                            pass
+        
+        # Метод 3: Fallback - извлечение из текста
+        logger.warning("Could not parse JSON from agent response, using text extraction")
         return self._extract_plan_from_text(response_text)
     
     def _extract_plan_from_text(self, text: str) -> Dict[str, Any]:

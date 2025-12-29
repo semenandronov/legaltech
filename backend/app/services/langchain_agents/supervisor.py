@@ -125,6 +125,22 @@ def route_to_agent(state: AnalysisState) -> str:
                 # All subtasks completed, can proceed to evaluation
                 logger.info(f"[Супервизор] All {len(subtasks)} subtasks completed")
     
+    # Check if deep analysis is needed (LEGORA workflow)
+    understanding_result = state.get("understanding_result", {})
+    complexity = understanding_result.get("complexity", "medium")
+    task_type = understanding_result.get("task_type", "general")
+    
+    # Check if deep analysis should be used
+    needs_deep_analysis = (
+        complexity == "high" and
+        task_type in ["research", "analysis", "comparison"] and
+        not state.get("deep_analysis_result")
+    )
+    
+    if needs_deep_analysis:
+        logger.info(f"[Супервизор] Routing to deep_analysis for complex task (complexity={complexity}, type={task_type})")
+        return "deep_analysis"
+    
     # Fall back to original analysis_types
     analysis_types = state.get("analysis_types", [])
     requested_types = set(analysis_types)
@@ -158,6 +174,8 @@ def route_to_agent(state: AnalysisState) -> str:
         completed.add("privilege_check")
     if state.get("relationship_result"):
         completed.add("relationship")
+    if state.get("deep_analysis_result"):
+        completed.add("deep_analysis")
     
     # Check dependencies
     entities_ready = state.get("entities_result") is not None

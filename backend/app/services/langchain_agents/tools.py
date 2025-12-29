@@ -251,7 +251,9 @@ def retrieve_documents_iterative_tool(query: str, case_id: str, k: int = 20) -> 
 
 def get_all_tools() -> List:
     """Get all available tools for agents"""
-    return [
+    from app.services.langchain_agents.legal_research_tool import get_legal_research_tools
+    
+    tools = [
         retrieve_documents_tool,
         retrieve_documents_iterative_tool,
         save_timeline_tool,
@@ -260,13 +262,27 @@ def get_all_tools() -> List:
         save_risk_analysis_tool,
         save_summary_tool,
     ]
+    
+    # Add legal research tools
+    legal_research_tools = get_legal_research_tools()
+    tools.extend(legal_research_tools)
+    
+    return tools
 
 
 def get_critical_agent_tools() -> List:
-    """Get tools for critical agents (risk, discrepancy) - includes iterative search"""
-    return [
+    """Get tools for critical agents (risk, discrepancy) - includes iterative search and legal research"""
+    from app.services.langchain_agents.legal_research_tool import get_legal_research_tools
+    
+    tools = [
         retrieve_documents_tool,
         retrieve_documents_iterative_tool,  # Explicit iterative tool for critical agents
         save_discrepancy_tool,
         save_risk_analysis_tool,
     ]
+    
+    # Add legal research tools for critical agents
+    legal_research_tools = get_legal_research_tools()
+    tools.extend(legal_research_tools)
+    
+    return tools

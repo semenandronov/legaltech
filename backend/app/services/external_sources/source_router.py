@@ -295,7 +295,21 @@ def initialize_source_router(rag_service=None) -> SourceRouter:
     vault_source = VaultSource(rag_service=rag_service)
     _global_router.register_source(vault_source)
     
-    logger.info("Source router initialized with vault source")
+    # Register legal research sources
+    try:
+        from .moyarbitr_source import MoyArbitrSource
+        from .vas_practice_source import VASPracticeSource
+        
+        moyarbitr_source = MoyArbitrSource()
+        _global_router.register_source(moyarbitr_source)
+        
+        vas_source = VASPracticeSource()
+        _global_router.register_source(vas_source)
+        
+        logger.info("Source router initialized with vault, МойАрбитр, and ВАС sources")
+    except Exception as e:
+        logger.warning(f"Failed to register legal research sources: {e}")
+        logger.info("Source router initialized with vault source only")
     
     return _global_router
 

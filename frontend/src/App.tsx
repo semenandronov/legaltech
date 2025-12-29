@@ -4,11 +4,8 @@ import { Box, CircularProgress } from '@mui/material'
 import ProtectedRoute from './components/ProtectedRoute'
 import LoginPage from './pages/LoginPage'
 import RegisterPage from './pages/RegisterPage'
-const ChatWindow = lazy(() => import('./components/ChatWindow'))
 const CaseNavigation = lazy(() => import('./components/CaseOverview/CaseNavigation'))
-import { getCase } from './services/api'
-import { logger } from '@/lib/logger'
-import { useState, useEffect } from 'react'
+const AssistantChatPage = lazy(() => import('./pages/AssistantChatPage'))
 
 // Lazy load heavy pages
 const CasesListPage = lazy(() => import('./pages/CasesListPage'))
@@ -142,32 +139,15 @@ function App() {
 
 const CaseChatPage = () => {
   const { caseId } = useParams<{ caseId: string }>()
-  const [fileNames, setFileNames] = useState<string[]>([])
-
-  useEffect(() => {
-    if (caseId) {
-      loadCase()
-    }
-  }, [caseId])
-
-  const loadCase = async () => {
-    if (!caseId) return
-    try {
-      const caseData = await getCase(caseId)
-      setFileNames(caseData.file_names || [])
-    } catch (error) {
-      logger.error('Ошибка при загрузке дела:', error)
-    }
-  }
 
   return (
     <Suspense fallback={<PageLoader />}>
-      <div className="flex h-screen bg-primary">
+      <div className="flex h-screen bg-background">
         <CaseNavigation caseId={caseId || ''} />
         <div className="flex-1 flex flex-col overflow-hidden">
           <main className="flex-1 overflow-y-auto">
             <div className="h-full">
-              <ChatWindow caseId={caseId || ''} fileNames={fileNames} />
+              <AssistantChatPage />
             </div>
           </main>
         </div>

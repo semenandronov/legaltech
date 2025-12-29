@@ -216,34 +216,18 @@ def entity_extraction_agent_node(
                             "file_name": entity.get("file_name", "")
                         }
                         
-                        # Use asyncio.run for async call from sync function
+                        # Use run_async_safe for async call from sync function
+                        from app.utils.async_utils import run_async_safe
                         try:
-                            loop = asyncio.get_event_loop()
-                            if loop.is_running():
-                                # If loop is running, use create_task
-                                asyncio.create_task(store_service.save_pattern(
-                                    namespace=namespace,
-                                    key=entity.get("text", "")[:200],
-                                    value=entity_value,
-                                    metadata=metadata
-                                ))
-                            else:
-                                loop.run_until_complete(store_service.save_pattern(
-                                    namespace=namespace,
-                                    key=entity.get("text", "")[:200],
-                                    value=entity_value,
-                                    metadata=metadata
-                                ))
-                            saved_count += 1
-                        except RuntimeError:
-                            # No event loop, create new one
-                            asyncio.run(store_service.save_pattern(
+                            run_async_safe(store_service.save_pattern(
                                 namespace=namespace,
                                 key=entity.get("text", "")[:200],
                                 value=entity_value,
                                 metadata=metadata
                             ))
                             saved_count += 1
+                        except Exception as e:
+                            logger.warning(f"Failed to save entity pattern: {e}")
                 
                 if saved_count > 0:
                     logger.info(f"Saved {saved_count} frequently occurring entities to Store")
