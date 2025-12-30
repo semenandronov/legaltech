@@ -2,10 +2,10 @@ import React, { useState } from 'react'
 import { CheckCircle2, XCircle, Edit2, Loader2 } from 'lucide-react'
 import { getApiUrl } from '@/services/api'
 import { logger } from '@/lib/logger'
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/UI/card'
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/UI/Card'
 import { Button } from '@/components/UI/Button'
-import { Badge } from '@/components/UI/badge'
-import { Reasoning, ReasoningStep } from '../ai-elements/reasoning'
+import { Badge } from '@/components/UI/Badge'
+import { Reasoning, ReasoningContent, ReasoningTrigger } from '../ai-elements/reasoning'
 
 interface PlanApprovalCardProps {
   planId: string
@@ -127,10 +127,9 @@ export const PlanApprovalCard: React.FC<PlanApprovalCardProps> = ({
       <CardContent className="space-y-4">
         {plan.reasoning && (
           <div>
-            <Reasoning>
-              <ReasoningStep status="completed">
-                {plan.reasoning}
-              </ReasoningStep>
+            <Reasoning isStreaming={false}>
+              <ReasoningTrigger />
+              <ReasoningContent>{plan.reasoning}</ReasoningContent>
             </Reasoning>
           </div>
         )}

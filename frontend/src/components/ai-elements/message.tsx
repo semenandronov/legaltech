@@ -1,10 +1,9 @@
 import * as React from "react"
 import { cn } from "@/lib/utils"
 import ReactMarkdown from "react-markdown"
-import { Reasoning, ReasoningStep } from "./reasoning"
+import { Reasoning, ReasoningContent, ReasoningTrigger } from "./reasoning"
 import { Tool, ToolInput, ToolOutput } from "./tool"
 import { Response, ResponseContent, ResponseSources } from "./response"
-import type { EnhancedAgentStep } from "../Chat/EnhancedAgentStepsView"
 
 // Animation styles
 const fadeIn = "animate-in fade-in slide-in-from-bottom-2 duration-300"
@@ -65,9 +64,6 @@ export interface AssistantMessageProps {
   }>
   response?: string
   sources?: Array<{ title?: string; url?: string; page?: number }>
-  agentSteps?: EnhancedAgentStep[]
-  planId?: string
-  plan?: any
   isStreaming?: boolean
   className?: string
   children?: React.ReactNode
@@ -79,9 +75,6 @@ export const AssistantMessage = React.memo(function AssistantMessage({
   toolCalls,
   response,
   sources,
-  agentSteps,
-  planId,
-  plan,
   isStreaming = false,
   className,
   children,
@@ -160,10 +153,9 @@ export const AssistantMessage = React.memo(function AssistantMessage({
         {/* Reasoning */}
         {reasoning && (
           <div className="mb-4">
-            <Reasoning>
-              <ReasoningStep status={isStreaming ? "running" : "completed"}>
-                {reasoning}
-              </ReasoningStep>
+            <Reasoning isStreaming={isStreaming}>
+              <ReasoningTrigger />
+              <ReasoningContent>{reasoning}</ReasoningContent>
             </Reasoning>
           </div>
         )}

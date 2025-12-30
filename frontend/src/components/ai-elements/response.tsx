@@ -1,7 +1,7 @@
 import * as React from "react"
 import { cn } from "@/lib/utils"
 import { FileText, CheckCircle2 } from "lucide-react"
-import { Card, CardContent, CardHeader } from "@/components/UI/card"
+import { Card, CardContent, CardHeader } from "@/components/UI/Card"
 import ReactMarkdown from "react-markdown"
 
 // Animation styles

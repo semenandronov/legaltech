@@ -4,9 +4,11 @@ import {
   Clock, 
   AlertCircle, 
   Loader2, 
-  Brain
+  Brain,
+  ChevronDown,
+  ChevronRight
 } from 'lucide-react'
-import { Reasoning, ReasoningStep } from '../ai-elements/reasoning'
+import { Reasoning, ReasoningContent, ReasoningTrigger } from '../ai-elements/reasoning'
 import { Tool, ToolInput, ToolOutput } from '../ai-elements/tool'
 import { Response, ResponseContent } from '../ai-elements/response'
 
@@ -43,7 +45,6 @@ export const EnhancedAgentStepsView: React.FC<EnhancedAgentStepsViewProps> = ({
   collapsible = true
 }) => {
   const [expandedSteps, setExpandedSteps] = useState<Set<string>>(new Set())
-  const [expandedDetails, setExpandedDetails] = useState<Set<string>>(new Set())
 
   if (steps.length === 0) {
     return null
@@ -62,17 +63,6 @@ export const EnhancedAgentStepsView: React.FC<EnhancedAgentStepsViewProps> = ({
     })
   }
 
-  const toggleDetails = (stepId: string) => {
-    setExpandedDetails(prev => {
-      const next = new Set(prev)
-      if (next.has(stepId)) {
-        next.delete(stepId)
-      } else {
-        next.add(stepId)
-      }
-      return next
-    })
-  }
 
   const getStatusIcon = (status: EnhancedAgentStep['status']) => {
     switch (status) {
@@ -113,22 +103,13 @@ export const EnhancedAgentStepsView: React.FC<EnhancedAgentStepsViewProps> = ({
     if (!timestamp) return null
     try {
       const date = new Date(timestamp)
-      return date.toLocaleTimeString('ru-RU', { 
-        hour: '2-digit', 
+      return date.toLocaleTimeString('ru-RU', {
+        hour: '2-digit',
         minute: '2-digit',
         second: '2-digit'
       })
     } catch {
       return timestamp
-    }
-  }
-
-  const renderJSON = (data: any) => {
-    if (!data) return null
-    try {
-      return JSON.stringify(data, null, 2)
-    } catch {
-      return String(data)
     }
   }
 
@@ -144,8 +125,7 @@ export const EnhancedAgentStepsView: React.FC<EnhancedAgentStepsViewProps> = ({
       
       <div className="space-y-2">
         {steps.map((step, idx) => {
-          const isExpanded = expandedSteps.has(step.step_id)
-          const isDetailsExpanded = expandedDetails.has(step.step_id)
+                const isExpanded = expandedSteps.has(step.step_id)
           const hasDetails = step.reasoning || step.result || step.error || step.tool_calls || step.input || step.output
           
           return (
@@ -215,10 +195,9 @@ export const EnhancedAgentStepsView: React.FC<EnhancedAgentStepsViewProps> = ({
                   {/* Рассуждения */}
                   {step.reasoning && showReasoning && (
                     <div className="mb-2">
-                      <Reasoning>
-                        <ReasoningStep status={step.status}>
-                          {step.reasoning}
-                        </ReasoningStep>
+                      <Reasoning isStreaming={step.status === 'running'}>
+                        <ReasoningTrigger />
+                        <ReasoningContent>{step.reasoning}</ReasoningContent>
                       </Reasoning>
                     </div>
                   )}
@@ -230,7 +209,7 @@ export const EnhancedAgentStepsView: React.FC<EnhancedAgentStepsViewProps> = ({
                         <Tool
                           key={toolIdx}
                           name={toolCall.name}
-                          status={toolCall.status || step.status}
+                          status={((toolCall as any).status || step.status) as any}
                         >
                           {toolCall.input && <ToolInput>{toolCall.input}</ToolInput>}
                           {toolCall.output && <ToolOutput>{toolCall.output}</ToolOutput>}

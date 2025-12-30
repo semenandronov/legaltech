@@ -1,12 +1,12 @@
 "use client";
 
-import { Button } from "@/components/ui/button";
+import { Button } from "@/components/UI/Button";
 import {
   Collapsible,
   CollapsibleContent,
   CollapsibleTrigger,
-} from "@/components/ui/collapsible";
-import { ScrollArea } from "@/components/ui/scroll-area";
+} from "@/components/UI/collapsible";
+import { ScrollArea } from "@/components/UI/scroll-area";
 import { cn } from "@/lib/utils";
 import { ChevronDownIcon, PaperclipIcon } from "lucide-react";
 import type { ComponentProps } from "react";

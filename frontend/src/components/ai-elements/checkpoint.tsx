@@ -1,12 +1,12 @@
 "use client";
 
-import { Button } from "@/components/ui/button";
-import { Separator } from "@/components/ui/separator";
+import { Button } from "@/components/UI/Button";
+import { Separator } from "@/components/UI/separator";
 import {
   Tooltip,
   TooltipContent,
   TooltipTrigger,
-} from "@/components/ui/tooltip";
+} from "@/components/UI/tooltip";
 import { cn } from "@/lib/utils";
 import { BookmarkIcon, type LucideProps } from "lucide-react";
 import type { ComponentProps, HTMLAttributes } from "react";

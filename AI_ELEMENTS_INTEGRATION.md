@@ -168,3 +168,4 @@ import { Tool, ToolInput, ToolOutput } from "@/components/ai-elements/tool"
 - [Vercel Blog: Introducing AI Elements](https://vercel.com/blog/introducing-ai-elements)
 - [shadcn/ui Documentation](https://ui.shadcn.com/)
 
+

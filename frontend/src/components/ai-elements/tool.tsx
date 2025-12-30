@@ -2,8 +2,8 @@ import * as React from "react"
 import { cn } from "@/lib/utils"
 import { Zap, CheckCircle2, Clock, AlertCircle, Loader2, ChevronDown, ChevronRight } from "lucide-react"
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/UI/collapsible"
-import { Card, CardContent, CardHeader } from "@/components/UI/card"
-import { Badge } from "@/components/UI/badge"
+import { Card, CardContent, CardHeader } from "@/components/UI/Card"
+import { Badge } from "@/components/UI/Badge"
 
 // Animation styles
 const fadeIn = "animate-in fade-in slide-in-from-left-2 duration-300"

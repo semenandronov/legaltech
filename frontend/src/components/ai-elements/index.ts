@@ -3,9 +3,11 @@
 
 export {
   Reasoning,
-  ReasoningStep,
+  ReasoningContent,
+  ReasoningTrigger,
   type ReasoningProps,
-  type ReasoningStepProps,
+  type ReasoningContentProps,
+  type ReasoningTriggerProps,
 } from "./reasoning"
 
 export {
@@ -28,9 +30,13 @@ export {
 
 export {
   Conversation,
-  ConversationEmpty,
+  ConversationContent,
+  ConversationEmptyState,
+  ConversationScrollButton,
   type ConversationProps,
-  type ConversationEmptyProps,
+  type ConversationContentProps,
+  type ConversationEmptyStateProps,
+  type ConversationScrollButtonProps,
 } from "./conversation"
 
 export {

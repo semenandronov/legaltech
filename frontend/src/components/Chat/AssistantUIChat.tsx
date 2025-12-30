@@ -3,7 +3,7 @@ import { useParams } from 'react-router-dom'
 import { getApiUrl } from '@/services/api'
 import { logger } from '@/lib/logger'
 import { Globe, FileText } from 'lucide-react'
-import { Conversation, ConversationEmpty } from '../ai-elements/conversation'
+import { Conversation, ConversationContent, ConversationEmptyState } from '../ai-elements/conversation'
 import { UserMessage, AssistantMessage } from '../ai-elements/message'
 import { PlanApprovalCard } from './PlanApprovalCard'
 import { AgentStep } from './AgentStepsView'
@@ -289,8 +289,9 @@ export const AssistantUIChat = ({ caseId, className }: AssistantUIChatProps) => 
   return (
     <div className={`flex flex-col h-full bg-white ${className || ''}`}>
       {/* Messages area */}
-      <Conversation autoScroll={true}>
-        {messages.length === 0 && <ConversationEmpty />}
+      <Conversation>
+        <ConversationContent>
+          {messages.length === 0 && <ConversationEmptyState title="Начните диалог" description="Задайте вопрос о документах дела" />}
 
         {messages.map((message) => {
           if (message.role === 'user') {
@@ -307,9 +308,6 @@ export const AssistantUIChat = ({ caseId, className }: AssistantUIChatProps) => 
               toolCalls={message.toolCalls}
               response={message.response}
               sources={message.sources}
-              agentSteps={message.agentSteps}
-              planId={message.planId}
-              plan={message.plan}
               isStreaming={isLoading && message.id === messages[messages.length - 1]?.id}
             >
               {message.planId && message.plan && (
@@ -381,6 +379,7 @@ export const AssistantUIChat = ({ caseId, className }: AssistantUIChatProps) => 
             </div>
           </div>
         )}
+        </ConversationContent>
       </Conversation>
 
       {/* Input area - красивое большое поле как на скриншоте */}
