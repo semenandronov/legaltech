@@ -192,6 +192,36 @@ async def stream_chat_response(
                 
                 logger.info(f"Planning completed: {len(analysis_types)} steps, confidence: {confidence:.2f}")
                 
+                # Сохраняем план в БД для одобрения
+                from app.models.analysis import AnalysisPlan
+                from datetime import datetime
+                import uuid
+                
+                plan_id = str(uuid.uuid4())
+                try:
+                    analysis_plan = AnalysisPlan(
+                        id=plan_id,
+                        case_id=case_id,
+                        user_id=current_user.id,
+                        user_task=question,
+                        plan_data=plan,
+                        status="pending_approval",
+                        confidence=confidence,
+                        validation_result={
+                            "is_valid": True,
+                            "issues": [],
+                            "warnings": []
+                        },
+                        tables_to_create=plan.get("tables_to_create", [])
+                    )
+                    db.add(analysis_plan)
+                    db.commit()
+                    logger.info(f"Plan saved to DB with id: {plan_id}")
+                except Exception as save_error:
+                    db.rollback()
+                    logger.error(f"Error saving plan to DB: {save_error}", exc_info=True)
+                    # Продолжаем без сохранения в БД
+                
                 # Формируем ответ с планом
                 plan_text = f"""Я составил план анализа для вашей задачи:
 
@@ -201,50 +231,16 @@ async def stream_chat_response(
 **Типы анализов:** {', '.join(analysis_types)}
 **Уверенность:** {confidence:.0%}
 
-Запускаю выполнение анализа в фоновом режиме. Результаты будут доступны в разделе "Анализ"."""
+Пожалуйста, проверьте план и подтвердите выполнение."""
                 
                 # Stream plan response
                 for chunk in plan_text:
                     yield f"data: {json.dumps({'textDelta': chunk}, ensure_ascii=False)}\n\n"
                     await asyncio.sleep(0.01)  # Small delay for streaming effect
                 
+                # Отправляем план для одобрения через SSE
+                yield f"data: {json.dumps({'type': 'plan_ready', 'planId': plan_id, 'plan': plan}, ensure_ascii=False)}\n\n"
                 yield f"data: {json.dumps({'textDelta': ''})}\n\n"
-                
-                # Start analysis in background
-                from app.utils.database import SessionLocal
-                
-                def run_planned_analysis():
-                    """Run analysis in background based on plan"""
-                    background_db = SessionLocal()
-                    try:
-                        analysis_service = AnalysisService(background_db)
-                        
-                        if analysis_service.use_agents:
-                            # Map to agent format
-                            agent_types = []
-                            for at in analysis_types:
-                                if at == "discrepancy":
-                                    agent_types.append("discrepancy")
-                                elif at == "risk":
-                                    agent_types.append("risk")
-                                else:
-                                    agent_types.append(at)
-                            
-                            logger.info(f"Running planned analysis for case {case_id}: {agent_types}")
-                            results = analysis_service.run_agent_analysis(case_id, agent_types)
-                            logger.info(
-                                f"Planned analysis completed for case {case_id}, "
-                                f"execution time: {results.get('execution_time', 0):.2f}s"
-                            )
-                        else:
-                            logger.warning(f"Agents not enabled, using legacy analysis")
-                    except Exception as e:
-                        logger.error(f"Error in background analysis: {e}", exc_info=True)
-                    finally:
-                        background_db.close()
-                
-                # Add background task
-                background_tasks.add_task(run_planned_analysis)
                 
             except Exception as e:
                 logger.error(f"Error in task planning: {e}", exc_info=True)

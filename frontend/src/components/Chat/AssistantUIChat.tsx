@@ -4,11 +4,16 @@ import { getApiUrl } from '@/services/api'
 import { logger } from '@/lib/logger'
 import { Globe, FileText } from 'lucide-react'
 import ReactMarkdown from 'react-markdown'
+import { PlanApprovalCard } from './PlanApprovalCard'
+import { AgentStepsView, AgentStep } from './AgentStepsView'
 
 interface Message {
   id: string
   role: 'user' | 'assistant'
   content: string
+  planId?: string
+  plan?: any
+  agentSteps?: AgentStep[]
 }
 
 interface AssistantUIChatProps {
@@ -109,6 +114,33 @@ export const AssistantUIChat = ({ caseId, className }: AssistantUIChatProps) => 
                       ? { ...msg, content: msg.content + data.textDelta }
                       : msg
                   )
+                )
+              }
+              // Обработка плана для одобрения
+              if (data.type === 'plan_ready' && data.planId && data.plan) {
+                setMessages((prev) =>
+                  prev.map((msg) =>
+                    msg.id === assistantMsgId
+                      ? { ...msg, planId: data.planId, plan: data.plan }
+                      : msg
+                  )
+                )
+              }
+              // Обработка шагов выполнения агентов
+              if (data.type === 'agent_step' && data.step) {
+                setMessages((prev) =>
+                  prev.map((msg) => {
+                    if (msg.id === assistantMsgId) {
+                      const currentSteps = msg.agentSteps || []
+                      const stepIndex = currentSteps.findIndex((s) => s.step_id === data.step.step_id)
+                      const updatedSteps =
+                        stepIndex >= 0
+                          ? currentSteps.map((s, idx) => (idx === stepIndex ? data.step : s))
+                          : [...currentSteps, data.step]
+                      return { ...msg, agentSteps: updatedSteps }
+                    }
+                    return msg
+                  })
                 )
               }
               if (data.error) {
@@ -226,6 +258,37 @@ export const AssistantUIChat = ({ caseId, className }: AssistantUIChatProps) => 
                   >
                     {message.content || '...'}
                   </ReactMarkdown>
+                  {message.planId && message.plan && (
+                    <PlanApprovalCard
+                      planId={message.planId}
+                      plan={message.plan}
+                      onApproved={() => {
+                        setMessages((prev) =>
+                          prev.map((msg) =>
+                            msg.id === message.id
+                              ? { ...msg, planId: undefined, plan: undefined }
+                              : msg
+                          )
+                        )
+                      }}
+                      onRejected={() => {
+                        setMessages((prev) =>
+                          prev.map((msg) =>
+                            msg.id === message.id
+                              ? { ...msg, planId: undefined, plan: undefined }
+                              : msg
+                          )
+                        )
+                      }}
+                      onModified={(modifications) => {
+                        // Отправляем изменения в чат
+                        sendMessage(`Измени план: ${modifications}`)
+                      }}
+                    />
+                  )}
+                  {message.agentSteps && message.agentSteps.length > 0 && (
+                    <AgentStepsView steps={message.agentSteps} isStreaming={isLoading} />
+                  )}
                 </div>
               ) : (
                 <div className="whitespace-pre-wrap break-words text-sm leading-relaxed">
