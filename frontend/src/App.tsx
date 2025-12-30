@@ -1,10 +1,11 @@
 import { lazy, Suspense } from 'react'
 import { Routes, Route, Navigate, useParams } from 'react-router-dom'
 import { Box, CircularProgress } from '@mui/material'
+import { Home, MessageSquare, FileText, Table } from 'lucide-react'
 import ProtectedRoute from './components/ProtectedRoute'
 import LoginPage from './pages/LoginPage'
 import RegisterPage from './pages/RegisterPage'
-const CaseNavigation = lazy(() => import('./components/CaseOverview/CaseNavigation'))
+import UnifiedSidebar from './components/Layout/UnifiedSidebar'
 const AssistantChatPage = lazy(() => import('./pages/AssistantChatPage'))
 
 // Lazy load heavy pages
@@ -140,11 +141,18 @@ function App() {
 const CaseChatPage = () => {
   const { caseId } = useParams<{ caseId: string }>()
 
+  const navItems = [
+    { id: 'overview', label: 'Обзор', icon: Home, path: `/cases/${caseId}/workspace` },
+    { id: 'chat', label: 'Ассистент', icon: MessageSquare, path: `/cases/${caseId}/chat` },
+    { id: 'documents', label: 'Документы', icon: FileText, path: `/cases/${caseId}/documents` },
+    { id: 'tabular-review', label: 'Tabular Review', icon: Table, path: `/cases/${caseId}/tabular-review` },
+  ]
+
   return (
     <Suspense fallback={<PageLoader />}>
-      <div className="flex h-screen bg-background">
-        <CaseNavigation caseId={caseId || ''} />
-        <div className="flex-1 flex flex-col overflow-hidden">
+      <div className="flex h-screen bg-gradient-to-br from-[#F8F9FA] via-white to-[#F0F4F8]">
+        <UnifiedSidebar navItems={navItems} title="Legal AI" />
+        <div className="flex-1 flex flex-col overflow-hidden content-background">
           <main className="flex-1 overflow-y-auto">
             <div className="h-full">
               <AssistantChatPage />

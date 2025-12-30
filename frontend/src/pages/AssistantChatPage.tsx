@@ -1,5 +1,4 @@
 import { useParams } from 'react-router-dom'
-import { Box } from '@mui/material'
 import { AssistantUIChat } from '../components/Chat/AssistantUIChat'
 
 const AssistantChatPage = () => {
@@ -7,26 +6,16 @@ const AssistantChatPage = () => {
 
   if (!caseId) {
     return (
-      <Box sx={{ height: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-        Дело не найдено
-      </Box>
+      <div className="h-full flex items-center justify-center">
+        <p className="text-body text-[#6B7280]">Дело не найдено</p>
+      </div>
     )
   }
 
   return (
-    <Box 
-      sx={{ 
-        height: '100vh', 
-        display: 'flex', 
-        flexDirection: 'column', 
-        width: '100%',
-        margin: 0,
-        padding: 0,
-        bgcolor: 'background.default',
-      }}
-    >
+    <div className="h-full w-full flex flex-col fade-in-up">
       <AssistantUIChat caseId={caseId} className="h-full" />
-    </Box>
+    </div>
   )
 }
 

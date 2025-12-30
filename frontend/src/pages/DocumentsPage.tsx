@@ -2,18 +2,14 @@ import { useState, useEffect } from 'react'
 import { useParams } from 'react-router-dom'
 import {
   Box,
-  Grid,
-  Card,
-  CardContent,
   Typography,
-  Chip,
   CircularProgress,
   IconButton,
   Drawer,
-  Stack,
 } from '@mui/material'
 import { Description as DescriptionIcon, Close as CloseIcon } from '@mui/icons-material'
-import CaseNavigation from '../components/CaseOverview/CaseNavigation'
+import { Home, MessageSquare, FileText, Table } from 'lucide-react'
+import UnifiedSidebar from '../components/Layout/UnifiedSidebar'
 import DocumentViewer from '../components/Documents/DocumentViewer'
 import { DocumentWithMetadata } from '../components/Documents/DocumentsList'
 
@@ -59,97 +55,80 @@ const DocumentsPage = () => {
   
   if (loading) {
     return (
-      <Box
-        sx={{
-          height: '100vh',
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          bgcolor: 'background.default',
-        }}
-      >
-        <CircularProgress />
-      </Box>
+      <div className="flex h-screen bg-gradient-to-br from-[#F8F9FA] via-white to-[#F0F4F8]">
+        {caseId && (
+          <UnifiedSidebar 
+            navItems={[
+              { id: 'overview', label: 'Обзор', icon: Home, path: `/cases/${caseId}/workspace` },
+              { id: 'chat', label: 'Ассистент', icon: MessageSquare, path: `/cases/${caseId}/chat` },
+              { id: 'documents', label: 'Документы', icon: FileText, path: `/cases/${caseId}/documents` },
+              { id: 'tabular-review', label: 'Tabular Review', icon: Table, path: `/cases/${caseId}/tabular-review` },
+            ]} 
+            title="Legal AI" 
+          />
+        )}
+        <div className="flex-1 flex items-center justify-center">
+          <CircularProgress />
+        </div>
+      </div>
     )
   }
 
+  const navItems = [
+    { id: 'overview', label: 'Обзор', icon: Home, path: `/cases/${caseId}/workspace` },
+    { id: 'chat', label: 'Ассистент', icon: MessageSquare, path: `/cases/${caseId}/chat` },
+    { id: 'documents', label: 'Документы', icon: FileText, path: `/cases/${caseId}/documents` },
+    { id: 'tabular-review', label: 'Tabular Review', icon: Table, path: `/cases/${caseId}/tabular-review` },
+  ]
+
   return (
-    <Box 
-      sx={{ 
-        height: '100vh',
-        display: 'flex', 
-        bgcolor: 'background.default',
-        overflow: 'hidden',
-      }}
-    >
-      {caseId && <CaseNavigation caseId={caseId} />}
-      <Box
-        sx={{
-          flex: 1,
-          overflow: 'auto',
-          p: 3,
-        }}
-      >
-          <Typography variant="h4" sx={{ mb: 3, fontWeight: 600 }}>
+    <div className="flex h-screen bg-gradient-to-br from-[#F8F9FA] via-white to-[#F0F4F8]">
+      {caseId && <UnifiedSidebar navItems={navItems} title="Legal AI" />}
+      <div className="flex-1 overflow-auto content-background">
+        <div className="p-8 fade-in-up">
+          <h1 className="font-display text-h1 text-[#1F2937] mb-6">
             Документы ({documents.length})
-          </Typography>
+          </h1>
 
-          <Grid container spacing={2}>
-            {documents.map((doc) => (
-              <Grid item xs={12} sm={6} md={4} key={doc.id}>
-                <Card
-                  sx={{
-                    cursor: 'pointer',
-                    transition: 'all 0.2s',
-                    '&:hover': {
-                      boxShadow: 4,
-                      transform: 'translateY(-2px)',
-                    },
-                  }}
-                  onClick={() => {
-                    const index = documents.findIndex(d => d.id === doc.id)
-                    setSelectedDocument(doc)
-                    setSelectedDocumentIndex(index)
-                  }}
-                >
-                  <CardContent>
-                    <Stack spacing={2}>
-                      <Stack direction="row" spacing={1} alignItems="center">
-                        <DescriptionIcon color="primary" />
-                        <Typography
-                          variant="h6"
-                          sx={{
-                            overflow: 'hidden',
-                            textOverflow: 'ellipsis',
-                            whiteSpace: 'nowrap',
-                            fontWeight: 500,
-                          }}
-                        >
-                          {doc.filename}
-                        </Typography>
-                      </Stack>
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
+            {documents.map((doc, index) => (
+              <div
+                key={doc.id}
+                className="bg-white rounded-lg border border-[#E5E7EB] p-6 cursor-pointer hoverable transition-all duration-300"
+                style={{ animationDelay: `${index * 0.05}s` }}
+                onClick={() => {
+                  const idx = documents.findIndex(d => d.id === doc.id)
+                  setSelectedDocument(doc)
+                  setSelectedDocumentIndex(idx)
+                }}
+              >
+                <div className="space-y-4">
+                  <div className="flex items-center gap-3">
+                    <div className="w-10 h-10 rounded-lg bg-gradient-to-br from-[#00D4FF]/20 to-[#7C3AED]/20 flex items-center justify-center">
+                      <DescriptionIcon className="w-5 h-5 text-[#00D4FF]" />
+                    </div>
+                    <h3 className="font-display text-h3 text-[#1F2937] truncate flex-1">
+                      {doc.filename}
+                    </h3>
+                  </div>
 
-                      {doc.file_type && (
-                        <Chip
-                          label={doc.file_type}
-                          size="small"
-                          variant="outlined"
-                          color="primary"
-                        />
-                      )}
+                  {doc.file_type && (
+                    <span className="inline-block px-3 py-1 rounded-full text-xs font-medium bg-gradient-to-r from-[#00D4FF]/10 to-[#7C3AED]/10 text-[#00D4FF] border border-[#00D4FF]/20">
+                      {doc.file_type}
+                    </span>
+                  )}
 
-                      {doc.status && (
-                        <Typography variant="body2" color="text.secondary">
-                          Статус: {doc.status}
-                        </Typography>
-                      )}
-                    </Stack>
-                  </CardContent>
-                </Card>
-              </Grid>
+                  {doc.status && (
+                    <p className="text-sm text-[#6B7280]">
+                      Статус: {doc.status}
+                    </p>
+                  )}
+                </div>
+              </div>
             ))}
-          </Grid>
-      </Box>
+          </div>
+        </div>
+      </div>
       
       {/* Drawer для просмотра документа */}
       <Drawer
@@ -163,6 +142,7 @@ const DocumentsPage = () => {
           sx: {
             width: '90%',
             maxWidth: '1200px',
+            bgcolor: 'white',
           },
         }}
       >
@@ -171,15 +151,15 @@ const DocumentsPage = () => {
             {/* Header */}
             <Box
               sx={{
-                p: 2,
-                borderBottom: 1,
-                borderColor: 'divider',
+                p: 3,
+                borderBottom: '1px solid #E5E7EB',
                 display: 'flex',
                 alignItems: 'center',
                 justifyContent: 'space-between',
+                bgcolor: 'white',
               }}
             >
-              <Typography variant="h6" sx={{ fontWeight: 600 }}>
+              <Typography variant="h6" sx={{ fontWeight: 600, fontFamily: 'Playfair Display', color: '#1F2937' }}>
                 {selectedDocument.filename}
               </Typography>
               <IconButton
@@ -187,13 +167,18 @@ const DocumentsPage = () => {
                   setSelectedDocument(null)
                   setSelectedDocumentIndex(null)
                 }}
+                sx={{
+                  '&:hover': {
+                    bgcolor: '#F3F4F6',
+                  },
+                }}
               >
                 <CloseIcon />
               </IconButton>
             </Box>
 
             {/* Document Viewer */}
-            <Box sx={{ flex: 1, overflow: 'hidden' }}>
+            <Box sx={{ flex: 1, overflow: 'hidden', bgcolor: 'white' }}>
               <DocumentViewer
                 document={
                   selectedDocument
@@ -225,7 +210,7 @@ const DocumentsPage = () => {
           </Box>
         )}
       </Drawer>
-    </Box>
+    </div>
   )
 }
 
