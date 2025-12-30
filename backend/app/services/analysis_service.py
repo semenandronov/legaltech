@@ -1,5 +1,5 @@
 """Analysis service for coordinating different types of analysis"""
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Optional
 from sqlalchemy.orm import Session
 from app.models.case import Case
 from app.models.analysis import AnalysisResult
@@ -39,13 +39,14 @@ class AnalysisService:
         else:
             logger.info("Multi-agent system disabled, using legacy extractors")
     
-    def run_agent_analysis(self, case_id: str, analysis_types: List[str]) -> Dict[str, Any]:
+    def run_agent_analysis(self, case_id: str, analysis_types: List[str], step_callback: Optional[Any] = None) -> Dict[str, Any]:
         """
         Run analysis using multi-agent system
         
         Args:
             case_id: Case identifier
             analysis_types: List of analysis types to run
+            step_callback: Optional callback function to be called for each execution step
         
         Returns:
             Dictionary with all analysis results
@@ -53,7 +54,7 @@ class AnalysisService:
         if not self.use_agents:
             raise ValueError("Agent system is disabled. Use individual methods or enable AGENT_ENABLED.")
         
-        return self.agent_coordinator.run_analysis(case_id, analysis_types)
+        return self.agent_coordinator.run_analysis(case_id, analysis_types, step_callback=step_callback)
     
     def extract_timeline(self, case_id: str) -> Dict[str, Any]:
         """

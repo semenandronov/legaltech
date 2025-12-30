@@ -171,6 +171,99 @@ export const AssistantUIChat = ({ caseId, className }: AssistantUIChatProps) => 
     }
   }, [actualCaseId, isLoading, messages])
 
+  const startPlanExecutionStream = useCallback(async (planId: string, messageId: string) => {
+    try {
+      const token = localStorage.getItem('access_token')
+      const response = await fetch(getApiUrl(`/api/plan/${planId}/stream`), {
+        method: 'GET',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+        },
+      })
+
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`)
+      }
+
+      const reader = response.body?.getReader()
+      const decoder = new TextDecoder()
+
+      if (!reader) {
+        throw new Error('No response body')
+      }
+
+      let buffer = ''
+      while (true) {
+        const { done, value } = await reader.read()
+        if (done) break
+
+        buffer += decoder.decode(value, { stream: true })
+        const lines = buffer.split('\n\n')
+        buffer = lines.pop() || ''
+
+        for (const line of lines) {
+          if (line.startsWith('data: ')) {
+            try {
+              const data = JSON.parse(line.slice(6))
+              
+              if (data.type === 'execution_started') {
+                setMessages((prev) =>
+                  prev.map((msg) =>
+                    msg.id === messageId
+                      ? { ...msg, agentSteps: [], content: msg.content + '\n\n**Выполнение плана начато...**\n\n' }
+                      : msg
+                  )
+                )
+              } else if (data.type === 'step_completed' && data.step) {
+                setMessages((prev) =>
+                  prev.map((msg) => {
+                    if (msg.id === messageId) {
+                      const currentSteps = msg.agentSteps || []
+                      const stepIndex = currentSteps.findIndex((s) => s.step_id === data.step.step_id)
+                      const updatedSteps =
+                        stepIndex >= 0
+                          ? currentSteps.map((s, idx) => (idx === stepIndex ? { ...data.step, status: 'completed' } : s))
+                          : [...currentSteps, { ...data.step, status: 'completed' }]
+                      return { ...msg, agentSteps: updatedSteps }
+                    }
+                    return msg
+                  })
+                )
+              } else if (data.type === 'execution_completed') {
+                setMessages((prev) =>
+                  prev.map((msg) =>
+                    msg.id === messageId
+                      ? { ...msg, content: msg.content + '\n\n**✅ Выполнение плана завершено**\n\n' }
+                      : msg
+                  )
+                )
+              } else if (data.type === 'execution_failed' || data.type === 'error') {
+                setMessages((prev) =>
+                  prev.map((msg) =>
+                    msg.id === messageId
+                      ? { ...msg, content: msg.content + `\n\n**❌ Ошибка: ${data.message || 'Неизвестная ошибка'}**\n\n` }
+                      : msg
+                  )
+                )
+              }
+            } catch (e) {
+              logger.error('Error parsing plan execution SSE data:', e)
+            }
+          }
+        }
+      }
+    } catch (error) {
+      logger.error('Error streaming plan execution:', error)
+      setMessages((prev) =>
+        prev.map((msg) =>
+          msg.id === messageId
+            ? { ...msg, content: msg.content + '\n\n**❌ Ошибка при отслеживании выполнения плана**\n\n' }
+            : msg
+        )
+      )
+    }
+  }, [])
+
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault()
     if (input.trim() && !isLoading) {
@@ -263,10 +356,12 @@ export const AssistantUIChat = ({ caseId, className }: AssistantUIChatProps) => 
                       planId={message.planId}
                       plan={message.plan}
                       onApproved={() => {
+                        // Start streaming execution steps
+                        startPlanExecutionStream(message.planId, message.id)
                         setMessages((prev) =>
                           prev.map((msg) =>
                             msg.id === message.id
-                              ? { ...msg, planId: undefined, plan: undefined }
+                              ? { ...msg, planId: undefined, plan: undefined, agentSteps: [] }
                               : msg
                           )
                         )

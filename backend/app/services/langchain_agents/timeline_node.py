@@ -121,6 +121,31 @@ def timeline_agent_node(
     
     try:
         logger.info(f"Timeline agent: Starting extraction for case {case_id}")
+        # #region agent log
+        import json
+        import os
+        import time
+        try:
+            log_path = os.path.join(os.getcwd(), '.cursor', 'debug.log')
+            os.makedirs(os.path.dirname(log_path), exist_ok=True)
+            with open(log_path, 'a') as f:
+                f.write(json.dumps({
+                    "sessionId": "debug-session",
+                    "runId": "timeline-node-start",
+                    "hypothesisId": "H6",
+                    "location": "timeline_node.py:timeline_agent_node",
+                    "message": "Timeline agent node started",
+                    "data": {
+                        "case_id": case_id,
+                        "has_db": db is not None,
+                        "has_rag": rag_service is not None,
+                        "has_doc_processor": document_processor is not None
+                    },
+                    "timestamp": int(time.time() * 1000)
+                }) + '\n')
+        except Exception:
+            pass
+        # #endregion
         
         # Initialize FileSystemContext if not already initialized
         from app.services.langchain_agents.file_system_helper import get_file_system_context_from_state
@@ -525,6 +550,31 @@ def timeline_agent_node(
         
     except Exception as e:
         logger.error(f"Timeline agent error for case {case_id}: {e}", exc_info=True)
+        # #region agent log
+        try:
+            import json
+            import os
+            import time
+            import traceback
+            log_path = os.path.join(os.getcwd(), '.cursor', 'debug.log')
+            with open(log_path, 'a') as f:
+                f.write(json.dumps({
+                    "sessionId": "debug-session",
+                    "runId": "timeline-node-error",
+                    "hypothesisId": "H7",
+                    "location": "timeline_node.py:timeline_agent_node:exception",
+                    "message": "Timeline agent node error",
+                    "data": {
+                        "case_id": case_id,
+                        "error_type": type(e).__name__,
+                        "error_message": str(e)[:500],
+                        "traceback": traceback.format_exc()[:1000]
+                    },
+                    "timestamp": int(time.time() * 1000)
+                }) + '\n')
+        except Exception:
+            pass
+        # #endregion
         # Add error to state
         new_state = state.copy()
         if "errors" not in new_state:

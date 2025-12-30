@@ -190,6 +190,18 @@ async def stream_chat_response(
                 reasoning = plan.get("reasoning", "План создан на основе задачи")
                 confidence = plan.get("confidence", 0.8)
                 
+                # Очищаем reasoning от JSON, если он там есть
+                import re
+                if "План извлечен из текстового ответа:" in reasoning:
+                    # Убираем префикс и извлекаем нормальный текст
+                    reasoning = reasoning.replace("План извлечен из текстового ответа:", "").strip()
+                    # Убираем JSON объекты из reasoning
+                    reasoning = re.sub(r'\{[^}]*\}', '', reasoning)
+                    reasoning = re.sub(r'\[[^\]]*\]', '', reasoning)
+                    reasoning = reasoning.strip()
+                    if not reasoning:
+                        reasoning = f"Выполнить анализ: {', '.join(analysis_types)}"
+                
                 logger.info(f"Planning completed: {len(analysis_types)} steps, confidence: {confidence:.2f}")
                 
                 # Сохраняем план в БД для одобрения
@@ -222,7 +234,7 @@ async def stream_chat_response(
                     logger.error(f"Error saving plan to DB: {save_error}", exc_info=True)
                     # Продолжаем без сохранения в БД
                 
-                # Формируем ответ с планом
+                # Формируем ответ с планом (без сырого JSON)
                 plan_text = f"""Я составил план анализа для вашей задачи:
 
 **План:**

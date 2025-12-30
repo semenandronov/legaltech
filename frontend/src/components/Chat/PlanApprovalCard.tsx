@@ -52,6 +52,7 @@ export const PlanApprovalCard: React.FC<PlanApprovalCardProps> = ({
 
       const data = await response.json()
       logger.info('Plan approved:', data)
+      // Call onApproved with planId to start streaming
       onApproved?.()
     } catch (error) {
       logger.error('Error approving plan:', error)

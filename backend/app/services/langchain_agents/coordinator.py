@@ -17,6 +17,8 @@ from langchain_core.messages import HumanMessage
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import logging
 import time
+import os
+import json
 
 logger = logging.getLogger(__name__)
 
@@ -116,7 +118,8 @@ class AgentCoordinator:
         analysis_types: List[str],
         user_task: Optional[str] = None,
         config: Optional[Dict[str, Any]] = None,
-        websocket_callback: Optional[Any] = None
+        websocket_callback: Optional[Any] = None,
+        step_callback: Optional[Any] = None
     ) -> Dict[str, Any]:
         """
         Run analysis using multi-agent system
@@ -168,6 +171,25 @@ class AgentCoordinator:
         
         try:
             logger.info(f"Starting multi-agent analysis for case {case_id}, types: {analysis_types}")
+            # #region agent log
+            import json
+            import os
+            try:
+                log_path = os.path.join(os.getcwd(), '.cursor', 'debug.log')
+                os.makedirs(os.path.dirname(log_path), exist_ok=True)
+                with open(log_path, 'a') as f:
+                    f.write(json.dumps({
+                        "sessionId": "debug-session",
+                        "runId": "coordinator-start",
+                        "hypothesisId": "H1",
+                        "location": "coordinator.py:run_analysis",
+                        "message": "Starting multi-agent analysis",
+                        "data": {"case_id": case_id, "analysis_types": analysis_types, "user_task": user_task is not None},
+                        "timestamp": int(time.time() * 1000)
+                    }) + '\n')
+            except Exception:
+                pass
+            # #endregion
             
             # Initialize plan_goals and current_plan
             plan_goals = []
@@ -345,11 +367,57 @@ class AgentCoordinator:
                 logger.info(f"Running {len(analysis_types)} independent agents, using optimized execution")
                 # LangGraph will handle this, but we log it for monitoring
             
+            # Track execution steps for streaming
+            execution_steps = []
+            
             for state in self.graph.stream(initial_state, thread_config):
                 # Log progress
                 node_name = list(state.keys())[0] if state else "unknown"
                 logger.info(f"Graph execution: {node_name} completed")
                 final_state = state[node_name] if state else None
+                
+                # #region agent log
+                try:
+                    log_path = os.path.join(os.getcwd(), '.cursor', 'debug.log')
+                    with open(log_path, 'a') as f:
+                        f.write(json.dumps({
+                            "sessionId": "debug-session",
+                            "runId": "coordinator-stream",
+                            "hypothesisId": "H2",
+                            "location": "coordinator.py:graph.stream",
+                            "message": "Node execution completed",
+                            "data": {
+                                "node_name": node_name,
+                                "has_final_state": final_state is not None,
+                                "state_keys": list(state.keys()) if state else []
+                            },
+                            "timestamp": int(time.time() * 1000)
+                        }) + '\n')
+                except Exception:
+                    pass
+                # #endregion
+                
+                # Track step for streaming
+                if node_name and node_name != "supervisor":
+                    step_info = {
+                        "step_id": f"{node_name}_{len(execution_steps)}",
+                        "agent_name": node_name,
+                        "status": "completed",
+                        "description": f"Выполнение анализа {node_name}"
+                    }
+                    # Extract reasoning and result if available
+                    if final_state and isinstance(final_state, dict):
+                        result_key = f"{node_name}_result"
+                        if result_key in final_state:
+                            step_info["result"] = str(final_state[result_key])[:500]  # Limit length
+                    execution_steps.append(step_info)
+                    
+                    # Call step callback if provided (for real-time saving)
+                    if step_callback:
+                        try:
+                            step_callback(step_info)
+                        except Exception as callback_error:
+                            logger.warning(f"Error in step callback: {callback_error}")
             
             # Get final state
             if final_state is None:
@@ -558,6 +626,10 @@ class AgentCoordinator:
                     except Exception as fallback_error:
                         logger.warning(f"Fallback handling failed for {agent_name}: {fallback_error}")
             
+            # Add execution steps to results
+            if execution_steps:
+                results["execution_steps"] = execution_steps
+            
             # Unregister WebSocket callback
             if websocket_callback:
                 self.feedback_service.unregister_websocket_callback(case_id)
@@ -570,6 +642,31 @@ class AgentCoordinator:
                 f"Error in multi-agent analysis for case {case_id}: {e}",
                 exc_info=True
             )
+            # #region agent log
+            try:
+                import json
+                import os
+                import traceback
+                log_path = os.path.join(os.getcwd(), '.cursor', 'debug.log')
+                with open(log_path, 'a') as f:
+                    f.write(json.dumps({
+                        "sessionId": "debug-session",
+                        "runId": "coordinator-error",
+                        "hypothesisId": "H3",
+                        "location": "coordinator.py:run_analysis:exception",
+                        "message": "Error in multi-agent analysis",
+                        "data": {
+                            "case_id": case_id,
+                            "error_type": type(e).__name__,
+                            "error_message": str(e),
+                            "execution_time": execution_time,
+                            "traceback": traceback.format_exc()[:1000]
+                        },
+                        "timestamp": int(time.time() * 1000)
+                    }) + '\n')
+            except Exception:
+                pass
+            # #endregion
             
             # Определить тип ошибки
             error_type = "fatal"

@@ -982,26 +982,81 @@ async def approve_plan(
                     plan.executed_at = datetime.utcnow()
                     background_db.commit()
                     
-                    # Execute analyses
-                    analysis_service = AnalysisService()
-                    for analysis_type in api_analysis_types:
-                        try:
-                            if analysis_type == "timeline":
-                                analysis_service.extract_timeline(case_id)
-                            elif analysis_type == "discrepancies":
-                                analysis_service.find_discrepancies(case_id)
-                            elif analysis_type == "key_facts":
-                                analysis_service.extract_key_facts(case_id)
-                            elif analysis_type == "summary":
-                                analysis_service.generate_summary(case_id)
-                            elif analysis_type == "risk_analysis":
-                                analysis_service.analyze_risks(case_id)
-                            elif analysis_type == "entity_extraction":
-                                analysis_service.extract_entities(case_id)
-                            elif analysis_type == "relationship":
-                                analysis_service.build_relationships(case_id)
-                        except Exception as e:
-                            logger.error(f"Error executing {analysis_type}: {e}", exc_info=True)
+                    # Execute analyses using agent system
+                    analysis_service = AnalysisService(background_db)
+                    
+                    if analysis_service.use_agents:
+                        # Map back to agent format
+                        agent_types = []
+                        for at in api_analysis_types:
+                            if at == "discrepancies":
+                                agent_types.append("discrepancy")
+                            elif at == "risk_analysis":
+                                agent_types.append("risk")
+                            else:
+                                agent_types.append(at)
+                        
+                        # Create callback to save steps in real-time
+                        def save_step_to_plan(step_info: dict):
+                            """Save execution step to plan in real-time"""
+                            try:
+                                # Refresh plan from DB
+                                plan_refresh = background_db.query(AnalysisPlan).filter(AnalysisPlan.id == plan.id).first()
+                                if plan_refresh:
+                                    plan_data = plan_refresh.plan_data or {}
+                                    if not isinstance(plan_data, dict):
+                                        plan_data = {}
+                                    execution_steps = plan_data.get("execution_steps", [])
+                                    # Check if step already exists
+                                    if not any(s.get("step_id") == step_info.get("step_id") for s in execution_steps):
+                                        execution_steps.append(step_info)
+                                        plan_data["execution_steps"] = execution_steps
+                                        plan_refresh.plan_data = plan_data
+                                        background_db.commit()
+                            except Exception as e:
+                                logger.warning(f"Error saving step to plan: {e}")
+                        
+                        logger.info(f"Running approved plan for case {case_id}: {agent_types}")
+                        results = analysis_service.run_agent_analysis(
+                            case_id, 
+                            agent_types,
+                            step_callback=save_step_to_plan
+                        )
+                        logger.info(
+                            f"Approved plan execution completed for case {case_id}, "
+                            f"execution_time: {results.get('execution_time', 0):.2f}s"
+                        )
+                        
+                        # Final save of all execution steps (in case callback missed any)
+                        execution_steps = results.get("execution_steps", [])
+                        if execution_steps:
+                            plan_data = plan.plan_data
+                            if not isinstance(plan_data, dict):
+                                plan_data = {}
+                            plan_data["execution_steps"] = execution_steps
+                            plan.plan_data = plan_data
+                            background_db.commit()
+                    else:
+                        # Legacy approach
+                        logger.warning(f"Agents not enabled, using legacy analysis")
+                        for analysis_type in api_analysis_types:
+                            try:
+                                if analysis_type == "timeline":
+                                    analysis_service.extract_timeline(case_id)
+                                elif analysis_type == "discrepancies":
+                                    analysis_service.find_discrepancies(case_id)
+                                elif analysis_type == "key_facts":
+                                    analysis_service.extract_key_facts(case_id)
+                                elif analysis_type == "summary":
+                                    analysis_service.generate_summary(case_id)
+                                elif analysis_type == "risk_analysis":
+                                    analysis_service.analyze_risks(case_id)
+                                elif analysis_type == "entity_extraction":
+                                    analysis_service.extract_entities(case_id)
+                                elif analysis_type == "relationship":
+                                    analysis_service.build_relationships(case_id)
+                            except Exception as e:
+                                logger.error(f"Error executing {analysis_type}: {e}", exc_info=True)
                     
                     # Mark plan as completed
                     plan.status = "completed"
