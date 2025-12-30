@@ -239,13 +239,13 @@ def analyze_document_structure_tool(case_id: str) -> str:
                 try:
                     # Если RAG service доступен, получаем релевантные chunks
                     if _rag_service:
-                    chunks = _rag_service.retrieve_context(
-                        case_id=case_id,
-                        query=f"содержание документа {file.filename}",
-                        k=3,
-                        db=db
-                    )
-                    if chunks:
+                        chunks = _rag_service.retrieve_context(
+                            case_id=case_id,
+                            query=f"содержание документа {file.filename}",
+                            k=3,
+                            db=db
+                        )
+                        if chunks:
                             # Document объекты имеют атрибут page_content, а не content
                             first_chunk = chunks[0]
                             preview = ""
