@@ -7,7 +7,7 @@ from app.services.langchain_agents.state import AnalysisState
 from app.services.rag_service import RAGService
 from app.services.document_processor import DocumentProcessor
 from app.services.langchain_parsers import ParserService, EntitiesExtractionModel
-from app.services.lexnlp_extractor import LexNLPExtractor
+from app.services.regex_extractor import RegexExtractor
 from sqlalchemy.orm import Session
 from app.models.case import File
 import logging
@@ -62,8 +62,8 @@ def entity_extraction_agent_node(
         from app.services.langchain_agents.prompts import get_agent_prompt
         system_prompt = get_agent_prompt("entity_extraction")
         
-        # Initialize LexNLP extractor for pre-processing
-        lexnlp_extractor = LexNLPExtractor()
+        # Initialize regex extractor for pre-processing
+        regex_extractor = RegexExtractor()
         
         # Extract entities from each file
         all_entities = []
@@ -79,31 +79,31 @@ def entity_extraction_agent_node(
                 # Limit text to avoid token limits
                 limited_text = document_text[:5000]
                 
-                # Pre-processing: используем LexNLP для извлечения дат и сумм
-                lexnlp_results = lexnlp_extractor.extract_all(limited_text)
-                lexnlp_hints = []
+                # Pre-processing: используем regex для извлечения дат и сумм
+                regex_results = regex_extractor.extract_all(limited_text)
+                regex_hints = []
                 
-                # Формируем hints для LLM на основе результатов LexNLP
-                if lexnlp_results.get("dates"):
-                    dates_str = ", ".join([f"{d.get('date')} ({d.get('original_text')})" for d in lexnlp_results["dates"][:10]])
-                    lexnlp_hints.append(f"Найденные даты (LexNLP): {dates_str}")
+                # Формируем hints для LLM на основе результатов regex
+                if regex_results.get("dates"):
+                    dates_str = ", ".join([f"{d.get('date')} ({d.get('original_text')})" for d in regex_results["dates"][:10]])
+                    regex_hints.append(f"Найденные даты (regex): {dates_str}")
                 
-                if lexnlp_results.get("amounts"):
-                    amounts_str = ", ".join([f"{a.get('amount')} {a.get('currency', '')}" for a in lexnlp_results["amounts"][:10]])
-                    lexnlp_hints.append(f"Найденные суммы (LexNLP): {amounts_str}")
+                if regex_results.get("amounts"):
+                    amounts_str = ", ".join([f"{a.get('amount')} {a.get('currency', '')}" for a in regex_results["amounts"][:10]])
+                    regex_hints.append(f"Найденные суммы (regex): {amounts_str}")
                 
-                if lexnlp_results.get("entities"):
-                    entities_str = ", ".join([f"{e.get('text')} ({e.get('type')})" for e in lexnlp_results["entities"][:10]])
-                    lexnlp_hints.append(f"Найденные сущности (LexNLP): {entities_str}")
+                if regex_results.get("entities"):
+                    entities_str = ", ".join([f"{e.get('text')} ({e.get('type')})" for e in regex_results["entities"][:10]])
+                    regex_hints.append(f"Найденные сущности (regex): {entities_str}")
                 
-                hints_text = "\n".join(lexnlp_hints) if lexnlp_hints else ""
+                hints_text = "\n".join(regex_hints) if regex_hints else ""
                 
-                # Create prompt for entity extraction with LexNLP hints
+                # Create prompt for entity extraction with regex hints
                 user_prompt = f"""ДОКУМЕНТ:
 {limited_text}
 {hints_text if hints_text else ''}
 
-Извлеки из документа ВСЕ юридически значимые сущности. Используй информацию из LexNLP как hints для более точного извлечения."""
+Извлеки из документа ВСЕ юридически значимые сущности. Используй информацию из regex как hints для более точного извлечения."""
                 
                 # Try to use structured output
                 try:

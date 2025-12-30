@@ -1,4 +1,4 @@
-"""LexNLP Extractor - wrapper for LexNLP library for legal text extraction"""
+"""Regex Extractor - извлечение данных из юридических документов с помощью регулярных выражений"""
 from typing import List, Dict, Any, Optional
 import re
 import logging
@@ -6,32 +6,17 @@ from datetime import datetime
 
 logger = logging.getLogger(__name__)
 
-# Try to import LexNLP
-# LexNLP требует Python 3.11 или 3.12 (не совместим с 3.13)
-# Код работает с regex fallbacks если LexNLP недоступен
-try:
-    from lexnlp.extract.en.dates import get_dates
-    from lexnlp.extract.en.amounts import get_amounts
-    from lexnlp.extract.en.money import get_money
-    LEXNLP_AVAILABLE = True
-    logger.info("✅ LexNLP imported successfully")
-except ImportError as e:
-    logger.warning(f"LexNLP not available: {e}. Using regex fallbacks for extraction.")
-    LEXNLP_AVAILABLE = False
 
-
-class LexNLPExtractor:
+class RegexExtractor:
     """
-    Wrapper для LexNLP библиотеки для извлечения юридически значимых данных.
+    Извлечение юридически значимых данных из текста с помощью регулярных выражений.
     
-    Интегрирует LexNLP с поддержкой русского языка через дополнительные regex patterns.
+    Поддерживает русский язык: даты, суммы, организации, имена.
     """
     
     def __init__(self):
-        """Initialize LexNLP extractor"""
-        self.available = LEXNLP_AVAILABLE
-        
-        # Russian date patterns (дополнительно к LexNLP)
+        """Initialize regex extractor"""
+        # Russian date patterns
         self.russian_date_patterns = [
             r'\d{1,2}\s+(января|февраля|марта|апреля|мая|июня|июля|августа|сентября|октября|ноября|декабря)\s+\d{4}',
             r'\d{1,2}\.\d{1,2}\.\d{4}',  # DD.MM.YYYY
@@ -54,7 +39,7 @@ class LexNLPExtractor:
     
     def extract_dates(self, text: str) -> List[Dict[str, Any]]:
         """
-        Извлекает даты из текста
+        Извлекает даты из текста (только regex для русского языка)
         
         Args:
             text: Текст для анализа
@@ -65,8 +50,8 @@ class LexNLPExtractor:
                 {
                     "date": "2024-01-15",
                     "original_text": "15 января 2024",
-                    "confidence": 0.95,
-                    "source": "lexnlp" or "regex"
+                    "confidence": 0.85,
+                    "source": "regex"
                 }
             ]
         """
@@ -75,31 +60,7 @@ class LexNLPExtractor:
         if not text:
             return dates
         
-        # Используем LexNLP если доступен (для английских дат)
-        if self.available:
-            try:
-                lexnlp_dates = list(get_dates(text))
-                for date_obj in lexnlp_dates:
-                    if isinstance(date_obj, datetime):
-                        dates.append({
-                            "date": date_obj.strftime("%Y-%m-%d"),
-                            "original_text": str(date_obj),
-                            "confidence": 0.9,
-                            "source": "lexnlp"
-                        })
-                    elif isinstance(date_obj, dict):
-                        # LexNLP может вернуть словарь
-                        if 'date' in date_obj:
-                            dates.append({
-                                "date": date_obj['date'].strftime("%Y-%m-%d") if isinstance(date_obj['date'], datetime) else str(date_obj['date']),
-                                "original_text": date_obj.get('text', str(date_obj)),
-                                "confidence": 0.9,
-                                "source": "lexnlp"
-                            })
-            except Exception as e:
-                logger.debug(f"LexNLP date extraction error: {e}")
-        
-        # Дополнительно извлекаем русские даты через regex
+        # Извлекаем русские даты через regex
         for pattern in self.russian_date_patterns:
             matches = re.finditer(pattern, text, re.IGNORECASE)
             for match in matches:
@@ -149,7 +110,7 @@ class LexNLPExtractor:
     
     def extract_amounts(self, text: str) -> List[Dict[str, Any]]:
         """
-        Извлекает денежные суммы из текста
+        Извлекает денежные суммы из текста (только regex для русского языка)
         
         Args:
             text: Текст для анализа
@@ -161,8 +122,8 @@ class LexNLPExtractor:
                     "amount": 1500000,
                     "currency": "RUB",
                     "original_text": "1 500 000 рублей",
-                    "confidence": 0.9,
-                    "source": "lexnlp" or "regex"
+                    "confidence": 0.85,
+                    "source": "regex"
                 }
             ]
         """
@@ -171,31 +132,7 @@ class LexNLPExtractor:
         if not text:
             return amounts
         
-        # Используем LexNLP если доступен
-        if self.available:
-            try:
-                lexnlp_amounts = list(get_amounts(text))
-                for amount_obj in lexnlp_amounts:
-                    if isinstance(amount_obj, (int, float)):
-                        amounts.append({
-                            "amount": float(amount_obj),
-                            "currency": "USD",  # LexNLP defaults to USD
-                            "original_text": str(amount_obj),
-                            "confidence": 0.9,
-                            "source": "lexnlp"
-                        })
-                    elif isinstance(amount_obj, dict):
-                        amounts.append({
-                            "amount": float(amount_obj.get('amount', 0)),
-                            "currency": amount_obj.get('currency', 'USD'),
-                            "original_text": amount_obj.get('text', str(amount_obj)),
-                            "confidence": 0.9,
-                            "source": "lexnlp"
-                        })
-            except Exception as e:
-                logger.debug(f"LexNLP amount extraction error: {e}")
-        
-        # Дополнительно извлекаем русские суммы через regex
+        # Извлекаем русские суммы через regex
         for pattern in self.russian_amount_patterns:
             matches = re.finditer(pattern, text, re.IGNORECASE)
             for match in matches:
@@ -236,7 +173,7 @@ class LexNLPExtractor:
     
     def extract_money(self, text: str) -> List[Dict[str, Any]]:
         """
-        Извлекает валютные суммы из текста (более детально чем extract_amounts)
+        Извлекает валютные суммы из текста (алиас для extract_amounts)
         
         Args:
             text: Текст для анализа
@@ -244,12 +181,11 @@ class LexNLPExtractor:
         Returns:
             List of dictionaries with money information (similar to extract_amounts)
         """
-        # Используем extract_amounts как базу, но можем добавить специфичную логику
         return self.extract_amounts(text)
     
     def extract_entities(self, text: str, entity_types: Optional[List[str]] = None) -> List[Dict[str, Any]]:
         """
-        Извлекает именованные сущности из текста
+        Извлекает именованные сущности из текста (regex для русского языка)
         
         Args:
             text: Текст для анализа
@@ -261,7 +197,7 @@ class LexNLPExtractor:
                 {
                     "text": "ООО Ромашка",
                     "type": "ORG",
-                    "confidence": 0.8,
+                    "confidence": 0.75,
                     "source": "regex"
                 }
             ]
@@ -271,7 +207,7 @@ class LexNLPExtractor:
         if not text:
             return entities
         
-        # Простые паттерны для русского языка (можно расширить)
+        # Простые паттерны для русского языка
         # Организации (ООО, ЗАО, АО и т.д.)
         org_patterns = [
             r'(?:ООО|ЗАО|АО|ПАО|ИП|ОАО)\s+[""]?([А-ЯЁ][А-Яа-яё\s-]+)[""]?',

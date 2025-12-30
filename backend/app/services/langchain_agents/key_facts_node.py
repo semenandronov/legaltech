@@ -9,7 +9,7 @@ from app.services.langchain_agents.prompts import get_agent_prompt
 from app.services.rag_service import RAGService
 from app.services.document_processor import DocumentProcessor
 from app.services.langchain_parsers import ParserService
-from app.services.lexnlp_extractor import LexNLPExtractor
+from app.services.regex_extractor import RegexExtractor
 from app.services.citation_verifier import CitationVerifier
 from sqlalchemy.orm import Session
 from app.models.analysis import AnalysisResult
@@ -21,29 +21,29 @@ import json
 logger = logging.getLogger(__name__)
 
 
-def _merge_lexnlp_and_llm_facts(
+def _merge_regex_and_llm_facts(
     llm_facts: List,
-    lexnlp_facts: List[Dict[str, Any]]
+    regex_facts: List[Dict[str, Any]]
 ) -> List:
     """
-    Объединяет результаты LexNLP и LLM для key facts
+    Объединяет результаты regex и LLM для key facts
     
     Args:
         llm_facts: Факты, извлеченные LLM
-        lexnlp_facts: Факты, извлеченные LexNLP (даты и суммы)
+        regex_facts: Факты, извлеченные regex (даты и суммы)
         
     Returns:
         Объединенный список фактов с улучшенным confidence scoring
     """
-    # Создаем словарь фактов из LexNLP для быстрого поиска
-    lexnlp_facts_map = {}
-    for fact in lexnlp_facts:
+    # Создаем словарь фактов из regex для быстрого поиска
+    regex_facts_map = {}
+    for fact in regex_facts:
         key = (fact.get("fact_type"), str(fact.get("value", "")))
-        if key not in lexnlp_facts_map:
-            lexnlp_facts_map[key] = []
-        lexnlp_facts_map[key].append(fact)
+        if key not in regex_facts_map:
+            regex_facts_map[key] = []
+        regex_facts_map[key].append(fact)
     
-    # Обогащаем факты LLM информацией из LexNLP
+    # Обогащаем факты LLM информацией из regex
     enriched_facts = []
     for fact in llm_facts:
         # Получаем тип и значение факта
@@ -57,23 +57,23 @@ def _merge_lexnlp_and_llm_facts(
             fact_type = fact.get('fact_type')
             fact_value = fact.get('value')
         
-        # Проверяем совпадение с LexNLP
+        # Проверяем совпадение с regex
         if fact_type and fact_value:
             key = (fact_type, str(fact_value))
-            if key in lexnlp_facts_map:
-                matching_facts = lexnlp_facts_map[key]
+            if key in regex_facts_map:
+                matching_facts = regex_facts_map[key]
                 # Находим совпадение по документу если возможно
                 source_match = False
                 if hasattr(fact, 'source_document'):
                     fact_source = fact.source_document
-                    for lexnlp_fact in matching_facts:
-                        if lexnlp_fact.get('source_document') == fact_source:
+                    for regex_fact in matching_facts:
+                        if regex_fact.get('source_document') == fact_source:
                             source_match = True
                             break
                 elif isinstance(fact, dict):
                     fact_source = fact.get('source_document')
-                    for lexnlp_fact in matching_facts:
-                        if lexnlp_fact.get('source_document') == fact_source:
+                    for regex_fact in matching_facts:
+                        if regex_fact.get('source_document') == fact_source:
                             source_match = True
                             break
                 
@@ -91,7 +91,7 @@ def _merge_lexnlp_and_llm_facts(
         
         enriched_facts.append(fact)
     
-    # Добавляем факты из LexNLP, которых нет в LLM (только для дат и сумм)
+    # Добавляем факты из regex, которых нет в LLM (только для дат и сумм)
     seen_keys = set()
     for fact in enriched_facts:
         fact_type = None
@@ -106,8 +106,8 @@ def _merge_lexnlp_and_llm_facts(
         if fact_type and fact_value:
             seen_keys.add((fact_type, str(fact_value)))
     
-    # Добавляем уникальные факты из LexNLP
-    for fact in lexnlp_facts:
+    # Добавляем уникальные факты из regex
+    for fact in regex_facts:
         key = (fact.get("fact_type"), str(fact.get("value", "")))
         if key not in seen_keys and fact.get("fact_type") in ["date", "amount"]:
             enriched_facts.append(fact)
@@ -259,9 +259,9 @@ def key_facts_agent_node(
                 callbacks=[callback]
             )
         
-        # Pre-processing: используем LexNLP для предварительного извлечения дат/сумм
-        lexnlp_extractor = LexNLPExtractor()
-        lexnlp_facts = []
+        # Pre-processing: используем regex для предварительного извлечения дат/сумм
+        regex_extractor = RegexExtractor()
+        regex_facts = []
         
         try:
             # Получаем документы для pre-processing
@@ -269,43 +269,43 @@ def key_facts_agent_node(
                 preprocess_docs = rag_service.retrieve_context(
                     case_id=case_id,
                     query="суммы даты стороны факты",
-                    k=50,  # Больше документов для LexNLP
+                    k=50,
                     db=db
                 )
                 
-                # Извлекаем даты и суммы из всех документов с помощью LexNLP
+                # Извлекаем даты и суммы из всех документов с помощью regex
                 for doc in preprocess_docs:
                     if hasattr(doc, 'page_content'):
-                        dates = lexnlp_extractor.extract_dates(doc.page_content)
-                        amounts = lexnlp_extractor.extract_amounts(doc.page_content)
+                        dates = regex_extractor.extract_dates(doc.page_content)
+                        amounts = regex_extractor.extract_amounts(doc.page_content)
                         
                         # Добавляем даты как факты
                         for date_info in dates:
-                            lexnlp_facts.append({
+                            regex_facts.append({
                                 "fact_type": "date",
                                 "value": date_info.get("date"),
                                 "description": date_info.get("original_text"),
                                 "source_document": doc.metadata.get("source_file", "unknown"),
                                 "source_page": doc.metadata.get("source_page"),
                                 "confidence": date_info.get("confidence", 0.8),
-                                "reasoning": f"Извлечено LexNLP: {date_info.get('original_text')}"
+                                "reasoning": f"Извлечено regex: {date_info.get('original_text')}"
                             })
                         
                         # Добавляем суммы как факты
                         for amount_info in amounts:
-                            lexnlp_facts.append({
+                            regex_facts.append({
                                 "fact_type": "amount",
                                 "value": f"{amount_info.get('amount')} {amount_info.get('currency', 'RUB')}",
                                 "description": amount_info.get("original_text"),
                                 "source_document": doc.metadata.get("source_file", "unknown"),
                                 "source_page": doc.metadata.get("source_page"),
                                 "confidence": amount_info.get("confidence", 0.8),
-                                "reasoning": f"Извлечено LexNLP: {amount_info.get('original_text')}"
+                                "reasoning": f"Извлечено regex: {amount_info.get('original_text')}"
                             })
                 
-                logger.info(f"LexNLP extracted {len(lexnlp_facts)} facts as pre-processing step")
+                logger.info(f"Regex extracted {len(regex_facts)} facts as pre-processing step")
         except Exception as e:
-            logger.warning(f"Error in LexNLP pre-processing: {e}, continuing without LexNLP facts")
+            logger.warning(f"Error in regex pre-processing: {e}, continuing without regex facts")
         
         # Извлекаем JSON из ответа
         from app.services.langchain_agents.llm_helper import extract_json_from_response

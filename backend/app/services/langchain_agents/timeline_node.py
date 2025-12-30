@@ -10,7 +10,7 @@ from app.services.langchain_agents.prompts import get_agent_prompt
 from app.services.rag_service import RAGService
 from app.services.document_processor import DocumentProcessor
 from app.services.langchain_parsers import ParserService
-from app.services.lexnlp_extractor import LexNLPExtractor
+from app.services.regex_extractor import RegexExtractor
 from app.services.citation_verifier import CitationVerifier
 from sqlalchemy.orm import Session
 from app.models.analysis import TimelineEvent
@@ -22,30 +22,30 @@ import json
 logger = logging.getLogger(__name__)
 
 
-def _merge_lexnlp_and_llm_results(
+def _merge_regex_and_llm_results(
     llm_events: List,
-    lexnlp_dates: List[Dict[str, Any]]
+    regex_dates: List[Dict[str, Any]]
 ) -> List:
     """
-    Объединяет результаты LexNLP и LLM
+    Объединяет результаты regex и LLM
     
     Args:
         llm_events: События, извлеченные LLM
-        lexnlp_dates: Даты, извлеченные LexNLP
+        regex_dates: Даты, извлеченные regex
         
     Returns:
         Объединенный список событий с улучшенным confidence scoring
     """
-    # Создаем словарь дат из LexNLP для быстрого поиска
-    lexnlp_date_map = {}
-    for date_info in lexnlp_dates:
+    # Создаем словарь дат из regex для быстрого поиска
+    regex_date_map = {}
+    for date_info in regex_dates:
         date_key = date_info.get("date")
         if date_key:
-            if date_key not in lexnlp_date_map:
-                lexnlp_date_map[date_key] = []
-            lexnlp_date_map[date_key].append(date_info)
+            if date_key not in regex_date_map:
+                regex_date_map[date_key] = []
+            regex_date_map[date_key].append(date_info)
     
-    # Обогащаем события LLM информацией из LexNLP
+    # Обогащаем события LLM информацией из regex
     enriched_events = []
     for event in llm_events:
         # Получаем дату события (может быть в разных форматах)
@@ -69,15 +69,15 @@ def _merge_lexnlp_and_llm_results(
             except:
                 pass
         
-        # Если дата совпадает с LexNLP - повышаем confidence
-        if normalized_date and normalized_date in lexnlp_date_map:
-            matching_dates = lexnlp_date_map[normalized_date]
+        # Если дата совпадает с regex - повышаем confidence
+        if normalized_date and normalized_date in regex_date_map:
+            matching_dates = regex_date_map[normalized_date]
             # Находим совпадение по документу если возможно
             source_match = False
             if hasattr(event, 'source_document'):
                 event_source = event.source_document
-                for lexnlp_date in matching_dates:
-                    if lexnlp_date.get('source_document') == event_source:
+                for regex_date in matching_dates:
+                    if regex_date.get('source_document') == event_source:
                         source_match = True
                         break
             
@@ -217,10 +217,9 @@ def timeline_agent_node(
             logger.warning(f"Could not extract JSON from timeline response, trying to parse full text")
             parsed_events = ParserService.parse_timeline_events(response_text)
         
-        # Объединяем результаты LexNLP и LLM
-        # LexNLP дает точные даты, LLM дает контекст событий
-        if lexnlp_dates and parsed_events:
-            parsed_events = _merge_lexnlp_and_llm_results(parsed_events, lexnlp_dates)
+        # Объединяем результаты regex и LLM (опционально, если нужно предварительное извлечение дат)
+        # Regex дает точные даты, LLM дает контекст событий
+        # Примечание: основная работа выполняется LLM, regex может использоваться для предварительного извлечения
         
         # Validate dates
         if parsed_events:
