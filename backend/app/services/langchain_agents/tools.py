@@ -266,6 +266,7 @@ def get_all_tools() -> List:
     from app.services.langchain_agents.legal_research_tool import get_legal_research_tools
     from app.services.langchain_agents.file_system_tools import get_file_system_tools
     from app.services.langchain_agents.web_research_tool import web_research_tool
+    from app.services.langchain_agents.table_creator_tool import create_table_tool
     
     tools = [
         retrieve_documents_tool,
@@ -279,16 +280,27 @@ def get_all_tools() -> List:
     ]
     
     # Add legal research tools
-    legal_research_tools = get_legal_research_tools()
-    tools.extend(legal_research_tools)
+    try:
+        legal_research_tools = get_legal_research_tools()
+        tools.extend(legal_research_tools)
+        logger.debug("Legal research tools added to agent tools")
+    except Exception as e:
+        logger.warning(f"Legal research tools not available: {e}")
     
-    # Add file system tools (if initialized)
+    # Add file system tools (always available, auto-initializes if needed)
     try:
         file_system_tools = get_file_system_tools()
         tools.extend(file_system_tools)
         logger.debug("File system tools added to agent tools")
     except Exception as e:
-        logger.debug(f"File system tools not available: {e}")
+        logger.warning(f"File system tools not available: {e}")
+    
+    # Add table creator tool (will be initialized when needed with db session)
+    try:
+        tools.append(create_table_tool)
+        logger.debug("Table creator tool added to agent tools")
+    except Exception as e:
+        logger.warning(f"Table creator tool not available: {e}")
     
     return tools
 
@@ -297,24 +309,38 @@ def get_critical_agent_tools() -> List:
     """Get tools for critical agents (risk, discrepancy) - includes iterative search and legal research"""
     from app.services.langchain_agents.legal_research_tool import get_legal_research_tools
     from app.services.langchain_agents.file_system_tools import get_file_system_tools
+    from app.services.langchain_agents.web_research_tool import web_research_tool
+    from app.services.langchain_agents.table_creator_tool import create_table_tool
     
     tools = [
         retrieve_documents_tool,
         retrieve_documents_iterative_tool,  # Explicit iterative tool for critical agents
         save_discrepancy_tool,
         save_risk_analysis_tool,
+        web_research_tool,  # Web research for critical analysis
     ]
     
     # Add legal research tools for critical agents
-    legal_research_tools = get_legal_research_tools()
-    tools.extend(legal_research_tools)
+    try:
+        legal_research_tools = get_legal_research_tools()
+        tools.extend(legal_research_tools)
+        logger.debug("Legal research tools added to critical agent tools")
+    except Exception as e:
+        logger.warning(f"Legal research tools not available: {e}")
     
-    # Add file system tools (if initialized)
+    # Add file system tools (always available, auto-initializes if needed)
     try:
         file_system_tools = get_file_system_tools()
         tools.extend(file_system_tools)
         logger.debug("File system tools added to critical agent tools")
     except Exception as e:
-        logger.debug(f"File system tools not available: {e}")
+        logger.warning(f"File system tools not available: {e}")
+    
+    # Add table creator tool for critical agents
+    try:
+        tools.append(create_table_tool)
+        logger.debug("Table creator tool added to critical agent tools")
+    except Exception as e:
+        logger.warning(f"Table creator tool not available: {e}")
     
     return tools

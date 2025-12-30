@@ -18,8 +18,37 @@ def initialize_file_system_tools(file_system_context: Any) -> None:
     logger.info("File system tools initialized")
 
 
+def _ensure_file_system_context(case_id: str = None) -> bool:
+    """Ensure FileSystemContext is initialized, create if needed"""
+    global _file_system_context
+    
+    if _file_system_context:
+        return True
+    
+    # Try to create FileSystemContext automatically
+    try:
+        from app.services.langchain_agents.file_system_context import FileSystemContext
+        import os
+        
+        workspace_base_path = os.getenv("WORKSPACE_BASE_PATH", os.path.join(os.getcwd(), "workspaces"))
+        
+        # If case_id is provided, use it; otherwise use a default
+        if case_id:
+            _file_system_context = FileSystemContext(workspace_base_path, case_id)
+            logger.info(f"Auto-initialized FileSystemContext for case {case_id}")
+            return True
+        else:
+            # Try to get case_id from state if available
+            # This is a fallback - ideally context should be initialized before use
+            logger.warning("FileSystemContext not initialized and no case_id provided")
+            return False
+    except Exception as e:
+        logger.warning(f"Failed to auto-initialize FileSystemContext: {e}")
+        return False
+
+
 @tool
-def ls_tool(path: str = ".") -> str:
+def ls_tool(path: str = ".", case_id: str = None) -> str:
     """
     Список файлов в workspace.
     
@@ -28,6 +57,7 @@ def ls_tool(path: str = ".") -> str:
     Args:
         path: Путь относительно workspace (по умолчанию "." - корень)
               Можно указать поддиректорию: "results", "intermediate", "reports"
+        case_id: Идентификатор дела (опционально, для автоматической инициализации)
     
     Returns:
         JSON строка со списком файлов или сообщение об ошибке
@@ -35,10 +65,11 @@ def ls_tool(path: str = ".") -> str:
     global _file_system_context
     
     if not _file_system_context:
-        return json.dumps({
-            "error": "File system context not initialized",
-            "message": "Call initialize_file_system_tools() first"
-        })
+        if not _ensure_file_system_context(case_id):
+            return json.dumps({
+                "error": "File system context not initialized",
+                "message": "FileSystemContext not available. Please ensure workspace is initialized."
+            })
     
     try:
         # Если path содержит поддиректорию, используем её
@@ -72,7 +103,7 @@ def ls_tool(path: str = ".") -> str:
 
 
 @tool
-def read_file_tool(filename: str) -> str:
+def read_file_tool(filename: str, case_id: str = None) -> str:
     """
     Читает файл из workspace.
     
@@ -81,6 +112,7 @@ def read_file_tool(filename: str) -> str:
     Args:
         filename: Имя файла или путь относительно workspace
                   Примеры: "timeline.json", "results/key_facts.json", "plan.json"
+        case_id: Идентификатор дела (опционально, для автоматической инициализации)
     
     Returns:
         Содержимое файла (JSON строка для JSON файлов) или сообщение об ошибке
@@ -88,10 +120,11 @@ def read_file_tool(filename: str) -> str:
     global _file_system_context
     
     if not _file_system_context:
-        return json.dumps({
-            "error": "File system context not initialized",
-            "message": "Call initialize_file_system_tools() first"
-        })
+        if not _ensure_file_system_context(case_id):
+            return json.dumps({
+                "error": "File system context not initialized",
+                "message": "FileSystemContext not available. Please ensure workspace is initialized."
+            })
     
     try:
         # Определяем поддиректорию из пути
@@ -137,7 +170,7 @@ def read_file_tool(filename: str) -> str:
 
 
 @tool
-def write_file_tool(filename: str, content: str, subdirectory: str = "results") -> str:
+def write_file_tool(filename: str, content: str, subdirectory: str = "results", case_id: str = None) -> str:
     """
     Записывает результат в файл.
     
@@ -148,6 +181,7 @@ def write_file_tool(filename: str, content: str, subdirectory: str = "results") 
         filename: Имя файла (например, "timeline.json", "key_facts.json")
         content: Содержимое файла (строка или JSON строка)
         subdirectory: Поддиректория ("results", "intermediate", "reports")
+        case_id: Идентификатор дела (опционально, для автоматической инициализации)
                      По умолчанию "results" для результатов агентов
     
     Returns:
@@ -156,10 +190,11 @@ def write_file_tool(filename: str, content: str, subdirectory: str = "results") 
     global _file_system_context
     
     if not _file_system_context:
-        return json.dumps({
-            "error": "File system context not initialized",
-            "message": "Call initialize_file_system_tools() first"
-        })
+        if not _ensure_file_system_context(case_id):
+            return json.dumps({
+                "error": "File system context not initialized",
+                "message": "FileSystemContext not available. Please ensure workspace is initialized."
+            })
     
     try:
         # Если content выглядит как JSON, парсим его
@@ -194,7 +229,7 @@ def write_file_tool(filename: str, content: str, subdirectory: str = "results") 
 
 
 @tool
-def edit_file_tool(filename: str, old_text: str, new_text: str, subdirectory: str = "results") -> str:
+def edit_file_tool(filename: str, old_text: str, new_text: str, subdirectory: str = "results", case_id: str = None) -> str:
     """
     Редактирует существующий файл (замена текста).
     
@@ -205,6 +240,7 @@ def edit_file_tool(filename: str, old_text: str, new_text: str, subdirectory: st
         old_text: Текст для замены
         new_text: Новый текст
         subdirectory: Поддиректория
+        case_id: Идентификатор дела (опционально, для автоматической инициализации)
     
     Returns:
         JSON строка с результатом операции
@@ -212,10 +248,11 @@ def edit_file_tool(filename: str, old_text: str, new_text: str, subdirectory: st
     global _file_system_context
     
     if not _file_system_context:
-        return json.dumps({
-            "error": "File system context not initialized",
-            "message": "Call initialize_file_system_tools() first"
-        })
+        if not _ensure_file_system_context(case_id):
+            return json.dumps({
+                "error": "File system context not initialized",
+                "message": "FileSystemContext not available. Please ensure workspace is initialized."
+            })
     
     try:
         success = _file_system_context.edit_file(
@@ -246,7 +283,7 @@ def edit_file_tool(filename: str, old_text: str, new_text: str, subdirectory: st
 
 
 @tool
-def write_todos_tool(todos: str) -> str:
+def write_todos_tool(todos: str, case_id: str = None) -> str:
     """
     Записывает план задач (как DeepAgents write_todos).
     
@@ -257,6 +294,7 @@ def write_todos_tool(todos: str) -> str:
         todos: JSON строка с массивом задач или словарем с планом
                Формат: {"goals": [...], "steps": [...], "reasoning": "..."}
                или [{"step_id": "...", "description": "...", ...}, ...]
+        case_id: Идентификатор дела (опционально, для автоматической инициализации)
     
     Returns:
         JSON строка с результатом операции
@@ -264,8 +302,11 @@ def write_todos_tool(todos: str) -> str:
     global _file_system_context
     
     if not _file_system_context:
-        return json.dumps({
-            "error": "File system context not initialized",
+        if not _ensure_file_system_context(case_id):
+            return json.dumps({
+                "error": "File system context not initialized",
+                "message": "FileSystemContext not available. Please ensure workspace is initialized."
+            })
             "message": "Call initialize_file_system_tools() first"
         })
     

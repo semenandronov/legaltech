@@ -122,6 +122,16 @@ def timeline_agent_node(
     try:
         logger.info(f"Timeline agent: Starting extraction for case {case_id}")
         
+        # Initialize FileSystemContext if not already initialized
+        from app.services.langchain_agents.file_system_helper import get_file_system_context_from_state
+        file_system_context = get_file_system_context_from_state(state)
+        if file_system_context:
+            from app.services.langchain_agents.file_system_tools import initialize_file_system_tools
+            initialize_file_system_tools(file_system_context)
+        else:
+            # Try to auto-initialize with case_id (will be done when tools are called)
+            logger.debug(f"FileSystemContext not in state, will auto-initialize when needed for case {case_id}")
+        
         # Initialize tools if needed
         if rag_service and document_processor:
             initialize_tools(rag_service, document_processor)

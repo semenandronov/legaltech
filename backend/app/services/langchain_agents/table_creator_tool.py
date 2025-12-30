@@ -18,6 +18,24 @@ def initialize_table_creator(db: Session):
     logger.info("Table creator initialized")
 
 
+def _ensure_table_creator_initialized() -> bool:
+    """Ensure table creator is initialized, create session if needed"""
+    global _db_session
+    
+    if _db_session:
+        return True
+    
+    # Try to create database session automatically
+    try:
+        from app.utils.database import SessionLocal
+        _db_session = SessionLocal()
+        logger.info("Auto-initialized table creator with database session")
+        return True
+    except Exception as e:
+        logger.warning(f"Failed to auto-initialize table creator: {e}")
+        return False
+
+
 @tool
 def create_table_tool(
     analysis_type: str,
@@ -40,8 +58,11 @@ def create_table_tool(
     Returns:
         table_id или путь к таблице
     """
+    global _db_session
+    
     if not _db_session:
-        raise ValueError("Table creator not initialized. Call initialize_table_creator() first.")
+        if not _ensure_table_creator_initialized():
+            return f"Error: Table creator not initialized. Database session not available."
     
     try:
         service = TabularReviewService(_db_session)

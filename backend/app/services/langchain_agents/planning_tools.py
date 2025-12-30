@@ -208,12 +208,6 @@ def analyze_document_structure_tool(case_id: str) -> str:
     """
     global _rag_service, _document_processor
     
-    if not _rag_service or not _document_processor:
-        return json.dumps({
-            "error": "Document analysis tools not initialized",
-            "message": "RAG service or document processor not available"
-        })
-    
     try:
         from app.utils.database import SessionLocal
         db = SessionLocal()
@@ -242,21 +236,35 @@ def analyze_document_structure_tool(case_id: str) -> str:
             sample_docs = []
             for file in files[:5]:  # Первые 5 файлов
                 try:
-                    # Получаем релевантные chunks для понимания содержания
-                    chunks = _rag_service.retrieve_context(
-                        case_id=case_id,
-                        query=f"содержание документа {file.filename}",
-                        k=3,
-                        db=db
-                    )
-                    if chunks:
+                    # Если RAG service доступен, получаем релевантные chunks
+                    if _rag_service:
+                        chunks = _rag_service.retrieve_context(
+                            case_id=case_id,
+                            query=f"содержание документа {file.filename}",
+                            k=3,
+                            db=db
+                        )
+                        if chunks:
+                            sample_docs.append({
+                                "filename": file.filename,
+                                "type": file.file_type,
+                                "preview": chunks[0].get("content", "")[:200] if chunks else ""
+                            })
+                    else:
+                        # Fallback: только метаданные файла
                         sample_docs.append({
                             "filename": file.filename,
                             "type": file.file_type,
-                            "preview": chunks[0].get("content", "")[:200] if chunks else ""
+                            "preview": "RAG service not available for content preview"
                         })
                 except Exception as e:
                     logger.debug(f"Error analyzing file {file.filename}: {e}")
+                    # Добавляем файл без preview
+                    sample_docs.append({
+                        "filename": file.filename,
+                        "type": file.file_type,
+                        "preview": "Error retrieving content"
+                    })
             
             result = {
                 "case_id": case_id,
@@ -294,36 +302,48 @@ def classify_case_type_tool(case_id: str) -> str:
     """
     global _rag_service
     
-    if not _rag_service:
-        return json.dumps({
-            "error": "RAG service not initialized",
-            "message": "Cannot classify case type without RAG service"
-        })
-    
     try:
         from app.utils.database import SessionLocal
         db = SessionLocal()
         
         try:
-            # Получаем общий контекст дела
-            context_docs = _rag_service.retrieve_context(
-                case_id=case_id,
-                query="тип дела суть спора предмет договора",
-                k=10,
-                db=db
-            )
-            
-            if not context_docs:
-                return json.dumps({
-                    "case_id": case_id,
-                    "case_type": "unknown",
-                    "confidence": 0.0,
-                    "message": "Insufficient documents for classification"
-                })
-            
-            # Анализируем ключевые слова для классификации
-            content_text = " ".join([doc.get("content", "") for doc in context_docs[:5]])
-            content_lower = content_text.lower()
+            # Если RAG service доступен, используем его для классификации
+            if _rag_service:
+                # Получаем общий контекст дела
+                context_docs = _rag_service.retrieve_context(
+                    case_id=case_id,
+                    query="тип дела суть спора предмет договора",
+                    k=10,
+                    db=db
+                )
+                
+                if not context_docs:
+                    return json.dumps({
+                        "case_id": case_id,
+                        "case_type": "unknown",
+                        "confidence": 0.0,
+                        "message": "Insufficient documents for classification"
+                    })
+                
+                # Анализируем ключевые слова для классификации
+                content_text = " ".join([doc.get("content", "") for doc in context_docs[:5]])
+                content_lower = content_text.lower()
+            else:
+                # Fallback: классификация на основе имен файлов
+                from app.models.case import File as FileModel
+                files = db.query(FileModel).filter(FileModel.case_id == case_id).all()
+                
+                if not files:
+                    return json.dumps({
+                        "case_id": case_id,
+                        "case_type": "unknown",
+                        "confidence": 0.0,
+                        "message": "No documents found in case"
+                    })
+                
+                # Анализируем имена файлов для классификации
+                filenames_text = " ".join([f.filename or "" for f in files[:10]])
+                content_lower = filenames_text.lower()
             
             # Определяем тип дела по ключевым словам
             case_types = {
