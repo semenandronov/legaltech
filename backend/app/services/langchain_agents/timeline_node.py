@@ -1,5 +1,5 @@
 """Timeline agent node for LangGraph"""
-from typing import Dict, Any
+from typing import Dict, Any, List
 from datetime import datetime
 from app.services.llm_factory import create_llm
 from app.services.langchain_agents.agent_factory import create_legal_agent, safe_agent_invoke
@@ -10,13 +10,93 @@ from app.services.langchain_agents.prompts import get_agent_prompt
 from app.services.rag_service import RAGService
 from app.services.document_processor import DocumentProcessor
 from app.services.langchain_parsers import ParserService
+from app.services.lexnlp_extractor import LexNLPExtractor
+from app.services.citation_verifier import CitationVerifier
 from sqlalchemy.orm import Session
 from app.models.analysis import TimelineEvent
 from langchain_core.messages import HumanMessage
+from langchain_core.documents import Document
 import logging
 import json
 
 logger = logging.getLogger(__name__)
+
+
+def _merge_lexnlp_and_llm_results(
+    llm_events: List,
+    lexnlp_dates: List[Dict[str, Any]]
+) -> List:
+    """
+    Объединяет результаты LexNLP и LLM
+    
+    Args:
+        llm_events: События, извлеченные LLM
+        lexnlp_dates: Даты, извлеченные LexNLP
+        
+    Returns:
+        Объединенный список событий с улучшенным confidence scoring
+    """
+    # Создаем словарь дат из LexNLP для быстрого поиска
+    lexnlp_date_map = {}
+    for date_info in lexnlp_dates:
+        date_key = date_info.get("date")
+        if date_key:
+            if date_key not in lexnlp_date_map:
+                lexnlp_date_map[date_key] = []
+            lexnlp_date_map[date_key].append(date_info)
+    
+    # Обогащаем события LLM информацией из LexNLP
+    enriched_events = []
+    for event in llm_events:
+        # Получаем дату события (может быть в разных форматах)
+        event_date = None
+        if hasattr(event, 'date'):
+            event_date = event.date
+        elif isinstance(event, dict):
+            event_date = event.get('date')
+        
+        # Нормализуем дату для поиска
+        normalized_date = None
+        if event_date:
+            try:
+                if isinstance(event_date, str):
+                    # Пытаемся распарсить дату
+                    try:
+                        dt = datetime.strptime(event_date, "%Y-%m-%d")
+                        normalized_date = dt.strftime("%Y-%m-%d")
+                    except:
+                        normalized_date = event_date
+            except:
+                pass
+        
+        # Если дата совпадает с LexNLP - повышаем confidence
+        if normalized_date and normalized_date in lexnlp_date_map:
+            matching_dates = lexnlp_date_map[normalized_date]
+            # Находим совпадение по документу если возможно
+            source_match = False
+            if hasattr(event, 'source_document'):
+                event_source = event.source_document
+                for lexnlp_date in matching_dates:
+                    if lexnlp_date.get('source_document') == event_source:
+                        source_match = True
+                        break
+            
+            # Повышаем confidence если есть совпадение
+            if hasattr(event, 'confidence'):
+                # Если совпадение по документу - значительное повышение
+                if source_match:
+                    event.confidence = min(1.0, event.confidence + 0.15)
+                else:
+                    event.confidence = min(1.0, event.confidence + 0.1)
+            elif isinstance(event, dict):
+                if source_match:
+                    event['confidence'] = min(1.0, event.get('confidence', 0.8) + 0.15)
+                else:
+                    event['confidence'] = min(1.0, event.get('confidence', 0.8) + 0.1)
+        
+        enriched_events.append(event)
+    
+    return enriched_events
 
 
 def timeline_agent_node(
@@ -136,6 +216,11 @@ def timeline_agent_node(
             # Если не удалось извлечь JSON, пробуем парсить весь текст
             logger.warning(f"Could not extract JSON from timeline response, trying to parse full text")
             parsed_events = ParserService.parse_timeline_events(response_text)
+        
+        # Объединяем результаты LexNLP и LLM
+        # LexNLP дает точные даты, LLM дает контекст событий
+        if lexnlp_dates and parsed_events:
+            parsed_events = _merge_lexnlp_and_llm_results(parsed_events, lexnlp_dates)
         
         # Validate dates
         if parsed_events:
@@ -415,6 +500,13 @@ def timeline_agent_node(
             )
         except Exception as ctx_error:
             logger.warning(f"Failed to save timeline context: {ctx_error}")
+        
+        # Save to file system (DeepAgents pattern)
+        try:
+            from app.services.langchain_agents.file_system_helper import save_agent_result_to_file
+            save_agent_result_to_file(state, "timeline", result_data)
+        except Exception as fs_error:
+            logger.debug(f"Failed to save timeline result to file: {fs_error}")
         
         # Update state
         new_state = state.copy()

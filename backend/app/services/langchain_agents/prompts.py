@@ -9,33 +9,43 @@ logger = logging.getLogger(__name__)
 PROMPTS = {
     "document_classifier": {
         "v1": None,  # Will be set below
+        "extreme": None,  # Extreme version (will be set below)
     },
     "privilege_check": {
         "v1": None,  # Will be set below
+        "extreme": None,  # Extreme version (will be set below)
     },
     "entity_extraction": {
         "v1": None,  # Will be set below
+        "extreme": None,  # Extreme version (will be set below)
     },
     "timeline": {
         "v1": None,  # Will be set below
+        "extreme": None,  # Extreme version (will be set below)
     },
     "key_facts": {
         "v1": None,  # Will be set below
+        "extreme": None,  # Extreme version (will be set below)
     },
     "discrepancy": {
         "v1": None,  # Will be set below
+        "extreme": None,  # Extreme version (will be set below)
     },
     "risk": {
         "v1": None,  # Will be set below
+        "extreme": None,  # Extreme version (will be set below)
     },
     "summary": {
         "v1": None,  # Will be set below
+        "extreme": None,  # Extreme version (will be set below)
     },
     "supervisor": {
         "v1": None,  # Will be set below
+        "extreme": None,  # Extreme version (will be set below)
     },
     "planning": {
         "v1": None,  # Will be set below
+        "extreme": None,  # Extreme version (will be set below)
     },
 }
 
@@ -134,7 +144,8 @@ TIMELINE_AGENT_PROMPT = """Ты эксперт по извлечению вре�
 ВАЖНО:
 - Извлекай только фактические даты и события из документов
 - Указывай точные источники (файл, страница, строка)
-- ВСЕГДА указывай reasoning с цитатой из документа
+- ВСЕГДА указывай reasoning с ТОЧНОЙ ЦИТАТОЙ из документа почему это событие было извлечено - это критично!
+- Цитаты будут автоматически проверяться системой - убедись что они точные
 - ВСЕГДА указывай confidence (0-1) - уверенность в извлечении события
 - Проверяй логическую последовательность дат (события должны быть в хронологическом порядке)
 - Не создавай дубликаты - если событие уже извлечено, не добавляй его снова
@@ -182,7 +193,8 @@ KEY_FACTS_AGENT_PROMPT = """Ты эксперт по извлечению клю
 - Извлекай только факты, подтвержденные документами
 - Указывай источники для каждого факта
 - Категоризируй факты по типам
-- ВСЕГДА указывай reasoning - подробное объяснение почему факт ключевой
+- ВСЕГДА указывай reasoning с ТОЧНОЙ ЦИТАТОЙ из документа - подробное объяснение почему факт ключевой
+- Цитаты будут автоматически проверяться системой - убедись что они точные
 - ВСЕГДА указывай confidence (0-1) - уверенность в извлечении факта
 """
 
@@ -236,7 +248,8 @@ DISCREPANCY_AGENT_PROMPT = """Ты эксперт по анализу юриди
 - Сравнивай информацию между разными документами
 - Оценивай серьезность противоречий (HIGH для критических, LOW для незначительных)
 - Указывай все документы, связанные с противоречием
-- ВСЕГДА указывай reasoning с конкретными цитатами из документов
+- ВСЕГДА указывай reasoning с ТОЧНЫМИ ЦИТАТАМИ из документов - это критично!
+- Цитаты будут автоматически проверяться системой - убедись что они точные и действительно присутствуют в документах
 - ВСЕГДА указывай confidence (0-1) - уверенность в обнаружении противоречия
 - НЕ создавай дубликаты - если противоречие уже описано, не добавляй его снова
 
@@ -321,7 +334,8 @@ RISK_AGENT_PROMPT = """Ты эксперт по анализу юридичес�
 - Каждый риск должен ссылаться на конкретные документы
 - Указывай вероятность и влияние для каждого риска
 - Давай практические рекомендации по митигации
-- ВСЕГДА указывай reasoning с ссылками на документы
+- ВСЕГДА указывай reasoning с ТОЧНЫМИ ССЫЛКАМИ и ЦИТАТАМИ из документов - это критично!
+- Цитаты будут автоматически проверяться системой - убедись что они точные и действительно присутствуют в документах
 - ВСЕГДА указывай confidence (0-1) - уверенность в оценке риска
 
 ИНСТРУМЕНТЫ ДЛЯ ПОИСКА ДОКУМЕНТОВ:
@@ -662,14 +676,47 @@ PROMPTS["summary"]["v1"] = SUMMARY_AGENT_PROMPT
 PROMPTS["supervisor"]["v1"] = SUPERVISOR_PROMPT
 PROMPTS["planning"]["v1"] = PLANNING_AGENT_PROMPT
 
+# Initialize extreme prompts (import from extreme_prompts.py)
+try:
+    from app.services.langchain_agents.extreme_prompts import (
+        SUPERVISOR_EXTREME_PROMPT,
+        TIMELINE_EXTREME_PROMPT,
+        KEY_FACTS_EXTREME_PROMPT,
+        DISCREPANCY_EXTREME_PROMPT,
+        RISK_EXTREME_PROMPT,
+        SUMMARY_EXTREME_PROMPT,
+        DOCUMENT_CLASSIFIER_EXTREME_PROMPT,
+        ENTITY_EXTRACTION_EXTREME_PROMPT,
+        PRIVILEGE_CHECK_EXTREME_PROMPT,
+        PLANNING_EXTREME_PROMPT
+    )
+    
+    PROMPTS["supervisor"]["extreme"] = SUPERVISOR_EXTREME_PROMPT
+    PROMPTS["timeline"]["extreme"] = TIMELINE_EXTREME_PROMPT
+    PROMPTS["key_facts"]["extreme"] = KEY_FACTS_EXTREME_PROMPT
+    PROMPTS["discrepancy"]["extreme"] = DISCREPANCY_EXTREME_PROMPT
+    PROMPTS["risk"]["extreme"] = RISK_EXTREME_PROMPT
+    PROMPTS["summary"]["extreme"] = SUMMARY_EXTREME_PROMPT
+    PROMPTS["document_classifier"]["extreme"] = DOCUMENT_CLASSIFIER_EXTREME_PROMPT
+    PROMPTS["entity_extraction"]["extreme"] = ENTITY_EXTRACTION_EXTREME_PROMPT
+    PROMPTS["privilege_check"]["extreme"] = PRIVILEGE_CHECK_EXTREME_PROMPT
+    PROMPTS["planning"]["extreme"] = PLANNING_EXTREME_PROMPT
+    
+    logger.info("✅ Extreme prompts loaded")
+except ImportError as e:
+    logger.warning(f"Failed to load extreme prompts: {e}, using v1 prompts only")
 
-def get_agent_prompt(agent_name: str, version: str = "latest") -> str:
+
+def get_agent_prompt(agent_name: str, version: str = "extreme") -> str:
     """
     Get prompt for a specific agent
     
     Args:
         agent_name: Name of the agent
-        version: Version of the prompt ("latest" for most recent, or "v1", "v2", etc.)
+        version: Version of the prompt 
+                 - "extreme" (default): Extreme detailed prompt (1000+ tokens)
+                 - "v1": Original prompt
+                 - "latest": Same as "extreme"
     
     Returns:
         Prompt string for the agent
@@ -680,18 +727,14 @@ def get_agent_prompt(agent_name: str, version: str = "latest") -> str:
     
     agent_prompts = PROMPTS[agent_name]
     
+    # Default to extreme if not specified or "latest"
     if version == "latest":
-        # Get the latest version (highest version number)
-        versions = sorted([v for v in agent_prompts.keys() if v.startswith("v")], reverse=True)
-        if versions:
-            version = versions[0]
-        else:
-            logger.warning(f"No versions found for agent {agent_name}, using v1")
-            version = "v1"
+        version = "extreme"
     
+    # Try to get requested version, fallback to v1
     prompt = agent_prompts.get(version)
     if prompt is None:
-        logger.warning(f"Version {version} not found for agent {agent_name}, using v1")
+        logger.debug(f"Version {version} not found for agent {agent_name}, using v1")
         prompt = agent_prompts.get("v1", "")
     
     # Log which version is being used

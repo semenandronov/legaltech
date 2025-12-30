@@ -4,6 +4,8 @@ from app.services.llm_factory import create_llm
 from app.services.langchain_agents.agent_factory import create_legal_agent
 from app.services.rag_service import RAGService
 from app.services.document_processor import DocumentProcessor
+from app.services.langchain_agents.file_system_context import FileSystemContext
+import json
 import logging
 
 logger = logging.getLogger(__name__)
@@ -18,7 +20,8 @@ class SubAgent:
         agent_type: str,
         task: str,
         context: Dict[str, Any],
-        agent_instance: Any
+        agent_instance: Any,
+        file_system_context: Optional[FileSystemContext] = None
     ):
         """Initialize subagent
         
@@ -28,12 +31,14 @@ class SubAgent:
             task: Task description
             context: Context dictionary
             agent_instance: LangChain agent instance
+            file_system_context: Optional FileSystemContext for saving results
         """
         self.subtask_id = subtask_id
         self.agent_type = agent_type
         self.task = task
         self.context = context
         self.agent_instance = agent_instance
+        self.file_system_context = file_system_context
         self.status = "created"  # created, running, completed, failed
         self.result = None
         self.error = None
@@ -67,6 +72,25 @@ class SubAgent:
                 })
                 
                 self.result = result
+                
+                # Сохраняем результат в файл если есть file_system_context
+                if self.file_system_context:
+                    try:
+                        result_filename = f"{self.agent_type}.json"
+                        if isinstance(result, dict):
+                            result_content = result
+                        else:
+                            result_content = {"result": str(result)}
+                        
+                        self.file_system_context.write_result(
+                            result_filename,
+                            result_content,
+                            subdirectory="results"
+                        )
+                        logger.debug(f"SubAgent {self.subtask_id} result saved to {result_filename}")
+                    except Exception as e:
+                        logger.warning(f"Failed to save SubAgent result to file: {e}")
+                
                 self.status = "completed"
                 logger.info(f"SubAgent {self.subtask_id} completed successfully")
                 
@@ -97,21 +121,26 @@ class SubAgentManager:
     def __init__(
         self,
         rag_service: Optional[RAGService] = None,
-        document_processor: Optional[DocumentProcessor] = None
+        document_processor: Optional[DocumentProcessor] = None,
+        file_system_context: Optional[FileSystemContext] = None
     ):
         """Initialize subagent manager
         
         Args:
             rag_service: Optional RAG service
             document_processor: Optional document processor
+            file_system_context: Optional FileSystemContext for saving results
         """
         self.rag_service = rag_service
         self.document_processor = document_processor
+        self.file_system_context = file_system_context
         self.subagents: Dict[str, SubAgent] = {}
         
         try:
             self.llm = create_llm(temperature=0.1)
             logger.info("✅ SubAgent Manager initialized")
+            if file_system_context:
+                logger.info("✅ FileSystemContext integrated in SubAgentManager")
         except Exception as e:
             logger.error(f"Failed to initialize LLM: {e}")
             raise
@@ -166,7 +195,8 @@ class SubAgentManager:
                     "dependencies": dependencies,
                     "previous_results": self._get_dependency_results(dependencies)
                 },
-                agent_instance=agent_instance
+                agent_instance=agent_instance,
+                file_system_context=self.file_system_context
             )
             
             # Сохраняем в словарь
@@ -202,14 +232,31 @@ class SubAgentManager:
             return "key_facts"  # Default
     
     def _get_dependency_results(self, dependencies: List[str]) -> Dict[str, Any]:
-        """Получает результаты зависимых подзадач"""
+        """Получает результаты зависимых подзадач (из файлов если есть file_system_context)"""
         results = {}
         
         for dep_id in dependencies:
+            # Сначала пытаемся получить из памяти
             if dep_id in self.subagents:
                 subagent = self.subagents[dep_id]
                 if subagent.status == "completed" and subagent.result:
                     results[dep_id] = subagent.result
+                    continue
+            
+            # Если есть file_system_context, пытаемся прочитать из файла
+            if self.file_system_context:
+                # Пытаемся определить agent_type из dep_id или найти файл
+                # Ищем файлы результатов
+                result_files = self.file_system_context.list_files("*.json", subdirectory="results")
+                for filename in result_files:
+                    try:
+                        result_dict = self.file_system_context.read_result_as_dict(filename, subdirectory="results")
+                        if result_dict:
+                            # Сохраняем результат если он соответствует зависимости
+                            results[dep_id] = result_dict
+                            break
+                    except Exception as e:
+                        logger.debug(f"Failed to read dependency result from {filename}: {e}")
         
         return results
     
@@ -219,7 +266,7 @@ class SubAgentManager:
         main_task: str
     ) -> Dict[str, Any]:
         """
-        Объединяет результаты под-агентов
+        Объединяет результаты под-агентов (читает из файлов если есть file_system_context)
         
         Args:
             subagent_results: List of result dictionaries from subagents
@@ -230,6 +277,38 @@ class SubAgentManager:
         """
         try:
             logger.info(f"Reconciling {len(subagent_results)} subagent results")
+            
+            # Если есть file_system_context, дополняем результаты из файлов
+            if self.file_system_context:
+                file_results = {}
+                result_files = self.file_system_context.list_files("*.json", subdirectory="results")
+                for filename in result_files:
+                    try:
+                        result_dict = self.file_system_context.read_result_as_dict(filename, subdirectory="results")
+                        if result_dict:
+                            # Определяем agent_type из имени файла
+                            agent_type = filename.replace(".json", "")
+                            file_results[agent_type] = result_dict
+                    except Exception as e:
+                        logger.debug(f"Failed to read result from {filename}: {e}")
+                
+                # Объединяем результаты из памяти и файлов
+                for agent_type, file_result in file_results.items():
+                    # Проверяем, нет ли уже такого результата в subagent_results
+                    found = False
+                    for result in subagent_results:
+                        if result.get("agent_type") == agent_type:
+                            found = True
+                            break
+                    
+                    if not found:
+                        # Добавляем результат из файла
+                        subagent_results.append({
+                            "subtask_id": f"file_{agent_type}",
+                            "agent_type": agent_type,
+                            "data": file_result,
+                            "status": "completed"
+                        })
             
             # Объединяем результаты
             reconciled = {

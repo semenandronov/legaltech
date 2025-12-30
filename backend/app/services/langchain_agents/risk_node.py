@@ -8,6 +8,7 @@ from app.services.langchain_agents.tools import get_all_tools, initialize_tools
 from app.services.langchain_agents.prompts import get_agent_prompt
 from app.services.rag_service import RAGService
 from app.services.document_processor import DocumentProcessor
+from app.services.citation_verifier import CitationVerifier
 from sqlalchemy.orm import Session
 from app.models.analysis import AnalysisResult
 from app.models.case import Case
@@ -218,6 +219,48 @@ def risk_agent_node(
                 logger.error(f"Error parsing risks: {e}")
                 parsed_risks = []
         
+        # Verify citations: проверяем что evidence и reasoning реально присутствуют в документах
+        if parsed_risks and rag_service:
+            try:
+                citation_verifier = CitationVerifier(similarity_threshold=0.7)
+                # Получаем source documents для верификации
+                verify_docs = rag_service.retrieve_context(
+                    case_id=case_id,
+                    query="",
+                    k=100,  # Получаем больше документов для верификации
+                    db=db
+                )
+                
+                # Верифицируем каждый риск (проверяем reasoning с ссылками на документы и evidence)
+                for risk in parsed_risks:
+                    verification_result = citation_verifier.verify_extracted_fact(
+                        fact=risk if isinstance(risk, dict) else {
+                            "reasoning": getattr(risk, 'reasoning', None),
+                            "description": getattr(risk, 'description', None),
+                            "value": getattr(risk, 'risk_name', None)
+                        },
+                        source_documents=verify_docs,
+                        tolerance=150  # Больше tolerance для рисков, так как они могут быть сложными
+                    )
+                    
+                    # Устанавливаем verification_status
+                    verification_status = "verified" if verification_result.get("verified", False) else "unverified"
+                    if hasattr(risk, 'verification_status'):
+                        risk.verification_status = verification_status
+                        # Снижаем confidence если не верифицировано
+                        if not verification_result.get("verified", False):
+                            current_confidence = getattr(risk, 'confidence', 0.8)
+                            risk.confidence = max(0.3, current_confidence - 0.2)
+                    elif isinstance(risk, dict):
+                        risk['verification_status'] = verification_status
+                        if not verification_result.get("verified", False):
+                            current_confidence = risk.get('confidence', 0.8)
+                            risk['confidence'] = max(0.3, current_confidence - 0.2)
+                
+                logger.info(f"Citation verification completed for {len(parsed_risks)} risks")
+            except Exception as e:
+                logger.warning(f"Error during citation verification: {e}, continuing without verification")
+        
         # Save to database
         result_id = None
         if db:
@@ -330,6 +373,13 @@ def risk_agent_node(
             "discrepancies": discrepancy_result,
             "result_id": result_id
         }
+        
+        # Save to file system (DeepAgents pattern)
+        try:
+            from app.services.langchain_agents.file_system_helper import save_agent_result_to_file
+            save_agent_result_to_file(state, "risk", result_data)
+        except Exception as fs_error:
+            logger.debug(f"Failed to save risk result to file: {fs_error}")
         
         # Update state
         new_state = state.copy()

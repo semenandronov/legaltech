@@ -181,6 +181,13 @@ def summary_agent_node(
             "result_id": result_id
         }
         
+        # Save to file system (DeepAgents pattern)
+        try:
+            from app.services.langchain_agents.file_system_helper import save_agent_result_to_file
+            save_agent_result_to_file(state, "summary", result_data)
+        except Exception as fs_error:
+            logger.debug(f"Failed to save summary result to file: {fs_error}")
+        
         # Update state
         new_state = state.copy()
         new_state["summary_result"] = result_data

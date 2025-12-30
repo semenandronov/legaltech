@@ -246,6 +246,13 @@ def document_classifier_agent_node(
             f"{result_data['high_relevance_count']} highly relevant"
         )
         
+        # Save to file system (DeepAgents pattern)
+        try:
+            from app.services.langchain_agents.file_system_helper import save_agent_result_to_file
+            save_agent_result_to_file(state, "classification", result_data)
+        except Exception as fs_error:
+            logger.debug(f"Failed to save classification result to file: {fs_error}")
+        
         # Update state
         new_state = state.copy()
         new_state["classification_result"] = result_data

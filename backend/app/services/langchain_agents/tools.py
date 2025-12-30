@@ -21,18 +21,20 @@ def initialize_tools(rag_service: RAGService, document_processor: DocumentProces
 
 
 @tool
-def retrieve_documents_tool(query: str, case_id: str, k: int = 20, use_iterative: bool = False) -> str:
+def retrieve_documents_tool(query: str, case_id: str, k: int = 20, use_iterative: bool = False, use_hybrid: bool = False) -> str:
     """
     Retrieve relevant documents from the case using semantic search.
     
     Use this tool to find documents related to a specific query.
-    For critical analysis (risk, discrepancy), use_iterative=True for better relevance.
+    For critical analysis (risk, discrepancy), use_iterative=True or use_hybrid=True for better relevance.
     
     Args:
         query: Search query describing what information you need
         case_id: Case identifier
         k: Number of document chunks to retrieve (default: 20)
         use_iterative: If True, uses iterative search with query refinement (default: False)
+        use_hybrid: If True, uses hybrid search (combines semantic + keyword search) (default: False)
+                    Recommended for critical agents (risk, discrepancy)
     
     Returns:
         Formatted string with retrieved documents and their sources
@@ -41,8 +43,18 @@ def retrieve_documents_tool(query: str, case_id: str, k: int = 20, use_iterative
         raise ValueError("RAG service not initialized. Call initialize_tools() first.")
     
     try:
+        # Use hybrid search if requested (best for critical agents)
+        if use_hybrid:
+            logger.info(f"Using hybrid search for query: {query[:50]}...")
+            documents = _rag_service.retrieve_context(
+                case_id=case_id,
+                query=query,
+                k=k,
+                retrieval_strategy="hybrid",
+                use_hybrid=True
+            )
         # Use iterative search if requested (better for critical agents)
-        if use_iterative:
+        elif use_iterative:
             logger.info(f"Using iterative search for query: {query[:50]}...")
             documents = _rag_service.retrieve_context(
                 case_id=case_id,
@@ -252,6 +264,8 @@ def retrieve_documents_iterative_tool(query: str, case_id: str, k: int = 20) -> 
 def get_all_tools() -> List:
     """Get all available tools for agents"""
     from app.services.langchain_agents.legal_research_tool import get_legal_research_tools
+    from app.services.langchain_agents.file_system_tools import get_file_system_tools
+    from app.services.langchain_agents.web_research_tool import web_research_tool
     
     tools = [
         retrieve_documents_tool,
@@ -261,11 +275,20 @@ def get_all_tools() -> List:
         save_discrepancy_tool,
         save_risk_analysis_tool,
         save_summary_tool,
+        web_research_tool,  # Add web research tool
     ]
     
     # Add legal research tools
     legal_research_tools = get_legal_research_tools()
     tools.extend(legal_research_tools)
+    
+    # Add file system tools (if initialized)
+    try:
+        file_system_tools = get_file_system_tools()
+        tools.extend(file_system_tools)
+        logger.debug("File system tools added to agent tools")
+    except Exception as e:
+        logger.debug(f"File system tools not available: {e}")
     
     return tools
 
@@ -273,6 +296,7 @@ def get_all_tools() -> List:
 def get_critical_agent_tools() -> List:
     """Get tools for critical agents (risk, discrepancy) - includes iterative search and legal research"""
     from app.services.langchain_agents.legal_research_tool import get_legal_research_tools
+    from app.services.langchain_agents.file_system_tools import get_file_system_tools
     
     tools = [
         retrieve_documents_tool,
@@ -284,5 +308,13 @@ def get_critical_agent_tools() -> List:
     # Add legal research tools for critical agents
     legal_research_tools = get_legal_research_tools()
     tools.extend(legal_research_tools)
+    
+    # Add file system tools (if initialized)
+    try:
+        file_system_tools = get_file_system_tools()
+        tools.extend(file_system_tools)
+        logger.debug("File system tools added to critical agent tools")
+    except Exception as e:
+        logger.debug(f"File system tools not available: {e}")
     
     return tools

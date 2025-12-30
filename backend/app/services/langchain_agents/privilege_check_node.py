@@ -166,6 +166,13 @@ def privilege_check_agent_node(
             f"{result_data['requires_review_count']} require human review"
         )
         
+        # Save to file system (DeepAgents pattern)
+        try:
+            from app.services.langchain_agents.file_system_helper import save_agent_result_to_file
+            save_agent_result_to_file(state, "privilege", result_data)
+        except Exception as fs_error:
+            logger.debug(f"Failed to save privilege result to file: {fs_error}")
+        
         # Update state
         new_state = state.copy()
         new_state["privilege_result"] = result_data

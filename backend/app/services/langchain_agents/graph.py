@@ -21,12 +21,16 @@ from app.services.langchain_agents.understand_node import understand_node
 from app.services.langchain_agents.plan_node import plan_node
 from app.services.langchain_agents.deliver_node import deliver_node
 from app.services.langchain_agents.deep_analysis_node import deep_analysis_node
+from app.services.langchain_agents.file_system_context import FileSystemContext
+from app.services.langchain_agents.file_system_tools import initialize_file_system_tools, get_file_system_tools
+from app.services.langchain_agents.graph_optimizer import optimize_route_function
 from sqlalchemy.orm import Session
 from app.services.rag_service import RAGService
 from app.services.document_processor import DocumentProcessor
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import threading
 import logging
+import os
 
 logger = logging.getLogger(__name__)
 
@@ -48,12 +52,21 @@ def create_analysis_graph(
     Returns:
         Compiled LangGraph graph
     """
-    # Initialize SubAgent Manager for the graph
+    # Initialize File System Context (workspace base path)
+    # Use UPLOAD_DIR as base or default to ./workspaces
+    workspace_base_path = os.getenv("WORKSPACE_BASE_PATH", os.path.join(os.getcwd(), "workspaces"))
+    os.makedirs(workspace_base_path, exist_ok=True)
+    
+    # FileSystemContext will be created per case in nodes
+    # We pass base_path to nodes so they can create context when needed
+    
+    # Initialize SubAgent Manager for the graph (file_system_context will be set per case)
     subagent_manager = None
     try:
         subagent_manager = SubAgentManager(
             rag_service=rag_service,
-            document_processor=document_processor
+            document_processor=document_processor,
+            file_system_context=None  # Will be set per case in init_workspace_node
         )
         logger.info("✅ SubAgent Manager initialized in graph")
     except Exception as e:
@@ -116,6 +129,38 @@ def create_analysis_graph(
         """Wrapper for adaptation node with services"""
         return adaptation_node(state, db, rag_service, document_processor)
     
+    def init_workspace_node_wrapper(state: AnalysisState) -> AnalysisState:
+        """
+        Initialize workspace for file system context
+        
+        Creates FileSystemContext for the case and sets workspace_path in state
+        """
+        case_id = state.get("case_id", "unknown")
+        new_state = dict(state)
+        
+        try:
+            # Create FileSystemContext for this case
+            file_system_context = FileSystemContext(workspace_base_path, case_id)
+            workspace_path = file_system_context.get_workspace_path()
+            
+            # Set workspace_path in state
+            new_state["workspace_path"] = workspace_path
+            new_state["workspace_files"] = []
+            
+            # Initialize file system tools with context
+            initialize_file_system_tools(file_system_context)
+            
+            # Update subagent_manager with file_system_context
+            if subagent_manager:
+                subagent_manager.file_system_context = file_system_context
+            
+            logger.info(f"[InitWorkspace] Workspace initialized: {workspace_path}")
+        except Exception as e:
+            logger.error(f"[InitWorkspace] Failed to initialize workspace: {e}", exc_info=True)
+            # Continue without file system context
+        
+        return new_state
+    
     def spawn_subagents_node(state: AnalysisState) -> AnalysisState:
         """
         Spawn subagents node - creates and executes subagents for subtasks
@@ -131,6 +176,18 @@ def create_analysis_graph(
         logger.info(f"[SpawnSubagents] Starting subagent execution for case {case_id}")
         
         new_state = dict(state)
+        
+        # Initialize FileSystemContext if not already done
+        if not subagent_manager.file_system_context:
+            workspace_path = state.get("workspace_path")
+            if workspace_path:
+                # FileSystemContext already created in init_workspace_node
+                try:
+                    file_system_context = FileSystemContext(workspace_base_path, case_id)
+                    subagent_manager.file_system_context = file_system_context
+                    initialize_file_system_tools(file_system_context)
+                except Exception as e:
+                    logger.warning(f"[SpawnSubagents] Failed to create FileSystemContext: {e}")
         
         # Get subtasks from state (set by AdvancedPlanningAgent)
         subtasks = state.get("subtasks", [])
@@ -412,6 +469,9 @@ def create_analysis_graph(
     # Create the graph
     graph = StateGraph(AnalysisState)
     
+    # Add init_workspace node (always first to initialize file system context)
+    graph.add_node("init_workspace", init_workspace_node_wrapper)
+    
     # Add LEGORA workflow nodes if enabled
     if use_legora_workflow:
         graph.add_node("understand", understand_wrapper)
@@ -438,9 +498,12 @@ def create_analysis_graph(
     graph.add_node("human_feedback_wait", human_feedback_wait_node)
     
     # Add edges from START
+    # Always start with init_workspace
+    graph.add_edge(START, "init_workspace")
+    
     if use_legora_workflow:
-        # LEGORA workflow: START → understand → plan → supervisor
-        graph.add_edge(START, "understand")
+        # LEGORA workflow: init_workspace → understand → plan → supervisor
+        graph.add_edge("init_workspace", "understand")
         
         # Conditional routing from understand to plan (skip plan for simple tasks)
         def route_after_understand(state: AnalysisState) -> str:
@@ -454,9 +517,16 @@ def create_analysis_graph(
                 logger.info("[Graph] Simple task detected, skipping plan phase")
                 return "supervisor"
         
+        # Optimize route_after_understand with caching
+        optimized_route_after_understand = optimize_route_function(
+            route_after_understand,
+            enable_cache=True,
+            enable_priorities=False  # This route doesn't need priorities
+        )
+        
         graph.add_conditional_edges(
             "understand",
-            route_after_understand,
+            optimized_route_after_understand,
             {
                 "plan": "plan",
                 "supervisor": "supervisor"
@@ -466,8 +536,8 @@ def create_analysis_graph(
         # Plan always goes to supervisor
         graph.add_edge("plan", "supervisor")
     else:
-        # Legacy workflow: START → supervisor
-        graph.add_edge(START, "supervisor")
+        # Legacy workflow: init_workspace → supervisor
+        graph.add_edge("init_workspace", "supervisor")
     
     # Add conditional edges from supervisor
     supervisor_routes = {
@@ -491,9 +561,16 @@ def create_analysis_graph(
     if use_legora_workflow:
         supervisor_routes["deep_analysis"] = "deep_analysis"
     
+    # Optimize route_to_agent function with caching and priorities
+    optimized_route_to_agent = optimize_route_function(
+        route_to_agent,
+        enable_cache=True,
+        enable_priorities=True
+    )
+    
     graph.add_conditional_edges(
         "supervisor",
-        route_to_agent,
+        optimized_route_to_agent,
         supervisor_routes
     )
     
@@ -591,34 +668,40 @@ def create_analysis_graph(
     
     # Compile graph with checkpointer
     # Try PostgresSaver first (for production persistence), fallback to MemorySaver
+    # Use optimized checkpointer with connection pooling
     checkpointer = None
     try:
-        from langgraph.checkpoint.postgres import PostgresSaver
-        from app.config import config
+        from app.utils.checkpointer_setup import get_checkpointer_instance
         
-        db_url = config.DATABASE_URL
-        # Remove psycopg driver prefix if present (PostgresSaver expects standard postgresql://)
-        if db_url.startswith("postgresql+psycopg://"):
-            db_url = db_url.replace("postgresql+psycopg://", "postgresql://", 1)
-        elif db_url.startswith("postgresql+psycopg2://"):
-            db_url = db_url.replace("postgresql+psycopg2://", "postgresql://", 1)
+        # Get or create checkpointer instance (with connection pooling)
+        checkpointer = get_checkpointer_instance()
         
-        # PostgresSaver.from_conn_string() creates a checkpointer
-        checkpointer = PostgresSaver.from_conn_string(db_url)
-        
-        # Setup tables if they don't exist (idempotent)
-        # setup() returns a context manager that must be used with 'with' statement
-        try:
-            if hasattr(checkpointer, 'setup') and callable(checkpointer.setup):
-                # Use setup() as context manager to create tables
-                with checkpointer.setup():
-                    pass  # Tables are created when entering the context
-                logger.debug("Checkpointer tables setup completed")
-        except Exception as setup_error:
-            # Setup might fail if tables already exist or if setup() works differently
-            logger.debug(f"Checkpointer setup note: {setup_error}")
-        
-        logger.info("✅ Using PostgreSQL checkpointer for state persistence")
+        if checkpointer is None:
+            # Fallback to direct initialization if get_checkpointer_instance failed
+            from langgraph.checkpoint.postgres import PostgresSaver
+            from app.config import config
+            
+            db_url = config.DATABASE_URL
+            # Remove psycopg driver prefix if present (PostgresSaver expects standard postgresql://)
+            if db_url.startswith("postgresql+psycopg://"):
+                db_url = db_url.replace("postgresql+psycopg://", "postgresql://", 1)
+            elif db_url.startswith("postgresql+psycopg2://"):
+                db_url = db_url.replace("postgresql+psycopg2://", "postgresql://", 1)
+            
+            checkpointer = PostgresSaver.from_conn_string(db_url)
+            
+            # Setup tables if they don't exist (idempotent)
+            try:
+                if hasattr(checkpointer, 'setup') and callable(checkpointer.setup):
+                    with checkpointer.setup():
+                        pass  # Tables are created when entering the context
+                    logger.debug("Checkpointer tables setup completed")
+            except Exception as setup_error:
+                logger.debug(f"Checkpointer setup note: {setup_error}")
+            
+            logger.info("✅ Using PostgreSQL checkpointer for state persistence")
+        else:
+            logger.info("✅ Using PostgreSQL checkpointer with connection pooling")
     except ImportError as e:
         logger.warning(f"PostgresSaver not available (langgraph-checkpoint-postgres not installed): {e}, using MemorySaver")
         checkpointer = MemorySaver()

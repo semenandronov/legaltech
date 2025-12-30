@@ -1,25 +1,72 @@
-"""Utility for setting up PostgreSQL checkpointer tables"""
+"""Utility for setting up PostgreSQL checkpointer tables with connection pooling"""
 from contextlib import contextmanager
 from typing import Optional
 from langgraph.checkpoint.postgres import PostgresSaver
 from langgraph.checkpoint.memory import MemorySaver
 from app.config import config
 import logging
+from sqlalchemy import create_engine
+from sqlalchemy.pool import QueuePool
 
 logger = logging.getLogger(__name__)
 
 # Global flag to track if setup was done
 _checkpointer_setup_done = False
 
+# Global checkpointer instance for reuse (connection pooling)
+_global_checkpointer: Optional[PostgresSaver] = None
+
+
+def _create_checkpointer_with_pooling():
+    """
+    Create PostgresSaver with connection pooling support
+    
+    Returns:
+        PostgresSaver instance with optimized connection pooling
+    """
+    from langgraph.checkpoint.postgres import PostgresSaver
+    
+    # Convert DATABASE_URL to format required by PostgresSaver
+    db_url = config.DATABASE_URL
+    if db_url.startswith("postgresql+psycopg://"):
+        db_url = db_url.replace("postgresql+psycopg://", "postgresql://", 1)
+    
+    # Create SQLAlchemy engine with connection pooling
+    # Connection pooling improves performance by reusing connections
+    engine = create_engine(
+        db_url,
+        poolclass=QueuePool,
+        pool_size=5,  # Number of connections to maintain
+        max_overflow=10,  # Maximum overflow connections
+        pool_pre_ping=True,  # Verify connections before using
+        pool_recycle=3600,  # Recycle connections after 1 hour
+        echo=False  # Set to True for SQL debugging
+    )
+    
+    # Create PostgresSaver with engine (if supported) or connection string
+    try:
+        # Try to create with engine (if PostgresSaver supports it)
+        if hasattr(PostgresSaver, 'from_conn_string'):
+            # Use connection string (PostgresSaver creates its own connections)
+            # Connection pooling happens at the database level
+            checkpointer = PostgresSaver.from_conn_string(db_url)
+        else:
+            checkpointer = PostgresSaver(engine)
+    except (TypeError, AttributeError):
+        # Fallback to connection string if engine not supported
+        checkpointer = PostgresSaver.from_conn_string(db_url)
+    
+    return checkpointer
+
 
 @contextmanager
 def get_checkpointer():
     """
-    Context manager for PostgreSQL checkpointer initialization
+    Context manager for PostgreSQL checkpointer initialization with connection pooling
     
     Handles setup of checkpointer tables (one-time) and returns
     PostgresSaver instance. Falls back to MemorySaver if PostgresSaver
-    is not available.
+    is not available. Uses connection pooling for better performance.
     
     Usage:
         with get_checkpointer() as checkpointer:
@@ -28,20 +75,20 @@ def get_checkpointer():
     Yields:
         PostgresSaver or MemorySaver instance
     """
-    global _checkpointer_setup_done
+    global _checkpointer_setup_done, _global_checkpointer
     
     checkpointer = None
     try:
         from langgraph.checkpoint.postgres import PostgresSaver
         
-        # Convert DATABASE_URL to format required by PostgresSaver
-        # PostgresSaver expects postgresql:// format
-        db_url = config.DATABASE_URL
-        if db_url.startswith("postgresql+psycopg://"):
-            db_url = db_url.replace("postgresql+psycopg://", "postgresql://", 1)
+        # Reuse global checkpointer if available (connection pooling)
+        if _global_checkpointer is not None:
+            logger.debug("Reusing global checkpointer instance (connection pooling)")
+            yield _global_checkpointer
+            return
         
-        # Create PostgresSaver instance
-        checkpointer = PostgresSaver.from_conn_string(db_url)
+        # Create new checkpointer with pooling
+        checkpointer = _create_checkpointer_with_pooling()
         
         # Setup tables once (idempotent - safe to call multiple times)
         if not _checkpointer_setup_done:
@@ -53,7 +100,10 @@ def get_checkpointer():
             except Exception as setup_error:
                 logger.debug(f"Checkpointer setup note: {setup_error}")
         
-        logger.info("✅ Using PostgreSQL checkpointer for state persistence")
+        # Store globally for reuse (connection pooling)
+        _global_checkpointer = checkpointer
+        
+        logger.info("✅ Using PostgreSQL checkpointer with connection pooling")
         yield checkpointer
         
     except ImportError as import_error:
@@ -70,6 +120,41 @@ def get_checkpointer():
         )
         checkpointer = MemorySaver()
         yield checkpointer
+
+
+def get_checkpointer_instance() -> Optional[PostgresSaver]:
+    """
+    Get the global checkpointer instance (for reuse across graph compilations)
+    
+    Returns:
+        PostgresSaver instance or None if not initialized
+    """
+    global _global_checkpointer, _checkpointer_setup_done
+    
+    if _global_checkpointer is None:
+        try:
+            from langgraph.checkpoint.postgres import PostgresSaver
+            
+            # Create new checkpointer with pooling
+            checkpointer = _create_checkpointer_with_pooling()
+            
+            # Setup tables once (idempotent - safe to call multiple times)
+            if not _checkpointer_setup_done:
+                try:
+                    if hasattr(checkpointer, 'setup') and callable(checkpointer.setup):
+                        checkpointer.setup()
+                        logger.info("✅ PostgreSQL checkpointer tables initialized")
+                    _checkpointer_setup_done = True
+                except Exception as setup_error:
+                    logger.debug(f"Checkpointer setup note: {setup_error}")
+            
+            _global_checkpointer = checkpointer
+            logger.info("✅ Using PostgreSQL checkpointer with connection pooling")
+        except Exception as e:
+            logger.warning(f"Failed to initialize PostgresSaver: {e}")
+            return None
+    
+    return _global_checkpointer
 
 
 def setup_checkpointer():

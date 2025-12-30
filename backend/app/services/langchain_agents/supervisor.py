@@ -6,6 +6,11 @@ from langchain_core.tools import Tool
 from app.config import config
 from app.services.langchain_agents.state import AnalysisState
 from app.services.langchain_agents.prompts import get_agent_prompt
+from app.services.langchain_agents.graph_optimizer import (
+    optimize_route_function,
+    AgentPriorities,
+    get_next_agent_with_priorities
+)
 import logging
 
 logger = logging.getLogger(__name__)

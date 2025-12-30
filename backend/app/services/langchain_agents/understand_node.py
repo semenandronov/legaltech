@@ -103,6 +103,15 @@ def understand_node(
         
         state["understanding_result"] = understanding_result
         
+        # Сохраняем в файл (DeepAgents pattern)
+        try:
+            from app.services.langchain_agents.file_system_helper import get_file_system_context_from_state
+            file_system_context = get_file_system_context_from_state(state)
+            if file_system_context:
+                file_system_context.write_result("understanding.json", understanding_result, subdirectory="")
+        except Exception as fs_error:
+            logger.debug(f"Failed to save understanding result to file: {fs_error}")
+        
         # Добавить в metadata для обратной совместимости
         if "metadata" not in state:
             state["metadata"] = {}

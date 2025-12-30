@@ -1,8 +1,12 @@
 """Workflow Service for managing analysis workflows"""
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, AsyncIterator
 from sqlalchemy.orm import Session
 from sqlalchemy import or_
 from app.models.workflow_template import WorkflowTemplate, DEFAULT_WORKFLOWS
+from app.services.workflow_nl_parser import WorkflowNLParser
+from app.services.workflow_executor import WorkflowExecutor, WorkflowExecutionEvent
+from app.services.rag_service import RAGService
+from app.services.document_processor import DocumentProcessor
 from datetime import datetime
 import logging
 
@@ -15,14 +19,24 @@ class WorkflowService:
     Similar to Harvey's Workflows feature.
     """
     
-    def __init__(self, db: Session):
+    def __init__(
+        self,
+        db: Session,
+        rag_service: RAGService = None,
+        document_processor: DocumentProcessor = None
+    ):
         """
         Initialize service
         
         Args:
             db: Database session
+            rag_service: Optional RAG service for workflow execution
+            document_processor: Optional document processor for workflow execution
         """
         self.db = db
+        self.rag_service = rag_service
+        self.document_processor = document_processor
+        self.nl_parser = WorkflowNLParser()
     
     def get_workflows(
         self,
@@ -340,4 +354,78 @@ class WorkflowService:
             {"name": "research", "display_name": "Исследование"},
             {"name": "custom", "display_name": "Кастомные"},
         ]
+    
+    def create_workflow_from_nl(
+        self,
+        user_id: str,
+        description: str,
+        display_name: str = None,
+        category: str = "custom"
+    ) -> Dict[str, Any]:
+        """
+        Создает workflow из natural language описания
+        
+        Args:
+            user_id: User ID
+            description: Natural language описание workflow
+            display_name: Display name (опционально)
+            category: Category для workflow
+            
+        Returns:
+            Created workflow dictionary
+        """
+        try:
+            # Parse NL description to WorkflowTemplate
+            workflow = self.nl_parser.parse_workflow_description(
+                description=description,
+                user_id=user_id,
+                display_name=display_name,
+                category=category
+            )
+            
+            # Save to database
+            self.db.add(workflow)
+            self.db.commit()
+            self.db.refresh(workflow)
+            
+            logger.info(f"Created workflow from NL: {workflow.id} - {workflow.display_name}")
+            return workflow.to_dict()
+            
+        except Exception as e:
+            logger.error(f"Error creating workflow from NL: {e}", exc_info=True)
+            self.db.rollback()
+            raise
+    
+    async def execute_workflow(
+        self,
+        workflow_id: str,
+        case_id: str,
+        user_input: str,
+        user_id: str
+    ) -> AsyncIterator[WorkflowExecutionEvent]:
+        """
+        Выполняет workflow и возвращает streaming events
+        
+        Args:
+            workflow_id: Workflow template ID
+            case_id: Case ID to analyze
+            user_input: User input/query
+            user_id: User ID
+            
+        Yields:
+            WorkflowExecutionEvent objects
+        """
+        executor = WorkflowExecutor(
+            db=self.db,
+            rag_service=self.rag_service,
+            document_processor=self.document_processor
+        )
+        
+        async for event in executor.execute_workflow(
+            workflow_id=workflow_id,
+            case_id=case_id,
+            user_input=user_input,
+            user_id=user_id
+        ):
+            yield event
 

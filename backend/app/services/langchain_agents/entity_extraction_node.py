@@ -1,5 +1,5 @@
 """Entity extraction agent node for LangGraph"""
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, List
 from app.services.llm_factory import create_llm
 from langchain_core.prompts import ChatPromptTemplate
 from app.config import config
@@ -7,6 +7,7 @@ from app.services.langchain_agents.state import AnalysisState
 from app.services.rag_service import RAGService
 from app.services.document_processor import DocumentProcessor
 from app.services.langchain_parsers import ParserService, EntitiesExtractionModel
+from app.services.lexnlp_extractor import LexNLPExtractor
 from sqlalchemy.orm import Session
 from app.models.case import File
 import logging
@@ -61,6 +62,9 @@ def entity_extraction_agent_node(
         from app.services.langchain_agents.prompts import get_agent_prompt
         system_prompt = get_agent_prompt("entity_extraction")
         
+        # Initialize LexNLP extractor for pre-processing
+        lexnlp_extractor = LexNLPExtractor()
+        
         # Extract entities from each file
         all_entities = []
         
@@ -75,11 +79,31 @@ def entity_extraction_agent_node(
                 # Limit text to avoid token limits
                 limited_text = document_text[:5000]
                 
-                # Create prompt for entity extraction
+                # Pre-processing: используем LexNLP для извлечения дат и сумм
+                lexnlp_results = lexnlp_extractor.extract_all(limited_text)
+                lexnlp_hints = []
+                
+                # Формируем hints для LLM на основе результатов LexNLP
+                if lexnlp_results.get("dates"):
+                    dates_str = ", ".join([f"{d.get('date')} ({d.get('original_text')})" for d in lexnlp_results["dates"][:10]])
+                    lexnlp_hints.append(f"Найденные даты (LexNLP): {dates_str}")
+                
+                if lexnlp_results.get("amounts"):
+                    amounts_str = ", ".join([f"{a.get('amount')} {a.get('currency', '')}" for a in lexnlp_results["amounts"][:10]])
+                    lexnlp_hints.append(f"Найденные суммы (LexNLP): {amounts_str}")
+                
+                if lexnlp_results.get("entities"):
+                    entities_str = ", ".join([f"{e.get('text')} ({e.get('type')})" for e in lexnlp_results["entities"][:10]])
+                    lexnlp_hints.append(f"Найденные сущности (LexNLP): {entities_str}")
+                
+                hints_text = "\n".join(lexnlp_hints) if lexnlp_hints else ""
+                
+                # Create prompt for entity extraction with LexNLP hints
                 user_prompt = f"""ДОКУМЕНТ:
 {limited_text}
+{hints_text if hints_text else ''}
 
-Извлеки из документа ВСЕ юридически значимые сущности."""
+Извлеки из документа ВСЕ юридически значимые сущности. Используй информацию из LexNLP как hints для более точного извлечения."""
                 
                 # Try to use structured output
                 try:
@@ -233,6 +257,13 @@ def entity_extraction_agent_node(
                     logger.info(f"Saved {saved_count} frequently occurring entities to Store")
             except Exception as e:
                 logger.warning(f"Failed to save entities to Store: {e}")
+        
+        # Save to file system (DeepAgents pattern)
+        try:
+            from app.services.langchain_agents.file_system_helper import save_agent_result_to_file
+            save_agent_result_to_file(state, "entities", result_data)
+        except Exception as fs_error:
+            logger.debug(f"Failed to save entities result to file: {fs_error}")
         
         # Update state
         new_state = state.copy()

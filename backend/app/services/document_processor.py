@@ -4,6 +4,7 @@ from langchain_core.documents import Document
 from app.config import config
 from app.services.yandex_embeddings import YandexEmbeddings
 from app.services.legal_splitter import LegalTextSplitter
+from app.services.bm25_retriever import BM25Retriever
 from sqlalchemy.orm import Session
 import logging
 
@@ -48,6 +49,9 @@ class DocumentProcessor:
         except Exception as e:
             logger.error(f"Failed to initialize PGVector store: {e}", exc_info=True)
             raise ValueError(f"Ошибка инициализации PGVector store: {str(e)}")
+        
+        # Initialize BM25 retriever for hybrid search
+        self.bm25_retriever = BM25Retriever()
     
     def split_documents(
         self,
@@ -205,6 +209,142 @@ class DocumentProcessor:
         except Exception as e:
             logger.error(f"Error retrieving chunks from PGVector for case {case_id}: {e}", exc_info=True)
             raise
+    
+    def hybrid_search(
+        self,
+        case_id: str,
+        query: str,
+        k: int = 10,
+        alpha: float = 0.7,
+        db: Optional[Session] = None
+    ) -> List[Document]:
+        """
+        Hybrid search: объединяет dense search (semantic) и sparse search (BM25)
+        
+        Args:
+            case_id: Case identifier
+            query: Search query
+            k: Number of documents to retrieve
+            alpha: Weight for dense search (0.0-1.0), sparse weight = 1.0 - alpha
+                  alpha=0.7 означает 70% weight для dense, 30% для sparse
+            db: Optional database session (not used, kept for API compatibility)
+            
+        Returns:
+            List of relevant Document objects with combined scores
+        """
+        try:
+            # 1. Dense search (semantic search via PGVector)
+            dense_docs = self.retrieve_relevant_chunks(
+                case_id=case_id,
+                query=query,
+                k=k * 2,  # Get more documents for better ranking
+                db=db
+            )
+            
+            # 2. Sparse search (BM25)
+            # Сначала нужно убедиться, что индекс построен
+            # Для этого получаем все документы дела (можно кешировать)
+            if not self.bm25_retriever.has_index(case_id):
+                logger.info(f"BM25 index not found for case {case_id}, building index...")
+                # Получаем все документы дела из vector store для построения индекса
+                # Используем простой запрос для получения всех документов
+                try:
+                    all_docs = self.retrieve_relevant_chunks(
+                        case_id=case_id,
+                        query="",  # Пустой запрос для получения всех документов (если поддерживается)
+                        k=1000,  # Большое количество для получения всех документов
+                        db=db
+                    )
+                    if all_docs:
+                        # Если пустой запрос не работает, используем документы из dense search
+                        if len(all_docs) < 10:
+                            all_docs = dense_docs
+                        
+                        # Строим индекс
+                        self.bm25_retriever.build_index(case_id, all_docs)
+                except Exception as e:
+                    logger.warning(f"Could not build BM25 index for case {case_id}: {e}")
+            
+            # Выполняем BM25 поиск
+            sparse_docs = self.bm25_retriever.retrieve(case_id, query, k=k * 2)
+            
+            # 3. Reciprocal Rank Fusion (RRF) для объединения результатов
+            # RRF score = sum(1 / (k + rank)) для каждого ранга документа
+            rrf_scores: Dict[str, float] = {}
+            rrf_docs: Dict[str, Document] = {}
+            
+            # Добавляем документы из dense search
+            for rank, doc in enumerate(dense_docs, start=1):
+                doc_id = self._get_doc_id(doc)
+                # RRF: alpha weight для dense search
+                rrf_score = alpha * (1.0 / (60 + rank))  # k=60 для RRF
+                if doc_id not in rrf_scores:
+                    rrf_scores[doc_id] = 0.0
+                    rrf_docs[doc_id] = doc
+                rrf_scores[doc_id] += rrf_score
+                
+                # Сохраняем similarity_score если есть
+                if hasattr(doc, 'metadata') and 'similarity_score' not in doc.metadata:
+                    doc.metadata['similarity_score'] = 1.0 - (rank / len(dense_docs))
+            
+            # Добавляем документы из sparse search
+            for rank, doc in enumerate(sparse_docs, start=1):
+                doc_id = self._get_doc_id(doc)
+                # RRF: (1-alpha) weight для sparse search
+                rrf_score = (1.0 - alpha) * (1.0 / (60 + rank))
+                if doc_id not in rrf_scores:
+                    rrf_scores[doc_id] = 0.0
+                    rrf_docs[doc_id] = doc
+                rrf_scores[doc_id] += rrf_score
+                
+                # Сохраняем bm25_score если есть
+                if hasattr(doc, 'metadata') and 'bm25_score' not in doc.metadata:
+                    doc.metadata['bm25_score'] = 0.0
+            
+            # Сортируем по RRF score (по убыванию)
+            sorted_docs = sorted(
+                rrf_docs.items(),
+                key=lambda x: rrf_scores[x[0]],
+                reverse=True
+            )
+            
+            # Возвращаем top-k документов
+            result_docs = [doc for doc_id, doc in sorted_docs[:k]]
+            
+            # Добавляем combined_score в metadata
+            for i, (doc_id, doc) in enumerate(sorted_docs[:k]):
+                if hasattr(doc, 'metadata'):
+                    doc.metadata['combined_score'] = float(rrf_scores[doc_id])
+                else:
+                    doc.metadata = {'combined_score': float(rrf_scores[doc_id])}
+            
+            logger.info(f"Hybrid search for case {case_id} returned {len(result_docs)} documents (alpha={alpha})")
+            return result_docs
+            
+        except Exception as e:
+            logger.error(f"Error in hybrid search for case {case_id}: {e}", exc_info=True)
+            # Fallback to dense search only
+            logger.warning("Falling back to dense search only")
+            return self.retrieve_relevant_chunks(case_id, query, k=k, db=db)
+    
+    def _get_doc_id(self, doc: Document) -> str:
+        """
+        Генерирует уникальный ID для документа для использования в RRF
+        
+        Args:
+            doc: Document object
+            
+        Returns:
+            String ID for the document
+        """
+        # Используем комбинацию source_file и chunk_index если доступно
+        if hasattr(doc, 'metadata'):
+            source = doc.metadata.get('source_file', 'unknown')
+            chunk_idx = doc.metadata.get('chunk_index', 0)
+            return f"{source}:{chunk_idx}"
+        else:
+            # Fallback: используем hash от содержимого
+            return str(hash(doc.page_content[:100]))
     
     def get_index_id(self, case_id: str, db: Optional[Session] = None) -> Optional[str]:
         """

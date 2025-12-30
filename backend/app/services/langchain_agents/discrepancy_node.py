@@ -9,6 +9,7 @@ from app.services.langchain_agents.prompts import get_agent_prompt
 from app.services.rag_service import RAGService
 from app.services.document_processor import DocumentProcessor
 from app.services.langchain_parsers import ParserService
+from app.services.citation_verifier import CitationVerifier
 from sqlalchemy.orm import Session
 from app.models.analysis import Discrepancy
 from langchain_core.messages import HumanMessage
@@ -205,6 +206,48 @@ def discrepancy_agent_node(
                 response = llm_service.generate(system_prompt, user_prompt, temperature=0)
                 parsed_discrepancies = ParserService.parse_discrepancies(response)
         
+        # Verify citations: проверяем что цитаты в противоречиях реально присутствуют в документах
+        if parsed_discrepancies and rag_service:
+            try:
+                citation_verifier = CitationVerifier(similarity_threshold=0.7)
+                # Получаем source documents для верификации
+                verify_docs = rag_service.retrieve_context(
+                    case_id=case_id,
+                    query="",
+                    k=100,  # Получаем больше документов для верификации
+                    db=db
+                )
+                
+                # Верифицируем каждое противоречие (проверяем reasoning с цитатами и description)
+                for discrepancy in parsed_discrepancies:
+                    verification_result = citation_verifier.verify_extracted_fact(
+                        fact=discrepancy if isinstance(discrepancy, dict) else {
+                            "reasoning": getattr(discrepancy, 'reasoning', None),
+                            "description": getattr(discrepancy, 'description', None),
+                            "value": getattr(discrepancy, 'type', None)
+                        },
+                        source_documents=verify_docs,
+                        tolerance=150  # Больше tolerance для противоречий, так как они могут быть сложными
+                    )
+                    
+                    # Устанавливаем verification_status
+                    verification_status = "verified" if verification_result.get("verified", False) else "unverified"
+                    if hasattr(discrepancy, 'verification_status'):
+                        discrepancy.verification_status = verification_status
+                        # Снижаем confidence если не верифицировано
+                        if not verification_result.get("verified", False):
+                            current_confidence = getattr(discrepancy, 'confidence', 0.8)
+                            discrepancy.confidence = max(0.3, current_confidence - 0.2)
+                    elif isinstance(discrepancy, dict):
+                        discrepancy['verification_status'] = verification_status
+                        if not verification_result.get("verified", False):
+                            current_confidence = discrepancy.get('confidence', 0.8)
+                            discrepancy['confidence'] = max(0.3, current_confidence - 0.2)
+                
+                logger.info(f"Citation verification completed for {len(parsed_discrepancies)} discrepancies")
+            except Exception as e:
+                logger.warning(f"Error during citation verification: {e}, continuing without verification")
+        
         # Deduplicate discrepancies
         if parsed_discrepancies:
             from app.services.deduplication import deduplicate_discrepancies
@@ -274,6 +317,13 @@ def discrepancy_agent_node(
         }
         
         logger.info(f"Discrepancy agent: Found {len(parsed_discrepancies)} discrepancies for case {case_id}")
+        
+        # Save to file system (DeepAgents pattern)
+        try:
+            from app.services.langchain_agents.file_system_helper import save_agent_result_to_file
+            save_agent_result_to_file(state, "discrepancy", result_data)
+        except Exception as fs_error:
+            logger.debug(f"Failed to save discrepancy result to file: {fs_error}")
         
         # Update state
         new_state = state.copy()

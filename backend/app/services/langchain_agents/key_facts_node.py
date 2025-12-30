@@ -1,5 +1,5 @@
 """Key facts agent node for LangGraph"""
-from typing import Dict, Any
+from typing import Dict, Any, List
 from app.services.llm_factory import create_llm
 from app.services.langchain_agents.agent_factory import create_legal_agent, safe_agent_invoke
 from app.config import config
@@ -9,13 +9,110 @@ from app.services.langchain_agents.prompts import get_agent_prompt
 from app.services.rag_service import RAGService
 from app.services.document_processor import DocumentProcessor
 from app.services.langchain_parsers import ParserService
+from app.services.lexnlp_extractor import LexNLPExtractor
+from app.services.citation_verifier import CitationVerifier
 from sqlalchemy.orm import Session
 from app.models.analysis import AnalysisResult
 from langchain_core.messages import HumanMessage
+from langchain_core.documents import Document
 import logging
 import json
 
 logger = logging.getLogger(__name__)
+
+
+def _merge_lexnlp_and_llm_facts(
+    llm_facts: List,
+    lexnlp_facts: List[Dict[str, Any]]
+) -> List:
+    """
+    Объединяет результаты LexNLP и LLM для key facts
+    
+    Args:
+        llm_facts: Факты, извлеченные LLM
+        lexnlp_facts: Факты, извлеченные LexNLP (даты и суммы)
+        
+    Returns:
+        Объединенный список фактов с улучшенным confidence scoring
+    """
+    # Создаем словарь фактов из LexNLP для быстрого поиска
+    lexnlp_facts_map = {}
+    for fact in lexnlp_facts:
+        key = (fact.get("fact_type"), str(fact.get("value", "")))
+        if key not in lexnlp_facts_map:
+            lexnlp_facts_map[key] = []
+        lexnlp_facts_map[key].append(fact)
+    
+    # Обогащаем факты LLM информацией из LexNLP
+    enriched_facts = []
+    for fact in llm_facts:
+        # Получаем тип и значение факта
+        fact_type = None
+        fact_value = None
+        
+        if hasattr(fact, 'fact_type'):
+            fact_type = fact.fact_type
+            fact_value = getattr(fact, 'value', None)
+        elif isinstance(fact, dict):
+            fact_type = fact.get('fact_type')
+            fact_value = fact.get('value')
+        
+        # Проверяем совпадение с LexNLP
+        if fact_type and fact_value:
+            key = (fact_type, str(fact_value))
+            if key in lexnlp_facts_map:
+                matching_facts = lexnlp_facts_map[key]
+                # Находим совпадение по документу если возможно
+                source_match = False
+                if hasattr(fact, 'source_document'):
+                    fact_source = fact.source_document
+                    for lexnlp_fact in matching_facts:
+                        if lexnlp_fact.get('source_document') == fact_source:
+                            source_match = True
+                            break
+                elif isinstance(fact, dict):
+                    fact_source = fact.get('source_document')
+                    for lexnlp_fact in matching_facts:
+                        if lexnlp_fact.get('source_document') == fact_source:
+                            source_match = True
+                            break
+                
+                # Повышаем confidence если есть совпадение
+                if hasattr(fact, 'confidence'):
+                    if source_match:
+                        fact.confidence = min(1.0, fact.confidence + 0.15)
+                    else:
+                        fact.confidence = min(1.0, fact.confidence + 0.1)
+                elif isinstance(fact, dict):
+                    if source_match:
+                        fact['confidence'] = min(1.0, fact.get('confidence', 0.8) + 0.15)
+                    else:
+                        fact['confidence'] = min(1.0, fact.get('confidence', 0.8) + 0.1)
+        
+        enriched_facts.append(fact)
+    
+    # Добавляем факты из LexNLP, которых нет в LLM (только для дат и сумм)
+    seen_keys = set()
+    for fact in enriched_facts:
+        fact_type = None
+        fact_value = None
+        if hasattr(fact, 'fact_type'):
+            fact_type = fact.fact_type
+            fact_value = getattr(fact, 'value', None)
+        elif isinstance(fact, dict):
+            fact_type = fact.get('fact_type')
+            fact_value = fact.get('value')
+        
+        if fact_type and fact_value:
+            seen_keys.add((fact_type, str(fact_value)))
+    
+    # Добавляем уникальные факты из LexNLP
+    for fact in lexnlp_facts:
+        key = (fact.get("fact_type"), str(fact.get("value", "")))
+        if key not in seen_keys and fact.get("fact_type") in ["date", "amount"]:
+            enriched_facts.append(fact)
+    
+    return enriched_facts
 
 
 def key_facts_agent_node(
@@ -162,6 +259,54 @@ def key_facts_agent_node(
                 callbacks=[callback]
             )
         
+        # Pre-processing: используем LexNLP для предварительного извлечения дат/сумм
+        lexnlp_extractor = LexNLPExtractor()
+        lexnlp_facts = []
+        
+        try:
+            # Получаем документы для pre-processing
+            if rag_service:
+                preprocess_docs = rag_service.retrieve_context(
+                    case_id=case_id,
+                    query="суммы даты стороны факты",
+                    k=50,  # Больше документов для LexNLP
+                    db=db
+                )
+                
+                # Извлекаем даты и суммы из всех документов с помощью LexNLP
+                for doc in preprocess_docs:
+                    if hasattr(doc, 'page_content'):
+                        dates = lexnlp_extractor.extract_dates(doc.page_content)
+                        amounts = lexnlp_extractor.extract_amounts(doc.page_content)
+                        
+                        # Добавляем даты как факты
+                        for date_info in dates:
+                            lexnlp_facts.append({
+                                "fact_type": "date",
+                                "value": date_info.get("date"),
+                                "description": date_info.get("original_text"),
+                                "source_document": doc.metadata.get("source_file", "unknown"),
+                                "source_page": doc.metadata.get("source_page"),
+                                "confidence": date_info.get("confidence", 0.8),
+                                "reasoning": f"Извлечено LexNLP: {date_info.get('original_text')}"
+                            })
+                        
+                        # Добавляем суммы как факты
+                        for amount_info in amounts:
+                            lexnlp_facts.append({
+                                "fact_type": "amount",
+                                "value": f"{amount_info.get('amount')} {amount_info.get('currency', 'RUB')}",
+                                "description": amount_info.get("original_text"),
+                                "source_document": doc.metadata.get("source_file", "unknown"),
+                                "source_page": doc.metadata.get("source_page"),
+                                "confidence": amount_info.get("confidence", 0.8),
+                                "reasoning": f"Извлечено LexNLP: {amount_info.get('original_text')}"
+                            })
+                
+                logger.info(f"LexNLP extracted {len(lexnlp_facts)} facts as pre-processing step")
+        except Exception as e:
+            logger.warning(f"Error in LexNLP pre-processing: {e}, continuing without LexNLP facts")
+        
         # Извлекаем JSON из ответа
         from app.services.langchain_agents.llm_helper import extract_json_from_response
         
@@ -178,6 +323,48 @@ def key_facts_agent_node(
             
             query = "Извлеки ключевые факты: стороны спора, суммы, даты, суть спора, судья, суд"
             relevant_docs = rag_service.retrieve_context(case_id, query, k=20)
+        
+        # Verify citations: проверяем что факты реально присутствуют в документах
+        if parsed_facts and rag_service:
+            try:
+                citation_verifier = CitationVerifier(similarity_threshold=0.7)
+                # Получаем source documents для верификации
+                verify_docs = rag_service.retrieve_context(
+                    case_id=case_id,
+                    query="",
+                    k=100,  # Получаем больше документов для верификации
+                    db=db
+                )
+                
+                # Верифицируем каждый факт
+                for fact in parsed_facts:
+                    verification_result = citation_verifier.verify_extracted_fact(
+                        fact=fact if isinstance(fact, dict) else {
+                            "reasoning": getattr(fact, 'reasoning', None),
+                            "description": getattr(fact, 'description', None),
+                            "value": getattr(fact, 'value', None)
+                        },
+                        source_documents=verify_docs,
+                        tolerance=100
+                    )
+                    
+                    # Устанавливаем verification_status
+                    verification_status = "verified" if verification_result.get("verified", False) else "unverified"
+                    if hasattr(fact, 'verification_status'):
+                        fact.verification_status = verification_status
+                        # Снижаем confidence если не верифицировано
+                        if not verification_result.get("verified", False):
+                            current_confidence = getattr(fact, 'confidence', 0.8)
+                            fact.confidence = max(0.3, current_confidence - 0.2)
+                    elif isinstance(fact, dict):
+                        fact['verification_status'] = verification_status
+                        if not verification_result.get("verified", False):
+                            current_confidence = fact.get('confidence', 0.8)
+                            fact['confidence'] = max(0.3, current_confidence - 0.2)
+                
+                logger.info(f"Citation verification completed for {len(parsed_facts)} key facts")
+            except Exception as e:
+                logger.warning(f"Error during citation verification: {e}, continuing without verification")
             
             # Use LLM with structured output for key facts extraction
             from langchain_core.prompts import ChatPromptTemplate
@@ -255,6 +442,13 @@ def key_facts_agent_node(
             "result_id": result_id,
             "total_facts": len(parsed_facts)
         }
+        
+        # Save to file system (DeepAgents pattern)
+        try:
+            from app.services.langchain_agents.file_system_helper import save_agent_result_to_file
+            save_agent_result_to_file(state, "key_facts", result_data)
+        except Exception as fs_error:
+            logger.debug(f"Failed to save key_facts result to file: {fs_error}")
         
         # Update state
         new_state = state.copy()

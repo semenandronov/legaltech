@@ -52,6 +52,7 @@ class TimelineEventModel(BaseModel):
     source_line: Optional[int] = Field(None, description="Line number in source document")
     reasoning: Optional[str] = Field(None, description="Объяснение почему это событие было извлечено из документа")
     confidence: Optional[float] = Field(0.8, description="Уверенность в извлечении события (0-1)", ge=0.0, le=1.0)
+    verification_status: Optional[str] = Field(None, description="Статус верификации цитаты: 'verified', 'unverified', 'pending'")
     
     @field_validator('date')
     @classmethod
@@ -117,6 +118,7 @@ class DiscrepancyModel(BaseModel):
     details: Dict[str, Any] = Field(default_factory=dict, description="Additional details")
     reasoning: str = Field(description="Объяснение почему это противоречие было обнаружено")
     confidence: float = Field(description="Уверенность в обнаружении противоречия (0-1)", ge=0.0, le=1.0)
+    verification_status: Optional[str] = Field(None, description="Статус верификации цитаты: 'verified', 'unverified', 'pending'")
 
 
 class KeyFactModel(BaseModel):
@@ -128,6 +130,7 @@ class KeyFactModel(BaseModel):
     source_page: Optional[int] = Field(None, description="Page number")
     confidence: float = Field(description="Confidence score 0-1", ge=0.0, le=1.0)
     reasoning: str = Field(description="Объяснение почему этот факт считается ключевым")
+    verification_status: Optional[str] = Field(None, description="Статус верификации цитаты: 'verified', 'unverified', 'pending'")
 
 
 class DocumentClassificationModel(BaseModel):
@@ -174,6 +177,7 @@ class RiskModel(BaseModel):
     recommendation: str = Field(description="Рекомендации по митигации риска")
     reasoning: str = Field(description="Обоснование риска с ссылками на документы")
     confidence: float = Field(description="Уверенность в оценке риска (0-1)", ge=0.0, le=1.0)
+    verification_status: Optional[str] = Field(None, description="Статус верификации цитаты: 'verified', 'unverified', 'pending'")
     
     @field_validator('risk_category')
     @classmethod

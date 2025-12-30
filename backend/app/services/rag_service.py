@@ -40,7 +40,8 @@ class RAGService:
         k: int = 5,
         retrieval_strategy: str = "simple",
         db: Optional[Session] = None,
-        use_iterative: bool = False
+        use_iterative: bool = False,
+        use_hybrid: bool = False
     ) -> List[Document]:
         """
         Retrieve relevant context for a query using Yandex Index
@@ -57,6 +58,22 @@ class RAGService:
             List of relevant Document objects
         """
         try:
+            # Use hybrid search if requested or if strategy is 'hybrid'
+            if use_hybrid or retrieval_strategy == "hybrid":
+                logger.info(f"Using hybrid search for case {case_id}")
+                docs = self.document_processor.hybrid_search(
+                    case_id=case_id,
+                    query=query,
+                    k=k,
+                    alpha=0.7,  # 70% dense, 30% sparse
+                    db=db
+                )
+                # Filter out None or invalid documents
+                valid_docs = [doc for doc in docs if doc is not None and hasattr(doc, 'page_content')]
+                if not valid_docs:
+                    logger.warning(f"No valid documents from hybrid search for case {case_id}")
+                return valid_docs
+            
             # Use iterative RAG if requested or if strategy is 'iterative'
             if use_iterative or retrieval_strategy == "iterative":
                 if self.iterative_rag:

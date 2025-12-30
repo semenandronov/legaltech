@@ -247,6 +247,13 @@ def relationship_agent_node(
             "total_edges": len(saved_edges)
         }
         
+        # Save to file system (DeepAgents pattern)
+        try:
+            from app.services.langchain_agents.file_system_helper import save_agent_result_to_file
+            save_agent_result_to_file(state, "relationship", result_data)
+        except Exception as fs_error:
+            logger.debug(f"Failed to save relationship result to file: {fs_error}")
+        
         # Update state
         new_state = state.copy()
         new_state["relationship_result"] = result_data

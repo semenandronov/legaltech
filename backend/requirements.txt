@@ -39,3 +39,9 @@ requests>=2.32.5  # Обновлено для совместимости с lang
 gigachat>=0.1.0  # Официальный SDK для GigaChat (используется в нашем кастомном wrapper)
 # langchain-gigachat>=0.1.0  # Несовместим с langchain-core==1.2.2, используем кастомный wrapper
 
+# LexNLP - библиотека для извлечения юридически значимых данных
+lexnlp>=0.3.0
+
+# BM25 - алгоритм для sparse search (hybrid search)
+rank-bm25>=0.2.2
+

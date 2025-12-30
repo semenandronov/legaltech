@@ -96,6 +96,15 @@ def plan_node(
         # Сохраняем план в state
         state["current_plan"] = plan
         
+        # Сохраняем план в файл (DeepAgents pattern - write_todos)
+        try:
+            from app.services.langchain_agents.file_system_helper import get_file_system_context_from_state
+            file_system_context = get_file_system_context_from_state(state)
+            if file_system_context:
+                file_system_context.write_result("plan.json", plan, subdirectory="")
+        except Exception as fs_error:
+            logger.debug(f"Failed to save plan to file: {fs_error}")
+        
         # Также сохраняем analysis_types для обратной совместимости
         if "analysis_types" in plan:
             state["analysis_types"] = plan["analysis_types"]

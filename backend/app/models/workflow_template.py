@@ -53,6 +53,16 @@ class WorkflowTemplate(Base):
     # Usage tracking
     usage_count = Column(Integer, default=0)
     
+    # LangGraph integration (for executable workflows)
+    graph_config = Column(JSON, default=dict)  # LangGraph configuration
+    node_mapping = Column(JSON, default=dict)  # Mapping step_id -> node_name in graph
+    conditional_edges = Column(JSON, default=list)  # Conditional edges configuration
+    parallel_groups = Column(JSON, default=list)  # Groups for parallel execution
+    
+    # No-code fields
+    natural_language_source = Column(Text, nullable=True)  # Original NL description if auto-generated
+    auto_generated = Column(Boolean, default=False)  # Whether generated from natural language
+    
     # Timestamps
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
@@ -76,6 +86,12 @@ class WorkflowTemplate(Base):
             "is_public": self.is_public,
             "user_id": self.user_id,
             "usage_count": self.usage_count,
+            "graph_config": self.graph_config or {},
+            "node_mapping": self.node_mapping or {},
+            "conditional_edges": self.conditional_edges or [],
+            "parallel_groups": self.parallel_groups or [],
+            "natural_language_source": self.natural_language_source,
+            "auto_generated": self.auto_generated or False,
             "created_at": self.created_at.isoformat() if self.created_at else None,
             "updated_at": self.updated_at.isoformat() if self.updated_at else None,
         }

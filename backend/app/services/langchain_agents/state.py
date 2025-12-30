@@ -191,6 +191,17 @@ class AnalysisState(TypedDict):
     # Result of Deep Analysis phase
     deep_analysis_result: Optional[Dict[str, Any]]  # Result from deep_analysis_node
 
+    # === NEW: File System Context Fields ===
+    
+    # Workspace path for file system context
+    workspace_path: Optional[str]  # Path to workspace directory
+    
+    # List of files in workspace (updated dynamically)
+    workspace_files: List[str]  # List of file paths relative to workspace
+    
+    # Current working file (if agent is editing a file)
+    current_working_file: Optional[str]  # Current file being edited
+
 
 def create_initial_state(
     case_id: str,
@@ -236,4 +247,8 @@ def create_initial_state(
         feedback_responses={},
         waiting_for_human=False,
         current_feedback_request=None,
+        # File System Context fields
+        workspace_path=None,
+        workspace_files=[],
+        current_working_file=None,
     )
