@@ -2,6 +2,7 @@ services:
   - type: web
     name: legal-ai-vault
     runtime: python
+    pythonVersion: "3.12.8"
     buildCommand: |
       pip install --upgrade pip &&
       pip install -r backend/requirements.txt &&
