@@ -98,21 +98,25 @@ export default {
   				ring: 'hsl(var(--sidebar-ring))'
   			}
   		},
-  		fontFamily: {
-  			sans: [
-  				'Inter',
-  				'-apple-system',
-  				'BlinkMacSystemFont',
-  				'Segoe UI',
-  				'Roboto',
-  				'sans-serif'
-  			],
-  			mono: [
-  				'Fira Code',
-  				'Courier New',
-  				'monospace'
-  			]
-  		},
+		fontFamily: {
+			sans: [
+				'Source Sans Pro',
+				'-apple-system',
+				'BlinkMacSystemFont',
+				'Segoe UI',
+				'sans-serif'
+			],
+			display: [
+				'Playfair Display',
+				'serif'
+			],
+			mono: [
+				'JetBrains Mono',
+				'Fira Code',
+				'Courier New',
+				'monospace'
+			]
+		},
   		fontSize: {
   			h1: [
   				'32px',

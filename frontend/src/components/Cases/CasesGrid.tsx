@@ -3,8 +3,6 @@ import { LayoutGrid, List, Table2, Plus } from 'lucide-react'
 import { CaseListItem } from '../../services/api'
 import CaseCard from './CaseCard'
 import Pagination from '../UI/Pagination'
-import { Skeleton } from '../UI/Skeleton'
-import { Button } from '../UI/Button'
 import { CasesTable } from './CasesTable'
 import {
   Dialog,
@@ -44,10 +42,18 @@ const CasesGrid = ({
   
   if (loading && cases.length === 0) {
     return (
-      <div className="flex-1 p-6">
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+      <div className="flex-1 p-8">
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
           {[...Array(6)].map((_, i) => (
-            <Skeleton key={i} variant="rectangular" height={200} />
+            <div 
+              key={i} 
+              className="bg-white rounded-xl p-6 shadow-soft border border-[#E5E8EB]/50 h-[200px] animate-pulse"
+              style={{ animationDelay: `${i * 0.1}s` }}
+            >
+              <div className="h-6 bg-[#E5E8EB] rounded mb-4 w-3/4"></div>
+              <div className="h-4 bg-[#E5E8EB] rounded mb-2 w-1/2"></div>
+              <div className="h-4 bg-[#E5E8EB] rounded w-2/3"></div>
+            </div>
           ))}
         </div>
       </div>
@@ -57,31 +63,35 @@ const CasesGrid = ({
   if (cases.length === 0) {
     return (
       <div className="flex-1 flex flex-col">
-        <div className="p-6 border-b border-border flex items-center justify-between">
-          <h2 className="text-h2 text-primary">
-            📋 Дела
-          </h2>
-          <Button
-            variant="primary"
-            size="sm"
+        <div className="p-8 border-b border-[#E5E8EB]/50 flex items-center justify-between bg-white/50 backdrop-blur-subtle">
+          <div>
+            <h2 className="text-3xl font-display text-[#0F1419] mb-1 tracking-tight">
+              Дела
+            </h2>
+            <p className="text-sm text-[#666B78] font-medium">Начните работу с первым делом</p>
+          </div>
+          <button
             onClick={() => setIsUploadDialogOpen(true)}
+            className="px-5 py-2.5 bg-gradient-to-r from-[#00D4FF] to-[#7C3AED] text-white rounded-lg font-medium text-sm hover:shadow-lg hover:shadow-[#00D4FF]/25 transition-all duration-300 flex items-center gap-2"
           >
-            <Plus className="w-4 h-4 mr-2" />
+            <Plus className="w-4 h-4" />
             Создать дело
-          </Button>
+          </button>
         </div>
-        <div className="flex-1 flex items-center justify-center">
-          <div className="text-center">
-            <div className="text-6xl mb-4">📁</div>
-            <h3 className="text-h3 text-primary mb-2">Нет дел</h3>
-            <p className="text-body text-secondary mb-4">Загрузите документы, чтобы создать первое дело</p>
-            <Button
-              variant="primary"
+        <div className="flex-1 flex items-center justify-center fade-in">
+          <div className="text-center max-w-md">
+            <div className="text-7xl mb-6 scale-in" style={{ animationDelay: '0.1s' }}>📁</div>
+            <h3 className="text-2xl font-display text-[#0F1419] mb-3 tracking-tight">Нет дел</h3>
+            <p className="text-base text-[#666B78] mb-8 leading-relaxed">
+              Загрузите документы, чтобы создать первое дело и начать работу с AI-ассистентом
+            </p>
+            <button
               onClick={() => setIsUploadDialogOpen(true)}
+              className="px-6 py-3 bg-gradient-to-r from-[#00D4FF] to-[#7C3AED] text-white rounded-lg font-medium text-base hover:shadow-lg hover:shadow-[#00D4FF]/25 transition-all duration-300 flex items-center gap-2 mx-auto hover-scale"
             >
-              <Plus className="w-4 h-4 mr-2" />
+              <Plus className="w-5 h-5" />
               Создать первое дело
-            </Button>
+            </button>
           </div>
         </div>
         <Dialog 
@@ -102,57 +112,84 @@ const CasesGrid = ({
   return (
     <div className="flex-1 flex flex-col">
       {/* Header */}
-      <div className="p-6 border-b border-border flex items-center justify-between">
-        <h2 className="text-h2 text-primary">
-          📋 Дела ({total} результатов)
-        </h2>
-        <div className="flex items-center gap-2">
-          <Button
-            variant="primary"
-            size="sm"
+      <div className="p-8 border-b border-[#E5E8EB]/50 flex items-center justify-between bg-white/50 backdrop-blur-subtle">
+        <div>
+          <h2 className="text-3xl font-display text-[#0F1419] mb-1 tracking-tight">
+            Дела
+          </h2>
+          <p className="text-sm text-[#666B78] font-medium">
+            {total} {total === 1 ? 'результат' : total < 5 ? 'результата' : 'результатов'}
+          </p>
+        </div>
+        <div className="flex items-center gap-3">
+          <button
             onClick={() => setIsUploadDialogOpen(true)}
+            className="px-4 py-2 bg-gradient-to-r from-[#00D4FF] to-[#7C3AED] text-white rounded-lg font-medium text-sm hover:shadow-lg hover:shadow-[#00D4FF]/25 transition-all duration-300 flex items-center gap-2"
           >
-            <Plus className="w-4 h-4 mr-2" />
+            <Plus className="w-4 h-4" />
             Создать дело
-          </Button>
-          <Button
-            variant={viewMode === 'grid' ? 'primary' : 'secondary'}
-            size="sm"
-            onClick={() => onViewModeChange('grid')}
-          >
-            <LayoutGrid className="w-4 h-4" />
-          </Button>
-          <Button
-            variant={viewMode === 'list' ? 'primary' : 'secondary'}
-            size="sm"
-            onClick={() => onViewModeChange('list')}
-          >
-            <List className="w-4 h-4" />
-          </Button>
-          <Button
-            variant={viewMode === 'table' ? 'primary' : 'secondary'}
-            size="sm"
-            onClick={() => onViewModeChange('table')}
-          >
-            <Table2 className="w-4 h-4" />
-          </Button>
+          </button>
+          <div className="flex items-center gap-1 bg-white/80 rounded-lg p-1 border border-[#E5E8EB]/50">
+            <button
+              onClick={() => onViewModeChange('grid')}
+              className={`p-2 rounded-md transition-all duration-200 ${
+                viewMode === 'grid'
+                  ? 'bg-gradient-to-r from-[#00D4FF] to-[#7C3AED] text-white shadow-sm'
+                  : 'text-[#666B78] hover:bg-[#F8F9FA]'
+              }`}
+            >
+              <LayoutGrid className="w-4 h-4" />
+            </button>
+            <button
+              onClick={() => onViewModeChange('list')}
+              className={`p-2 rounded-md transition-all duration-200 ${
+                viewMode === 'list'
+                  ? 'bg-gradient-to-r from-[#00D4FF] to-[#7C3AED] text-white shadow-sm'
+                  : 'text-[#666B78] hover:bg-[#F8F9FA]'
+              }`}
+            >
+              <List className="w-4 h-4" />
+            </button>
+            <button
+              onClick={() => onViewModeChange('table')}
+              className={`p-2 rounded-md transition-all duration-200 ${
+                viewMode === 'table'
+                  ? 'bg-gradient-to-r from-[#00D4FF] to-[#7C3AED] text-white shadow-sm'
+                  : 'text-[#666B78] hover:bg-[#F8F9FA]'
+              }`}
+            >
+              <Table2 className="w-4 h-4" />
+            </button>
+          </div>
         </div>
       </div>
       
       {/* Grid/List/Table */}
-      <div className="flex-1 overflow-y-auto p-6">
+      <div className="flex-1 overflow-y-auto p-8">
         {viewMode === 'table' ? (
           <CasesTable data={cases} loading={loading} />
         ) : viewMode === 'grid' ? (
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-            {cases.map((caseItem) => (
-              <CaseCard key={caseItem.id} caseItem={caseItem} />
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+            {cases.map((caseItem, index) => (
+              <div 
+                key={caseItem.id} 
+                className="stagger-item"
+                style={{ animationDelay: `${index * 0.05}s` }}
+              >
+                <CaseCard caseItem={caseItem} />
+              </div>
             ))}
           </div>
         ) : (
           <div className="space-y-4">
-            {cases.map((caseItem) => (
-              <CaseCard key={caseItem.id} caseItem={caseItem} />
+            {cases.map((caseItem, index) => (
+              <div 
+                key={caseItem.id}
+                className="stagger-item"
+                style={{ animationDelay: `${index * 0.03}s` }}
+              >
+                <CaseCard caseItem={caseItem} />
+              </div>
             ))}
           </div>
         )}

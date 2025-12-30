@@ -2,6 +2,8 @@ import { useState, useEffect } from 'react'
 import { getCasesList, CasesListResponse } from '../services/api'
 import CasesFilters, { FilterState } from '../components/Cases/CasesFilters'
 import CasesGrid from '../components/Cases/CasesGrid'
+import UnifiedSidebar from '../components/Layout/UnifiedSidebar'
+import { Home, FolderOpen, Settings, BarChart3 } from 'lucide-react'
 
 const CasesListPage = () => {
   const [cases, setCases] = useState<CasesListResponse['cases']>([])
@@ -19,6 +21,14 @@ const CasesListPage = () => {
   })
   
   const limit = 20
+  
+  // Navigation items for main sidebar
+  const mainNavItems = [
+    { id: 'home', label: 'Главная', icon: Home, path: '/' },
+    { id: 'cases', label: 'Дела', icon: FolderOpen, path: '/cases' },
+    { id: 'analytics', label: 'Аналитика', icon: BarChart3, path: '/analytics' },
+    { id: 'settings', label: 'Настройки', icon: Settings, path: '/settings' },
+  ]
   
   useEffect(() => {
     loadCases()
@@ -49,18 +59,34 @@ const CasesListPage = () => {
   }
   
   return (
-    <div className="h-screen bg-background flex overflow-hidden">
-      <CasesFilters onFiltersChange={handleFiltersChange} />
+    <div className="h-screen flex overflow-hidden bg-[#0F0F23]">
+      {/* Unified Sidebar */}
+      <UnifiedSidebar navItems={mainNavItems} title="Legal AI" />
+      
+      {/* Main Content Area with expressive design */}
       <div className="flex-1 flex flex-col overflow-hidden">
-        <CasesGrid
-          cases={cases}
-          total={total}
-          loading={loading}
-          currentPage={currentPage}
-          onPageChange={handlePageChange}
-          viewMode={viewMode}
-          onViewModeChange={setViewMode}
-        />
+        {/* Content with gradient mesh background */}
+        <div className="flex-1 content-background overflow-auto">
+          <div className="flex h-full">
+            {/* Filters Sidebar */}
+            <div className="w-[280px] border-r border-[#E5E8EB]/50 bg-white/50 backdrop-blur-subtle">
+              <CasesFilters onFiltersChange={handleFiltersChange} />
+            </div>
+            
+            {/* Cases Grid */}
+            <div className="flex-1 fade-in-up" style={{ animationDelay: '0.1s' }}>
+              <CasesGrid
+                cases={cases}
+                total={total}
+                loading={loading}
+                currentPage={currentPage}
+                onPageChange={handlePageChange}
+                viewMode={viewMode}
+                onViewModeChange={setViewMode}
+              />
+            </div>
+          </div>
+        </div>
       </div>
     </div>
   )

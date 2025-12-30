@@ -1,6 +1,14 @@
 /* Import fonts first (must be before other CSS rules) */
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
-@import url('https://fonts.googleapis.com/css2?family=Fira+Code:wght@400;500;600&display=swap');
+/* Display font for headings - Playfair Display */
+@import url('https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;500;600;700&display=swap');
+/* Body font - Source Sans Pro */
+@import url('https://fonts.googleapis.com/css2?family=Source+Sans+Pro:wght@300;400;500;600;700&display=swap');
+/* Monospace - JetBrains Mono */
+@import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&display=swap');
+
+/* Import expressive design styles (must be before Tailwind) */
+@import './styles/animations.css';
+@import './styles/effects.css';
 
 /* Tailwind CSS Directives */
 @tailwind base;
@@ -254,9 +262,21 @@
 
   body {
     @apply font-sans antialiased;
-    font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    font-family: 'Source Sans Pro', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
     @apply bg-primary text-primary;
     @apply text-body-large;
+  }
+  
+  /* Display font for headings */
+  h1, h2, h3, h4, h5, h6, .font-display {
+    font-family: 'Playfair Display', serif;
+    font-weight: 600;
+    letter-spacing: -0.02em;
+  }
+  
+  /* Monospace for code */
+  code, pre, .font-mono {
+    font-family: 'JetBrains Mono', 'Fira Code', monospace;
   }
 
   #root {
