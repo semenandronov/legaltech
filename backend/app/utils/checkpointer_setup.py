@@ -142,7 +142,9 @@ def get_checkpointer_instance() -> Optional[PostgresSaver]:
             if not _checkpointer_setup_done:
                 try:
                     if hasattr(checkpointer, 'setup') and callable(checkpointer.setup):
-                        checkpointer.setup()
+                        # setup() returns a context manager, use it properly
+                        with checkpointer.setup():
+                            pass  # Tables are created when entering the context
                         logger.info("✅ PostgreSQL checkpointer tables initialized")
                     _checkpointer_setup_done = True
                 except Exception as setup_error:
