@@ -281,8 +281,8 @@ def get_all_tools() -> List:
     
     # Add legal research tools
     try:
-    legal_research_tools = get_legal_research_tools()
-    tools.extend(legal_research_tools)
+        legal_research_tools = get_legal_research_tools()
+        tools.extend(legal_research_tools)
         logger.debug("Legal research tools added to agent tools")
     except Exception as e:
         logger.warning(f"Legal research tools not available: {e}")
