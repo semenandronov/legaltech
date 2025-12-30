@@ -574,7 +574,7 @@ class PlanningAgent:
                             pass
         
         # Метод 3: Fallback - извлечение из текста
-        logger.warning("Could not parse JSON from agent response, using text extraction")
+        logger.debug("Could not parse JSON from agent response, using text extraction")
         return self._extract_plan_from_text(response_text)
     
     def _extract_plan_from_text(self, text: str) -> Dict[str, Any]:

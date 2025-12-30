@@ -370,7 +370,7 @@ class AdvancedPlanningAgent:
                     }
                 
             except json.JSONDecodeError as e:
-                logger.warning(f"Failed to parse table detection JSON: {e}, using fallback")
+                logger.debug(f"Failed to parse table detection JSON: {e}, using fallback")
                 return self._fallback_table_detection(user_task)
         
         except Exception as e:
