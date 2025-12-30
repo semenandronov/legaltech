@@ -247,7 +247,6 @@ async def get_templates(
                                 "template_id": t.id if hasattr(t, 'id') else None,
                                 "error": str(e),
                                 "error_type": type(e).__name__
-                                "error_type": type(e).__name__
                             },
                             "timestamp": int(__import__('time').time() * 1000),
                             "sessionId": "debug-session",
