@@ -148,9 +148,16 @@ async def stream_chat_response(
         is_task = await classify_request(question, classification_llm)
         
         # #region agent log
-        with open('/Users/semyon_andronov04/Desktop/C ДВ/.cursor/debug.log', 'a') as f:
-            import json as json_debug
-            f.write(json_debug.dumps({"sessionId":"debug-session","runId":"run1","hypothesisId":"A","location":"assistant_chat.py:148","message":"Classification result","data":{"is_task":is_task,"asyncio_available":hasattr(__import__('asyncio'),'sleep')},"timestamp":int(__import__('time').time()*1000)})+"\n")
+        try:
+            import os
+            log_dir = os.path.join(os.getcwd(), '.cursor')
+            os.makedirs(log_dir, exist_ok=True)
+            log_path = os.path.join(log_dir, 'debug.log')
+            with open(log_path, 'a') as f:
+                import json as json_debug
+                f.write(json_debug.dumps({"sessionId":"debug-session","runId":"run1","hypothesisId":"A","location":"assistant_chat.py:148","message":"Classification result","data":{"is_task":is_task,"asyncio_available":hasattr(asyncio,'sleep')},"timestamp":int(__import__('time').time()*1000)})+"\n")
+        except Exception as log_err:
+            pass  # Ignore logging errors
         # #endregion
         
         if is_task:
@@ -211,15 +218,16 @@ async def stream_chat_response(
                 
                 # Stream plan response
                 # #region agent log
-                with open('/Users/semyon_andronov04/Desktop/C ДВ/.cursor/debug.log', 'a') as f:
-                    import json as json_debug
-                    try:
-                        asyncio_test = asyncio
-                        asyncio_available = True
-                    except UnboundLocalError as e:
-                        asyncio_available = False
-                        asyncio_error = str(e)
-                    f.write(json_debug.dumps({"sessionId":"debug-session","runId":"run1","hypothesisId":"A","location":"assistant_chat.py:207","message":"Before asyncio.sleep in task block","data":{"asyncio_available":asyncio_available,"error":asyncio_error if not asyncio_available else None},"timestamp":int(__import__('time').time()*1000)})+"\n")
+                try:
+                    import os
+                    log_dir = os.path.join(os.getcwd(), '.cursor')
+                    os.makedirs(log_dir, exist_ok=True)
+                    log_path = os.path.join(log_dir, 'debug.log')
+                    with open(log_path, 'a') as f:
+                        import json as json_debug
+                        f.write(json_debug.dumps({"sessionId":"debug-session","runId":"run1","hypothesisId":"A","location":"assistant_chat.py:224","message":"Before asyncio.sleep in task block","data":{"asyncio_available":True,"asyncio_type":str(type(asyncio))},"timestamp":int(__import__('time').time()*1000)})+"\n")
+                except Exception as log_err:
+                    pass  # Ignore logging errors
                 # #endregion
                 for chunk in plan_text:
                     yield f"data: {json.dumps({'textDelta': chunk}, ensure_ascii=False)}\n\n"
@@ -271,16 +279,18 @@ async def stream_chat_response(
         else:
             # Это вопрос - используем RAG + LLM
             # #region agent log
-            with open('/Users/semyon_andronov04/Desktop/C ДВ/.cursor/debug.log', 'a') as f:
-                import json as json_debug
-                f.write(json_debug.dumps({"sessionId":"debug-session","runId":"run1","hypothesisId":"A","location":"assistant_chat.py:256","message":"Before local asyncio import in else block","data":{"asyncio_in_globals":"asyncio" in __import__('sys').modules},"timestamp":int(__import__('time').time()*1000)})+"\n")
+            try:
+                import os
+                log_dir = os.path.join(os.getcwd(), '.cursor')
+                os.makedirs(log_dir, exist_ok=True)
+                log_path = os.path.join(log_dir, 'debug.log')
+                with open(log_path, 'a') as f:
+                    import json as json_debug
+                    f.write(json_debug.dumps({"sessionId":"debug-session","runId":"run1","hypothesisId":"A","location":"assistant_chat.py:279","message":"In else block (question path)","data":{"asyncio_available":True},"timestamp":int(__import__('time').time()*1000)})+"\n")
+            except Exception as log_err:
+                pass  # Ignore logging errors
             # #endregion
-            import asyncio
-            # #region agent log
-            with open('/Users/semyon_andronov04/Desktop/C ДВ/.cursor/debug.log', 'a') as f:
-                import json as json_debug
-                f.write(json_debug.dumps({"sessionId":"debug-session","runId":"run1","hypothesisId":"A","location":"assistant_chat.py:258","message":"After local asyncio import","data":{},"timestamp":int(__import__('time').time()*1000)})+"\n")
-            # #endregion
+            # asyncio уже импортирован глобально, не нужно импортировать локально
             loop = asyncio.get_event_loop()
             
             # Get relevant documents using RAG
