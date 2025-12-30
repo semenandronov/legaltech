@@ -307,8 +307,6 @@ def write_todos_tool(todos: str, case_id: str = None) -> str:
                 "error": "File system context not initialized",
                 "message": "FileSystemContext not available. Please ensure workspace is initialized."
             })
-            "message": "Call initialize_file_system_tools() first"
-        })
     
     try:
         # Парсим todos как JSON
