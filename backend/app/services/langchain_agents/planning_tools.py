@@ -342,7 +342,7 @@ def classify_case_type_tool(case_id: str) -> str:
                     elif isinstance(doc, dict):
                         content_parts.append(doc.get("content", ""))
                 content_text = " ".join(content_parts)
-            content_lower = content_text.lower()
+                content_lower = content_text.lower()
             else:
                 # Fallback: классификация на основе имен файлов
                 from app.models.case import File as FileModel
