@@ -3,7 +3,8 @@ import { useParams } from 'react-router-dom'
 import { getApiUrl } from '@/services/api'
 import { logger } from '@/lib/logger'
 import { Globe, FileText } from 'lucide-react'
-import ReactMarkdown from 'react-markdown'
+import { Conversation, ConversationEmpty } from '../ai-elements/conversation'
+import { UserMessage, AssistantMessage } from '../ai-elements/message'
 import { PlanApprovalCard } from './PlanApprovalCard'
 import { AgentStep } from './AgentStepsView'
 import { EnhancedAgentStepsView } from './EnhancedAgentStepsView'
@@ -15,6 +16,19 @@ interface Message {
   planId?: string
   plan?: any
   agentSteps?: AgentStep[]
+  reasoning?: string  // для прямых рассуждений
+  toolCalls?: Array<{  // для прямых tool calls
+    name: string
+    input?: any
+    output?: any
+    status?: 'pending' | 'running' | 'completed' | 'error'
+  }>
+  response?: string  // для структурированного ответа
+  sources?: Array<{  // для источников ответа
+    title?: string
+    url?: string
+    page?: number
+  }>
 }
 
 interface AssistantUIChatProps {
@@ -275,137 +289,77 @@ export const AssistantUIChat = ({ caseId, className }: AssistantUIChatProps) => 
   return (
     <div className={`flex flex-col h-full bg-white ${className || ''}`}>
       {/* Messages area */}
-      <div className="flex-1 overflow-y-auto px-6 py-8 space-y-6">
-        {messages.length === 0 && (
-          <div className="text-center py-16">
-            <p className="text-2xl font-semibold text-gray-800 mb-2">Начните диалог</p>
-            <p className="text-gray-500">Задайте вопрос о документах дела</p>
-          </div>
-        )}
+      <Conversation autoScroll={true}>
+        {messages.length === 0 && <ConversationEmpty />}
 
-        {messages.map((message) => (
-          <div
-            key={message.id}
-            className={`flex ${message.role === 'user' ? 'justify-end' : 'justify-start'}`}
-          >
-            <div
-              className={`max-w-[75%] rounded-2xl px-4 py-3 ${
-                message.role === 'user'
-                  ? 'bg-blue-600 text-white'
-                  : 'bg-gray-100 text-gray-800'
-              }`}
+        {messages.map((message) => {
+          if (message.role === 'user') {
+            return (
+              <UserMessage key={message.id} content={message.content} />
+            )
+          }
+
+          return (
+            <AssistantMessage
+              key={message.id}
+              content={message.content}
+              reasoning={message.reasoning}
+              toolCalls={message.toolCalls}
+              response={message.response}
+              sources={message.sources}
+              agentSteps={message.agentSteps}
+              planId={message.planId}
+              plan={message.plan}
+              isStreaming={isLoading && message.id === messages[messages.length - 1]?.id}
             >
-              {message.role === 'assistant' ? (
-                <div className="text-sm leading-relaxed prose prose-sm max-w-none">
-                  <ReactMarkdown
-                    components={{
-                      p: ({ children }) => <p className="mb-3 last:mb-0">{children}</p>,
-                      h1: ({ children }) => <h1 className="text-xl font-bold mb-3 mt-4 first:mt-0">{children}</h1>,
-                      h2: ({ children }) => <h2 className="text-lg font-semibold mb-2 mt-3 first:mt-0">{children}</h2>,
-                      h3: ({ children }) => <h3 className="text-base font-semibold mb-2 mt-3 first:mt-0">{children}</h3>,
-                      ul: ({ children }) => <ul className="list-disc list-inside mb-3 space-y-1">{children}</ul>,
-                      ol: ({ children }) => <ol className="list-decimal list-inside mb-3 space-y-1">{children}</ol>,
-                      li: ({ children }) => <li className="ml-2">{children}</li>,
-                      code: ({ children, className }) => {
-                        const isInline = !className
-                        return isInline ? (
-                          <code className="bg-gray-200 dark:bg-gray-700 px-1.5 py-0.5 rounded text-xs font-mono">
-                            {children}
-                          </code>
-                        ) : (
-                          <code className="block bg-gray-200 dark:bg-gray-700 p-3 rounded text-xs font-mono overflow-x-auto mb-3">
-                            {children}
-                          </code>
-                        )
-                      },
-                      pre: ({ children }) => (
-                        <pre className="bg-gray-200 dark:bg-gray-700 p-3 rounded text-xs font-mono overflow-x-auto mb-3">
-                          {children}
-                        </pre>
-                      ),
-                      strong: ({ children }) => <strong className="font-semibold">{children}</strong>,
-                      em: ({ children }) => <em className="italic">{children}</em>,
-                      table: ({ children }) => (
-                        <div className="overflow-x-auto mb-3">
-                          <table className="min-w-full border-collapse border border-gray-300">
-                            {children}
-                          </table>
-                        </div>
-                      ),
-                      thead: ({ children }) => <thead className="bg-gray-200">{children}</thead>,
-                      tbody: ({ children }) => <tbody>{children}</tbody>,
-                      tr: ({ children }) => <tr className="border-b border-gray-200">{children}</tr>,
-                      th: ({ children }) => (
-                        <th className="border border-gray-300 px-3 py-2 text-left font-semibold">
-                          {children}
-                        </th>
-                      ),
-                      td: ({ children }) => (
-                        <td className="border border-gray-300 px-3 py-2">{children}</td>
-                      ),
-                      blockquote: ({ children }) => (
-                        <blockquote className="border-l-4 border-gray-400 pl-4 italic my-3">
-                          {children}
-                        </blockquote>
-                      ),
-                    }}
-                  >
-                    {message.content || '...'}
-                  </ReactMarkdown>
-                  {message.planId && message.plan && (
-                    <PlanApprovalCard
-                      planId={message.planId}
-                      plan={message.plan}
-                      onApproved={() => {
-                        // Start streaming execution steps
-                        if (message.planId) {
-                          startPlanExecutionStream(message.planId, message.id)
-                        }
-                        setMessages((prev) =>
-                          prev.map((msg) =>
-                            msg.id === message.id
-                              ? { ...msg, planId: undefined, plan: undefined, agentSteps: [] }
-                              : msg
-                          )
-                        )
-                      }}
-                      onRejected={() => {
-                        setMessages((prev) =>
-                          prev.map((msg) =>
-                            msg.id === message.id
-                              ? { ...msg, planId: undefined, plan: undefined }
-                              : msg
-                          )
-                        )
-                      }}
-                      onModified={(modifications) => {
-                        // Отправляем изменения в чат
-                        sendMessage(`Измени план: ${modifications}`)
-                      }}
-                    />
-                  )}
-                  {message.agentSteps && message.agentSteps.length > 0 && (
-                    <EnhancedAgentStepsView 
-                      steps={message.agentSteps.map(step => ({
-                        ...step,
-                        // Конвертируем старый формат в новый, если нужно
-                        tool_calls: undefined,
-                        duration: undefined,
-                      }))} 
-                      isStreaming={isLoading}
-                      showReasoning={true}
-                      collapsible={true}
-                    />
-                  )}
-                </div>
-              ) : (
-                <div className="whitespace-pre-wrap break-words text-sm leading-relaxed">
-                  {message.content}
-                </div>
+              {message.planId && message.plan && (
+                <PlanApprovalCard
+                  planId={message.planId}
+                  plan={message.plan}
+                  onApproved={() => {
+                    // Start streaming execution steps
+                    if (message.planId) {
+                      startPlanExecutionStream(message.planId, message.id)
+                    }
+                    setMessages((prev) =>
+                      prev.map((msg) =>
+                        msg.id === message.id
+                          ? { ...msg, planId: undefined, plan: undefined, agentSteps: [] }
+                          : msg
+                      )
+                    )
+                  }}
+                  onRejected={() => {
+                    setMessages((prev) =>
+                      prev.map((msg) =>
+                        msg.id === message.id
+                          ? { ...msg, planId: undefined, plan: undefined }
+                          : msg
+                      )
+                    )
+                  }}
+                  onModified={(modifications) => {
+                    // Отправляем изменения в чат
+                    sendMessage(`Измени план: ${modifications}`)
+                  }}
+                />
               )}
-            </div>
-          </div>
-        ))}
+              {message.agentSteps && message.agentSteps.length > 0 && (
+                <EnhancedAgentStepsView 
+                  steps={message.agentSteps.map(step => ({
+                    ...step,
+                    // Конвертируем старый формат в новый, если нужно
+                    tool_calls: undefined,
+                    duration: undefined,
+                  }))} 
+                  isStreaming={isLoading}
+                  showReasoning={true}
+                  collapsible={true}
+                />
+              )}
+            </AssistantMessage>
+          )
+        })}
 
         {isLoading && (
           <div className="flex justify-start">
@@ -427,9 +381,7 @@ export const AssistantUIChat = ({ caseId, className }: AssistantUIChatProps) => 
             </div>
           </div>
         )}
-
-        <div ref={messagesEndRef} />
-      </div>
+      </Conversation>
 
       {/* Input area - красивое большое поле как на скриншоте */}
       <div className="border-t border-gray-200 bg-white px-6 py-4">

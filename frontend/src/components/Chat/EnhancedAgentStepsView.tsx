@@ -4,13 +4,11 @@ import {
   Clock, 
   AlertCircle, 
   Loader2, 
-  ChevronDown, 
-  ChevronRight,
-  Brain,
-  Zap,
-  FileText,
-  Code
+  Brain
 } from 'lucide-react'
+import { Reasoning, ReasoningStep } from '../ai-elements/reasoning'
+import { Tool, ToolInput, ToolOutput } from '../ai-elements/tool'
+import { Response, ResponseContent } from '../ai-elements/response'
 
 export interface EnhancedAgentStep {
   step_id: string
@@ -216,63 +214,39 @@ export const EnhancedAgentStepsView: React.FC<EnhancedAgentStepsViewProps> = ({
                 <div className="px-4 pb-4 space-y-2 border-t border-gray-200 pt-3 mt-2">
                   {/* Рассуждения */}
                   {step.reasoning && showReasoning && (
-                    <div className="bg-white rounded-lg p-3 border border-gray-200">
-                      <div className="flex items-center gap-2 mb-2">
-                        <Brain className="w-4 h-4 text-purple-600" />
-                        <span className="text-xs font-semibold text-gray-700">Рассуждения:</span>
-                      </div>
-                      <p className="text-xs text-gray-600 leading-relaxed whitespace-pre-wrap">
-                        {step.reasoning}
-                      </p>
+                    <div className="mb-2">
+                      <Reasoning>
+                        <ReasoningStep status={step.status}>
+                          {step.reasoning}
+                        </ReasoningStep>
+                      </Reasoning>
                     </div>
                   )}
 
                   {/* Tool Calls */}
                   {step.tool_calls && step.tool_calls.length > 0 && (
-                    <div className="space-y-2">
+                    <div className="space-y-2 mb-2">
                       {step.tool_calls.map((toolCall, toolIdx) => (
-                        <div key={toolIdx} className="bg-white rounded-lg p-3 border border-gray-200">
-                          <div className="flex items-center gap-2 mb-2">
-                            <Zap className="w-4 h-4 text-yellow-600" />
-                            <span className="text-xs font-semibold text-gray-700">
-                              Инструмент: {toolCall.name}
-                            </span>
-                          </div>
-                          {toolCall.input && (
-                            <details className="mt-2">
-                              <summary className="text-xs text-gray-600 cursor-pointer hover:text-gray-800">
-                                Входные данные
-                              </summary>
-                              <pre className="mt-1 text-xs bg-gray-50 p-2 rounded overflow-x-auto">
-                                {renderJSON(toolCall.input)}
-                              </pre>
-                            </details>
-                          )}
-                          {toolCall.output && (
-                            <details className="mt-2">
-                              <summary className="text-xs text-gray-600 cursor-pointer hover:text-gray-800">
-                                Результат
-                              </summary>
-                              <pre className="mt-1 text-xs bg-gray-50 p-2 rounded overflow-x-auto">
-                                {renderJSON(toolCall.output)}
-                              </pre>
-                            </details>
-                          )}
-                        </div>
+                        <Tool
+                          key={toolIdx}
+                          name={toolCall.name}
+                          status={toolCall.status || step.status}
+                        >
+                          {toolCall.input && <ToolInput>{toolCall.input}</ToolInput>}
+                          {toolCall.output && <ToolOutput>{toolCall.output}</ToolOutput>}
+                        </Tool>
                       ))}
                     </div>
                   )}
 
                   {/* Результат */}
                   {step.result && step.status === 'completed' && (
-                    <div className="bg-white rounded-lg p-3 border border-green-200">
-                      <div className="flex items-center gap-2 mb-2">
-                        <FileText className="w-4 h-4 text-green-600" />
-                        <span className="text-xs font-semibold text-gray-700">Результат:</span>
-                      </div>
-                      <p className="text-xs text-gray-700 leading-relaxed whitespace-pre-wrap">
-                        {step.result}
-                      </p>
+                    <div className="mb-2">
+                      <Response status="completed">
+                        <ResponseContent markdown={false}>
+                          {step.result}
+                        </ResponseContent>
+                      </Response>
                     </div>
                   )}
 
@@ -291,34 +265,12 @@ export const EnhancedAgentStepsView: React.FC<EnhancedAgentStepsViewProps> = ({
 
                   {/* Дополнительные детали (input/output) */}
                   {(step.input || step.output) && (
-                    <details 
-                      className="bg-white rounded-lg p-3 border border-gray-200"
-                      open={isDetailsExpanded}
-                      onToggle={() => toggleDetails(step.step_id)}
-                    >
-                      <summary className="text-xs font-semibold text-gray-700 cursor-pointer hover:text-gray-800 flex items-center gap-2">
-                        <Code className="w-4 h-4" />
-                        Технические детали
-                      </summary>
-                      <div className="mt-2 space-y-2">
-                        {step.input && (
-                          <div>
-                            <span className="text-xs font-medium text-gray-600">Input:</span>
-                            <pre className="mt-1 text-xs bg-gray-50 p-2 rounded overflow-x-auto">
-                              {renderJSON(step.input)}
-                            </pre>
-                          </div>
-                        )}
-                        {step.output && (
-                          <div>
-                            <span className="text-xs font-medium text-gray-600">Output:</span>
-                            <pre className="mt-1 text-xs bg-gray-50 p-2 rounded overflow-x-auto">
-                              {renderJSON(step.output)}
-                            </pre>
-                          </div>
-                        )}
-                      </div>
-                    </details>
+                    <div className="mt-2">
+                      <Tool name="Технические детали" status="completed">
+                        {step.input && <ToolInput>{step.input}</ToolInput>}
+                        {step.output && <ToolOutput>{step.output}</ToolOutput>}
+                      </Tool>
+                    </div>
                   )}
                 </div>
               )}
