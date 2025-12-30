@@ -357,7 +357,9 @@ export const AssistantUIChat = ({ caseId, className }: AssistantUIChatProps) => 
                       plan={message.plan}
                       onApproved={() => {
                         // Start streaming execution steps
-                        startPlanExecutionStream(message.planId, message.id)
+                        if (message.planId) {
+                          startPlanExecutionStream(message.planId, message.id)
+                        }
                         setMessages((prev) =>
                           prev.map((msg) =>
                             msg.id === message.id
