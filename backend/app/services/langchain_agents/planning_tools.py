@@ -239,13 +239,13 @@ def analyze_document_structure_tool(case_id: str) -> str:
                 try:
                     # Если RAG service доступен, получаем релевантные chunks
                     if _rag_service:
-                        chunks = _rag_service.retrieve_context(
-                            case_id=case_id,
-                            query=f"содержание документа {file.filename}",
-                            k=3,
-                            db=db
-                        )
-                        if chunks:
+                    chunks = _rag_service.retrieve_context(
+                        case_id=case_id,
+                        query=f"содержание документа {file.filename}",
+                        k=3,
+                        db=db
+                    )
+                    if chunks:
                             # Document объекты имеют атрибут page_content, а не content
                             first_chunk = chunks[0]
                             preview = ""
@@ -317,23 +317,23 @@ def classify_case_type_tool(case_id: str) -> str:
         try:
             # Если RAG service доступен, используем его для классификации
             if _rag_service:
-                # Получаем общий контекст дела
-                context_docs = _rag_service.retrieve_context(
-                    case_id=case_id,
-                    query="тип дела суть спора предмет договора",
-                    k=10,
-                    db=db
-                )
-                
-                if not context_docs:
-                    return json.dumps({
-                        "case_id": case_id,
-                        "case_type": "unknown",
-                        "confidence": 0.0,
-                        "message": "Insufficient documents for classification"
-                    })
-                
-                # Анализируем ключевые слова для классификации
+            # Получаем общий контекст дела
+            context_docs = _rag_service.retrieve_context(
+                case_id=case_id,
+                query="тип дела суть спора предмет договора",
+                k=10,
+                db=db
+            )
+            
+            if not context_docs:
+                return json.dumps({
+                    "case_id": case_id,
+                    "case_type": "unknown",
+                    "confidence": 0.0,
+                    "message": "Insufficient documents for classification"
+                })
+            
+            # Анализируем ключевые слова для классификации
                 # Document объекты имеют атрибут page_content
                 content_parts = []
                 for doc in context_docs[:5]:
@@ -342,7 +342,7 @@ def classify_case_type_tool(case_id: str) -> str:
                     elif isinstance(doc, dict):
                         content_parts.append(doc.get("content", ""))
                 content_text = " ".join(content_parts)
-                content_lower = content_text.lower()
+            content_lower = content_text.lower()
             else:
                 # Fallback: классификация на основе имен файлов
                 from app.models.case import File as FileModel

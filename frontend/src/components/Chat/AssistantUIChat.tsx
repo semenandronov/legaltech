@@ -5,7 +5,8 @@ import { logger } from '@/lib/logger'
 import { Globe, FileText } from 'lucide-react'
 import ReactMarkdown from 'react-markdown'
 import { PlanApprovalCard } from './PlanApprovalCard'
-import { AgentStepsView, AgentStep } from './AgentStepsView'
+import { AgentStep } from './AgentStepsView'
+import { EnhancedAgentStepsView } from './EnhancedAgentStepsView'
 
 interface Message {
   id: string
@@ -384,7 +385,17 @@ export const AssistantUIChat = ({ caseId, className }: AssistantUIChatProps) => 
                     />
                   )}
                   {message.agentSteps && message.agentSteps.length > 0 && (
-                    <AgentStepsView steps={message.agentSteps} isStreaming={isLoading} />
+                    <EnhancedAgentStepsView 
+                      steps={message.agentSteps.map(step => ({
+                        ...step,
+                        // Конвертируем старый формат в новый, если нужно
+                        tool_calls: undefined,
+                        duration: undefined,
+                      }))} 
+                      isStreaming={isLoading}
+                      showReasoning={true}
+                      collapsible={true}
+                    />
                   )}
                 </div>
               ) : (

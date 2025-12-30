@@ -983,7 +983,16 @@ async def approve_plan(
                     background_db.commit()
                     
                     # Execute analyses using agent system
-                    analysis_service = AnalysisService(background_db)
+                    # Verify background_db is not None before creating AnalysisService
+                    if background_db is None:
+                        raise ValueError("background_db is None, cannot create AnalysisService")
+                    logger.info(f"Creating AnalysisService with background_db for case {case_id}")
+                    try:
+                        analysis_service = AnalysisService(background_db)
+                        logger.info(f"AnalysisService created successfully for case {case_id}")
+                    except TypeError as e:
+                        logger.error(f"Error creating AnalysisService: {e}, background_db type: {type(background_db)}")
+                        raise
                     
                     if analysis_service.use_agents:
                         # Map back to agent format

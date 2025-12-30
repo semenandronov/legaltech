@@ -94,7 +94,9 @@ def get_checkpointer():
         if not _checkpointer_setup_done:
             try:
                 if hasattr(checkpointer, 'setup') and callable(checkpointer.setup):
-                    checkpointer.setup()
+                    # setup() returns a context manager, use it properly
+                    with checkpointer.setup():
+                        pass  # Tables are created when entering the context
                     logger.info("✅ PostgreSQL checkpointer tables initialized")
                 _checkpointer_setup_done = True
             except Exception as setup_error:
@@ -138,6 +140,11 @@ def get_checkpointer_instance() -> Optional[PostgresSaver]:
             # Create new checkpointer with pooling
             checkpointer = _create_checkpointer_with_pooling()
             
+            # Verify it's actually a PostgresSaver instance, not a context manager
+            if not isinstance(checkpointer, PostgresSaver):
+                logger.error(f"Created checkpointer is not PostgresSaver: {type(checkpointer)}")
+                return None
+            
             # Setup tables once (idempotent - safe to call multiple times)
             if not _checkpointer_setup_done:
                 try:
@@ -150,11 +157,25 @@ def get_checkpointer_instance() -> Optional[PostgresSaver]:
                 except Exception as setup_error:
                     logger.debug(f"Checkpointer setup note: {setup_error}")
             
+            # Verify again before storing
+            if not isinstance(checkpointer, PostgresSaver):
+                logger.error(f"Checkpointer changed type after setup: {type(checkpointer)}")
+                return None
+            
             _global_checkpointer = checkpointer
             logger.info("✅ Using PostgreSQL checkpointer with connection pooling")
         except Exception as e:
-            logger.warning(f"Failed to initialize PostgresSaver: {e}")
+            logger.warning(f"Failed to initialize PostgresSaver: {e}", exc_info=True)
             return None
+    
+    # Verify the global checkpointer is still valid
+    if _global_checkpointer is not None:
+        from langgraph.checkpoint.postgres import PostgresSaver
+        if not isinstance(_global_checkpointer, PostgresSaver):
+            logger.error(f"Global checkpointer is not PostgresSaver: {type(_global_checkpointer)}")
+            # Reset and try again
+            _global_checkpointer = None
+            return get_checkpointer_instance()
     
     return _global_checkpointer
 

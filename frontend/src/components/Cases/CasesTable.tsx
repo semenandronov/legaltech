@@ -172,13 +172,13 @@ export function CasesTable({ data, loading }: CasesTableProps) {
                 Чат
               </DropdownMenuItem>
               <DropdownMenuItem
-                onClick={() => {}}
+          onClick={() => {}}
               >
                 <Download className="mr-2 h-4 w-4" />
                 Экспорт
               </DropdownMenuItem>
               <DropdownMenuItem
-                onClick={() => {}}
+          onClick={() => {}}
               >
                 <Archive className="mr-2 h-4 w-4" />
                 Архивировать
