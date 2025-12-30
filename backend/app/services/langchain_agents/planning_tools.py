@@ -324,16 +324,16 @@ def classify_case_type_tool(case_id: str) -> str:
                     k=10,
                     db=db
                 )
-            
-            if not context_docs:
-                return json.dumps({
-                    "case_id": case_id,
-                    "case_type": "unknown",
-                    "confidence": 0.0,
-                    "message": "Insufficient documents for classification"
-                })
-            
-            # Анализируем ключевые слова для классификации
+                
+                if not context_docs:
+                    return json.dumps({
+                        "case_id": case_id,
+                        "case_type": "unknown",
+                        "confidence": 0.0,
+                        "message": "Insufficient documents for classification"
+                    })
+                
+                # Анализируем ключевые слова для классификации
                 # Document объекты имеют атрибут page_content
                 content_parts = []
                 for doc in context_docs[:5]:
