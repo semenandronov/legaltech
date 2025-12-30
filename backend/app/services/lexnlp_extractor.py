@@ -7,19 +7,16 @@ from datetime import datetime
 logger = logging.getLogger(__name__)
 
 # Try to import LexNLP
-# LexNLP временно отключен из-за несовместимости gensim 4.1.2 с Python 3.13
-# Код работает с regex fallbacks
-LEXNLP_AVAILABLE = False
+# LexNLP требует Python 3.11 или 3.12 (не совместим с 3.13)
+# Код работает с regex fallbacks если LexNLP недоступен
 try:
-    # Попытка импорта отключена до решения проблемы с зависимостями
-    # from lexnlp.extract.en.dates import get_dates
-    # from lexnlp.extract.en.amounts import get_amounts
-    # from lexnlp.extract.en.money import get_money
-    # LEXNLP_AVAILABLE = True
-    # logger.info("✅ LexNLP imported successfully")
-    pass
+    from lexnlp.extract.en.dates import get_dates
+    from lexnlp.extract.en.amounts import get_amounts
+    from lexnlp.extract.en.money import get_money
+    LEXNLP_AVAILABLE = True
+    logger.info("✅ LexNLP imported successfully")
 except ImportError as e:
-    logger.warning(f"LexNLP not available: {e}. Some extraction features will be limited.")
+    logger.warning(f"LexNLP not available: {e}. Using regex fallbacks for extraction.")
     LEXNLP_AVAILABLE = False
 
 
