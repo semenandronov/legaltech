@@ -142,9 +142,22 @@ class PlanningAgent:
                         db=db
                     )
                     for doc in relevant_docs[:3]:
+                        # Document объекты имеют атрибуты page_content и metadata
+                        content = ""
+                        source = "unknown"
+                        if hasattr(doc, 'page_content'):
+                            content = doc.page_content[:200]
+                        elif isinstance(doc, dict):
+                            content = doc.get("content", "")[:200]
+                        
+                        if hasattr(doc, 'metadata') and doc.metadata:
+                            source = doc.metadata.get("source_file", doc.metadata.get("file", "unknown"))
+                        elif isinstance(doc, dict):
+                            source = doc.get("file", "unknown")
+                        
                         key_indicators.append({
-                            "content": doc.get("content", "")[:200],
-                            "source": doc.get("file", "unknown")
+                            "content": content,
+                            "source": source
                         })
                 else:
                     # Общий поиск ключевых элементов
@@ -155,9 +168,22 @@ class PlanningAgent:
                         db=db
                     )
                     for doc in general_docs[:3]:
+                        # Document объекты имеют атрибуты page_content и metadata
+                        content = ""
+                        source = "unknown"
+                        if hasattr(doc, 'page_content'):
+                            content = doc.page_content[:200]
+                        elif isinstance(doc, dict):
+                            content = doc.get("content", "")[:200]
+                        
+                        if hasattr(doc, 'metadata') and doc.metadata:
+                            source = doc.metadata.get("source_file", doc.metadata.get("file", "unknown"))
+                        elif isinstance(doc, dict):
+                            source = doc.get("file", "unknown")
+                        
                         key_indicators.append({
-                            "content": doc.get("content", "")[:200],
-                            "source": doc.get("file", "unknown")
+                            "content": content,
+                            "source": source
                         })
                 
                 # 4. Предлагаем анализы на основе типа дела и структуры

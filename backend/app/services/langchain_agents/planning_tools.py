@@ -230,7 +230,8 @@ def analyze_document_structure_tool(case_id: str) -> str:
             for file in files:
                 file_type = file.file_type or "unknown"
                 file_types[file_type] = file_types.get(file_type, 0) + 1
-                total_size += file.file_size or 0
+                # Вычисляем размер через длину текста (file_size не существует в модели)
+                total_size += len(file.original_text) if file.original_text else 0
             
             # Получаем образцы документов для понимания содержания
             sample_docs = []
@@ -245,10 +246,17 @@ def analyze_document_structure_tool(case_id: str) -> str:
                             db=db
                         )
                         if chunks:
+                            # Document объекты имеют атрибут page_content, а не content
+                            first_chunk = chunks[0]
+                            preview = ""
+                            if hasattr(first_chunk, 'page_content'):
+                                preview = first_chunk.page_content[:200]
+                            elif isinstance(first_chunk, dict):
+                                preview = first_chunk.get("content", "")[:200]
                             sample_docs.append({
                                 "filename": file.filename,
                                 "type": file.file_type,
-                                "preview": chunks[0].get("content", "")[:200] if chunks else ""
+                                "preview": preview
                             })
                     else:
                         # Fallback: только метаданные файла
@@ -326,7 +334,14 @@ def classify_case_type_tool(case_id: str) -> str:
                     })
                 
                 # Анализируем ключевые слова для классификации
-                content_text = " ".join([doc.get("content", "") for doc in context_docs[:5]])
+                # Document объекты имеют атрибут page_content
+                content_parts = []
+                for doc in context_docs[:5]:
+                    if hasattr(doc, 'page_content'):
+                        content_parts.append(doc.page_content)
+                    elif isinstance(doc, dict):
+                        content_parts.append(doc.get("content", ""))
+                content_text = " ".join(content_parts)
                 content_lower = content_text.lower()
             else:
                 # Fallback: классификация на основе имен файлов
@@ -370,12 +385,20 @@ def classify_case_type_tool(case_id: str) -> str:
             primary_type = detected_types[0]["type"] if detected_types else "general"
             confidence = detected_types[0]["confidence"] if detected_types else 0.5
             
+            # Формируем indicators из Document объектов
+            indicators = []
+            for doc in context_docs[:3]:
+                if hasattr(doc, 'page_content'):
+                    indicators.append(doc.page_content[:100])
+                elif isinstance(doc, dict):
+                    indicators.append(doc.get("content", "")[:100])
+            
             result = {
                 "case_id": case_id,
                 "case_type": primary_type,
                 "confidence": confidence,
                 "alternative_types": [dt["type"] for dt in detected_types[1:3]],
-                "indicators": [doc.get("content", "")[:100] for doc in context_docs[:3]],
+                "indicators": indicators,
                 "message": f"Classified as {primary_type} with {confidence:.0%} confidence"
             }
             
