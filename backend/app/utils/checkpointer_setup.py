@@ -44,36 +44,43 @@ def _create_checkpointer_with_pooling():
     )
     
     # Create PostgresSaver with engine (if supported) or connection string
+    # IMPORTANT: PostgresSaver.from_conn_string() should return PostgresSaver directly
+    # If it returns a context manager, we need to handle it differently
     try:
-        # Try to create with engine (if PostgresSaver supports it)
-        if hasattr(PostgresSaver, 'from_conn_string'):
-            # Use connection string (PostgresSaver creates its own connections)
-            # Connection pooling happens at the database level
-            # IMPORTANT: from_conn_string() may return a context manager in some versions
-            # Check if it's a context manager and handle accordingly
-            result = PostgresSaver.from_conn_string(db_url)
-            
-            # Check if result is a context manager (from_conn_string returns context manager)
-            from contextlib import _GeneratorContextManager
-            if isinstance(result, _GeneratorContextManager):
-                # from_conn_string() returns a context manager, enter it to get the actual PostgresSaver
-                logger.debug("PostgresSaver.from_conn_string() returned context manager, entering it")
-                checkpointer = result.__enter__()
-                # Note: We don't call __exit__ here because we want to keep the checkpointer alive
-                # The context manager is for setup, not for lifecycle management
-            else:
-                checkpointer = result
-        else:
+        # First, try to create PostgresSaver with engine (preferred method)
+        # This gives us better control over connection pooling
+        try:
             checkpointer = PostgresSaver(engine)
-    except (TypeError, AttributeError) as e:
-        # Fallback to connection string if engine not supported
-        logger.debug(f"Fallback to from_conn_string due to: {e}")
-        result = PostgresSaver.from_conn_string(db_url)
-        from contextlib import _GeneratorContextManager
-        if isinstance(result, _GeneratorContextManager):
-            checkpointer = result.__enter__()
-        else:
-            checkpointer = result
+            logger.debug("Created PostgresSaver with engine")
+        except (TypeError, AttributeError) as engine_error:
+            logger.debug(f"PostgresSaver(engine) failed: {engine_error}, trying from_conn_string")
+            # Fallback to from_conn_string if engine not supported
+            if hasattr(PostgresSaver, 'from_conn_string'):
+                result = PostgresSaver.from_conn_string(db_url)
+                
+                # Check if result is a context manager
+                from contextlib import _GeneratorContextManager
+                if isinstance(result, _GeneratorContextManager):
+                    # from_conn_string() returned a context manager
+                    # This means we need to use it as a context manager for the entire lifecycle
+                    # But we can't do that here - we need to return the PostgresSaver instance
+                    # Try to get the actual PostgresSaver by entering the context
+                    logger.warning("PostgresSaver.from_conn_string() returned context manager - entering it")
+                    # Enter the context to get the actual PostgresSaver
+                    # Store the context manager so we can exit it later if needed
+                    checkpointer = result.__enter__()
+                    # Note: We're not calling __exit__ here, which means the connection stays open
+                    # This is intentional - we want the checkpointer to remain active
+                else:
+                    checkpointer = result
+                    logger.debug("Created PostgresSaver with from_conn_string (direct)")
+            else:
+                # No from_conn_string method, try direct constructor with connection string
+                checkpointer = PostgresSaver(db_url)
+                logger.debug("Created PostgresSaver with connection string directly")
+    except Exception as e:
+        logger.error(f"Failed to create PostgresSaver: {e}", exc_info=True)
+        raise
     
     # Verify that we got a PostgresSaver instance, not a context manager
     if not isinstance(checkpointer, PostgresSaver):

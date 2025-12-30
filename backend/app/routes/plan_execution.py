@@ -98,8 +98,8 @@ async def stream_plan_execution_endpoint(
         if not plan:
             raise HTTPException(status_code=404, detail="Plan not found")
         
-        if plan.status not in ["executing", "completed"]:
-            raise HTTPException(status_code=400, detail=f"Plan is not executing or completed (status: {plan.status})")
+        if plan.status not in ["approved", "executing", "completed"]:
+            raise HTTPException(status_code=400, detail=f"Plan is not approved, executing or completed (status: {plan.status})")
         
         return StreamingResponse(
             stream_plan_execution(plan_id, db),
