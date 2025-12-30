@@ -1,4 +1,3 @@
-import { Button } from "@/components/UI/Button"
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -38,88 +37,91 @@ export function TabularReviewToolbar({
   processing = false,
 }: TabularReviewToolbarProps) {
   return (
-    <div className="flex items-center justify-between py-4 border-b">
-      <div className="flex items-center gap-2">
-        <Button
-          variant="outline"
-          size="sm"
+    <div className="flex items-center justify-between py-4 px-6 border-b border-[#E5E7EB] bg-white/80 backdrop-blur-sm">
+      <div className="flex items-center gap-3">
+        <button
           onClick={onAddDocuments}
           disabled={processing}
+          className="px-4 py-2 bg-white border border-[#E5E7EB] text-[#6B7280] text-sm font-medium rounded-lg hover:bg-[#F3F4F6] hover:text-[#1F2937] transition-all duration-300 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
         >
-          <Plus className="w-4 h-4 mr-2" />
+          <Plus className="w-4 h-4" />
           Add documents
-        </Button>
+        </button>
         {onUpdateDocuments && (
-          <Button
-            variant="outline"
-            size="sm"
+          <button
             onClick={onUpdateDocuments}
             disabled={processing}
+            className="px-4 py-2 bg-white border border-[#E5E7EB] text-[#6B7280] text-sm font-medium rounded-lg hover:bg-[#F3F4F6] hover:text-[#1F2937] transition-all duration-300 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
           >
-            <FolderOpen className="w-4 h-4 mr-2" />
+            <FolderOpen className="w-4 h-4" />
             Изменить документы
-          </Button>
+          </button>
         )}
-        <Button
-          variant="outline"
-          size="sm"
+        <button
           onClick={onAddColumns}
           disabled={processing}
+          className="px-4 py-2 bg-white border border-[#E5E7EB] text-[#6B7280] text-sm font-medium rounded-lg hover:bg-[#F3F4F6] hover:text-[#1F2937] transition-all duration-300 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
         >
-          <FileText className="w-4 h-4 mr-2" />
+          <FileText className="w-4 h-4" />
           Add columns
-        </Button>
+        </button>
         {onTemplates && (
-          <Button
-            variant="outline"
-            size="sm"
+          <button
             onClick={onTemplates}
             disabled={processing}
+            className="px-4 py-2 bg-white border border-[#E5E7EB] text-[#6B7280] text-sm font-medium rounded-lg hover:bg-[#F3F4F6] hover:text-[#1F2937] transition-all duration-300 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
           >
-            <LayoutTemplate className="w-4 h-4 mr-2" />
+            <LayoutTemplate className="w-4 h-4" />
             Templates
-          </Button>
+          </button>
         )}
       </div>
       
-      <div className="flex items-center gap-2">
-        <Button
-          variant="default"
-          size="sm"
+      <div className="flex items-center gap-3">
+        <button
           onClick={onRunAll}
           disabled={processing}
+          className="px-5 py-2 bg-gradient-to-r from-[#00D4FF] to-[#7C3AED] text-white text-sm font-medium rounded-lg hover:shadow-lg hover:shadow-[#00D4FF]/30 transition-all duration-300 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
         >
-          <Play className="w-4 h-4 mr-2" />
+          <Play className="w-4 h-4" />
           {processing ? "Обработка..." : "Run all"}
-        </Button>
+        </button>
         
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
-            <Button variant="outline" size="sm" disabled={processing}>
-              <Download className="w-4 h-4 mr-2" />
+            <button
+              disabled={processing}
+              className="px-4 py-2 bg-white border border-[#E5E7EB] text-[#6B7280] text-sm font-medium rounded-lg hover:bg-[#F3F4F6] hover:text-[#1F2937] transition-all duration-300 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+            >
+              <Download className="w-4 h-4" />
               Download
-              <ChevronDown className="w-4 h-4 ml-2" />
-            </Button>
+              <ChevronDown className="w-4 h-4" />
+            </button>
           </DropdownMenuTrigger>
-          <DropdownMenuContent align="end">
-            <DropdownMenuItem onClick={() => onDownload?.("csv")}>
+          <DropdownMenuContent align="end" className="bg-white border border-[#E5E7EB] rounded-lg shadow-lg">
+            <DropdownMenuItem 
+              onClick={() => onDownload?.("csv")}
+              className="hover:bg-[#F3F4F6] cursor-pointer"
+            >
               CSV
             </DropdownMenuItem>
-            <DropdownMenuItem onClick={() => onDownload?.("excel")}>
+            <DropdownMenuItem 
+              onClick={() => onDownload?.("excel")}
+              className="hover:bg-[#F3F4F6] cursor-pointer"
+            >
               Excel
             </DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>
         
-        <Button
-          variant="outline"
-          size="sm"
+        <button
           onClick={onShare}
           disabled={processing}
+          className="px-4 py-2 bg-white border border-[#E5E7EB] text-[#6B7280] text-sm font-medium rounded-lg hover:bg-[#F3F4F6] hover:text-[#1F2937] transition-all duration-300 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
         >
-          <Share2 className="w-4 h-4 mr-2" />
+          <Share2 className="w-4 h-4" />
           Share
-        </Button>
+        </button>
       </div>
     </div>
   )

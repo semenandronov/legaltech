@@ -530,7 +530,7 @@ const TabularReviewPage: React.FC = () => {
 
         {/* Featured Templates Carousel */}
         {reviewId && tableData.columns.length === 0 && (
-          <div className="px-4">
+          <div className="px-6 py-4 bg-white/50">
             <FeaturedTemplatesCarousel
               reviewId={reviewId}
               onTemplateApplied={loadReviewData}
