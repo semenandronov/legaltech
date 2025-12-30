@@ -49,12 +49,31 @@ def _create_checkpointer_with_pooling():
         if hasattr(PostgresSaver, 'from_conn_string'):
             # Use connection string (PostgresSaver creates its own connections)
             # Connection pooling happens at the database level
-            checkpointer = PostgresSaver.from_conn_string(db_url)
+            # IMPORTANT: from_conn_string() may return a context manager in some versions
+            # Check if it's a context manager and handle accordingly
+            result = PostgresSaver.from_conn_string(db_url)
+            
+            # Check if result is a context manager (from_conn_string returns context manager)
+            from contextlib import _GeneratorContextManager
+            if isinstance(result, _GeneratorContextManager):
+                # from_conn_string() returns a context manager, enter it to get the actual PostgresSaver
+                logger.debug("PostgresSaver.from_conn_string() returned context manager, entering it")
+                checkpointer = result.__enter__()
+                # Note: We don't call __exit__ here because we want to keep the checkpointer alive
+                # The context manager is for setup, not for lifecycle management
+            else:
+                checkpointer = result
         else:
             checkpointer = PostgresSaver(engine)
-    except (TypeError, AttributeError):
+    except (TypeError, AttributeError) as e:
         # Fallback to connection string if engine not supported
-        checkpointer = PostgresSaver.from_conn_string(db_url)
+        logger.debug(f"Fallback to from_conn_string due to: {e}")
+        result = PostgresSaver.from_conn_string(db_url)
+        from contextlib import _GeneratorContextManager
+        if isinstance(result, _GeneratorContextManager):
+            checkpointer = result.__enter__()
+        else:
+            checkpointer = result
     
     # Verify that we got a PostgresSaver instance, not a context manager
     if not isinstance(checkpointer, PostgresSaver):
