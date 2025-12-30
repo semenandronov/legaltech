@@ -56,6 +56,12 @@ def _create_checkpointer_with_pooling():
         # Fallback to connection string if engine not supported
         checkpointer = PostgresSaver.from_conn_string(db_url)
     
+    # Verify that we got a PostgresSaver instance, not a context manager
+    if not isinstance(checkpointer, PostgresSaver):
+        logger.error(f"_create_checkpointer_with_pooling returned {type(checkpointer)} instead of PostgresSaver")
+        raise TypeError(f"Expected PostgresSaver, got {type(checkpointer)}")
+    
+    logger.debug(f"Created PostgresSaver instance: {type(checkpointer)}")
     return checkpointer
 
 
@@ -90,17 +96,28 @@ def get_checkpointer():
         # Create new checkpointer with pooling
         checkpointer = _create_checkpointer_with_pooling()
         
+        # Verify it's a PostgresSaver before setup
+        if not isinstance(checkpointer, PostgresSaver):
+            logger.error(f"Checkpointer is not PostgresSaver before setup: {type(checkpointer)}")
+            raise TypeError(f"Expected PostgresSaver, got {type(checkpointer)}")
+        
         # Setup tables once (idempotent - safe to call multiple times)
         if not _checkpointer_setup_done:
             try:
                 if hasattr(checkpointer, 'setup') and callable(checkpointer.setup):
                     # setup() returns a context manager, use it properly
+                    # IMPORTANT: setup() does NOT modify checkpointer, it just creates tables
                     with checkpointer.setup():
                         pass  # Tables are created when entering the context
                     logger.info("✅ PostgreSQL checkpointer tables initialized")
                 _checkpointer_setup_done = True
             except Exception as setup_error:
                 logger.debug(f"Checkpointer setup note: {setup_error}")
+        
+        # Verify it's still a PostgresSaver after setup
+        if not isinstance(checkpointer, PostgresSaver):
+            logger.error(f"Checkpointer changed type after setup: {type(checkpointer)}")
+            raise TypeError(f"Checkpointer changed from PostgresSaver to {type(checkpointer)} after setup")
         
         # Store globally for reuse (connection pooling)
         _global_checkpointer = checkpointer
