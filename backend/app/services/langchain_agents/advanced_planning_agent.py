@@ -7,6 +7,7 @@ from app.services.context_manager import ContextManager
 from app.services.rag_service import RAGService
 from app.services.document_processor import DocumentProcessor
 from langchain_core.messages import HumanMessage, SystemMessage
+from app.services.langchain_agents.prompts import TABLE_DETECTION_PROMPT
 import logging
 import json
 
@@ -270,6 +271,190 @@ class AdvancedPlanningAgent:
         
         return subtasks
     
+    def _determine_table_columns_from_task(self, user_task: str) -> Dict[str, Any]:
+        """
+        Определяет, требует ли задача создания таблицы, и если да - какие колонки нужны
+        
+        Args:
+            user_task: Задача пользователя на естественном языке
+            
+        Returns:
+            Dictionary с информацией о таблице:
+            {
+                "needs_table": bool,
+                "table_name": str (если needs_table=True),
+                "columns": List[Dict] (если needs_table=True),
+                "reasoning": str
+            }
+        """
+        try:
+            logger.info(f"Determining table requirement for task: {user_task[:100]}...")
+            
+            # Используем LLM для определения таблицы
+            prompt = f"""Задача пользователя: {user_task}
+
+Проанализируй задачу и определи, требует ли она создания таблицы для систематического сбора данных из всех документов.
+
+{TABLE_DETECTION_PROMPT}
+
+Верни JSON ответ в формате, указанном выше."""
+            
+            messages = [
+                SystemMessage(content=TABLE_DETECTION_PROMPT),
+                HumanMessage(content=f"Задача пользователя: {user_task}")
+            ]
+            
+            response = self.llm.invoke(messages)
+            response_text = response.content if hasattr(response, 'content') else str(response)
+            
+            # Парсим JSON ответ
+            try:
+                if "```json" in response_text:
+                    json_text = response_text.split("```json")[1].split("```")[0].strip()
+                elif "```" in response_text:
+                    json_text = response_text.split("```")[1].split("```")[0].strip()
+                elif "{" in response_text:
+                    start = response_text.find("{")
+                    end = response_text.rfind("}") + 1
+                    json_text = response_text[start:end]
+                else:
+                    json_text = response_text
+                
+                result = json.loads(json_text)
+                
+                # Валидация результата
+                needs_table = result.get("needs_table", False)
+                
+                if needs_table:
+                    # Проверяем наличие обязательных полей
+                    if not result.get("columns") or not isinstance(result.get("columns"), list):
+                        logger.warning("Table detection returned needs_table=True but no columns, setting to False")
+                        return {
+                            "needs_table": False,
+                            "reasoning": "Не удалось определить колонки для таблицы"
+                        }
+                    
+                    # Валидируем колонки
+                    validated_columns = []
+                    for col in result.get("columns", []):
+                        if not isinstance(col, dict):
+                            continue
+                        
+                        if not col.get("label") or not col.get("question"):
+                            logger.warning(f"Skipping invalid column: {col}")
+                            continue
+                        
+                        validated_columns.append({
+                            "label": col.get("label"),
+                            "question": col.get("question"),
+                            "type": col.get("type", "text")  # default to text
+                        })
+                    
+                    if not validated_columns:
+                        logger.warning("No valid columns found, setting needs_table=False")
+                        return {
+                            "needs_table": False,
+                            "reasoning": "Не удалось определить валидные колонки"
+                        }
+                    
+                    return {
+                        "needs_table": True,
+                        "table_name": result.get("table_name", "Данные из документов"),
+                        "columns": validated_columns,
+                        "reasoning": result.get("reasoning", "Задача требует систематического сбора данных")
+                    }
+                else:
+                    return {
+                        "needs_table": False,
+                        "reasoning": result.get("reasoning", "Задача не требует создания таблицы")
+                    }
+                
+            except json.JSONDecodeError as e:
+                logger.warning(f"Failed to parse table detection JSON: {e}, using fallback")
+                return self._fallback_table_detection(user_task)
+        
+        except Exception as e:
+            logger.error(f"Error in table detection: {e}", exc_info=True)
+            return self._fallback_table_detection(user_task)
+    
+    def _fallback_table_detection(self, user_task: str) -> Dict[str, Any]:
+        """
+        Fallback метод для определения таблиц на основе простых эвристик
+        
+        Args:
+            user_task: Задача пользователя
+            
+        Returns:
+            Dictionary с информацией о таблице
+        """
+        task_lower = user_task.lower()
+        
+        # Простые эвристики для определения таблиц
+        table_keywords = [
+            "извлеки все", "извлеки все", "найди все", "собери все",
+            "для каждого", "для всех", "из каждого", "из всех",
+            "создай таблицу", "в виде таблицы", "таблица с",
+            "покажи все", "представь в виде"
+        ]
+        
+        # Проверяем наличие ключевых слов для таблиц
+        has_table_keywords = any(keyword in task_lower for keyword in table_keywords)
+        
+        # Проверяем, не является ли это задачей для стандартных агентов
+        agent_keywords = [
+            "найди противоречия", "проанализируй риски", "извлеки ключевые факты",
+            "создай резюме", "хронология", "события", "даты и события"
+        ]
+        
+        is_agent_task = any(keyword in task_lower for keyword in agent_keywords)
+        
+        if has_table_keywords and not is_agent_task:
+            # Пытаемся определить колонки из задачи (простая эвристика)
+            columns = []
+            
+            # Извлекаем упоминания данных
+            if "дата" in task_lower or "даты" in task_lower:
+                if "подписания" in task_lower:
+                    columns.append({
+                        "label": "Дата подписания",
+                        "question": "Какая дата подписания документа?",
+                        "type": "date"
+                    })
+                else:
+                    columns.append({
+                        "label": "Дата",
+                        "question": "Какая дата упоминается в документе?",
+                        "type": "date"
+                    })
+            
+            if "сумма" in task_lower or "суммы" in task_lower:
+                columns.append({
+                    "label": "Сумма",
+                    "question": "Какая сумма упоминается в документе?",
+                    "type": "number"
+                })
+            
+            if "сторона" in task_lower or "стороны" in task_lower:
+                columns.append({
+                    "label": "Стороны",
+                    "question": "Кто являются сторонами договора?",
+                    "type": "text"
+                })
+            
+            if columns:
+                return {
+                    "needs_table": True,
+                    "table_name": "Данные из документов",
+                    "columns": columns,
+                    "reasoning": "Задача содержит ключевые слова для таблицы"
+                }
+        
+        # По умолчанию - таблица не нужна
+        return {
+            "needs_table": False,
+            "reasoning": "Задача не соответствует критериям для создания таблицы"
+        }
+    
     def plan_with_subtasks(
         self,
         user_task: str,
@@ -324,6 +509,10 @@ class AdvancedPlanningAgent:
             # 1. Анализ сложности задачи
             task_analysis = self._analyze_task_complexity(user_task, case_id, previous_plans_context)
             
+            # 1.5. Определение необходимости таблицы
+            table_detection_result = self._determine_table_columns_from_task(user_task)
+            needs_table = table_detection_result.get("needs_table", False)
+            
             # 2. Если задача простая - используем базовый планировщик
             if task_analysis.get("complexity") == "simple":
                 logger.info("Task is simple, using base planning agent")
@@ -334,7 +523,17 @@ class AdvancedPlanningAgent:
                     num_documents=num_documents
                 )
                 # Преобразуем в формат с подзадачами
-                return self._convert_to_subtasks_format(base_plan, user_task)
+                result_plan = self._convert_to_subtasks_format(base_plan, user_task)
+                
+                # Добавляем таблицы, если нужно
+                if needs_table:
+                    result_plan["tables_to_create"] = [{
+                        "table_name": table_detection_result.get("table_name", "Данные из документов"),
+                        "columns": table_detection_result.get("columns", [])
+                    }]
+                    logger.info(f"Table creation added to simple plan: {table_detection_result.get('table_name')}")
+                
+                return result_plan
             
             # 3. Разбивка на подзадачи для сложных задач
             logger.info(f"Task is complex ({task_analysis.get('complexity')}), breaking into subtasks")
@@ -349,6 +548,14 @@ class AdvancedPlanningAgent:
                 "estimated_time": "0 мин",
                 "confidence": 0.8
             }
+            
+            # Добавляем таблицы в план, если нужно
+            if needs_table:
+                plan["tables_to_create"] = [{
+                    "table_name": table_detection_result.get("table_name", "Данные из документов"),
+                    "columns": table_detection_result.get("columns", [])
+                }]
+                logger.info(f"Table creation added to plan: {table_detection_result.get('table_name')} with {len(table_detection_result.get('columns', []))} columns")
             
             total_time_minutes = 0
             for subtask in subtasks:
@@ -417,13 +624,28 @@ class AdvancedPlanningAgent:
             logger.error(f"Error in advanced planning: {e}", exc_info=True)
             # Fallback на базовый планировщик
             logger.warning("Falling back to base planning agent")
+            
+            # Определяем таблицы даже в fallback
+            table_detection_result = self._determine_table_columns_from_task(user_task)
+            needs_table = table_detection_result.get("needs_table", False)
+            
             base_plan = self.base_planning_agent.plan_analysis(
                 user_task=user_task,
                 case_id=case_id,
                 available_documents=available_documents,
                 num_documents=num_documents
             )
-            return self._convert_to_subtasks_format(base_plan, user_task)
+            result_plan = self._convert_to_subtasks_format(base_plan, user_task)
+            
+            # Добавляем таблицы, если нужно
+            if needs_table:
+                result_plan["tables_to_create"] = [{
+                    "table_name": table_detection_result.get("table_name", "Данные из документов"),
+                    "columns": table_detection_result.get("columns", [])
+                }]
+                logger.info(f"Table creation added to fallback plan: {table_detection_result.get('table_name')}")
+            
+            return result_plan
     
     def _analyze_task_complexity(
         self,

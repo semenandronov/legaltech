@@ -279,10 +279,20 @@ class AgentCoordinator:
                 self.feedback_service.register_websocket_callback(case_id, websocket_callback)
             
             # Initialize state using create_initial_state helper
+            metadata = {"planning_used": user_task is not None and self.planning_agent is not None}
+            
+            # Добавляем tables_to_create в metadata, если они есть в плане
+            if "plan" in locals() and isinstance(plan, dict):
+                tables_to_create = plan.get("tables_to_create")
+                if tables_to_create:
+                    metadata["tables_to_create"] = tables_to_create
+                    metadata["plan_data"] = plan  # Сохраняем весь план для доступа
+                    logger.info(f"Added {len(tables_to_create)} tables_to_create to metadata")
+            
             initial_state = create_initial_state(
                 case_id=case_id,
                 analysis_types=analysis_types,
-                metadata={"planning_used": user_task is not None and self.planning_agent is not None}
+                metadata=metadata
             )
             
             # Add plan goals and current_plan if created

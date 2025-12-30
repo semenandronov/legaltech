@@ -88,6 +88,95 @@ def deliver_node(
                         "error": str(e)
                     }
         
+        # 1.5. Создаем кастомные таблицы из плана (tables_to_create)
+        # Проверяем наличие tables_to_create в metadata или в сохраненном плане
+        custom_tables_to_create = state.get("metadata", {}).get("tables_to_create")
+        if not custom_tables_to_create:
+            # Попытка получить из plan_data если он есть в metadata
+            plan_data = state.get("metadata", {}).get("plan_data")
+            if plan_data and isinstance(plan_data, dict):
+                custom_tables_to_create = plan_data.get("tables_to_create")
+        
+        if custom_tables_to_create and isinstance(custom_tables_to_create, list):
+            logger.info(f"[DELIVER] Found {len(custom_tables_to_create)} custom tables to create from plan")
+            try:
+                from app.routes.review_table import ReviewTableColumn
+                
+                tabular_service = TabularReviewService(db)
+                
+                for table_spec in custom_tables_to_create:
+                    if not isinstance(table_spec, dict):
+                        continue
+                    
+                    table_name = table_spec.get("table_name", "Данные из документов")
+                    columns_spec = table_spec.get("columns", [])
+                    
+                    if not columns_spec:
+                        logger.warning(f"[DELIVER] Table {table_name} has no columns, skipping")
+                        continue
+                    
+                    # Преобразуем columns_spec в ReviewTableColumn
+                    review_columns = []
+                    for col in columns_spec:
+                        if not isinstance(col, dict):
+                            continue
+                        review_columns.append(ReviewTableColumn(
+                            label=col.get("label", ""),
+                            question=col.get("question", ""),
+                            column_type=col.get("type", "text")
+                        ))
+                    
+                    if not review_columns:
+                        logger.warning(f"[DELIVER] Table {table_name} has no valid columns, skipping")
+                        continue
+                    
+                    # Создаем TabularReview
+                    try:
+                        review = tabular_service.create_tabular_review(
+                            case_id=case_id,
+                            user_id=user_id,
+                            name=table_name,
+                            description=f"Автоматически созданная таблица из плана: {table_name}"
+                        )
+                        
+                        # Добавляем колонки
+                        for review_col in review_columns:
+                            tabular_service.add_column(
+                                review_id=review.id,
+                                column_label=review_col.label,
+                                column_type=review_col.column_type,
+                                prompt=review_col.question,
+                                user_id=user_id
+                            )
+                        
+                        # Запускаем извлечение данных в фоне (run_extraction - async метод)
+                        # Таблица создана с колонками, извлечение будет выполнено отдельно
+                        # или может быть запущено через API endpoint
+                        logger.info(f"[DELIVER] Table '{table_name}' created with {len(review_columns)} columns, extraction can be run separately")
+                        
+                        # Сохраняем результат в table_results
+                        table_key = f"custom_{table_name.lower().replace(' ', '_')}"
+                        table_results[table_key] = {
+                            "table_id": review.id,
+                            "table_name": table_name,
+                            "status": "created",
+                            "type": "custom"
+                        }
+                        
+                        logger.info(f"[DELIVER] Created custom table '{table_name}' with id: {review.id}")
+                        
+                    except Exception as table_error:
+                        logger.error(f"[DELIVER] Failed to create custom table '{table_name}': {table_error}", exc_info=True)
+                        table_key = f"custom_{table_name.lower().replace(' ', '_')}"
+                        table_results[table_key] = {
+                            "status": "failed",
+                            "error": str(table_error),
+                            "type": "custom"
+                        }
+                        
+            except Exception as e:
+                logger.error(f"[DELIVER] Error creating custom tables: {e}", exc_info=True)
+        
         state["table_results"] = table_results
         
         # 2. Генерируем отчеты
