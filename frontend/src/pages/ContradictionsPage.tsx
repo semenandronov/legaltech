@@ -87,7 +87,7 @@ const ContradictionsPage = () => {
         >
           <div className="space-y-4">
             <div>
-              <Badge variant={selectedContradiction.severity === 'HIGH' ? 'high-risk' : selectedContradiction.severity === 'MEDIUM' ? 'medium-risk' : 'low-risk'}>
+              <Badge variant={selectedContradiction.severity === 'HIGH' ? 'destructive' : selectedContradiction.severity === 'MEDIUM' ? 'secondary' : 'default'}>
                 {selectedContradiction.severity}
               </Badge>
               <h3 className="text-h3 text-primary mt-2">{selectedContradiction.type}</h3>

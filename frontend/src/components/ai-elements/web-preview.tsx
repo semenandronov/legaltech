@@ -6,7 +6,7 @@ import {
   CollapsibleContent,
   CollapsibleTrigger,
 } from "@/components/UI/collapsible";
-import { Input } from "@/components/UI/input";
+import Input from "@/components/UI/Input";
 import {
   Tooltip,
   TooltipContent,

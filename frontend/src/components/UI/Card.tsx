@@ -76,4 +76,18 @@ const CardFooter = React.forwardRef<
 ))
 CardFooter.displayName = "CardFooter"
 
-export { Card, CardHeader, CardFooter, CardTitle, CardDescription, CardContent }
+const CardAction = React.forwardRef<
+  HTMLDivElement,
+  React.HTMLAttributes<HTMLDivElement>
+>(({ className, ...props }, ref) => (
+  <div
+    ref={ref}
+    className={cn("ml-auto", className)}
+    {...props}
+  />
+))
+CardAction.displayName = "CardAction"
+
+export type CardProps = React.HTMLAttributes<HTMLDivElement>
+
+export { Card, CardHeader, CardFooter, CardTitle, CardDescription, CardContent, CardAction }
