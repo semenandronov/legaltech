@@ -370,7 +370,18 @@ class AgentCoordinator:
             # Track execution steps for streaming
             execution_steps = []
             
-            for state in self.graph.stream(initial_state, thread_config):
+            # Verify checkpointer before streaming
+            if hasattr(self.graph, 'checkpointer') and self.graph.checkpointer:
+                logger.debug(f"Graph checkpointer type: {type(self.graph.checkpointer)}")
+                from langgraph.checkpoint.postgres import PostgresSaver
+                if isinstance(self.graph.checkpointer, PostgresSaver):
+                    logger.debug("✅ Graph checkpointer is PostgresSaver instance")
+                else:
+                    logger.warning(f"⚠️ Graph checkpointer is not PostgresSaver: {type(self.graph.checkpointer)}")
+            
+            logger.info(f"Starting graph stream for case {case_id} with {len(analysis_types)} analysis types")
+            try:
+                for state in self.graph.stream(initial_state, thread_config):
                 # Log progress
                 node_name = list(state.keys())[0] if state else "unknown"
                 logger.info(f"Graph execution: {node_name} completed")
