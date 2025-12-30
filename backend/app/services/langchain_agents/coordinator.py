@@ -381,54 +381,56 @@ class AgentCoordinator:
             
             logger.info(f"Starting graph stream for case {case_id} with {len(analysis_types)} analysis types")
             try:
-                for state in self.graph.stream(initial_state, thread_config):
-                # Log progress
-                node_name = list(state.keys())[0] if state else "unknown"
-                logger.info(f"Graph execution: {node_name} completed")
-                final_state = state[node_name] if state else None
-                
-                # #region agent log
-                try:
-                    log_path = os.path.join(os.getcwd(), '.cursor', 'debug.log')
-                    with open(log_path, 'a') as f:
-                        f.write(json.dumps({
-                            "sessionId": "debug-session",
-                            "runId": "coordinator-stream",
-                            "hypothesisId": "H2",
-                            "location": "coordinator.py:graph.stream",
-                            "message": "Node execution completed",
-                            "data": {
-                                "node_name": node_name,
-                                "has_final_state": final_state is not None,
-                                "state_keys": list(state.keys()) if state else []
-                            },
-                            "timestamp": int(time.time() * 1000)
-                        }) + '\n')
-                except Exception:
-                    pass
-                # #endregion
-                
-                # Track step for streaming
-                if node_name and node_name != "supervisor":
-                    step_info = {
-                        "step_id": f"{node_name}_{len(execution_steps)}",
-                        "agent_name": node_name,
-                        "status": "completed",
-                        "description": f"Выполнение анализа {node_name}"
-                    }
-                    # Extract reasoning and result if available
-                    if final_state and isinstance(final_state, dict):
-                        result_key = f"{node_name}_result"
-                        if result_key in final_state:
-                            step_info["result"] = str(final_state[result_key])[:500]  # Limit length
-                    execution_steps.append(step_info)
+                stream_iter = self.graph.stream(initial_state, thread_config)
+                logger.debug(f"Graph stream iterator created: {type(stream_iter)}")
+                for state in stream_iter:
+                    # Log progress
+                    node_name = list(state.keys())[0] if state else "unknown"
+                    logger.info(f"Graph execution: {node_name} completed")
+                    final_state = state[node_name] if state else None
                     
-                    # Call step callback if provided (for real-time saving)
-                    if step_callback:
-                        try:
-                            step_callback(step_info)
-                        except Exception as callback_error:
-                            logger.warning(f"Error in step callback: {callback_error}")
+                    # #region agent log
+                    try:
+                        log_path = os.path.join(os.getcwd(), '.cursor', 'debug.log')
+                        with open(log_path, 'a') as f:
+                            f.write(json.dumps({
+                                "sessionId": "debug-session",
+                                "runId": "coordinator-stream",
+                                "hypothesisId": "H2",
+                                "location": "coordinator.py:graph.stream",
+                                "message": "Node execution completed",
+                                "data": {
+                                    "node_name": node_name,
+                                    "has_final_state": final_state is not None,
+                                    "state_keys": list(state.keys()) if state else []
+                                },
+                                "timestamp": int(time.time() * 1000)
+                            }) + '\n')
+                    except Exception:
+                        pass
+                    # #endregion
+                    
+                    # Track step for streaming
+                    if node_name and node_name != "supervisor":
+                        step_info = {
+                            "step_id": f"{node_name}_{len(execution_steps)}",
+                            "agent_name": node_name,
+                            "status": "completed",
+                            "description": f"Выполнение анализа {node_name}"
+                        }
+                        # Extract reasoning and result if available
+                        if final_state and isinstance(final_state, dict):
+                            result_key = f"{node_name}_result"
+                            if result_key in final_state:
+                                step_info["result"] = str(final_state[result_key])[:500]  # Limit length
+                        execution_steps.append(step_info)
+                        
+                        # Call step callback if provided (for real-time saving)
+                        if step_callback:
+                            try:
+                                step_callback(step_info)
+                            except Exception as callback_error:
+                                logger.warning(f"Error in step callback: {callback_error}")
             
             # Get final state
             if final_state is None:
