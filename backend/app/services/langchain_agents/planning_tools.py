@@ -317,13 +317,13 @@ def classify_case_type_tool(case_id: str) -> str:
         try:
             # Если RAG service доступен, используем его для классификации
             if _rag_service:
-            # Получаем общий контекст дела
-            context_docs = _rag_service.retrieve_context(
-                case_id=case_id,
-                query="тип дела суть спора предмет договора",
-                k=10,
-                db=db
-            )
+                # Получаем общий контекст дела
+                context_docs = _rag_service.retrieve_context(
+                    case_id=case_id,
+                    query="тип дела суть спора предмет договора",
+                    k=10,
+                    db=db
+                )
             
             if not context_docs:
                 return json.dumps({
