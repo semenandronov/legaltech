@@ -66,10 +66,10 @@ def ls_tool(path: str = ".", case_id: str = None) -> str:
     
     if not _file_system_context:
         if not _ensure_file_system_context(case_id):
-            return json.dumps({
-                "error": "File system context not initialized",
+        return json.dumps({
+            "error": "File system context not initialized",
                 "message": "FileSystemContext not available. Please ensure workspace is initialized."
-            })
+        })
     
     try:
         # Если path содержит поддиректорию, используем её
