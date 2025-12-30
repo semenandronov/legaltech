@@ -147,6 +147,12 @@ async def stream_chat_response(
         classification_llm = create_llm(temperature=0.0)
         is_task = await classify_request(question, classification_llm)
         
+        # #region agent log
+        with open('/Users/semyon_andronov04/Desktop/C ДВ/.cursor/debug.log', 'a') as f:
+            import json as json_debug
+            f.write(json_debug.dumps({"sessionId":"debug-session","runId":"run1","hypothesisId":"A","location":"assistant_chat.py:148","message":"Classification result","data":{"is_task":is_task,"asyncio_available":hasattr(__import__('asyncio'),'sleep')},"timestamp":int(__import__('time').time()*1000)})+"\n")
+        # #endregion
+        
         if is_task:
             # Это задача - используем Planning Agent и агентов
             logger.info(f"Detected task request for case {case_id}: {question[:100]}...")
@@ -204,6 +210,17 @@ async def stream_chat_response(
 Запускаю выполнение анализа в фоновом режиме. Результаты будут доступны в разделе "Анализ"."""
                 
                 # Stream plan response
+                # #region agent log
+                with open('/Users/semyon_andronov04/Desktop/C ДВ/.cursor/debug.log', 'a') as f:
+                    import json as json_debug
+                    try:
+                        asyncio_test = asyncio
+                        asyncio_available = True
+                    except UnboundLocalError as e:
+                        asyncio_available = False
+                        asyncio_error = str(e)
+                    f.write(json_debug.dumps({"sessionId":"debug-session","runId":"run1","hypothesisId":"A","location":"assistant_chat.py:207","message":"Before asyncio.sleep in task block","data":{"asyncio_available":asyncio_available,"error":asyncio_error if not asyncio_available else None},"timestamp":int(__import__('time').time()*1000)})+"\n")
+                # #endregion
                 for chunk in plan_text:
                     yield f"data: {json.dumps({'textDelta': chunk}, ensure_ascii=False)}\n\n"
                     await asyncio.sleep(0.01)  # Small delay for streaming effect
@@ -253,7 +270,17 @@ async def stream_chat_response(
                 yield f"data: {json.dumps({'textDelta': ''})}\n\n"
         else:
             # Это вопрос - используем RAG + LLM
+            # #region agent log
+            with open('/Users/semyon_andronov04/Desktop/C ДВ/.cursor/debug.log', 'a') as f:
+                import json as json_debug
+                f.write(json_debug.dumps({"sessionId":"debug-session","runId":"run1","hypothesisId":"A","location":"assistant_chat.py:256","message":"Before local asyncio import in else block","data":{"asyncio_in_globals":"asyncio" in __import__('sys').modules},"timestamp":int(__import__('time').time()*1000)})+"\n")
+            # #endregion
             import asyncio
+            # #region agent log
+            with open('/Users/semyon_andronov04/Desktop/C ДВ/.cursor/debug.log', 'a') as f:
+                import json as json_debug
+                f.write(json_debug.dumps({"sessionId":"debug-session","runId":"run1","hypothesisId":"A","location":"assistant_chat.py:258","message":"After local asyncio import","data":{},"timestamp":int(__import__('time').time()*1000)})+"\n")
+            # #endregion
             loop = asyncio.get_event_loop()
             
             # Get relevant documents using RAG
