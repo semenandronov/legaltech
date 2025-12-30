@@ -1,15 +1,15 @@
 import { useState, useEffect } from 'react'
 import { useParams } from 'react-router-dom'
+import { Home, MessageSquare, FileText, Table } from 'lucide-react'
 import { getCase, getRisks, getDiscrepancies, getTimeline, startAnalysis, CaseResponse, DiscrepancyItem, TimelineEvent } from '../services/api'
 import CaseHeader from '../components/CaseOverview/CaseHeader'
-import CaseNavigation from '../components/CaseOverview/CaseNavigation'
+import UnifiedSidebar from '../components/Layout/UnifiedSidebar'
 import RiskCards from '../components/CaseOverview/RiskCards'
 import ContradictionsSection from '../components/CaseOverview/ContradictionsSection'
 import TimelineSection from '../components/CaseOverview/TimelineSection'
 import Spinner from '../components/UI/Spinner'
 import { Tabs, TabList, Tab, TabPanel } from '../components/UI/Tabs'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../components/UI/Card'
-import { Button } from '../components/UI/Button'
 import { Alert, AlertDescription, AlertTitle } from '../components/UI/alert'
 import { logger } from '@/lib/logger'
 
@@ -170,19 +170,26 @@ const CaseOverviewPage = () => {
   
   if (loading || !caseData) {
     return (
-      <div className="flex items-center justify-center h-screen">
+      <div className="flex items-center justify-center h-screen bg-gradient-to-br from-[#F8F9FA] via-white to-[#F0F4F8]">
         <Spinner size="lg" />
       </div>
     )
   }
+
+  const navItems = [
+    { id: 'overview', label: 'Обзор', icon: Home, path: `/cases/${caseId}/workspace` },
+    { id: 'chat', label: 'Ассистент', icon: MessageSquare, path: `/cases/${caseId}/chat` },
+    { id: 'documents', label: 'Документы', icon: FileText, path: `/cases/${caseId}/documents` },
+    { id: 'tabular-review', label: 'Tabular Review', icon: Table, path: `/cases/${caseId}/tabular-review` },
+  ]
   
   return (
-    <div className="flex h-screen bg-primary">
-      <CaseNavigation caseId={caseId!} />
+    <div className="flex h-screen bg-gradient-to-br from-[#F8F9FA] via-white to-[#F0F4F8]">
+      <UnifiedSidebar navItems={navItems} title="Legal AI" />
       <div className="flex-1 flex flex-col overflow-hidden">
         <CaseHeader caseData={caseData} />
-        <div className="flex-1 overflow-y-auto">
-          <div className="p-6">
+        <div className="flex-1 overflow-y-auto content-background">
+          <div className="p-8 fade-in-up">
             <Tabs defaultTab="overview" className="space-y-6">
               <TabList>
                 <Tab id="overview">Обзор</Tab>
@@ -192,45 +199,45 @@ const CaseOverviewPage = () => {
               </TabList>
               
               <TabPanel id="overview" className="space-y-6">
-                <Card>
+                <Card className="hoverable">
                   <CardHeader>
-                    <CardTitle>Обзор дела</CardTitle>
-                    <CardDescription>
+                    <CardTitle className="font-display text-h2">Обзор дела</CardTitle>
+                    <CardDescription className="text-body text-[#6B7280]">
                       Общая информация о деле и его статусе
                     </CardDescription>
                   </CardHeader>
                   <CardContent>
-                    <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                      <div>
-                        <div className="text-2xl font-bold text-primary">{caseData.num_documents}</div>
-                        <div className="text-sm text-muted-foreground">Документов</div>
+                    <div className="grid grid-cols-2 md:grid-cols-4 gap-6">
+                      <div className="p-4 rounded-lg bg-gradient-to-br from-[#00D4FF]/10 to-[#7C3AED]/10 border border-[#00D4FF]/20">
+                        <div className="text-3xl font-display font-bold text-[#00D4FF]">{caseData.num_documents}</div>
+                        <div className="text-sm text-[#6B7280] mt-1">Документов</div>
                       </div>
-                      <div>
-                        <div className="text-2xl font-bold text-error">{risks.length}</div>
-                        <div className="text-sm text-muted-foreground">Рисков</div>
+                      <div className="p-4 rounded-lg bg-gradient-to-br from-[#EF4444]/10 to-[#DC2626]/10 border border-[#EF4444]/20">
+                        <div className="text-3xl font-display font-bold text-[#EF4444]">{risks.length}</div>
+                        <div className="text-sm text-[#6B7280] mt-1">Рисков</div>
                       </div>
-                      <div>
-                        <div className="text-2xl font-bold text-warning">{contradictions.length}</div>
-                        <div className="text-sm text-muted-foreground">Противоречий</div>
+                      <div className="p-4 rounded-lg bg-gradient-to-br from-[#F59E0B]/10 to-[#D97706]/10 border border-[#F59E0B]/20">
+                        <div className="text-3xl font-display font-bold text-[#F59E0B]">{contradictions.length}</div>
+                        <div className="text-sm text-[#6B7280] mt-1">Противоречий</div>
                       </div>
                     </div>
                   </CardContent>
                 </Card>
               </TabPanel>
               
-              <TabPanel id="risks" className="space-y-4">
+              <TabPanel id="risks" className="space-y-6">
                 <div className="flex items-center justify-between">
-                  <h2 className="text-h2 text-primary">
+                  <h2 className="font-display text-h1 text-[#1F2937]">
                     Ключевые риски ({risks.length} выявлено)
                   </h2>
                   {risks.length === 0 && !loadingRisks && (
-                    <Button 
-                      variant="primary" 
+                    <button
                       onClick={handleStartAnalysis}
                       disabled={startingAnalysis}
+                      className="px-6 py-3 bg-gradient-to-r from-[#00D4FF] to-[#7C3AED] text-white font-medium rounded-lg hover:shadow-lg hover:shadow-[#00D4FF]/30 transition-all duration-300 disabled:opacity-50 disabled:cursor-not-allowed"
                     >
                       {startingAnalysis ? 'Запуск анализа...' : 'Запустить анализ рисков'}
-                    </Button>
+                    </button>
                   )}
                 </div>
                 {loadingRisks ? (
@@ -242,15 +249,13 @@ const CaseOverviewPage = () => {
                     <AlertTitle>Анализ не выполнен</AlertTitle>
                     <AlertDescription>
                       Для выявления рисков необходимо запустить анализ документов.
-                      <Button 
-                        variant="primary" 
-                        size="sm"
-                        className="mt-2"
+                      <button
                         onClick={handleStartAnalysis}
                         disabled={startingAnalysis}
+                        className="mt-3 px-4 py-2 bg-gradient-to-r from-[#00D4FF] to-[#7C3AED] text-white text-sm font-medium rounded-lg hover:shadow-lg hover:shadow-[#00D4FF]/30 transition-all duration-300 disabled:opacity-50 disabled:cursor-not-allowed"
                       >
                         {startingAnalysis ? 'Запуск...' : 'Запустить анализ'}
-                      </Button>
+                      </button>
                     </AlertDescription>
                   </Alert>
                 ) : (
@@ -258,19 +263,19 @@ const CaseOverviewPage = () => {
                 )}
               </TabPanel>
               
-              <TabPanel id="contradictions" className="space-y-4">
+              <TabPanel id="contradictions" className="space-y-6">
                 <div className="flex items-center justify-between">
-                  <h2 className="text-h2 text-primary">
+                  <h2 className="font-display text-h1 text-[#1F2937]">
                     Противоречия ({contradictions.length} найдено)
                   </h2>
                   {contradictions.length === 0 && !loadingContradictions && (
-                    <Button 
-                      variant="primary" 
+                    <button
                       onClick={handleStartAnalysis}
                       disabled={startingAnalysis}
+                      className="px-6 py-3 bg-gradient-to-r from-[#00D4FF] to-[#7C3AED] text-white font-medium rounded-lg hover:shadow-lg hover:shadow-[#00D4FF]/30 transition-all duration-300 disabled:opacity-50 disabled:cursor-not-allowed"
                     >
                       {startingAnalysis ? 'Запуск анализа...' : 'Запустить анализ противоречий'}
-                    </Button>
+                    </button>
                   )}
                 </div>
                 {loadingContradictions ? (
@@ -282,15 +287,13 @@ const CaseOverviewPage = () => {
                     <AlertTitle>Анализ не выполнен</AlertTitle>
                     <AlertDescription>
                       Для поиска противоречий необходимо запустить анализ документов.
-                      <Button 
-                        variant="primary" 
-                        size="sm"
-                        className="mt-2"
+                      <button
                         onClick={handleStartAnalysis}
                         disabled={startingAnalysis}
+                        className="mt-3 px-4 py-2 bg-gradient-to-r from-[#00D4FF] to-[#7C3AED] text-white text-sm font-medium rounded-lg hover:shadow-lg hover:shadow-[#00D4FF]/30 transition-all duration-300 disabled:opacity-50 disabled:cursor-not-allowed"
                       >
                         {startingAnalysis ? 'Запуск...' : 'Запустить анализ'}
-                      </Button>
+                      </button>
                     </AlertDescription>
                   </Alert>
                 ) : (
@@ -298,17 +301,17 @@ const CaseOverviewPage = () => {
                 )}
               </TabPanel>
               
-              <TabPanel id="timeline" className="space-y-4">
+              <TabPanel id="timeline" className="space-y-6">
                 <div className="flex items-center justify-between">
-                  <h2 className="text-h2 text-primary">Временная линия</h2>
+                  <h2 className="font-display text-h1 text-[#1F2937]">Временная линия</h2>
                   {timelineEvents.length === 0 && !loadingTimeline && (
-                    <Button 
-                      variant="primary" 
+                    <button
                       onClick={handleStartAnalysis}
                       disabled={startingAnalysis}
+                      className="px-6 py-3 bg-gradient-to-r from-[#00D4FF] to-[#7C3AED] text-white font-medium rounded-lg hover:shadow-lg hover:shadow-[#00D4FF]/30 transition-all duration-300 disabled:opacity-50 disabled:cursor-not-allowed"
                     >
                       {startingAnalysis ? 'Запуск анализа...' : 'Запустить анализ временной линии'}
-                    </Button>
+                    </button>
                   )}
                 </div>
                 {loadingTimeline ? (
@@ -320,15 +323,13 @@ const CaseOverviewPage = () => {
                     <AlertTitle>Анализ не выполнен</AlertTitle>
                     <AlertDescription>
                       Для построения временной линии необходимо запустить анализ документов.
-                      <Button 
-                        variant="primary" 
-                        size="sm"
-                        className="mt-2"
+                      <button
                         onClick={handleStartAnalysis}
                         disabled={startingAnalysis}
+                        className="mt-3 px-4 py-2 bg-gradient-to-r from-[#00D4FF] to-[#7C3AED] text-white text-sm font-medium rounded-lg hover:shadow-lg hover:shadow-[#00D4FF]/30 transition-all duration-300 disabled:opacity-50 disabled:cursor-not-allowed"
                       >
                         {startingAnalysis ? 'Запуск...' : 'Запустить анализ'}
-                      </Button>
+                      </button>
                     </AlertDescription>
                   </Alert>
                 ) : (

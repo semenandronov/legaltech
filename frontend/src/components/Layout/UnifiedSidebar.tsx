@@ -99,3 +99,4 @@ const UnifiedSidebar = ({ navItems, title = 'Legal AI' }: UnifiedSidebarProps) =
 
 export default UnifiedSidebar
 
+

@@ -1,7 +1,5 @@
 import { AlertTriangle, CheckCircle, XCircle } from 'lucide-react'
 import { Card } from '../UI/Card'
-import { Button } from '../UI/Button'
-import { Badge } from '../UI/Badge'
 
 interface Contradiction {
   id: string
@@ -32,8 +30,8 @@ const ContradictionsSection = ({
 }: ContradictionsSectionProps) => {
   if (contradictions.length === 0) {
     return (
-      <div className="text-center py-8">
-        <p className="text-body text-secondary">Противоречия не найдены</p>
+      <div className="text-center py-12">
+        <p className="text-body text-[#6B7280]">Противоречия не найдены</p>
       </div>
     )
   }
@@ -41,63 +39,79 @@ const ContradictionsSection = ({
   const getStatusBadge = (status: string) => {
     switch (status) {
       case 'resolved':
-        return <Badge variant="completed"><CheckCircle className="w-3 h-3 inline mr-1" />Resolved</Badge>
+        return (
+          <span className="px-3 py-1 rounded-full text-xs font-medium bg-gradient-to-r from-[#10B981]/20 to-[#059669]/20 text-[#10B981] border border-[#10B981]/30 flex items-center gap-1">
+            <CheckCircle className="w-3 h-3" /> Resolved
+          </span>
+        )
       case 'ignored':
-        return <Badge variant="pending"><XCircle className="w-3 h-3 inline mr-1" />Ignored</Badge>
+        return (
+          <span className="px-3 py-1 rounded-full text-xs font-medium bg-gradient-to-r from-[#6B7280]/20 to-[#4B5563]/20 text-[#6B7280] border border-[#6B7280]/30 flex items-center gap-1">
+            <XCircle className="w-3 h-3" /> Ignored
+          </span>
+        )
       default:
-        return <Badge variant="flagged"><AlertTriangle className="w-3 h-3 inline mr-1" />Review</Badge>
+        return (
+          <span className="px-3 py-1 rounded-full text-xs font-medium bg-gradient-to-r from-[#F59E0B]/20 to-[#D97706]/20 text-[#F59E0B] border border-[#F59E0B]/30 flex items-center gap-1">
+            <AlertTriangle className="w-3 h-3" /> Review
+          </span>
+        )
     }
   }
   
   return (
     <div className="space-y-4">
-      {contradictions.map((contradiction) => (
-        <Card key={contradiction.id} className="border-l-4 border-l-warning">
-          <div className="space-y-3">
+      {contradictions.map((contradiction, index) => (
+        <Card 
+          key={contradiction.id} 
+          className="border-l-4 border-l-[#F59E0B] hoverable"
+          style={{ animationDelay: `${index * 0.05}s` }}
+        >
+          <div className="space-y-4">
             <div className="flex items-start justify-between">
-              <div className="flex items-center gap-2">
-                <AlertTriangle className="w-5 h-5 text-warning" />
-                <h3 className="text-h3 text-primary">{contradiction.type}</h3>
+              <div className="flex items-center gap-3">
+                <AlertTriangle className="w-5 h-5 text-[#F59E0B]" />
+                <h3 className="font-display text-h3 text-[#1F2937]">{contradiction.type}</h3>
               </div>
               {getStatusBadge(contradiction.status)}
             </div>
             
-            <p className="text-body text-primary">{contradiction.description}</p>
+            <p className="text-body text-[#374151]">{contradiction.description}</p>
             
-            <div className="bg-tertiary rounded-md p-3 space-y-2">
+            <div className="bg-gradient-to-r from-[#F3F4F6] to-[#E5E7EB] rounded-lg p-4 border border-[#E5E7EB] space-y-2">
               <div className="flex items-center gap-2">
-                <span className="text-small font-medium text-primary">Документ 1:</span>
+                <span className="text-sm font-medium text-[#1F2937]">Документ 1:</span>
                 <button
                   onClick={() => onViewDocument?.(contradiction.document1)}
-                  className="text-small text-primary hover:text-primary underline"
+                  className="text-sm text-[#00D4FF] hover:text-[#7C3AED] underline transition-colors"
                 >
                   {contradiction.document1}
                 </button>
                 {contradiction.location1 && (
-                  <span className="text-small text-secondary">({contradiction.location1})</span>
+                  <span className="text-sm text-[#6B7280]">({contradiction.location1})</span>
                 )}
               </div>
               <div className="flex items-center gap-2">
-                <span className="text-small font-medium text-primary">Документ 2:</span>
+                <span className="text-sm font-medium text-[#1F2937]">Документ 2:</span>
                 <button
                   onClick={() => onViewDocument?.(contradiction.document2)}
-                  className="text-small text-primary hover:text-primary underline"
+                  className="text-sm text-[#00D4FF] hover:text-[#7C3AED] underline transition-colors"
                 >
                   {contradiction.document2}
                 </button>
                 {contradiction.location2 && (
-                  <span className="text-small text-secondary">({contradiction.location2})</span>
+                  <span className="text-sm text-[#6B7280]">({contradiction.location2})</span>
                 )}
               </div>
             </div>
             
             {contradiction.status === 'resolved' && contradiction.resolution && (
-              <div className="bg-success bg-opacity-10 border border-success border-opacity-30 rounded-md p-3">
-                <p className="text-small text-primary">
+              <div className="bg-gradient-to-r from-[#10B981]/10 to-[#059669]/10 border border-[#10B981]/30 rounded-lg p-4">
+                <p className="text-sm text-[#1F2937]">
                   <strong>Разрешено:</strong> {contradiction.resolution}
                 </p>
                 {contradiction.resolvedBy && (
-                  <p className="text-tiny text-secondary mt-1">
+                  <p className="text-xs text-[#6B7280] mt-1">
                     {contradiction.resolvedBy} • {contradiction.resolvedAt && new Date(contradiction.resolvedAt).toLocaleDateString('ru-RU')}
                   </p>
                 )}
@@ -105,21 +119,19 @@ const ContradictionsSection = ({
             )}
             
             {contradiction.status === 'review' && (
-              <div className="flex items-center gap-2 pt-2 border-t border-border">
-                <Button
-                  variant="primary"
-                  size="sm"
+              <div className="flex items-center gap-2 pt-3 border-t border-[#E5E7EB]">
+                <button
                   onClick={() => onResolve?.(contradiction.id)}
+                  className="px-4 py-2 bg-gradient-to-r from-[#00D4FF] to-[#7C3AED] text-white text-sm font-medium rounded-lg hover:shadow-lg hover:shadow-[#00D4FF]/30 transition-all duration-300"
                 >
                   Отметить как решённое
-                </Button>
-                <Button
-                  variant="secondary"
-                  size="sm"
+                </button>
+                <button
                   onClick={() => onIgnore?.(contradiction.id)}
+                  className="px-4 py-2 bg-white border border-[#E5E7EB] text-[#6B7280] text-sm font-medium rounded-lg hover:bg-[#F3F4F6] transition-all duration-300"
                 >
                   Игнорировать
-                </Button>
+                </button>
               </div>
             )}
           </div>
