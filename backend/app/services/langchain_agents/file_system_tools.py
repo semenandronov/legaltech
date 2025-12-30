@@ -66,10 +66,10 @@ def ls_tool(path: str = ".", case_id: str = None) -> str:
     
     if not _file_system_context:
         if not _ensure_file_system_context(case_id):
-        return json.dumps({
-            "error": "File system context not initialized",
+            return json.dumps({
+                "error": "File system context not initialized",
                 "message": "FileSystemContext not available. Please ensure workspace is initialized."
-        })
+            })
     
     try:
         # Если path содержит поддиректорию, используем её
@@ -121,10 +121,10 @@ def read_file_tool(filename: str, case_id: str = None) -> str:
     
     if not _file_system_context:
         if not _ensure_file_system_context(case_id):
-            return json.dumps({
-                "error": "File system context not initialized",
+        return json.dumps({
+            "error": "File system context not initialized",
                 "message": "FileSystemContext not available. Please ensure workspace is initialized."
-            })
+        })
     
     try:
         # Определяем поддиректорию из пути
@@ -191,10 +191,10 @@ def write_file_tool(filename: str, content: str, subdirectory: str = "results", 
     
     if not _file_system_context:
         if not _ensure_file_system_context(case_id):
-            return json.dumps({
-                "error": "File system context not initialized",
+        return json.dumps({
+            "error": "File system context not initialized",
                 "message": "FileSystemContext not available. Please ensure workspace is initialized."
-            })
+        })
     
     try:
         # Если content выглядит как JSON, парсим его
@@ -249,10 +249,10 @@ def edit_file_tool(filename: str, old_text: str, new_text: str, subdirectory: st
     
     if not _file_system_context:
         if not _ensure_file_system_context(case_id):
-            return json.dumps({
-                "error": "File system context not initialized",
+        return json.dumps({
+            "error": "File system context not initialized",
                 "message": "FileSystemContext not available. Please ensure workspace is initialized."
-            })
+        })
     
     try:
         success = _file_system_context.edit_file(
@@ -303,10 +303,10 @@ def write_todos_tool(todos: str, case_id: str = None) -> str:
     
     if not _file_system_context:
         if not _ensure_file_system_context(case_id):
-            return json.dumps({
-                "error": "File system context not initialized",
+        return json.dumps({
+            "error": "File system context not initialized",
                 "message": "FileSystemContext not available. Please ensure workspace is initialized."
-            })
+        })
     
     try:
         # Парсим todos как JSON
