@@ -1,11 +1,12 @@
 import React, { useState } from 'react'
-import { CheckCircle2, XCircle, Edit2, Loader2 } from 'lucide-react'
+import { CheckCircle2, XCircle, Edit2 } from 'lucide-react'
 import { getApiUrl } from '@/services/api'
 import { logger } from '@/lib/logger'
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/UI/Card'
 import { Button } from '@/components/UI/Button'
 import { Badge } from '@/components/UI/Badge'
 import { Reasoning, ReasoningContent, ReasoningTrigger } from '../ai-elements/reasoning'
+import { Loader } from '../ai-elements/loader'
+import { Plan, PlanHeader, PlanTitle, PlanDescription, PlanContent, PlanTrigger } from '../ai-elements/plan'
 
 interface PlanApprovalCardProps {
   planId: string
@@ -113,18 +114,28 @@ export const PlanApprovalCard: React.FC<PlanApprovalCardProps> = ({
   }
 
   return (
-    <Card className="border-2 border-blue-200 bg-blue-50 my-4">
-      <CardHeader>
-        <div className="flex items-start justify-between">
-          <CardTitle className="text-lg font-semibold text-gray-800">План анализа</CardTitle>
-          {plan.confidence !== undefined && (
-            <Badge variant="outline" className="text-sm">
-              Уверенность: {(plan.confidence * 100).toFixed(0)}%
-            </Badge>
-          )}
+    <Plan className="border-2 border-blue-200 bg-blue-50 my-4" defaultOpen={true}>
+      <PlanHeader>
+        <div className="flex items-start justify-between w-full">
+          <div className="flex-1">
+            <PlanTitle>План анализа</PlanTitle>
+            {plan.confidence !== undefined && (
+              <PlanDescription>
+                {`Уверенность: ${(plan.confidence * 100).toFixed(0)}%`}
+              </PlanDescription>
+            )}
+          </div>
+          <div className="flex items-center gap-2">
+            {plan.confidence !== undefined && (
+              <Badge variant="outline" className="text-sm">
+                {(plan.confidence * 100).toFixed(0)}%
+              </Badge>
+            )}
+            <PlanTrigger />
+          </div>
         </div>
-      </CardHeader>
-      <CardContent className="space-y-4">
+      </PlanHeader>
+      <PlanContent className="space-y-4">
         {plan.reasoning && (
           <div>
             <Reasoning isStreaming={false}>
@@ -224,7 +235,7 @@ export const PlanApprovalCard: React.FC<PlanApprovalCardProps> = ({
             >
               {isApproving ? (
                 <>
-                  <Loader2 className="w-4 h-4 animate-spin mr-2" />
+                  <Loader size={16} className="mr-2" />
                   Одобряю...
                 </>
               ) : (
@@ -249,7 +260,7 @@ export const PlanApprovalCard: React.FC<PlanApprovalCardProps> = ({
             >
               {isRejecting ? (
                 <>
-                  <Loader2 className="w-4 h-4 animate-spin mr-2" />
+                  <Loader size={16} className="mr-2" />
                   Отклоняю...
                 </>
               ) : (
@@ -261,8 +272,8 @@ export const PlanApprovalCard: React.FC<PlanApprovalCardProps> = ({
             </Button>
           </div>
         )}
-      </CardContent>
-    </Card>
+      </PlanContent>
+    </Plan>
   )
 }
 

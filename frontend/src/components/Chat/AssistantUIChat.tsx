@@ -2,12 +2,25 @@ import { useState, useEffect, useRef, useCallback } from 'react'
 import { useParams } from 'react-router-dom'
 import { getApiUrl } from '@/services/api'
 import { logger } from '@/lib/logger'
-import { ArrowUp } from 'lucide-react'
 import { Conversation, ConversationContent, ConversationEmptyState } from '../ai-elements/conversation'
 import { UserMessage, AssistantMessage } from '../ai-elements/message'
 import { PlanApprovalCard } from './PlanApprovalCard'
 import { AgentStep } from './AgentStepsView'
 import { EnhancedAgentStepsView } from './EnhancedAgentStepsView'
+import {
+  PromptInputProvider,
+  PromptInput,
+  PromptInputBody,
+  PromptInputTextarea,
+  PromptInputSubmit,
+  PromptInputFooter,
+  PromptInputAttachments,
+  PromptInputAttachment,
+  usePromptInputController,
+} from '../ai-elements/prompt-input'
+import { Switch } from '../UI/switch'
+import { Loader } from '../ai-elements/loader'
+import { Suggestions, Suggestion } from '../ai-elements/suggestion'
 
 interface Message {
   id: string
@@ -43,7 +56,6 @@ export const AssistantUIChat = ({ caseId, className, initialQuery, onQuerySelect
   const actualCaseId = caseId || params.caseId || ''
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const [messages, setMessages] = useState<Message[]>([])
-  const [input, setInput] = useState(initialQuery || '')
   const [isLoading, setIsLoading] = useState(false)
   const [webSearch, setWebSearch] = useState(false)
   const [databaseSearch, setDatabaseSearch] = useState(false)
@@ -63,11 +75,8 @@ export const AssistantUIChat = ({ caseId, className, initialQuery, onQuerySelect
 
   // Update input when initialQuery changes
   useEffect(() => {
-    if (initialQuery) {
-      setInput(initialQuery)
-      if (onQuerySelected) {
-        onQuerySelected()
-      }
+    if (initialQuery && onQuerySelected) {
+      onQuerySelected()
     }
   }, [initialQuery, onQuerySelected])
 
@@ -86,7 +95,6 @@ export const AssistantUIChat = ({ caseId, className, initialQuery, onQuerySelect
       content: userMessage,
     }
     setMessages((prev) => [...prev, userMsg])
-    setInput('')
     setIsLoading(true)
 
     // Create assistant message placeholder
@@ -303,26 +311,26 @@ export const AssistantUIChat = ({ caseId, className, initialQuery, onQuerySelect
     }
   }, [])
 
-  const handleSubmit = (e: React.FormEvent) => {
-    e.preventDefault()
-    if (input.trim() && !isLoading) {
-      sendMessage(input)
+  const handlePromptSubmit = useCallback(async ({ text }: { text: string; files: any[] }) => {
+    if (text.trim() && !isLoading && actualCaseId) {
+      await sendMessage(text)
     }
-  }
+  }, [sendMessage, isLoading, actualCaseId])
 
   return (
-    <div className={`flex flex-col h-full bg-white ${className || ''}`}>
-      {/* Header */}
-      {messages.length === 0 && (
-        <div className="px-6 py-8">
-          <h1 className="text-3xl font-semibold text-gray-900 mb-8">How can I assist?</h1>
-        </div>
-      )}
+    <PromptInputProvider initialInput={initialQuery || ''}>
+      <div className={`flex flex-col h-full bg-white ${className || ''}`}>
+        {/* Header */}
+        {messages.length === 0 && (
+          <div className="flex items-center justify-center px-6 py-8">
+            <h1 className="text-3xl font-semibold text-gray-900">How can I assist?</h1>
+          </div>
+        )}
 
-      {/* Messages area */}
-      <Conversation>
-        <ConversationContent>
-          {messages.length === 0 && <ConversationEmptyState title="" description="" />}
+        {/* Messages area */}
+        <Conversation>
+          <ConversationContent>
+            {messages.length === 0 && <ConversationEmptyState title="" description="" />}
 
         {messages.map((message) => {
           if (message.role === 'user') {
@@ -393,179 +401,166 @@ export const AssistantUIChat = ({ caseId, className, initialQuery, onQuerySelect
         {isLoading && (
           <div className="flex justify-start">
             <div className="bg-gray-100 rounded-2xl px-4 py-3">
-              <div className="flex space-x-1.5">
-                <div
-                  className="w-2 h-2 bg-gray-400 rounded-full animate-bounce"
-                  style={{ animationDelay: '0ms' }}
-                />
-                <div
-                  className="w-2 h-2 bg-gray-400 rounded-full animate-bounce"
-                  style={{ animationDelay: '150ms' }}
-                />
-                <div
-                  className="w-2 h-2 bg-gray-400 rounded-full animate-bounce"
-                  style={{ animationDelay: '300ms' }}
-                />
-              </div>
+              <Loader size={20} className="text-gray-600" />
             </div>
           </div>
         )}
         </ConversationContent>
       </Conversation>
 
-      {/* Input area - точно как на скриншоте */}
+      {/* Input area - точно как на скриншоте Legora - ПО ЦЕНТРУ */}
       {messages.length === 0 ? (
-        <div className="border-t border-gray-200 bg-white px-6 py-6">
-          {/* Большое поле ввода */}
-          <div className="mb-6">
-            <form onSubmit={handleSubmit} className="relative">
-              <input
-                value={input}
-                onChange={(e) => setInput(e.target.value)}
-                placeholder="Type a question or use a prompt"
-                className="w-full px-5 py-4 pr-24 text-base border-2 border-gray-300 rounded-xl focus:outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-200 transition-all disabled:bg-gray-50 disabled:cursor-not-allowed"
-                disabled={isLoading || !actualCaseId}
-                autoFocus
-              />
-              <div className="absolute right-3 top-1/2 -translate-y-1/2 flex items-center gap-2">
-                <button
-                  type="button"
-                  onClick={() => setDeepThink(!deepThink)}
-                  className={`px-3 py-1.5 text-sm font-medium rounded-lg transition-colors ${
-                    deepThink
-                      ? 'bg-blue-600 text-white'
-                      : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
-                  }`}
-                >
-                  Deep think
-                </button>
-                <button
-                  type="submit"
-                  disabled={isLoading || !input.trim() || !actualCaseId}
-                  className="p-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-                >
-                  <ArrowUp className="w-4 h-4" />
-                </button>
-              </div>
-            </form>
-          </div>
+        <div className="flex-1 flex flex-col items-center justify-center px-6 py-8 border-t border-gray-200 bg-white">
+          {/* Центрированный контейнер */}
+          <div className="w-full max-w-4xl mx-auto space-y-6">
+            {/* PromptInput с готовыми компонентами из @ai */}
+            <PromptInput
+              onSubmit={handlePromptSubmit}
+              className="w-full"
+            >
+              <PromptInputBody>
+                <PromptInputTextarea 
+                  placeholder="Type a question or use a prompt"
+                  className="min-h-[60px] text-base"
+                />
+                <PromptInputSubmit 
+                  variant="default"
+                  className="bg-black text-white hover:bg-gray-800 rounded-lg"
+                  disabled={isLoading || !actualCaseId}
+                />
+              </PromptInputBody>
+              
+              {/* Вложения под полем ввода */}
+              <PromptInputAttachments>
+                {(attachment) => (
+                  <PromptInputAttachment data={attachment} />
+                )}
+              </PromptInputAttachments>
+              
+              {/* Footer с Deep think */}
+              <PromptInputFooter>
+                <label className="flex items-center gap-2 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={deepThink}
+                    onChange={(e) => setDeepThink(e.target.checked)}
+                    className="w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500"
+                  />
+                  <span className="text-sm text-gray-700">
+                    Deep think <span className="text-gray-500">More powerful, but slower responses</span>
+                  </span>
+                </label>
+              </PromptInputFooter>
+            </PromptInput>
 
-          {/* Три карточки функций */}
-          <div className="space-y-3 mb-6">
-            <div className="flex items-center justify-between p-4 bg-white border border-gray-200 rounded-lg hover:border-gray-300 transition-colors">
-              <div className="flex items-start gap-3">
-                <div className="flex-1">
-                  <div className="flex items-center gap-2 mb-1">
+            {/* Три карточки функций ГОРИЗОНТАЛЬНО */}
+            <div className="grid grid-cols-3 gap-4">
+              {/* Web search */}
+              <div className="flex flex-col p-4 bg-white border border-gray-200 rounded-lg hover:border-gray-300 transition-colors">
+                <div className="flex items-center justify-between mb-2">
+                  <span className="text-sm font-medium text-gray-900">Web search</span>
+                  <Switch 
+                    checked={webSearch} 
+                    onCheckedChange={setWebSearch}
+                  />
+                </div>
+                <p className="text-sm text-gray-600">Leverage the web to perform deep research on any topic</p>
+              </div>
+
+              {/* Database search */}
+              <div className="flex flex-col p-4 bg-white border border-gray-200 rounded-lg hover:border-gray-300 transition-colors">
+                <div className="flex items-center justify-between mb-2">
+                  <span className="text-sm font-medium text-gray-900">Database search</span>
+                  <Switch 
+                    checked={databaseSearch} 
+                    onCheckedChange={setDatabaseSearch}
+                  />
+                </div>
+                <p className="text-sm text-gray-600">Search your project or organization's databases</p>
+              </div>
+
+              {/* Legal research */}
+              <div className="flex flex-col p-4 bg-white border border-gray-200 rounded-lg hover:border-gray-300 transition-colors">
+                <div className="flex items-center justify-between mb-2">
+                  <div className="flex items-center gap-2">
                     <span className="text-sm font-medium text-gray-900">Legal research</span>
                     <span className="px-2 py-0.5 text-xs font-medium bg-blue-100 text-blue-700 rounded">Early</span>
                   </div>
-                  <p className="text-sm text-gray-600">Find answers to your questions in curated legal sources</p>
+                  <Switch 
+                    checked={legalResearch} 
+                    onCheckedChange={setLegalResearch}
+                  />
                 </div>
+                <p className="text-sm text-gray-600">Find answers to your questions in curated legal sources</p>
               </div>
-              <label className="relative inline-flex items-center cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={legalResearch}
-                  onChange={(e) => setLegalResearch(e.target.checked)}
-                  className="sr-only peer"
-                />
-                <div className="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-blue-300 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600"></div>
-              </label>
             </div>
 
-            <div className="flex items-center justify-between p-4 bg-white border border-gray-200 rounded-lg hover:border-gray-300 transition-colors">
-              <div className="flex items-start gap-3">
-                <div className="flex-1">
-                  <div className="flex items-center gap-2 mb-1">
-                    <span className="text-sm font-medium text-gray-900">Web search</span>
-                  </div>
-                  <p className="text-sm text-gray-600">Leverage the web to perform deep research on any topic</p>
-                </div>
-              </div>
-              <label className="relative inline-flex items-center cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={webSearch}
-                  onChange={(e) => setWebSearch(e.target.checked)}
-                  className="sr-only peer"
-                />
-                <div className="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-blue-300 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600"></div>
-              </label>
-            </div>
-
-            <div className="flex items-center justify-between p-4 bg-white border border-gray-200 rounded-lg hover:border-gray-300 transition-colors">
-              <div className="flex items-start gap-3">
-                <div className="flex-1">
-                  <div className="flex items-center gap-2 mb-1">
-                    <span className="text-sm font-medium text-gray-900">Database search</span>
-                  </div>
-                  <p className="text-sm text-gray-600">Search your project or organization's databases</p>
-                </div>
-              </div>
-              <label className="relative inline-flex items-center cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={databaseSearch}
-                  onChange={(e) => setDatabaseSearch(e.target.checked)}
-                  className="sr-only peer"
-                />
-                <div className="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-blue-300 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600"></div>
-              </label>
-            </div>
-          </div>
-
-          {/* Кнопка Explore all prompts */}
-          <button className="w-full px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-100 rounded-lg transition-colors mb-4">
-            Explore all prompts
-          </button>
-
-          {/* Горизонтальная полоса с предложениями промптов */}
-          <div className="flex items-center gap-2 overflow-x-auto pb-2">
-            {promptSuggestions.map((prompt, index) => (
-              <button
-                key={index}
-                onClick={() => setInput(prompt)}
-                className="px-4 py-2 text-sm font-medium text-gray-700 bg-gray-100 hover:bg-gray-200 rounded-lg whitespace-nowrap transition-colors"
-              >
-                {prompt}
+            {/* Кнопка Explore all prompts - по центру */}
+            <div className="flex justify-center">
+              <button className="px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-100 rounded-lg transition-colors">
+                Explore all prompts
               </button>
-            ))}
+            </div>
+
+            {/* Горизонтальная полоса с предложениями промптов */}
+            <PromptSuggestionsBar 
+              suggestions={promptSuggestions}
+            />
           </div>
         </div>
       ) : (
         <div className="border-t border-gray-200 bg-white px-6 py-4">
-          <form onSubmit={handleSubmit} className="relative">
-            <input
-              value={input}
-              onChange={(e) => setInput(e.target.value)}
-              placeholder="Type a question or use a prompt"
-              className="w-full px-5 py-4 pr-24 text-base border-2 border-gray-300 rounded-xl focus:outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-200 transition-all disabled:bg-gray-50 disabled:cursor-not-allowed"
-              disabled={isLoading || !actualCaseId}
-            />
-            <div className="absolute right-3 top-1/2 -translate-y-1/2 flex items-center gap-2">
-              <button
-                type="button"
-                onClick={() => setDeepThink(!deepThink)}
-                className={`px-3 py-1.5 text-sm font-medium rounded-lg transition-colors ${
-                  deepThink
-                    ? 'bg-blue-600 text-white'
-                    : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
-                }`}
-              >
-                Deep think
-              </button>
-              <button
-                type="submit"
-                disabled={isLoading || !input.trim() || !actualCaseId}
-                className="p-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-              >
-                <ArrowUp className="w-4 h-4" />
-              </button>
-            </div>
-          </form>
+          <PromptInput
+            onSubmit={handlePromptSubmit}
+            className="w-full"
+          >
+            <PromptInputBody>
+              <PromptInputTextarea 
+                placeholder="Type a question or use a prompt"
+                className="min-h-[60px] text-base"
+              />
+              <PromptInputSubmit 
+                variant="default"
+                className="bg-black text-white hover:bg-gray-800 rounded-lg"
+                disabled={isLoading || !actualCaseId}
+              />
+            </PromptInputBody>
+            <PromptInputFooter>
+              <label className="flex items-center gap-2 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={deepThink}
+                  onChange={(e) => setDeepThink(e.target.checked)}
+                  className="w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500"
+                />
+                <span className="text-sm text-gray-700">Deep think</span>
+              </label>
+            </PromptInputFooter>
+          </PromptInput>
         </div>
       )}
-    </div>
+      </div>
+    </PromptInputProvider>
   )
 }
+
+// Компонент для промптов
+const PromptSuggestionsBar = ({ suggestions }: { suggestions: string[] }) => {
+  const { textInput } = usePromptInputController()
+  
+  return (
+    <Suggestions className="justify-center pb-2">
+      {suggestions.map((prompt, index) => (
+        <Suggestion
+          key={index}
+          suggestion={prompt}
+          onClick={(text) => textInput.setInput(text)}
+          variant="outline"
+          size="sm"
+        />
+      ))}
+    </Suggestions>
+  )
+}
+
 

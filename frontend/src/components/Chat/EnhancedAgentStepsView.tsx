@@ -3,7 +3,6 @@ import {
   CheckCircle2, 
   Clock, 
   AlertCircle, 
-  Loader2, 
   Brain,
   ChevronDown,
   ChevronRight
@@ -11,6 +10,8 @@ import {
 import { Reasoning, ReasoningContent, ReasoningTrigger } from '../ai-elements/reasoning'
 import { Tool, ToolInput, ToolOutput } from '../ai-elements/tool'
 import { Response, ResponseContent } from '../ai-elements/response'
+import { Loader } from '../ai-elements/loader'
+import { Task, TaskContent, TaskItem } from '../ai-elements/task'
 
 export interface EnhancedAgentStep {
   step_id: string
@@ -69,7 +70,7 @@ export const EnhancedAgentStepsView: React.FC<EnhancedAgentStepsViewProps> = ({
       case 'completed':
         return <CheckCircle2 className="w-5 h-5 text-green-600" />
       case 'running':
-        return <Loader2 className="w-5 h-5 text-blue-600 animate-spin" />
+        return <Loader size={20} className="text-blue-600" />
       case 'error':
         return <AlertCircle className="w-5 h-5 text-red-600" />
       case 'pending':
@@ -190,68 +191,87 @@ export const EnhancedAgentStepsView: React.FC<EnhancedAgentStepsViewProps> = ({
               </div>
 
               {/* Детали шага (раскрывающиеся) */}
-              {hasDetails && (isExpanded || !collapsible) && (
-                <div className="px-4 pb-4 space-y-2 border-t border-gray-200 pt-3 mt-2">
-                  {/* Рассуждения */}
-                  {step.reasoning && showReasoning && (
-                    <div className="mb-2">
-                      <Reasoning isStreaming={step.status === 'running'}>
-                        <ReasoningTrigger />
-                        <ReasoningContent>{step.reasoning}</ReasoningContent>
-                      </Reasoning>
-                    </div>
-                  )}
+              {hasDetails && (
+                <Task 
+                  open={isExpanded || !collapsible}
+                  onOpenChange={(open) => {
+                    if (collapsible) {
+                      if (open) {
+                        setExpandedSteps(prev => new Set(prev).add(step.step_id))
+                      } else {
+                        setExpandedSteps(prev => {
+                          const next = new Set(prev)
+                          next.delete(step.step_id)
+                          return next
+                        })
+                      }
+                    }
+                  }}
+                >
+                  <TaskContent className="px-4 pb-4 border-t border-gray-200 pt-3 mt-2">
+                    {/* Рассуждения */}
+                    {step.reasoning && showReasoning && (
+                      <TaskItem>
+                        <Reasoning isStreaming={step.status === 'running'}>
+                          <ReasoningTrigger />
+                          <ReasoningContent>{step.reasoning}</ReasoningContent>
+                        </Reasoning>
+                      </TaskItem>
+                    )}
 
-                  {/* Tool Calls */}
-                  {step.tool_calls && step.tool_calls.length > 0 && (
-                    <div className="space-y-2 mb-2">
-                      {step.tool_calls.map((toolCall, toolIdx) => (
-                        <Tool
-                          key={toolIdx}
-                          name={toolCall.name}
-                          status={((toolCall as any).status || step.status) as any}
-                        >
-                          {toolCall.input && <ToolInput>{toolCall.input}</ToolInput>}
-                          {toolCall.output && <ToolOutput>{toolCall.output}</ToolOutput>}
+                    {/* Tool Calls */}
+                    {step.tool_calls && step.tool_calls.length > 0 && (
+                      <TaskItem>
+                        {step.tool_calls.map((toolCall, toolIdx) => (
+                          <Tool
+                            key={toolIdx}
+                            name={toolCall.name}
+                            status={((toolCall as any).status || step.status) as any}
+                          >
+                            {toolCall.input && <ToolInput>{toolCall.input}</ToolInput>}
+                            {toolCall.output && <ToolOutput>{toolCall.output}</ToolOutput>}
+                          </Tool>
+                        ))}
+                      </TaskItem>
+                    )}
+
+                    {/* Результат */}
+                    {step.result && step.status === 'completed' && (
+                      <TaskItem>
+                        <Response status="completed">
+                          <ResponseContent markdown={false}>
+                            {step.result}
+                          </ResponseContent>
+                        </Response>
+                      </TaskItem>
+                    )}
+
+                    {/* Ошибка */}
+                    {step.error && step.status === 'error' && (
+                      <TaskItem>
+                        <div className="bg-red-50 rounded-lg p-3 border border-red-200">
+                          <div className="flex items-center gap-2 mb-2">
+                            <AlertCircle className="w-4 h-4 text-red-600" />
+                            <span className="text-xs font-semibold text-red-700">Ошибка:</span>
+                          </div>
+                          <p className="text-xs text-red-700 leading-relaxed whitespace-pre-wrap">
+                            {step.error}
+                          </p>
+                        </div>
+                      </TaskItem>
+                    )}
+
+                    {/* Дополнительные детали (input/output) */}
+                    {(step.input || step.output) && (
+                      <TaskItem>
+                        <Tool name="Технические детали" status="completed">
+                          {step.input && <ToolInput>{step.input}</ToolInput>}
+                          {step.output && <ToolOutput>{step.output}</ToolOutput>}
                         </Tool>
-                      ))}
-                    </div>
-                  )}
-
-                  {/* Результат */}
-                  {step.result && step.status === 'completed' && (
-                    <div className="mb-2">
-                      <Response status="completed">
-                        <ResponseContent markdown={false}>
-                          {step.result}
-                        </ResponseContent>
-                      </Response>
-                    </div>
-                  )}
-
-                  {/* Ошибка */}
-                  {step.error && step.status === 'error' && (
-                    <div className="bg-red-50 rounded-lg p-3 border border-red-200">
-                      <div className="flex items-center gap-2 mb-2">
-                        <AlertCircle className="w-4 h-4 text-red-600" />
-                        <span className="text-xs font-semibold text-red-700">Ошибка:</span>
-                      </div>
-                      <p className="text-xs text-red-700 leading-relaxed whitespace-pre-wrap">
-                        {step.error}
-                      </p>
-                    </div>
-                  )}
-
-                  {/* Дополнительные детали (input/output) */}
-                  {(step.input || step.output) && (
-                    <div className="mt-2">
-                      <Tool name="Технические детали" status="completed">
-                        {step.input && <ToolInput>{step.input}</ToolInput>}
-                        {step.output && <ToolOutput>{step.output}</ToolOutput>}
-                      </Tool>
-                    </div>
-                  )}
-                </div>
+                      </TaskItem>
+                    )}
+                  </TaskContent>
+                </Task>
               )}
             </div>
           )

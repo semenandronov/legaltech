@@ -3,6 +3,7 @@ import { cn } from "@/lib/utils"
 import { FileText, CheckCircle2 } from "lucide-react"
 import { Card, CardContent, CardHeader } from "@/components/UI/Card"
 import ReactMarkdown from "react-markdown"
+import { Sources, SourcesTrigger, SourcesContent, Source } from "./sources"
 
 // Animation styles
 const fadeIn = "animate-in fade-in slide-in-from-left-2 duration-300"
@@ -80,27 +81,25 @@ export function ResponseSources({ sources, className }: ResponseSourcesProps) {
 
   return (
     <div className={cn("mt-4 pt-4 border-t border-gray-200", className)}>
-      <div className="text-xs font-semibold text-gray-600 uppercase tracking-wide mb-2">
-        Источники
-      </div>
-      <div className="space-y-1">
-        {sources.map((source, index) => (
-          <div key={index} className="text-xs text-gray-600">
-            {source.title && <span className="font-medium">{source.title}</span>}
-            {source.page && <span className="text-gray-500"> (стр. {source.page})</span>}
-            {source.url && (
-              <a 
-                href={source.url} 
-                target="_blank" 
-                rel="noopener noreferrer"
-                className="text-blue-600 hover:underline ml-2"
-              >
-                Открыть
-              </a>
-            )}
-          </div>
-        ))}
-      </div>
+      <Sources>
+        <SourcesTrigger count={sources.length}>
+          <p className="text-xs font-semibold text-gray-600 uppercase tracking-wide">
+            Использовано {sources.length} {sources.length === 1 ? 'источник' : sources.length < 5 ? 'источника' : 'источников'}
+          </p>
+        </SourcesTrigger>
+        <SourcesContent>
+          {sources.map((source, index) => {
+            const href = source.url || '#'
+            const title = source.title 
+              ? `${source.title}${source.page ? ` (стр. ${source.page})` : ''}`
+              : `Источник ${index + 1}${source.page ? ` (стр. ${source.page})` : ''}`
+            
+            return (
+              <Source key={index} href={href} title={title} />
+            )
+          })}
+        </SourcesContent>
+      </Sources>
     </div>
   )
 }

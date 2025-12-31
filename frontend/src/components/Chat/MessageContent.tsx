@@ -1,7 +1,7 @@
 import React from 'react'
 import ReactMarkdown from 'react-markdown'
 import { SourceInfo } from '../../services/api'
-import InlineCitation from './InlineCitation'
+import { InlineCitationAdapter } from './InlineCitationAdapter'
 
 interface MessageContentProps {
   content: string
@@ -50,7 +50,7 @@ const MessageContent: React.FC<MessageContentProps> = ({
       // Add citation component (Perplexity style)
       const citationIndex = parseInt(match[1], 10)
       parts.push(
-        <InlineCitation
+        <InlineCitationAdapter
           key={`citation-${keyCounter++}`}
           index={citationIndex}
           sources={sources}
