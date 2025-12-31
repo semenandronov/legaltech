@@ -212,16 +212,7 @@ def key_facts_agent_node(
             # Создаем запрос для агента
             user_query = f"Извлеки ключевые факты из документов дела {case_id}. Используй retrieve_documents_tool для поиска релевантных документов. Сначала проверь известные типичные факты для этого типа дела (указаны в системном промпте), затем извлекай специфичные для данного дела. Верни результат в формате JSON массива фактов с полями: fact_type, value, description, source_document, source_page, confidence, reasoning."
             
-            # #region debug log
-            import json
-            with open('/Users/semyon_andronov04/Desktop/C ДВ/.cursor/debug.log', 'a') as f:
-                f.write(json.dumps({"sessionId":"debug-session","runId":"pre-fix","hypothesisId":"A","location":"key_facts_node.py:215","message":"Before HumanMessage usage","data":{"has_HumanMessage_in_globals":"HumanMessage" in globals(),"has_HumanMessage_in_locals":"HumanMessage" in locals()},"timestamp":int(__import__('time').time()*1000)}) + '\n')
-            # #endregion
             initial_message = HumanMessage(content=user_query)
-            # #region debug log
-            with open('/Users/semyon_andronov04/Desktop/C ДВ/.cursor/debug.log', 'a') as f:
-                f.write(json.dumps({"sessionId":"debug-session","runId":"pre-fix","hypothesisId":"A","location":"key_facts_node.py:217","message":"After HumanMessage usage","data":{"initial_message_type":type(initial_message).__name__},"timestamp":int(__import__('time').time()*1000)}) + '\n')
-            # #endregion
             
             # Вызываем агента (он сам решит, когда вызывать tools)
             from app.services.langchain_agents.callbacks import AnalysisCallbackHandler
@@ -410,19 +401,10 @@ def key_facts_agent_node(
                 try:
                     # Используем GigaChat LLM напрямую через invoke с сообщениями
                     # SystemMessage и HumanMessage уже импортированы в начале файла
-                    # #region debug log
-                    import json
-                    with open('/Users/semyon_andronov04/Desktop/C ДВ/.cursor/debug.log', 'a') as f:
-                        f.write(json.dumps({"sessionId":"debug-session","runId":"pre-fix","hypothesisId":"B","location":"key_facts_node.py:403","message":"In fallback, before using SystemMessage/HumanMessage","data":{"has_SystemMessage_in_globals":"SystemMessage" in globals(),"has_HumanMessage_in_globals":"HumanMessage" in globals(),"has_SystemMessage_in_locals":"SystemMessage" in locals(),"has_HumanMessage_in_locals":"HumanMessage" in locals()},"timestamp":int(__import__('time').time()*1000)}) + '\n')
-                    # #endregion
                     messages = [
                         SystemMessage(content=system_prompt),
                         HumanMessage(content=user_prompt)
                     ]
-                    # #region debug log
-                    with open('/Users/semyon_andronov04/Desktop/C ДВ/.cursor/debug.log', 'a') as f:
-                        f.write(json.dumps({"sessionId":"debug-session","runId":"pre-fix","hypothesisId":"B","location":"key_facts_node.py:409","message":"In fallback, after creating messages","data":{"messages_count":len(messages)},"timestamp":int(__import__('time').time()*1000)}) + '\n')
-                    # #endregion
                     response = llm.invoke(messages)
                     response_text = response.content if hasattr(response, 'content') else str(response)
                     parsed_facts = ParserService.parse_key_facts(response_text)
