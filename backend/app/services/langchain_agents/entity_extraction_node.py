@@ -116,11 +116,21 @@ def entity_extraction_agent_node(
                     entities_result = chain.invoke({})
                 except Exception as e:
                     logger.warning(f"Structured output not supported, falling back to JSON parsing: {e}")
-                    # Fallback to direct LLM call
-                    from app.services.llm_service import LLMService
-                    llm_service = LLMService()
-                    response = llm_service.generate(system_prompt, user_prompt, temperature=0)
-                    entities_result = ParserService.parse_entities(response)
+                    # Fallback to direct LLM call using GigaChat
+                    try:
+                        from langchain_core.prompts import ChatPromptTemplate
+                        prompt = ChatPromptTemplate.from_messages([
+                            ("system", system_prompt),
+                            ("human", user_prompt)
+                        ])
+                        chain = prompt | llm
+                        response = chain.invoke({})
+                        response_text = response.content if hasattr(response, 'content') else str(response)
+                        entities_result = ParserService.parse_entities(response_text)
+                    except Exception as fallback_error:
+                        logger.error(f"Fallback LLM call failed: {fallback_error}, using empty entities")
+                        from app.services.langchain_parsers import EntitiesExtractionModel
+                        entities_result = EntitiesExtractionModel(entities=[])
                 
                 # Add file metadata to entities
                 for entity in entities_result.entities:

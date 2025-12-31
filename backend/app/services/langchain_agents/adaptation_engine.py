@@ -76,7 +76,7 @@ class AdaptationEngine:
         current_plan = state.get("current_plan", [])
         pending_steps = [
             s for s in current_plan 
-            if s.get("status") == PlanStepStatus.PENDING.value
+            if isinstance(s, dict) and s.get("status") == PlanStepStatus.PENDING.value
         ]
         if pending_steps and not completed:
             # We have pending steps but no progress - might need adaptation
@@ -145,8 +145,8 @@ class AdaptationEngine:
             adaptation_record = AdaptationRecord(
                 timestamp=datetime.utcnow().isoformat(),
                 reason=evaluation.get("issues", ["Unknown"])[0] if evaluation.get("issues") else "Optimization",
-                original_plan=[s.get("step_id") for s in current_plan],
-                new_plan=[s.get("step_id") for s in new_plan],
+                original_plan=[s.get("step_id") if isinstance(s, dict) else str(s) for s in current_plan],
+                new_plan=[s.get("step_id") if isinstance(s, dict) else str(s) for s in new_plan],
                 trigger=trigger
             )
             
@@ -297,6 +297,14 @@ class AdaptationEngine:
         new_plan = []
         
         for step in plan:
+            # Проверяем, что step является словарем
+            if not isinstance(step, dict):
+                if isinstance(step, str):
+                    logger.warning(f"Skipping non-dict step in retry strategy: {step}")
+                    continue
+                else:
+                    step = {"agent_name": str(step), "status": PlanStepStatus.PENDING.value}
+            
             if step.get("status") == PlanStepStatus.FAILED.value:
                 # Reset to pending for retry
                 retry_step = dict(step)
@@ -322,6 +330,14 @@ class AdaptationEngine:
         new_plan = []
         
         for step in plan:
+            # Проверяем, что step является словарем
+            if not isinstance(step, dict):
+                if isinstance(step, str):
+                    logger.warning(f"Skipping non-dict step in skip strategy: {step}")
+                    continue
+                else:
+                    step = {"agent_name": str(step), "status": PlanStepStatus.PENDING.value}
+            
             if step.get("status") == PlanStepStatus.FAILED.value:
                 # Mark as skipped
                 skip_step = dict(step)
@@ -370,15 +386,17 @@ class AdaptationEngine:
     ) -> List[Dict[str, Any]]:
         """Reorder steps to do simpler tasks first"""
         # Separate completed, pending, and failed
-        completed = [s for s in plan if s.get("status") == PlanStepStatus.COMPLETED.value]
-        pending = [s for s in plan if s.get("status") == PlanStepStatus.PENDING.value]
-        failed = [s for s in plan if s.get("status") == PlanStepStatus.FAILED.value]
+        completed = [s for s in plan if isinstance(s, dict) and s.get("status") == PlanStepStatus.COMPLETED.value]
+        pending = [s for s in plan if isinstance(s, dict) and s.get("status") == PlanStepStatus.PENDING.value]
+        failed = [s for s in plan if isinstance(s, dict) and s.get("status") == PlanStepStatus.FAILED.value]
         
         # Sort pending by complexity (simple agents first)
         simple_agents = ["timeline", "key_facts", "entity_extraction"]
         complex_agents = ["risk", "summary", "relationship"]
         
         def sort_key(step):
+            if not isinstance(step, dict):
+                return 999  # Non-dict steps go to end
             agent = step.get("agent_name", "")
             if agent in simple_agents:
                 return 0
@@ -402,6 +420,16 @@ class AdaptationEngine:
         
         new_plan = []
         for step in plan:
+            # Проверяем, что step является словарем
+            if not isinstance(step, dict):
+                # Если step - строка, пропускаем или конвертируем
+                if isinstance(step, str):
+                    logger.warning(f"Skipping non-dict step in simplify strategy: {step}")
+                    continue
+                else:
+                    # Пытаемся конвертировать в словарь
+                    step = {"agent_name": str(step), "status": PlanStepStatus.PENDING.value}
+            
             agent = step.get("agent_name", "")
             status = step.get("status", "")
             

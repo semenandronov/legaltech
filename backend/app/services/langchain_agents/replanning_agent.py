@@ -399,6 +399,16 @@ class ReplanningAgent:
         new_steps = []
         
         for step in current_plan:
+            # Проверяем, что step является словарем
+            if not isinstance(step, dict):
+                # Если step - строка, пропускаем или конвертируем
+                if isinstance(step, str):
+                    logger.warning(f"Skipping non-dict step in skip plan: {step}")
+                    continue
+                else:
+                    # Пытаемся конвертировать в словарь
+                    step = {"agent_name": str(step), "status": PlanStepStatus.PENDING.value}
+            
             if step.get("agent_name") == affected_agent:
                 # Mark as skipped
                 skipped_step = dict(step)

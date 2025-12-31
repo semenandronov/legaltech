@@ -397,11 +397,21 @@ def key_facts_agent_node(
                 parsed_facts = chain.invoke({})
             except Exception as e:
                 logger.warning(f"Structured output not supported, falling back to JSON parsing: {e}")
-                # Fallback to direct LLM call and parsing
-                from app.services.llm_service import LLMService
-                llm_service = LLMService()
-                response = llm_service.generate(system_prompt, user_prompt, temperature=0)
-                parsed_facts = ParserService.parse_key_facts(response)
+                # Fallback to direct LLM call and parsing using GigaChat
+                try:
+                    # Используем GigaChat LLM напрямую
+                    from langchain_core.prompts import ChatPromptTemplate
+                    prompt = ChatPromptTemplate.from_messages([
+                        ("system", system_prompt),
+                        ("human", user_prompt)
+                    ])
+                    chain = prompt | llm
+                    response = chain.invoke({})
+                    response_text = response.content if hasattr(response, 'content') else str(response)
+                    parsed_facts = ParserService.parse_key_facts(response_text)
+                except Exception as fallback_error:
+                    logger.error(f"Fallback LLM call failed: {fallback_error}, using empty facts")
+                    parsed_facts = []
         
         # Convert to structured format
         facts_data = {

@@ -105,11 +105,25 @@ def privilege_check_agent_node(
                     privilege_check = chain.invoke({})
                 except Exception as e:
                     logger.warning(f"Structured output not supported, falling back to JSON parsing: {e}")
-                    # Fallback to direct LLM call
-                    from app.services.llm_service import LLMService
-                    llm_service = LLMService()
-                    response = llm_service.generate(system_prompt, user_prompt, temperature=0)
-                    privilege_check = ParserService.parse_privilege_check(response)
+                    # Fallback to direct LLM call using GigaChat
+                    try:
+                        from langchain_core.prompts import ChatPromptTemplate
+                        prompt = ChatPromptTemplate.from_messages([
+                            ("system", system_prompt),
+                            ("human", user_prompt)
+                        ])
+                        chain = prompt | llm
+                        response = chain.invoke({})
+                        response_text = response.content if hasattr(response, 'content') else str(response)
+                        privilege_check = ParserService.parse_privilege_check(response_text)
+                    except Exception as fallback_error:
+                        logger.error(f"Fallback LLM call failed: {fallback_error}, using default privilege check")
+                        from app.services.langchain_parsers import PrivilegeCheckModel
+                        privilege_check = PrivilegeCheckModel(
+                            is_privileged=False,
+                            confidence=0.0,
+                            reasoning="Fallback: unable to determine privilege status"
+                        )
                 
                 # Validate confidence (must be >95% for production)
                 if privilege_check.confidence < 95.0:

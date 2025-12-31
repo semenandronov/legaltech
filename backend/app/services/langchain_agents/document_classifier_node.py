@@ -155,11 +155,28 @@ def document_classifier_agent_node(
                         classification = chain.invoke({})
                     except Exception as e:
                         logger.warning(f"Structured output not supported, falling back to JSON parsing: {e}")
-                        # Fallback to direct LLM call
-                        from app.services.llm_service import LLMService
-                        llm_service = LLMService()
-                        response = llm_service.generate(system_prompt, user_prompt, temperature=0)
-                        classification = ParserService.parse_document_classification(response)
+                        # Fallback to direct LLM call using GigaChat
+                        try:
+                            if llm is None:
+                                raise ValueError("LLM not initialized")
+                            from langchain_core.prompts import ChatPromptTemplate
+                            prompt = ChatPromptTemplate.from_messages([
+                                ("system", system_prompt),
+                                ("human", user_prompt)
+                            ])
+                            chain = prompt | llm
+                            response = chain.invoke({})
+                            response_text = response.content if hasattr(response, 'content') else str(response)
+                            classification = ParserService.parse_document_classification(response_text)
+                        except Exception as fallback_error:
+                            logger.error(f"Fallback LLM call failed: {fallback_error}, using default classification")
+                            from app.services.langchain_parsers import DocumentClassificationModel
+                            classification = DocumentClassificationModel(
+                                doc_type="unknown",
+                                relevance_score=0.5,
+                                is_privileged=False,
+                                confidence=0.0
+                            )
                 
                 classifications.append({
                     "file_id": file.id,
