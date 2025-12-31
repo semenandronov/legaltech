@@ -522,6 +522,15 @@ class ParserService:
             facts = []
             for item in data:
                 try:
+                    # Normalize field names - fix common LLM mistakes (кириллица -> латиница)
+                    # LLM sometimes returns 'reasonинг' instead of 'reasoning'
+                    if isinstance(item, dict):
+                        # Fix reasoning field name
+                        if 'reasonинг' in item and 'reasoning' not in item:
+                            item['reasoning'] = item.pop('reasonинг')
+                        # Ensure reasoning field exists (required by KeyFactModel)
+                        if 'reasoning' not in item:
+                            item['reasoning'] = item.get('reasonинг', '')
                     fact = KeyFactModel(**item)
                     facts.append(fact)
                 except Exception as e:
