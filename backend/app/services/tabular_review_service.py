@@ -857,39 +857,52 @@ class TabularReviewService:
             raise ValueError("No files found for this case")
         
         # Create cells from discrepancies
+        # Check for existing cells to avoid duplicates
+        from app.models.tabular_review import TabularCell
+        
         for disc in discrepancies:
             # Use first file as placeholder (discrepancies don't have direct file_id)
             file = files[0]
             
+            # Helper function to check and create cell
+            def get_or_create_cell(column_idx, value, confidence=0.9):
+                column_id = review.columns[column_idx].id
+                # Check if cell already exists
+                existing = self.db.query(TabularCell).filter(
+                    TabularCell.tabular_review_id == review.id,
+                    TabularCell.file_id == file.id,
+                    TabularCell.column_id == column_id
+                ).first()
+                
+                if existing:
+                    # Update existing cell
+                    existing.cell_value = value
+                    existing.confidence_score = confidence
+                    return existing
+                else:
+                    # Create new cell
+                    return TabularCell(
+                        tabular_review_id=review.id,
+                        file_id=file.id,
+                        column_id=column_id,
+                        cell_value=value,
+                        confidence_score=confidence
+                    )
+            
             # Type cell
-            cell_type = TabularCell(
-                tabular_review_id=review.id,
-                file_id=file.id,
-                column_id=review.columns[0].id,
-                cell_value=disc.type,
-                confidence_score=0.9
-            )
-            self.db.add(cell_type)
+            cell_type = get_or_create_cell(0, disc.type, 0.9)
+            if not self.db.is_modified(cell_type, include_collections=False) and cell_type not in self.db.new:
+                self.db.add(cell_type)
             
             # Severity cell
-            cell_severity = TabularCell(
-                tabular_review_id=review.id,
-                file_id=file.id,
-                column_id=review.columns[1].id,
-                cell_value=disc.severity,
-                confidence_score=0.9
-            )
-            self.db.add(cell_severity)
+            cell_severity = get_or_create_cell(1, disc.severity, 0.9)
+            if not self.db.is_modified(cell_severity, include_collections=False) and cell_severity not in self.db.new:
+                self.db.add(cell_severity)
             
             # Description cell
-            cell_desc = TabularCell(
-                tabular_review_id=review.id,
-                file_id=file.id,
-                column_id=review.columns[2].id,
-                cell_value=disc.description,
-                confidence_score=0.9
-            )
-            self.db.add(cell_desc)
+            cell_desc = get_or_create_cell(2, disc.description, 0.9)
+            if not self.db.is_modified(cell_desc, include_collections=False) and cell_desc not in self.db.new:
+                self.db.add(cell_desc)
             
             # Documents cell
             source_docs = disc.source_documents
@@ -898,16 +911,15 @@ class TabularReviewService:
             else:
                 docs_str = str(source_docs)
             
-            cell_docs = TabularCell(
-                tabular_review_id=review.id,
-                file_id=file.id,
-                column_id=review.columns[3].id,
-                cell_value=docs_str,
-                confidence_score=1.0
-            )
-            self.db.add(cell_docs)
+            cell_docs = get_or_create_cell(3, docs_str, 1.0)
+            if not self.db.is_modified(cell_docs, include_collections=False) and cell_docs not in self.db.new:
+                self.db.add(cell_docs)
         
-        self.db.commit()
+        try:
+            self.db.commit()
+        except Exception as e:
+            self.db.rollback()
+            raise
         logger.info(f"Created discrepancies table {review.id} with {len(discrepancies)} discrepancies")
         return review
     

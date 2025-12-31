@@ -513,34 +513,67 @@ class AgentCoordinator:
                             }
                             
                             try:
-                                loop = asyncio.get_event_loop()
-                                if loop.is_running():
-                                    asyncio.create_task(
-                                        self.learning_service.save_successful_pattern(
-                                            case_id=case_id,
-                                            agent_name=agent_name,
-                                            pattern=pattern,
-                                            outcome=outcome
+                                # Try to get existing event loop
+                                try:
+                                    loop = asyncio.get_event_loop()
+                                    if loop.is_running():
+                                        # If loop is running, schedule task
+                                        asyncio.create_task(
+                                            self.learning_service.save_successful_pattern(
+                                                case_id=case_id,
+                                                agent_name=agent_name,
+                                                pattern=pattern,
+                                                outcome=outcome
+                                            )
                                         )
-                                    )
-                                else:
-                                    loop.run_until_complete(
-                                        self.learning_service.save_successful_pattern(
-                                            case_id=case_id,
-                                            agent_name=agent_name,
-                                            pattern=pattern,
-                                            outcome=outcome
+                                    else:
+                                        # If loop exists but not running, run until complete
+                                        loop.run_until_complete(
+                                            self.learning_service.save_successful_pattern(
+                                                case_id=case_id,
+                                                agent_name=agent_name,
+                                                pattern=pattern,
+                                                outcome=outcome
+                                            )
                                         )
-                                    )
-                            except RuntimeError:
-                                asyncio.run(
+                                except RuntimeError:
+                                    # No event loop, create new one
+                                    try:
+                                        asyncio.run(
+                                            self.learning_service.save_successful_pattern(
+                                                case_id=case_id,
+                                                agent_name=agent_name,
+                                                pattern=pattern,
+                                                outcome=outcome
+                                            )
+                                        )
+                                    except RuntimeError:
+                                        # If asyncio.run fails (e.g., in thread), use new event loop
+                                        loop = asyncio.new_event_loop()
+                                        asyncio.set_event_loop(loop)
+                                        try:
+                                            loop.run_until_complete(
+                                                self.learning_service.save_successful_pattern(
+                                                    case_id=case_id,
+                                                    agent_name=agent_name,
+                                                    pattern=pattern,
+                                                    outcome=outcome
+                                                )
+                                            )
+                                        finally:
+                                            loop.close()
+                            except Exception as e:
+                                logger.warning(f"Failed to save pattern asynchronously: {e}, saving synchronously")
+                                # Fallback to synchronous save
+                                try:
                                     self.learning_service.save_successful_pattern(
                                         case_id=case_id,
                                         agent_name=agent_name,
                                         pattern=pattern,
                                         outcome=outcome
                                     )
-                                )
+                                except Exception as sync_error:
+                                    logger.error(f"Failed to save pattern synchronously: {sync_error}")
                             
                             logger.debug(f"Saved {outcome} pattern for {agent_name} agent")
                     

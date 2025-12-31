@@ -105,6 +105,10 @@ class LangGraphStoreService:
             True if saved successfully
         """
         try:
+            # Проверяем состояние сессии и делаем rollback если нужно
+            if not self.db.is_active:
+                self.db.rollback()
+            
             # Проверяем, существует ли уже такой паттерн
             existing = self.db.execute(
                 text("""
@@ -178,6 +182,10 @@ class LangGraphStoreService:
             List of precedent dictionaries
         """
         try:
+            # Проверяем состояние сессии и делаем rollback если нужно
+            if not self.db.is_active:
+                self.db.rollback()
+            
             if query:
                 # Поиск по содержимому JSONB value
                 results = self.db.execute(
@@ -266,6 +274,10 @@ class LangGraphStoreService:
     ) -> bool:
         """Удалить паттерн"""
         try:
+            # Проверяем состояние сессии и делаем rollback если нужно
+            if not self.db.is_active:
+                self.db.rollback()
+            
             self.db.execute(
                 text("""
                     DELETE FROM langgraph_store
