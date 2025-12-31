@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from "react"
 import { useParams, useNavigate } from "react-router-dom"
-import { Home, MessageSquare, FileText, Table } from "lucide-react"
+import { MessageSquare, FileText, Table } from "lucide-react"
 import UnifiedSidebar from "../components/Layout/UnifiedSidebar"
 import { TabularReviewTable } from "../components/TabularReview/TabularReviewTable"
 import { TabularReviewToolbar } from "../components/TabularReview/TabularReviewToolbar"

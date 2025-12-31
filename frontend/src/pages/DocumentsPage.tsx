@@ -8,7 +8,7 @@ import {
   Drawer,
 } from '@mui/material'
 import { Description as DescriptionIcon, Close as CloseIcon } from '@mui/icons-material'
-import { Home, MessageSquare, FileText, Table } from 'lucide-react'
+import { MessageSquare, FileText, Table } from 'lucide-react'
 import UnifiedSidebar from '../components/Layout/UnifiedSidebar'
 import DocumentViewer from '../components/Documents/DocumentViewer'
 import { DocumentWithMetadata } from '../components/Documents/DocumentsList'

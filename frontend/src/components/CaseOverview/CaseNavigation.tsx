@@ -1,5 +1,5 @@
 import { useNavigate, useLocation } from 'react-router-dom'
-import { Home, MessageSquare, FileText, Table } from 'lucide-react'
+import { MessageSquare, FileText, Table } from 'lucide-react'
 
 interface CaseNavigationProps {
   caseId: string

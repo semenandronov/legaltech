@@ -1,7 +1,7 @@
 import { lazy, Suspense } from 'react'
 import { Routes, Route, Navigate, useParams } from 'react-router-dom'
 import { Box, CircularProgress } from '@mui/material'
-import { Home, MessageSquare, FileText, Table } from 'lucide-react'
+import { MessageSquare, FileText, Table } from 'lucide-react'
 import ProtectedRoute from './components/ProtectedRoute'
 import LoginPage from './pages/LoginPage'
 import RegisterPage from './pages/RegisterPage'

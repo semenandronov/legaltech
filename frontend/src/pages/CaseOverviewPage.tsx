@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
 import { useParams } from 'react-router-dom'
-import { Home, MessageSquare, FileText, Table } from 'lucide-react'
+import { MessageSquare, FileText, Table } from 'lucide-react'
 import { getCase, getRisks, getDiscrepancies, getTimeline, startAnalysis, CaseResponse, DiscrepancyItem, TimelineEvent } from '../services/api'
 import CaseHeader from '../components/CaseOverview/CaseHeader'
 import UnifiedSidebar from '../components/Layout/UnifiedSidebar'

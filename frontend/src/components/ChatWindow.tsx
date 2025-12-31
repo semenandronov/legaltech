@@ -1299,9 +1299,10 @@ const ChatWindow = ({ caseId, onDocumentClick }: ChatWindowProps) => {
         isOpen={historyPanelOpen}
         onClose={() => setHistoryPanelOpen(false)}
         currentCaseId={caseId}
-        onSelectCase={(selectedCaseId) => {
-          // Navigate to the selected case
-          window.location.href = `/cases/${selectedCaseId}`
+        onSelectQuery={(query: string) => {
+          // Set the selected query in the input field
+          setInputValue(query)
+          setHistoryPanelOpen(false)
         }}
       />
 

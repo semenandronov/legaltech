@@ -1,5 +1,4 @@
 import React, { useState, useEffect } from 'react'
-import { useNavigate } from 'react-router-dom'
 import {
   Drawer,
   Box,
@@ -23,7 +22,6 @@ import {
 import {
   Search as SearchIcon,
   Close as CloseIcon,
-  History as HistoryIcon,
   Chat as ChatIcon,
   MoreVert as MoreVertIcon,
 } from '@mui/icons-material'
@@ -49,7 +47,6 @@ export const ChatHistoryPanel: React.FC<ChatHistoryPanelProps> = ({
   currentCaseId,
   onSelectQuery,
 }) => {
-  const navigate = useNavigate()
   const [historyItems, setHistoryItems] = useState<HistoryItem[]>([])
   const [filteredItems, setFilteredItems] = useState<HistoryItem[]>([])
   const [searchQuery, setSearchQuery] = useState('')
