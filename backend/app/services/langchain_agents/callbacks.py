@@ -21,6 +21,8 @@ class AnalysisCallbackHandler(BaseCallbackHandler):
     
     def on_chain_start(self, serialized: Dict[str, Any], inputs: Dict[str, Any], **kwargs) -> None:
         """Called when a chain starts"""
+        if serialized is None:
+            serialized = {}
         logger.debug(f"[{self.agent_name}] Chain started: {serialized.get('name', 'unknown')}")
     
     def on_chain_end(self, outputs: Dict[str, Any], **kwargs) -> None:
@@ -57,6 +59,8 @@ class AnalysisCallbackHandler(BaseCallbackHandler):
     
     def on_tool_start(self, serialized: Dict[str, Any], input_str: str, **kwargs) -> None:
         """Called when a tool starts"""
+        if serialized is None:
+            serialized = {}
         tool_name = serialized.get('name', 'unknown')
         logger.debug(f"[{self.agent_name}] Tool started: {tool_name}")
     

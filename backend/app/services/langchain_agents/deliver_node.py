@@ -61,7 +61,20 @@ def deliver_node(
         
         # 1. Создаем таблицы для каждого типа анализа
         table_results = {}
-        user_id = state.get("metadata", {}).get("user_id") or "system"
+        # Получаем user_id из metadata или из case
+        user_id = state.get("metadata", {}).get("user_id")
+        if not user_id:
+            # Попробуем получить user_id из case
+            try:
+                from app.models.case import Case
+                case = db.query(Case).filter(Case.id == case_id).first()
+                if case:
+                    user_id = case.user_id
+                else:
+                    user_id = "system"
+            except Exception as e:
+                logger.warning(f"Failed to get user_id from case: {e}")
+                user_id = "system"
         
         # Список типов анализов, для которых можно создать таблицы
         table_supported_types = ["timeline", "key_facts", "discrepancy", "risk"]

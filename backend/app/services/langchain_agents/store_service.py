@@ -59,7 +59,10 @@ class LangGraphStoreService:
             self.db.commit()
             logger.info("✅ LangGraph Store tables created")
         except Exception as e:
-            self.db.rollback()
+            try:
+                self.db.rollback()
+            except Exception:
+                pass  # Ignore rollback errors if commit already succeeded
             logger.warning(f"Store tables may already exist: {e}")
     
     async def save_pattern(
@@ -130,7 +133,10 @@ class LangGraphStoreService:
             return True
             
         except Exception as e:
-            self.db.rollback()
+            try:
+                self.db.rollback()
+            except Exception:
+                pass  # Ignore rollback errors if commit already succeeded
             logger.error(f"Error saving pattern {namespace}/{key}: {e}", exc_info=True)
             return False
     

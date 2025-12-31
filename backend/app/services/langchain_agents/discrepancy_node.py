@@ -10,6 +10,7 @@ from app.services.rag_service import RAGService
 from app.services.document_processor import DocumentProcessor
 from app.services.langchain_parsers import ParserService
 from app.services.citation_verifier import CitationVerifier
+from app.services.langchain_agents.llm_helper import extract_json_from_response
 from sqlalchemy.orm import Session
 from app.models.analysis import Discrepancy
 from langchain_core.messages import HumanMessage
@@ -144,7 +145,7 @@ def discrepancy_agent_node(
             logger.info("Using direct RAG approach (GigaChat without tools)")
             
             # Используем helper для прямого вызова LLM с RAG
-            from app.services.langchain_agents.llm_helper import direct_llm_call_with_rag, extract_json_from_response
+            from app.services.langchain_agents.llm_helper import direct_llm_call_with_rag
             from app.services.langchain_agents.callbacks import AnalysisCallbackHandler
             
             # Create callback for logging
