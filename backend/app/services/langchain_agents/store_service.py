@@ -258,7 +258,10 @@ class LangGraphStoreService:
             return True
             
         except Exception as e:
-            self.db.rollback()
+            try:
+                self.db.rollback()
+            except Exception:
+                pass  # Ignore rollback errors if commit already succeeded
             logger.error(f"Error deleting pattern {namespace}/{key}: {e}")
             return False
     
