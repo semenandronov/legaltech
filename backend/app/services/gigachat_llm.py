@@ -158,8 +158,9 @@ class ChatGigaChat(BaseChatModel):
         
         # Вызываем GigaChat API with retry for rate limiting
         import time
-        max_retries = 3
-        retry_delay = 2  # Start with 2 seconds
+        import random
+        max_retries = 5  # Увеличиваем количество попыток
+        retry_delay = 3  # Увеличиваем начальную задержку до 3 секунд
         response = None
         
         for attempt in range(max_retries):
@@ -191,16 +192,27 @@ class ChatGigaChat(BaseChatModel):
                 )
                 
                 if is_rate_limit and attempt < max_retries - 1:
-                    # Exponential backoff for rate limiting
-                    wait_time = retry_delay * (2 ** attempt)
+                    # Exponential backoff with jitter for rate limiting
+                    # Увеличиваем время ожидания и добавляем случайную задержку для распределения нагрузки
+                    base_wait = retry_delay * (2 ** attempt)
+                    jitter = random.uniform(0.5, 1.5)  # Случайная задержка от 0.5 до 1.5
+                    wait_time = base_wait * jitter
+                    # Ограничиваем максимальное время ожидания до 30 секунд
+                    wait_time = min(wait_time, 30.0)
+                    
                     logger.warning(
-                        f"Rate limit (429) hit, retrying in {wait_time}s "
+                        f"Rate limit (429) hit, retrying in {wait_time:.1f}s "
                         f"(attempt {attempt + 1}/{max_retries})"
                     )
                     time.sleep(wait_time)
                     continue
                 else:
                     # Re-raise if not rate limit or out of retries
+                    if is_rate_limit:
+                        logger.error(
+                            f"Rate limit (429) exceeded after {max_retries} attempts. "
+                            f"Please reduce concurrent requests or wait before retrying."
+                        )
                     raise
         
         # Извлекаем ответ
