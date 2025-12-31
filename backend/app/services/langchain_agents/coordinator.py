@@ -431,6 +431,9 @@ class AgentCoordinator:
                                 step_callback(step_info)
                             except Exception as callback_error:
                                 logger.warning(f"Error in step callback: {callback_error}")
+            except Exception as stream_error:
+                logger.error(f"Error during graph stream execution: {stream_error}", exc_info=True)
+                raise
             
             # Get final state
             if final_state is None:
