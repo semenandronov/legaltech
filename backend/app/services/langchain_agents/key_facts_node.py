@@ -399,14 +399,13 @@ def key_facts_agent_node(
                 logger.warning(f"Structured output not supported, falling back to JSON parsing: {e}")
                 # Fallback to direct LLM call and parsing using GigaChat
                 try:
-                    # Используем GigaChat LLM напрямую
-                    from langchain_core.prompts import ChatPromptTemplate
-                    prompt = ChatPromptTemplate.from_messages([
-                        ("system", system_prompt),
-                        ("human", user_prompt)
-                    ])
-                    chain = prompt | llm
-                    response = chain.invoke({})
+                    # Используем GigaChat LLM напрямую через invoke с сообщениями
+                    from langchain_core.messages import SystemMessage, HumanMessage
+                    messages = [
+                        SystemMessage(content=system_prompt),
+                        HumanMessage(content=user_prompt)
+                    ]
+                    response = llm.invoke(messages)
                     response_text = response.content if hasattr(response, 'content') else str(response)
                     parsed_facts = ParserService.parse_key_facts(response_text)
                 except Exception as fallback_error:
