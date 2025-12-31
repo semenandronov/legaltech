@@ -237,7 +237,7 @@ const DocumentPreviewSheet = ({
                 <IconButton
                   size="small"
                   component="a"
-                  href={`/cases/${caseId}/workspace?file=${encodeURIComponent(source.file)}`}
+                  href={`/cases/${caseId}/chat?file=${encodeURIComponent(source.file)}`}
                   target="_blank"
                   rel="noopener noreferrer"
                 >

@@ -61,7 +61,7 @@ const Header = ({ onMenuClick }: HeaderProps) => {
 
   const handleSettings = () => {
     handleMenuClose()
-    navigate('/settings')
+    // Settings page removed
   }
 
   const handleLogout = async () => {

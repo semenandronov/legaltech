@@ -121,25 +121,6 @@ export function NavUser() {
           </Typography>
         </Box>
         <Divider />
-        <MenuItem onClick={() => { handleMenuClose(); navigate('/settings') }}>
-          <ListItemIcon>
-            <UserCircleIcon fontSize="small" />
-          </ListItemIcon>
-          <ListItemText>Аккаунт</ListItemText>
-        </MenuItem>
-        <MenuItem onClick={() => { handleMenuClose(); navigate('/settings') }}>
-          <ListItemIcon>
-            <CreditCardIcon fontSize="small" />
-          </ListItemIcon>
-          <ListItemText>Биллинг</ListItemText>
-        </MenuItem>
-        <MenuItem onClick={() => { handleMenuClose(); navigate('/settings') }}>
-          <ListItemIcon>
-            <BellIcon fontSize="small" />
-          </ListItemIcon>
-          <ListItemText>Уведомления</ListItemText>
-        </MenuItem>
-        <Divider />
         <MenuItem onClick={handleLogout}>
           <ListItemIcon>
             <LogoutIcon fontSize="small" />

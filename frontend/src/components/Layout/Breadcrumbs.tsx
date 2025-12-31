@@ -4,7 +4,6 @@ import NavigateNextIcon from '@mui/icons-material/NavigateNext'
 
 const routeMap: Record<string, string> = {
   '/cases': 'Дела',
-  '/settings': 'Настройки',
 }
 
 export function AppBreadcrumbs() {

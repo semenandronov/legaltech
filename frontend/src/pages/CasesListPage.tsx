@@ -1,9 +1,8 @@
 import { useState, useEffect } from 'react'
 import { getCasesList, CasesListResponse } from '../services/api'
-import CasesFilters, { FilterState } from '../components/Cases/CasesFilters'
 import CasesGrid from '../components/Cases/CasesGrid'
 import UnifiedSidebar from '../components/Layout/UnifiedSidebar'
-import { Home, FolderOpen, Settings, BarChart3 } from 'lucide-react'
+import { Home, FolderOpen } from 'lucide-react'
 
 const CasesListPage = () => {
   const [cases, setCases] = useState<CasesListResponse['cases']>([])
@@ -11,14 +10,6 @@ const CasesListPage = () => {
   const [loading, setLoading] = useState(true)
   const [currentPage, setCurrentPage] = useState(1)
   const [viewMode, setViewMode] = useState<'grid' | 'list' | 'table'>('grid')
-  const [filters, setFilters] = useState<FilterState>({
-    search: '',
-    status: [],
-    caseType: [],
-    assignedTo: [],
-    dateFrom: '',
-    dateTo: '',
-  })
   
   const limit = 20
   
@@ -26,13 +17,11 @@ const CasesListPage = () => {
   const mainNavItems = [
     { id: 'home', label: 'Главная', icon: Home, path: '/' },
     { id: 'cases', label: 'Дела', icon: FolderOpen, path: '/cases' },
-    { id: 'analytics', label: 'Аналитика', icon: BarChart3, path: '/analytics' },
-    { id: 'settings', label: 'Настройки', icon: Settings, path: '/settings' },
   ]
   
   useEffect(() => {
     loadCases()
-  }, [currentPage, filters])
+  }, [currentPage])
   
   const loadCases = async () => {
     setLoading(true)
@@ -46,11 +35,6 @@ const CasesListPage = () => {
     } finally {
       setLoading(false)
     }
-  }
-  
-  const handleFiltersChange = (newFilters: FilterState) => {
-    setFilters(newFilters)
-    setCurrentPage(1) // Сброс на первую страницу при изменении фильтров
   }
   
   const handlePageChange = (page: number) => {
@@ -67,24 +51,17 @@ const CasesListPage = () => {
       <div className="flex-1 flex flex-col overflow-hidden">
         {/* Content with gradient mesh background */}
         <div className="flex-1 content-background overflow-auto">
-          <div className="flex h-full">
-            {/* Filters Sidebar */}
-            <div className="w-[280px] border-r border-[#E5E8EB]/50 bg-white/50 backdrop-blur-subtle">
-              <CasesFilters onFiltersChange={handleFiltersChange} />
-            </div>
-            
-            {/* Cases Grid */}
-            <div className="flex-1 fade-in-up" style={{ animationDelay: '0.1s' }}>
-              <CasesGrid
-                cases={cases}
-                total={total}
-                loading={loading}
-                currentPage={currentPage}
-                onPageChange={handlePageChange}
-                viewMode={viewMode}
-                onViewModeChange={setViewMode}
-              />
-            </div>
+          {/* Cases Grid */}
+          <div className="fade-in-up" style={{ animationDelay: '0.1s' }}>
+            <CasesGrid
+              cases={cases}
+              total={total}
+              loading={loading}
+              currentPage={currentPage}
+              onPageChange={handlePageChange}
+              viewMode={viewMode}
+              onViewModeChange={setViewMode}
+            />
           </div>
         </div>
       </div>

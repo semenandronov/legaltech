@@ -260,7 +260,7 @@ const TabularReviewPage: React.FC = () => {
               <h2 className="font-display text-h2 text-[#1F2937] mb-2">Ошибка</h2>
               <p className="text-body text-[#6B7280] mb-4">{error}</p>
               <button
-                onClick={() => navigate(`/cases/${caseId}/workspace`)}
+                onClick={() => navigate(`/cases/${caseId}/chat`)}
                 className="px-6 py-3 bg-gradient-to-r from-[#00D4FF] to-[#7C3AED] text-white font-medium rounded-lg hover:shadow-lg hover:shadow-[#00D4FF]/30 transition-all duration-300"
               >
                 Вернуться к делу
@@ -290,7 +290,7 @@ const TabularReviewPage: React.FC = () => {
           <div className="border-b border-[#E5E7EB] bg-white/80 backdrop-blur-sm p-6">
             <div className="flex items-center gap-4">
               <button
-                onClick={() => navigate(`/cases/${caseId}/workspace`)}
+                onClick={() => navigate(`/cases/${caseId}/chat`)}
                 className="p-2 rounded-lg hover:bg-[#F3F4F6] transition-colors duration-200 text-[#6B7280] hover:text-[#1F2937] flex items-center gap-2"
               >
                 <ArrowLeft className="w-4 h-4" />
@@ -450,7 +450,7 @@ const TabularReviewPage: React.FC = () => {
                     Попробовать снова
                   </button>
                   <button
-                    onClick={() => navigate(`/cases/${caseId}/workspace`)}
+                    onClick={() => navigate(`/cases/${caseId}/chat`)}
                     className="px-4 py-2 bg-white border border-[#E5E7EB] text-[#6B7280] font-medium rounded-lg hover:bg-[#F3F4F6] transition-all duration-300"
                   >
                     Вернуться к делу
@@ -471,7 +471,7 @@ const TabularReviewPage: React.FC = () => {
             <div className="text-center">
               <p className="text-body text-[#6B7280] mb-4">Нет данных для отображения</p>
               <button
-                onClick={() => navigate(`/cases/${caseId}/workspace`)}
+                onClick={() => navigate(`/cases/${caseId}/chat`)}
                 className="px-6 py-3 bg-gradient-to-r from-[#00D4FF] to-[#7C3AED] text-white font-medium rounded-lg hover:shadow-lg hover:shadow-[#00D4FF]/30 transition-all duration-300"
               >
                 Вернуться к делу
@@ -492,7 +492,7 @@ const TabularReviewPage: React.FC = () => {
           <div className="flex items-center justify-between mb-4">
             <div className="flex items-center gap-4">
               <button
-                onClick={() => navigate(`/cases/${caseId}/workspace`)}
+                onClick={() => navigate(`/cases/${caseId}/chat`)}
                 className="p-2 rounded-lg hover:bg-[#F3F4F6] transition-colors duration-200 text-[#6B7280] hover:text-[#1F2937] flex items-center gap-2"
               >
                 <ArrowLeft className="w-4 h-4" />

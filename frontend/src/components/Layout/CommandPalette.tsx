@@ -6,12 +6,10 @@ import {
   Calculator,
   Calendar,
   CreditCard,
-  Settings,
   Smile,
   User,
   FileText,
   Home,
-  BarChart3,
 } from "lucide-react"
 
 import {
@@ -62,16 +60,6 @@ export function CommandPalette() {
               <FileText className="mr-2 h-4 w-4" />
               <span>Новое дело</span>
               <CommandShortcut>⌘N</CommandShortcut>
-            </CommandItem>
-            <CommandItem onSelect={() => runCommand(() => navigate("/settings"))}>
-              <Settings className="mr-2 h-4 w-4" />
-              <span>Настройки</span>
-              <CommandShortcut>⌘S</CommandShortcut>
-            </CommandItem>
-            <CommandItem onSelect={() => runCommand(() => navigate("/cases"))}>
-              <BarChart3 className="mr-2 h-4 w-4" />
-              <span>Аналитика</span>
-              <CommandShortcut>⌘A</CommandShortcut>
             </CommandItem>
           </CommandGroup>
           <CommandSeparator />

@@ -51,7 +51,7 @@ const CaseCard = ({ caseItem }: CaseCardProps) => {
             className="w-full px-4 py-2.5 bg-gradient-to-r from-[#00D4FF] to-[#7C3AED] text-white rounded-lg font-medium text-sm hover:shadow-lg hover:shadow-[#00D4FF]/25 transition-all duration-300 transform hover:scale-[1.02]"
             onClick={(e: React.MouseEvent<HTMLButtonElement>) => {
               e.stopPropagation()
-              navigate(`/cases/${caseItem.id}/workspace`)
+              navigate(`/cases/${caseItem.id}/chat`)
             }}
           >
             Открыть дело

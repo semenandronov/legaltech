@@ -15,7 +15,6 @@ const ContradictionsPage = lazy(() => import('./pages/ContradictionsPage'))
 const DocumentsPage = lazy(() => import('./pages/DocumentsPage'))
 const AnalysisPage = lazy(() => import('./pages/AnalysisPage'))
 const ReportsPage = lazy(() => import('./pages/ReportsPage'))
-const SettingsPage = lazy(() => import('./pages/SettingsPage'))
 const TabularReviewPage = lazy(() => import('./pages/TabularReviewPage'))
 
 // Loading fallback
@@ -72,16 +71,6 @@ function App() {
         }
       />
       <Route
-        path="/cases/:caseId/workspace"
-        element={
-          <ProtectedRoute>
-            <Suspense fallback={<PageLoader />}>
-              <CaseOverviewPage />
-            </Suspense>
-          </ProtectedRoute>
-        }
-      />
-      <Route
         path="/cases/:caseId/documents"
         element={
           <ProtectedRoute>
@@ -127,16 +116,6 @@ function App() {
           <ProtectedRoute>
             <Suspense fallback={<PageLoader />}>
               <TabularReviewPage />
-            </Suspense>
-          </ProtectedRoute>
-        }
-      />
-      <Route
-        path="/settings"
-        element={
-          <ProtectedRoute>
-            <Suspense fallback={<PageLoader />}>
-              <SettingsPage />
             </Suspense>
           </ProtectedRoute>
         }
