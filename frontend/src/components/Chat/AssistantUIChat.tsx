@@ -16,11 +16,9 @@ import {
   PromptInputFooter,
   PromptInputAttachments,
   PromptInputAttachment,
-  usePromptInputController,
 } from '../ai-elements/prompt-input'
 import { Switch } from '../UI/switch'
 import { Loader } from '../ai-elements/loader'
-import { Suggestions, Suggestion } from '../ai-elements/suggestion'
 
 interface Message {
   id: string
@@ -63,15 +61,6 @@ export const AssistantUIChat = ({ caseId, className, initialQuery, onQuerySelect
   const [deepThink, setDeepThink] = useState(false)
   const abortControllerRef = useRef<AbortController | null>(null)
   
-  // Prompt suggestions
-  const promptSuggestions = [
-    'Creating Timeline',
-    'Dispute Timeline',
-    'Add More Context to Thi...',
-    'Anti-dilution protections',
-    'Anti-Money Laundering (...',
-    'Arbitration case file sum...'
-  ]
 
   // Update input when initialQuery changes
   useEffect(() => {
@@ -420,15 +409,19 @@ export const AssistantUIChat = ({ caseId, className, initialQuery, onQuerySelect
                 className="w-full"
               >
               <PromptInputBody>
-                <PromptInputTextarea 
-                  placeholder="Введите вопрос или используйте промпт"
-                  className="min-h-[60px] text-base"
-                />
-                <PromptInputSubmit 
-                  variant="default"
-                  className="bg-black text-white hover:bg-gray-800 rounded-lg"
-                  disabled={isLoading || !actualCaseId}
-                />
+                <div className="relative w-full">
+                  <PromptInputTextarea 
+                    placeholder="Введите вопрос или используйте промпт"
+                    className="min-h-[60px] text-base pr-12"
+                  />
+                  <div className="absolute bottom-2 right-2">
+                    <PromptInputSubmit 
+                      variant="default"
+                      className="bg-black text-white hover:bg-gray-800 rounded-lg"
+                      disabled={isLoading || !actualCaseId}
+                    />
+                  </div>
+                </div>
               </PromptInputBody>
               
               {/* Вложения под полем ввода */}
@@ -497,17 +490,6 @@ export const AssistantUIChat = ({ caseId, className, initialQuery, onQuerySelect
               </div>
             </div>
 
-            {/* Кнопка Explore all prompts - по центру */}
-            <div className="flex justify-center">
-              <button className="px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-100 rounded-lg transition-colors">
-                Изучить все промпты
-          </button>
-        </div>
-
-            {/* Горизонтальная полоса с предложениями промптов */}
-            <PromptSuggestionsBar 
-              suggestions={promptSuggestions}
-            />
           </div>
         </div>
       ) : (
@@ -519,15 +501,19 @@ export const AssistantUIChat = ({ caseId, className, initialQuery, onQuerySelect
                 className="w-full"
               >
               <PromptInputBody>
-                <PromptInputTextarea 
-                  placeholder="Введите вопрос или используйте промпт"
-                  className="min-h-[60px] text-base"
-                />
-                <PromptInputSubmit 
-                  variant="default"
-                  className="bg-black text-white hover:bg-gray-800 rounded-lg"
-                  disabled={isLoading || !actualCaseId}
-                />
+                <div className="relative w-full">
+                  <PromptInputTextarea 
+                    placeholder="Введите вопрос или используйте промпт"
+                    className="min-h-[60px] text-base pr-12"
+                  />
+                  <div className="absolute bottom-2 right-2">
+                    <PromptInputSubmit 
+                      variant="default"
+                      className="bg-black text-white hover:bg-gray-800 rounded-lg"
+                      disabled={isLoading || !actualCaseId}
+                    />
+                  </div>
+                </div>
               </PromptInputBody>
                 <PromptInputFooter>
                   <label className="flex items-center gap-2 cursor-pointer">
@@ -585,10 +571,6 @@ export const AssistantUIChat = ({ caseId, className, initialQuery, onQuerySelect
               </div>
             </div>
 
-            {/* Горизонтальная полоса с предложениями промптов */}
-            <PromptSuggestionsBar 
-              suggestions={promptSuggestions}
-            />
           </div>
         </div>
       )}
@@ -596,24 +578,4 @@ export const AssistantUIChat = ({ caseId, className, initialQuery, onQuerySelect
     </PromptInputProvider>
   )
 }
-
-// Компонент для промптов
-const PromptSuggestionsBar = ({ suggestions }: { suggestions: string[] }) => {
-  const { textInput } = usePromptInputController()
-  
-  return (
-    <Suggestions className="justify-center pb-2">
-      {suggestions.map((prompt, index) => (
-        <Suggestion
-          key={index}
-          suggestion={prompt}
-          onClick={(text) => textInput.setInput(text)}
-          variant="outline"
-          size="sm"
-        />
-      ))}
-    </Suggestions>
-  )
-}
-
 

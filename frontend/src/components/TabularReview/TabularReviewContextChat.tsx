@@ -118,7 +118,7 @@ export const TabularReviewContextChat: React.FC<TabularReviewContextChatProps> =
   }, [onAddDocuments])
 
   return (
-    <div className="flex flex-col h-full bg-white border-t border-[#E5E7EB]">
+    <div className="flex flex-col h-full bg-white">
       {/* Header */}
       <div className="px-4 py-3 border-b border-[#E5E7EB] bg-[#F9FAFB]">
         <div className="flex items-center gap-2">

@@ -539,7 +539,28 @@ const TabularReviewPage: React.FC = () => {
         )}
 
         {/* Main Content Area */}
-        <div className="flex-1 overflow-hidden flex flex-col">
+        <div className="flex-1 overflow-hidden flex">
+          {/* Chat (Left Panel) */}
+          {reviewId && tableData && (
+            <div className="w-80 border-r border-[#E5E7EB] shrink-0 bg-white flex flex-col">
+              <TabularReviewContextChat
+                reviewId={reviewId}
+                reviewName={tableData.review.name}
+                tableData={tableData}
+                onExtractKeyPoints={async () => {
+                  // Extract key points logic
+                  toast.info("Извлечение ключевых моментов...")
+                }}
+                onRefineColumns={() => {
+                  setShowColumnBuilder(true)
+                }}
+                onAddDocuments={() => {
+                  setShowDocumentSelector(true)
+                }}
+              />
+            </div>
+          )}
+
           {/* Table and Document Split View */}
           <div className="flex-1 overflow-hidden flex">
             {/* Table */}
@@ -631,27 +652,6 @@ const TabularReviewPage: React.FC = () => {
               </div>
             )}
           </div>
-
-          {/* Context Chat (Bottom Left) */}
-          {reviewId && tableData && (
-            <div className="h-96 border-t border-[#E5E7EB] shrink-0 bg-white">
-              <TabularReviewContextChat
-                reviewId={reviewId}
-                reviewName={tableData.review.name}
-                tableData={tableData}
-                onExtractKeyPoints={async () => {
-                  // Extract key points logic
-                  toast.info("Извлечение ключевых моментов...")
-                }}
-                onRefineColumns={() => {
-                  setShowColumnBuilder(true)
-                }}
-                onAddDocuments={() => {
-                  setShowDocumentSelector(true)
-                }}
-              />
-            </div>
-          )}
         </div>
 
         {/* Column Builder Modal */}
