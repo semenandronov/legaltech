@@ -688,7 +688,18 @@ def create_analysis_graph(
             elif db_url.startswith("postgresql+psycopg2://"):
                 db_url = db_url.replace("postgresql+psycopg2://", "postgresql://", 1)
             
-            checkpointer = PostgresSaver.from_conn_string(db_url)
+            result = PostgresSaver.from_conn_string(db_url)
+            
+            # Check if result is a context manager
+            from contextlib import _GeneratorContextManager
+            if isinstance(result, _GeneratorContextManager):
+                # from_conn_string() returned a context manager
+                # Enter it to get the actual PostgresSaver
+                logger.warning("⚠️ PostgresSaver.from_conn_string() returned context manager in fallback")
+                checkpointer = result.__enter__()
+                # Note: We don't call __exit__ to keep connection open
+            else:
+                checkpointer = result
             
             # Setup tables if they don't exist (idempotent)
             try:
