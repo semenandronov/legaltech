@@ -177,7 +177,6 @@ const CaseOverviewPage = () => {
   }
 
   const navItems = [
-    { id: 'overview', label: 'Обзор', icon: Home, path: `/cases/${caseId}/workspace` },
     { id: 'chat', label: 'Ассистент', icon: MessageSquare, path: `/cases/${caseId}/chat` },
     { id: 'documents', label: 'Документы', icon: FileText, path: `/cases/${caseId}/documents` },
     { id: 'tabular-review', label: 'Tabular Review', icon: Table, path: `/cases/${caseId}/tabular-review` },

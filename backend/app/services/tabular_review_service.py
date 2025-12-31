@@ -10,6 +10,9 @@ from app.models.case import Case, File
 from app.models.user import User
 from app.services.llm_factory import create_llm
 from app.config import config
+from app.services.tabular_review_models import TabularCellExtractionModel
+from langchain_core.documents import Document
+from langchain_core.prompts import ChatPromptTemplate
 import logging
 import asyncio
 from datetime import datetime
@@ -293,6 +296,275 @@ class TabularReviewService:
                 "error": str(e)
             }
     
+    def _is_complex_question(self, prompt: str) -> bool:
+        """Determine if question is complex and requires advanced reasoning"""
+        complex_keywords = [
+            "оцени", "проанализируй", "сравни", "найди все",
+            "риски", "противоречия", "последствия", "прецеденты",
+            "юридические", "правовые", "судебная практика", "анализ"
+        ]
+        prompt_lower = prompt.lower()
+        return any(keyword in prompt_lower for keyword in complex_keywords)
+    
+    def _determine_extraction_strategy(
+        self,
+        file: File,
+        column: TabularColumn
+    ) -> str:
+        """
+        Determine optimal extraction strategy based on column type, question complexity, and document size
+        
+        Returns:
+            Strategy name: 'simple', 'multi_query', 'compression', 'iterative', 'map_reduce'
+        """
+        doc_length = len(file.original_text or "")
+        is_complex = self._is_complex_question(column.prompt)
+        
+        # Simple types (date, currency, number, yes_no) - use simpler approach
+        if column.column_type in ['date', 'currency', 'number', 'yes_no']:
+            if doc_length < 10000:
+                return 'multi_query'  # Short document - use multi-query retriever
+            else:
+                return 'compression'  # Long document - use compression retriever
+        
+        # Complex types (text, verbatim) - use advanced approach
+        elif column.column_type in ['text', 'verbatim']:
+            if is_complex:
+                return 'iterative'  # Complex question - use iterative RAG
+            elif doc_length > 50000:
+                return 'compression'  # Very long document - use compression
+            else:
+                return 'multi_query'  # Medium case - use multi-query
+        
+        # Default - multi-query
+        return 'multi_query'
+    
+    async def extract_cell_value_improved(
+        self,
+        file: File,
+        column: TabularColumn,
+        strategy: str = 'multi_query'
+    ) -> Dict[str, Any]:
+        """
+        Improved extraction using LangChain retrievers and structured output
+        
+        Args:
+            file: File to extract from
+            column: Column definition
+            strategy: Extraction strategy ('multi_query', 'compression', 'iterative')
+        
+        Returns:
+            Dictionary with extraction results
+        """
+        try:
+            from app.services.document_processor import DocumentProcessor
+            from app.services.langchain_retrievers import AdvancedRetrieverService
+            from app.services.iterative_rag_service import IterativeRAGService
+            from app.services.rag_service import RAGService
+            from app.services.legal_splitter import LegalTextSplitter
+            from app.services.langchain_agents.llm_helper import create_fixing_parser
+            
+            document_processor = DocumentProcessor()
+            retriever_service = AdvancedRetrieverService(document_processor)
+            
+            # Get document text
+            document_text = file.original_text or ""
+            if not document_text:
+                logger.warning(f"File {file.id} has no text content")
+                return {
+                    "file_id": file.id,
+                    "column_id": column.id,
+                    "cell_value": None,
+                    "error": "No text content"
+                }
+            
+            # Build query for retrieval
+            query = f"{column.prompt} {column.column_label}"
+            
+            # Retrieve relevant chunks based on strategy
+            relevant_chunks = []
+            
+            try:
+                if strategy == 'iterative':
+                    # Use IterativeRAGService for complex questions
+                    rag_service = RAGService()
+                    iterative_rag = IterativeRAGService(rag_service)
+                    relevant_chunks = iterative_rag.retrieve_iteratively(
+                        case_id=file.case_id,
+                        query=query,
+                        max_iterations=3,
+                        initial_k=5
+                    )
+                elif strategy == 'compression':
+                    # Use compression retriever for long documents
+                    relevant_chunks = retriever_service.retrieve_with_compression(
+                        case_id=file.case_id,
+                        query=query,
+                        k=5
+                    )
+                else:
+                    # Default: multi-query retriever
+                    relevant_chunks = retriever_service.retrieve_with_multi_query(
+                        case_id=file.case_id,
+                        query=query,
+                        k=5
+                    )
+            except Exception as e:
+                logger.warning(f"Error retrieving chunks with strategy '{strategy}': {e}, falling back to document chunking")
+                relevant_chunks = []
+            
+            # Filter chunks for this specific file
+            file_chunks = [
+                chunk for chunk in relevant_chunks
+                if (chunk.metadata.get('file_id') == file.id or
+                    chunk.metadata.get('source_file') == file.filename or
+                    chunk.metadata.get('source_file', '').endswith(file.filename))
+            ]
+            
+            # If no chunks found through retriever, use document chunking as fallback
+            if not file_chunks:
+                logger.debug(f"No chunks found via retriever for file {file.id}, using document chunking")
+                splitter = LegalTextSplitter(chunk_size=1200, chunk_overlap=300)
+                all_chunks = splitter.split_text(document_text)
+                file_chunks = [
+                    Document(
+                        page_content=chunk,
+                        metadata={
+                            "chunk_index": i,
+                            "file_id": file.id,
+                            "source_file": file.filename
+                        }
+                    )
+                    for i, chunk in enumerate(all_chunks)
+                ]
+            
+            if not file_chunks:
+                return {
+                    "file_id": file.id,
+                    "column_id": column.id,
+                    "cell_value": None,
+                    "error": "No chunks available for extraction"
+                }
+            
+            # Try to use structured output
+            best_result = None
+            best_confidence = 0.0
+            
+            # Process top 3 chunks
+            for chunk in file_chunks[:3]:
+                try:
+                    # Create prompt
+                    prompt = ChatPromptTemplate.from_messages([
+                        ("system", f"""Ты эксперт по извлечению информации из юридических документов.
+Тип ответа: {column.column_type}
+
+Форматы:
+- date: YYYY-MM-DD (обязательно!)
+- currency: число (только цифры и точка/запятая)
+- number: число
+- yes_no: Yes/No/Unknown
+- text: свободный текст
+- verbatim: точная цитата из документа
+
+ВАЖНО:
+- Указывай source_page если возможно
+- Указывай source_section (например, "Раздел 3.1", "Статья 5")
+- Указывай reasoning - как ты нашел это значение
+- Указывай confidence - насколько ты уверен (0.0-1.0)
+- Если информация не найдена, верни "N/A" для cell_value"""),
+                        ("human", f"""Вопрос: {column.prompt}
+
+Документ:
+{chunk.page_content}
+
+Извлеки информацию согласно типу {column.column_type}.
+Если это verbatim, приведи ТОЧНУЮ цитату из документа.""")
+                    ])
+                    
+                    # Try structured output first
+                    try:
+                        structured_llm = self.llm.with_structured_output(
+                            TabularCellExtractionModel,
+                            method="json_schema"
+                        )
+                        chain = prompt | structured_llm
+                        result = await chain.ainvoke({})
+                        
+                        # Add column_type for validation
+                        result.column_type = column.column_type
+                        
+                    except Exception as e:
+                        logger.warning(f"Structured output failed, using parser: {e}")
+                        # Fallback: use parser with retry
+                        chain = prompt | self.llm
+                        response = await chain.ainvoke({})
+                        response_text = response.content if hasattr(response, 'content') else str(response)
+                        
+                        parser = create_fixing_parser(
+                            TabularCellExtractionModel,
+                            self.llm,
+                            max_retries=3
+                        )
+                        result = parser.parse(response_text)
+                        result.column_type = column.column_type
+                    
+                    # Update source_page from metadata if not set
+                    if not result.source_page:
+                        result.source_page = chunk.metadata.get('source_page')
+                    
+                    # Update source_section if available in metadata
+                    if not result.source_section:
+                        result.source_section = chunk.metadata.get('source_section')
+                    
+                    # Validate result
+                    if result.confidence > best_confidence:
+                        best_result = result
+                        best_confidence = result.confidence
+                        
+                        # Early stop if confidence is very high
+                        if result.confidence >= 0.95:
+                            break
+                            
+                except Exception as e:
+                    logger.warning(f"Error extracting from chunk: {e}")
+                    continue
+            
+            if not best_result:
+                # Final fallback: use old method
+                logger.warning(f"All extraction attempts failed for file {file.id}, column {column.id}, using fallback")
+                return await self.extract_cell_value(file, column)
+            
+            return {
+                "file_id": file.id,
+                "column_id": column.id,
+                "cell_value": best_result.cell_value,
+                "verbatim_extract": best_result.verbatim_extract,
+                "source_page": best_result.source_page,
+                "source_section": best_result.source_section,
+                "reasoning": best_result.reasoning,
+                "confidence_score": float(best_result.confidence),
+                "extraction_method": best_result.extraction_method
+            }
+            
+        except Exception as e:
+            logger.error(f"Error in improved extraction for file {file.id}, column {column.id}: {e}", exc_info=True)
+            # Fallback to old method
+            return await self.extract_cell_value(file, column)
+    
+    async def extract_cell_value_smart(
+        self,
+        file: File,
+        column: TabularColumn
+    ) -> Dict[str, Any]:
+        """
+        Smart extraction with automatic strategy selection
+        
+        Determines optimal strategy and uses it for extraction
+        """
+        strategy = self._determine_extraction_strategy(file, column)
+        logger.debug(f"Using extraction strategy '{strategy}' for file {file.id}, column {column.id}")
+        return await self.extract_cell_value_improved(file, column, strategy=strategy)
+    
     async def run_extraction(self, review_id: str, user_id: str) -> Dict[str, Any]:
         """Run parallel extraction for all documents and columns"""
         # Verify review belongs to user
@@ -308,8 +580,11 @@ class TabularReviewService:
         self.db.commit()
         
         try:
-            # Get files
-            files = self.db.query(File).filter(File.case_id == review.case_id).all()
+            # Get files - filter by selected_file_ids if specified
+            files_query = self.db.query(File).filter(File.case_id == review.case_id)
+            if review.selected_file_ids:
+                files_query = files_query.filter(File.id.in_(review.selected_file_ids))
+            files = files_query.all()
             
             # Get columns
             columns = self.db.query(TabularColumn).filter(
@@ -326,7 +601,8 @@ class TabularReviewService:
             tasks = []
             for file in files:
                 for column in columns:
-                    task = self.extract_cell_value(file, column)
+                    # Use smart extraction method
+                    task = self.extract_cell_value_smart(file, column)
                     tasks.append(task)
             
             # Execute tasks in parallel
@@ -356,15 +632,17 @@ class TabularReviewService:
                 ).first()
                 
                 if existing_cell:
-                    # Update existing cell
+                    # Update existing cell with all new fields
                     existing_cell.cell_value = result.get("cell_value")
                     existing_cell.verbatim_extract = result.get("verbatim_extract")
                     existing_cell.reasoning = result.get("reasoning")
                     existing_cell.confidence_score = result.get("confidence_score")
+                    existing_cell.source_page = result.get("source_page")
+                    existing_cell.source_section = result.get("source_section")
                     existing_cell.status = "completed"
                     existing_cell.updated_at = datetime.utcnow()
                 else:
-                    # Create new cell
+                    # Create new cell with all fields
                     cell = TabularCell(
                         tabular_review_id=review_id,
                         file_id=result["file_id"],
@@ -373,6 +651,8 @@ class TabularReviewService:
                         verbatim_extract=result.get("verbatim_extract"),
                         reasoning=result.get("reasoning"),
                         confidence_score=result.get("confidence_score"),
+                        source_page=result.get("source_page"),
+                        source_section=result.get("source_section"),
                         status="completed"
                     )
                     self.db.add(cell)

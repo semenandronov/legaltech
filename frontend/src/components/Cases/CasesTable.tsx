@@ -160,7 +160,7 @@ export function CasesTable({ data, loading }: CasesTableProps) {
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end">
               <DropdownMenuItem
-                onClick={() => navigate(`/cases/${caseItem.id}/workspace`)}
+                onClick={() => navigate(`/cases/${caseItem.id}/chat`)}
               >
                 <FileText className="mr-2 h-4 w-4" />
                 Открыть
@@ -287,7 +287,7 @@ export function CasesTable({ data, loading }: CasesTableProps) {
                   key={row.id}
                   data-state={row.getIsSelected() && "selected"}
                   className="cursor-pointer hover:bg-muted/50"
-                  onClick={() => navigate(`/cases/${row.original.id}/workspace`)}
+                  onClick={() => navigate(`/cases/${row.original.id}/chat`)}
                 >
                   {row.getVisibleCells().map((cell) => (
                     <TableCell key={cell.id}>

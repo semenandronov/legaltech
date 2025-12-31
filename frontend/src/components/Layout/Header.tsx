@@ -47,7 +47,7 @@ const Header = ({ onMenuClick }: HeaderProps) => {
 
   const handleUpload = (caseId: string, _fileNames: string[]) => {
     setShowUploadModal(false)
-    navigate(`/cases/${caseId}/workspace`)
+    navigate(`/cases/${caseId}/chat`)
     window.location.reload()
   }
 

@@ -25,7 +25,7 @@ const CaseCard = ({ caseItem }: CaseCardProps) => {
   return (
     <div 
       className="card-hover cursor-pointer bg-white rounded-xl p-6 shadow-soft border border-[#E5E8EB]/50"
-      onClick={() => navigate(`/cases/${caseItem.id}/workspace`)}
+      onClick={() => navigate(`/cases/${caseItem.id}/chat`)}
     >
       <div className="space-y-5">
         {/* Название */}

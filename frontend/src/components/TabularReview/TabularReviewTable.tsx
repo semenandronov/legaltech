@@ -242,11 +242,35 @@ export const TabularReviewTable = React.memo(({ reviewId, tableData, onCellClick
                   <ExpandIcon fontSize="small" color="action" />
                 )}
               </Stack>
-              {cell?.confidence_score && (
-                <Typography variant="caption" color="text.secondary">
-                  Уверенность: {Math.round(cell.confidence_score * 100)}%
-                </Typography>
-              )}
+              <Stack direction="row" spacing={1} alignItems="center" flexWrap="wrap">
+                {cell?.confidence_score !== null && cell?.confidence_score !== undefined && (
+                  <Chip
+                    label={`${Math.round(cell.confidence_score * 100)}%`}
+                    size="small"
+                    sx={{
+                      height: 20,
+                      fontSize: '0.7rem',
+                      bgcolor: cell.confidence_score >= 0.9 
+                        ? 'success.light' 
+                        : cell.confidence_score >= 0.7 
+                        ? 'warning.light' 
+                        : 'error.light',
+                      color: cell.confidence_score >= 0.9 
+                        ? 'success.dark' 
+                        : cell.confidence_score >= 0.7 
+                        ? 'warning.dark' 
+                        : 'error.dark',
+                    }}
+                  />
+                )}
+                {(cell?.source_page || cell?.source_section) && (
+                  <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.7rem' }}>
+                    {cell?.source_page && `Стр. ${cell.source_page}`}
+                    {cell?.source_page && cell?.source_section && ', '}
+                    {cell?.source_section && cell.source_section}
+                  </Typography>
+                )}
+              </Stack>
             </Stack>
           </Box>
         )

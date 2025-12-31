@@ -230,11 +230,10 @@ const TabularReviewPage: React.FC = () => {
 
   const handleAddDocuments = () => {
     if (!caseId) return
-    navigate(`/cases/${caseId}/workspace`)
+    navigate(`/cases/${caseId}/chat`)
   }
 
   const navItems = caseId ? [
-    { id: 'overview', label: 'Обзор', icon: Home, path: `/cases/${caseId}/workspace` },
     { id: 'chat', label: 'Ассистент', icon: MessageSquare, path: `/cases/${caseId}/chat` },
     { id: 'documents', label: 'Документы', icon: FileText, path: `/cases/${caseId}/documents` },
     { id: 'tabular-review', label: 'Tabular Review', icon: Table, path: `/cases/${caseId}/tabular-review` },
