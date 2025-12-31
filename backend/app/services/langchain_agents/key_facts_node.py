@@ -167,17 +167,24 @@ def key_facts_agent_node(
             
             import asyncio
             try:
-                loop = asyncio.get_event_loop()
-                if loop.is_running():
-                    known_facts_patterns = []
-                else:
-                    known_facts_patterns = loop.run_until_complete(
+                # Try to get existing event loop
+                try:
+                    loop = asyncio.get_event_loop()
+                    if loop.is_running():
+                        # Event loop is running, cannot use it - skip pattern loading
+                        known_facts_patterns = []
+                    else:
+                        known_facts_patterns = loop.run_until_complete(
+                            pattern_loader.load_key_facts_patterns(case_type, limit=20)
+                        )
+                except RuntimeError:
+                    # No event loop exists, create a new one
+                    known_facts_patterns = asyncio.run(
                         pattern_loader.load_key_facts_patterns(case_type, limit=20)
                     )
-            except RuntimeError:
-                known_facts_patterns = asyncio.run(
-                    pattern_loader.load_key_facts_patterns(case_type, limit=20)
-                )
+            except Exception as e:
+                logger.warning(f"Failed to load key facts patterns (async issue): {e}")
+                known_facts_patterns = []
             
             if known_facts_patterns:
                 known_facts_text = pattern_loader.format_patterns_for_prompt(
@@ -313,6 +320,10 @@ def key_facts_agent_node(
         # Try to extract JSON from response
         key_facts_data = extract_json_from_response(response_text)
         
+        # Initialize parsed_facts and relevant_docs
+        parsed_facts = None
+        relevant_docs = []
+        
         # If we have key facts data, parse it
         if key_facts_data:
             parsed_facts = ParserService.parse_key_facts(json.dumps(key_facts_data) if isinstance(key_facts_data, (list, dict)) else str(key_facts_data))
@@ -322,7 +333,7 @@ def key_facts_agent_node(
                 raise ValueError("RAG service required for key facts extraction")
             
             query = "Извлеки ключевые факты: стороны спора, суммы, даты, суть спора, судья, суд"
-            relevant_docs = rag_service.retrieve_context(case_id, query, k=20)
+            relevant_docs = rag_service.retrieve_context(case_id, query, k=20, db=db)
         
         # Verify citations: проверяем что факты реально присутствуют в документах
         if parsed_facts and rag_service:

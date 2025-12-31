@@ -25,44 +25,64 @@ class LangGraphStoreService:
     def _ensure_tables(self):
         """Создает таблицы для Store если их нет"""
         try:
-            # Таблица для паттернов и прецедентов
-            self.db.execute(text("""
-                CREATE TABLE IF NOT EXISTS langgraph_store (
-                    id SERIAL PRIMARY KEY,
-                    namespace VARCHAR(255) NOT NULL,
-                    key VARCHAR(500) NOT NULL,
-                    value JSONB NOT NULL,
-                    metadata JSONB,
-                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    UNIQUE(namespace, key)
-                )
-            """))
+            # Проверяем, не находится ли сессия в состоянии 'prepared'
+            # Если да, то создаем новую сессию для создания таблиц
+            from sqlalchemy.orm import Session
+            from app.utils.database import SessionLocal
             
-            # Индексы для быстрого поиска
-            self.db.execute(text("""
-                CREATE INDEX IF NOT EXISTS idx_store_namespace 
-                ON langgraph_store(namespace)
-            """))
+            db_to_use = self.db
+            should_close = False
             
-            self.db.execute(text("""
-                CREATE INDEX IF NOT EXISTS idx_store_key 
-                ON langgraph_store(key)
-            """))
+            # Проверяем состояние сессии
+            if hasattr(self.db, 'in_transaction') and self.db.in_transaction():
+                # Сессия в транзакции, используем новую сессию
+                db_to_use = SessionLocal()
+                should_close = True
             
-            # GIN индекс для JSONB поиска
-            self.db.execute(text("""
-                CREATE INDEX IF NOT EXISTS idx_store_value_gin 
-                ON langgraph_store USING GIN(value)
-            """))
-            
-            self.db.commit()
-            logger.info("✅ LangGraph Store tables created")
-        except Exception as e:
             try:
-                self.db.rollback()
-            except Exception:
-                pass  # Ignore rollback errors if commit already succeeded
+                # Таблица для паттернов и прецедентов
+                db_to_use.execute(text("""
+                    CREATE TABLE IF NOT EXISTS langgraph_store (
+                        id SERIAL PRIMARY KEY,
+                        namespace VARCHAR(255) NOT NULL,
+                        key VARCHAR(500) NOT NULL,
+                        value JSONB NOT NULL,
+                        metadata JSONB,
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        UNIQUE(namespace, key)
+                    )
+                """))
+                
+                # Индексы для быстрого поиска
+                db_to_use.execute(text("""
+                    CREATE INDEX IF NOT EXISTS idx_store_namespace 
+                    ON langgraph_store(namespace)
+                """))
+                
+                db_to_use.execute(text("""
+                    CREATE INDEX IF NOT EXISTS idx_store_key 
+                    ON langgraph_store(key)
+                """))
+                
+                # GIN индекс для JSONB поиска
+                db_to_use.execute(text("""
+                    CREATE INDEX IF NOT EXISTS idx_store_value_gin 
+                    ON langgraph_store USING GIN(value)
+                """))
+                
+                db_to_use.commit()
+                logger.info("✅ LangGraph Store tables created")
+            except Exception as e:
+                try:
+                    db_to_use.rollback()
+                except Exception:
+                    pass
+                raise
+            finally:
+                if should_close:
+                    db_to_use.close()
+        except Exception as e:
             logger.warning(f"Store tables may already exist: {e}")
     
     async def save_pattern(

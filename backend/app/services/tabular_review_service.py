@@ -620,7 +620,7 @@ class TabularReviewService:
             if source_doc and source_doc not in files_dict:
                 file = self.db.query(File).filter(
                     File.case_id == case_id,
-                    File.name == source_doc
+                    File.filename == source_doc
                 ).first()
                 if file:
                     files_dict[source_doc] = file

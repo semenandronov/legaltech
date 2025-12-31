@@ -97,6 +97,12 @@ class YandexEmbeddings(Embeddings):
             # Обрабатываем каждый текст
             for text in texts:
                 try:
+                    # Пропускаем пустые тексты
+                    if not text or not text.strip():
+                        logger.warning("Skipping empty text for embedding")
+                        embeddings.append([0.0] * 256)  # Возвращаем нулевой вектор для пустого текста
+                        continue
+                    
                     logger.debug(f"Embedding text (length: {len(text)}) via SDK")
                     
                     # Вызываем модель через SDK
