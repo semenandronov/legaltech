@@ -34,7 +34,7 @@ export const SourcesTrigger = ({
   >
     {children ?? (
       <>
-        <p className="font-medium">Used {count} sources</p>
+        <p className="font-medium">Использовано {count} {count === 1 ? 'источник' : count < 5 ? 'источника' : 'источников'}</p>
         <ChevronDownIcon className="h-4 w-4" />
       </>
     )}

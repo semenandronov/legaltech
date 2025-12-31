@@ -319,17 +319,17 @@ export const AssistantUIChat = ({ caseId, className, initialQuery, onQuerySelect
 
   return (
     <PromptInputProvider initialInput={initialQuery || ''}>
-      <div className={`flex flex-col h-full bg-white ${className || ''}`}>
+    <div className={`flex flex-col h-full bg-white ${className || ''}`}>
         {/* Header */}
         {messages.length === 0 && (
           <div className="flex items-center justify-center px-6 py-8">
-            <h1 className="text-3xl font-semibold text-gray-900">How can I assist?</h1>
+            <h1 className="text-3xl font-semibold text-gray-900">Чем могу помочь?</h1>
           </div>
         )}
 
-        {/* Messages area */}
-        <Conversation>
-          <ConversationContent>
+      {/* Messages area */}
+      <Conversation>
+        <ConversationContent>
             {messages.length === 0 && <ConversationEmptyState title="" description="" />}
 
         {messages.map((message) => {
@@ -414,13 +414,14 @@ export const AssistantUIChat = ({ caseId, className, initialQuery, onQuerySelect
           {/* Центрированный контейнер */}
           <div className="w-full max-w-4xl mx-auto space-y-6">
             {/* PromptInput с готовыми компонентами из @ai */}
-            <PromptInput
-              onSubmit={handlePromptSubmit}
-              className="w-full"
-            >
+            <div className="relative">
+              <PromptInput
+                onSubmit={handlePromptSubmit}
+                className="w-full"
+              >
               <PromptInputBody>
                 <PromptInputTextarea 
-                  placeholder="Type a question or use a prompt"
+                  placeholder="Введите вопрос или используйте промпт"
                   className="min-h-[60px] text-base"
                 />
                 <PromptInputSubmit 
@@ -447,43 +448,44 @@ export const AssistantUIChat = ({ caseId, className, initialQuery, onQuerySelect
                     className="w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500"
                   />
                   <span className="text-sm text-gray-700">
-                    Deep think <span className="text-gray-500">More powerful, but slower responses</span>
+                    Глубокое размышление <span className="text-gray-500">Более мощные, но медленные ответы</span>
                   </span>
                 </label>
               </PromptInputFooter>
             </PromptInput>
+            </div>
 
             {/* Три карточки функций ГОРИЗОНТАЛЬНО */}
             <div className="grid grid-cols-3 gap-4">
               {/* Web search */}
               <div className="flex flex-col p-4 bg-white border border-gray-200 rounded-lg hover:border-gray-300 transition-colors">
                 <div className="flex items-center justify-between mb-2">
-                  <span className="text-sm font-medium text-gray-900">Web search</span>
+                  <span className="text-sm font-medium text-gray-900">Веб-поиск</span>
                   <Switch 
                     checked={webSearch} 
                     onCheckedChange={setWebSearch}
                   />
                 </div>
-                <p className="text-sm text-gray-600">Leverage the web to perform deep research on any topic</p>
+                <p className="text-sm text-gray-600">Используйте веб для глубокого исследования любой темы</p>
               </div>
 
               {/* Database search */}
               <div className="flex flex-col p-4 bg-white border border-gray-200 rounded-lg hover:border-gray-300 transition-colors">
                 <div className="flex items-center justify-between mb-2">
-                  <span className="text-sm font-medium text-gray-900">Database search</span>
+                  <span className="text-sm font-medium text-gray-900">Поиск в базе данных</span>
                   <Switch 
                     checked={databaseSearch} 
                     onCheckedChange={setDatabaseSearch}
                   />
                 </div>
-                <p className="text-sm text-gray-600">Search your project or organization's databases</p>
+                <p className="text-sm text-gray-600">Поиск в базах данных проекта или организации</p>
               </div>
 
               {/* Legal research */}
               <div className="flex flex-col p-4 bg-white border border-gray-200 rounded-lg hover:border-gray-300 transition-colors">
                 <div className="flex items-center justify-between mb-2">
                   <div className="flex items-center gap-2">
-                    <span className="text-sm font-medium text-gray-900">Legal research</span>
+                    <span className="text-sm font-medium text-gray-900">Юридическое исследование</span>
                     <span className="px-2 py-0.5 text-xs font-medium bg-blue-100 text-blue-700 rounded">Early</span>
                   </div>
                   <Switch 
@@ -491,16 +493,16 @@ export const AssistantUIChat = ({ caseId, className, initialQuery, onQuerySelect
                     onCheckedChange={setLegalResearch}
                   />
                 </div>
-                <p className="text-sm text-gray-600">Find answers to your questions in curated legal sources</p>
+                <p className="text-sm text-gray-600">Найдите ответы на свои вопросы в курируемых юридических источниках</p>
               </div>
             </div>
 
             {/* Кнопка Explore all prompts - по центру */}
             <div className="flex justify-center">
               <button className="px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-100 rounded-lg transition-colors">
-                Explore all prompts
-              </button>
-            </div>
+                Изучить все промпты
+          </button>
+        </div>
 
             {/* Горизонтальная полоса с предложениями промптов */}
             <PromptSuggestionsBar 
@@ -510,33 +512,84 @@ export const AssistantUIChat = ({ caseId, className, initialQuery, onQuerySelect
         </div>
       ) : (
         <div className="border-t border-gray-200 bg-white px-6 py-4">
-          <PromptInput
-            onSubmit={handlePromptSubmit}
-            className="w-full"
-          >
-            <PromptInputBody>
-              <PromptInputTextarea 
-                placeholder="Type a question or use a prompt"
-                className="min-h-[60px] text-base"
-              />
-              <PromptInputSubmit 
-                variant="default"
-                className="bg-black text-white hover:bg-gray-800 rounded-lg"
-                disabled={isLoading || !actualCaseId}
-              />
-            </PromptInputBody>
-            <PromptInputFooter>
-              <label className="flex items-center gap-2 cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={deepThink}
-                  onChange={(e) => setDeepThink(e.target.checked)}
-                  className="w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500"
+          <div className="w-full max-w-4xl mx-auto space-y-4">
+            <div className="relative">
+              <PromptInput
+                onSubmit={handlePromptSubmit}
+                className="w-full"
+              >
+              <PromptInputBody>
+                <PromptInputTextarea 
+                  placeholder="Введите вопрос или используйте промпт"
+                  className="min-h-[60px] text-base"
                 />
-                <span className="text-sm text-gray-700">Deep think</span>
-              </label>
-            </PromptInputFooter>
-          </PromptInput>
+                <PromptInputSubmit 
+                  variant="default"
+                  className="bg-black text-white hover:bg-gray-800 rounded-lg"
+                  disabled={isLoading || !actualCaseId}
+                />
+              </PromptInputBody>
+                <PromptInputFooter>
+                  <label className="flex items-center gap-2 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={deepThink}
+                      onChange={(e) => setDeepThink(e.target.checked)}
+                      className="w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500"
+                    />
+                    <span className="text-sm text-gray-700">Глубокое размышление</span>
+                  </label>
+                </PromptInputFooter>
+              </PromptInput>
+            </div>
+
+            {/* Три карточки функций ГОРИЗОНТАЛЬНО - показываем и когда есть сообщения */}
+            <div className="grid grid-cols-3 gap-4">
+              {/* Web search */}
+              <div className="flex flex-col p-4 bg-white border border-gray-200 rounded-lg hover:border-gray-300 transition-colors">
+                <div className="flex items-center justify-between mb-2">
+                  <span className="text-sm font-medium text-gray-900">Веб-поиск</span>
+                  <Switch 
+                    checked={webSearch} 
+                    onCheckedChange={setWebSearch}
+                  />
+                </div>
+                <p className="text-sm text-gray-600">Используйте веб для глубокого исследования любой темы</p>
+              </div>
+
+              {/* Database search */}
+              <div className="flex flex-col p-4 bg-white border border-gray-200 rounded-lg hover:border-gray-300 transition-colors">
+                <div className="flex items-center justify-between mb-2">
+                  <span className="text-sm font-medium text-gray-900">Поиск в базе данных</span>
+                  <Switch 
+                    checked={databaseSearch} 
+                    onCheckedChange={setDatabaseSearch}
+                  />
+                </div>
+                <p className="text-sm text-gray-600">Поиск в базах данных проекта или организации</p>
+              </div>
+
+              {/* Legal research */}
+              <div className="flex flex-col p-4 bg-white border border-gray-200 rounded-lg hover:border-gray-300 transition-colors">
+                <div className="flex items-center justify-between mb-2">
+                  <div className="flex items-center gap-2">
+                    <span className="text-sm font-medium text-gray-900">Юридическое исследование</span>
+                    <span className="px-2 py-0.5 text-xs font-medium bg-blue-100 text-blue-700 rounded">Early</span>
+                  </div>
+                  <Switch 
+                    checked={legalResearch} 
+                    onCheckedChange={setLegalResearch}
+                  />
+                </div>
+                <p className="text-sm text-gray-600">Найдите ответы на свои вопросы в курируемых юридических источниках</p>
+              </div>
+            </div>
+
+            {/* Горизонтальная полоса с предложениями промптов */}
+            <PromptSuggestionsBar 
+              suggestions={promptSuggestions}
+            />
+          </div>
         </div>
       )}
       </div>
