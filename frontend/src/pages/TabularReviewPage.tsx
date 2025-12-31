@@ -8,6 +8,7 @@ import { ColumnBuilder } from "../components/TabularReview/ColumnBuilder"
 import { DocumentSelector } from "../components/TabularReview/DocumentSelector"
 import { TabularDocumentViewer } from "../components/TabularReview/TabularDocumentViewer"
 import { TabularChat } from "../components/TabularReview/TabularChat"
+import { TabularReviewContextChat } from "../components/TabularReview/TabularReviewContextChat"
 import { TemplatesModal } from "../components/TabularReview/TemplatesModal"
 import { FeaturedTemplatesCarousel } from "../components/TabularReview/FeaturedTemplatesCarousel"
 import { tabularReviewApi, TableData } from "../services/tabularReviewApi"
@@ -538,110 +539,118 @@ const TabularReviewPage: React.FC = () => {
           </div>
         )}
 
-        {/* Chat, Table and Document Split View */}
-        <div className="flex-1 overflow-hidden flex">
-          {/* Chat (Left Panel) */}
-          {reviewId && tableData && (
-            <div className="w-80 border-r border-[#E5E7EB] shrink-0 bg-white">
-              <TabularChat
-                reviewId={reviewId}
-                caseId={caseId || ""}
-                tableData={tableData}
-                onDocumentClick={(fileId) => {
-                  // Find row and open document
-                  const row = tableData.rows.find(r => r.file_id === fileId)
-                  if (row) {
-                    // Open first cell or just the document
-                    const firstColumn = tableData.columns[0]
-                    if (firstColumn) {
-                      const cell = row.cells[firstColumn.id]
-                      let highlightMode: 'verbatim' | 'page' | 'none' = 'none'
-                      if (cell?.verbatim_extract) {
-                        highlightMode = 'verbatim'
-                      } else if (cell?.source_page || cell?.source_section) {
-                        highlightMode = 'page'
-                      }
-                      setSelectedDocument({
-                        fileId,
-                        fileType: row.file_type,
-                        cellData: {
-                          verbatimExtract: cell?.verbatim_extract,
-                          sourcePage: cell?.source_page,
-                          sourceSection: cell?.source_section,
-                          columnType: firstColumn.column_type,
-                          highlightMode,
-                        }
-                      })
-                    } else {
-                      setSelectedDocument({
-                        fileId,
-                        fileType: row.file_type,
-                        cellData: { highlightMode: 'none' }
-                      })
+        {/* Main Content Area */}
+        <div className="flex-1 overflow-hidden flex flex-col">
+          {/* Table and Document Split View */}
+          <div className="flex-1 overflow-hidden flex">
+            {/* Table */}
+            <div className={`overflow-auto p-6 transition-all flex-1 bg-white ${selectedDocument ? 'w-1/2' : 'flex-1'}`}>
+              {tableData.columns.length === 0 ? (
+                <Card className="p-6 hoverable">
+                  <div className="text-center">
+                    <h3 className="font-display text-h2 text-[#1F2937] mb-2">
+                      Нет колонок
+                    </h3>
+                    <p className="text-body text-[#6B7280] mb-6">
+                      Добавьте колонки для начала работы с Tabular Review
+                    </p>
+                    <button
+                      onClick={() => setShowColumnBuilder(true)}
+                      className="px-6 py-3 bg-gradient-to-r from-[#00D4FF] to-[#7C3AED] text-white font-medium rounded-lg hover:shadow-lg hover:shadow-[#00D4FF]/30 transition-all duration-300"
+                    >
+                      Добавить колонку
+                    </button>
+                  </div>
+                </Card>
+              ) : (
+                <TabularReviewTable
+                  reviewId={reviewId}
+                  tableData={tableData}
+                  onCellClick={(fileId, cellData) => {
+                    // Find file type from table data
+                    const row = tableData.rows.find(r => r.file_id === fileId)
+                    setSelectedDocument({ 
+                      fileId, 
+                      fileType: row?.file_type,
+                      cellData 
+                    })
+                  }}
+                  onRemoveDocument={async (fileId) => {
+                    if (!reviewId) return
+                    try {
+                      // Remove file from selected files
+                      const currentFileIds = selectedFileIds.filter(id => id !== fileId)
+                      await tabularReviewApi.updateSelectedFiles(reviewId, currentFileIds)
+                      setSelectedFileIds(currentFileIds)
+                      toast.success("Документ удален из таблицы")
+                      await loadReviewData()
+                    } catch (err: any) {
+                      toast.error("Не удалось удалить документ: " + (err.message || ""))
                     }
-                  }
-                }}
-              />
+                  }}
+                  onRunColumn={async (columnId) => {
+                    if (!reviewId) return
+                    try {
+                      // For now, run extraction for all (you might want to add column-specific extraction)
+                      setProcessing(true)
+                      const result = await tabularReviewApi.runExtraction(reviewId)
+                      toast.success(
+                        `Обработка завершена: ${result.saved_count} ячеек сохранено`
+                      )
+                      await loadReviewData()
+                    } catch (err: any) {
+                      toast.error("Ошибка при обработке: " + (err.message || ""))
+                    } finally {
+                      setProcessing(false)
+                    }
+                  }}
+                />
+              )}
             </div>
-          )}
 
-          {/* Table */}
-          <div className={`overflow-auto p-6 transition-all flex-1 bg-white ${selectedDocument ? 'w-1/2' : ''}`}>
-            {tableData.columns.length === 0 ? (
-              <Card className="p-6 hoverable">
-                <div className="text-center">
-                  <h3 className="font-display text-h2 text-[#1F2937] mb-2">
-                    Нет колонок
-                  </h3>
-                  <p className="text-body text-[#6B7280] mb-6">
-                    Добавьте колонки для начала работы с Tabular Review
-                  </p>
+            {/* Document Viewer */}
+            {selectedDocument && (
+              <div className="w-1/3 border-l border-[#E5E7EB] bg-white flex flex-col shrink-0">
+                <div className="border-b border-[#E5E7EB] p-3 flex items-center justify-between bg-white/80 backdrop-blur-sm">
+                  <span className="text-sm font-medium text-[#1F2937]">Документ</span>
                   <button
-                    onClick={() => setShowColumnBuilder(true)}
-                    className="px-6 py-3 bg-gradient-to-r from-[#00D4FF] to-[#7C3AED] text-white font-medium rounded-lg hover:shadow-lg hover:shadow-[#00D4FF]/30 transition-all duration-300"
+                    onClick={() => setSelectedDocument(null)}
+                    className="p-2 rounded-lg hover:bg-[#F3F4F6] transition-colors duration-200 text-[#6B7280] hover:text-[#1F2937]"
                   >
-                    Добавить колонку
+                    <X className="w-4 h-4" />
                   </button>
                 </div>
-              </Card>
-            ) : (
-              <TabularReviewTable
-                reviewId={reviewId}
-                tableData={tableData}
-                onCellClick={(fileId, cellData) => {
-                  // Find file type from table data
-                  const row = tableData.rows.find(r => r.file_id === fileId)
-                  setSelectedDocument({ 
-                    fileId, 
-                    fileType: row?.file_type,
-                    cellData 
-                  })
-                }}
-              />
+                <div className="flex-1 overflow-hidden">
+                  <TabularDocumentViewer
+                    fileId={selectedDocument.fileId}
+                    caseId={caseId || ""}
+                    fileType={selectedDocument.fileType}
+                    cellData={selectedDocument.cellData}
+                    onClose={() => setSelectedDocument(null)}
+                  />
+                </div>
+              </div>
             )}
           </div>
 
-          {/* Document Viewer */}
-          {selectedDocument && (
-            <div className="w-1/3 border-l border-[#E5E7EB] bg-white flex flex-col shrink-0">
-              <div className="border-b border-[#E5E7EB] p-3 flex items-center justify-between bg-white/80 backdrop-blur-sm">
-                <span className="text-sm font-medium text-[#1F2937]">Документ</span>
-                <button
-                  onClick={() => setSelectedDocument(null)}
-                  className="p-2 rounded-lg hover:bg-[#F3F4F6] transition-colors duration-200 text-[#6B7280] hover:text-[#1F2937]"
-                >
-                  <X className="w-4 h-4" />
-                </button>
-              </div>
-              <div className="flex-1 overflow-hidden">
-                <TabularDocumentViewer
-                  fileId={selectedDocument.fileId}
-                  caseId={caseId || ""}
-                  fileType={selectedDocument.fileType}
-                  cellData={selectedDocument.cellData}
-                  onClose={() => setSelectedDocument(null)}
-                />
-              </div>
+          {/* Context Chat (Bottom Left) */}
+          {reviewId && tableData && (
+            <div className="h-96 border-t border-[#E5E7EB] shrink-0 bg-white">
+              <TabularReviewContextChat
+                reviewId={reviewId}
+                reviewName={tableData.review.name}
+                tableData={tableData}
+                onExtractKeyPoints={async () => {
+                  // Extract key points logic
+                  toast.info("Извлечение ключевых моментов...")
+                }}
+                onRefineColumns={() => {
+                  setShowColumnBuilder(true)
+                }}
+                onAddDocuments={() => {
+                  setShowDocumentSelector(true)
+                }}
+              />
             </div>
           )}
         </div>
