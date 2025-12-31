@@ -224,7 +224,7 @@ class WebResearchService:
     def get_cached_result(self, query: str, filters: Optional[Dict[str, Any]] = None) -> Optional[ResearchResult]:
         """Получить закэшированный результат"""
         cache_key = self._make_cache_key(query, filters)
-            return self.cache.get(cache_key)
+        return self.cache.get(cache_key)
 
 
 # Global service instance
