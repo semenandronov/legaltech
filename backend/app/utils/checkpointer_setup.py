@@ -43,49 +43,34 @@ def _create_checkpointer_with_pooling():
         echo=False  # Set to True for SQL debugging
     )
     
-    # Create PostgresSaver with engine (preferred method for connection pooling)
-    # IMPORTANT: PostgresSaver should accept engine directly, which gives us better control
+    # Create PostgresSaver with connection string
+    # IMPORTANT: PostgresSaver does NOT accept SQLAlchemy Engine directly
+    # It only accepts connection string via from_conn_string() method
     try:
-        # Try to create PostgresSaver with engine first (best for connection pooling)
-        checkpointer = PostgresSaver(engine)
-        logger.debug("✅ Created PostgresSaver with engine (connection pooling enabled)")
-    except (TypeError, AttributeError, ValueError) as engine_error:
-        logger.debug(f"PostgresSaver(engine) not supported: {engine_error}, trying from_conn_string")
-        # Fallback to from_conn_string if engine not supported
         if hasattr(PostgresSaver, 'from_conn_string'):
             result = PostgresSaver.from_conn_string(db_url)
             
             # Check if result is a context manager
             from contextlib import _GeneratorContextManager
             if isinstance(result, _GeneratorContextManager):
-                # from_conn_string() returned a context manager - this is unexpected
-                # The context manager should be used for setup only, not for the lifecycle
-                logger.warning("⚠️ PostgresSaver.from_conn_string() returned context manager - this may cause connection issues")
-                # Try to enter the context to get the actual PostgresSaver
-                # WARNING: This may cause connection to close when context exits
-                try:
-                    checkpointer = result.__enter__()
-                    logger.warning("⚠️ Entered context manager - connection may close unexpectedly")
-                except Exception as enter_error:
-                    logger.error(f"Failed to enter context manager: {enter_error}")
-                    # Try creating PostgresSaver directly with connection string
-                    try:
-                        checkpointer = PostgresSaver(db_url)
-                        logger.debug("✅ Created PostgresSaver directly with connection string")
-                    except Exception as direct_error:
-                        logger.error(f"All PostgresSaver creation methods failed: {direct_error}")
-                        raise ValueError(f"Cannot create PostgresSaver: {direct_error}")
+                # from_conn_string() returned a context manager
+                # This is used for setup, but we need the actual PostgresSaver instance
+                logger.warning("⚠️ PostgresSaver.from_conn_string() returned context manager")
+                # Enter the context to get the actual PostgresSaver
+                # Note: We keep the context open by not calling __exit__
+                checkpointer = result.__enter__()
+                logger.debug("✅ Created PostgresSaver by entering context manager")
             else:
+                # from_conn_string() returned PostgresSaver directly
                 checkpointer = result
                 logger.debug("✅ Created PostgresSaver with from_conn_string (direct)")
         else:
             # No from_conn_string method, try direct constructor with connection string
-            try:
-                checkpointer = PostgresSaver(db_url)
-                logger.debug("✅ Created PostgresSaver with connection string directly")
-            except Exception as direct_error:
-                logger.error(f"Failed to create PostgresSaver with connection string: {direct_error}")
-                raise
+            checkpointer = PostgresSaver(db_url)
+            logger.debug("✅ Created PostgresSaver with connection string directly")
+    except Exception as create_error:
+        logger.error(f"Failed to create PostgresSaver: {create_error}", exc_info=True)
+        raise ValueError(f"Cannot create PostgresSaver: {create_error}")
     
     # Verify that we got a PostgresSaver instance, not a context manager
     if not isinstance(checkpointer, PostgresSaver):
