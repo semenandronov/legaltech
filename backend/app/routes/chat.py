@@ -744,17 +744,17 @@ async def chat(
         if "authentication" in error_msg.lower() or "api key" in error_msg.lower():
             raise HTTPException(
                 status_code=500,
-                detail="Ошибка аутентификации OpenRouter API. Проверьте API ключ."
+                detail="Ошибка аутентификации LLM API. Проверьте настройки GigaChat."
             )
-        elif "rate limit" in error_msg.lower():
+        elif "rate limit" in error_msg.lower() or "429" in error_msg:
             raise HTTPException(
                 status_code=500,
-                detail="Превышен лимит запросов к OpenRouter API. Попробуйте позже."
+                detail="Превышен лимит запросов к LLM API. Попробуйте позже."
             )
         elif "timeout" in error_msg.lower() or "timed out" in error_msg.lower():
             raise HTTPException(
                 status_code=500,
-                detail="Превышено время ожидания ответа от OpenRouter API. "
+                detail="Превышено время ожидания ответа от LLM API. "
                 "Попробуйте упростить запрос или повторить попытку позже."
             )
         else:

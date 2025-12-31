@@ -5,7 +5,7 @@ from sqlalchemy.orm import Session
 from app.models.case import Case
 from app.models.analysis import TimelineEvent
 from app.services.rag_service import RAGService
-from app.services.llm_service import LLMService
+from app.services.llm_factory import create_llm
 from app.services.langchain_parsers import ParserService, TimelineEventModel
 import re
 import logging
@@ -21,7 +21,7 @@ class TimelineExtractor:
         """Initialize timeline extractor"""
         self.db = db
         self.rag_service = RAGService()
-        self.llm_service = LLMService()
+        self.llm = create_llm(temperature=0.1)
     
     def extract(self, case_id: str) -> Dict[str, Any]:
         """
@@ -80,10 +80,18 @@ class TimelineExtractor:
 ]"""
         
         try:
-            response = self.llm_service.generate(full_system_prompt, user_prompt, temperature=0.3)
+            from langchain_core.prompts import ChatPromptTemplate
+            
+            prompt = ChatPromptTemplate.from_messages([
+                ("system", full_system_prompt),
+                ("human", user_prompt)
+            ])
+            chain = prompt | self.llm
+            response = chain.invoke({})
+            response_text = response.content if hasattr(response, 'content') else str(response)
             
             # Parse using ParserService
-            parsed_events = ParserService.parse_timeline_events(response)
+            parsed_events = ParserService.parse_timeline_events(response_text)
             
             # Save events to database
             saved_events = []

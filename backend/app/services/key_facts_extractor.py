@@ -4,7 +4,7 @@ from sqlalchemy.orm import Session
 from app.models.case import Case
 from app.models.analysis import AnalysisResult
 from app.services.rag_service import RAGService
-from app.services.llm_service import LLMService
+from app.services.llm_factory import create_llm
 from app.services.langchain_parsers import ParserService, KeyFactModel
 import json
 import re
@@ -20,7 +20,7 @@ class KeyFactsExtractor:
         """Initialize key facts extractor"""
         self.db = db
         self.rag_service = RAGService()
-        self.llm_service = LLMService()
+        self.llm = create_llm(temperature=0.1)
     
     def extract(self, case_id: str) -> Dict[str, Any]:
         """
@@ -66,11 +66,19 @@ class KeyFactsExtractor:
 Каждый факт должен содержать: fact_type, value, description (опционально), source_document, source_page (опционально), confidence (опционально)."""
         
         try:
+            from langchain_core.prompts import ChatPromptTemplate
             full_system_prompt = f"{system_prompt}\n\n{format_instructions}"
-            response = self.llm_service.generate(full_system_prompt, user_prompt, temperature=0.3)
+            
+            prompt = ChatPromptTemplate.from_messages([
+                ("system", full_system_prompt),
+                ("human", user_prompt)
+            ])
+            chain = prompt | self.llm
+            response = chain.invoke({})
+            response_text = response.content if hasattr(response, 'content') else str(response)
             
             # Parse using ParserService
-            parsed_facts = ParserService.parse_key_facts(response)
+            parsed_facts = ParserService.parse_key_facts(response_text)
             
             # Convert to structured format
             facts_data = {

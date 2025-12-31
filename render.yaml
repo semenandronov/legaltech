@@ -12,14 +12,6 @@ services:
       - key: DATABASE_URL
         sync: false
       
-      # OpenRouter API
-      - key: OPENROUTER_API_KEY
-        sync: false
-      - key: OPENROUTER_MODEL
-        value: "openrouter/auto"
-      - key: OPENROUTER_BASE_URL
-        value: "https://openrouter.ai/api/v1"
-      
       # JWT Authentication
       - key: JWT_SECRET_KEY
         sync: false

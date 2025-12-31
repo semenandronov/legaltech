@@ -4,7 +4,7 @@ from sqlalchemy.orm import Session
 from app.models.case import Case
 from app.models.analysis import Discrepancy
 from app.services.rag_service import RAGService
-from app.services.llm_service import LLMService
+from app.services.llm_factory import create_llm
 from app.services.langchain_parsers import ParserService, DiscrepancyModel
 import re
 import logging
@@ -19,7 +19,7 @@ class DiscrepancyFinder:
         """Initialize discrepancy finder"""
         self.db = db
         self.rag_service = RAGService()
-        self.llm_service = LLMService()
+        self.llm = create_llm(temperature=0.1)
     
     def find(self, case_id: str) -> Dict[str, Any]:
         """
@@ -64,11 +64,19 @@ class DiscrepancyFinder:
 Верни результат в формате JSON массива противоречий."""
         
         try:
+            from langchain_core.prompts import ChatPromptTemplate
             full_system_prompt = f"{system_prompt}\n\n{format_instructions}"
-            response = self.llm_service.generate(full_system_prompt, user_prompt, temperature=0.3)
+            
+            prompt = ChatPromptTemplate.from_messages([
+                ("system", full_system_prompt),
+                ("human", user_prompt)
+            ])
+            chain = prompt | self.llm
+            response = chain.invoke({})
+            response_text = response.content if hasattr(response, 'content') else str(response)
             
             # Parse using ParserService
-            parsed_discrepancies = ParserService.parse_discrepancies(response)
+            parsed_discrepancies = ParserService.parse_discrepancies(response_text)
             
             # Save discrepancies to database
             saved_discrepancies = []

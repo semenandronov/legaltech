@@ -141,7 +141,6 @@ export type ModelSelectorLogoProps = Omit<
     | "openai"
     | "zhipuai-coding-plan"
     | "perplexity"
-    | "openrouter"
     | "zenmux"
     | "v0"
     | "iflowcn"

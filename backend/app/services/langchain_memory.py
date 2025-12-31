@@ -2,7 +2,7 @@
 from typing import List, Dict, Any, Optional
 import logging
 
-from langchain_openai import ChatOpenAI
+from app.services.llm_factory import create_llm
 from app.config import config
 
 logger = logging.getLogger(__name__)
@@ -57,13 +57,8 @@ class MemoryService:
     
     def __init__(self):
         """Initialize memory service"""
-        self.llm = ChatOpenAI(
-            model=config.OPENROUTER_MODEL,
-            openai_api_key=config.OPENROUTER_API_KEY,
-            openai_api_base=config.OPENROUTER_BASE_URL,
-            temperature=0.7,
-            max_tokens=1000
-        )
+        # Используем GigaChat через llm_factory
+        self.llm = create_llm(temperature=0.7)
         
         # Store memory instances per case
         self.memories: Dict[str, Dict[str, BaseMemory]] = {}

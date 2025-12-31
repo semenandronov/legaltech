@@ -12,13 +12,6 @@ logger = logging.getLogger(__name__)
 class Config:
     """Application configuration"""
     
-    # OpenRouter (совместим с OpenAI API)
-    OPENROUTER_API_KEY: str = os.getenv("OPENROUTER_API_KEY", "")
-    OPENROUTER_MODEL: str = os.getenv("OPENROUTER_MODEL", "openrouter/auto")
-    OPENROUTER_BASE_URL: str = os.getenv(
-        "OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1"
-    )
-    
     # Database
     DATABASE_URL: str = os.getenv(
         "DATABASE_URL", 
@@ -43,7 +36,7 @@ class Config:
     ALLOWED_EXTENSIONS: List[str] = [".pdf", ".docx", ".txt", ".xlsx"]
     MAX_TOTAL_TEXT_CHARS: int = 2_000_000  # Ограничение суммарного текста
 
-    # OpenRouter / LLM context limits
+    # LLM context limits
     MAX_CONTEXT_CHARS: int = 60_000  # Приближённо к лимиту ~32k токенов
     
     # Multi-Agent System Settings

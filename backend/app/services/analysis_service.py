@@ -126,9 +126,11 @@ class AnalysisService:
         # Use key facts extractor for summary
         key_facts = self.extract_key_facts(case_id)
         
-        # Generate summary text
-        from app.services.llm_service import LLMService
-        llm_service = LLMService()
+        # Generate summary text using GigaChat
+        from app.services.llm_factory import create_llm
+        from langchain_core.prompts import ChatPromptTemplate
+        
+        llm = create_llm(temperature=0.7)
         
         system_prompt = """Ты эксперт по анализу юридических дел.
 Создай краткое резюме дела на основе предоставленной информации."""
@@ -144,7 +146,13 @@ class AnalysisService:
 4. Основные даты
 5. Текущий статус"""
         
-        summary_text = llm_service.generate(system_prompt, user_prompt)
+        prompt = ChatPromptTemplate.from_messages([
+            ("system", system_prompt),
+            ("human", user_prompt)
+        ])
+        chain = prompt | llm
+        response = chain.invoke({})
+        summary_text = response.content if hasattr(response, 'content') else str(response)
         
         # Save to database
         result = AnalysisResult(
@@ -187,9 +195,11 @@ class AnalysisService:
         # Get discrepancies
         discrepancies = self.find_discrepancies(case_id)
         
-        # Use LLM for risk analysis
-        from app.services.llm_service import LLMService
-        llm_service = LLMService()
+        # Use LLM for risk analysis using GigaChat
+        from app.services.llm_factory import create_llm
+        from langchain_core.prompts import ChatPromptTemplate
+        
+        llm = create_llm(temperature=0.7)
         
         system_prompt = """Ты эксперт по анализу юридических рисков.
 Оцени риски дела на основе предоставленной информации.
@@ -214,7 +224,13 @@ class AnalysisService:
 - Обоснование
 - Рекомендации"""
         
-        risk_analysis = llm_service.generate(system_prompt, user_prompt)
+        prompt = ChatPromptTemplate.from_messages([
+            ("system", system_prompt),
+            ("human", user_prompt)
+        ])
+        chain = prompt | llm
+        response = chain.invoke({})
+        risk_analysis = response.content if hasattr(response, 'content') else str(response)
         
         # Save to database
         result = AnalysisResult(
