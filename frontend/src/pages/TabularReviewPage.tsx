@@ -7,7 +7,6 @@ import { TabularReviewToolbar } from "../components/TabularReview/TabularReviewT
 import { ColumnBuilder } from "../components/TabularReview/ColumnBuilder"
 import { DocumentSelector } from "../components/TabularReview/DocumentSelector"
 import { TabularDocumentViewer } from "../components/TabularReview/TabularDocumentViewer"
-import { TabularChat } from "../components/TabularReview/TabularChat"
 import { TabularReviewContextChat } from "../components/TabularReview/TabularReviewContextChat"
 import { TemplatesModal } from "../components/TabularReview/TemplatesModal"
 import { FeaturedTemplatesCarousel } from "../components/TabularReview/FeaturedTemplatesCarousel"
@@ -588,7 +587,7 @@ const TabularReviewPage: React.FC = () => {
                       toast.error("Не удалось удалить документ: " + (err.message || ""))
                     }
                   }}
-                  onRunColumn={async (columnId) => {
+                  onRunColumn={async (_columnId) => {
                     if (!reviewId) return
                     try {
                       // For now, run extraction for all (you might want to add column-specific extraction)

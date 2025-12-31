@@ -42,7 +42,6 @@ interface Message {
 export const TabularReviewContextChat: React.FC<TabularReviewContextChatProps> = ({
   reviewId,
   reviewName,
-  tableData,
   onExtractKeyPoints,
   onRefineColumns,
   onAddDocuments,
