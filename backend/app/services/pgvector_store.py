@@ -384,39 +384,13 @@ class CaseVectorStore:
                 
                 # Get raw connection properly - use conn.connection for SQLAlchemy 1.4+
                 # conn.connection is the underlying DBAPI connection
-                # #region debug log
-                import json
-                import time
-                try:
-                    with open('/Users/semyon_andronov04/Desktop/C ДВ/.cursor/debug.log', 'a') as f:
-                        f.write(json.dumps({"sessionId":"debug-session","runId":"pre-fix","hypothesisId":"B","location":"pgvector_store.py:387","message":"Before getting raw connection","data":{"conn_type":type(conn).__name__,"has_connection_attr":hasattr(conn,"connection")},"timestamp":int(time.time()*1000)}) + '\n')
-                except: pass
-                # #endregion
                 raw_conn = conn.connection
-                # #region debug log
-                try:
-                    with open('/Users/semyon_andronov04/Desktop/C ДВ/.cursor/debug.log', 'a') as f:
-                        f.write(json.dumps({"sessionId":"debug-session","runId":"pre-fix","hypothesisId":"B","location":"pgvector_store.py:390","message":"After getting raw connection","data":{"raw_conn_type":type(raw_conn).__name__,"is_closed":getattr(raw_conn,"closed",None)},"timestamp":int(time.time()*1000)}) + '\n')
-                except: pass
-                # #endregion
                 cursor = raw_conn.cursor()
                 try:
-                    # #region debug log
-                    try:
-                        with open('/Users/semyon_andronov04/Desktop/C ДВ/.cursor/debug.log', 'a') as f:
-                            f.write(json.dumps({"sessionId":"debug-session","runId":"pre-fix","hypothesisId":"B","location":"pgvector_store.py:395","message":"Before cursor.execute","data":{"cursor_type":type(cursor).__name__},"timestamp":int(time.time()*1000)}) + '\n')
-                    except: pass
-                    # #endregion
                     cursor.execute(
                         sql,
                         (query_embedding_str, self.collection_name, query_embedding_str, k)
                     )
-                    # #region debug log
-                    try:
-                        with open('/Users/semyon_andronov04/Desktop/C ДВ/.cursor/debug.log', 'a') as f:
-                            f.write(json.dumps({"sessionId":"debug-session","runId":"pre-fix","hypothesisId":"B","location":"pgvector_store.py:403","message":"After cursor.execute","data":{"success":True},"timestamp":int(time.time()*1000)}) + '\n')
-                    except: pass
-                    # #endregion
                     
                     documents = []
                     for row in cursor.fetchall():
