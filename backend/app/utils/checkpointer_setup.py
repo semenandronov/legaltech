@@ -59,14 +59,22 @@ def _create_checkpointer_with_pooling():
                 # The context manager is typically used for setup, but we need the actual PostgresSaver
                 logger.error("❌ PostgresSaver.from_conn_string() returned context manager - this will cause connection issues")
                 logger.error("   Context managers should only be used for setup, not for long-lived checkpointer")
-                # Try to enter the context to get PostgresSaver, but this may cause connection to close
-                # This is a workaround, but not ideal
+                # Try to enter the context to get PostgresSaver
+                # IMPORTANT: We need to keep the context manager alive to prevent connection closure
+                # Store both the context manager and the PostgresSaver instance
                 try:
                     checkpointer = result.__enter__()
                     logger.warning("⚠️ Entered context manager to get PostgresSaver - connection may close unexpectedly")
-                    # Store reference to context manager to prevent garbage collection
-                    # This might help keep connection open, but it's not guaranteed
-                    checkpointer._context_manager = result
+                    # Store reference to context manager as class attribute to prevent garbage collection
+                    # This is critical: if context manager is garbage collected, connection will close
+                    if not hasattr(checkpointer, '_context_manager_ref'):
+                        checkpointer._context_manager_ref = result
+                    # Also store in a module-level variable to ensure it's never garbage collected
+                    import sys
+                    if not hasattr(sys.modules[__name__], '_active_context_managers'):
+                        sys.modules[__name__]._active_context_managers = []
+                    sys.modules[__name__]._active_context_managers.append(result)
+                    logger.info("✅ Stored context manager reference to prevent connection closure")
                 except Exception as enter_error:
                     logger.error(f"Failed to enter context manager: {enter_error}")
                     raise ValueError("Cannot create PostgresSaver from context manager")

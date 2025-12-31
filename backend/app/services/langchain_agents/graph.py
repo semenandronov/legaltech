@@ -697,7 +697,16 @@ def create_analysis_graph(
                 # Enter it to get the actual PostgresSaver
                 logger.warning("⚠️ PostgresSaver.from_conn_string() returned context manager in fallback")
                 checkpointer = result.__enter__()
-                # Note: We don't call __exit__ to keep connection open
+                # Store reference to context manager to prevent garbage collection
+                # This is critical: if context manager is garbage collected, connection will close
+                if not hasattr(checkpointer, '_context_manager_ref'):
+                    checkpointer._context_manager_ref = result
+                # Also store in a module-level variable to ensure it's never garbage collected
+                import sys
+                if not hasattr(sys.modules[__name__], '_active_context_managers'):
+                    sys.modules[__name__]._active_context_managers = []
+                sys.modules[__name__]._active_context_managers.append(result)
+                logger.info("✅ Stored context manager reference to prevent connection closure")
             else:
                 checkpointer = result
             
