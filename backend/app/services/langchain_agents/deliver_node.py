@@ -374,6 +374,7 @@ def deliver_node(
         logger.info(f"[DEBUG-HYP-A] deliver_node: table_results_keys={list(table_results.keys())}, "
                    f"table_results={table_results_summary}, "
                    f"delivery_result_tables_keys={list(delivery_result.get('tables', {}).keys()) if delivery_result.get('tables') else None}, "
+                   f"delivery_result_keys={list(delivery_result.keys())}, "
                    f"case_id={case_id}")
         # #endregion
         

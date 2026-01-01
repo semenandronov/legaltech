@@ -1076,11 +1076,14 @@ async def approve_plan(
                         
                         plan.plan_data = plan_data
                         background_db.commit()
+                        background_db.refresh(plan)  # Refresh to ensure data is persisted
                         # #region agent log
                         logger.info(f"[DEBUG-HYP-A] chat.py: plan_data committed to DB, "
                                    f"plan_id={plan.id if plan else None}, "
                                    f"plan_status={plan.status if plan else None}, "
-                                   f"plan_data_keys={list(plan.plan_data.keys()) if plan and plan.plan_data else None}")
+                                   f"plan_data_keys={list(plan.plan_data.keys()) if plan and plan.plan_data else None}, "
+                                   f"has_table_results_in_plan={bool(plan.plan_data.get('table_results') if plan and plan.plan_data else False)}, "
+                                   f"has_delivery_result_in_plan={bool(plan.plan_data.get('delivery_result') if plan and plan.plan_data else False)}")
                         # #endregion
                     else:
                         # Legacy approach
