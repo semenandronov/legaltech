@@ -2,6 +2,7 @@
 from fastapi import APIRouter, HTTPException, Depends, BackgroundTasks
 from pydantic import BaseModel, Field, field_validator
 from sqlalchemy.orm import Session
+from sqlalchemy.orm.attributes import flag_modified
 from typing import List, Optional, Dict, Any
 from app.utils.database import get_db
 from app.utils.auth import get_current_user
@@ -1030,6 +1031,7 @@ async def approve_plan(
                                         execution_steps.append(step_info)
                                         plan_data["execution_steps"] = execution_steps
                                         plan_refresh.plan_data = plan_data
+                                        flag_modified(plan_refresh, "plan_data")
                                         background_db.commit()
                             except Exception as e:
                                 logger.warning(f"Error saving step to plan: {e}")
@@ -1066,14 +1068,17 @@ async def approve_plan(
                         delivery_result = results.get("delivery") or results.get("delivery_result", {})
                         # #region agent log
                         logger.info(f"[DEBUG-HYP-A] chat.py: saving table_results to plan_data, "
+                                   f"results_keys={list(results.keys())}, "
+                                   f"has_delivery_key={bool(results.get('delivery'))}, "
+                                   f"has_delivery_result_key={bool(results.get('delivery_result'))}, "
                                    f"has_delivery={bool(delivery_result)}, "
-                                   f"delivery_keys={list(delivery_result.keys()) if delivery_result else None}, "
-                                   f"delivery_tables={list(delivery_result.get('tables', {}).keys()) if delivery_result and delivery_result.get('tables') else None}, "
+                                   f"delivery_keys={list(delivery_result.keys()) if delivery_result and isinstance(delivery_result, dict) else None}, "
+                                   f"delivery_tables={list(delivery_result.get('tables', {}).keys()) if delivery_result and isinstance(delivery_result, dict) and delivery_result.get('tables') else None}, "
                                    f"has_results_tables={bool(results.get('tables'))}, "
                                    f"results_tables_keys={list(results.get('tables', {}).keys()) if results.get('tables') else None}, "
                                    f"plan_id={plan.id if plan else None}")
                         # #endregion
-                        if delivery_result:
+                        if delivery_result and isinstance(delivery_result, dict):
                             plan_data["delivery_result"] = delivery_result
                             # Also save tables separately for easier access
                             if delivery_result.get("tables"):
@@ -1090,7 +1095,14 @@ async def approve_plan(
                             plan_data["table_results"] = results.get("tables")
                             logger.info(f"Saved {len(results.get('tables', {}))} table results to plan_data (fallback)")
                         
+                        # Log plan_data state before commit
+                        logger.info(f"[DEBUG-HYP-A] chat.py: plan_data before commit, "
+                                   f"plan_data_keys={list(plan_data.keys())}, "
+                                   f"has_table_results={bool(plan_data.get('table_results'))}, "
+                                   f"has_delivery_result={bool(plan_data.get('delivery_result'))}")
+                        
                         plan.plan_data = plan_data
+                        flag_modified(plan, "plan_data")
                         background_db.commit()
                         # Re-query plan to ensure we have the latest data (refresh fails if plan is not in session)
                         plan = background_db.query(AnalysisPlan).filter(AnalysisPlan.id == plan_id_for_execution).first()
