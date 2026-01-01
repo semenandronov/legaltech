@@ -951,12 +951,19 @@ async def approve_plan(
             db.commit()
             
             # Start execution in background
+            plan_id_for_execution = plan.id  # Capture plan_id before background execution
             def execute_approved_plan():
                 """Execute approved plan in background"""
                 background_db = SessionLocal()
                 try:
+                    # Re-query plan from DB to ensure it's attached to background_db session
+                    plan = background_db.query(AnalysisPlan).filter(AnalysisPlan.id == plan_id_for_execution).first()
+                    if not plan:
+                        logger.error(f"Plan {plan_id_for_execution} not found in database")
+                        return
+                    
                     # Get plan data
-                    plan_data = plan.plan_data
+                    plan_data = plan.plan_data or {}
                     case_id = plan.case_id
                     
                     # Get analysis types from plan
@@ -981,6 +988,8 @@ async def approve_plan(
                     plan.status = "executing"
                     plan.executed_at = datetime.utcnow()
                     background_db.commit()
+                    # Re-query to ensure plan is attached to session
+                    plan = background_db.query(AnalysisPlan).filter(AnalysisPlan.id == plan_id_for_execution).first()
                     
                     # Execute analyses using agent system
                     # Verify background_db is not None before creating AnalysisService
@@ -1010,7 +1019,7 @@ async def approve_plan(
                             """Save execution step to plan in real-time"""
                             try:
                                 # Refresh plan from DB
-                                plan_refresh = background_db.query(AnalysisPlan).filter(AnalysisPlan.id == plan.id).first()
+                                plan_refresh = background_db.query(AnalysisPlan).filter(AnalysisPlan.id == plan_id_for_execution).first()
                                 if plan_refresh:
                                     plan_data = plan_refresh.plan_data or {}
                                     if not isinstance(plan_data, dict):
@@ -1036,9 +1045,15 @@ async def approve_plan(
                             f"execution_time: {results.get('execution_time', 0):.2f}s"
                         )
                         
+                        # Re-query plan to ensure we have the latest data
+                        plan = background_db.query(AnalysisPlan).filter(AnalysisPlan.id == plan_id_for_execution).first()
+                        if not plan:
+                            logger.error(f"Plan {plan_id_for_execution} not found when saving results")
+                            return
+                        
                         # Final save of all execution steps (in case callback missed any)
                         execution_steps = results.get("execution_steps", [])
-                        plan_data = plan.plan_data
+                        plan_data = plan.plan_data or {}
                         if not isinstance(plan_data, dict):
                             plan_data = {}
                         
@@ -1047,7 +1062,8 @@ async def approve_plan(
                         
                         # Save table_results and delivery_result for table_created events
                         # Extract tables from delivery_result if available
-                        delivery_result = results.get("delivery", {})
+                        # Check both "delivery" key and direct delivery_result in results
+                        delivery_result = results.get("delivery") or results.get("delivery_result", {})
                         # #region agent log
                         logger.info(f"[DEBUG-HYP-A] chat.py: saving table_results to plan_data, "
                                    f"has_delivery={bool(delivery_result)}, "
@@ -1077,7 +1093,7 @@ async def approve_plan(
                         plan.plan_data = plan_data
                         background_db.commit()
                         # Re-query plan to ensure we have the latest data (refresh fails if plan is not in session)
-                        plan = background_db.query(AnalysisPlan).filter(AnalysisPlan.id == plan.id).first()
+                        plan = background_db.query(AnalysisPlan).filter(AnalysisPlan.id == plan_id_for_execution).first()
                         # #region agent log
                         logger.info(f"[DEBUG-HYP-A] chat.py: plan_data committed to DB, "
                                    f"plan_id={plan.id if plan else None}, "
@@ -1109,13 +1125,17 @@ async def approve_plan(
                                 logger.error(f"Error executing {analysis_type}: {e}", exc_info=True)
                     
                     # Mark plan as completed
-                    plan.status = "completed"
-                    background_db.commit()
+                    plan = background_db.query(AnalysisPlan).filter(AnalysisPlan.id == plan_id_for_execution).first()
+                    if plan:
+                        plan.status = "completed"
+                        background_db.commit()
                     
                 except Exception as e:
                     logger.error(f"Error in approved plan execution: {e}", exc_info=True)
-                    plan.status = "failed"
-                    background_db.commit()
+                    plan = background_db.query(AnalysisPlan).filter(AnalysisPlan.id == plan_id_for_execution).first()
+                    if plan:
+                        plan.status = "failed"
+                        background_db.commit()
                 finally:
                     background_db.close()
             

@@ -452,7 +452,8 @@ class AgentCoordinator:
                     # Log progress
                     node_name = list(state.keys())[0] if state else "unknown"
                     logger.info(f"Graph execution: {node_name} completed")
-                    final_state = state[node_name] if state else None
+                    # Don't set final_state here - we'll get it from graph state at the end
+                    # This ensures we get the complete state including delivery_result
                     
                     # #region agent log
                     try:
@@ -500,10 +501,17 @@ class AgentCoordinator:
                 logger.error(f"Error during graph stream execution: {stream_error}", exc_info=True)
                 raise
             
-            # Get final state
-            if final_state is None:
-                # Try to get final state from graph
-                final_state = self.graph.get_state(thread_config).values
+            # Get final state from graph (always get complete state, not just last node)
+            # This ensures we get delivery_result and all other state data
+            try:
+                graph_state = self.graph.get_state(thread_config)
+                final_state = graph_state.values if graph_state else None
+                logger.info(f"[Coordinator] Retrieved final state from graph, keys: {list(final_state.keys()) if final_state and isinstance(final_state, dict) else 'N/A'}")
+            except Exception as e:
+                logger.warning(f"[Coordinator] Failed to get final state from graph: {e}, using last node state")
+                # Fallback to last node state if graph state retrieval fails
+                if final_state is None:
+                    final_state = {}
             
             execution_time = time.time() - start_time
             
