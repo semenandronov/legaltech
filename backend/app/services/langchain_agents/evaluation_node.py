@@ -450,12 +450,14 @@ def evaluation_node(
     if current_step_id:
         # Find the step in current plan
         current_plan = state.get("current_plan", [])
-        for step in current_plan:
-            if step.get("step_id") == current_step_id:
-                agent_name = step.get("agent_name", "")
-                result_key = f"{agent_name}_result"
-                result = state.get(result_key)
-                break
+        if isinstance(current_plan, list):
+            for step in current_plan:
+                # Ensure step is a dictionary before calling .get()
+                if isinstance(step, dict) and step.get("step_id") == current_step_id:
+                    agent_name = step.get("agent_name", "")
+                    result_key = f"{agent_name}_result"
+                    result = state.get(result_key)
+                    break
     
     # If no current_step_id, try to determine from results
     if not agent_name or not result:

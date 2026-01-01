@@ -262,10 +262,28 @@ def parse_with_fixing(
             else:
                 # RetryOutputParser not available, use fixing parser (or base parser)
                 retry_parser = fixing_parser
-            return retry_parser.parse(response_text)
+            try:
+                return retry_parser.parse(response_text)
+            except TypeError as type_error:
+                # Handle case where pydantic_object is not a class (e.g., List[Model])
+                if "issubclass() arg 1 must be a class" in str(type_error):
+                    logger.warning(f"Parser type error, falling back to manual JSON extraction: {type_error}")
+                    # Raise to be caught by outer exception handler for fallback
+                    raise OutputParserException(f"Type error in parser: {type_error}") from type_error
+                else:
+                    raise
         else:
-            parser = create_fixing_parser(pydantic_model, llm, max_retries)
-            return parser.parse(response_text)
+            try:
+                parser = create_fixing_parser(pydantic_model, llm, max_retries)
+                return parser.parse(response_text)
+            except TypeError as type_error:
+                # Handle case where pydantic_object is not a class
+                if "issubclass() arg 1 must be a class" in str(type_error):
+                    logger.warning(f"Parser type error, falling back to manual JSON extraction: {type_error}")
+                    # Raise to be caught by outer exception handler for fallback
+                    raise OutputParserException(f"Type error in parser: {type_error}") from type_error
+                else:
+                    raise
     except OutputParserException as e:
         logger.warning(f"Parser error after retries: {e}")
         # Fallback to manual JSON extraction
