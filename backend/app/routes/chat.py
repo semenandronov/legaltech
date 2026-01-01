@@ -956,6 +956,7 @@ async def approve_plan(
             def execute_approved_plan():
                 """Execute approved plan in background"""
                 background_db = SessionLocal()
+                plan = None  # Initialize to avoid UnboundLocalError
                 try:
                     # Re-query plan from DB to ensure it's attached to background_db session
                     plan = background_db.query(AnalysisPlan).filter(AnalysisPlan.id == plan_id_for_execution).first()
@@ -963,8 +964,13 @@ async def approve_plan(
                         logger.error(f"Plan {plan_id_for_execution} not found in database")
                         return
                     
-                    # Get plan data
-                    plan_data = plan.plan_data or {}
+                    # Get plan data - modify in place to ensure SQLAlchemy tracks changes
+                    if not plan.plan_data:
+                        plan.plan_data = {}
+                    plan_data = plan.plan_data
+                    if not isinstance(plan_data, dict):
+                        plan_data = {}
+                        plan.plan_data = plan_data
                     case_id = plan.case_id
                     
                     # Get analysis types from plan
@@ -1022,16 +1028,21 @@ async def approve_plan(
                                 # Refresh plan from DB
                                 plan_refresh = background_db.query(AnalysisPlan).filter(AnalysisPlan.id == plan_id_for_execution).first()
                                 if plan_refresh:
-                                    plan_data = plan_refresh.plan_data or {}
+                                    # Modify in place for SQLAlchemy tracking
+                                    if not plan_refresh.plan_data:
+                                        plan_refresh.plan_data = {}
+                                    plan_data = plan_refresh.plan_data
                                     if not isinstance(plan_data, dict):
                                         plan_data = {}
+                                        plan_refresh.plan_data = plan_data
                                     execution_steps = plan_data.get("execution_steps", [])
                                     # Check if step already exists
                                     if not any(s.get("step_id") == step_info.get("step_id") for s in execution_steps):
                                         execution_steps.append(step_info)
                                         plan_data["execution_steps"] = execution_steps
-                                        plan_refresh.plan_data = plan_data
+                                        # plan_data is already a reference to plan_refresh.plan_data
                                         flag_modified(plan_refresh, "plan_data")
+                                        background_db.flush()  # Ensure changes are processed before commit
                                         background_db.commit()
                             except Exception as e:
                                 logger.warning(f"Error saving step to plan: {e}")
@@ -1055,9 +1066,13 @@ async def approve_plan(
                         
                         # Final save of all execution steps (in case callback missed any)
                         execution_steps = results.get("execution_steps", [])
-                        plan_data = plan.plan_data or {}
+                        # Ensure plan_data exists and is a dict - modify in place for SQLAlchemy tracking
+                        if not plan.plan_data:
+                            plan.plan_data = {}
+                        plan_data = plan.plan_data
                         if not isinstance(plan_data, dict):
                             plan_data = {}
+                            plan.plan_data = plan_data
                         
                         if execution_steps:
                             plan_data["execution_steps"] = execution_steps
@@ -1101,8 +1116,10 @@ async def approve_plan(
                                    f"has_table_results={bool(plan_data.get('table_results'))}, "
                                    f"has_delivery_result={bool(plan_data.get('delivery_result'))}")
                         
-                        plan.plan_data = plan_data
+                        # plan_data is already a reference to plan.plan_data, so changes are tracked
+                        # But we still need flag_modified for JSON fields
                         flag_modified(plan, "plan_data")
+                        background_db.flush()  # Ensure changes are processed before commit
                         background_db.commit()
                         # Re-query plan to ensure we have the latest data (refresh fails if plan is not in session)
                         plan = background_db.query(AnalysisPlan).filter(AnalysisPlan.id == plan_id_for_execution).first()

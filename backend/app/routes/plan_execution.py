@@ -93,7 +93,7 @@ async def stream_plan_execution(
                                             "name": review.name,
                                             "description": review.description,
                                             "columns_count": len(columns),
-                                            "rows_count": len(review.selected_file_ids) if review.selected_file_ids else 0,
+                                            "rows_count": len(review.selected_file_ids) if review.selected_file_ids and isinstance(review.selected_file_ids, list) else 0,
                                             "preview": {
                                                 "columns": [col.column_label for col in columns[:4]],
                                                 "rows": []
@@ -151,7 +151,7 @@ async def stream_plan_execution(
                                                 "name": review.name,
                                                 "description": review.description,
                                                 "columns_count": len(columns),
-                                                "rows_count": len(review.selected_file_ids) if review.selected_file_ids else 0,
+                                                "rows_count": len(review.selected_file_ids) if review.selected_file_ids and isinstance(review.selected_file_ids, list) else 0,
                                                 "preview": {
                                                     "columns": [col.column_label for col in columns[:4]],
                                                     "rows": []
