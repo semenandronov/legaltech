@@ -685,21 +685,27 @@ def create_analysis_graph(
                 db_url = db_url.replace("postgresql+psycopg2://", "postgresql://", 1)
             
             # Use from_conn_string() which returns a context manager
-            # Enter the context manager to get PostgresSaver instance
+            # CRITICAL: We MUST use 'with' statement to properly initialize PostgresSaver
             if hasattr(PostgresSaver, 'from_conn_string'):
                 conn_manager = PostgresSaver.from_conn_string(db_url)
                 
-                # Check if it's a context manager
-                from contextlib import _GeneratorContextManager
-                from collections.abc import ContextManager
-                is_context_manager = isinstance(conn_manager, (_GeneratorContextManager, ContextManager)) or (hasattr(conn_manager, "__enter__") and hasattr(conn_manager, "__exit__"))
+                # Check if it's a context manager by checking for __enter__ and __exit__
+                is_context_manager = hasattr(conn_manager, "__enter__") and hasattr(conn_manager, "__exit__")
                 
                 if is_context_manager:
-                    # Enter the context manager to get PostgresSaver instance
+                    # CRITICAL: Use __enter__() to properly initialize PostgresSaver
+                    # The context manager sets up the connection properly
                     checkpointer = conn_manager.__enter__()
+                    
+                    # Verify the checkpointer has a proper connection object, not a string
+                    if hasattr(checkpointer, 'conn'):
+                        if isinstance(checkpointer.conn, str):
+                            logger.error(f"❌ PostgresSaver.conn is still a string after __enter__()")
+                            raise ValueError("PostgresSaver.conn is a string, not a connection object")
+                    
                     logger.info("✅ Created PostgresSaver using from_conn_string() context manager (fallback)")
                 else:
-                    # from_conn_string() returned PostgresSaver directly
+                    # from_conn_string() returned PostgresSaver directly (older version)
                     checkpointer = conn_manager
                     logger.info("✅ Created PostgresSaver with from_conn_string (fallback, direct)")
             else:

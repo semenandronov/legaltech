@@ -31,42 +31,35 @@ def _create_checkpointer_with_pooling():
     if db_url.startswith("postgresql+psycopg://"):
         db_url = db_url.replace("postgresql+psycopg://", "postgresql://", 1)
     
-    # Create SQLAlchemy engine with connection pooling
-    # Connection pooling improves performance by reusing connections
-    engine = create_engine(
-        db_url,
-        poolclass=QueuePool,
-        pool_size=5,  # Number of connections to maintain
-        max_overflow=10,  # Maximum overflow connections
-        pool_pre_ping=True,  # Verify connections before using
-        pool_recycle=3600,  # Recycle connections after 1 hour
-        echo=False  # Set to True for SQL debugging
-    )
-    
     # Create PostgresSaver with connection string
-    # IMPORTANT: In langgraph-checkpoint-postgres 3.0.2, from_conn_string() returns a context manager
-    # We need to enter the context manager to get the PostgresSaver instance, then keep it alive
+    # IMPORTANT: In langgraph-checkpoint-postgres, from_conn_string() returns a context manager
+    # The context manager properly initializes the connection object
+    # We MUST use 'with' statement' to properly initialize, but we need to keep it alive
     try:
         # Use from_conn_string() which returns a context manager
         if hasattr(PostgresSaver, 'from_conn_string'):
             # from_conn_string() returns a context manager that yields PostgresSaver
-            # We enter it to get the instance, but we need to keep the connection alive
+            # CRITICAL: We must use 'with' to properly initialize, but we can't exit for long-lived instances
+            # Solution: Use the context manager's __enter__() but keep the context manager alive
             conn_manager = PostgresSaver.from_conn_string(db_url)
             
-            # Check if it's a context manager
-            from contextlib import _GeneratorContextManager
-            from collections.abc import ContextManager
-            is_context_manager = isinstance(conn_manager, (_GeneratorContextManager, ContextManager)) or (hasattr(conn_manager, "__enter__") and hasattr(conn_manager, "__exit__"))
+            # Check if it's a context manager by checking for __enter__ and __exit__
+            is_context_manager = hasattr(conn_manager, "__enter__") and hasattr(conn_manager, "__exit__")
             
             if is_context_manager:
-                # Enter the context manager to get PostgresSaver instance
-                # Store the context manager to keep connection alive
+                # CRITICAL: Enter the context manager to properly initialize PostgresSaver
+                # The __enter__() method sets up the connection object properly
+                # We keep the context manager alive by NOT calling __exit__()
                 checkpointer = conn_manager.__enter__()
-                # Store the context manager so we can exit it later if needed
-                # For long-lived instances, we keep it open
+                
+                # Store the context manager to prevent garbage collection
+                # This keeps the connection alive for long-lived instances
+                if not hasattr(checkpointer, '_context_manager'):
+                    checkpointer._context_manager = conn_manager
+                
                 logger.info("✅ Created PostgresSaver using from_conn_string() context manager")
             else:
-                # from_conn_string() returned PostgresSaver directly
+                # from_conn_string() returned PostgresSaver directly (older version)
                 checkpointer = conn_manager
                 logger.info("✅ Created PostgresSaver with from_conn_string (direct)")
         else:
