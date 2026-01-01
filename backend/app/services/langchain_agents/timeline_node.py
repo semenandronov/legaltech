@@ -18,6 +18,7 @@ from langchain_core.messages import HumanMessage
 from langchain_core.documents import Document
 import logging
 import json
+import os
 
 logger = logging.getLogger(__name__)
 
@@ -167,6 +168,13 @@ def timeline_agent_node(
         # Initialize LLM через factory (GigaChat)
         llm = create_llm(temperature=0.1)
         
+        # Initialize Memory Manager for context between requests
+        from app.services.langchain_agents.memory_manager import AgentMemoryManager
+        memory_manager = AgentMemoryManager(case_id, llm)
+        
+        # Get context from memory
+        memory_context = memory_manager.get_context_for_agent("timeline", "")
+        
         # Проверяем, поддерживает ли LLM function calling
         use_tools = hasattr(llm, 'bind_tools')
         
@@ -174,29 +182,90 @@ def timeline_agent_node(
             # GigaChat с function calling - агент сам вызовет retrieve_documents_tool
             logger.info("Using GigaChat with function calling for timeline agent")
             
-            prompt = get_agent_prompt("timeline")
+            base_prompt = get_agent_prompt("timeline")
             
-            # Создаем агента с tools
-            agent = create_legal_agent(llm, tools, system_prompt=prompt)
+            # Add memory context to prompt if available
+            if memory_context:
+                prompt = f"""{base_prompt}
+
+Предыдущий контекст из памяти:
+{memory_context}
+
+Используй этот контекст для улучшения анализа, но не дублируй уже извлеченные события."""
+            else:
+                prompt = base_prompt
             
-            # Создаем запрос для агента
-            user_query = f"Извлеки все даты и события из документов дела {case_id}. Используй retrieve_documents_tool для поиска релевантных документов. Верни результат в формате JSON массива событий с полями: date, event_type, description, source_document, source_page."
+            # Try LCEL chain first (pilot implementation)
+            use_lcel = os.getenv("USE_LCEL_CHAINS", "false").lower() == "true"
             
-            initial_message = HumanMessage(content=user_query)
+            if use_lcel:
+                logger.info("Using LCEL chain for timeline agent (pilot)")
+                from app.services.langchain_agents.agent_factory import create_agent_chain_lcel
+                
+                # Create LCEL chain
+                chain = create_agent_chain_lcel(
+                    agent_type="timeline",
+                    llm=llm,
+                    tools=tools,
+                    system_prompt=prompt,
+                    rag_service=rag_service,
+                    case_id=case_id
+                )
+                
+                # Create callback
+                from app.services.langchain_agents.callbacks import AnalysisCallbackHandler
+                callback = AnalysisCallbackHandler(agent_name="timeline")
+                
+                # Prepare state for chain
+                user_query = f"Извлеки все даты и события из документов дела {case_id}. Используй retrieve_documents_tool для поиска релевантных документов. Верни результат в формате JSON массива событий с полями: date, event_type, description, source_document, source_page."
+                
+                chain_state = {
+                    "query": user_query,
+                    "case_id": case_id,
+                    "previous_results": {}
+                }
+                
+                # Invoke chain
+                try:
+                    response = chain.invoke(
+                        chain_state,
+                        config={"callbacks": [callback]}
+                    )
+                    
+                    # Extract response text
+                    if hasattr(response, 'content'):
+                        response_text = response.content
+                    elif isinstance(response, dict):
+                        response_text = str(response)
+                    else:
+                        response_text = str(response)
+                except Exception as lcel_error:
+                    logger.warning(f"LCEL chain failed: {lcel_error}, falling back to regular agent")
+                    use_lcel = False
             
-            # Вызываем агента (он сам решит, когда вызывать tools)
-            from app.services.langchain_agents.callbacks import AnalysisCallbackHandler
-            callback = AnalysisCallbackHandler(agent_name="timeline")
-            
-            result = safe_agent_invoke(
-                agent,
-                llm,
-                {
-                    "messages": [initial_message],
-                    "case_id": case_id
-                },
-                config={"recursion_limit": 15, "callbacks": [callback]}
-            )
+            if not use_lcel:
+                # Fallback to regular agent creation
+                # Создаем агента с tools
+                agent = create_legal_agent(llm, tools, system_prompt=prompt)
+                
+                # Создаем запрос для агента
+                user_query = f"Извлеки все даты и события из документов дела {case_id}. Используй retrieve_documents_tool для поиска релевантных документов. Верни результат в формате JSON массива событий с полями: date, event_type, description, source_document, source_page."
+                
+                initial_message = HumanMessage(content=user_query)
+                
+                # Вызываем агента (он сам решит, когда вызывать tools)
+                from app.services.langchain_agents.callbacks import AnalysisCallbackHandler
+                callback = AnalysisCallbackHandler(agent_name="timeline")
+                
+                result = safe_agent_invoke(
+                    agent,
+                    llm,
+                    {
+                        "messages": [initial_message],
+                        "case_id": case_id
+                    },
+                    config={"recursion_limit": 15, "callbacks": [callback]}
+                )
             
             # Извлекаем ответ
             if isinstance(result, dict):
@@ -222,7 +291,19 @@ def timeline_agent_node(
             # Create callback for logging
             callback = AnalysisCallbackHandler(agent_name="timeline")
             
-            prompt = get_agent_prompt("timeline")
+            base_prompt = get_agent_prompt("timeline")
+            
+            # Add memory context to prompt if available
+            if memory_context:
+                prompt = f"""{base_prompt}
+
+Предыдущий контекст из памяти:
+{memory_context}
+
+Используй этот контекст для улучшения анализа, но не дублируй уже извлеченные события."""
+            else:
+                prompt = base_prompt
+            
             user_query = f"Извлеки все даты и события из документов дела {case_id}. Верни результат в формате JSON массива событий с полями: date, event_type, description, source_document, source_page."
             
             response_text = direct_llm_call_with_rag(
@@ -542,9 +623,36 @@ def timeline_agent_node(
         except Exception as fs_error:
             logger.debug(f"Failed to save timeline result to file: {fs_error}")
         
+        # Save to memory for context in future requests
+        try:
+            result_summary = f"Extracted {len(parsed_events)} timeline events for case {case_id}"
+            memory_manager.save_to_memory("timeline", user_query, result_summary)
+        except Exception as mem_error:
+            logger.debug(f"Failed to save timeline to memory: {mem_error}")
+        
+        # Collect and save metrics
+        try:
+            from app.services.langchain_agents.metrics_collector import MetricsCollector
+            if db:
+                metrics_collector = MetricsCollector(db)
+                callback_metrics = callback.get_metrics()
+                metrics_collector.record_agent_metrics(case_id, "timeline", callback_metrics)
+                logger.debug(f"Saved metrics for timeline agent: {callback_metrics.get('tokens_used', 0)} tokens, {callback_metrics.get('tool_calls', 0)} tools")
+        except Exception as metrics_error:
+            logger.debug(f"Failed to save timeline metrics: {metrics_error}")
+        
         # Update state
         new_state = state.copy()
         new_state["timeline_result"] = result_data
+        
+        # Add metrics to state (optional)
+        try:
+            if "metadata" not in new_state:
+                new_state["metadata"] = {}
+            new_state["metadata"]["agent_metrics"] = new_state["metadata"].get("agent_metrics", {})
+            new_state["metadata"]["agent_metrics"]["timeline"] = callback.get_metrics()
+        except Exception:
+            pass
         
         return new_state
         

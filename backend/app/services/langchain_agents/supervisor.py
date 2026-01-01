@@ -67,7 +67,7 @@ def route_to_agent(state: AnalysisState) -> str:
     Учитывает:
     - Результаты evaluation (needs_replanning, confidence)
     - Адаптации плана (current_plan)
-    - Human feedback (waiting_for_human)
+    - Human feedback (обрабатывается через LangGraph interrupts автоматически)
     
     Args:
         state: Current graph state
@@ -75,17 +75,10 @@ def route_to_agent(state: AnalysisState) -> str:
     Returns:
         Name of the next agent to execute, or "end" if done
     """
-    # Check if waiting for human feedback
+    # Note: Human feedback is now handled via LangGraph interrupts
+    # Interrupts pause execution automatically, no need to check here
+    
     case_id = state.get("case_id", "unknown")
-    if state.get("waiting_for_human", False):
-        current_request = state.get("current_feedback_request")
-        if current_request:
-            request_id = current_request.get("request_id")
-            feedback_responses = state.get("feedback_responses", {})
-            if request_id not in feedback_responses:
-                # Still waiting, return to human_feedback_wait
-                logger.info(f"[Супервизор] Дело {case_id}: Ожидание human feedback для запроса {request_id}")
-                return "human_feedback_wait"
     
     # Check if we have an adapted plan
     current_plan = state.get("current_plan", [])

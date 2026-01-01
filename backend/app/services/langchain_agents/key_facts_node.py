@@ -148,6 +148,13 @@ def key_facts_agent_node(
         # Initialize LLM через factory (GigaChat)
         llm = create_llm(temperature=0.1)
         
+        # Initialize Memory Manager for context between requests
+        from app.services.langchain_agents.memory_manager import AgentMemoryManager
+        memory_manager = AgentMemoryManager(case_id, llm)
+        
+        # Get context from memory
+        memory_context = memory_manager.get_context_for_agent("key_facts", "")
+        
         # Проверяем, поддерживает ли LLM function calling
         use_tools = hasattr(llm, 'bind_tools')
         
@@ -200,11 +207,22 @@ def key_facts_agent_node(
             # GigaChat с function calling - агент сам вызовет retrieve_documents_tool
             logger.info("Using GigaChat with function calling for key_facts agent")
             
-            prompt = get_agent_prompt("key_facts")
+            base_prompt = get_agent_prompt("key_facts")
+            
+            # Add memory context to prompt if available
+            if memory_context:
+                base_prompt = f"""{base_prompt}
+
+Предыдущий контекст из памяти:
+{memory_context}
+
+Используй этот контекст для улучшения анализа, но не дублируй уже извлеченные факты."""
             
             # Добавляем известные факты в промпт, если они есть
             if known_facts_text:
-                prompt = prompt + "\n\n" + known_facts_text
+                prompt = base_prompt + "\n\n" + known_facts_text
+            else:
+                prompt = base_prompt
             
             # Создаем агента с tools
             agent = create_legal_agent(llm, tools, system_prompt=prompt)
@@ -252,7 +270,19 @@ def key_facts_agent_node(
             # Create callback for logging
             callback = AnalysisCallbackHandler(agent_name="key_facts")
             
-            prompt = get_agent_prompt("key_facts")
+            base_prompt = get_agent_prompt("key_facts")
+            
+            # Add memory context to prompt if available
+            if memory_context:
+                prompt = f"""{base_prompt}
+
+Предыдущий контекст из памяти:
+{memory_context}
+
+Используй этот контекст для улучшения анализа, но не дублируй уже извлеченные факты."""
+            else:
+                prompt = base_prompt
+            
             user_query = f"Извлеки ключевые факты из документов дела {case_id}. Верни результат в формате JSON массива фактов с полями: fact_type, value, description, source_document, source_page, confidence, reasoning."
             
             response_text = direct_llm_call_with_rag(
@@ -473,6 +503,13 @@ def key_facts_agent_node(
         # Update state
         new_state = state.copy()
         new_state["key_facts_result"] = result_data
+        
+        # Save to memory for context in future requests
+        try:
+            result_summary = f"Extracted {len(parsed_facts)} key facts for case {case_id}"
+            memory_manager.save_to_memory("key_facts", user_query, result_summary)
+        except Exception as mem_error:
+            logger.debug(f"Failed to save key_facts to memory: {mem_error}")
         
         return new_state
         

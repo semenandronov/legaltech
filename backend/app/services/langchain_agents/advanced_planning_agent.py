@@ -503,6 +503,26 @@ class AdvancedPlanningAgent:
                     )
                     if previous_plans_context:
                         logger.info("Loaded previous planning context for learning")
+                        
+                        # Use SummarizationMiddleware if context is too large
+                        try:
+                            from app.services.langchain_agents.summarization_middleware import SummarizationMiddleware
+                            summarizer = SummarizationMiddleware(llm=self.llm)
+                            
+                            # Summarize context if it's a string
+                            if isinstance(previous_plans_context, str):
+                                previous_plans_context = summarizer.summarize_if_needed(
+                                    previous_plans_context,
+                                    context="Previous planning context"
+                                )
+                            elif isinstance(previous_plans_context, dict):
+                                # Summarize large text fields in dict
+                                previous_plans_context = summarizer.summarize_state(
+                                    previous_plans_context,
+                                    fields=["plan", "user_task", "context"]
+                                )
+                        except Exception as sum_error:
+                            logger.debug(f"SummarizationMiddleware not available: {sum_error}")
                 except Exception as ctx_error:
                     logger.warning(f"Failed to load previous planning context: {ctx_error}")
             
@@ -593,7 +613,36 @@ class AdvancedPlanningAgent:
                 plan = validation_result.optimized_plan
                 logger.info("Plan optimized by validator")
             
-            # 7. Сохраняем план в ContextManager для future learning
+            # 7. Сохраняем план через TodoListMiddleware (Deep Agents pattern)
+            try:
+                from app.services.langchain_agents.todo_middleware import TodoListMiddleware
+                
+                # Convert subtasks to todos format
+                todos = []
+                for subtask in plan.get("subtasks", []):
+                    todos.append({
+                        "id": subtask.get("subtask_id", f"todo_{len(todos) + 1}"),
+                        "description": subtask.get("description", ""),
+                        "status": "pending",
+                        "dependencies": subtask.get("dependencies", []),
+                        "agent_type": subtask.get("agent_type"),
+                        "estimated_time": subtask.get("estimated_time"),
+                        "priority": subtask.get("priority", 1)
+                    })
+                
+                # Create middleware and save todos
+                todo_middleware = TodoListMiddleware()
+                todo_middleware.write_todos(todos)
+                
+                # Add todos to plan for access by agents
+                plan["todos"] = todo_middleware.read_todos()
+                plan["todo_progress"] = todo_middleware.get_progress()
+                
+                logger.info(f"TodoList: Saved {len(todos)} todos for case {case_id}")
+            except Exception as todo_error:
+                logger.debug(f"TodoListMiddleware not available: {todo_error}")
+            
+            # 8. Сохраняем план в ContextManager для future learning
             if self.context_manager:
                 try:
                     self.context_manager.save_context(

@@ -62,6 +62,13 @@ def risk_agent_node(
         # Initialize LLM через factory (GigaChat)
         llm = create_llm(temperature=0.1)
         
+        # Initialize Memory Manager for context between requests
+        from app.services.langchain_agents.memory_manager import AgentMemoryManager
+        memory_manager = AgentMemoryManager(case_id, llm)
+        
+        # Get context from memory
+        memory_context = memory_manager.get_context_for_agent("risk", "")
+        
         # Проверяем, поддерживает ли LLM function calling
         use_tools = hasattr(llm, 'bind_tools')
         
@@ -113,11 +120,22 @@ def risk_agent_node(
             # GigaChat с function calling - агент сам вызовет retrieve_documents_tool
             logger.info("Using GigaChat with function calling for risk agent")
             
-            prompt = get_agent_prompt("risk")
+            base_prompt = get_agent_prompt("risk")
+            
+            # Add memory context to prompt if available
+            if memory_context:
+                base_prompt = f"""{base_prompt}
+
+Предыдущий контекст из памяти:
+{memory_context}
+
+Используй этот контекст для улучшения анализа, но не дублируй уже проанализированные риски."""
             
             # Добавляем известные риски в промпт, если они есть
             if known_risks_text:
-                prompt = prompt + "\n\n" + known_risks_text
+                prompt = base_prompt + "\n\n" + known_risks_text
+            else:
+                prompt = base_prompt
             
             # Создаем агента с tools
             agent = create_legal_agent(llm, tools, system_prompt=prompt)
@@ -182,7 +200,19 @@ def risk_agent_node(
 
 Извлеки конкретные риски с обоснованием. Верни результат в формате JSON массива объектов с полями: risk_name, risk_category, probability, impact, description, evidence, recommendation, reasoning, confidence."""
             
-            prompt = get_agent_prompt("risk")
+            base_prompt = get_agent_prompt("risk")
+            
+            # Add memory context to prompt if available
+            if memory_context:
+                prompt = f"""{base_prompt}
+
+Предыдущий контекст из памяти:
+{memory_context}
+
+Используй этот контекст для улучшения анализа, но не дублируй уже проанализированные риски."""
+            else:
+                prompt = base_prompt
+            
             response_text = direct_llm_call_with_rag(
                 case_id=case_id,
                 system_prompt=prompt,
@@ -384,6 +414,35 @@ def risk_agent_node(
         # Update state
         new_state = state.copy()
         new_state["risk_result"] = result_data
+        
+        # Save to memory for context in future requests
+        try:
+            result_summary = f"Analyzed {len(parsed_risks) if parsed_risks else 0} risks for case {case_id}"
+            memory_manager.save_to_memory("risk", user_query, result_summary)
+        except Exception as mem_error:
+            logger.debug(f"Failed to save risk to memory: {mem_error}")
+        
+        # Collect and save metrics
+        try:
+            from app.services.langchain_agents.metrics_collector import MetricsCollector
+            if db:
+                metrics_collector = MetricsCollector(db)
+                callback_metrics = callback.get_metrics() if 'callback' in locals() else {}
+                if callback_metrics:
+                    metrics_collector.record_agent_metrics(case_id, "risk", callback_metrics)
+                    logger.debug(f"Saved metrics for risk agent: {callback_metrics.get('tokens_used', 0)} tokens")
+        except Exception as metrics_error:
+            logger.debug(f"Failed to save risk metrics: {metrics_error}")
+        
+        # Add metrics to state (optional)
+        try:
+            if "metadata" not in new_state:
+                new_state["metadata"] = {}
+            new_state["metadata"]["agent_metrics"] = new_state["metadata"].get("agent_metrics", {})
+            if 'callback' in locals():
+                new_state["metadata"]["agent_metrics"]["risk"] = callback.get_metrics()
+        except Exception:
+            pass
         
         return new_state
         

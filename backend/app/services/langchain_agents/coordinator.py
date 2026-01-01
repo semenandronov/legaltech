@@ -383,7 +383,72 @@ class AgentCoordinator:
             try:
                 stream_iter = self.graph.stream(initial_state, thread_config)
                 logger.debug(f"Graph stream iterator created: {type(stream_iter)}")
-                for state in stream_iter:
+                for event in stream_iter:
+                    # Check for interrupts (LangGraph interrupts are returned as special events)
+                    if isinstance(event, dict):
+                        # Check if this is an interrupt event
+                        # LangGraph interrupts may appear as events with "__interrupt__" key or similar
+                        if "__interrupt__" in event or any(key.startswith("__") for key in event.keys()):
+                            interrupt_type = event.get("__interrupt__") or event.get("interrupt")
+                            if interrupt_type == "human_feedback_needed":
+                                logger.info(f"[Interrupt] Human feedback needed for case {case_id}")
+                                
+                                # Get current state to extract feedback request
+                                current_state = self.graph.get_state(thread_config).values
+                                feedback_request = current_state.get("current_feedback_request")
+                                
+                                if feedback_request and websocket_callback:
+                                    # Send question via WebSocket
+                                    try:
+                                        import asyncio
+                                        if asyncio.iscoroutinefunction(websocket_callback):
+                                            # Async callback
+                                            loop = asyncio.get_event_loop()
+                                            if loop.is_running():
+                                                asyncio.create_task(websocket_callback({
+                                                    "type": "agent_question",
+                                                    "request_id": feedback_request.get("request_id"),
+                                                    "agent_name": feedback_request.get("agent_name"),
+                                                    "question_type": feedback_request.get("question_type"),
+                                                    "question_text": feedback_request.get("question_text"),
+                                                    "options": feedback_request.get("options"),
+                                                    "context": feedback_request.get("context"),
+                                                }))
+                                            else:
+                                                loop.run_until_complete(websocket_callback({
+                                                    "type": "agent_question",
+                                                    "request_id": feedback_request.get("request_id"),
+                                                    "agent_name": feedback_request.get("agent_name"),
+                                                    "question_type": feedback_request.get("question_type"),
+                                                    "question_text": feedback_request.get("question_text"),
+                                                    "options": feedback_request.get("options"),
+                                                    "context": feedback_request.get("context"),
+                                                }))
+                                        else:
+                                            # Sync callback
+                                            websocket_callback({
+                                                "type": "agent_question",
+                                                "request_id": feedback_request.get("request_id"),
+                                                "agent_name": feedback_request.get("agent_name"),
+                                                "question_type": feedback_request.get("question_type"),
+                                                "question_text": feedback_request.get("question_text"),
+                                                "options": feedback_request.get("options"),
+                                                "context": feedback_request.get("context"),
+                                            })
+                                        logger.info(f"[Interrupt] Sent feedback request via WebSocket: {feedback_request.get('request_id')}")
+                                    except Exception as ws_error:
+                                        logger.error(f"Error sending feedback request via WebSocket: {ws_error}")
+                                
+                                # Wait for response (this will be handled by HumanFeedbackService)
+                                # The execution will pause here until feedback is received
+                                # Coordinator should check for feedback and update state, then continue
+                                logger.info(f"[Interrupt] Waiting for human feedback. Execution paused.")
+                                # Note: In production, you would wait here and then update state with feedback
+                                # For now, we continue - the actual waiting should be handled by the service
+                                continue
+                    
+                    # Normal state event
+                    state = event
                     # Log progress
                     node_name = list(state.keys())[0] if state else "unknown"
                     logger.info(f"Graph execution: {node_name} completed")

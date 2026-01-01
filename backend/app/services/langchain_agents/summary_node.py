@@ -58,6 +58,13 @@ def summary_agent_node(
         # Initialize LLM через factory (GigaChat)
         llm = create_llm(temperature=0.3)  # Creative задача, но все еще контролируемая
         
+        # Initialize Memory Manager for context between requests
+        from app.services.langchain_agents.memory_manager import AgentMemoryManager
+        memory_manager = AgentMemoryManager(case_id, llm)
+        
+        # Get context from memory
+        memory_context = memory_manager.get_context_for_agent("summary", "")
+        
         # Проверяем, поддерживает ли LLM function calling
         use_tools = hasattr(llm, 'bind_tools')
         
@@ -67,7 +74,18 @@ def summary_agent_node(
             # GigaChat с function calling - агент может вызвать retrieve_documents_tool для уточнения
             logger.info("Using GigaChat with function calling for summary agent")
             
-            prompt = get_agent_prompt("summary")
+            base_prompt = get_agent_prompt("summary")
+            
+            # Add memory context to prompt if available
+            if memory_context:
+                prompt = f"""{base_prompt}
+
+Предыдущий контекст из памяти:
+{memory_context}
+
+Используй этот контекст для улучшения резюме, но не дублируй уже созданные разделы."""
+            else:
+                prompt = base_prompt
             
             # Создаем агента с tools
             agent = create_legal_agent(llm, tools, system_prompt=prompt)
@@ -123,7 +141,19 @@ def summary_agent_node(
             # Create callback for logging
             callback = AnalysisCallbackHandler(agent_name="summary")
             
-            prompt = get_agent_prompt("summary")
+            base_prompt = get_agent_prompt("summary")
+            
+            # Add memory context to prompt if available
+            if memory_context:
+                prompt = f"""{base_prompt}
+
+Предыдущий контекст из памяти:
+{memory_context}
+
+Используй этот контекст для улучшения резюме, но не дублируй уже созданные разделы."""
+            else:
+                prompt = base_prompt
+            
             user_query = f"""Создай краткое резюме дела на основе следующих ключевых фактов:
 
 {key_facts_text}
@@ -188,9 +218,38 @@ def summary_agent_node(
         except Exception as fs_error:
             logger.debug(f"Failed to save summary result to file: {fs_error}")
         
+        # Save to memory for context in future requests
+        try:
+            result_summary = f"Generated summary for case {case_id}"
+            memory_manager.save_to_memory("summary", user_query, result_summary)
+        except Exception as mem_error:
+            logger.debug(f"Failed to save summary to memory: {mem_error}")
+        
+        # Collect and save metrics
+        try:
+            from app.services.langchain_agents.metrics_collector import MetricsCollector
+            if db:
+                metrics_collector = MetricsCollector(db)
+                callback_metrics = callback.get_metrics() if 'callback' in locals() else {}
+                if callback_metrics:
+                    metrics_collector.record_agent_metrics(case_id, "summary", callback_metrics)
+                    logger.debug(f"Saved metrics for summary agent: {callback_metrics.get('tokens_used', 0)} tokens")
+        except Exception as metrics_error:
+            logger.debug(f"Failed to save summary metrics: {metrics_error}")
+        
         # Update state
         new_state = state.copy()
         new_state["summary_result"] = result_data
+        
+        # Add metrics to state (optional)
+        try:
+            if "metadata" not in new_state:
+                new_state["metadata"] = {}
+            new_state["metadata"]["agent_metrics"] = new_state["metadata"].get("agent_metrics", {})
+            if 'callback' in locals():
+                new_state["metadata"]["agent_metrics"]["summary"] = callback.get_metrics()
+        except Exception:
+            pass
         
         return new_state
         

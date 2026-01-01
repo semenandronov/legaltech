@@ -494,6 +494,42 @@ def evaluation_node(
         result=result
     )
     
+    # Additional evaluation using LangChain evaluators (if available)
+    try:
+        from app.services.langchain_agents.evaluators import evaluate_agent_result_simple
+        
+        # Evaluate result quality using LangChain evaluator
+        eval_result = evaluate_agent_result_simple(
+            agent_type=agent_name,
+            prediction=result,
+            input_text=f"Analysis for case {case_id}"
+        )
+        
+        # Merge evaluator results into step_evaluation
+        if eval_result.get("score") is not None:
+            # Normalize score to 0-1 range if needed
+            evaluator_score = eval_result.get("score", 0.0)
+            if isinstance(evaluator_score, (int, float)):
+                # If score is already 0-1, use it; otherwise normalize
+                if evaluator_score > 1.0:
+                    evaluator_score = evaluator_score / 10.0  # Assume 0-10 scale
+                
+                # Combine with existing confidence (weighted average)
+                existing_confidence = step_evaluation.get("confidence", 0.5)
+                combined_confidence = (existing_confidence * 0.6) + (evaluator_score * 0.4)
+                step_evaluation["confidence"] = combined_confidence
+                step_evaluation["evaluator_score"] = evaluator_score
+                step_evaluation["evaluator_reasoning"] = eval_result.get("reasoning", "")
+                step_evaluation["evaluator_passed"] = eval_result.get("passed", False)
+                
+                logger.info(
+                    f"[Evaluation] LangChain evaluator score for {agent_name}: {evaluator_score:.2f}, "
+                    f"combined confidence: {combined_confidence:.2f}"
+                )
+    except Exception as eval_error:
+        logger.debug(f"LangChain evaluator not available or failed: {eval_error}")
+        # Continue without evaluator results
+    
     # Log evaluation
     logger.info(
         f"[Evaluation] Step {current_step_id} ({agent_name}): "
@@ -541,6 +577,14 @@ def evaluation_node(
             f"[Evaluation] Low confidence ({confidence:.2f}) for {agent_name}, "
             f"requesting human feedback: {feedback_request.request_id}"
         )
+        
+        # Use LangGraph interrupt for human-in-the-loop
+        try:
+            from langgraph.graph import interrupt
+            interrupt("human_feedback_needed")
+        except ImportError:
+            # Fallback: if interrupt not available, log warning and continue
+            logger.warning("LangGraph interrupt not available, using fallback routing")
     
     if step_evaluation["success"]:
         # Mark step as completed

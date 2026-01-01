@@ -9,6 +9,7 @@ import {
   DropdownMenuTrigger 
 } from '../components/UI/dropdown-menu'
 import { ChevronDown, Upload, Share2, History, Plus } from 'lucide-react'
+import { toast } from 'sonner'
 
 const AssistantChatPage = () => {
   const { caseId } = useParams<{ caseId: string }>()
@@ -27,6 +28,21 @@ const AssistantChatPage = () => {
   const handleSelectQuery = (query: string) => {
     setSelectedQuery(query)
     setHistoryPanelOpen(false)
+  }
+
+  const handleUploadDocuments = () => {
+    navigate(`/cases/${caseId}/documents`)
+  }
+
+  const handleShare = async () => {
+    try {
+      const url = window.location.href
+      await navigator.clipboard.writeText(url)
+      toast.success('Ссылка на чат скопирована в буфер обмена')
+    } catch (error) {
+      console.error('Ошибка при копировании URL:', error)
+      toast.error('Не удалось скопировать ссылку')
+    }
   }
 
   return (
@@ -56,7 +72,7 @@ const AssistantChatPage = () => {
               </button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="start">
-              <DropdownMenuItem>
+              <DropdownMenuItem onClick={handleUploadDocuments}>
                 <Upload className="w-4 h-4 mr-2" />
                 Upload Documents
               </DropdownMenuItem>
@@ -65,7 +81,11 @@ const AssistantChatPage = () => {
         </div>
 
         <div className="flex items-center gap-3">
-          <button className="px-3 py-1.5 text-sm font-medium text-gray-700 hover:bg-gray-100 rounded-lg transition-colors">
+          <button 
+            onClick={handleShare}
+            className="px-3 py-1.5 text-sm font-medium text-gray-700 hover:bg-gray-100 rounded-lg transition-colors"
+            title="Скопировать ссылку на чат"
+          >
             <Share2 className="w-4 h-4" />
           </button>
           <button 

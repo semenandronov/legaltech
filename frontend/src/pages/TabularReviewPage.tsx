@@ -501,7 +501,11 @@ const TabularReviewPage: React.FC = () => {
               <div>
                 <div className="flex items-center gap-2">
                   <h1 className="font-display text-h1 text-[#1F2937]">{tableData.review.name}</h1>
-                  <button className="p-2 rounded-lg hover:bg-[#F3F4F6] transition-colors duration-200 text-[#6B7280] hover:text-[#1F2937]">
+                  <button 
+                    onClick={() => toast.info("Редактирование названия будет реализовано позже")}
+                    className="p-2 rounded-lg hover:bg-[#F3F4F6] transition-colors duration-200 text-[#6B7280] hover:text-[#1F2937]"
+                    title="Редактировать название"
+                  >
                     <Edit2 className="w-4 h-4" />
                   </button>
                 </div>

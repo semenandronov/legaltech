@@ -26,6 +26,7 @@ import {
   MoreVert as MoreVertIcon,
 } from '@mui/icons-material'
 import { fetchHistory } from '@/services/api'
+import { toast } from 'sonner'
 
 interface HistoryItem {
   id: string
@@ -284,7 +285,10 @@ export const ChatHistoryPanel: React.FC<ChatHistoryPanelProps> = ({
           }}>
             Use this query
           </MenuItem>
-          <MenuItem onClick={handleMenuClose}>
+          <MenuItem onClick={() => {
+            toast.info("Удаление сообщений из истории будет реализовано позже")
+            handleMenuClose()
+          }}>
             Delete
           </MenuItem>
         </Menu>

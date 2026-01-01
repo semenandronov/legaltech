@@ -495,7 +495,7 @@ def create_analysis_graph(
     graph.add_node("adaptation", adaptation_wrapper)
     graph.add_node("parallel_independent", parallel_independent_agents_node)
     graph.add_node("spawn_subagents", spawn_subagents_node)
-    graph.add_node("human_feedback_wait", human_feedback_wait_node)
+    # Note: human_feedback_wait_node removed - using LangGraph interrupts instead
     
     # Add edges from START
     # Always start with init_workspace
@@ -552,7 +552,7 @@ def create_analysis_graph(
             "relationship": "relationship",
             "parallel_independent": "parallel_independent",
             "spawn_subagents": "spawn_subagents",
-            "human_feedback_wait": "human_feedback_wait",
+            # Note: human_feedback_wait removed - using LangGraph interrupts instead
             "end": END,
             "supervisor": "supervisor"  # Wait if dependencies not ready
         }
@@ -595,17 +595,15 @@ def create_analysis_graph(
     # Spawn subagents node goes to evaluation
     graph.add_edge("spawn_subagents", "evaluation")
     
-    # Evaluation node conditionally routes to adaptation, human_feedback, deliver, or supervisor
+    # Evaluation node conditionally routes to adaptation, deliver, or supervisor
+    # Note: Human feedback is now handled via LangGraph interrupts, not routing
     def route_after_evaluation(state: AnalysisState) -> str:
-        """Route after evaluation: adaptation, human_feedback, deliver, or supervisor"""
+        """Route after evaluation: adaptation, deliver, or supervisor"""
         needs_adaptation = state.get("needs_replanning", False)
         evaluation_result = state.get("evaluation_result", {})
-        waiting_for_human = state.get("waiting_for_human", False)
         
-        # Check if human feedback is needed first
-        if waiting_for_human:
-            logger.info(f"[Graph] Routing to human_feedback_wait after evaluation for case {state.get('case_id', 'unknown')}")
-            return "human_feedback"
+        # Note: waiting_for_human is handled via interrupts, not routing
+        # If interrupt was triggered, execution will pause automatically
         
         # Check if adaptation is needed
         if needs_adaptation or evaluation_result.get("needs_adaptation", False):
@@ -641,7 +639,6 @@ def create_analysis_graph(
             route_after_evaluation,
             {
                 "adaptation": "adaptation",
-                "human_feedback": "human_feedback_wait",
                 "deliver": "deliver",
                 "supervisor": "supervisor"
             }
@@ -655,13 +652,12 @@ def create_analysis_graph(
             route_after_evaluation,
             {
                 "adaptation": "adaptation",
-                "human_feedback": "human_feedback_wait",
                 "supervisor": "supervisor"
             }
         )
     
-    # Human feedback wait node routes back to supervisor (which will check if feedback received)
-    graph.add_edge("human_feedback_wait", "supervisor")
+    # Note: Human feedback is now handled via LangGraph interrupts
+    # Interrupts pause execution automatically, coordinator handles resume
     
     # Adaptation node returns to supervisor for replanning
     graph.add_edge("adaptation", "supervisor")
@@ -729,7 +725,24 @@ def create_analysis_graph(
         logger.warning(f"Failed to initialize PostgresSaver ({e}), using MemorySaver as fallback")
         checkpointer = MemorySaver()
     
-    compiled_graph = graph.compile(checkpointer=checkpointer)
+    # Create Store for long-term memory (optional, falls back gracefully if unavailable)
+    store = None
+    try:
+        from app.services.langchain_agents.store_integration import create_store_instance
+        store = create_store_instance()
+        if store:
+            logger.info("✅ LangGraph Store initialized for long-term memory")
+        else:
+            logger.debug("LangGraph Store not available, continuing without Store")
+    except Exception as e:
+        logger.debug(f"Store initialization skipped: {e}")
+        store = None
+    
+    # Compile graph with checkpointer and optional store
+    if store:
+        compiled_graph = graph.compile(checkpointer=checkpointer, store=store)
+    else:
+        compiled_graph = graph.compile(checkpointer=checkpointer)
     
     logger.info("Created LangGraph for multi-agent analysis")
     

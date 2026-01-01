@@ -2,6 +2,8 @@
 from langchain_openai import ChatOpenAI
 from typing import List, Any, Optional, Dict
 from langchain_core.messages import HumanMessage, AIMessage
+from langchain_core.runnables import RunnablePassthrough, RunnableLambda
+from langchain_core.prompts import ChatPromptTemplate
 import logging
 
 logger = logging.getLogger(__name__)
@@ -184,3 +186,105 @@ def safe_agent_invoke(
             # Re-raise if it's a different error
             logger.error(f"Agent invoke error (not tool-related): {error_type}: {error_msg}")
             raise
+
+
+def create_agent_chain_lcel(
+    agent_type: str,
+    llm: ChatOpenAI,
+    tools: List[Any],
+    system_prompt: str,
+    rag_service: Optional[Any] = None,
+    case_id: Optional[str] = None
+) -> Any:
+    """
+    Create agent chain using LangChain Expression Language (LCEL)
+    
+    LCEL provides more flexible composition and easier testing of individual steps.
+    
+    Args:
+        agent_type: Type of agent (timeline, key_facts, etc.)
+        llm: LLM instance
+        tools: List of tools for the agent
+        system_prompt: System prompt for the agent
+        rag_service: Optional RAG service for document retrieval
+        case_id: Optional case ID for context
+        
+    Returns:
+        LCEL chain (Runnable)
+    """
+    try:
+        from langchain_core.output_parsers import PydanticOutputParser
+        from langchain_core.pydantic_v1 import BaseModel
+        from typing import List as TypingList
+        
+        # Step 1: Prepare context (RunnableLambda)
+        def prepare_context(state: Dict[str, Any]) -> Dict[str, Any]:
+            """Prepare context for agent execution"""
+            context = {
+                "query": state.get("query", ""),
+                "case_id": state.get("case_id", case_id),
+                "previous_results": state.get("previous_results", {})
+            }
+            
+            # Add document retrieval if RAG service available
+            if rag_service and context["case_id"]:
+                try:
+                    # Retrieve relevant documents
+                    documents = rag_service.retrieve_documents(
+                        query=context["query"],
+                        case_id=context["case_id"],
+                        k=20
+                    )
+                    context["documents"] = "\n\n".join([
+                        f"Document: {doc.page_content[:500]}" 
+                        for doc in documents[:10]  # Limit to 10 docs
+                    ])
+                except Exception as e:
+                    logger.warning(f"Error retrieving documents in LCEL chain: {e}")
+                    context["documents"] = ""
+            
+            return context
+        
+        prepare_context_step = RunnableLambda(prepare_context)
+        
+        # Step 2: Create prompt template
+        prompt_template = ChatPromptTemplate.from_messages([
+            ("system", system_prompt),
+            ("human", """Запрос: {query}
+
+Документы:
+{documents}
+
+Предыдущие результаты:
+{previous_results}
+
+Выполни задачу и верни результат.""")
+        ])
+        
+        # Step 3: LLM with tools (if tools available)
+        if tools and hasattr(llm, 'bind_tools'):
+            try:
+                llm_with_tools = llm.bind_tools(tools)
+            except Exception as e:
+                logger.warning(f"Could not bind tools to LLM: {e}, using LLM without tools")
+                llm_with_tools = llm
+        else:
+            llm_with_tools = llm
+        
+        # Step 4: Parse output (optional, can be added later)
+        # For now, return raw LLM response
+        
+        # Chain: prepare_context | prompt_template | llm_with_tools
+        chain = (
+            prepare_context_step
+            | prompt_template
+            | llm_with_tools
+        )
+        
+        logger.debug(f"Created LCEL chain for {agent_type}")
+        return chain
+        
+    except Exception as e:
+        logger.warning(f"Failed to create LCEL chain for {agent_type}: {e}, falling back to regular agent")
+        # Fallback to regular agent creation
+        return create_legal_agent(llm, tools, system_prompt=system_prompt)

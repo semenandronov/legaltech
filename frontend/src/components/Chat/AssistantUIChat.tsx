@@ -115,6 +115,10 @@ export const AssistantUIChat = ({ caseId, className, initialQuery, onQuerySelect
             role: m.role,
             content: m.content,
           })),
+          web_search: webSearch,
+          database_search: databaseSearch,
+          legal_research: legalResearch,
+          deep_think: deepThink,
         }),
         signal: abortControllerRef.current.signal,
       })
