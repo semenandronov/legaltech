@@ -48,6 +48,18 @@ async def stream_plan_execution(
             # Check for new tables during execution (not just at completion)
             plan_data = plan.plan_data or {}
             table_results = plan_data.get("table_results") or plan_data.get("delivery_result", {}).get("tables", {})
+            # #region agent log
+            if poll_count % 5 == 0:  # Log every 5 polls to avoid spam
+                logger.info(f"[DEBUG-HYP-B] plan_execution.py: checking table_results, "
+                           f"plan_status={plan.status}, "
+                           f"plan_data_keys={list(plan_data.keys())}, "
+                           f"has_table_results={bool(plan_data.get('table_results'))}, "
+                           f"table_results_keys={list(plan_data.get('table_results', {}).keys()) if plan_data.get('table_results') else None}, "
+                           f"has_delivery_result={bool(plan_data.get('delivery_result'))}, "
+                           f"delivery_result_tables_keys={list(plan_data.get('delivery_result', {}).get('tables', {}).keys()) if plan_data.get('delivery_result') and plan_data.get('delivery_result', {}).get('tables') else None}, "
+                           f"final_table_results_keys={list(table_results.keys()) if table_results else None}, "
+                           f"poll_count={poll_count}")
+            # #endregion
             if table_results:
                 try:
                     from app.models.tabular_review import TabularReview, TabularColumn
@@ -56,6 +68,16 @@ async def stream_plan_execution(
                     case = db.query(Case).filter(Case.id == plan.case_id).first()
                     if case:
                         for table_key, table_info in table_results.items():
+                            # #region agent log
+                            logger.info(f"[DEBUG-HYP-C] plan_execution.py: processing table_info, "
+                                       f"table_key={table_key}, "
+                                       f"table_info_type={type(table_info).__name__}, "
+                                       f"is_dict={isinstance(table_info, dict)}, "
+                                       f"table_info={table_info if isinstance(table_info, dict) else str(table_info)}, "
+                                       f"status={table_info.get('status') if isinstance(table_info, dict) else None}, "
+                                       f"table_id={table_info.get('table_id') if isinstance(table_info, dict) else None}, "
+                                       f"in_last_table_ids={table_info.get('table_id') in last_table_ids if isinstance(table_info, dict) and table_info.get('table_id') else False}")
+                            # #endregion
                             if isinstance(table_info, dict) and table_info.get("status") == "created":
                                 table_id = table_info.get("table_id")
                                 if table_id and table_id not in last_table_ids:

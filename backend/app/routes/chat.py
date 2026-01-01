@@ -1048,12 +1048,27 @@ async def approve_plan(
                         # Save table_results and delivery_result for table_created events
                         # Extract tables from delivery_result if available
                         delivery_result = results.get("delivery", {})
+                        # #region agent log
+                        logger.info(f"[DEBUG-HYP-A] chat.py: saving table_results to plan_data, "
+                                   f"has_delivery={bool(delivery_result)}, "
+                                   f"delivery_keys={list(delivery_result.keys()) if delivery_result else None}, "
+                                   f"delivery_tables={list(delivery_result.get('tables', {}).keys()) if delivery_result and delivery_result.get('tables') else None}, "
+                                   f"has_results_tables={bool(results.get('tables'))}, "
+                                   f"results_tables_keys={list(results.get('tables', {}).keys()) if results.get('tables') else None}, "
+                                   f"plan_id={plan.id if plan else None}")
+                        # #endregion
                         if delivery_result:
                             plan_data["delivery_result"] = delivery_result
                             # Also save tables separately for easier access
                             if delivery_result.get("tables"):
                                 plan_data["table_results"] = delivery_result.get("tables")
                                 logger.info(f"Saved {len(delivery_result.get('tables', {}))} table results to plan_data")
+                                # #region agent log
+                                table_results_summary = {k: {"table_id": v.get("table_id"), "status": v.get("status")} for k, v in plan_data.get("table_results", {}).items()}
+                                logger.info(f"[DEBUG-HYP-A] chat.py: table_results saved to plan_data, "
+                                           f"table_results_keys={list(plan_data.get('table_results', {}).keys())}, "
+                                           f"table_results={table_results_summary}")
+                                # #endregion
                         elif results.get("tables"):
                             # Fallback: save tables directly if delivery_result not available
                             plan_data["table_results"] = results.get("tables")
@@ -1061,6 +1076,12 @@ async def approve_plan(
                         
                         plan.plan_data = plan_data
                         background_db.commit()
+                        # #region agent log
+                        logger.info(f"[DEBUG-HYP-A] chat.py: plan_data committed to DB, "
+                                   f"plan_id={plan.id if plan else None}, "
+                                   f"plan_status={plan.status if plan else None}, "
+                                   f"plan_data_keys={list(plan.plan_data.keys()) if plan and plan.plan_data else None}")
+                        # #endregion
                     else:
                         # Legacy approach
                         logger.warning(f"Agents not enabled, using legacy analysis")
