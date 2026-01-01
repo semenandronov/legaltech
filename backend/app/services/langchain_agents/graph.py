@@ -684,28 +684,31 @@ def create_analysis_graph(
             elif db_url.startswith("postgresql+psycopg2://"):
                 db_url = db_url.replace("postgresql+psycopg2://", "postgresql://", 1)
             
-            # Use direct constructor for long-lived checkpointer (preferred)
-            try:
-                checkpointer = PostgresSaver(db_url)
-                logger.info("✅ Created PostgresSaver using direct constructor (fallback)")
-            except (TypeError, ValueError):
-                # If direct constructor doesn't work, try from_conn_string()
-                result = PostgresSaver.from_conn_string(db_url)
+            # Use from_conn_string() which returns a context manager
+            # Enter the context manager to get PostgresSaver instance
+            if hasattr(PostgresSaver, 'from_conn_string'):
+                conn_manager = PostgresSaver.from_conn_string(db_url)
                 
-                # Check if result is a context manager
+                # Check if it's a context manager
                 from contextlib import _GeneratorContextManager
                 from collections.abc import ContextManager
-                is_context_manager = isinstance(result, (_GeneratorContextManager, ContextManager)) or (hasattr(result, "__enter__") and hasattr(result, "__exit__"))
+                is_context_manager = isinstance(conn_manager, (_GeneratorContextManager, ContextManager)) or (hasattr(conn_manager, "__enter__") and hasattr(conn_manager, "__exit__"))
                 
                 if is_context_manager:
-                    logger.error("❌ PostgresSaver.from_conn_string() returned context manager - not suitable for long-lived checkpointer")
-                    raise ValueError(
-                        "PostgresSaver.from_conn_string() returns context manager which is not suitable "
-                        "for long-lived checkpointer. Please use PostgresSaver(connection_string) directly."
-                    )
+                    # Enter the context manager to get PostgresSaver instance
+                    checkpointer = conn_manager.__enter__()
+                    logger.info("✅ Created PostgresSaver using from_conn_string() context manager (fallback)")
                 else:
-                    checkpointer = result
-                    logger.info("✅ Created PostgresSaver with from_conn_string (fallback)")
+                    # from_conn_string() returned PostgresSaver directly
+                    checkpointer = conn_manager
+                    logger.info("✅ Created PostgresSaver with from_conn_string (fallback, direct)")
+            else:
+                # Fallback: try direct constructor
+                try:
+                    checkpointer = PostgresSaver(db_url)
+                    logger.info("✅ Created PostgresSaver using direct constructor (fallback)")
+                except (TypeError, ValueError) as direct_error:
+                    raise ValueError(f"PostgresSaver initialization failed: {direct_error}")
             
             # Setup tables if they don't exist (idempotent)
             try:

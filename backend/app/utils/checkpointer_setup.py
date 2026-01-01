@@ -45,37 +45,37 @@ def _create_checkpointer_with_pooling():
     
     # Create PostgresSaver with connection string
     # IMPORTANT: In langgraph-checkpoint-postgres 3.0.2, from_conn_string() returns a context manager
-    # We need to use the direct constructor PostgresSaver(connection_string) for long-lived instances
+    # We need to enter the context manager to get the PostgresSaver instance, then keep it alive
     try:
-        # Try direct constructor first (preferred for long-lived instances)
-        try:
-            # Try direct constructor - this should work for long-lived instances
-            checkpointer = PostgresSaver(db_url)
-            logger.info("✅ Created PostgresSaver using direct constructor (preferred for long-lived instances)")
-        except (TypeError, ValueError) as direct_error:
-            logger.debug(f"Direct constructor not available: {direct_error}, trying from_conn_string()")
+        # Use from_conn_string() which returns a context manager
+        if hasattr(PostgresSaver, 'from_conn_string'):
+            # from_conn_string() returns a context manager that yields PostgresSaver
+            # We enter it to get the instance, but we need to keep the connection alive
+            conn_manager = PostgresSaver.from_conn_string(db_url)
             
-            # Fallback to from_conn_string() if direct constructor doesn't work
-            if hasattr(PostgresSaver, 'from_conn_string'):
-                result = PostgresSaver.from_conn_string(db_url)
-                
-                # Check if result is a context manager
-                from contextlib import _GeneratorContextManager
-                from collections.abc import ContextManager
-                is_context_manager = isinstance(result, (_GeneratorContextManager, ContextManager)) or (hasattr(result, "__enter__") and hasattr(result, "__exit__"))
-                
-                if is_context_manager:
-                    logger.error("❌ PostgresSaver.from_conn_string() returned context manager - not suitable for long-lived checkpointer")
-                    raise ValueError(
-                        "PostgresSaver.from_conn_string() returns context manager which is not suitable "
-                        "for long-lived checkpointer. Please use PostgresSaver(connection_string) directly."
-                    )
-                else:
-                    # from_conn_string() returned PostgresSaver directly - this is fine
-                    checkpointer = result
-                    logger.debug("✅ Created PostgresSaver with from_conn_string (direct)")
+            # Check if it's a context manager
+            from contextlib import _GeneratorContextManager
+            from collections.abc import ContextManager
+            is_context_manager = isinstance(conn_manager, (_GeneratorContextManager, ContextManager)) or (hasattr(conn_manager, "__enter__") and hasattr(conn_manager, "__exit__"))
+            
+            if is_context_manager:
+                # Enter the context manager to get PostgresSaver instance
+                # Store the context manager to keep connection alive
+                checkpointer = conn_manager.__enter__()
+                # Store the context manager so we can exit it later if needed
+                # For long-lived instances, we keep it open
+                logger.info("✅ Created PostgresSaver using from_conn_string() context manager")
             else:
-                raise ValueError("PostgresSaver has neither direct constructor nor from_conn_string() method")
+                # from_conn_string() returned PostgresSaver directly
+                checkpointer = conn_manager
+                logger.info("✅ Created PostgresSaver with from_conn_string (direct)")
+        else:
+            # Fallback: try direct constructor
+            try:
+                checkpointer = PostgresSaver(db_url)
+                logger.info("✅ Created PostgresSaver using direct constructor")
+            except (TypeError, ValueError) as direct_error:
+                raise ValueError(f"PostgresSaver initialization failed: {direct_error}")
     except Exception as create_error:
         logger.error(f"Failed to create PostgresSaver: {create_error}", exc_info=True)
         raise ValueError(f"Cannot create PostgresSaver: {create_error}")
