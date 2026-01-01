@@ -48,7 +48,7 @@ const TabularReviewPage: React.FC = () => {
     columnLabel: string
   } | null>(null)
   const [cellDetails, setCellDetails] = useState<any>(null)
-  const [loadingCellDetails, setLoadingCellDetails] = useState(false)
+  const [_loadingCellDetails, setLoadingCellDetails] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const loadingRef = useRef(false)
   
