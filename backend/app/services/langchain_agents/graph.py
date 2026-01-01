@@ -696,6 +696,28 @@ def create_analysis_graph(
                     # CRITICAL: Use __enter__() to properly initialize PostgresSaver
                     # The context manager sets up the connection properly
                     checkpointer = conn_manager.__enter__()
+                    # #region agent log
+                    try:
+                        with open('/Users/semyon_andronov04/Desktop/C ДВ/.cursor/debug.log', 'a') as f:
+                            import json
+                            log_entry = {
+                                "sessionId": "debug-session",
+                                "runId": "run1",
+                                "hypothesisId": "A",
+                                "location": "graph.py:698",
+                                "message": "After __enter__() in fallback - checkpointer type and conn",
+                                "data": {
+                                    "checkpointer_type": str(type(checkpointer)),
+                                    "has_conn": hasattr(checkpointer, 'conn'),
+                                    "conn_type": str(type(checkpointer.conn)) if hasattr(checkpointer, 'conn') else None,
+                                    "conn_is_str": isinstance(checkpointer.conn, str) if hasattr(checkpointer, 'conn') else None
+                                },
+                                "timestamp": int(__import__('time').time() * 1000)
+                            }
+                            f.write(json.dumps(log_entry) + '\n')
+                    except Exception:
+                        pass
+                    # #endregion
                     
                     # Verify the checkpointer has a proper connection object, not a string
                     if hasattr(checkpointer, 'conn'):

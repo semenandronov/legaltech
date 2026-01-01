@@ -28,8 +28,47 @@ def _create_checkpointer_with_pooling():
     
     # Convert DATABASE_URL to format required by PostgresSaver
     db_url = config.DATABASE_URL
+    # #region agent log
+    try:
+        with open('/Users/semyon_andronov04/Desktop/C ДВ/.cursor/debug.log', 'a') as f:
+            import json
+            log_entry = {
+                "sessionId": "debug-session",
+                "runId": "run1",
+                "hypothesisId": "D",
+                "location": "checkpointer_setup.py:30",
+                "message": "Before URL conversion - original DATABASE_URL",
+                "data": {
+                    "original_url": db_url[:100] if db_url else None,
+                    "url_starts_with_psycopg": db_url.startswith("postgresql+psycopg://") if db_url else False
+                },
+                "timestamp": int(__import__('time').time() * 1000)
+            }
+            f.write(json.dumps(log_entry) + '\n')
+    except Exception:
+        pass
+    # #endregion
     if db_url.startswith("postgresql+psycopg://"):
         db_url = db_url.replace("postgresql+psycopg://", "postgresql://", 1)
+    # #region agent log
+    try:
+        with open('/Users/semyon_andronov04/Desktop/C ДВ/.cursor/debug.log', 'a') as f:
+            import json
+            log_entry = {
+                "sessionId": "debug-session",
+                "runId": "run1",
+                "hypothesisId": "D",
+                "location": "checkpointer_setup.py:33",
+                "message": "After URL conversion - converted db_url",
+                "data": {
+                    "converted_url": db_url[:100] if db_url else None
+                },
+                "timestamp": int(__import__('time').time() * 1000)
+            }
+            f.write(json.dumps(log_entry) + '\n')
+    except Exception:
+        pass
+    # #endregion
     
     # Create PostgresSaver with connection string
     # IMPORTANT: In langgraph-checkpoint-postgres, from_conn_string() returns a context manager
@@ -42,6 +81,27 @@ def _create_checkpointer_with_pooling():
             # CRITICAL: We must use 'with' to properly initialize, but we can't exit for long-lived instances
             # Solution: Use the context manager's __enter__() but keep the context manager alive
             conn_manager = PostgresSaver.from_conn_string(db_url)
+            # #region agent log
+            try:
+                with open('/Users/semyon_andronov04/Desktop/C ДВ/.cursor/debug.log', 'a') as f:
+                    import json
+                    log_entry = {
+                        "sessionId": "debug-session",
+                        "runId": "run1",
+                        "hypothesisId": "B",
+                        "location": "checkpointer_setup.py:44",
+                        "message": "After from_conn_string() - conn_manager type",
+                        "data": {
+                            "conn_manager_type": str(type(conn_manager)),
+                            "has_enter": hasattr(conn_manager, "__enter__"),
+                            "has_exit": hasattr(conn_manager, "__exit__")
+                        },
+                        "timestamp": int(__import__('time').time() * 1000)
+                    }
+                    f.write(json.dumps(log_entry) + '\n')
+            except Exception:
+                pass
+            # #endregion
             
             # Check if it's a context manager by checking for __enter__ and __exit__
             is_context_manager = hasattr(conn_manager, "__enter__") and hasattr(conn_manager, "__exit__")
@@ -51,6 +111,30 @@ def _create_checkpointer_with_pooling():
                 # The __enter__() method sets up the connection object properly
                 # We keep the context manager alive by NOT calling __exit__()
                 checkpointer = conn_manager.__enter__()
+                
+                # #region agent log
+                try:
+                    with open('/Users/semyon_andronov04/Desktop/C ДВ/.cursor/debug.log', 'a') as f:
+                        import json
+                        log_entry = {
+                            "sessionId": "debug-session",
+                            "runId": "run1",
+                            "hypothesisId": "A",
+                            "location": "checkpointer_setup.py:53",
+                            "message": "After __enter__() - checkpointer type and conn attribute",
+                            "data": {
+                                "checkpointer_type": str(type(checkpointer)),
+                                "has_conn": hasattr(checkpointer, 'conn'),
+                                "conn_type": str(type(checkpointer.conn)) if hasattr(checkpointer, 'conn') else None,
+                                "conn_is_str": isinstance(checkpointer.conn, str) if hasattr(checkpointer, 'conn') else None,
+                                "conn_value_preview": str(checkpointer.conn)[:50] if hasattr(checkpointer, 'conn') and not isinstance(checkpointer.conn, str) else str(checkpointer.conn)[:50] if hasattr(checkpointer, 'conn') else None
+                            },
+                            "timestamp": int(__import__('time').time() * 1000)
+                        }
+                        f.write(json.dumps(log_entry) + '\n')
+                except Exception:
+                    pass
+                # #endregion
                 
                 # Store the context manager to prevent garbage collection
                 # This keeps the connection alive for long-lived instances
