@@ -13,9 +13,6 @@ import {
 } from '@mui/material'
 import {
   MoreVert as MoreVerticalIcon,
-  AccountCircle as UserCircleIcon,
-  CreditCard as CreditCardIcon,
-  Notifications as BellIcon,
   Logout as LogoutIcon,
 } from '@mui/icons-material'
 import { useAuth } from '@/contexts/AuthContext'

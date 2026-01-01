@@ -10,7 +10,6 @@ const AssistantChatPage = lazy(() => import('./pages/AssistantChatPage'))
 
 // Lazy load heavy pages
 const CasesListPage = lazy(() => import('./pages/CasesListPage'))
-const CaseOverviewPage = lazy(() => import('./pages/CaseOverviewPage'))
 const ContradictionsPage = lazy(() => import('./pages/ContradictionsPage'))
 const DocumentsPage = lazy(() => import('./pages/DocumentsPage'))
 const AnalysisPage = lazy(() => import('./pages/AnalysisPage'))
