@@ -10,6 +10,7 @@ import { TabularDocumentViewer } from "../components/TabularReview/TabularDocume
 import { TabularReviewContextChat } from "../components/TabularReview/TabularReviewContextChat"
 import { TemplatesModal } from "../components/TabularReview/TemplatesModal"
 import { FeaturedTemplatesCarousel } from "../components/TabularReview/FeaturedTemplatesCarousel"
+import { CellDetailPanel } from "../components/TabularReview/CellDetailPanel"
 import { tabularReviewApi, TableData } from "../services/tabularReviewApi"
 import { Card } from "../components/UI/Card"
 import Spinner from "../components/UI/Spinner"
@@ -30,14 +31,24 @@ const TabularReviewPage: React.FC = () => {
   const [selectedDocument, setSelectedDocument] = useState<{
     fileId: string
     fileType?: string
+    fileName?: string
     cellData: {
       verbatimExtract?: string | null
       sourcePage?: number | null
       sourceSection?: string | null
       columnType?: string
       highlightMode?: 'verbatim' | 'page' | 'none'
+      sourceReferences?: Array<{ page?: number | null; section?: string | null; text: string }>
     }
   } | null>(null)
+  const [selectedCell, setSelectedCell] = useState<{
+    fileId: string
+    columnId: string
+    fileName: string
+    columnLabel: string
+  } | null>(null)
+  const [cellDetails, setCellDetails] = useState<any>(null)
+  const [loadingCellDetails, setLoadingCellDetails] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const loadingRef = useRef(false)
   
@@ -156,6 +167,10 @@ const TabularReviewPage: React.FC = () => {
     column_label: string
     column_type: string
     prompt: string
+    column_config?: {
+      options?: Array<{ label: string; color: string }>
+      allow_custom?: boolean
+    }
   }) => {
     if (!reviewId) return
     
@@ -164,7 +179,8 @@ const TabularReviewPage: React.FC = () => {
         reviewId,
         column.column_label,
         column.column_type,
-        column.prompt
+        column.prompt,
+        column.column_config
       )
       toast.success("Колонка добавлена")
       await loadReviewData()
@@ -565,10 +581,10 @@ const TabularReviewPage: React.FC = () => {
             </div>
           )}
 
-          {/* Table and Document Split View */}
+          {/* Table, Cell Detail, and Document Split View */}
           <div className="flex-1 overflow-hidden flex">
             {/* Table */}
-            <div className={`overflow-auto p-6 transition-all flex-1 bg-white ${selectedDocument ? 'w-1/2' : 'flex-1'}`}>
+            <div className={`overflow-auto p-6 transition-all bg-white ${selectedCell ? 'w-2/5' : selectedDocument ? 'w-1/2' : 'flex-1'}`}>
               {tableData.columns.length === 0 ? (
                 <Card className="p-6 hoverable">
                   <div className="text-center">
@@ -590,13 +606,48 @@ const TabularReviewPage: React.FC = () => {
                 <TabularReviewTable
                   reviewId={reviewId}
                   tableData={tableData}
-                  onCellClick={(fileId, cellData) => {
-                    // Find file type from table data
+                  onCellClick={async (fileId, cellData) => {
+                    // Find file type and name from table data
                     const row = tableData.rows.find(r => r.file_id === fileId)
+                    const column = tableData.columns.find(col => {
+                      // Try to find column by matching cell data or use first column
+                      return true
+                    })
+                    
+                    if (column) {
+                      setSelectedCell({
+                        fileId,
+                        columnId: column.id,
+                        fileName: row?.file_name || "Document",
+                        columnLabel: column.column_label,
+                      })
+                      
+                      // Load cell details
+                      if (reviewId) {
+                        setLoadingCellDetails(true)
+                        try {
+                          const details = await tabularReviewApi.getCellDetails(
+                            reviewId,
+                            fileId,
+                            column.id
+                          )
+                          setCellDetails(details)
+                        } catch (err) {
+                          console.error("Error loading cell details:", err)
+                        } finally {
+                          setLoadingCellDetails(false)
+                        }
+                      }
+                    }
+                    
                     setSelectedDocument({ 
                       fileId, 
                       fileType: row?.file_type,
-                      cellData 
+                      fileName: row?.file_name,
+                      cellData: {
+                        ...cellData,
+                        sourceReferences: cellDetails?.source_references,
+                      }
                     })
                   }}
                   onRemoveDocument={async (fileId) => {
@@ -632,9 +683,58 @@ const TabularReviewPage: React.FC = () => {
               )}
             </div>
 
+            {/* Cell Detail Panel */}
+            {selectedCell && (
+              <CellDetailPanel
+                fileName={selectedCell.fileName}
+                columnLabel={selectedCell.columnLabel}
+                cellDetails={cellDetails}
+                onClose={() => {
+                  setSelectedCell(null)
+                  setCellDetails(null)
+                }}
+                onEdit={() => {
+                  toast.info("Редактирование ячейки будет реализовано позже")
+                }}
+                onRefresh={async () => {
+                  if (reviewId && selectedCell) {
+                    setLoadingCellDetails(true)
+                    try {
+                      const details = await tabularReviewApi.getCellDetails(
+                        reviewId,
+                        selectedCell.fileId,
+                        selectedCell.columnId
+                      )
+                      setCellDetails(details)
+                      toast.success("Данные обновлены")
+                    } catch (err) {
+                      toast.error("Ошибка при обновлении данных")
+                    } finally {
+                      setLoadingCellDetails(false)
+                    }
+                  }
+                }}
+                onJumpToSource={(ref) => {
+                  // Update selected document with source reference
+                  const row = tableData.rows.find(r => r.file_id === selectedCell.fileId)
+                  setSelectedDocument({
+                    fileId: selectedCell.fileId,
+                    fileType: row?.file_type,
+                    fileName: selectedCell.fileName,
+                    cellData: {
+                      sourcePage: ref.page || undefined,
+                      sourceSection: ref.section || undefined,
+                      highlightMode: 'page' as const,
+                      sourceReferences: [ref],
+                    }
+                  })
+                }}
+              />
+            )}
+
             {/* Document Viewer */}
             {selectedDocument && (
-              <div className="w-1/3 border-l border-[#E5E7EB] bg-white flex flex-col shrink-0">
+              <div className={`border-l border-[#E5E7EB] bg-white flex flex-col shrink-0 ${selectedCell ? 'w-2/5' : 'w-1/3'}`}>
                 <div className="border-b border-[#E5E7EB] p-3 flex items-center justify-between bg-white/80 backdrop-blur-sm">
                   <span className="text-sm font-medium text-[#1F2937]">Документ</span>
                   <button
@@ -649,6 +749,7 @@ const TabularReviewPage: React.FC = () => {
                     fileId={selectedDocument.fileId}
                     caseId={caseId || ""}
                     fileType={selectedDocument.fileType}
+                    fileName={selectedDocument.fileName}
                     cellData={selectedDocument.cellData}
                     onClose={() => setSelectedDocument(null)}
                   />

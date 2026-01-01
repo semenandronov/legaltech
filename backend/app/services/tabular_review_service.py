@@ -83,7 +83,8 @@ class TabularReviewService:
         column_label: str,
         column_type: str,
         prompt: str,
-        user_id: str
+        user_id: str,
+        column_config: Optional[Dict[str, Any]] = None
     ) -> TabularColumn:
         """Add a column to tabular review"""
         # Verify review belongs to user
@@ -106,6 +107,7 @@ class TabularReviewService:
             column_label=column_label,
             column_type=column_type,
             prompt=prompt,
+            column_config=column_config,
             order_index=order_index
         )
         
@@ -226,57 +228,168 @@ class TabularReviewService:
             limited_text = document_text[:8000]
             
             # Build prompt based on column type
+            column_type_descriptions = {
+                "text": "свободный текст",
+                "bulleted_list": "маркированный список (каждый пункт с новой строки, начинается с •)",
+                "number": "числовое значение",
+                "currency": "денежная сумма с валютой (например: '100000 USD' или '50 000 руб.')",
+                "yes_no": "только 'Yes' или 'No'",
+                "date": "дата в формате YYYY-MM-DD или DD.MM.YYYY",
+                "tag": "один тег из предопределенного списка",
+                "multiple_tags": "несколько тегов из предопределенного списка (через запятую)",
+                "verbatim": "точная цитата из документа с указанием источника",
+                "manual_input": "ручной ввод (не используется AI)"
+            }
+            
+            type_desc = column_type_descriptions.get(column.column_type, "свободный текст")
+            
+            # Для tag/multiple_tags добавляем доступные опции
+            tag_options_text = ""
+            if column.column_type in ["tag", "multiple_tags"] and column.column_config:
+                options = column.column_config.get("options", [])
+                if options:
+                    tag_options_text = f"\n\nДоступные опции: {', '.join([opt.get('label', '') for opt in options])}"
+            
             system_prompt = f"""Ты эксперт по извлечению информации из юридических документов.
-Твоя задача - ответить на вопрос о документе.
+Твоя задача - ответить на вопрос о документе и предоставить подробное обоснование.
 
 Тип ответа: {column.column_type}
-- text: свободный текст
-- date: дата в формате YYYY-MM-DD
-- currency: денежная сумма (число)
-- number: число
-- yes_no: только "Yes" или "No"
-- tags: список тегов через запятую
-- verbatim: точная цитата из документа
+Описание: {type_desc}{tag_options_text}
 
-ВАЖНО: Если информация не найдена, верни "N/A".
-Если тип yes_no и информации нет, верни "Unknown"."""
+ВАЖНО:
+1. Если информация не найдена, верни "N/A" для cell_value
+2. Для yes_no: только "Yes" или "No" или "Unknown"
+3. Для verbatim: приведи точную цитату из документа
+4. Для tag/multiple_tags: используй ТОЛЬКО опции из списка выше
+5. ВСЕГДА указывай reasoning - подробное объяснение, откуда взялась информация
+6. ВСЕГДА указывай source_references - конкретные места в документе (страницы, разделы, цитаты)
+
+Формат ответа (JSON):
+{{
+    "cell_value": "извлеченное значение",
+    "reasoning": "подробное объяснение, почему именно такой ответ, с указанием конкретных мест в документе",
+    "source_references": [
+        {{"page": 1, "section": "Раздел 3.1", "text": "цитата из документа"}},
+        {{"page": 2, "section": null, "text": "еще одна цитата"}}
+    ],
+    "confidence": 0.9
+}}"""
 
             user_prompt = f"""Вопрос: {column.prompt}
 
-Документ:
+Документ ({file.filename}):
 {limited_text}
 
-Ответь на вопрос согласно типу ответа {column.column_type}.
-Если это verbatim, приведи точную цитату из документа."""
+Извлеки информацию согласно типу {column.column_type} и верни JSON с cell_value, reasoning и source_references."""
             
             if not self.llm:
                 raise ValueError("LLM not configured")
             
-            # Call LLM
-            from langchain_core.messages import SystemMessage, HumanMessage
-            messages = [
-                SystemMessage(content=system_prompt),
-                HumanMessage(content=user_prompt)
-            ]
-            
-            response = await self.llm.ainvoke(messages)
-            
-            cell_value = response.content.strip() if hasattr(response, 'content') else str(response).strip()
+            # Try structured output first, fallback to regular if not supported
+            try:
+                from langchain_core.pydantic_v1 import BaseModel as PydanticBaseModel
+                from typing import List as TypingList
+                
+                class ExtractionResponse(PydanticBaseModel):
+                    cell_value: str
+                    reasoning: str
+                    source_references: TypingList[dict] = []
+                    confidence: float = 0.85
+                
+                # Use structured output if LLM supports it
+                if hasattr(self.llm, 'with_structured_output'):
+                    structured_llm = self.llm.with_structured_output(ExtractionResponse)
+                    from langchain_core.messages import SystemMessage, HumanMessage
+                    messages = [
+                        SystemMessage(content=system_prompt),
+                        HumanMessage(content=user_prompt)
+                    ]
+                    result = await structured_llm.ainvoke(messages)
+                    
+                    cell_value = result.cell_value
+                    reasoning = result.reasoning
+                    source_references = result.source_references or []
+                    confidence = result.confidence
+                else:
+                    # Fallback to regular LLM call with JSON parsing
+                    from langchain_core.messages import SystemMessage, HumanMessage
+                    messages = [
+                        SystemMessage(content=system_prompt),
+                        HumanMessage(content=user_prompt)
+                    ]
+                    response = await self.llm.ainvoke(messages)
+                    response_text = response.content.strip() if hasattr(response, 'content') else str(response).strip()
+                    
+                    # Try to parse JSON from response
+                    import json
+                    import re
+                    # Extract JSON from response (might be wrapped in markdown code blocks)
+                    json_match = re.search(r'\{[^{}]*"cell_value"[^{}]*\}', response_text, re.DOTALL)
+                    if json_match:
+                        try:
+                            parsed = json.loads(json_match.group(0))
+                            cell_value = parsed.get("cell_value", response_text)
+                            reasoning = parsed.get("reasoning", f"Извлечено из документа '{file.filename}'")
+                            source_references = parsed.get("source_references", [])
+                            confidence = parsed.get("confidence", 0.85)
+                        except:
+                            cell_value = response_text
+                            reasoning = f"Извлечено из документа '{file.filename}' на основе вопроса: {column.prompt}"
+                            source_references = []
+                            confidence = 0.85
+                    else:
+                        cell_value = response_text
+                        reasoning = f"Извлечено из документа '{file.filename}' на основе вопроса: {column.prompt}"
+                        source_references = []
+                        confidence = 0.85
+            except Exception as e:
+                logger.warning(f"Structured output failed, using fallback: {e}")
+                # Fallback to simple extraction
+                from langchain_core.messages import SystemMessage, HumanMessage
+                messages = [
+                    SystemMessage(content=system_prompt),
+                    HumanMessage(content=user_prompt)
+                ]
+                response = await self.llm.ainvoke(messages)
+                cell_value = response.content.strip() if hasattr(response, 'content') else str(response).strip()
+                reasoning = f"Извлечено из документа '{file.filename}' на основе вопроса: {column.prompt}"
+                source_references = []
+                confidence = 0.85
             
             # Format value based on type
             if column.column_type == "yes_no":
-                if cell_value.lower() in ["yes", "да", "есть"]:
+                if cell_value.lower() in ["yes", "да", "есть", "true"]:
                     cell_value = "Yes"
-                elif cell_value.lower() in ["no", "нет", "нету"]:
+                elif cell_value.lower() in ["no", "нет", "нету", "false"]:
                     cell_value = "No"
                 else:
                     cell_value = "Unknown"
+            elif column.column_type == "bulleted_list":
+                # Ensure bulleted list format
+                if cell_value and not cell_value.startswith("•"):
+                    lines = [line.strip() for line in cell_value.split("\n") if line.strip()]
+                    cell_value = "\n".join([f"• {line}" if not line.startswith("•") else line for line in lines])
+            elif column.column_type in ["tag", "multiple_tags"]:
+                # Validate against column_config options
+                if column.column_config and column.column_config.get("options"):
+                    valid_options = [opt.get("label", "").lower() for opt in column.column_config["options"]]
+                    # Split by comma for multiple_tags
+                    if column.column_type == "multiple_tags":
+                        tags = [tag.strip() for tag in cell_value.split(",")]
+                        # Filter to only valid options
+                        valid_tags = [tag for tag in tags if tag.lower() in valid_options]
+                        cell_value = ", ".join(valid_tags) if valid_tags else cell_value
+                    else:
+                        # Single tag - check if valid
+                        if cell_value.lower() not in valid_options:
+                            # Try to find closest match
+                            for opt in column.column_config["options"]:
+                                if opt.get("label", "").lower() in cell_value.lower():
+                                    cell_value = opt.get("label", "")
+                                    break
             
             # Extract verbatim if type is verbatim
             verbatim_extract = cell_value if column.column_type == "verbatim" else None
-            
-            # Extract reasoning (simplified - in production use structured output)
-            reasoning = f"Извлечено из документа '{file.filename}' на основе вопроса: {column.prompt}"
             
             return {
                 "file_id": file.id,
@@ -284,7 +397,8 @@ class TabularReviewService:
                 "cell_value": cell_value,
                 "verbatim_extract": verbatim_extract,
                 "reasoning": reasoning,
-                "confidence_score": 0.85,  # Default confidence
+                "source_references": source_references,
+                "confidence_score": confidence,
             }
             
         except Exception as e:
@@ -453,32 +567,51 @@ class TabularReviewService:
             # Process top 3 chunks
             for chunk in file_chunks[:3]:
                 try:
+                    # Build type descriptions
+                    column_type_descriptions = {
+                        "text": "свободный текст",
+                        "bulleted_list": "маркированный список (каждый пункт с новой строки, начинается с •)",
+                        "number": "числовое значение",
+                        "currency": "денежная сумма с валютой (например: '100000 USD' или '50 000 руб.')",
+                        "yes_no": "только 'Yes' или 'No'",
+                        "date": "дата в формате YYYY-MM-DD или DD.MM.YYYY",
+                        "tag": "один тег из предопределенного списка",
+                        "multiple_tags": "несколько тегов из предопределенного списка (через запятую)",
+                        "verbatim": "точная цитата из документа с указанием источника",
+                        "manual_input": "ручной ввод (не используется AI)"
+                    }
+                    
+                    type_desc = column_type_descriptions.get(column.column_type, "свободный текст")
+                    
+                    # Для tag/multiple_tags добавляем доступные опции
+                    tag_options_text = ""
+                    if column.column_type in ["tag", "multiple_tags"] and column.column_config:
+                        options = column.column_config.get("options", [])
+                        if options:
+                            tag_options_text = f"\n\nДоступные опции: {', '.join([opt.get('label', '') for opt in options])}"
+                    
                     # Create prompt
                     prompt = ChatPromptTemplate.from_messages([
                         ("system", f"""Ты эксперт по извлечению информации из юридических документов.
 Тип ответа: {column.column_type}
-
-Форматы:
-- date: YYYY-MM-DD (обязательно!)
-- currency: число (только цифры и точка/запятая)
-- number: число
-- yes_no: Yes/No/Unknown
-- text: свободный текст
-- verbatim: точная цитата из документа
+Описание: {type_desc}{tag_options_text}
 
 ВАЖНО:
 - Указывай source_page если возможно
 - Указывай source_section (например, "Раздел 3.1", "Статья 5")
-- Указывай reasoning - как ты нашел это значение
+- Указывай source_references - список конкретных мест в документе с цитатами: [{{"page": 1, "section": "Раздел 3", "text": "цитата"}}]
+- Указывай reasoning - подробное объяснение, почему именно такой ответ, с указанием конкретных мест в документе
 - Указывай confidence - насколько ты уверен (0.0-1.0)
-- Если информация не найдена, верни "N/A" для cell_value"""),
+- Если информация не найдена, верни "N/A" для cell_value
+- Для tag/multiple_tags используй ТОЛЬКО опции из списка выше"""),
                         ("human", f"""Вопрос: {column.prompt}
 
 Документ:
 {chunk.page_content}
 
 Извлеки информацию согласно типу {column.column_type}.
-Если это verbatim, приведи ТОЧНУЮ цитату из документа.""")
+Если это verbatim, приведи ТОЧНУЮ цитату из документа.
+ВСЕГДА указывай source_references с конкретными цитатами из документа.""")
                     ])
                     
                     # Try structured output first
@@ -534,6 +667,20 @@ class TabularReviewService:
                 logger.warning(f"All extraction attempts failed for file {file.id}, column {column.id}, using fallback")
                 return await self.extract_cell_value(file, column)
             
+            # Build source_references from result
+            source_references = []
+            if best_result.source_page or best_result.source_section:
+                source_ref = {
+                    "page": best_result.source_page,
+                    "section": best_result.source_section,
+                    "text": best_result.verbatim_extract or best_result.cell_value[:200]  # First 200 chars as quote
+                }
+                source_references.append(source_ref)
+            
+            # Add any additional source_references from result
+            if hasattr(best_result, 'source_references') and best_result.source_references:
+                source_references.extend(best_result.source_references)
+            
             return {
                 "file_id": file.id,
                 "column_id": column.id,
@@ -541,6 +688,7 @@ class TabularReviewService:
                 "verbatim_extract": best_result.verbatim_extract,
                 "source_page": best_result.source_page,
                 "source_section": best_result.source_section,
+                "source_references": source_references,
                 "reasoning": best_result.reasoning,
                 "confidence_score": float(best_result.confidence),
                 "extraction_method": best_result.extraction_method
@@ -636,12 +784,31 @@ class TabularReviewService:
                     existing_cell.cell_value = result.get("cell_value")
                     existing_cell.verbatim_extract = result.get("verbatim_extract")
                     existing_cell.reasoning = result.get("reasoning")
+                    existing_cell.source_references = result.get("source_references")
                     existing_cell.confidence_score = result.get("confidence_score")
-                    existing_cell.source_page = result.get("source_page")
-                    existing_cell.source_section = result.get("source_section")
+                    # Extract source_page from first source_reference if available
+                    source_refs = result.get("source_references", [])
+                    if source_refs and isinstance(source_refs, list) and len(source_refs) > 0:
+                        first_ref = source_refs[0]
+                        if isinstance(first_ref, dict):
+                            existing_cell.source_page = first_ref.get("page")
+                            existing_cell.source_section = first_ref.get("section")
+                    else:
+                        existing_cell.source_page = result.get("source_page")
+                        existing_cell.source_section = result.get("source_section")
                     existing_cell.status = "completed"
                     existing_cell.updated_at = datetime.utcnow()
                 else:
+                    # Extract source_page from first source_reference if available
+                    source_refs = result.get("source_references", [])
+                    source_page = result.get("source_page")
+                    source_section = result.get("source_section")
+                    if source_refs and isinstance(source_refs, list) and len(source_refs) > 0:
+                        first_ref = source_refs[0]
+                        if isinstance(first_ref, dict):
+                            source_page = first_ref.get("page") or source_page
+                            source_section = first_ref.get("section") or source_section
+                    
                     # Create new cell with all fields
                     cell = TabularCell(
                         tabular_review_id=review_id,
@@ -650,9 +817,10 @@ class TabularReviewService:
                         cell_value=result.get("cell_value"),
                         verbatim_extract=result.get("verbatim_extract"),
                         reasoning=result.get("reasoning"),
+                        source_references=result.get("source_references"),
                         confidence_score=result.get("confidence_score"),
-                        source_page=result.get("source_page"),
-                        source_section=result.get("source_section"),
+                        source_page=source_page,
+                        source_section=source_section,
                         status="completed"
                     )
                     self.db.add(cell)

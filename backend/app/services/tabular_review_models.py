@@ -57,6 +57,13 @@ def validate_yes_no(value: str) -> str:
         return 'Unknown'
 
 
+class SourceReference(BaseModel):
+    """Model for source reference in document"""
+    page: Optional[int] = Field(None, description="Номер страницы")
+    section: Optional[str] = Field(None, description="Раздел документа")
+    text: str = Field(description="Цитата из документа")
+
+
 class TabularCellExtractionModel(BaseModel):
     """Pydantic model for structured output of tabular cell extraction"""
     
@@ -66,6 +73,7 @@ class TabularCellExtractionModel(BaseModel):
     source_section: Optional[str] = Field(None, description="Раздел документа (например, 'Раздел 3.1', 'Статья 5')")
     source_start_line: Optional[int] = Field(None, description="Начальная строка в документе (если доступно)")
     source_end_line: Optional[int] = Field(None, description="Конечная строка в документе (если доступно)")
+    source_references: Optional[list] = Field(default_factory=list, description="Список ссылок на источники: [{page, section, text}]")
     confidence: float = Field(0.8, description="Уверенность в извлечении (0.0-1.0)", ge=0.0, le=1.0)
     reasoning: str = Field(description="Подробное объяснение как было извлечено значение и откуда")
     extraction_method: str = Field("llm", description="Метод извлечения: llm, regex, hybrid")

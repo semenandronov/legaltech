@@ -1,10 +1,16 @@
 """WebSocket routes for streaming analysis"""
-from fastapi import WebSocket, WebSocketDisconnect, APIRouter
+from fastapi import WebSocket, WebSocketDisconnect, APIRouter, Depends
 from app.services.langchain_agents.coordinator import AgentCoordinator
 from app.services.rag_service import RAGService
 from app.services.document_processor import DocumentProcessor
+from app.services.tabular_review_service import TabularReviewService
+from app.utils.database import get_db
+from app.utils.auth import get_current_user
+from app.models.user import User
+from sqlalchemy.orm import Session
 import json
 import logging
+import asyncio
 
 logger = logging.getLogger(__name__)
 
@@ -315,6 +321,132 @@ async def stream_chat(
         logger.info(f"WebSocket chat disconnected for case {case_id}")
     except Exception as e:
         logger.error(f"WebSocket chat error for case {case_id}: {e}", exc_info=True)
+        try:
+            await websocket.send_json({
+                "type": "error",
+                "message": f"Ошибка: {str(e)}"
+            })
+        except:
+            pass
+    finally:
+        db.close()
+        try:
+            await websocket.close()
+        except:
+            pass
+
+
+@router.websocket("/ws/tabular-review/{review_id}")
+async def stream_tabular_review_updates(
+    websocket: WebSocket,
+    review_id: str
+):
+    """
+    WebSocket endpoint for streaming tabular review updates in real-time
+    
+    Streams updates when:
+    - Cells are updated during extraction
+    - Columns are added
+    - Extraction progress changes
+    """
+    await websocket.accept()
+    logger.info(f"WebSocket tabular review connection opened for review {review_id}")
+    
+    # Get database session
+    from app.utils.database import SessionLocal
+    db = SessionLocal()
+    
+    try:
+        # Verify review exists
+        from app.models.tabular_review import TabularReview
+        review = db.query(TabularReview).filter(TabularReview.id == review_id).first()
+        if not review:
+            await websocket.send_json({
+                "type": "error",
+                "message": "Review not found"
+            })
+            await websocket.close()
+            return
+        
+        # Send initial connection confirmation
+        await websocket.send_json({
+            "type": "connected",
+            "review_id": review_id,
+            "message": "Connected to tabular review updates"
+        })
+        
+        # Poll for updates (in production, use database triggers or pub/sub)
+        last_update_time = None
+        while True:
+            try:
+                # Check for new cells
+                from app.models.tabular_review import TabularCell
+                from datetime import datetime
+                
+                query = db.query(TabularCell).filter(
+                    TabularCell.tabular_review_id == review_id
+                )
+                
+                if last_update_time:
+                    query = query.filter(TabularCell.updated_at > last_update_time)
+                
+                new_cells = query.all()
+                
+                if new_cells:
+                    for cell in new_cells:
+                        await websocket.send_json({
+                            "type": "cell_updated",
+                            "cell_id": cell.id,
+                            "file_id": cell.file_id,
+                            "column_id": cell.column_id,
+                            "cell_value": cell.cell_value,
+                            "reasoning": cell.reasoning,
+                            "source_references": cell.source_references,
+                            "status": cell.status,
+                            "confidence_score": float(cell.confidence_score) if cell.confidence_score else None,
+                        })
+                    
+                    last_update_time = datetime.utcnow()
+                
+                # Check for new columns
+                from app.models.tabular_review import TabularColumn
+                new_columns = db.query(TabularColumn).filter(
+                    TabularColumn.tabular_review_id == review_id
+                )
+                if last_update_time:
+                    new_columns = new_columns.filter(TabularColumn.created_at > last_update_time)
+                new_columns = new_columns.all()
+                
+                if new_columns:
+                    for column in new_columns:
+                        await websocket.send_json({
+                            "type": "column_added",
+                            "column": {
+                                "id": column.id,
+                                "column_label": column.column_label,
+                                "column_type": column.column_type,
+                                "prompt": column.prompt,
+                                "column_config": column.column_config,
+                                "order_index": column.order_index,
+                            }
+                        })
+                
+                # Sleep before next poll
+                await asyncio.sleep(1)
+                
+            except WebSocketDisconnect:
+                logger.info(f"WebSocket tabular review disconnected for review {review_id}")
+                break
+            except Exception as e:
+                logger.error(f"Error in tabular review WebSocket: {e}", exc_info=True)
+                await websocket.send_json({
+                    "type": "error",
+                    "message": str(e)
+                })
+                await asyncio.sleep(1)
+                
+    except Exception as e:
+        logger.error(f"WebSocket tabular review error for review {review_id}: {e}", exc_info=True)
         try:
             await websocket.send_json({
                 "type": "error",

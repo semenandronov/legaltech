@@ -7,6 +7,7 @@ import { UserMessage, AssistantMessage } from '../ai-elements/message'
 import { PlanApprovalCard } from './PlanApprovalCard'
 import { AgentStep } from './AgentStepsView'
 import { EnhancedAgentStepsView } from './EnhancedAgentStepsView'
+import { TableCard } from './TableCard'
 import {
   PromptInputProvider,
   PromptInput,
@@ -39,6 +40,36 @@ interface Message {
     title?: string
     url?: string
     page?: number
+  }>
+  tableCard?: {  // для отображения карточки таблицы (одна таблица)
+    reviewId: string
+    caseId: string
+    tableData: {
+      id: string
+      name: string
+      description?: string
+      columns_count?: number
+      rows_count?: number
+      preview?: {
+        columns: string[]
+        rows: Array<Record<string, string>>
+      }
+    }
+  }
+  tableCards?: Array<{  // для отображения множественных таблиц
+    reviewId: string
+    caseId: string
+    tableData: {
+      id: string
+      name: string
+      description?: string
+      columns_count?: number
+      rows_count?: number
+      preview?: {
+        columns: string[]
+        rows: Array<Record<string, string>>
+      }
+    }
   }>
 }
 
@@ -183,6 +214,33 @@ export const AssistantUIChat = ({ caseId, className, initialQuery, onQuerySelect
                   })
                 )
               }
+              // Обработка создания таблицы
+              if (data.type === 'table_created' && data.table_id && data.table_data) {
+                setMessages((prev) =>
+                  prev.map((msg) => {
+                    if (msg.id === assistantMsgId) {
+                      const existingTableCards = msg.tableCards || (msg.tableCard ? [msg.tableCard] : [])
+                      const newTableCard = {
+                        reviewId: data.table_id,
+                        caseId: data.case_id || actualCaseId,
+                        tableData: data.table_data
+                      }
+                      // Проверяем, нет ли уже такой таблицы
+                      const tableExists = existingTableCards.some(tc => tc.reviewId === data.table_id)
+                      if (!tableExists) {
+                        return {
+                          ...msg,
+                          tableCards: [...existingTableCards, newTableCard],
+                          // Для обратной совместимости также устанавливаем tableCard (последняя таблица)
+                          tableCard: newTableCard
+                        }
+                      }
+                      return msg
+                    }
+                    return msg
+                  })
+                )
+              }
               if (data.error) {
                 throw new Error(data.error)
               }
@@ -265,6 +323,32 @@ export const AssistantUIChat = ({ caseId, className, initialQuery, onQuerySelect
                           ? currentSteps.map((s, idx) => (idx === stepIndex ? { ...data.step, status: 'completed' } : s))
                           : [...currentSteps, { ...data.step, status: 'completed' }]
                       return { ...msg, agentSteps: updatedSteps }
+                    }
+                    return msg
+                  })
+                )
+              } else if (data.type === 'table_created' && data.table_id && data.table_data) {
+                // Обработка создания таблицы из plan execution stream
+                setMessages((prev) =>
+                  prev.map((msg) => {
+                    if (msg.id === messageId) {
+                      const existingTableCards = msg.tableCards || (msg.tableCard ? [msg.tableCard] : [])
+                      const newTableCard = {
+                        reviewId: data.table_id,
+                        caseId: data.case_id || actualCaseId,
+                        tableData: data.table_data
+                      }
+                      // Проверяем, нет ли уже такой таблицы
+                      const tableExists = existingTableCards.some(tc => tc.reviewId === data.table_id)
+                      if (!tableExists) {
+                        return {
+                          ...msg,
+                          tableCards: [...existingTableCards, newTableCard],
+                          // Для обратной совместимости также устанавливаем tableCard (последняя таблица)
+                          tableCard: newTableCard
+                        }
+                      }
+                      return msg
                     }
                     return msg
                   })
@@ -387,6 +471,27 @@ export const AssistantUIChat = ({ caseId, className, initialQuery, onQuerySelect
                   collapsible={true}
                 />
               )}
+              {/* Отображаем множественные таблицы, если есть, иначе одну */}
+              {message.tableCards && message.tableCards.length > 0 ? (
+                <div className="mt-4 space-y-4">
+                  {message.tableCards.map((tableCard, index) => (
+                    <TableCard
+                      key={tableCard.reviewId || index}
+                      reviewId={tableCard.reviewId}
+                      caseId={tableCard.caseId}
+                      tableData={tableCard.tableData}
+                    />
+                  ))}
+                </div>
+              ) : message.tableCard ? (
+                <div className="mt-4">
+                  <TableCard
+                    reviewId={message.tableCard.reviewId}
+                    caseId={message.tableCard.caseId}
+                    tableData={message.tableCard.tableData}
+                  />
+                </div>
+              ) : null}
             </AssistantMessage>
           )
         })}

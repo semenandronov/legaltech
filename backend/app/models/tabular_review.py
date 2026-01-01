@@ -34,9 +34,11 @@ class TabularColumn(Base):
     id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
     tabular_review_id = Column(String, ForeignKey("tabular_reviews.id", ondelete="CASCADE"), nullable=False, index=True)
     column_label = Column(String(255), nullable=False)  # "Loan Type", "Key Terms", etc.
-    column_type = Column(String(50), nullable=False)  # text, date, currency, number, yes_no, tags, verbatim
+    column_type = Column(String(50), nullable=False)  # text, bulleted_list, number, currency, yes_no, date, tag, multiple_tags, verbatim, manual_input
     prompt = Column(Text, nullable=False)  # вопрос/prompt для AI
+    column_config = Column(JSON, nullable=True)  # Конфигурация для типов tag/multiple_tags: {options: [{label, color}], allow_custom: bool}
     order_index = Column(Integer, nullable=False)
+    is_pinned = Column(Boolean, default=False)  # Закреплена ли колонка
     created_at = Column(DateTime, default=datetime.utcnow)
     
     # Relationships
@@ -54,7 +56,8 @@ class TabularCell(Base):
     column_id = Column(String, ForeignKey("tabular_columns.id", ondelete="CASCADE"), nullable=False, index=True)
     cell_value = Column(Text, nullable=True)  # извлеченное значение
     verbatim_extract = Column(Text, nullable=True)  # точная цитата из документа
-    reasoning = Column(Text, nullable=True)  # объяснение AI
+    reasoning = Column(Text, nullable=True)  # объяснение AI (обоснование ответа)
+    source_references = Column(JSON, nullable=True)  # Ссылки на источники: [{page: int, section: str, text: str}]
     confidence_score = Column(DECIMAL(3, 2), nullable=True)  # 0.00 - 1.00
     source_page = Column(Integer, nullable=True)
     source_section = Column(String(255), nullable=True)

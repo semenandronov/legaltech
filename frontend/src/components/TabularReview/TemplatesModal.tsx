@@ -180,31 +180,85 @@ export const TemplatesModal: React.FC<TemplatesModalProps> = ({
           {/* Left sidebar - categories */}
           <Box
             sx={{
-              width: 200,
+              width: 240,
               flexShrink: 0,
               borderRight: 1,
               borderColor: 'divider',
               p: 2,
               display: 'flex',
               flexDirection: 'column',
+              gap: 2,
             }}
           >
+            <Button
+              variant="contained"
+              fullWidth
+              startIcon={<SparklesIcon />}
+              onClick={() => {
+                toast.info("Создание нового шаблона будет реализовано позже")
+              }}
+              sx={{ justifyContent: 'flex-start', mb: 1 }}
+            >
+              + New template
+            </Button>
+            
+            <Divider />
+            
             <Stack spacing={0.5}>
               <Button
-                variant={selectedCategory === null ? 'contained' : 'text'}
+                variant={activeTab === 0 && selectedCategory === null ? 'contained' : 'text'}
                 fullWidth
-                onClick={() => setSelectedCategory(null)}
+                onClick={() => {
+                  setActiveTab(0)
+                  setSelectedCategory(null)
+                }}
                 sx={{ justifyContent: 'flex-start' }}
               >
-                Все категории
+                Все
               </Button>
+              <Button
+                variant={activeTab === 1 ? 'contained' : 'text'}
+                fullWidth
+                startIcon={<StarIcon />}
+                onClick={() => {
+                  setActiveTab(1)
+                  setSelectedCategory(null)
+                }}
+                sx={{ justifyContent: 'flex-start' }}
+              >
+                Избранные
+              </Button>
+              <Button
+                variant={activeTab === 2 ? 'contained' : 'text'}
+                fullWidth
+                startIcon={<ClockIcon />}
+                onClick={() => {
+                  setActiveTab(2)
+                  setSelectedCategory(null)
+                }}
+                sx={{ justifyContent: 'flex-start' }}
+              >
+                Мои шаблоны
+              </Button>
+            </Stack>
+            
+            <Divider />
+            
+            <Typography variant="caption" color="text.secondary" sx={{ px: 1, fontWeight: 600 }}>
+              by System
+            </Typography>
+            
+            <Stack spacing={0.5}>
               {categories.map((cat) => (
                 <Button
                   key={cat}
                   variant={selectedCategory === cat ? 'contained' : 'text'}
                   fullWidth
                   startIcon={CATEGORY_ICONS[cat]}
-                  onClick={() => setSelectedCategory(cat)}
+                  onClick={() => {
+                    setSelectedCategory(cat)
+                    setActiveTab(0)
+                  }}
                   sx={{ justifyContent: 'flex-start' }}
                 >
                   {CATEGORY_NAMES[cat]}
@@ -309,6 +363,32 @@ export const TemplatesModal: React.FC<TemplatesModalProps> = ({
                                 </Typography>
                               )}
                             </Stack>
+                            {/* Preview колонок (первые 5 названий) */}
+                            <Box>
+                              <Typography variant="caption" color="text.secondary" sx={{ mb: 0.5, display: 'block' }}>
+                                Колонки:
+                              </Typography>
+                              <Stack direction="row" spacing={0.5} flexWrap="wrap">
+                                {template.columns.slice(0, 5).map((col, idx) => (
+                                  <Chip
+                                    key={idx}
+                                    label={col.column_label}
+                                    size="small"
+                                    variant="outlined"
+                                    sx={{ fontSize: '0.65rem', height: 20 }}
+                                  />
+                                ))}
+                                {template.columns.length > 5 && (
+                                  <Chip
+                                    label={`+${template.columns.length - 5}`}
+                                    size="small"
+                                    variant="outlined"
+                                    sx={{ fontSize: '0.65rem', height: 20 }}
+                                  />
+                                )}
+                              </Stack>
+                            </Box>
+                            
                             {template.tags && template.tags.length > 0 && (
                               <Stack direction="row" spacing={0.5} flexWrap="wrap">
                                 {template.tags.slice(0, 3).map((tag, idx) => (
@@ -316,6 +396,42 @@ export const TemplatesModal: React.FC<TemplatesModalProps> = ({
                                 ))}
                               </Stack>
                             )}
+                          </Stack>
+                          
+                          <Stack direction="row" spacing={1} sx={{ mt: 1, pt: 1, borderTop: 1, borderColor: 'divider' }}>
+                            <Button
+                              size="small"
+                              variant="outlined"
+                              onClick={(e) => {
+                                e.stopPropagation()
+                                setSelectedTemplate(template)
+                              }}
+                              sx={{ flex: 1 }}
+                            >
+                              Preview
+                            </Button>
+                            <Button
+                              size="small"
+                              variant="contained"
+                              startIcon={<PlayIcon />}
+                              onClick={(e) => {
+                                e.stopPropagation()
+                                handleApplyTemplate(template)
+                              }}
+                              disabled={isApplying}
+                              sx={{ flex: 1 }}
+                            >
+                              Use template
+                            </Button>
+                            <IconButton
+                              size="small"
+                              onClick={(e) => {
+                                e.stopPropagation()
+                                toast.info("Добавление в избранное будет реализовано позже")
+                              }}
+                            >
+                              <StarIcon fontSize="small" />
+                            </IconButton>
                           </Stack>
                         </CardContent>
                       </Card>

@@ -45,6 +45,7 @@ import {
 import { TabularRow, TabularColumn, TabularCell, CellDetails } from "@/services/tabularReviewApi"
 import { tabularReviewApi } from "@/services/tabularReviewApi"
 import { CellExpansionModal } from "./CellExpansionModal"
+import { TagCell } from "./TagCell"
 
 interface TabularReviewTableProps {
   reviewId: string
@@ -552,25 +553,30 @@ export const TabularReviewTable = React.memo(({ reviewId, tableData, onCellClick
       cell: ({ row }) => {
         const cell: TabularCell = row.getValue(col.id)
         const cellValue = cell?.cell_value || "-"
+        const cellStatus = cell?.status || "pending"
+        const isTagType = col.column_type === "tag" || col.column_type === "multiple_tags"
         
         return (
           <Box
             sx={{
-                cursor: cellValue !== "-" ? 'pointer' : 'default',
-                py: 1,
-                minHeight: 40,
+              cursor: cellValue !== "-" ? 'pointer' : 'default',
+              py: 1,
+              px: 1,
+              minHeight: 40,
               display: 'flex',
               alignItems: 'center',
-              transition: (theme) => theme.transitions.create('background-color', {
+              transition: (theme) => theme.transitions.create(['background-color', 'transform'], {
                 duration: theme.transitions.duration.shorter,
               }),
-                '&:hover': cellValue !== "-" ? {
+              '&:hover': cellValue !== "-" ? {
                 bgcolor: 'action.hover',
-                } : {},
+                transform: 'translateX(2px)',
+              } : {},
+              position: 'relative',
             }}
             onClick={async () => {
-                if (cellValue === "-") return
-                
+              if (cellValue === "-") return
+              
               setSelectedCell({
                 fileId: row.original.file_id,
                 columnId: col.id,
@@ -605,6 +611,7 @@ export const TabularReviewTable = React.memo(({ reviewId, tableData, onCellClick
                     sourceSection: details.source_section,
                     columnType: details.column_type,
                     highlightMode,
+                    sourceReferences: details.source_references,
                   })
                 }
               } catch (error) {
@@ -615,16 +622,60 @@ export const TabularReviewTable = React.memo(({ reviewId, tableData, onCellClick
               }
             }}
           >
-                <Typography
-                  variant="body2"
-                  sx={{
-                    flex: 1,
-                    fontStyle: cellValue === "-" ? 'italic' : 'normal',
+            {/* Status indicator */}
+            {cellStatus === "processing" && (
+              <Box
+                sx={{
+                  position: 'absolute',
+                  left: 4,
+                  top: '50%',
+                  transform: 'translateY(-50%)',
+                  width: 4,
+                  height: 4,
+                  borderRadius: '50%',
+                  bgcolor: 'warning.main',
+                  animation: 'pulse 1.5s ease-in-out infinite',
+                  '@keyframes pulse': {
+                    '0%, 100%': { opacity: 1 },
+                    '50%': { opacity: 0.5 },
+                  },
+                }}
+              />
+            )}
+            
+            {/* Cell content */}
+            {isTagType ? (
+              <TagCell value={cellValue} column={col} />
+            ) : (
+              <Typography
+                variant="body2"
+                sx={{
+                  flex: 1,
+                  fontStyle: cellValue === "-" ? 'italic' : 'normal',
                   color: cellValue === "-" ? '#6B7280' : '#1F2937',
-                  }}
-                >
-                  {cellValue === "-" ? "—" : cellValue}
-                </Typography>
+                  whiteSpace: col.column_type === "bulleted_list" ? "pre-line" : "normal",
+                }}
+              >
+                {cellValue === "-" ? "—" : cellValue}
+              </Typography>
+            )}
+            
+            {/* Status badge */}
+            {cellStatus === "reviewed" && (
+              <Chip
+                label="✓"
+                size="small"
+                sx={{
+                  ml: 1,
+                  height: 18,
+                  width: 18,
+                  minWidth: 18,
+                  bgcolor: 'success.main',
+                  color: 'white',
+                  fontSize: '0.7rem',
+                }}
+              />
+            )}
           </Box>
         )
       },

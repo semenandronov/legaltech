@@ -25,8 +25,9 @@ class TabularReviewCreateRequest(BaseModel):
 
 class ColumnCreateRequest(BaseModel):
     column_label: str
-    column_type: str  # text, date, currency, number, yes_no, tags, verbatim
+    column_type: str  # text, bulleted_list, number, currency, yes_no, date, tag, multiple_tags, verbatim, manual_input
     prompt: str
+    column_config: Optional[dict] = None  # Конфигурация для tag/multiple_tags: {options: [{label, color}], allow_custom: bool}
 
 
 class DocumentStatusUpdateRequest(BaseModel):
@@ -46,7 +47,7 @@ class TemplateCreateRequest(BaseModel):
 
 class ColumnPromptGenerateRequest(BaseModel):
     column_label: str
-    column_type: str  # text, date, currency, number, yes_no, tags, verbatim
+    column_type: str  # text, bulleted_list, number, currency, yes_no, date, tag, multiple_tags, verbatim, manual_input
 
 
 @router.post("/")
@@ -335,13 +336,15 @@ async def add_column(
             column_label=request.column_label,
             column_type=request.column_type,
             prompt=request.prompt,
-            user_id=current_user.id
+            user_id=current_user.id,
+            column_config=request.column_config
         )
         return {
             "id": column.id,
             "column_label": column.column_label,
             "column_type": column.column_type,
             "prompt": column.prompt,
+            "column_config": column.column_config,
             "order_index": column.order_index,
         }
     except ValueError as e:
@@ -426,6 +429,7 @@ async def get_cell_details(
             "cell_value": cell.cell_value,
             "verbatim_extract": cell.verbatim_extract,
             "reasoning": cell.reasoning,
+            "source_references": cell.source_references or [],
             "confidence_score": float(cell.confidence_score) if cell.confidence_score else None,
             "source_page": cell.source_page,
             "source_section": cell.source_section,
@@ -793,4 +797,62 @@ async def chat_over_table(
     except Exception as e:
         logger.error(f"Error in chat over table: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail="Failed to analyze table")
+
+
+@router.post("/columns/generate-prompt")
+async def generate_column_prompt(
+    request: ColumnPromptGenerateRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """Generate AI prompt for a column based on label and type"""
+    try:
+        from app.services.llm_factory import create_llm
+        from langchain_core.messages import SystemMessage, HumanMessage
+        
+        llm = create_llm(temperature=0.7)
+        
+        # Build prompt generation request
+        system_prompt = """Ты эксперт по созданию промптов для извлечения информации из юридических документов.
+Твоя задача - создать четкий и эффективный промпт для AI-агента, который будет извлекать информацию из документов.
+
+Типы колонок:
+- text: свободный текст
+- bulleted_list: маркированный список
+- number: числовое значение
+- currency: денежная сумма с валютой
+- yes_no: да/нет (boolean)
+- date: дата
+- tag: один тег из предопределенного списка
+- multiple_tags: несколько тегов из предопределенного списка
+- verbatim: точная цитата из документа
+- manual_input: ручной ввод (без AI)
+
+Создай промпт на английском языке, который:
+1. Четко описывает, какую информацию нужно извлечь
+2. Указывает формат ответа
+3. Для tag/multiple_tags - перечисляет доступные опции
+4. Для verbatim - требует точную цитату с указанием источника
+
+Верни ТОЛЬКО промпт, без дополнительных объяснений."""
+
+        user_prompt = f"""Создай промпт для колонки:
+Название: {request.column_label}
+Тип: {request.column_type}
+
+Промпт должен быть на английском языке и четко описывать, какую информацию нужно извлечь."""
+
+        messages = [
+            SystemMessage(content=system_prompt),
+            HumanMessage(content=user_prompt)
+        ]
+        
+        response = await llm.ainvoke(messages)
+        prompt = response.content.strip() if hasattr(response, 'content') else str(response).strip()
+        
+        return {"prompt": prompt}
+        
+    except Exception as e:
+        logger.error(f"Error generating column prompt: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Failed to generate prompt")
 

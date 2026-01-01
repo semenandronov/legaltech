@@ -7,6 +7,7 @@ from app.services.document_processor import DocumentProcessor
 from app.services.tabular_review_service import TabularReviewService
 from app.services.report_generator import ReportGenerator
 from app.services.langchain_agents.table_creator_tool import initialize_table_creator, create_table_tool
+from app.models.tabular_review import TabularReview, TabularColumn
 from io import BytesIO
 import logging
 import os
@@ -79,6 +80,9 @@ def deliver_node(
         # Список типов анализов, для которых можно создать таблицы
         table_supported_types = ["timeline", "key_facts", "discrepancy", "risk"]
         
+        # Get SSE callback from state metadata if available
+        sse_callback = state.get("metadata", {}).get("sse_callback")
+        
         for analysis_type in table_supported_types:
             result_key = f"{analysis_type}_result"
             if state.get(result_key):
@@ -94,6 +98,43 @@ def deliver_node(
                         "status": "created"
                     }
                     logger.info(f"[DELIVER] Created table for {analysis_type}: {table_id}")
+                    
+                    # Send SSE event if callback is available
+                    if sse_callback and callable(sse_callback):
+                        try:
+                            # Get table preview data
+                            tabular_service = TabularReviewService(db)
+                            review = db.query(TabularReview).filter(TabularReview.id == table_id).first()
+                            if review:
+                                columns = db.query(TabularColumn).filter(
+                                    TabularColumn.tabular_review_id == table_id
+                                ).order_by(TabularColumn.order_index).all()
+                                
+                                # Get preview data (first few rows)
+                                preview_data = {
+                                    "id": table_id,
+                                    "name": review.name,
+                                    "description": review.description,
+                                    "columns_count": len(columns),
+                                    "rows_count": len(review.selected_file_ids) if review.selected_file_ids else 0,
+                                    "preview": {
+                                        "columns": [col.column_label for col in columns[:4]],
+                                        "rows": []  # Will be populated if needed
+                                    }
+                                }
+                                
+                                # Send table_created event
+                                event_data = {
+                                    "type": "table_created",
+                                    "table_id": table_id,
+                                    "case_id": case_id,
+                                    "analysis_type": analysis_type,
+                                    "table_data": preview_data
+                                }
+                                sse_callback(event_data)
+                                logger.info(f"[DELIVER] Sent table_created SSE event for {analysis_type}: {table_id}")
+                        except Exception as callback_error:
+                            logger.warning(f"[DELIVER] Failed to send SSE event for table {table_id}: {callback_error}")
                 except Exception as e:
                     logger.warning(f"[DELIVER] Failed to create table for {analysis_type}: {e}")
                     table_results[analysis_type] = {
@@ -177,6 +218,40 @@ def deliver_node(
                         }
                         
                         logger.info(f"[DELIVER] Created custom table '{table_name}' with id: {review.id}")
+                        
+                        # Send SSE event if callback is available
+                        if sse_callback and callable(sse_callback):
+                            try:
+                                # Get preview data
+                                columns = db.query(TabularColumn).filter(
+                                    TabularColumn.tabular_review_id == review.id
+                                ).order_by(TabularColumn.order_index).all()
+                                
+                                preview_data = {
+                                    "id": review.id,
+                                    "name": review.name,
+                                    "description": review.description,
+                                    "columns_count": len(columns),
+                                    "rows_count": len(review.selected_file_ids) if review.selected_file_ids else 0,
+                                    "preview": {
+                                        "columns": [col.column_label for col in columns[:4]],
+                                        "rows": []
+                                    }
+                                }
+                                
+                                # Send table_created event
+                                event_data = {
+                                    "type": "table_created",
+                                    "table_id": review.id,
+                                    "case_id": case_id,
+                                    "analysis_type": "custom",
+                                    "table_name": table_name,
+                                    "table_data": preview_data
+                                }
+                                sse_callback(event_data)
+                                logger.info(f"[DELIVER] Sent table_created SSE event for custom table '{table_name}': {review.id}")
+                            except Exception as callback_error:
+                                logger.warning(f"[DELIVER] Failed to send SSE event for custom table {review.id}: {callback_error}")
                         
                     except Exception as table_error:
                         logger.error(f"[DELIVER] Failed to create custom table '{table_name}': {table_error}", exc_info=True)

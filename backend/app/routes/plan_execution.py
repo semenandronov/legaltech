@@ -54,6 +54,50 @@ async def stream_plan_execution(
                 for step in execution_steps[last_step_count:]:
                     yield f"data: {json.dumps({'type': 'step_completed', 'step': step}, ensure_ascii=False)}\n\n"
                 
+                # Send table_created events if tables were created
+                # Check if there are table results in execution_steps or plan_data
+                table_results = plan_data.get("table_results") or plan_data.get("delivery_result", {}).get("tables", {})
+                if table_results:
+                    try:
+                        from app.models.tabular_review import TabularReview, TabularColumn
+                        from app.models.case import Case
+                        
+                        case = db.query(Case).filter(Case.id == plan.case_id).first()
+                        if case:
+                            for table_key, table_info in table_results.items():
+                                if isinstance(table_info, dict) and table_info.get("status") == "created":
+                                    table_id = table_info.get("table_id")
+                                    if table_id:
+                                        # Get table preview data
+                                        review = db.query(TabularReview).filter(TabularReview.id == table_id).first()
+                                        if review:
+                                            columns = db.query(TabularColumn).filter(
+                                                TabularColumn.tabular_review_id == table_id
+                                            ).order_by(TabularColumn.order_index).all()
+                                            
+                                            preview_data = {
+                                                "id": table_id,
+                                                "name": review.name,
+                                                "description": review.description,
+                                                "columns_count": len(columns),
+                                                "rows_count": len(review.selected_file_ids) if review.selected_file_ids else 0,
+                                                "preview": {
+                                                    "columns": [col.column_label for col in columns[:4]],
+                                                    "rows": []
+                                                }
+                                            }
+                                            
+                                            # Send table_created event
+                                            yield f"data: {json.dumps({
+                                                'type': 'table_created',
+                                                'table_id': table_id,
+                                                'case_id': plan.case_id,
+                                                'analysis_type': table_key,
+                                                'table_data': preview_data
+                                            }, ensure_ascii=False)}\n\n"
+                    except Exception as table_error:
+                        logger.warning(f"Error sending table_created events: {table_error}")
+                
                 yield f"data: {json.dumps({'type': 'execution_completed', 'steps': execution_steps}, ensure_ascii=False)}\n\n"
                 return
             elif plan.status == "failed":

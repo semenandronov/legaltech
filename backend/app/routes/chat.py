@@ -1038,13 +1038,21 @@ async def approve_plan(
                         
                         # Final save of all execution steps (in case callback missed any)
                         execution_steps = results.get("execution_steps", [])
+                        plan_data = plan.plan_data
+                        if not isinstance(plan_data, dict):
+                            plan_data = {}
+                        
                         if execution_steps:
-                            plan_data = plan.plan_data
-                            if not isinstance(plan_data, dict):
-                                plan_data = {}
                             plan_data["execution_steps"] = execution_steps
-                            plan.plan_data = plan_data
-                            background_db.commit()
+                        
+                        # Save table_results and delivery_result for table_created events
+                        if results.get("tables"):
+                            plan_data["table_results"] = results.get("tables")
+                        if results.get("delivery"):
+                            plan_data["delivery_result"] = results.get("delivery")
+                        
+                        plan.plan_data = plan_data
+                        background_db.commit()
                     else:
                         # Legacy approach
                         logger.warning(f"Agents not enabled, using legacy analysis")

@@ -65,15 +65,27 @@ export interface TabularReview {
 export interface TabularColumn {
   id: string
   column_label: string
-  column_type: 'text' | 'date' | 'currency' | 'number' | 'yes_no' | 'tags' | 'verbatim'
+  column_type: 'text' | 'bulleted_list' | 'number' | 'currency' | 'yes_no' | 'date' | 'tag' | 'multiple_tags' | 'verbatim' | 'manual_input'
   prompt: string
+  column_config?: {
+    options?: Array<{ label: string; color: string }>
+    allow_custom?: boolean
+  }
+  is_pinned?: boolean
   order_index: number
+}
+
+export interface SourceReference {
+  page?: number | null
+  section?: string | null
+  text: string
 }
 
 export interface TabularCell {
   cell_value: string | null
   verbatim_extract?: string | null
   reasoning?: string | null
+  source_references?: SourceReference[]
   confidence_score?: number | null
   source_page?: number | null
   source_section?: string | null
@@ -105,6 +117,7 @@ export interface CellDetails {
   cell_value: string | null
   verbatim_extract?: string | null
   reasoning?: string | null
+  source_references?: SourceReference[]
   confidence_score?: number | null
   source_page?: number | null
   source_section?: string | null
@@ -190,13 +203,18 @@ export const tabularReviewApi = {
     reviewId: string,
     columnLabel: string,
     columnType: string,
-    prompt: string
+    prompt: string,
+    columnConfig?: {
+      options?: Array<{ label: string; color: string }>
+      allow_custom?: boolean
+    }
   ): Promise<TabularColumn> {
     try {
       const response = await apiClient.post(`/api/tabular-review/${reviewId}/columns`, {
         column_label: columnLabel,
         column_type: columnType,
         prompt,
+        column_config: columnConfig,
       })
       return response.data
     } catch (error) {
