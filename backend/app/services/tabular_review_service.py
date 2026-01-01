@@ -299,11 +299,11 @@ class TabularReviewService:
                 # Use structured output if LLM supports it
                 if hasattr(self.llm, 'with_structured_output'):
                     structured_llm = self.llm.with_structured_output(ExtractionResponse)
-            from langchain_core.messages import SystemMessage, HumanMessage
-            messages = [
-                SystemMessage(content=system_prompt),
-                HumanMessage(content=user_prompt)
-            ]
+                    from langchain_core.messages import SystemMessage, HumanMessage
+                    messages = [
+                        SystemMessage(content=system_prompt),
+                        HumanMessage(content=user_prompt)
+                    ]
                     result = await structured_llm.ainvoke(messages)
                     
                     cell_value = result.cell_value
@@ -317,7 +317,7 @@ class TabularReviewService:
                         SystemMessage(content=system_prompt),
                         HumanMessage(content=user_prompt)
                     ]
-            response = await self.llm.ainvoke(messages)
+                    response = await self.llm.ainvoke(messages)
                     response_text = response.content.strip() if hasattr(response, 'content') else str(response).strip()
                     
                     # Try to parse JSON from response
@@ -351,7 +351,7 @@ class TabularReviewService:
                     HumanMessage(content=user_prompt)
                 ]
                 response = await self.llm.ainvoke(messages)
-            cell_value = response.content.strip() if hasattr(response, 'content') else str(response).strip()
+                cell_value = response.content.strip() if hasattr(response, 'content') else str(response).strip()
                 reasoning = f"Извлечено из документа '{file.filename}' на основе вопроса: {column.prompt}"
                 source_references = []
                 confidence = 0.85
@@ -794,10 +794,10 @@ class TabularReviewService:
                             existing_cell.source_page = first_ref.get("page")
                             existing_cell.source_section = first_ref.get("section")
                     else:
-                    existing_cell.source_page = result.get("source_page")
-                    existing_cell.source_section = result.get("source_section")
-                    existing_cell.status = "completed"
-                    existing_cell.updated_at = datetime.utcnow()
+                        existing_cell.source_page = result.get("source_page")
+                        existing_cell.source_section = result.get("source_section")
+                        existing_cell.status = "completed"
+                        existing_cell.updated_at = datetime.utcnow()
                 else:
                     # Extract source_page from first source_reference if available
                     source_refs = result.get("source_references", [])
