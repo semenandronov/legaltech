@@ -344,6 +344,27 @@ def init_db():
     
     ensure_schema()
     
+    # Apply tabular_columns migration if needed
+    try:
+        from sqlalchemy import text, inspect as sql_inspect
+        inspector = sql_inspect(engine)
+        if "tabular_columns" in inspector.get_table_names():
+            columns = [col['name'] for col in inspector.get_columns("tabular_columns")]
+            if "column_config" not in columns:
+                logger.info("Applying migration: adding column_config and is_pinned to tabular_columns")
+                with engine.begin() as conn:
+                    conn.execute(text("ALTER TABLE tabular_columns ADD COLUMN IF NOT EXISTS column_config JSONB"))
+                    conn.execute(text("ALTER TABLE tabular_columns ADD COLUMN IF NOT EXISTS is_pinned BOOLEAN DEFAULT FALSE"))
+                    conn.execute(text("CREATE INDEX IF NOT EXISTS idx_tabular_columns_is_pinned ON tabular_columns(is_pinned) WHERE is_pinned = TRUE"))
+                logger.info("✅ Migration applied: column_config and is_pinned added to tabular_columns")
+            if "source_references" not in [col['name'] for col in inspector.get_columns("tabular_cells")]:
+                logger.info("Applying migration: adding source_references to tabular_cells")
+                with engine.begin() as conn:
+                    conn.execute(text("ALTER TABLE tabular_cells ADD COLUMN IF NOT EXISTS source_references JSONB"))
+                logger.info("✅ Migration applied: source_references added to tabular_cells")
+    except Exception as e:
+        logger.warning(f"Could not apply tabular_columns migration: {e}", exc_info=True)
+    
     # Setup LangGraph checkpointer tables
     try:
         from app.utils.checkpointer_setup import setup_checkpointer

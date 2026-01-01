@@ -113,5 +113,10 @@ def create_table_tool(
             
     except Exception as e:
         logger.error(f"Error creating table for {analysis_type}: {e}", exc_info=True)
+        # Rollback session to clear error state
+        try:
+            _db_session.rollback()
+        except Exception as rollback_error:
+            logger.warning(f"Error rolling back session: {rollback_error}")
         return f"Error creating table: {str(e)}"
 
