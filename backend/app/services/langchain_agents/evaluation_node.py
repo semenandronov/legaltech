@@ -489,7 +489,7 @@ def evaluation_node(
     
     # Evaluate the step
     try:
-    step_evaluation = evaluator.evaluate_step_result(
+        step_evaluation = evaluator.evaluate_step_result(
         step_id=current_step_id,
         agent_name=agent_name,
         result=result
