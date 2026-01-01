@@ -1046,10 +1046,18 @@ async def approve_plan(
                             plan_data["execution_steps"] = execution_steps
                         
                         # Save table_results and delivery_result for table_created events
-                        if results.get("tables"):
+                        # Extract tables from delivery_result if available
+                        delivery_result = results.get("delivery", {})
+                        if delivery_result:
+                            plan_data["delivery_result"] = delivery_result
+                            # Also save tables separately for easier access
+                            if delivery_result.get("tables"):
+                                plan_data["table_results"] = delivery_result.get("tables")
+                                logger.info(f"Saved {len(delivery_result.get('tables', {}))} table results to plan_data")
+                        elif results.get("tables"):
+                            # Fallback: save tables directly if delivery_result not available
                             plan_data["table_results"] = results.get("tables")
-                        if results.get("delivery"):
-                            plan_data["delivery_result"] = results.get("delivery")
+                            logger.info(f"Saved {len(results.get('tables', {}))} table results to plan_data (fallback)")
                         
                         plan.plan_data = plan_data
                         background_db.commit()
