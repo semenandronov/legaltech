@@ -44,49 +44,79 @@ def _create_checkpointer_with_pooling():
     )
     
     # Create PostgresSaver with connection string
-    # IMPORTANT: PostgresSaver does NOT accept SQLAlchemy Engine directly
-    # It only accepts connection string via from_conn_string() method
-    # NOTE: from_conn_string() should return PostgresSaver directly, not a context manager
+    # IMPORTANT: In langgraph-checkpoint-postgres 3.0.2, from_conn_string() returns a context manager
+    # We need to use the direct constructor PostgresSaver(connection_string) for long-lived instances
+    # #region agent log
+    import json
+    import os
+    log_path = "/Users/semyon_andronov04/Desktop/C ДВ/.cursor/debug.log"
+    def log_debug(location, message, data, hypothesis_id="A"):
+        try:
+            log_entry = {
+                "sessionId": "debug-session",
+                "runId": "run1",
+                "hypothesisId": hypothesis_id,
+                "location": location,
+                "message": message,
+                "data": data,
+                "timestamp": int(__import__("time").time() * 1000)
+            }
+            with open(log_path, "a", encoding="utf-8") as f:
+                f.write(json.dumps(log_entry, ensure_ascii=False) + "\n")
+        except:
+            pass
+    # #endregion
+    
     try:
-        if hasattr(PostgresSaver, 'from_conn_string'):
-            result = PostgresSaver.from_conn_string(db_url)
-            logger.debug(f"PostgresSaver.from_conn_string() returned: {type(result)}")
+        # HYPOTHESIS A: Direct constructor PostgresSaver(connection_string) exists and works for long-lived instances
+        # HYPOTHESIS B: from_conn_string() returns context manager that must be kept alive
+        # HYPOTHESIS C: Need to use a different method or pattern
+        
+        # Try direct constructor first (preferred for long-lived instances)
+        log_debug("checkpointer_setup.py:52", "Attempting direct PostgresSaver constructor", {"db_url_prefix": db_url[:30] + "..."}, "A")
+        try:
+            # Check if PostgresSaver has __init__ that accepts connection string
+            import inspect
+            init_sig = inspect.signature(PostgresSaver.__init__)
+            log_debug("checkpointer_setup.py:58", "PostgresSaver.__init__ signature", {"params": list(init_sig.parameters.keys())}, "A")
             
-            # Check if result is a context manager
-            from contextlib import _GeneratorContextManager
-            if isinstance(result, _GeneratorContextManager):
-                # from_conn_string() returned a context manager - this is unexpected
-                # The context manager is typically used for setup, but we need the actual PostgresSaver
-                logger.error("❌ PostgresSaver.from_conn_string() returned context manager - this will cause connection issues")
-                logger.error("   Context managers should only be used for setup, not for long-lived checkpointer")
-                # Try to enter the context to get PostgresSaver
-                # IMPORTANT: We need to keep the context manager alive to prevent connection closure
-                # Store both the context manager and the PostgresSaver instance
-                try:
-                    checkpointer = result.__enter__()
-                    logger.warning("⚠️ Entered context manager to get PostgresSaver - connection may close unexpectedly")
-                    # Store reference to context manager as class attribute to prevent garbage collection
-                    # This is critical: if context manager is garbage collected, connection will close
-                    if not hasattr(checkpointer, '_context_manager_ref'):
-                        checkpointer._context_manager_ref = result
-                    # Also store in a module-level variable to ensure it's never garbage collected
-                    import sys
-                    if not hasattr(sys.modules[__name__], '_active_context_managers'):
-                        sys.modules[__name__]._active_context_managers = []
-                    sys.modules[__name__]._active_context_managers.append(result)
-                    logger.info("✅ Stored context manager reference to prevent connection closure")
-                except Exception as enter_error:
-                    logger.error(f"Failed to enter context manager: {enter_error}")
-                    raise ValueError("Cannot create PostgresSaver from context manager")
-            else:
-                # from_conn_string() returned PostgresSaver directly - this is the expected case
-                checkpointer = result
-                logger.debug("✅ Created PostgresSaver with from_conn_string (direct)")
-        else:
-            # No from_conn_string method, try direct constructor with connection string
+            # Try direct constructor - this should work for long-lived instances
             checkpointer = PostgresSaver(db_url)
-            logger.debug("✅ Created PostgresSaver with connection string directly")
+            log_debug("checkpointer_setup.py:62", "Direct constructor succeeded", {"type": type(checkpointer).__name__}, "A")
+            logger.info("✅ Created PostgresSaver using direct constructor (preferred for long-lived instances)")
+        except (TypeError, ValueError) as direct_error:
+            log_debug("checkpointer_setup.py:66", "Direct constructor failed", {"error": str(direct_error)}, "A")
+            logger.debug(f"Direct constructor not available: {direct_error}, trying from_conn_string()")
+            
+            # Fallback to from_conn_string() if direct constructor doesn't work
+            if hasattr(PostgresSaver, 'from_conn_string'):
+                log_debug("checkpointer_setup.py:70", "Trying from_conn_string()", {}, "B")
+                result = PostgresSaver.from_conn_string(db_url)
+                log_debug("checkpointer_setup.py:72", "from_conn_string() result", {"type": type(result).__name__, "has_enter": hasattr(result, "__enter__"), "has_exit": hasattr(result, "__exit__")}, "B")
+                
+                # Check if result is a context manager
+                from contextlib import _GeneratorContextManager
+                from collections.abc import ContextManager
+                is_context_manager = isinstance(result, (_GeneratorContextManager, ContextManager)) or (hasattr(result, "__enter__") and hasattr(result, "__exit__"))
+                
+                if is_context_manager:
+                    log_debug("checkpointer_setup.py:78", "from_conn_string() returned context manager", {"type": type(result).__name__}, "B")
+                    logger.warning("⚠️ PostgresSaver.from_conn_string() returned context manager - using direct constructor instead")
+                    # Don't use context manager for long-lived checkpointer - use direct constructor
+                    # If direct constructor failed, this is a problem
+                    raise ValueError(
+                        "PostgresSaver.from_conn_string() returns context manager which is not suitable "
+                        "for long-lived checkpointer. Please use PostgresSaver(connection_string) directly."
+                    )
+                else:
+                    # from_conn_string() returned PostgresSaver directly - this is fine
+                    checkpointer = result
+                    log_debug("checkpointer_setup.py:88", "from_conn_string() returned PostgresSaver directly", {"type": type(checkpointer).__name__}, "B")
+                    logger.debug("✅ Created PostgresSaver with from_conn_string (direct)")
+            else:
+                raise ValueError("PostgresSaver has neither direct constructor nor from_conn_string() method")
     except Exception as create_error:
+        log_debug("checkpointer_setup.py:95", "Failed to create PostgresSaver", {"error": str(create_error), "error_type": type(create_error).__name__}, "C")
         logger.error(f"Failed to create PostgresSaver: {create_error}", exc_info=True)
         raise ValueError(f"Cannot create PostgresSaver: {create_error}")
     

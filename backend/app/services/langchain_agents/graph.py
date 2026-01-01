@@ -684,27 +684,28 @@ def create_analysis_graph(
             elif db_url.startswith("postgresql+psycopg2://"):
                 db_url = db_url.replace("postgresql+psycopg2://", "postgresql://", 1)
             
-            result = PostgresSaver.from_conn_string(db_url)
-            
-            # Check if result is a context manager
-            from contextlib import _GeneratorContextManager
-            if isinstance(result, _GeneratorContextManager):
-                # from_conn_string() returned a context manager
-                # Enter it to get the actual PostgresSaver
-                logger.warning("⚠️ PostgresSaver.from_conn_string() returned context manager in fallback")
-                checkpointer = result.__enter__()
-                # Store reference to context manager to prevent garbage collection
-                # This is critical: if context manager is garbage collected, connection will close
-                if not hasattr(checkpointer, '_context_manager_ref'):
-                    checkpointer._context_manager_ref = result
-                # Also store in a module-level variable to ensure it's never garbage collected
-                import sys
-                if not hasattr(sys.modules[__name__], '_active_context_managers'):
-                    sys.modules[__name__]._active_context_managers = []
-                sys.modules[__name__]._active_context_managers.append(result)
-                logger.info("✅ Stored context manager reference to prevent connection closure")
-            else:
-                checkpointer = result
+            # Use direct constructor for long-lived checkpointer (preferred)
+            try:
+                checkpointer = PostgresSaver(db_url)
+                logger.info("✅ Created PostgresSaver using direct constructor (fallback)")
+            except (TypeError, ValueError):
+                # If direct constructor doesn't work, try from_conn_string()
+                result = PostgresSaver.from_conn_string(db_url)
+                
+                # Check if result is a context manager
+                from contextlib import _GeneratorContextManager
+                from collections.abc import ContextManager
+                is_context_manager = isinstance(result, (_GeneratorContextManager, ContextManager)) or (hasattr(result, "__enter__") and hasattr(result, "__exit__"))
+                
+                if is_context_manager:
+                    logger.error("❌ PostgresSaver.from_conn_string() returned context manager - not suitable for long-lived checkpointer")
+                    raise ValueError(
+                        "PostgresSaver.from_conn_string() returns context manager which is not suitable "
+                        "for long-lived checkpointer. Please use PostgresSaver(connection_string) directly."
+                    )
+                else:
+                    checkpointer = result
+                    logger.info("✅ Created PostgresSaver with from_conn_string (fallback)")
             
             # Setup tables if they don't exist (idempotent)
             try:
