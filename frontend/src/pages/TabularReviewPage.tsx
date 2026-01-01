@@ -48,6 +48,7 @@ const TabularReviewPage: React.FC = () => {
     columnLabel: string
   } | null>(null)
   const [cellDetails, setCellDetails] = useState<any>(null)
+  const [loadingCellDetails, setLoadingCellDetails] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const loadingRef = useRef(false)
   
@@ -608,7 +609,7 @@ const TabularReviewPage: React.FC = () => {
                   onCellClick={async (fileId, cellData) => {
                     // Find file type and name from table data
                     const row = tableData.rows.find(r => r.file_id === fileId)
-                    const _column = tableData.columns.find(() => {
+                    const column = tableData.columns.find(() => {
                       // Try to find column by matching cell data or use first column
                       return true
                     })
