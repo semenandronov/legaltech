@@ -31,6 +31,7 @@ import {
   Typography,
   IconButton,
   Link,
+  Chip,
 } from '@mui/material'
 import {
   SwapVert as ArrowUpDownIcon,
@@ -65,6 +66,7 @@ interface TabularReviewTableProps {
     sourceSection?: string | null
     columnType?: string
     highlightMode?: 'verbatim' | 'page' | 'none'
+    sourceReferences?: Array<{ page?: number | null; section?: string | null; text: string }>
   }) => void
   onRemoveDocument?: (fileId: string) => void
   onRunColumn?: (columnId: string) => void

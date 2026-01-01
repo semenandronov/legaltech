@@ -2,7 +2,6 @@ import React, { useState, useEffect } from "react"
 import PDFViewer from "../Documents/PDFViewer"
 import { TextHighlighter } from "./TextHighlighter"
 import { Card } from "../UI/Card"
-import { Badge } from "../UI/Badge"
 import { FileText, AlertCircle, Download, Printer, Info, Search, X } from "lucide-react"
 import Spinner from "../UI/Spinner"
 import {
@@ -10,7 +9,6 @@ import {
   Tabs,
   Tab,
   IconButton,
-  Button,
   TextField,
   InputAdornment,
   Menu,
@@ -220,7 +218,7 @@ export const TabularDocumentViewer: React.FC<TabularDocumentViewerProps> = ({
             scrollButtons="auto"
             sx={{ borderBottom: 1, borderColor: "divider" }}
           >
-            {documentTabs.map((doc, idx) => (
+            {documentTabs.map((doc) => (
               <Tab
                 key={doc.fileId}
                 label={doc.fileName}

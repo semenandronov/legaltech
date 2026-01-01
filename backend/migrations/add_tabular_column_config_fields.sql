@@ -23,3 +23,4 @@ COMMENT ON COLUMN tabular_columns.is_pinned IS 'Whether the column is pinned (al
 COMMENT ON COLUMN tabular_cells.source_references IS 'Source references for reasoning: [{page: int, section: str, text: str}]';
 
 
+

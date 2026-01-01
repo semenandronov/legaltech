@@ -7,7 +7,6 @@ import {
   IconButton,
   Stack,
   Chip,
-  Divider,
   Button,
   Paper,
 } from "@mui/material"
@@ -253,5 +252,6 @@ export const CellDetailPanel: React.FC<CellDetailPanelProps> = ({
     </Box>
   )
 }
+
 
 

@@ -37,8 +37,8 @@ interface ColumnHeaderMenuProps {
 }
 
 export const ColumnHeaderMenu: React.FC<ColumnHeaderMenuProps> = ({
-  columnId,
-  columnLabel,
+  columnId: _columnId,
+  columnLabel: _columnLabel,
   isPinned = false,
   sortDirection,
   onEdit,
