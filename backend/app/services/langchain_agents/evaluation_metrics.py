@@ -144,7 +144,7 @@ class EvaluationMetrics:
             # Check if facts have sources
             facts_with_sources = sum(
                 1 for f in facts
-                if isinstance(f, dict) and f.get("source") or f.get("source_document")
+                if isinstance(f, dict) and (f.get("source") or f.get("source_document"))
             )
             
             return facts_with_sources / len(facts) if facts else 0.0

@@ -102,7 +102,15 @@ class AdaptationEngine:
             Updated state with adapted plan
         """
         new_state = dict(state)
-        current_plan = list(state.get("current_plan", []))
+        plan_data = state.get("current_plan", [])
+        
+        # Handle case where current_plan might be a dict with 'steps' key
+        if isinstance(plan_data, dict):
+            current_plan = plan_data.get("steps", [])
+        elif isinstance(plan_data, list):
+            current_plan = plan_data
+        else:
+            current_plan = []
         
         if not current_plan:
             logger.info("[Adaptation] No plan to adapt")

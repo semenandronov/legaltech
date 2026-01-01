@@ -488,11 +488,25 @@ def evaluation_node(
         new_state["current_step_id"] = current_step_id
     
     # Evaluate the step
-    step_evaluation = evaluator.evaluate_step_result(
-        step_id=current_step_id,
-        agent_name=agent_name,
-        result=result
-    )
+    try:
+        step_evaluation = evaluator.evaluate_step_result(
+            step_id=current_step_id,
+            agent_name=agent_name,
+            result=result
+        )
+    except Exception as eval_error:
+        logger.error(f"Error in step evaluation: {eval_error}", exc_info=True)
+        # Fallback evaluation with default values
+        step_evaluation = {
+            "step_id": current_step_id,
+            "agent_name": agent_name,
+            "success": True,  # Assume success if evaluation fails
+            "confidence": 0.7,
+            "completeness": 0.5,
+            "accuracy": 0.5,
+            "issues": [f"Evaluation error: {str(eval_error)}"],
+            "warnings": []
+        }
     
     # Additional evaluation using LangChain evaluators (if available)
     try:

@@ -240,7 +240,18 @@ class ReplanningAgent:
         """Creates plan to retry with modified parameters"""
         new_steps = []
         
-        for step in current_plan:
+        # Handle case where current_plan might be a dict with 'steps' key
+        if isinstance(current_plan, dict):
+            steps = current_plan.get("steps", [])
+        elif isinstance(current_plan, list):
+            steps = current_plan
+        else:
+            steps = []
+        
+        for step in steps:
+            # Skip non-dict items (like string keys from dict iteration)
+            if not isinstance(step, dict):
+                continue
             if step.get("agent_name") == affected_agent and step.get("status") == PlanStepStatus.FAILED.value:
                 # Modify step for retry
                 retry_step = dict(step)
