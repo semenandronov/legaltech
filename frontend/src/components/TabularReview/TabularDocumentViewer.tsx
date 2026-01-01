@@ -302,21 +302,21 @@ export const TabularDocumentViewer: React.FC<TabularDocumentViewerProps> = ({
         {fileType === "pdf" ? (
           <Box sx={{ position: "relative", height: "100%" }}>
             {currentFileId && (
-              <PDFViewer
+            <PDFViewer
                 fileId={currentFileId}
-                caseId={caseId}
+              caseId={caseId}
                 filename={activeDoc?.fileName || ""}
-                initialPage={
-                  highlightMode === "page" && cellData?.sourcePage
-                    ? cellData.sourcePage
-                    : highlightMode === "verbatim" && cellData?.sourcePage
-                    ? cellData.sourcePage
+              initialPage={
+                highlightMode === "page" && cellData?.sourcePage
+                  ? cellData.sourcePage
+                  : highlightMode === "verbatim" && cellData?.sourcePage
+                  ? cellData.sourcePage
                     : cellData?.sourceReferences?.[0]?.page || undefined
-                }
-                onError={(err) => {
-                  setError(err.message || "Ошибка при загрузке PDF")
-                }}
-              />
+              }
+              onError={(err) => {
+                setError(err.message || "Ошибка при загрузке PDF")
+              }}
+            />
             )}
             {/* Source references indicators */}
             {cellData?.sourceReferences && cellData.sourceReferences.length > 0 && (

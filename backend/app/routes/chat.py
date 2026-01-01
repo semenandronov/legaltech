@@ -1116,8 +1116,9 @@ async def approve_plan(
                                    f"has_table_results={bool(plan_data.get('table_results'))}, "
                                    f"has_delivery_result={bool(plan_data.get('delivery_result'))}")
                         
-                        # plan_data is already a reference to plan.plan_data, so changes are tracked
-                        # But we still need flag_modified for JSON fields
+                        # CRITICAL: Explicitly reassign plan.plan_data to ensure SQLAlchemy tracks the change
+                        # Even though plan_data is a reference, SQLAlchemy needs explicit reassignment for JSON fields
+                        plan.plan_data = plan_data
                         flag_modified(plan, "plan_data")
                         background_db.flush()  # Ensure changes are processed before commit
                         background_db.commit()

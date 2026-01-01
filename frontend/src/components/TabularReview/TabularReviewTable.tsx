@@ -561,24 +561,24 @@ export const TabularReviewTable = React.memo(({ reviewId, tableData, onCellClick
         return (
           <Box
             sx={{
-              cursor: cellValue !== "-" ? 'pointer' : 'default',
-              py: 1,
+                cursor: cellValue !== "-" ? 'pointer' : 'default',
+                py: 1,
               px: 1,
-              minHeight: 40,
+                minHeight: 40,
               display: 'flex',
               alignItems: 'center',
               transition: (theme) => theme.transitions.create(['background-color', 'transform'], {
                 duration: theme.transitions.duration.shorter,
               }),
-              '&:hover': cellValue !== "-" ? {
+                '&:hover': cellValue !== "-" ? {
                 bgcolor: 'action.hover',
                 transform: 'translateX(2px)',
-              } : {},
+                } : {},
               position: 'relative',
             }}
             onClick={async () => {
-              if (cellValue === "-") return
-              
+                if (cellValue === "-") return
+                
               setSelectedCell({
                 fileId: row.original.file_id,
                 columnId: col.id,
@@ -649,17 +649,17 @@ export const TabularReviewTable = React.memo(({ reviewId, tableData, onCellClick
             {isTagType ? (
               <TagCell value={cellValue} column={col} />
             ) : (
-              <Typography
-                variant="body2"
-                sx={{
-                  flex: 1,
-                  fontStyle: cellValue === "-" ? 'italic' : 'normal',
+                <Typography
+                  variant="body2"
+                  sx={{
+                    flex: 1,
+                    fontStyle: cellValue === "-" ? 'italic' : 'normal',
                   color: cellValue === "-" ? '#6B7280' : '#1F2937',
                   whiteSpace: col.column_type === "bulleted_list" ? "pre-line" : "normal",
-                }}
-              >
-                {cellValue === "-" ? "—" : cellValue}
-              </Typography>
+                  }}
+                >
+                  {cellValue === "-" ? "—" : cellValue}
+                </Typography>
             )}
             
             {/* Status badge */}

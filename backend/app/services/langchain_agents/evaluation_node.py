@@ -489,11 +489,11 @@ def evaluation_node(
     
     # Evaluate the step
     try:
-        step_evaluation = evaluator.evaluate_step_result(
-            step_id=current_step_id,
-            agent_name=agent_name,
-            result=result
-        )
+    step_evaluation = evaluator.evaluate_step_result(
+        step_id=current_step_id,
+        agent_name=agent_name,
+        result=result
+    )
     except Exception as eval_error:
         logger.error(f"Error in step evaluation: {eval_error}", exc_info=True)
         # Fallback evaluation with default values

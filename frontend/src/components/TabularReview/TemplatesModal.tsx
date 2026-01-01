@@ -198,7 +198,7 @@ export const TemplatesModal: React.FC<TemplatesModalProps> = ({
                 toast.info("Создание нового шаблона будет реализовано позже")
               }}
               sx={{ justifyContent: 'flex-start', mb: 1 }}
-            >
+          >
               + New template
             </Button>
             
