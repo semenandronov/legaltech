@@ -1076,7 +1076,8 @@ async def approve_plan(
                         
                         plan.plan_data = plan_data
                         background_db.commit()
-                        background_db.refresh(plan)  # Refresh to ensure data is persisted
+                        # Re-query plan to ensure we have the latest data (refresh fails if plan is not in session)
+                        plan = background_db.query(AnalysisPlan).filter(AnalysisPlan.id == plan.id).first()
                         # #region agent log
                         logger.info(f"[DEBUG-HYP-A] chat.py: plan_data committed to DB, "
                                    f"plan_id={plan.id if plan else None}, "

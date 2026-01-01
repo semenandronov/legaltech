@@ -686,7 +686,7 @@ class AgentCoordinator:
             else:
                 # Legacy format (backward compatibility)
                 logger.info(f"[Coordinator] Using legacy result format for case {case_id}")
-            results = {
+                results = {
                 "case_id": case_id,
                 "timeline": final_state.get("timeline_result") if final_state else None,
                 "key_facts": final_state.get("key_facts_result") if final_state else None,
