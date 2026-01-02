@@ -205,22 +205,22 @@ async def upload_files(
                 # #region debug log
                 try:
                     with open(debug_log_path, "a", encoding="utf-8") as f:
-                    f.write(json.dumps({
-                        "sessionId": "debug-session",
-                        "runId": "run1",
-                        "hypothesisId": "A",
-                        "location": "upload.py:195",
-                        "message": "Classification result received",
-                        "data": {
-                            "filename": filename,
-                            "doc_type": classification_result.get("doc_type"),
-                            "confidence": classification_result.get("confidence"),
-                            "needs_human_review": classification_result.get("needs_human_review"),
-                            "classifier": classification_result.get("classifier"),
-                            "reasoning": classification_result.get("reasoning", "")[:200]
-                        },
-                        "timestamp": int(__import__("time").time() * 1000)
-                    }, ensure_ascii=False) + "\n")
+                        f.write(json.dumps({
+                            "sessionId": "debug-session",
+                            "runId": "run1",
+                            "hypothesisId": "A",
+                            "location": "upload.py:195",
+                            "message": "Classification result received",
+                            "data": {
+                                "filename": filename,
+                                "doc_type": classification_result.get("doc_type"),
+                                "confidence": classification_result.get("confidence"),
+                                "needs_human_review": classification_result.get("needs_human_review"),
+                                "classifier": classification_result.get("classifier"),
+                                "reasoning": classification_result.get("reasoning", "")[:200]
+                            },
+                            "timestamp": int(__import__("time").time() * 1000)
+                        }, ensure_ascii=False) + "\n")
                 except Exception:
                     pass
                 # #endregion
@@ -236,19 +236,21 @@ async def upload_files(
                 # #region debug log
                 try:
                     with open(debug_log_path, "a", encoding="utf-8") as f:
-                    f.write(json.dumps({
-                        "sessionId": "debug-session",
-                        "runId": "run1",
-                        "hypothesisId": "B",
-                        "location": "upload.py:220",
-                        "message": "Classification error",
-                        "data": {
-                            "filename": filename,
-                            "error": str(e),
-                            "error_type": type(e).__name__
-                        },
-                        "timestamp": int(__import__("time").time() * 1000)
-                    }, ensure_ascii=False) + "\n")
+                        f.write(json.dumps({
+                            "sessionId": "debug-session",
+                            "runId": "run1",
+                            "hypothesisId": "B",
+                            "location": "upload.py:220",
+                            "message": "Classification error",
+                            "data": {
+                                "filename": filename,
+                                "error": str(e),
+                                "error_type": type(e).__name__
+                            },
+                            "timestamp": int(__import__("time").time() * 1000)
+                        }, ensure_ascii=False) + "\n")
+                except Exception:
+                    pass
                 # #endregion
                 
                 logger.warning(f"Error classifying document {filename}: {e}", exc_info=True)
