@@ -21,7 +21,7 @@ def initialize_tools(rag_service: RAGService, document_processor: DocumentProces
 
 
 @tool
-def retrieve_documents_tool(query: str, case_id: str, k: int = 20, use_iterative: bool = False, use_hybrid: bool = False) -> str:
+def retrieve_documents_tool(query: str, case_id: str, k: int = 20, use_iterative: bool = False, use_hybrid: bool = False, doc_types: Optional[List[str]] = None) -> str:
     """
     Retrieve relevant documents from the case using semantic search.
     
@@ -35,6 +35,8 @@ def retrieve_documents_tool(query: str, case_id: str, k: int = 20, use_iterative
         use_iterative: If True, uses iterative search with query refinement (default: False)
         use_hybrid: If True, uses hybrid search (combines semantic + keyword search) (default: False)
                     Recommended for critical agents (risk, discrepancy)
+        doc_types: Optional list of document types to filter by (e.g., ['statement_of_claim', 'contract'])
+                   Use this when the user asks to work with specific document types
     
     Returns:
         Formatted string with retrieved documents and their sources
@@ -51,7 +53,8 @@ def retrieve_documents_tool(query: str, case_id: str, k: int = 20, use_iterative
                 query=query,
                 k=k,
                 retrieval_strategy="hybrid",
-                use_hybrid=True
+                use_hybrid=True,
+                doc_types=doc_types
             )
         # Use iterative search if requested (better for critical agents)
         elif use_iterative:
@@ -61,7 +64,8 @@ def retrieve_documents_tool(query: str, case_id: str, k: int = 20, use_iterative
                 query=query,
                 k=k,
                 retrieval_strategy="iterative",
-                use_iterative=True
+                use_iterative=True,
+                doc_types=doc_types
             )
         else:
             # Retrieve relevant documents with multi_query (better than simple search)
@@ -69,7 +73,8 @@ def retrieve_documents_tool(query: str, case_id: str, k: int = 20, use_iterative
                 case_id=case_id,
                 query=query,
                 k=k,
-                retrieval_strategy="multi_query"
+                retrieval_strategy="multi_query",
+                doc_types=doc_types
             )
         
         if not documents:
@@ -218,7 +223,7 @@ def save_summary_tool(summary_data: str, case_id: str) -> str:
 
 
 @tool
-def retrieve_documents_iterative_tool(query: str, case_id: str, k: int = 20) -> str:
+def retrieve_documents_iterative_tool(query: str, case_id: str, k: int = 20, doc_types: Optional[List[str]] = None) -> str:
     """
     Retrieve relevant documents using iterative search with query refinement.
     
@@ -230,6 +235,8 @@ def retrieve_documents_iterative_tool(query: str, case_id: str, k: int = 20) -> 
         query: Search query describing what information you need
         case_id: Case identifier
         k: Number of document chunks to retrieve (default: 20)
+        doc_types: Optional list of document types to filter by (e.g., ['statement_of_claim', 'contract'])
+                   Use this when the user asks to work with specific document types
     
     Returns:
         Formatted string with retrieved documents and their sources
@@ -245,7 +252,8 @@ def retrieve_documents_iterative_tool(query: str, case_id: str, k: int = 20) -> 
             query=query,
             k=k,
             retrieval_strategy="iterative",
-            use_iterative=True
+            use_iterative=True,
+            doc_types=doc_types
         )
         
         if not documents:

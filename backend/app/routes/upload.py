@@ -590,11 +590,27 @@ async def upload_files(
             filename = file_info["filename"]
             text = file_info["original_text"]
             
+            # Получаем классификацию для этого файла
+            classification = file_info.get("file_classification", {})
+            
+            # Подготавливаем метаданные с классификацией
+            metadata = {
+                "case_id": case_id,
+            }
+            
+            # Добавляем информацию о классификации в метаданные
+            if classification:
+                metadata["doc_type"] = classification.get("doc_type", "other")
+                metadata["classification_confidence"] = classification.get("confidence", 0.0)
+                metadata["is_privileged"] = classification.get("is_privileged", False)
+                metadata["key_topics"] = classification.get("tags", [])
+                metadata["relevance_score"] = classification.get("relevance_score", 0)
+            
             # Split text into chunks with metadata
             file_documents = document_processor.split_documents(
                 text=text,
                 filename=filename,
-                metadata={"case_id": case_id}
+                metadata=metadata
             )
             all_documents.extend(file_documents)
         

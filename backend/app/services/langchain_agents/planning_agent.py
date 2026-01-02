@@ -18,6 +18,71 @@ import logging
 
 logger = logging.getLogger(__name__)
 
+# Маппинг русских названий типов документов на английские коды
+DOC_TYPE_MAPPING = {
+    'исковое заявление': 'statement_of_claim',
+    'исковые заявления': 'statement_of_claim',
+    'исковое': 'statement_of_claim',
+    'договор': 'contract',
+    'договоры': 'contract',
+    'контракт': 'contract',
+    'контракты': 'contract',
+    'решение суда': 'court_decision',
+    'решения суда': 'court_decision',
+    'решение': 'court_decision',
+    'определение': 'court_ruling',
+    'определения': 'court_ruling',
+    'постановление': 'court_resolution',
+    'постановления': 'court_resolution',
+    'судебный приказ': 'court_order',
+    'отзыв на иск': 'response_to_claim',
+    'отзыв': 'response_to_claim',
+    'встречный иск': 'counterclaim',
+    'ходатайство': 'motion',
+    'ходатайства': 'motion',
+    'апелляционная жалоба': 'appeal',
+    'апелляция': 'appeal',
+    'кассационная жалоба': 'cassation',
+    'кассация': 'cassation',
+    'претензия': 'pre_claim',
+    'претензии': 'pre_claim',
+    'доверенность': 'power_of_attorney',
+    'акт': 'act',
+    'акты': 'act',
+    'справка': 'certificate',
+    'справки': 'certificate',
+    'переписка': 'correspondence',
+    'письмо': 'correspondence',
+    'письма': 'correspondence',
+    'протокол': 'protocol',
+    'заключение эксперта': 'expert_opinion',
+    'экспертное заключение': 'expert_opinion',
+    'мировое соглашение': 'settlement_agreement',
+    'заявление о банкротстве': 'bankruptcy_application',
+    'банкротство': 'bankruptcy_application',
+}
+
+
+def extract_doc_types_from_query(query: str) -> List[str]:
+    """Извлекает типы документов из запроса пользователя
+    
+    Args:
+        query: Запрос пользователя на русском языке
+        
+    Returns:
+        Список кодов типов документов (например, ['statement_of_claim', 'contract'])
+    """
+    query_lower = query.lower()
+    found_types = []
+    
+    for russian_name, doc_type in DOC_TYPE_MAPPING.items():
+        if russian_name in query_lower:
+            if doc_type not in found_types:
+                found_types.append(doc_type)
+                logger.info(f"Found document type '{doc_type}' from query: '{russian_name}'")
+    
+    return found_types
+
 
 class PlanningAgent:
     """Agent that converts natural language tasks to analysis plans"""
@@ -305,7 +370,12 @@ class PlanningAgent:
                 except Exception as e:
                     logger.warning(f"Failed to load plans from Store: {e}")
             
-            # ШАГ 1: Автономный анализ документов для понимания контекста
+            # ШАГ 1: Извлечение типов документов из запроса пользователя
+            extracted_doc_types = extract_doc_types_from_query(user_task)
+            if extracted_doc_types:
+                logger.info(f"Extracted document types from query: {extracted_doc_types}")
+            
+            # ШАГ 2: Автономный анализ документов для понимания контекста
             document_analysis = None
             if self.rag_service and self.document_processor:
                 try:
@@ -317,6 +387,12 @@ class PlanningAgent:
             
             # Формируем сообщение для агента с информацией о документах
             task_message = f"Задача пользователя: {user_task}\n\n"
+            
+            # Добавляем информацию о типах документов, если они были извлечены
+            if extracted_doc_types:
+                task_message += f"=== ТИПЫ ДОКУМЕНТОВ ИЗ ЗАПРОСА ===\n"
+                task_message += f"Пользователь просит работать с типами документов: {', '.join(extracted_doc_types)}\n"
+                task_message += f"ВАЖНО: Включи doc_types={extracted_doc_types} в параметры шагов плана, чтобы агенты фильтровали документы по этим типам.\n\n"
             
             # Добавляем результаты автономного анализа документов
             if document_analysis:
@@ -431,6 +507,10 @@ class PlanningAgent:
             
             # Парсим JSON из ответа
             plan = self._parse_agent_response(response_text)
+            
+            # Добавляем doc_types в параметры шагов, если они были извлечены из запроса
+            if extracted_doc_types:
+                plan = self._add_doc_types_to_plan(plan, extracted_doc_types)
             
             # Валидация и добавление зависимостей
             validated_types = self._validate_and_add_dependencies(plan.get("analysis_types", []))
@@ -643,6 +723,37 @@ class PlanningAgent:
         
         logger.debug(f"Dependency resolution: {analysis_types} -> {validated}")
         return validated
+    
+    def _add_doc_types_to_plan(self, plan: Dict[str, Any], doc_types: List[str]) -> Dict[str, Any]:
+        """Добавляет doc_types в параметры шагов плана
+        
+        Args:
+            plan: План анализа
+            doc_types: Список типов документов для фильтрации
+            
+        Returns:
+            План с добавленными doc_types в параметры шагов
+        """
+        # Добавляем doc_types в steps, если они есть
+        if "steps" in plan:
+            for step in plan["steps"]:
+                if "parameters" not in step:
+                    step["parameters"] = {}
+                step["parameters"]["doc_types"] = doc_types
+        
+        # Добавляем doc_types в goals -> subgoals -> steps
+        if "goals" in plan:
+            for goal in plan["goals"]:
+                if "subgoals" in goal:
+                    for subgoal in goal["subgoals"]:
+                        if "steps" in subgoal:
+                            for step in subgoal["steps"]:
+                                if "parameters" not in step:
+                                    step["parameters"] = {}
+                                step["parameters"]["doc_types"] = doc_types
+        
+        logger.info(f"Added doc_types={doc_types} to plan steps")
+        return plan
     
     def _enhance_plan_with_levels(
         self,
