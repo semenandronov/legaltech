@@ -920,7 +920,11 @@ export const TabularReviewTable = React.memo(({ reviewId, tableData, onCellClick
                       <TableRow
                         key={row.id}
                         data-index={virtualRow.index}
-                        ref={virtualRow.measureElement}
+                        ref={(node) => {
+                          if (node) {
+                            virtualizer.measureElement(node)
+                          }
+                        }}
                         sx={{
                           bgcolor: virtualRow.index % 2 === 0 ? '#FFFFFF' : '#F9FAFB',
                           borderBottom: '1px solid #E5E7EB',
