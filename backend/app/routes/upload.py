@@ -177,19 +177,19 @@ async def upload_files(
                 try:
                     os.makedirs(os.path.dirname(debug_log_path), exist_ok=True)
                     with open(debug_log_path, "a", encoding="utf-8") as f:
-                    f.write(json.dumps({
-                        "sessionId": "debug-session",
-                        "runId": "run1",
-                        "hypothesisId": "A",
-                        "location": "upload.py:173",
-                        "message": "Starting classification",
-                        "data": {
-                            "filename": filename,
-                            "text_length": len(text),
-                            "text_preview": text[:200] if text else "empty"
-                        },
-                        "timestamp": int(__import__("time").time() * 1000)
-                    }, ensure_ascii=False) + "\n")
+                        f.write(json.dumps({
+                            "sessionId": "debug-session",
+                            "runId": "run1",
+                            "hypothesisId": "A",
+                            "location": "upload.py:173",
+                            "message": "Starting classification",
+                            "data": {
+                                "filename": filename,
+                                "text_length": len(text),
+                                "text_preview": text[:200] if text else "empty"
+                            },
+                            "timestamp": int(__import__("time").time() * 1000)
+                        }, ensure_ascii=False) + "\n")
                 except Exception:
                     pass  # Ignore debug log errors
                 # #endregion
