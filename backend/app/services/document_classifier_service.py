@@ -65,18 +65,20 @@ class DocumentClassifierService:
         try:
             os.makedirs(os.path.dirname(debug_log_path), exist_ok=True)
             with open(debug_log_path, "a", encoding="utf-8") as f:
-            f.write(json.dumps({
-                "sessionId": "debug-session",
-                "runId": "run1",
-                "hypothesisId": "B",
-                "location": "document_classifier_service.py:59",
-                "message": "Initializing classifiers",
-                "data": {
-                    "has_yandex_key": bool(config.YANDEX_API_KEY or config.YANDEX_IAM_TOKEN),
-                    "has_classifier_id": bool(config.YANDEX_AI_STUDIO_CLASSIFIER_ID)
-                },
-                "timestamp": int(__import__("time").time() * 1000)
-            }, ensure_ascii=False) + "\n")
+                f.write(json.dumps({
+                    "sessionId": "debug-session",
+                    "runId": "run1",
+                    "hypothesisId": "B",
+                    "location": "document_classifier_service.py:59",
+                    "message": "Initializing classifiers",
+                    "data": {
+                        "has_yandex_key": bool(config.YANDEX_API_KEY or config.YANDEX_IAM_TOKEN),
+                        "has_classifier_id": bool(config.YANDEX_AI_STUDIO_CLASSIFIER_ID)
+                    },
+                    "timestamp": int(__import__("time").time() * 1000)
+                }, ensure_ascii=False) + "\n")
+        except Exception:
+            pass  # Ignore debug log errors
         # #endregion
         
         # Пытаемся использовать Yandex AI Studio классификатор
