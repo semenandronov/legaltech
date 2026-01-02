@@ -39,7 +39,11 @@ async def stream_plan_execution(
             await asyncio.sleep(1)  # Poll every second
             poll_count += 1
             
-            # Get plan from database
+            # CRITICAL: Expire all cached objects to force SQLAlchemy to re-read from DB
+            # Without this, the session caches old plan_data and never sees updates from chat.py
+            db.expire_all()
+            
+            # Get plan from database (now will read fresh data after expire_all)
             plan = db.query(AnalysisPlan).filter(AnalysisPlan.id == plan_id).first()
             if not plan:
                 yield f"data: {json.dumps({'type': 'error', 'message': 'Plan not found'}, ensure_ascii=False)}\n\n"
