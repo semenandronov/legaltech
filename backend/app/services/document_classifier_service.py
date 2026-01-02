@@ -6,6 +6,8 @@ from app.services.yandex_classifier import YandexDocumentClassifier
 from app.config import config
 from langchain_core.prompts import ChatPromptTemplate
 import logging
+import json
+import os
 
 logger = logging.getLogger(__name__)
 
@@ -59,8 +61,6 @@ class DocumentClassifierService:
     def _init_classifiers(self):
         """Initialize classifiers (Yandex preferred, GigaChat fallback)"""
         # #region debug log
-        import json
-        import os
         debug_log_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), ".cursor", "debug.log")
         try:
             os.makedirs(os.path.dirname(debug_log_path), exist_ok=True)
@@ -390,12 +390,12 @@ class DocumentClassifierService:
             # Пытаемся использовать structured output
             try:
                 structured_llm = self.llm.with_structured_output(DocumentClassificationModel)
-                from langchain_core.messages import SystemMessage, HumanMessage
-                messages = [
-                    SystemMessage(content=system_prompt),
-                    HumanMessage(content=user_prompt)
-                ]
-                classification = structured_llm.invoke(messages)
+                prompt = ChatPromptTemplate.from_messages([
+                    ("system", system_prompt),
+                    ("human", user_prompt)
+                ])
+                chain = prompt | structured_llm
+                classification = chain.invoke({})
                 
                 # #region debug log
                 try:

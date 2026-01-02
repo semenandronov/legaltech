@@ -136,12 +136,12 @@ class KeyFactModel(BaseModel):
 class DocumentClassificationModel(BaseModel):
     """Model for document classification"""
     doc_type: str = Field(description="Тип документа: письмо, контракт, отчет и т.д.")
-    relevance_score: int = Field(description="Релевантность к делу (0-100)", ge=0, le=100)
-    is_privileged: bool = Field(description="Защищено ли привилегией (предварительная оценка)")
-    privilege_type: str = Field(description="Тип привилегии: attorney-client, work-product, none")
-    key_topics: List[str] = Field(description="Массив основных тем документа")
-    confidence: float = Field(description="Уверенность классификации (0-1)", ge=0.0, le=1.0)
-    reasoning: str = Field(description="Подробное объяснение решения классификации - это критично!")
+    relevance_score: int = Field(description="Релевантность к делу (0-100)", ge=0, le=100, default=0)
+    is_privileged: bool = Field(description="Защищено ли привилегией (предварительная оценка)", default=False)
+    privilege_type: str = Field(description="Тип привилегии: attorney-client, work-product, none", default="none")
+    key_topics: Optional[List[str]] = Field(description="Массив основных тем документа", default_factory=list)
+    confidence: float = Field(description="Уверенность классификации (0-1)", ge=0.0, le=1.0, default=0.5)
+    reasoning: Optional[str] = Field(description="Подробное объяснение решения классификации - это критично!", default="")
 
 
 class EntityModel(BaseModel):
@@ -399,6 +399,12 @@ class ParserService:
             # Handle both dict and single object
             if isinstance(data, list) and len(data) > 0:
                 data = data[0]
+            
+            # Ensure key_topics exists and is a list
+            if "key_topics" not in data or data["key_topics"] is None:
+                data["key_topics"] = []
+            elif not isinstance(data["key_topics"], list):
+                data["key_topics"] = [str(data["key_topics"])] if data["key_topics"] else []
             
             classification = DocumentClassificationModel(**data)
             return classification
