@@ -171,8 +171,6 @@ async def upload_files(
             file_classification = None
             try:
                 # #region debug log
-                import json
-                import os
                 debug_log_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), ".cursor", "debug.log")
                 try:
                     os.makedirs(os.path.dirname(debug_log_path), exist_ok=True)
@@ -459,8 +457,6 @@ async def upload_files(
                 
                 # Сохраняем классификацию документа
                 # #region debug log
-                import json
-                import os
                 debug_log_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), ".cursor", "debug.log")
                 try:
                     os.makedirs(os.path.dirname(debug_log_path), exist_ok=True)
