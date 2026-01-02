@@ -267,7 +267,7 @@ export const AssistantUIChat = ({ caseId, className, initialQuery, onQuerySelect
       setIsLoading(false)
       abortControllerRef.current = null
     }
-  }, [actualCaseId, isLoading, messages])
+  }, [actualCaseId, isLoading, messages, webSearch, databaseSearch, legalResearch, deepThink])
 
   const startPlanExecutionStream = useCallback(async (planId: string, messageId: string) => {
     try {
