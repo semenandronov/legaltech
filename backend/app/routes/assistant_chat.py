@@ -335,9 +335,36 @@ async def stream_chat_response(
                         "sessionId": "debug-session",
                         "runId": "run1",
                         "hypothesisId": "B",
-                        "location": "assistant_chat.py:299",
+                        "location": "assistant_chat.py:348",
                         "message": "Before web_search check",
-                        "data": {"web_search": web_search, "web_search_type": str(type(web_search)), "web_search_bool": bool(web_search)},
+                        "data": {
+                            "web_search": web_search,
+                            "web_search_type": str(type(web_search)),
+                            "web_search_bool": bool(web_search),
+                            "web_search_is_truthy": bool(web_search) if web_search else False,
+                            "question": question[:100]
+                        },
+                        "timestamp": int(__import__('time').time() * 1000)
+                    }, ensure_ascii=False) + '\n')
+            except:
+                pass
+            # #endregion
+            
+            # #region agent log
+            try:
+                with open('/Users/semyon_andronov04/Desktop/C ДВ/.cursor/debug.log', 'a', encoding='utf-8') as f:
+                    f.write(json_module.dumps({
+                        "sessionId": "debug-session",
+                        "runId": "run1",
+                        "hypothesisId": "G",
+                        "location": "assistant_chat.py:353",
+                        "message": "Web search check result",
+                        "data": {
+                            "web_search": web_search,
+                            "web_search_bool": bool(web_search),
+                            "condition_result": bool(web_search),
+                            "question": question[:100]
+                        },
                         "timestamp": int(__import__('time').time() * 1000)
                     }, ensure_ascii=False) + '\n')
             except:
@@ -346,6 +373,21 @@ async def stream_chat_response(
             
             web_search_context = ""
             if web_search:
+                # #region agent log
+                try:
+                    with open('/Users/semyon_andronov04/Desktop/C ДВ/.cursor/debug.log', 'a', encoding='utf-8') as f:
+                        f.write(json_module.dumps({
+                            "sessionId": "debug-session",
+                            "runId": "run1",
+                            "hypothesisId": "C",
+                            "location": "assistant_chat.py:348",
+                            "message": "Web search condition TRUE - entering block",
+                            "data": {"question": question[:100]},
+                            "timestamp": int(__import__('time').time() * 1000)
+                        }, ensure_ascii=False) + '\n')
+                except:
+                    pass
+                # #endregion
                 try:
                     # #region agent log
                     try:
@@ -405,9 +447,24 @@ async def stream_chat_response(
                         
                         web_search_context = "\n".join(web_search_parts)
                         logger.info(f"Web search completed: {len(research_result.sources)} sources found")
-                    else:
-                        logger.warning("Web search returned no results")
-                except Exception as web_search_error:
+            else:
+                logger.warning("Web search returned no results")
+                # #region agent log
+                try:
+                    with open('/Users/semyon_andronov04/Desktop/C ДВ/.cursor/debug.log', 'a', encoding='utf-8') as f:
+                        f.write(json_module.dumps({
+                            "sessionId": "debug-session",
+                            "runId": "run1",
+                            "hypothesisId": "F",
+                            "location": "assistant_chat.py:409",
+                            "message": "Web search returned no results",
+                            "data": {"question": question[:100]},
+                            "timestamp": int(__import__('time').time() * 1000)
+                        }, ensure_ascii=False) + '\n')
+                except:
+                    pass
+                # #endregion
+            except Exception as web_search_error:
                     # #region agent log
                     try:
                         with open('/Users/semyon_andronov04/Desktop/C ДВ/.cursor/debug.log', 'a', encoding='utf-8') as f:
@@ -426,6 +483,26 @@ async def stream_chat_response(
                     
                     logger.warning(f"Web search failed: {web_search_error}, continuing without web search")
                     # Continue without web search - не критичная ошибка
+            else:
+                # #region agent log
+                try:
+                    with open('/Users/semyon_andronov04/Desktop/C ДВ/.cursor/debug.log', 'a', encoding='utf-8') as f:
+                        f.write(json_module.dumps({
+                            "sessionId": "debug-session",
+                            "runId": "run1",
+                            "hypothesisId": "H",
+                            "location": "assistant_chat.py:485",
+                            "message": "Web search condition FALSE - skipping web search",
+                            "data": {
+                                "web_search": web_search,
+                                "web_search_bool": bool(web_search),
+                                "question": question[:100]
+                            },
+                            "timestamp": int(__import__('time').time() * 1000)
+                        }, ensure_ascii=False) + '\n')
+                except:
+                    pass
+                # #endregion
             
             # Create prompt
             web_search_instructions = ""
@@ -551,7 +628,12 @@ async def assistant_chat(
         body = await request.json()
         messages = body.get("messages", [])
         case_id = body.get("case_id") or body.get("caseId")
-        web_search = body.get("web_search", False)
+        web_search_raw = body.get("web_search", False)
+        # Normalize web_search to boolean
+        if isinstance(web_search_raw, str):
+            web_search = web_search_raw.lower() in ("true", "1", "yes")
+        else:
+            web_search = bool(web_search_raw)
         deep_think = body.get("deep_think", False)
         
         # #region agent log
@@ -562,9 +644,17 @@ async def assistant_chat(
                     "sessionId": "debug-session",
                     "runId": "run1",
                     "hypothesisId": "A",
-                    "location": "assistant_chat.py:458",
+                    "location": "assistant_chat.py:554",
                     "message": "Request body parsed",
-                    "data": {"web_search": web_search, "web_search_type": str(type(web_search)), "body_keys": list(body.keys())},
+                    "data": {
+                        "web_search_raw": web_search_raw,
+                        "web_search_raw_type": str(type(web_search_raw)),
+                        "web_search": web_search,
+                        "web_search_type": str(type(web_search)),
+                        "web_search_bool": bool(web_search),
+                        "body_keys": list(body.keys()),
+                        "body_web_search_value": body.get("web_search")
+                    },
                     "timestamp": int(__import__('time').time() * 1000)
                 }, ensure_ascii=False) + '\n')
         except:
