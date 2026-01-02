@@ -216,20 +216,57 @@ const DocumentsPage = () => {
             {filteredDocuments.map((doc, index) => {
               const classification = doc.classification
               const docTypeLabels: Record<string, string> = {
-                'statement_of_claim': 'Исковое заявление',
-                'application': 'Заявление',
-                'response_to_claim': 'Отзыв на иск',
-                'counterclaim': 'Встречный иск',
-                'motion': 'Ходатайство',
-                'appeal': 'Апелляционная жалоба',
-                'cassation': 'Кассационная жалоба',
-                'supervisory_appeal': 'Надзорная жалоба',
-                'protocol_remarks': 'Замечания на протокол',
-                'settlement_agreement': 'Мировое соглашение',
+                // Судебные акты
                 'court_order': 'Судебный приказ',
                 'court_decision': 'Решение',
                 'court_ruling': 'Определение',
                 'court_resolution': 'Постановление',
+                
+                // Инициирующие дело
+                'statement_of_claim': 'Исковое заявление',
+                'order_application': 'Заявление о выдаче судебного приказа',
+                'bankruptcy_application': 'Заявление о признании должника банкротом',
+                
+                // Ответные документы
+                'response_to_claim': 'Отзыв на исковое заявление',
+                'counterclaim': 'Встречный иск',
+                'third_party_application': 'Заявление о вступлении третьего лица в дело',
+                'third_party_objection': 'Возражения третьего лица',
+                
+                // Ходатайства
+                'motion': 'Ходатайство',
+                'motion_evidence': 'Ходатайство о доказательствах',
+                'motion_security': 'Ходатайство об обеспечительных мерах',
+                'motion_cancel_security': 'Ходатайство об отмене обеспечения иска',
+                'motion_recusation': 'Ходатайство об отводе судьи',
+                'motion_reinstatement': 'Ходатайство о восстановлении пропущенного срока',
+                
+                // Обжалование
+                'appeal': 'Апелляционная жалоба',
+                'cassation': 'Кассационная жалоба',
+                'supervisory_appeal': 'Надзорная жалоба',
+                
+                // Специальные производства
+                'arbitral_annulment': 'Заявление об отмене решения третейского суда',
+                'arbitral_enforcement': 'Заявление о выдаче исполнительного листа на решение третейского суда',
+                'creditor_registry': 'Заявление о включении требования в реестр требований кредиторов',
+                'administrative_challenge': 'Заявление об оспаривании ненормативного правового акта',
+                'admin_penalty_challenge': 'Заявление об оспаривании решения административного органа',
+                
+                // Урегулирование
+                'settlement_agreement': 'Мировое соглашение',
+                'protocol_remarks': 'Замечания на протокол судебного заседания',
+                
+                // Досудебные
+                'pre_claim': 'Претензия (досудебное требование)',
+                'written_explanation': 'Письменное объяснение по делу',
+                
+                // Приложения
+                'power_of_attorney': 'Доверенность',
+                'egrul_extract': 'Выписка из ЕГРЮЛ/ЕГРИП',
+                'state_duty': 'Документ об уплате государственной пошлины',
+                
+                // Доказательства - Письменные
                 'contract': 'Договор',
                 'act': 'Акт',
                 'certificate': 'Справка',
@@ -239,22 +276,38 @@ const DocumentsPage = () => {
                 'expert_opinion': 'Заключение эксперта',
                 'specialist_consultation': 'Консультация специалиста',
                 'witness_statement': 'Показания свидетеля',
+                
+                // Доказательства - Мультимедиа
                 'audio_recording': 'Аудиозапись',
                 'video_recording': 'Видеозапись',
                 'physical_evidence': 'Вещественное доказательство',
+                
+                // Прочие
                 'other': 'Другое'
               }
               
               const getDocTypeColor = (docType: string) => {
-                if (['statement_of_claim', 'application', 'response_to_claim', 'counterclaim', 'motion', 'appeal', 'cassation', 'supervisory_appeal', 'protocol_remarks', 'settlement_agreement'].includes(docType)) {
-                  return 'from-blue-500/20 to-blue-600/20 text-blue-600 border-blue-500/30'
-                }
+                // Судебные акты - фиолетовый
                 if (['court_order', 'court_decision', 'court_ruling', 'court_resolution'].includes(docType)) {
                   return 'from-purple-500/20 to-purple-600/20 text-purple-600 border-purple-500/30'
                 }
-                if (['contract', 'act', 'certificate', 'correspondence', 'electronic_document', 'protocol', 'expert_opinion', 'specialist_consultation', 'witness_statement', 'audio_recording', 'video_recording', 'physical_evidence'].includes(docType)) {
+                // Процессуальные документы - синий
+                if (['statement_of_claim', 'order_application', 'bankruptcy_application', 'response_to_claim', 
+                      'counterclaim', 'third_party_application', 'third_party_objection', 'motion', 'motion_evidence', 
+                      'motion_security', 'motion_cancel_security', 'motion_recusation', 'motion_reinstatement',
+                      'appeal', 'cassation', 'supervisory_appeal', 'arbitral_annulment', 'arbitral_enforcement',
+                      'creditor_registry', 'administrative_challenge', 'admin_penalty_challenge', 'settlement_agreement',
+                      'protocol_remarks', 'pre_claim', 'written_explanation', 'power_of_attorney', 'egrul_extract', 
+                      'state_duty'].includes(docType)) {
+                  return 'from-blue-500/20 to-blue-600/20 text-blue-600 border-blue-500/30'
+                }
+                // Доказательства - зеленый
+                if (['contract', 'act', 'certificate', 'correspondence', 'electronic_document', 'protocol', 
+                      'expert_opinion', 'specialist_consultation', 'witness_statement', 'audio_recording', 
+                      'video_recording', 'physical_evidence'].includes(docType)) {
                   return 'from-green-500/20 to-green-600/20 text-green-600 border-green-500/30'
                 }
+                // Прочие - серый
                 return 'from-gray-500/20 to-gray-600/20 text-gray-600 border-gray-500/30'
               }
               

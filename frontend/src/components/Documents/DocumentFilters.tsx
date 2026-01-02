@@ -89,38 +89,99 @@ const DocumentFilters: React.FC<DocumentFiltersProps> = ({
     }
   }
 
-  // Все 26 типов документов, сгруппированные по категориям
+  // Полный набор типов документов арбитражных судов РФ (на основе АПК РФ)
   const docTypesByCategory = {
-    'Процессуальные': [
-      'statement_of_claim', 'application', 'response_to_claim', 'counterclaim', 
-      'motion', 'appeal', 'cassation', 'supervisory_appeal', 'protocol_remarks', 'settlement_agreement'
-    ],
     'Судебные акты': [
       'court_order', 'court_decision', 'court_ruling', 'court_resolution'
     ],
-    'Доказательства': [
+    'Инициирующие дело': [
+      'statement_of_claim', 'order_application', 'bankruptcy_application'
+    ],
+    'Ответные документы': [
+      'response_to_claim', 'counterclaim', 'third_party_application', 'third_party_objection'
+    ],
+    'Ходатайства': [
+      'motion', 'motion_evidence', 'motion_security', 'motion_cancel_security', 
+      'motion_recusation', 'motion_reinstatement'
+    ],
+    'Обжалование': [
+      'appeal', 'cassation', 'supervisory_appeal'
+    ],
+    'Специальные производства': [
+      'arbitral_annulment', 'arbitral_enforcement', 'creditor_registry', 
+      'administrative_challenge', 'admin_penalty_challenge'
+    ],
+    'Урегулирование': [
+      'settlement_agreement', 'protocol_remarks'
+    ],
+    'Досудебные': [
+      'pre_claim', 'written_explanation'
+    ],
+    'Приложения': [
+      'power_of_attorney', 'egrul_extract', 'state_duty'
+    ],
+    'Доказательства - Письменные': [
       'contract', 'act', 'certificate', 'correspondence', 'electronic_document', 
-      'protocol', 'expert_opinion', 'specialist_consultation', 'witness_statement', 
+      'protocol', 'expert_opinion', 'specialist_consultation', 'witness_statement'
+    ],
+    'Доказательства - Мультимедиа': [
       'audio_recording', 'video_recording', 'physical_evidence'
     ],
     'Прочие': ['other']
   }
   
   const docTypeLabels: Record<string, string> = {
-    'statement_of_claim': 'Исковое заявление',
-    'application': 'Заявление',
-    'response_to_claim': 'Отзыв на иск',
-    'counterclaim': 'Встречный иск',
-    'motion': 'Ходатайство',
-    'appeal': 'Апелляционная жалоба',
-    'cassation': 'Кассационная жалоба',
-    'supervisory_appeal': 'Надзорная жалоба',
-    'protocol_remarks': 'Замечания на протокол',
-    'settlement_agreement': 'Мировое соглашение',
+    // Судебные акты
     'court_order': 'Судебный приказ',
     'court_decision': 'Решение',
     'court_ruling': 'Определение',
     'court_resolution': 'Постановление',
+    
+    // Инициирующие дело
+    'statement_of_claim': 'Исковое заявление',
+    'order_application': 'Заявление о выдаче судебного приказа',
+    'bankruptcy_application': 'Заявление о признании должника банкротом',
+    
+    // Ответные документы
+    'response_to_claim': 'Отзыв на исковое заявление',
+    'counterclaim': 'Встречный иск',
+    'third_party_application': 'Заявление о вступлении третьего лица в дело',
+    'third_party_objection': 'Возражения третьего лица',
+    
+    // Ходатайства
+    'motion': 'Ходатайство',
+    'motion_evidence': 'Ходатайство о доказательствах',
+    'motion_security': 'Ходатайство об обеспечительных мерах',
+    'motion_cancel_security': 'Ходатайство об отмене обеспечения иска',
+    'motion_recusation': 'Ходатайство об отводе судьи',
+    'motion_reinstatement': 'Ходатайство о восстановлении пропущенного срока',
+    
+    // Обжалование
+    'appeal': 'Апелляционная жалоба',
+    'cassation': 'Кассационная жалоба',
+    'supervisory_appeal': 'Надзорная жалоба',
+    
+    // Специальные производства
+    'arbitral_annulment': 'Заявление об отмене решения третейского суда',
+    'arbitral_enforcement': 'Заявление о выдаче исполнительного листа на решение третейского суда',
+    'creditor_registry': 'Заявление о включении требования в реестр требований кредиторов',
+    'administrative_challenge': 'Заявление об оспаривании ненормативного правового акта',
+    'admin_penalty_challenge': 'Заявление об оспаривании решения административного органа',
+    
+    // Урегулирование
+    'settlement_agreement': 'Мировое соглашение',
+    'protocol_remarks': 'Замечания на протокол судебного заседания',
+    
+    // Досудебные
+    'pre_claim': 'Претензия (досудебное требование)',
+    'written_explanation': 'Письменное объяснение по делу',
+    
+    // Приложения
+    'power_of_attorney': 'Доверенность',
+    'egrul_extract': 'Выписка из ЕГРЮЛ/ЕГРИП',
+    'state_duty': 'Документ об уплате государственной пошлины',
+    
+    // Доказательства - Письменные
     'contract': 'Договор',
     'act': 'Акт',
     'certificate': 'Справка',
@@ -130,9 +191,13 @@ const DocumentFilters: React.FC<DocumentFiltersProps> = ({
     'expert_opinion': 'Заключение эксперта',
     'specialist_consultation': 'Консультация специалиста',
     'witness_statement': 'Показания свидетеля',
+    
+    // Доказательства - Мультимедиа
     'audio_recording': 'Аудиозапись',
     'video_recording': 'Видеозапись',
     'physical_evidence': 'Вещественное доказательство',
+    
+    // Прочие
     'other': 'Другое'
   }
   
