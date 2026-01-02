@@ -214,10 +214,34 @@ class WebSearchSource(BaseSource):
         Returns:
             List of SourceResult
         """
-        # Build request parameters for Yandex Search API
+        # #region agent log
+        import json as json_module
+        import time
+        try:
+            with open('/Users/semyon_andronov04/Desktop/C ДВ/.cursor/debug.log', 'a', encoding='utf-8') as f:
+                f.write(json_module.dumps({
+                    "sessionId": "debug-session",
+                    "runId": "run1",
+                    "hypothesisId": "D",
+                    "location": "web_search.py:200",
+                    "message": "Starting Yandex Search API request",
+                    "data": {
+                        "query": query[:100],
+                        "max_results": max_results,
+                        "base_url": self.base_url,
+                        "has_api_key": self.api_key is not None,
+                        "has_folder_id": bool(self.folder_id)
+                    },
+                    "timestamp": int(time.time() * 1000)
+                }, ensure_ascii=False) + '\n')
+        except:
+            pass
+        # #endregion
+        
+        # Build request parameters for Yandex Search API (XML format)
+        # Yandex Search API поддерживает как XML, так и REST API
+        # Используем XML API с правильной аутентификацией через заголовки
         params = {
-            "folderid": self.folder_id,
-            "apikey": self.api_key,
             "query": query,
             "l10n": "ru",
             "sortby": "rlv",  # Sort by relevance
@@ -233,26 +257,144 @@ class WebSearchSource(BaseSource):
                 site_query = " | ".join(f"site:{s}" for s in sites)
                 params["query"] = f"({params['query']}) ({site_query})"
         
+        # Правильная аутентификация через заголовки согласно документации
+        headers = {
+            "Authorization": f"Api-Key {self.api_key}",
+            "x-folder-id": self.folder_id,
+        }
+        
         try:
             async with aiohttp.ClientSession() as session:
+                # #region agent log
+                try:
+                    with open('/Users/semyon_andronov04/Desktop/C ДВ/.cursor/debug.log', 'a', encoding='utf-8') as f:
+                        f.write(json_module.dumps({
+                            "sessionId": "debug-session",
+                            "runId": "run1",
+                            "hypothesisId": "D",
+                            "location": "web_search.py:245",
+                            "message": "Sending request to Yandex Search API",
+                            "data": {
+                                "url": self.base_url,
+                                "method": "GET",
+                                "has_headers": bool(headers),
+                                "params_count": len(params)
+                            },
+                            "timestamp": int(time.time() * 1000)
+                        }, ensure_ascii=False) + '\n')
+                except:
+                    pass
+                # #endregion
+                
                 async with session.get(
                     self.base_url,
                     params=params,
+                    headers=headers,
                     timeout=aiohttp.ClientTimeout(total=30)
                 ) as response:
+                    # Читаем ответ один раз
+                    content = await response.text()
+                    
+                    # #region agent log
+                    try:
+                        with open('/Users/semyon_andronov04/Desktop/C ДВ/.cursor/debug.log', 'a', encoding='utf-8') as f:
+                            f.write(json_module.dumps({
+                                "sessionId": "debug-session",
+                                "runId": "run1",
+                                "hypothesisId": "D",
+                                "location": "web_search.py:260",
+                                "message": "Received response from Yandex Search API",
+                                "data": {
+                                    "status": response.status,
+                                    "status_text": response.reason,
+                                    "content_type": response.headers.get("Content-Type", ""),
+                                    "content_length": len(content),
+                                    "response_preview": content[:200]
+                                },
+                                "timestamp": int(time.time() * 1000)
+                            }, ensure_ascii=False) + '\n')
+                    except:
+                        pass
+                    # #endregion
+                    
                     if response.status != 200:
-                        logger.error(f"Yandex Search API error: {response.status}")
+                        logger.error(f"Yandex Search API error: {response.status} - {content[:200]}")
+                        # #region agent log
+                        try:
+                            with open('/Users/semyon_andronov04/Desktop/C ДВ/.cursor/debug.log', 'a', encoding='utf-8') as f:
+                                f.write(json_module.dumps({
+                                    "sessionId": "debug-session",
+                                    "runId": "run1",
+                                    "hypothesisId": "E",
+                                    "location": "web_search.py:275",
+                                    "message": "Yandex Search API returned error status",
+                                    "data": {
+                                        "status": response.status,
+                                        "error_text": content[:500]
+                                    },
+                                    "timestamp": int(time.time() * 1000)
+                                }, ensure_ascii=False) + '\n')
+                        except:
+                            pass
+                        # #endregion
                         return []
                     
                     # Parse XML response
-                    content = await response.text()
+                    # #region agent log
+                    try:
+                        with open('/Users/semyon_andronov04/Desktop/C ДВ/.cursor/debug.log', 'a', encoding='utf-8') as f:
+                            f.write(json_module.dumps({
+                                "sessionId": "debug-session",
+                                "runId": "run1",
+                                "hypothesisId": "D",
+                                "location": "web_search.py:290",
+                                "message": "Parsing XML response",
+                                "data": {
+                                    "content_length": len(content),
+                                    "content_preview": content[:200]
+                                },
+                                "timestamp": int(time.time() * 1000)
+                            }, ensure_ascii=False) + '\n')
+                    except:
+                        pass
+                    # #endregion
                     return self._parse_yandex_response(content)
                     
         except aiohttp.ClientError as e:
             logger.error(f"Yandex Search API connection error: {e}")
+            # #region agent log
+            try:
+                with open('/Users/semyon_andronov04/Desktop/C ДВ/.cursor/debug.log', 'a', encoding='utf-8') as f:
+                    f.write(json_module.dumps({
+                        "sessionId": "debug-session",
+                        "runId": "run1",
+                        "hypothesisId": "E",
+                        "location": "web_search.py:300",
+                        "message": "Yandex Search API connection error",
+                        "data": {"error": str(e), "error_type": str(type(e).__name__)},
+                        "timestamp": int(time.time() * 1000)
+                    }, ensure_ascii=False) + '\n')
+            except:
+                pass
+            # #endregion
             return []
         except Exception as e:
             logger.error(f"Yandex Search API error: {e}", exc_info=True)
+            # #region agent log
+            try:
+                with open('/Users/semyon_andronov04/Desktop/C ДВ/.cursor/debug.log', 'a', encoding='utf-8') as f:
+                    f.write(json_module.dumps({
+                        "sessionId": "debug-session",
+                        "runId": "run1",
+                        "hypothesisId": "E",
+                        "location": "web_search.py:310",
+                        "message": "Yandex Search API exception",
+                        "data": {"error": str(e), "error_type": str(type(e).__name__)},
+                        "timestamp": int(time.time() * 1000)
+                    }, ensure_ascii=False) + '\n')
+            except:
+                pass
+            # #endregion
             return []
     
     def _parse_yandex_response(self, xml_content: str) -> List[SourceResult]:
