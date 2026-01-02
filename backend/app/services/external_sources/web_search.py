@@ -213,28 +213,43 @@ class WebSearchSource(BaseSource):
         try:
             import xml.etree.ElementTree as ET
             
-            # Логируем структуру XML для отладки
-            logger.info(f"[WebSearch] XML response preview (first 500 chars): {xml_content[:500]}")
+            # Логируем полную структуру XML для отладки
+            logger.info(f"[WebSearch] XML response (full, {len(xml_content)} chars): {xml_content}")
+            logger.info(f"[WebSearch] XML response preview (first 1000 chars): {xml_content[:1000]}")
             
             root = ET.fromstring(xml_content)
             
             # Логируем корневой элемент и его дочерние элементы
-            logger.info(f"[WebSearch] Root element: {root.tag}, children: {[child.tag for child in root]}")
+            root_children = [child.tag for child in root]
+            logger.info(f"[WebSearch] Root element: {root.tag}, namespace: {root.tag.split('}')[0] if '}' in root.tag else 'none'}, children: {root_children}")
             
             # Пробуем разные варианты структуры XML
             # Вариант 1: Стандартная структура с group и doc
             groups = root.findall(".//group")
-            logger.info(f"[WebSearch] Found {len(groups)} groups")
+            logger.info(f"[WebSearch] Found {len(groups)} groups using .//group")
+            
+            # Также пробуем с namespace
+            if not groups:
+                # Пробуем найти group без namespace
+                for elem in root.iter():
+                    if 'group' in elem.tag.lower():
+                        logger.info(f"[WebSearch] Found group-like element: {elem.tag}")
             
             if not groups:
                 # Вариант 2: Прямые doc элементы
                 docs = root.findall(".//doc")
-                logger.info(f"[WebSearch] Found {len(docs)} direct doc elements")
+                logger.info(f"[WebSearch] Found {len(docs)} direct doc elements using .//doc")
                 
                 if not docs:
                     # Вариант 3: Проверяем все элементы
                     all_elements = list(root.iter())
-                    logger.info(f"[WebSearch] All XML elements: {[elem.tag for elem in all_elements[:20]]}")
+                    element_tags = [elem.tag for elem in all_elements[:30]]
+                    logger.info(f"[WebSearch] All XML elements (first 30): {element_tags}")
+                    
+                    # Ищем любые элементы, которые могут содержать результаты
+                    for elem in root.iter():
+                        if elem.text and len(elem.text.strip()) > 10:
+                            logger.info(f"[WebSearch] Element with text: tag={elem.tag}, text_preview={elem.text[:100]}")
             
             # Find all doc elements
             for group in root.findall(".//group"):
