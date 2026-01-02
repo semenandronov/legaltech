@@ -172,8 +172,11 @@ async def upload_files(
             try:
                 # #region debug log
                 import json
-                debug_log_path = "/Users/semyon_andronov04/Desktop/C ДВ/.cursor/debug.log"
-                with open(debug_log_path, "a", encoding="utf-8") as f:
+                import os
+                debug_log_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), ".cursor", "debug.log")
+                try:
+                    os.makedirs(os.path.dirname(debug_log_path), exist_ok=True)
+                    with open(debug_log_path, "a", encoding="utf-8") as f:
                     f.write(json.dumps({
                         "sessionId": "debug-session",
                         "runId": "run1",
@@ -187,6 +190,8 @@ async def upload_files(
                         },
                         "timestamp": int(__import__("time").time() * 1000)
                     }, ensure_ascii=False) + "\n")
+                except Exception:
+                    pass  # Ignore debug log errors
                 # #endregion
                 
                 logger.info(f"Classifying document: {filename}")
@@ -198,7 +203,8 @@ async def upload_files(
                 )
                 
                 # #region debug log
-                with open(debug_log_path, "a", encoding="utf-8") as f:
+                try:
+                    with open(debug_log_path, "a", encoding="utf-8") as f:
                     f.write(json.dumps({
                         "sessionId": "debug-session",
                         "runId": "run1",
@@ -215,6 +221,8 @@ async def upload_files(
                         },
                         "timestamp": int(__import__("time").time() * 1000)
                     }, ensure_ascii=False) + "\n")
+                except Exception:
+                    pass
                 # #endregion
                 
                 logger.info(
@@ -226,7 +234,8 @@ async def upload_files(
                 file_classification = classification_result
             except Exception as e:
                 # #region debug log
-                with open(debug_log_path, "a", encoding="utf-8") as f:
+                try:
+                    with open(debug_log_path, "a", encoding="utf-8") as f:
                     f.write(json.dumps({
                         "sessionId": "debug-session",
                         "runId": "run1",
@@ -449,22 +458,27 @@ async def upload_files(
                 # Сохраняем классификацию документа
                 # #region debug log
                 import json
-                debug_log_path = "/Users/semyon_andronov04/Desktop/C ДВ/.cursor/debug.log"
-                with open(debug_log_path, "a", encoding="utf-8") as f:
-                    f.write(json.dumps({
-                        "sessionId": "debug-session",
-                        "runId": "run1",
-                        "hypothesisId": "C",
-                        "location": "upload.py:394",
-                        "message": "Checking file_classification before save",
-                        "data": {
-                            "filename": filename,
-                            "file_id": file_model.id,
-                            "has_classification": bool(file_info.get("file_classification")),
-                            "classification_keys": list(file_info.get("file_classification", {}).keys()) if file_info.get("file_classification") else []
-                        },
-                        "timestamp": int(__import__("time").time() * 1000)
-                    }, ensure_ascii=False) + "\n")
+                import os
+                debug_log_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), ".cursor", "debug.log")
+                try:
+                    os.makedirs(os.path.dirname(debug_log_path), exist_ok=True)
+                    with open(debug_log_path, "a", encoding="utf-8") as f:
+                        f.write(json.dumps({
+                            "sessionId": "debug-session",
+                            "runId": "run1",
+                            "hypothesisId": "C",
+                            "location": "upload.py:394",
+                            "message": "Checking file_classification before save",
+                            "data": {
+                                "filename": filename,
+                                "file_id": file_model.id,
+                                "has_classification": bool(file_info.get("file_classification")),
+                                "classification_keys": list(file_info.get("file_classification", {}).keys()) if file_info.get("file_classification") else []
+                            },
+                            "timestamp": int(__import__("time").time() * 1000)
+                        }, ensure_ascii=False) + "\n")
+                except Exception:
+                    pass
                 # #endregion
                 
                 if file_info.get("file_classification"):
@@ -472,22 +486,25 @@ async def upload_files(
                     classification = file_info["file_classification"]
                     
                     # #region debug log
-                    with open(debug_log_path, "a", encoding="utf-8") as f:
-                        f.write(json.dumps({
-                            "sessionId": "debug-session",
-                            "runId": "run1",
-                            "hypothesisId": "C",
-                            "location": "upload.py:410",
-                            "message": "Saving classification to DB",
-                            "data": {
-                                "filename": filename,
-                                "file_id": file_model.id,
-                                "doc_type": classification.get("doc_type"),
-                                "confidence": classification.get("confidence"),
-                                "needs_human_review": classification.get("needs_human_review")
-                            },
-                            "timestamp": int(__import__("time").time() * 1000)
-                        }, ensure_ascii=False) + "\n")
+                    try:
+                        with open(debug_log_path, "a", encoding="utf-8") as f:
+                            f.write(json.dumps({
+                                "sessionId": "debug-session",
+                                "runId": "run1",
+                                "hypothesisId": "C",
+                                "location": "upload.py:410",
+                                "message": "Saving classification to DB",
+                                "data": {
+                                    "filename": filename,
+                                    "file_id": file_model.id,
+                                    "doc_type": classification.get("doc_type"),
+                                    "confidence": classification.get("confidence"),
+                                    "needs_human_review": classification.get("needs_human_review")
+                                },
+                                "timestamp": int(__import__("time").time() * 1000)
+                            }, ensure_ascii=False) + "\n")
+                    except Exception:
+                        pass
                     # #endregion
                     
                     doc_classification = DocumentClassification(
@@ -507,36 +524,42 @@ async def upload_files(
                     logger.info(f"Saved classification for file {file_model.id}: {classification.get('doc_type', 'unknown')}")
                     
                     # #region debug log
-                    with open(debug_log_path, "a", encoding="utf-8") as f:
-                        f.write(json.dumps({
-                            "sessionId": "debug-session",
-                            "runId": "run1",
-                            "hypothesisId": "C",
-                            "location": "upload.py:432",
-                            "message": "Classification saved to DB",
-                            "data": {
-                                "filename": filename,
-                                "file_id": file_model.id,
-                                "doc_type": classification.get("doc_type")
-                            },
-                            "timestamp": int(__import__("time").time() * 1000)
-                        }, ensure_ascii=False) + "\n")
+                    try:
+                        with open(debug_log_path, "a", encoding="utf-8") as f:
+                            f.write(json.dumps({
+                                "sessionId": "debug-session",
+                                "runId": "run1",
+                                "hypothesisId": "C",
+                                "location": "upload.py:432",
+                                "message": "Classification saved to DB",
+                                "data": {
+                                    "filename": filename,
+                                    "file_id": file_model.id,
+                                    "doc_type": classification.get("doc_type")
+                                },
+                                "timestamp": int(__import__("time").time() * 1000)
+                            }, ensure_ascii=False) + "\n")
+                    except Exception:
+                        pass
                     # #endregion
                 else:
                     # #region debug log
-                    with open(debug_log_path, "a", encoding="utf-8") as f:
-                        f.write(json.dumps({
-                            "sessionId": "debug-session",
-                            "runId": "run1",
-                            "hypothesisId": "C",
-                            "location": "upload.py:440",
-                            "message": "No classification to save",
-                            "data": {
-                                "filename": filename,
-                                "file_id": file_model.id
-                            },
-                            "timestamp": int(__import__("time").time() * 1000)
-                        }, ensure_ascii=False) + "\n")
+                    try:
+                        with open(debug_log_path, "a", encoding="utf-8") as f:
+                            f.write(json.dumps({
+                                "sessionId": "debug-session",
+                                "runId": "run1",
+                                "hypothesisId": "C",
+                                "location": "upload.py:440",
+                                "message": "No classification to save",
+                                "data": {
+                                    "filename": filename,
+                                    "file_id": file_model.id
+                                },
+                                "timestamp": int(__import__("time").time() * 1000)
+                            }, ensure_ascii=False) + "\n")
+                    except Exception:
+                        pass
                     # #endregion
             except Exception as file_error:
                 logger.warning(

@@ -60,8 +60,11 @@ class DocumentClassifierService:
         """Initialize classifiers (Yandex preferred, GigaChat fallback)"""
         # #region debug log
         import json
-        debug_log_path = "/Users/semyon_andronov04/Desktop/C ДВ/.cursor/debug.log"
-        with open(debug_log_path, "a", encoding="utf-8") as f:
+        import os
+        debug_log_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), ".cursor", "debug.log")
+        try:
+            os.makedirs(os.path.dirname(debug_log_path), exist_ok=True)
+            with open(debug_log_path, "a", encoding="utf-8") as f:
             f.write(json.dumps({
                 "sessionId": "debug-session",
                 "runId": "run1",
@@ -82,31 +85,37 @@ class DocumentClassifierService:
                 self.yandex_classifier = YandexDocumentClassifier()
                 if self.yandex_classifier.is_available():
                     # #region debug log
-                    with open(debug_log_path, "a", encoding="utf-8") as f:
-                        f.write(json.dumps({
-                            "sessionId": "debug-session",
-                            "runId": "run1",
-                            "hypothesisId": "B",
-                            "location": "document_classifier_service.py:68",
-                            "message": "Yandex classifier available",
-                            "data": {},
-                            "timestamp": int(__import__("time").time() * 1000)
-                        }, ensure_ascii=False) + "\n")
+                    try:
+                        with open(debug_log_path, "a", encoding="utf-8") as f:
+                            f.write(json.dumps({
+                                "sessionId": "debug-session",
+                                "runId": "run1",
+                                "hypothesisId": "B",
+                                "location": "document_classifier_service.py:68",
+                                "message": "Yandex classifier available",
+                                "data": {},
+                                "timestamp": int(__import__("time").time() * 1000)
+                            }, ensure_ascii=False) + "\n")
+                    except Exception:
+                        pass
                     # #endregion
                     logger.info("✅ Using Yandex AI Studio classifier for upload classification")
                     return
             except Exception as e:
                 # #region debug log
-                with open(debug_log_path, "a", encoding="utf-8") as f:
-                    f.write(json.dumps({
-                        "sessionId": "debug-session",
-                        "runId": "run1",
-                        "hypothesisId": "B",
-                        "location": "document_classifier_service.py:75",
-                        "message": "Yandex classifier init failed",
-                        "data": {"error": str(e)},
-                        "timestamp": int(__import__("time").time() * 1000)
-                    }, ensure_ascii=False) + "\n")
+                try:
+                    with open(debug_log_path, "a", encoding="utf-8") as f:
+                        f.write(json.dumps({
+                            "sessionId": "debug-session",
+                            "runId": "run1",
+                            "hypothesisId": "B",
+                            "location": "document_classifier_service.py:75",
+                            "message": "Yandex classifier init failed",
+                            "data": {"error": str(e)},
+                            "timestamp": int(__import__("time").time() * 1000)
+                        }, ensure_ascii=False) + "\n")
+                except Exception:
+                    pass
                 # #endregion
                 logger.warning(f"Failed to initialize Yandex classifier: {e}, using GigaChat fallback")
         
@@ -114,30 +123,36 @@ class DocumentClassifierService:
         try:
             self.llm = create_llm(temperature=0.1)
             # #region debug log
-            with open(debug_log_path, "a", encoding="utf-8") as f:
-                f.write(json.dumps({
-                    "sessionId": "debug-session",
-                    "runId": "run1",
-                    "hypothesisId": "B",
-                    "location": "document_classifier_service.py:85",
-                    "message": "GigaChat LLM initialized",
-                    "data": {},
-                    "timestamp": int(__import__("time").time() * 1000)
-                }, ensure_ascii=False) + "\n")
+            try:
+                with open(debug_log_path, "a", encoding="utf-8") as f:
+                    f.write(json.dumps({
+                        "sessionId": "debug-session",
+                        "runId": "run1",
+                        "hypothesisId": "B",
+                        "location": "document_classifier_service.py:85",
+                        "message": "GigaChat LLM initialized",
+                        "data": {},
+                        "timestamp": int(__import__("time").time() * 1000)
+                    }, ensure_ascii=False) + "\n")
+            except Exception:
+                pass
             # #endregion
             logger.info("✅ Using GigaChat LLM for document classification")
         except Exception as e:
             # #region debug log
-            with open(debug_log_path, "a", encoding="utf-8") as f:
-                f.write(json.dumps({
-                    "sessionId": "debug-session",
-                    "runId": "run1",
-                    "hypothesisId": "B",
-                    "location": "document_classifier_service.py:92",
-                    "message": "GigaChat LLM init failed",
-                    "data": {"error": str(e)},
-                    "timestamp": int(__import__("time").time() * 1000)
-                }, ensure_ascii=False) + "\n")
+            try:
+                with open(debug_log_path, "a", encoding="utf-8") as f:
+                    f.write(json.dumps({
+                        "sessionId": "debug-session",
+                        "runId": "run1",
+                        "hypothesisId": "B",
+                        "location": "document_classifier_service.py:92",
+                        "message": "GigaChat LLM init failed",
+                        "data": {"error": str(e)},
+                        "timestamp": int(__import__("time").time() * 1000)
+                    }, ensure_ascii=False) + "\n")
+            except Exception:
+                pass
             # #endregion
             logger.warning(f"Failed to initialize GigaChat for classification: {e}, classification will use default values")
             self.llm = None
@@ -169,22 +184,27 @@ class DocumentClassifierService:
         try:
             # #region debug log
             import json
-            debug_log_path = "/Users/semyon_andronov04/Desktop/C ДВ/.cursor/debug.log"
-            with open(debug_log_path, "a", encoding="utf-8") as f:
-                f.write(json.dumps({
-                    "sessionId": "debug-session",
-                    "runId": "run1",
-                    "hypothesisId": "B",
-                    "location": "document_classifier_service.py:103",
-                    "message": "Choosing classifier",
-                    "data": {
-                        "has_yandex": bool(self.yandex_classifier),
-                        "has_llm": bool(self.llm),
-                        "text_length": len(prompt_text),
-                        "filename": filename
-                    },
-                    "timestamp": int(__import__("time").time() * 1000)
-                }, ensure_ascii=False) + "\n")
+            import os
+            debug_log_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), ".cursor", "debug.log")
+            try:
+                os.makedirs(os.path.dirname(debug_log_path), exist_ok=True)
+                with open(debug_log_path, "a", encoding="utf-8") as f:
+                    f.write(json.dumps({
+                        "sessionId": "debug-session",
+                        "runId": "run1",
+                        "hypothesisId": "B",
+                        "location": "document_classifier_service.py:103",
+                        "message": "Choosing classifier",
+                        "data": {
+                            "has_yandex": bool(self.yandex_classifier),
+                            "has_llm": bool(self.llm),
+                            "text_length": len(prompt_text),
+                            "filename": filename
+                        },
+                        "timestamp": int(__import__("time").time() * 1000)
+                    }, ensure_ascii=False) + "\n")
+            except Exception:
+                pass
             # #endregion
             
             # Используем Yandex если доступен
@@ -197,32 +217,38 @@ class DocumentClassifierService:
             
             # Если ни один классификатор не доступен, возвращаем дефолтную классификацию
             # #region debug log
-            with open(debug_log_path, "a", encoding="utf-8") as f:
-                f.write(json.dumps({
-                    "sessionId": "debug-session",
-                    "runId": "run1",
-                    "hypothesisId": "B",
-                    "location": "document_classifier_service.py:120",
-                    "message": "No classifier available",
-                    "data": {},
-                    "timestamp": int(__import__("time").time() * 1000)
-                }, ensure_ascii=False) + "\n")
+            try:
+                with open(debug_log_path, "a", encoding="utf-8") as f:
+                    f.write(json.dumps({
+                        "sessionId": "debug-session",
+                        "runId": "run1",
+                        "hypothesisId": "B",
+                        "location": "document_classifier_service.py:120",
+                        "message": "No classifier available",
+                        "data": {},
+                        "timestamp": int(__import__("time").time() * 1000)
+                    }, ensure_ascii=False) + "\n")
+            except Exception:
+                pass
             # #endregion
             logger.warning("No classifier available, using default classification")
             return self._default_classification("No classifier available")
             
         except Exception as e:
             # #region debug log
-            with open(debug_log_path, "a", encoding="utf-8") as f:
-                f.write(json.dumps({
-                    "sessionId": "debug-session",
-                    "runId": "run1",
-                    "hypothesisId": "B",
-                    "location": "document_classifier_service.py:127",
-                    "message": "Classification exception",
-                    "data": {"error": str(e), "error_type": type(e).__name__},
-                    "timestamp": int(__import__("time").time() * 1000)
-                }, ensure_ascii=False) + "\n")
+            try:
+                with open(debug_log_path, "a", encoding="utf-8") as f:
+                    f.write(json.dumps({
+                        "sessionId": "debug-session",
+                        "runId": "run1",
+                        "hypothesisId": "B",
+                        "location": "document_classifier_service.py:127",
+                        "message": "Classification exception",
+                        "data": {"error": str(e), "error_type": type(e).__name__},
+                        "timestamp": int(__import__("time").time() * 1000)
+                    }, ensure_ascii=False) + "\n")
+            except Exception:
+                pass
             # #endregion
             logger.warning(f"Error classifying document: {e}", exc_info=True)
             return self._default_classification(f"Classification error: {str(e)}")
@@ -326,92 +352,72 @@ class DocumentClassifierService:
         try:
             # #region debug log
             import json
-            debug_log_path = "/Users/semyon_andronov04/Desktop/C ДВ/.cursor/debug.log"
-            with open(debug_log_path, "a", encoding="utf-8") as f:
-                f.write(json.dumps({
-                    "sessionId": "debug-session",
-                    "runId": "run1",
-                    "hypothesisId": "E",
-                    "location": "document_classifier_service.py:216",
-                    "message": "Starting LLM classification with structured output",
-                    "data": {
-                        "filename": filename,
-                        "text_length": len(text),
-                        "text_preview": text[:200]
-                    },
-                    "timestamp": int(__import__("time").time() * 1000)
-                }, ensure_ascii=False) + "\n")
+            import os
+            debug_log_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), ".cursor", "debug.log")
+            try:
+                os.makedirs(os.path.dirname(debug_log_path), exist_ok=True)
+                with open(debug_log_path, "a", encoding="utf-8") as f:
+                    f.write(json.dumps({
+                        "sessionId": "debug-session",
+                        "runId": "run1",
+                        "hypothesisId": "E",
+                        "location": "document_classifier_service.py:216",
+                        "message": "Starting LLM classification with structured output",
+                        "data": {
+                            "filename": filename,
+                            "text_length": len(text),
+                            "text_preview": text[:200]
+                        },
+                        "timestamp": int(__import__("time").time() * 1000)
+                    }, ensure_ascii=False) + "\n")
+            except Exception:
+                pass
             # #endregion
             
             # Пытаемся использовать structured output
-            structured_llm = self.llm.with_structured_output(DocumentClassificationModel)
-            prompt = ChatPromptTemplate.from_messages([
-                ("system", system_prompt),
-                ("human", user_prompt)
-            ])
-            chain = prompt | structured_llm
-            classification = chain.invoke({})
-            
-            # #region debug log
-            with open(debug_log_path, "a", encoding="utf-8") as f:
-                f.write(json.dumps({
-                    "sessionId": "debug-session",
-                    "runId": "run1",
-                    "hypothesisId": "E",
-                    "location": "document_classifier_service.py:235",
-                    "message": "LLM classification result received",
-                    "data": {
-                        "filename": filename,
-                        "doc_type": getattr(classification, "doc_type", None),
-                        "confidence": getattr(classification, "confidence", None),
-                        "has_key_topics": bool(getattr(classification, "key_topics", None))
-                    },
-                    "timestamp": int(__import__("time").time() * 1000)
-                }, ensure_ascii=False) + "\n")
-            # #endregion
-            
-            # Преобразуем в нужный формат
-            confidence = float(classification.confidence) if isinstance(classification.confidence, (int, float)) else 0.5
-            needs_human_review = confidence < CLASSIFICATION_CONFIDENCE_THRESHOLD
-            
-            return {
-                "doc_type": classification.doc_type,
-                "tags": classification.key_topics or [],
-                "confidence": confidence,
-                "needs_human_review": needs_human_review,
-                "reasoning": classification.reasoning or "Классифицировано через GigaChat LLM",
-                "classifier": "gigachat"
-            }
-        except Exception as e:
-            # #region debug log
-            with open(debug_log_path, "a", encoding="utf-8") as f:
-                f.write(json.dumps({
-                    "sessionId": "debug-session",
-                    "runId": "run1",
-                    "hypothesisId": "E",
-                    "location": "document_classifier_service.py:258",
-                    "message": "Structured output failed",
-                    "data": {
-                        "filename": filename,
-                        "error": str(e),
-                        "error_type": type(e).__name__
-                    },
-                    "timestamp": int(__import__("time").time() * 1000)
-                }, ensure_ascii=False) + "\n")
-            # #endregion
-            logger.warning(f"Structured output failed: {e}, using JSON parsing")
-            # Fallback к парсингу JSON
-            from app.services.langchain_parsers import ParserService
             try:
-                prompt = ChatPromptTemplate.from_messages([
-                    ("system", system_prompt),
-                    ("human", user_prompt)
-                ])
-                chain = prompt | self.llm
-                response = chain.invoke({})
-                response_text = response.content if hasattr(response, 'content') else str(response)
-                classification = ParserService.parse_document_classification(response_text)
+                structured_llm = self.llm.with_structured_output(DocumentClassificationModel)
+                from langchain_core.messages import SystemMessage, HumanMessage
+                messages = [
+                    SystemMessage(content=system_prompt),
+                    HumanMessage(content=user_prompt)
+                ]
+                classification = structured_llm.invoke(messages)
                 
+                # #region debug log
+                try:
+                    with open(debug_log_path, "a", encoding="utf-8") as f:
+                        f.write(json.dumps({
+                            "sessionId": "debug-session",
+                            "runId": "run1",
+                            "hypothesisId": "E",
+                            "location": "document_classifier_service.py:235",
+                            "message": "LLM classification result received",
+                            "data": {
+                                "filename": filename,
+                                "doc_type": getattr(classification, "doc_type", None),
+                                "confidence": getattr(classification, "confidence", None),
+                                "has_key_topics": bool(getattr(classification, "key_topics", None))
+                            },
+                            "timestamp": int(__import__("time").time() * 1000)
+                        }, ensure_ascii=False) + "\n")
+                except Exception:
+                    pass
+                # #endregion
+            except Exception as structured_error:
+                # Fallback: используем прямой вызов LLM без structured output
+                logger.warning(f"Structured output failed: {structured_error}, using direct LLM call")
+                from langchain_core.messages import SystemMessage, HumanMessage
+                messages = [
+                    SystemMessage(content=system_prompt),
+                    HumanMessage(content=user_prompt)
+                ]
+                response = self.llm.invoke(messages)
+                response_text = response.content if hasattr(response, 'content') else str(response)
+                from app.services.langchain_parsers import ParserService
+                classification = ParserService.parse_document_classification(response_text)
+            
+                # Преобразуем в нужный формат
                 confidence = float(classification.confidence) if isinstance(classification.confidence, (int, float)) else 0.5
                 needs_human_review = confidence < CLASSIFICATION_CONFIDENCE_THRESHOLD
                 
@@ -423,9 +429,28 @@ class DocumentClassifierService:
                     "reasoning": classification.reasoning or "Классифицировано через GigaChat LLM",
                     "classifier": "gigachat"
                 }
-            except Exception as parse_error:
-                logger.warning(f"JSON parsing failed: {parse_error}")
-                return self._default_classification(f"GigaChat classification error: {str(parse_error)}")
+        except Exception as e:
+            # #region debug log
+            try:
+                with open(debug_log_path, "a", encoding="utf-8") as f:
+                    f.write(json.dumps({
+                        "sessionId": "debug-session",
+                        "runId": "run1",
+                        "hypothesisId": "E",
+                        "location": "document_classifier_service.py:258",
+                        "message": "Classification failed",
+                        "data": {
+                            "filename": filename,
+                            "error": str(e),
+                            "error_type": type(e).__name__
+                        },
+                        "timestamp": int(__import__("time").time() * 1000)
+                    }, ensure_ascii=False) + "\n")
+            except Exception:
+                pass
+            # #endregion
+            logger.warning(f"Classification failed: {e}, using default")
+            return self._default_classification(f"GigaChat classification error: {str(e)}")
     
     def _get_tags_for_type(self, doc_type: str) -> list:
         """Get default tags for document type"""
