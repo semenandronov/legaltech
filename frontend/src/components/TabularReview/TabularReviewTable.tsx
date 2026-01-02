@@ -6,6 +6,8 @@ import {
   ColumnFiltersState,
   SortingState,
   VisibilityState,
+  ColumnSizingState,
+  ColumnPinningState,
   flexRender,
   getCoreRowModel,
   getFilteredRowModel,
@@ -13,6 +15,7 @@ import {
   getSortedRowModel,
   useReactTable,
 } from "@tanstack/react-table"
+import { useVirtualizer } from "@tanstack/react-virtual"
 import {
   Box,
   TextField,
@@ -76,6 +79,10 @@ export const TabularReviewTable = React.memo(({ reviewId, tableData, onCellClick
   const [sorting, setSorting] = React.useState<SortingState>([])
   const [columnFilters, setColumnFilters] = React.useState<ColumnFiltersState>([])
   const [columnVisibility, setColumnVisibility] = React.useState<VisibilityState>({})
+  const [columnSizing, setColumnSizing] = React.useState<ColumnSizingState>({})
+  const [columnPinning, setColumnPinning] = React.useState<ColumnPinningState>({ left: ['file_name'], right: [] })
+  const [globalFilter, setGlobalFilter] = React.useState("")
+  const [globalFilterInput, setGlobalFilterInput] = React.useState("")
   const [selectedCell, setSelectedCell] = React.useState<{
     fileId: string
     columnId: string
@@ -87,6 +94,30 @@ export const TabularReviewTable = React.memo(({ reviewId, tableData, onCellClick
   const [loadingCell, setLoadingCell] = React.useState(false)
   const [anchorEl, setAnchorEl] = React.useState<null | HTMLElement>(null)
   const [runningColumns, setRunningColumns] = React.useState<Set<string>>(new Set())
+  
+  // Кеш для cellDetails
+  const cellDetailsCache = React.useRef<Map<string, CellDetails>>(new Map())
+  
+  // Мемоизация findColumnByLabel
+  const columnMap = React.useMemo(() => {
+    const map = new Map<string, TabularColumn>()
+    tableData.columns.forEach(col => {
+      map.set(col.column_label.toLowerCase(), col)
+    })
+    return map
+  }, [tableData.columns])
+  
+  const findColumnByLabel = React.useCallback((label: string): TabularColumn | undefined => {
+    return columnMap.get(label.toLowerCase())
+  }, [columnMap])
+  
+  // Debounced глобальный фильтр
+  React.useEffect(() => {
+    const timer = setTimeout(() => {
+      setGlobalFilter(globalFilterInput)
+    }, 300)
+    return () => clearTimeout(timer)
+  }, [globalFilterInput])
 
   // Transform data for table
   const tableRows = React.useMemo(() => {
@@ -116,12 +147,6 @@ export const TabularReviewTable = React.memo(({ reviewId, tableData, onCellClick
     return cell?.cell_value || null
   }
 
-  // Helper function to find column by label
-  const findColumnByLabel = (label: string): TabularColumn | undefined => {
-    return tableData.columns.find(col => 
-      col.column_label.toLowerCase() === label.toLowerCase()
-    )
-  }
 
   // Build columns dynamically
   const columns = React.useMemo<ColumnDef<any>[]>(() => {
@@ -579,6 +604,41 @@ export const TabularReviewTable = React.memo(({ reviewId, tableData, onCellClick
             onClick={async () => {
                 if (cellValue === "-") return
                 
+              const cacheKey = `${row.original.file_id}_${col.id}`
+              
+              // Проверяем кеш
+              if (cellDetailsCache.current.has(cacheKey)) {
+                const cachedDetails = cellDetailsCache.current.get(cacheKey)!
+                setSelectedCell({
+                  fileId: row.original.file_id,
+                  columnId: col.id,
+                  cell: cell || { cell_value: null, status: 'pending' },
+                  fileName: row.original.file_name,
+                  columnLabel: col.column_label,
+                })
+                setCellDetails(cachedDetails)
+                
+                // Определяем highlight mode из кеша
+                let highlightMode: 'verbatim' | 'page' | 'none' = 'none'
+                if (cachedDetails.verbatim_extract) {
+                  highlightMode = 'verbatim'
+                } else if (cachedDetails.source_page || cachedDetails.source_section) {
+                  highlightMode = 'page'
+                }
+                
+                if (onCellClick) {
+                  onCellClick(row.original.file_id, {
+                    verbatimExtract: cachedDetails.verbatim_extract,
+                    sourcePage: cachedDetails.source_page,
+                    sourceSection: cachedDetails.source_section,
+                    columnType: cachedDetails.column_type,
+                    highlightMode,
+                    sourceReferences: cachedDetails.source_references,
+                  })
+                }
+                return
+              }
+              
               setSelectedCell({
                 fileId: row.original.file_id,
                 columnId: col.id,
@@ -595,6 +655,9 @@ export const TabularReviewTable = React.memo(({ reviewId, tableData, onCellClick
                   row.original.file_id,
                   col.id
                 )
+                
+                // Сохраняем в кеш
+                cellDetailsCache.current.set(cacheKey, details)
                 setCellDetails(details)
                 
                 // Determine highlight mode
@@ -696,11 +759,32 @@ export const TabularReviewTable = React.memo(({ reviewId, tableData, onCellClick
     getSortedRowModel: getSortedRowModel(),
     getFilteredRowModel: getFilteredRowModel(),
     onColumnVisibilityChange: setColumnVisibility,
+    onColumnSizingChange: setColumnSizing,
+    onColumnPinningChange: setColumnPinning,
+    onGlobalFilterChange: setGlobalFilter,
+    globalFilterFn: "includesString",
+    enableColumnResizing: true,
+    columnResizeMode: 'onChange',
+    enablePinning: true,
     state: {
       sorting,
       columnFilters,
       columnVisibility,
+      columnSizing,
+      columnPinning,
+      globalFilter,
     },
+  })
+  
+  // Виртуализация для больших таблиц (>100 строк)
+  const shouldVirtualize = table.getRowModel().rows.length > 100
+  const tableContainerRef = React.useRef<HTMLDivElement>(null)
+  
+  const { rows: virtualRows, totalSize } = useVirtualizer({
+    count: table.getRowModel().rows.length,
+    getScrollElement: () => tableContainerRef.current,
+    estimateSize: () => 50, // Примерная высота строки
+    overscan: 10,
   })
 
   const handleMenuOpen = React.useCallback((event: React.MouseEvent<HTMLElement>) => {
@@ -715,10 +799,10 @@ export const TabularReviewTable = React.memo(({ reviewId, tableData, onCellClick
     <Box sx={{ width: '100%' }}>
       <Stack direction="row" spacing={2} alignItems="center" sx={{ py: 2 }}>
         <TextField
-          placeholder="Поиск по документам..."
-          value={(table.getColumn("file_name")?.getFilterValue() as string) ?? ""}
+          placeholder="Поиск по всем полям..."
+          value={globalFilterInput}
           onChange={(event: React.ChangeEvent<HTMLInputElement>) =>
-            table.getColumn("file_name")?.setFilterValue(event.target.value)
+            setGlobalFilterInput(event.target.value)
           }
           size="small"
           sx={{ maxWidth: 300 }}
@@ -752,14 +836,16 @@ export const TabularReviewTable = React.memo(({ reviewId, tableData, onCellClick
       <TableContainer 
         component={Paper} 
         variant="outlined"
+        ref={tableContainerRef}
         sx={{
           border: '1px solid #E5E7EB',
           borderRadius: '8px',
-          overflow: 'hidden',
+          overflow: shouldVirtualize ? 'auto' : 'hidden',
+          maxHeight: shouldVirtualize ? '600px' : 'none',
         }}
       >
         <Table sx={{ borderCollapse: 'separate' }}>
-          <TableHead>
+          <TableHead sx={{ position: shouldVirtualize ? 'sticky' : 'static', top: 0, zIndex: 10 }}>
             {table.getHeaderGroups().map((headerGroup) => (
               <TableRow 
                 key={headerGroup.id}
@@ -776,9 +862,19 @@ export const TabularReviewTable = React.memo(({ reviewId, tableData, onCellClick
                       bgcolor: '#F9FAFB',
                       py: 1.5,
                       px: 2,
+                      width: header.getSize(),
+                      position: header.column.getIsPinned() ? 'sticky' : 'static',
+                      left: header.column.getIsPinned() === 'left' 
+                        ? `${header.getStart('left')}px` 
+                        : undefined,
+                      right: header.column.getIsPinned() === 'right' 
+                        ? `${header.getAfter('right')}px` 
+                        : undefined,
+                      zIndex: header.column.getIsPinned() ? 15 : 1,
                       '&:last-child': {
                         borderRight: 'none',
                       },
+                      position: 'relative',
                     }}
                   >
                     {header.isPlaceholder
@@ -787,6 +883,25 @@ export const TabularReviewTable = React.memo(({ reviewId, tableData, onCellClick
                           header.column.columnDef.header,
                           header.getContext()
                         )}
+                    <Box
+                      onMouseDown={header.getResizeHandler()}
+                      onTouchStart={header.getResizeHandler()}
+                      sx={{
+                        position: 'absolute',
+                        right: 0,
+                        top: 0,
+                        bottom: 0,
+                        width: '4px',
+                        cursor: 'col-resize',
+                        userSelect: 'none',
+                        touchAction: 'none',
+                        bgcolor: header.column.getIsResizing() ? '#2563EB' : 'transparent',
+                        '&:hover': {
+                          bgcolor: '#9CA3AF',
+                        },
+                        zIndex: 2,
+                      }}
+                    />
                   </TableCell>
                 ))}
               </TableRow>
@@ -794,36 +909,102 @@ export const TabularReviewTable = React.memo(({ reviewId, tableData, onCellClick
           </TableHead>
           <TableBody>
             {table.getRowModel().rows?.length ? (
-              table.getRowModel().rows.map((row, rowIndex) => (
-                <TableRow
-                  key={row.id}
-                  sx={{
-                    bgcolor: rowIndex % 2 === 0 ? '#FFFFFF' : '#F9FAFB',
-                    borderBottom: '1px solid #E5E7EB',
-                    '&:hover': {
-                      bgcolor: '#F3F4F6',
-                    },
-                  }}
-                >
-                  {row.getVisibleCells().map((cell) => (
-                    <TableCell
-                      key={cell.id}
-                      sx={{
-                        borderRight: '1px solid #E5E7EB',
-                        px: 2,
-                        '&:last-child': {
-                          borderRight: 'none',
-                        },
-                      }}
-                    >
-                      {flexRender(
-                        cell.column.columnDef.cell,
-                        cell.getContext()
-                      )}
-                    </TableCell>
-                  ))}
-                </TableRow>
-              ))
+              shouldVirtualize ? (
+                <>
+                  <tr style={{ height: `${virtualRows[0]?.start ?? 0}px` }} />
+                  {virtualRows.map((virtualRow) => {
+                    const row = table.getRowModel().rows[virtualRow.index]
+                    return (
+                      <TableRow
+                        key={row.id}
+                        data-index={virtualRow.index}
+                        ref={virtualRow.measureElement}
+                        sx={{
+                          bgcolor: virtualRow.index % 2 === 0 ? '#FFFFFF' : '#F9FAFB',
+                          borderBottom: '1px solid #E5E7EB',
+                          '&:hover': {
+                            bgcolor: '#F3F4F6',
+                          },
+                        }}
+                      >
+                    {row.getVisibleCells().map((cell) => (
+                      <TableCell
+                        key={cell.id}
+                        sx={{
+                          borderRight: '1px solid #E5E7EB',
+                          px: 2,
+                          width: cell.column.getSize(),
+                          position: cell.column.getIsPinned() ? 'sticky' : 'static',
+                          left: cell.column.getIsPinned() === 'left' 
+                            ? `${cell.column.getStart('left')}px` 
+                            : undefined,
+                          right: cell.column.getIsPinned() === 'right' 
+                            ? `${cell.column.getAfter('right')}px` 
+                            : undefined,
+                          zIndex: cell.column.getIsPinned() ? 10 : 1,
+                          bgcolor: cell.column.getIsPinned() 
+                            ? (rowIndex % 2 === 0 ? '#FFFFFF' : '#F9FAFB')
+                            : 'transparent',
+                          '&:last-child': {
+                            borderRight: 'none',
+                          },
+                        }}
+                      >
+                        {flexRender(
+                          cell.column.columnDef.cell,
+                          cell.getContext()
+                        )}
+                      </TableCell>
+                    ))}
+                      </TableRow>
+                    )
+                  })}
+                  <tr style={{ height: `${totalSize - (virtualRows[virtualRows.length - 1]?.end ?? 0)}px` }} />
+                </>
+              ) : (
+                table.getRowModel().rows.map((row, rowIndex) => (
+                  <TableRow
+                    key={row.id}
+                    sx={{
+                      bgcolor: rowIndex % 2 === 0 ? '#FFFFFF' : '#F9FAFB',
+                      borderBottom: '1px solid #E5E7EB',
+                      '&:hover': {
+                        bgcolor: '#F3F4F6',
+                      },
+                    }}
+                  >
+                    {row.getVisibleCells().map((cell) => (
+                      <TableCell
+                        key={cell.id}
+                        sx={{
+                          borderRight: '1px solid #E5E7EB',
+                          px: 2,
+                          width: cell.column.getSize(),
+                          position: cell.column.getIsPinned() ? 'sticky' : 'static',
+                          left: cell.column.getIsPinned() === 'left' 
+                            ? `${cell.column.getStart('left')}px` 
+                            : undefined,
+                          right: cell.column.getIsPinned() === 'right' 
+                            ? `${cell.column.getAfter('right')}px` 
+                            : undefined,
+                          zIndex: cell.column.getIsPinned() ? 10 : 1,
+                          bgcolor: cell.column.getIsPinned() 
+                            ? (virtualRow.index % 2 === 0 ? '#FFFFFF' : '#F9FAFB')
+                            : 'transparent',
+                          '&:last-child': {
+                            borderRight: 'none',
+                          },
+                        }}
+                      >
+                        {flexRender(
+                          cell.column.columnDef.cell,
+                          cell.getContext()
+                        )}
+                      </TableCell>
+                    ))}
+                  </TableRow>
+                ))
+              )
             ) : (
               <TableRow>
                 <TableCell

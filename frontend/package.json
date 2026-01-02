@@ -51,6 +51,7 @@
     "@radix-ui/react-tooltip": "^1.2.8",
     "@radix-ui/react-use-controllable-state": "^1.2.2",
     "@tanstack/react-table": "^8.21.3",
+    "@tanstack/react-virtual": "^3.11.1",
     "@types/react-window": "^1.8.8",
     "@xyflow/react": "^12.10.0",
     "ai": "^6.0.3",
