@@ -212,7 +212,29 @@ class WebSearchSource(BaseSource):
         
         try:
             import xml.etree.ElementTree as ET
+            
+            # Логируем структуру XML для отладки
+            logger.info(f"[WebSearch] XML response preview (first 500 chars): {xml_content[:500]}")
+            
             root = ET.fromstring(xml_content)
+            
+            # Логируем корневой элемент и его дочерние элементы
+            logger.info(f"[WebSearch] Root element: {root.tag}, children: {[child.tag for child in root]}")
+            
+            # Пробуем разные варианты структуры XML
+            # Вариант 1: Стандартная структура с group и doc
+            groups = root.findall(".//group")
+            logger.info(f"[WebSearch] Found {len(groups)} groups")
+            
+            if not groups:
+                # Вариант 2: Прямые doc элементы
+                docs = root.findall(".//doc")
+                logger.info(f"[WebSearch] Found {len(docs)} direct doc elements")
+                
+                if not docs:
+                    # Вариант 3: Проверяем все элементы
+                    all_elements = list(root.iter())
+                    logger.info(f"[WebSearch] All XML elements: {[elem.tag for elem in all_elements[:20]]}")
             
             # Find all doc elements
             for group in root.findall(".//group"):
@@ -247,15 +269,51 @@ class WebSearchSource(BaseSource):
                             results.append(result)
                             
                     except Exception as e:
-                        logger.warning(f"Error parsing doc element: {e}")
+                        logger.warning(f"[WebSearch] Error parsing doc element: {e}")
                         continue
             
-            logger.info(f"Parsed {len(results)} results from Yandex Search API")
+            # Если не нашли через group, пробуем напрямую
+            if not results:
+                for doc in root.findall(".//doc"):
+                    try:
+                        url_elem = doc.find("url")
+                        title_elem = doc.find("title")
+                        passages = doc.findall(".//passage")
+                        
+                        url = url_elem.text if url_elem is not None else ""
+                        title = self._clean_html(title_elem.text) if title_elem is not None else "Без названия"
+                        
+                        content_parts = []
+                        for passage in passages:
+                            if passage.text:
+                                content_parts.append(self._clean_html(passage.text))
+                        
+                        content = " ".join(content_parts) if content_parts else ""
+                        
+                        if content or title:
+                            result = SourceResult(
+                                content=content,
+                                title=title,
+                                source_name="web_search",
+                                url=url,
+                                relevance_score=0.7,
+                                metadata={
+                                    "domain": self._extract_domain(url),
+                                }
+                            )
+                            results.append(result)
+                            
+                    except Exception as e:
+                        logger.warning(f"[WebSearch] Error parsing direct doc element: {e}")
+                        continue
+            
+            logger.info(f"[WebSearch] Parsed {len(results)} results from Yandex Search API")
             
         except ET.ParseError as e:
-            logger.error(f"Error parsing Yandex XML response: {e}")
+            logger.error(f"[WebSearch] Error parsing Yandex XML response: {e}, content preview: {xml_content[:500]}")
         except Exception as e:
-            logger.error(f"Error processing Yandex response: {e}", exc_info=True)
+            logger.error(f"[WebSearch] Error processing Yandex response: {e}", exc_info=True)
+            logger.error(f"[WebSearch] XML content preview: {xml_content[:500]}")
         
         return results
     
