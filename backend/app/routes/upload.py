@@ -410,7 +410,7 @@ async def upload_files(
                     db.add(doc_classification)
                     logger.info(f"Saved classification for file {file_model.id}: {classification.get('doc_type', 'unknown')}")
             except Exception as file_error:
-                logger.error(
+                logger.warning(
                     f"Error creating File model for {filename}: {file_error}",
                     exc_info=True
                 )
