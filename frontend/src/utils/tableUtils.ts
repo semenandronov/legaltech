@@ -76,12 +76,13 @@ export function clearTableState(tableId: string): void {
 
 /**
  * Создание базовой колонки с сортировкой
+ * Возвращает конфигурацию колонки, которую можно использовать в компонентах
  */
 export function createSortableColumn<T>(
   accessorKey: string,
   header: string,
   options?: {
-    cell?: (value: any, row: T) => React.ReactNode
+    cell?: (value: any, row: T) => any
     width?: number
     minWidth?: number
     maxWidth?: number
@@ -89,13 +90,8 @@ export function createSortableColumn<T>(
 ): ColumnDef<T> {
   return {
     accessorKey,
-    header: ({ column }) => {
-      return (
-        <div onClick={() => column.toggleSorting(column.getIsSorted() === "asc")}>
-          {header}
-        </div>
-      )
-    },
+    header: header,
+    enableSorting: true,
     cell: options?.cell
       ? ({ row }) => options.cell!(row.getValue(accessorKey), row.original)
       : ({ row }) => formatCellContent(row.getValue(accessorKey)),
