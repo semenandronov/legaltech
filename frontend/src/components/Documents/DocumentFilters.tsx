@@ -89,8 +89,55 @@ const DocumentFilters: React.FC<DocumentFiltersProps> = ({
     }
   }
 
-  const docTypes = ['Contract', 'Letter', 'Report', 'Email', 'Other']
-  const privilegeStatuses = ['All', 'Privileged', 'Not Privileged', 'Low Confidence']
+  // Все 26 типов документов, сгруппированные по категориям
+  const docTypesByCategory = {
+    'Процессуальные': [
+      'statement_of_claim', 'application', 'response_to_claim', 'counterclaim', 
+      'motion', 'appeal', 'cassation', 'supervisory_appeal', 'protocol_remarks', 'settlement_agreement'
+    ],
+    'Судебные акты': [
+      'court_order', 'court_decision', 'court_ruling', 'court_resolution'
+    ],
+    'Доказательства': [
+      'contract', 'act', 'certificate', 'correspondence', 'electronic_document', 
+      'protocol', 'expert_opinion', 'specialist_consultation', 'witness_statement', 
+      'audio_recording', 'video_recording', 'physical_evidence'
+    ],
+    'Прочие': ['other']
+  }
+  
+  const docTypeLabels: Record<string, string> = {
+    'statement_of_claim': 'Исковое заявление',
+    'application': 'Заявление',
+    'response_to_claim': 'Отзыв на иск',
+    'counterclaim': 'Встречный иск',
+    'motion': 'Ходатайство',
+    'appeal': 'Апелляционная жалоба',
+    'cassation': 'Кассационная жалоба',
+    'supervisory_appeal': 'Надзорная жалоба',
+    'protocol_remarks': 'Замечания на протокол',
+    'settlement_agreement': 'Мировое соглашение',
+    'court_order': 'Судебный приказ',
+    'court_decision': 'Решение',
+    'court_ruling': 'Определение',
+    'court_resolution': 'Постановление',
+    'contract': 'Договор',
+    'act': 'Акт',
+    'certificate': 'Справка',
+    'correspondence': 'Деловая переписка',
+    'electronic_document': 'Электронный документ',
+    'protocol': 'Протокол',
+    'expert_opinion': 'Заключение эксперта',
+    'specialist_consultation': 'Консультация специалиста',
+    'witness_statement': 'Показания свидетеля',
+    'audio_recording': 'Аудиозапись',
+    'video_recording': 'Видеозапись',
+    'physical_evidence': 'Вещественное доказательство',
+    'other': 'Другое'
+  }
+  
+  const allDocTypes = Object.values(docTypesByCategory).flat()
+  const privilegeStatuses = ['All', 'Privileged', 'Not Privileged', 'Low Confidence', 'needs_review']
   const confidenceLevels = ['>95%', '80-95%', '<80%']
   const statuses = ['New', 'Reviewed', 'Flagged']
 

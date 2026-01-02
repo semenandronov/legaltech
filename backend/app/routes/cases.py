@@ -320,7 +320,9 @@ async def get_case_files(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
-    """Get list of files for a case"""
+    """Get list of files for a case with classifications"""
+    from app.models.analysis import DocumentClassification
+    
     # Verify case ownership
     case = db.query(Case).filter(
         Case.id == case_id,
@@ -333,13 +335,32 @@ async def get_case_files(
     # Get all files for the case
     files = db.query(FileModel).filter(FileModel.case_id == case_id).all()
     
+    # Get classifications for all files
+    file_ids = [file.id for file in files]
+    classifications = db.query(DocumentClassification).filter(
+        DocumentClassification.file_id.in_(file_ids)
+    ).all() if file_ids else []
+    
+    # Create mapping file_id -> classification
+    classification_map = {c.file_id: c for c in classifications if c.file_id}
+    
     return {
         "documents": [
             {
                 "id": file.id,
                 "filename": file.filename,
                 "file_type": file.file_type,
-                "created_at": file.created_at.isoformat() if file.created_at else None
+                "created_at": file.created_at.isoformat() if file.created_at else None,
+                "classification": {
+                    "doc_type": classification.doc_type,
+                    "relevance_score": classification.relevance_score,
+                    "is_privileged": classification.is_privileged == "true",
+                    "privilege_type": classification.privilege_type,
+                    "key_topics": classification.key_topics or [],
+                    "confidence": float(classification.confidence) if classification.confidence else 0.0,
+                    "reasoning": classification.reasoning,
+                    "needs_human_review": classification.needs_human_review == "true"
+                } if (classification := classification_map.get(file.id)) else None
             }
             for file in files
         ],

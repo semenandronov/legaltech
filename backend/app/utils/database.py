@@ -303,6 +303,58 @@ def ensure_schema():
                 logger.debug("✅ file_path column already exists in files table")
     except Exception as e:
         logger.error(f"Error checking/adding file_path column: {e}", exc_info=True)
+    
+    # Ensure document_classifications.needs_human_review column exists
+    try:
+        if "document_classifications" in inspector.get_table_names():
+            columns = {col["name"]: col for col in inspector.get_columns("document_classifications")}
+            
+            if "needs_human_review" not in columns:
+                logger.info("⚠️  needs_human_review column not found, adding it...")
+                try:
+                    with engine.begin() as conn:
+                        conn.execute(
+                            text(
+                                "ALTER TABLE document_classifications "
+                                "ADD COLUMN IF NOT EXISTS needs_human_review VARCHAR(10) DEFAULT 'false'"
+                            )
+                        )
+                        logger.info("✅ Added needs_human_review column")
+                        
+                        # Update existing records
+                        conn.execute(
+                            text(
+                                "UPDATE document_classifications "
+                                "SET needs_human_review = 'true' "
+                                "WHERE CAST(confidence AS FLOAT) < 0.75 "
+                                "AND (needs_human_review IS NULL OR needs_human_review = 'false')"
+                            )
+                        )
+                        
+                        # Set default for NULL values
+                        conn.execute(
+                            text(
+                                "UPDATE document_classifications "
+                                "SET needs_human_review = 'false' "
+                                "WHERE needs_human_review IS NULL"
+                            )
+                        )
+                        
+                        # Create index
+                        conn.execute(
+                            text(
+                                "CREATE INDEX IF NOT EXISTS ix_document_classifications_needs_review "
+                                "ON document_classifications(needs_human_review) "
+                                "WHERE needs_human_review = 'true'"
+                            )
+                        )
+                        logger.info("✅ Created index on needs_human_review")
+                except Exception as e:
+                    logger.error(f"❌ Could not add needs_human_review column: {e}", exc_info=True)
+            else:
+                logger.debug("✅ needs_human_review column already exists")
+    except Exception as e:
+        logger.error(f"Error checking/adding needs_human_review column: {e}", exc_info=True)
 
 
 def init_db():

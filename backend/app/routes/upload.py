@@ -12,6 +12,7 @@ from app.utils.auth import get_current_user
 from app.models.case import Case, File as FileModel
 from app.models.user import User
 from app.services.document_processor import DocumentProcessor
+from app.services.document_classifier_service import DocumentClassifierService
 from langchain_core.documents import Document
 from app.config import config
 import uuid
@@ -166,6 +167,36 @@ async def upload_files(
                 f"total text length: {len(text)} chars"
             )
             
+            # Классификация документа
+            file_classification = None
+            try:
+                logger.info(f"Classifying document: {filename}")
+                classifier_service = DocumentClassifierService()
+                classification_result = classifier_service.classify_document(
+                    text=text,
+                    filename=filename,
+                    case_context=None
+                )
+                
+                logger.info(
+                    f"Classified {filename}: type={classification_result['doc_type']}, "
+                    f"confidence={classification_result['confidence']:.2f}, "
+                    f"needs_review={classification_result['needs_human_review']}"
+                )
+                
+                file_classification = classification_result
+            except Exception as e:
+                logger.error(f"Error classifying document {filename}: {e}", exc_info=True)
+                # Не прерываем загрузку при ошибке классификации
+                file_classification = {
+                    "doc_type": "other",
+                    "tags": [],
+                    "confidence": 0.0,
+                    "needs_human_review": True,
+                    "reasoning": f"Ошибка классификации: {str(e)}",
+                    "classifier": "error"
+                }
+            
             # ВАЖНО: Сохраняем оригинальный файл для загрузки в Yandex Vector Store
             # content уже прочитан выше (await file.read()), сохраняем его в original_files
             original_files[filename] = content
@@ -211,6 +242,7 @@ async def upload_files(
                     "file_type": ext.lower(),
                     "original_text": sanitize_text(text),
                     "file_path": relative_file_path,  # Сохраняем путь к оригинальному файлу
+                    "file_classification": file_classification,  # Добавляем классификацию
                 }
             )
         except ValueError as e:
@@ -357,6 +389,26 @@ async def upload_files(
                 )
                 db.add(file_model)
                 db.flush()  # Flush to get file_model.id
+                
+                # Сохраняем классификацию документа
+                if file_info.get("file_classification"):
+                    from app.models.analysis import DocumentClassification
+                    classification = file_info["file_classification"]
+                    doc_classification = DocumentClassification(
+                        case_id=case_id,
+                        file_id=file_model.id,
+                        doc_type=classification.get("doc_type", "other"),
+                        relevance_score=0,  # Можно вычислить на основе типа
+                        is_privileged="false",
+                        privilege_type="none",
+                        key_topics=classification.get("tags", []),
+                        confidence=str(classification.get("confidence", 0.0)),
+                        reasoning=classification.get("reasoning", ""),
+                        needs_human_review="true" if classification.get("needs_human_review", False) else "false",
+                        prompt_version="v1"
+                    )
+                    db.add(doc_classification)
+                    logger.info(f"Saved classification for file {file_model.id}: {classification.get('doc_type', 'unknown')}")
             except Exception as file_error:
                 logger.error(
                     f"Error creating File model for {filename}: {file_error}",

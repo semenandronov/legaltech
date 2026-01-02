@@ -98,6 +98,7 @@ class DocumentClassification(Base):
     key_topics = Column(JSON, nullable=True)  # Массив основных тем
     confidence = Column(String(10), nullable=True)  # Уверенность 0-1
     reasoning = Column(Text, nullable=True)  # Подробное объяснение решения
+    needs_human_review = Column(String(10), nullable=False, default="false")  # true/false как строка
     prompt_version = Column(String(20), nullable=True, default="v1")  # Версия промпта
     created_at = Column(DateTime, default=datetime.utcnow)
     
