@@ -44,8 +44,6 @@ import {
   SwapVert as ArrowUpDownIcon,
   ExpandMore as ExpandMoreIcon,
   Description as FileTextIcon,
-  ChevronLeft as ChevronLeftIcon,
-  ChevronRight as ChevronRightIcon,
   PlayArrow as PlayArrowIcon,
   Close as CloseIcon,
   OpenInNew as OpenInNewIcon,
