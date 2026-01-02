@@ -35,6 +35,10 @@ import {
   IconButton,
   Link,
   Chip,
+  Pagination,
+  Select,
+  FormControl,
+  InputLabel,
 } from '@mui/material'
 import {
   SwapVert as ArrowUpDownIcon,
@@ -1029,27 +1033,33 @@ export const TabularReviewTable = React.memo(({ reviewId, tableData, onCellClick
       </TableContainer>
       <Stack direction="row" spacing={2} alignItems="center" justifyContent="space-between" sx={{ py: 2 }}>
         <Typography variant="body2" color="text.secondary">
-          {table.getFilteredRowModel().rows.length} строк показано
+          Показано {table.getRowModel().rows.length} из {table.getFilteredRowModel().rows.length} строк
         </Typography>
-        <Stack direction="row" spacing={1}>
-          <Button
-            variant="outlined"
-            size="small"
-            startIcon={<ChevronLeftIcon />}
-            onClick={() => table.previousPage()}
-            disabled={!table.getCanPreviousPage()}
-          >
-            Назад
-          </Button>
-          <Button
-            variant="outlined"
-            size="small"
-            endIcon={<ChevronRightIcon />}
-            onClick={() => table.nextPage()}
-            disabled={!table.getCanNextPage()}
-          >
-            Вперед
-          </Button>
+        <Stack direction="row" spacing={2} alignItems="center">
+          <FormControl size="small" sx={{ minWidth: 120 }}>
+            <InputLabel>Строк на странице</InputLabel>
+            <Select
+              value={table.getState().pagination.pageSize}
+              label="Строк на странице"
+              onChange={(e) => {
+                table.setPageSize(Number(e.target.value))
+              }}
+            >
+              {[10, 25, 50, 100].map((pageSize) => (
+                <MenuItem key={pageSize} value={pageSize}>
+                  {pageSize}
+                </MenuItem>
+              ))}
+            </Select>
+          </FormControl>
+          <Pagination
+            count={table.getPageCount()}
+            page={table.getState().pagination.pageIndex + 1}
+            onChange={(_, page) => table.setPageIndex(page - 1)}
+            color="primary"
+            showFirstButton
+            showLastButton
+          />
         </Stack>
       </Stack>
       
