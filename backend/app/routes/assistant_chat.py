@@ -447,24 +447,24 @@ async def stream_chat_response(
                         
                         web_search_context = "\n".join(web_search_parts)
                         logger.info(f"Web search completed: {len(research_result.sources)} sources found")
-            else:
-                logger.warning("Web search returned no results")
-                # #region agent log
-                try:
-                    with open('/Users/semyon_andronov04/Desktop/C ДВ/.cursor/debug.log', 'a', encoding='utf-8') as f:
-                        f.write(json_module.dumps({
-                            "sessionId": "debug-session",
-                            "runId": "run1",
-                            "hypothesisId": "F",
-                            "location": "assistant_chat.py:409",
-                            "message": "Web search returned no results",
-                            "data": {"question": question[:100]},
-                            "timestamp": int(__import__('time').time() * 1000)
-                        }, ensure_ascii=False) + '\n')
-                except:
-                    pass
-                # #endregion
-            except Exception as web_search_error:
+                    else:
+                        logger.warning("Web search returned no results")
+                        # #region agent log
+                        try:
+                            with open('/Users/semyon_andronov04/Desktop/C ДВ/.cursor/debug.log', 'a', encoding='utf-8') as f:
+                                f.write(json_module.dumps({
+                                    "sessionId": "debug-session",
+                                    "runId": "run1",
+                                    "hypothesisId": "F",
+                                    "location": "assistant_chat.py:450",
+                                    "message": "Web search returned no results",
+                                    "data": {"question": question[:100]},
+                                    "timestamp": int(__import__('time').time() * 1000)
+                                }, ensure_ascii=False) + '\n')
+                        except:
+                            pass
+                        # #endregion
+                except Exception as web_search_error:
                     # #region agent log
                     try:
                         with open('/Users/semyon_andronov04/Desktop/C ДВ/.cursor/debug.log', 'a', encoding='utf-8') as f:
