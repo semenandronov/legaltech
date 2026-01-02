@@ -17,9 +17,52 @@ class WebSearchSource(BaseSource):
     
     def __init__(self):
         super().__init__(name="web_search", enabled=True)
-        self.api_key = getattr(config, 'YANDEX_SEARCH_API_KEY', None)
+        # #region agent log
+        import json as json_module
+        import time
+        try:
+            with open('/Users/semyon_andronov04/Desktop/C ДВ/.cursor/debug.log', 'a', encoding='utf-8') as f:
+                f.write(json_module.dumps({
+                    "sessionId": "debug-session",
+                    "runId": "run1",
+                    "hypothesisId": "A",
+                    "location": "web_search.py:18",
+                    "message": "WebSearchSource __init__ started",
+                    "data": {
+                        "has_YANDEX_SEARCH_API_KEY": hasattr(config, 'YANDEX_SEARCH_API_KEY'),
+                        "YANDEX_SEARCH_API_KEY_value": getattr(config, 'YANDEX_SEARCH_API_KEY', None) is not None,
+                        "has_YANDEX_API_KEY": hasattr(config, 'YANDEX_API_KEY'),
+                        "YANDEX_API_KEY_value": bool(getattr(config, 'YANDEX_API_KEY', '')),
+                        "YANDEX_FOLDER_ID": bool(getattr(config, 'YANDEX_FOLDER_ID', ''))
+                    },
+                    "timestamp": int(time.time() * 1000)
+                }, ensure_ascii=False) + '\n')
+        except:
+            pass
+        # #endregion
+        # Используем YANDEX_API_KEY вместо YANDEX_SEARCH_API_KEY (которой нет в конфиге)
+        self.api_key = getattr(config, 'YANDEX_SEARCH_API_KEY', None) or getattr(config, 'YANDEX_API_KEY', None)
         self.folder_id = config.YANDEX_FOLDER_ID
         self.base_url = "https://yandex.ru/search/xml"
+        # #region agent log
+        try:
+            with open('/Users/semyon_andronov04/Desktop/C ДВ/.cursor/debug.log', 'a', encoding='utf-8') as f:
+                f.write(json_module.dumps({
+                    "sessionId": "debug-session",
+                    "runId": "run1",
+                    "hypothesisId": "A",
+                    "location": "web_search.py:22",
+                    "message": "WebSearchSource __init__ completed",
+                    "data": {
+                        "api_key_set": self.api_key is not None,
+                        "folder_id_set": bool(self.folder_id),
+                        "api_key_length": len(self.api_key) if self.api_key else 0
+                    },
+                    "timestamp": int(time.time() * 1000)
+                }, ensure_ascii=False) + '\n')
+        except:
+            pass
+        # #endregion
     
     async def initialize(self) -> bool:
         """Initialize web search source"""
@@ -60,10 +103,66 @@ class WebSearchSource(BaseSource):
         enhanced_query = self._enhance_legal_query(query, filters)
         
         try:
+            # #region agent log
+            import json as json_module
+            import time
+            try:
+                with open('/Users/semyon_andronov04/Desktop/C ДВ/.cursor/debug.log', 'a', encoding='utf-8') as f:
+                    f.write(json_module.dumps({
+                        "sessionId": "debug-session",
+                        "runId": "run1",
+                        "hypothesisId": "B",
+                        "location": "web_search.py:63",
+                        "message": "Checking API credentials before search",
+                        "data": {
+                            "has_api_key": self.api_key is not None,
+                            "has_folder_id": bool(self.folder_id),
+                            "api_key_length": len(self.api_key) if self.api_key else 0,
+                            "folder_id_length": len(self.folder_id) if self.folder_id else 0,
+                            "query": enhanced_query[:100]
+                        },
+                        "timestamp": int(time.time() * 1000)
+                    }, ensure_ascii=False) + '\n')
+            except:
+                pass
+            # #endregion
             if self.api_key and self.folder_id:
+                # #region agent log
+                try:
+                    with open('/Users/semyon_andronov04/Desktop/C ДВ/.cursor/debug.log', 'a', encoding='utf-8') as f:
+                        f.write(json_module.dumps({
+                            "sessionId": "debug-session",
+                            "runId": "run1",
+                            "hypothesisId": "C",
+                            "location": "web_search.py:66",
+                            "message": "Calling Yandex Search API",
+                            "data": {"query": enhanced_query[:100], "max_results": max_results},
+                            "timestamp": int(time.time() * 1000)
+                        }, ensure_ascii=False) + '\n')
+                except:
+                    pass
+                # #endregion
                 return await self._search_yandex_api(enhanced_query, max_results, filters)
             else:
                 # Fallback: return empty results with a note
+                # #region agent log
+                try:
+                    with open('/Users/semyon_andronov04/Desktop/C ДВ/.cursor/debug.log', 'a', encoding='utf-8') as f:
+                        f.write(json_module.dumps({
+                            "sessionId": "debug-session",
+                            "runId": "run1",
+                            "hypothesisId": "B",
+                            "location": "web_search.py:70",
+                            "message": "No API configured - returning empty results",
+                            "data": {
+                                "api_key_missing": self.api_key is None,
+                                "folder_id_missing": not bool(self.folder_id)
+                            },
+                            "timestamp": int(time.time() * 1000)
+                        }, ensure_ascii=False) + '\n')
+                except:
+                    pass
+                # #endregion
                 logger.warning("Web search: No API configured, returning empty results")
                 return []
         except Exception as e:
