@@ -170,6 +170,25 @@ async def upload_files(
             # Классификация документа
             file_classification = None
             try:
+                # #region debug log
+                import json
+                debug_log_path = "/Users/semyon_andronov04/Desktop/C ДВ/.cursor/debug.log"
+                with open(debug_log_path, "a", encoding="utf-8") as f:
+                    f.write(json.dumps({
+                        "sessionId": "debug-session",
+                        "runId": "run1",
+                        "hypothesisId": "A",
+                        "location": "upload.py:173",
+                        "message": "Starting classification",
+                        "data": {
+                            "filename": filename,
+                            "text_length": len(text),
+                            "text_preview": text[:200] if text else "empty"
+                        },
+                        "timestamp": int(__import__("time").time() * 1000)
+                    }, ensure_ascii=False) + "\n")
+                # #endregion
+                
                 logger.info(f"Classifying document: {filename}")
                 classifier_service = DocumentClassifierService()
                 classification_result = classifier_service.classify_document(
@@ -177,6 +196,26 @@ async def upload_files(
                     filename=filename,
                     case_context=None
                 )
+                
+                # #region debug log
+                with open(debug_log_path, "a", encoding="utf-8") as f:
+                    f.write(json.dumps({
+                        "sessionId": "debug-session",
+                        "runId": "run1",
+                        "hypothesisId": "A",
+                        "location": "upload.py:195",
+                        "message": "Classification result received",
+                        "data": {
+                            "filename": filename,
+                            "doc_type": classification_result.get("doc_type"),
+                            "confidence": classification_result.get("confidence"),
+                            "needs_human_review": classification_result.get("needs_human_review"),
+                            "classifier": classification_result.get("classifier"),
+                            "reasoning": classification_result.get("reasoning", "")[:200]
+                        },
+                        "timestamp": int(__import__("time").time() * 1000)
+                    }, ensure_ascii=False) + "\n")
+                # #endregion
                 
                 logger.info(
                     f"Classified {filename}: type={classification_result['doc_type']}, "
@@ -186,6 +225,23 @@ async def upload_files(
                 
                 file_classification = classification_result
             except Exception as e:
+                # #region debug log
+                with open(debug_log_path, "a", encoding="utf-8") as f:
+                    f.write(json.dumps({
+                        "sessionId": "debug-session",
+                        "runId": "run1",
+                        "hypothesisId": "B",
+                        "location": "upload.py:220",
+                        "message": "Classification error",
+                        "data": {
+                            "filename": filename,
+                            "error": str(e),
+                            "error_type": type(e).__name__
+                        },
+                        "timestamp": int(__import__("time").time() * 1000)
+                    }, ensure_ascii=False) + "\n")
+                # #endregion
+                
                 logger.warning(f"Error classifying document {filename}: {e}", exc_info=True)
                 # Не прерываем загрузку при ошибке классификации
                 file_classification = {
@@ -391,9 +447,49 @@ async def upload_files(
                 db.flush()  # Flush to get file_model.id
                 
                 # Сохраняем классификацию документа
+                # #region debug log
+                import json
+                debug_log_path = "/Users/semyon_andronov04/Desktop/C ДВ/.cursor/debug.log"
+                with open(debug_log_path, "a", encoding="utf-8") as f:
+                    f.write(json.dumps({
+                        "sessionId": "debug-session",
+                        "runId": "run1",
+                        "hypothesisId": "C",
+                        "location": "upload.py:394",
+                        "message": "Checking file_classification before save",
+                        "data": {
+                            "filename": filename,
+                            "file_id": file_model.id,
+                            "has_classification": bool(file_info.get("file_classification")),
+                            "classification_keys": list(file_info.get("file_classification", {}).keys()) if file_info.get("file_classification") else []
+                        },
+                        "timestamp": int(__import__("time").time() * 1000)
+                    }, ensure_ascii=False) + "\n")
+                # #endregion
+                
                 if file_info.get("file_classification"):
                     from app.models.analysis import DocumentClassification
                     classification = file_info["file_classification"]
+                    
+                    # #region debug log
+                    with open(debug_log_path, "a", encoding="utf-8") as f:
+                        f.write(json.dumps({
+                            "sessionId": "debug-session",
+                            "runId": "run1",
+                            "hypothesisId": "C",
+                            "location": "upload.py:410",
+                            "message": "Saving classification to DB",
+                            "data": {
+                                "filename": filename,
+                                "file_id": file_model.id,
+                                "doc_type": classification.get("doc_type"),
+                                "confidence": classification.get("confidence"),
+                                "needs_human_review": classification.get("needs_human_review")
+                            },
+                            "timestamp": int(__import__("time").time() * 1000)
+                        }, ensure_ascii=False) + "\n")
+                    # #endregion
+                    
                     doc_classification = DocumentClassification(
                         case_id=case_id,
                         file_id=file_model.id,
@@ -409,6 +505,39 @@ async def upload_files(
                     )
                     db.add(doc_classification)
                     logger.info(f"Saved classification for file {file_model.id}: {classification.get('doc_type', 'unknown')}")
+                    
+                    # #region debug log
+                    with open(debug_log_path, "a", encoding="utf-8") as f:
+                        f.write(json.dumps({
+                            "sessionId": "debug-session",
+                            "runId": "run1",
+                            "hypothesisId": "C",
+                            "location": "upload.py:432",
+                            "message": "Classification saved to DB",
+                            "data": {
+                                "filename": filename,
+                                "file_id": file_model.id,
+                                "doc_type": classification.get("doc_type")
+                            },
+                            "timestamp": int(__import__("time").time() * 1000)
+                        }, ensure_ascii=False) + "\n")
+                    # #endregion
+                else:
+                    # #region debug log
+                    with open(debug_log_path, "a", encoding="utf-8") as f:
+                        f.write(json.dumps({
+                            "sessionId": "debug-session",
+                            "runId": "run1",
+                            "hypothesisId": "C",
+                            "location": "upload.py:440",
+                            "message": "No classification to save",
+                            "data": {
+                                "filename": filename,
+                                "file_id": file_model.id
+                            },
+                            "timestamp": int(__import__("time").time() * 1000)
+                        }, ensure_ascii=False) + "\n")
+                    # #endregion
             except Exception as file_error:
                 logger.warning(
                     f"Error creating File model for {filename}: {file_error}",
