@@ -136,7 +136,6 @@ const DocumentFilters: React.FC<DocumentFiltersProps> = ({
     'other': 'Другое'
   }
   
-  const allDocTypes = Object.values(docTypesByCategory).flat()
   const privilegeStatuses = ['All', 'Privileged', 'Not Privileged', 'Low Confidence', 'needs_review']
   const confidenceLevels = ['>95%', '80-95%', '<80%']
   const statuses = ['New', 'Reviewed', 'Flagged']
@@ -159,18 +158,37 @@ const DocumentFilters: React.FC<DocumentFiltersProps> = ({
       </div>
 
       <div className="document-filters-group">
-        <label className="document-filters-group-label">☑ Type:</label>
+        <label className="document-filters-group-label">☑ Тип документа:</label>
+        {Object.entries(docTypesByCategory).map(([category, types]) => (
+          <details key={category} className="document-filters-category" open={category === 'Процессуальные'}>
+            <summary className="document-filters-category-summary">{category}</summary>
+            <div className="document-filters-checkbox-group">
+              {types.map((type: string) => (
+                <label key={type} className="document-filters-checkbox">
+                  <input
+                    type="checkbox"
+                    checked={filters.docTypes.includes(type)}
+                    onChange={() => handleDocTypeToggle(type)}
+                  />
+                  <span>{docTypeLabels[type] || type}</span>
+                </label>
+              ))}
+            </div>
+          </details>
+        ))}
+      </div>
+      
+      <div className="document-filters-group">
+        <label className="document-filters-group-label">☑ Требует проверки:</label>
         <div className="document-filters-checkbox-group">
-          {docTypes.map(type => (
-            <label key={type} className="document-filters-checkbox">
-              <input
-                type="checkbox"
-                checked={filters.docTypes.includes(type)}
-                onChange={() => handleDocTypeToggle(type)}
-              />
-              <span>{type}</span>
-            </label>
-          ))}
+          <label className="document-filters-checkbox">
+            <input
+              type="checkbox"
+              checked={filters.privilegeStatus.includes('needs_review')}
+              onChange={() => handlePrivilegeToggle('needs_review')}
+            />
+            <span>Требует ручной проверки</span>
+          </label>
         </div>
       </div>
 
