@@ -73,8 +73,8 @@ class DocumentClassifierService:
             self.llm = create_llm(temperature=0.1)
             logger.info("✅ Using GigaChat LLM for document classification")
         except Exception as e:
-            logger.error(f"Failed to initialize GigaChat for classification: {e}")
-            raise
+            logger.warning(f"Failed to initialize GigaChat for classification: {e}, classification will use default values")
+            self.llm = None
     
     def classify_document(
         self,
@@ -109,10 +109,12 @@ class DocumentClassifierService:
             if self.llm:
                 return self._classify_with_llm(prompt_text, filename, case_context)
             
-            raise ValueError("No classifier available")
+            # Если ни один классификатор не доступен, возвращаем дефолтную классификацию
+            logger.warning("No classifier available, using default classification")
+            return self._default_classification("No classifier available")
             
         except Exception as e:
-            logger.error(f"Error classifying document: {e}", exc_info=True)
+            logger.warning(f"Error classifying document: {e}", exc_info=True)
             return self._default_classification(f"Classification error: {str(e)}")
     
     def _classify_with_yandex(self, text: str, filename: Optional[str]) -> Dict[str, Any]:
@@ -259,7 +261,7 @@ class DocumentClassifierService:
                     "classifier": "gigachat"
                 }
             except Exception as parse_error:
-                logger.error(f"JSON parsing failed: {parse_error}")
+                logger.warning(f"JSON parsing failed: {parse_error}")
                 return self._default_classification(f"GigaChat classification error: {str(parse_error)}")
     
     def _get_tags_for_type(self, doc_type: str) -> list:
@@ -309,4 +311,5 @@ class DocumentClassifierService:
             "reasoning": reason,
             "classifier": "default"
         }
+
 

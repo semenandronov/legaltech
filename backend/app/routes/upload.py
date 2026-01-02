@@ -186,7 +186,7 @@ async def upload_files(
                 
                 file_classification = classification_result
             except Exception as e:
-                logger.error(f"Error classifying document {filename}: {e}", exc_info=True)
+                logger.warning(f"Error classifying document {filename}: {e}", exc_info=True)
                 # Не прерываем загрузку при ошибке классификации
                 file_classification = {
                     "doc_type": "other",

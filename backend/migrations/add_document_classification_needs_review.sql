@@ -21,3 +21,4 @@ CREATE INDEX IF NOT EXISTS ix_document_classifications_needs_review
 ON document_classifications(needs_human_review) 
 WHERE needs_human_review = 'true';
 
+
