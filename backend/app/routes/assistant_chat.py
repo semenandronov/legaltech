@@ -15,6 +15,7 @@ from app.services.llm_factory import create_llm
 from app.services.langchain_agents import PlanningAgent
 from app.services.langchain_agents.advanced_planning_agent import AdvancedPlanningAgent
 from app.services.analysis_service import AnalysisService
+from app.services.external_sources.web_research_service import get_web_research_service
 import json
 import logging
 import asyncio
@@ -118,7 +119,8 @@ async def stream_chat_response(
     question: str,
     db: Session,
     current_user: User,
-    background_tasks: BackgroundTasks
+    background_tasks: BackgroundTasks,
+    web_search: bool = False
 ) -> AsyncGenerator[str, None]:
     """
     Stream chat response using RAG and LLM OR agents for tasks
@@ -291,13 +293,59 @@ async def stream_chat_response(
             
             context = "\n\n".join(context_parts)
             
+            # Web search integration
+            web_search_context = ""
+            if web_search:
+                try:
+                    logger.info(f"Web search enabled for query: {question[:100]}...")
+                    web_research_service = get_web_research_service()
+                    research_result = await web_research_service.research(
+                        query=question,
+                        max_results=5,
+                        use_cache=True,
+                        validate_sources=True
+                    )
+                    
+                    if research_result.sources:
+                        web_search_parts = []
+                        web_search_parts.append(f"\n\n=== Результаты веб-поиска ===")
+                        web_search_parts.append(f"Найдено источников: {len(research_result.sources)}")
+                        
+                        for i, source in enumerate(research_result.sources[:5], 1):
+                            title = source.get("title", "Без названия")
+                            url = source.get("url", "")
+                            content = source.get("content", "")
+                            if content:
+                                web_search_parts.append(f"\n[Источник {i}: {title}]")
+                                if url:
+                                    web_search_parts.append(f"URL: {url}")
+                                web_search_parts.append(f"Содержание: {content[:300]}...")
+                        
+                        web_search_context = "\n".join(web_search_parts)
+                        logger.info(f"Web search completed: {len(research_result.sources)} sources found")
+                    else:
+                        logger.warning("Web search returned no results")
+                except Exception as web_search_error:
+                    logger.warning(f"Web search failed: {web_search_error}, continuing without web search")
+                    # Continue without web search - не критичная ошибка
+            
             # Create prompt
+            web_search_instructions = ""
+            if web_search_context:
+                web_search_instructions = """
+ИНСТРУКЦИИ ПО ИСПОЛЬЗОВАНИЮ РЕЗУЛЬТАТОВ ВЕБ-ПОИСКА:
+- Используй информацию из веб-поиска для дополнения ответа, когда информации из документов дела недостаточно
+- При цитировании информации из веб-поиска указывай источник (название и URL если доступен)
+- Предпочтительно использовать информацию из документов дела, веб-поиск - для дополнительного контекста
+- Если информация из веб-поиска противоречит документам дела, укажи это и приоритизируй документы дела
+"""
+
             prompt = f"""Ты - юридический AI-ассистент. Ты помогаешь анализировать документы дела.
 
 Контекст из документов дела:
-{context}
+{context}{web_search_context}
 
-Вопрос пользователя: {question}
+Вопрос пользователя: {question}{web_search_instructions}
 
 ВАЖНО - ФОРМАТИРОВАНИЕ ОТВЕТА:
 1. ВСЕГДА используй Markdown форматирование для ответов:
@@ -329,8 +377,9 @@ async def stream_chat_response(
    | 22.08.2016 | Не указан | A83-6426-2015 |
    | 15.03.2017 | Е.А. Остапов | A83-6426-2015 |
 
-Ответь на вопрос, используя информацию из документов. Если информации недостаточно, укажи это.
-Будь точным и профессиональным. ВСЕГДА используй Markdown форматирование."""
+Ответь на вопрос, используя информацию из документов дела. {f"Если информации из документов недостаточно, используй результаты веб-поиска для дополнения ответа." if web_search_context else "Если информации недостаточно, укажи это."}
+Будь точным и профессиональным. ВСЕГДА используй Markdown форматирование.
+{f"При цитировании информации из веб-поиска указывай источник в формате: [Название источника](URL) или просто название источника, если URL недоступен." if web_search_context else ""}"""
 
             # Initialize LLM
             llm = create_llm(temperature=0.7)
@@ -398,6 +447,7 @@ async def assistant_chat(
         body = await request.json()
         messages = body.get("messages", [])
         case_id = body.get("case_id") or body.get("caseId")
+        web_search = body.get("web_search", False)
         
         if not case_id:
             raise HTTPException(status_code=400, detail="case_id is required")
@@ -419,7 +469,8 @@ async def assistant_chat(
                 question=question,
                 db=db,
                 current_user=current_user,
-                background_tasks=background_tasks
+                background_tasks=background_tasks,
+                web_search=web_search
             ),
             media_type="text/event-stream",
             headers={
