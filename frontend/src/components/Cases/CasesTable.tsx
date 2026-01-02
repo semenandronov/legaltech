@@ -1,11 +1,7 @@
 import * as React from "react"
 import {
   ColumnDef,
-  ColumnFiltersState,
-  SortingState,
-  VisibilityState,
   RowSelectionState,
-  ColumnSizingState,
   flexRender,
   getCoreRowModel,
   getFilteredRowModel,
@@ -19,11 +15,6 @@ import {
   Button,
   Table,
   TableBody,
-  TableCell,
-  TableContainer,
-  TableHead,
-  TableRow,
-  Paper,
   Stack,
   Menu,
   MenuItem,
@@ -36,21 +27,16 @@ import {
   FormControl,
   InputLabel,
   Tooltip,
-  CircularProgress,
   Snackbar,
   Alert,
 } from '@mui/material'
 import {
-  ChevronDown as ChevronDownIcon,
-  SwapVert as ArrowUpDownIcon,
+  ExpandMore as ChevronDownIcon,
   MoreVert as MoreHorizontalIcon,
   Description as FileTextIcon,
-  MessageSquare as MessageSquareIcon,
+  Chat as MessageSquareIcon,
   Download as DownloadIcon,
   Archive as ArchiveIcon,
-  ArrowUpward,
-  ArrowDownward,
-  UnfoldMore,
 } from '@mui/icons-material'
 import { CaseListItem } from "@/services/api"
 import { useNavigate } from "react-router-dom"
@@ -264,7 +250,6 @@ export function CasesTable({ data, loading }: CasesTableProps) {
       id: "actions",
       enableHiding: false,
       cell: ({ row }) => {
-        const caseItem = row.original
         return (
           <IconButton
             size="small"
@@ -351,7 +336,7 @@ export function CasesTable({ data, loading }: CasesTableProps) {
 
   const handleArchive = () => {
     // TODO: Реализовать архивирование
-    setSnackbar({ open: true, message: 'Функция архивирования в разработке', severity: 'info' })
+    setSnackbar({ open: true, message: 'Функция архивирования в разработке', severity: 'success' })
   }
 
   return (

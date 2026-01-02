@@ -780,12 +780,15 @@ export const TabularReviewTable = React.memo(({ reviewId, tableData, onCellClick
   const shouldVirtualize = table.getRowModel().rows.length > 100
   const tableContainerRef = React.useRef<HTMLDivElement>(null)
   
-  const { rows: virtualRows, totalSize } = useVirtualizer({
+  const virtualizer = useVirtualizer({
     count: table.getRowModel().rows.length,
     getScrollElement: () => tableContainerRef.current,
     estimateSize: () => 50, // Примерная высота строки
     overscan: 10,
   })
+  
+  const virtualRows = virtualizer.getVirtualItems()
+  const totalSize = virtualizer.getTotalSize()
 
   const handleMenuOpen = React.useCallback((event: React.MouseEvent<HTMLElement>) => {
     setAnchorEl(event.currentTarget)
@@ -863,18 +866,17 @@ export const TabularReviewTable = React.memo(({ reviewId, tableData, onCellClick
                       py: 1.5,
                       px: 2,
                       width: header.getSize(),
-                      position: header.column.getIsPinned() ? 'sticky' : 'static',
+                      position: header.column.getIsPinned() ? 'sticky' : 'relative',
                       left: header.column.getIsPinned() === 'left' 
                         ? `${header.getStart('left')}px` 
                         : undefined,
                       right: header.column.getIsPinned() === 'right' 
-                        ? `${header.getAfter('right')}px` 
+                        ? `${header.getStart('right')}px` 
                         : undefined,
                       zIndex: header.column.getIsPinned() ? 15 : 1,
                       '&:last-child': {
                         borderRight: 'none',
                       },
-                      position: 'relative',
                     }}
                   >
                     {header.isPlaceholder
@@ -939,11 +941,11 @@ export const TabularReviewTable = React.memo(({ reviewId, tableData, onCellClick
                             ? `${cell.column.getStart('left')}px` 
                             : undefined,
                           right: cell.column.getIsPinned() === 'right' 
-                            ? `${cell.column.getAfter('right')}px` 
+                            ? `${cell.column.getStart('right')}px` 
                             : undefined,
                           zIndex: cell.column.getIsPinned() ? 10 : 1,
                           bgcolor: cell.column.getIsPinned() 
-                            ? (rowIndex % 2 === 0 ? '#FFFFFF' : '#F9FAFB')
+                            ? (virtualRow.index % 2 === 0 ? '#FFFFFF' : '#F9FAFB')
                             : 'transparent',
                           '&:last-child': {
                             borderRight: 'none',
@@ -985,11 +987,11 @@ export const TabularReviewTable = React.memo(({ reviewId, tableData, onCellClick
                             ? `${cell.column.getStart('left')}px` 
                             : undefined,
                           right: cell.column.getIsPinned() === 'right' 
-                            ? `${cell.column.getAfter('right')}px` 
+                            ? `${cell.column.getStart('right')}px` 
                             : undefined,
                           zIndex: cell.column.getIsPinned() ? 10 : 1,
                           bgcolor: cell.column.getIsPinned() 
-                            ? (virtualRow.index % 2 === 0 ? '#FFFFFF' : '#F9FAFB')
+                            ? (rowIndex % 2 === 0 ? '#FFFFFF' : '#F9FAFB')
                             : 'transparent',
                           '&:last-child': {
                             borderRight: 'none',

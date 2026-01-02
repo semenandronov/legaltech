@@ -3,13 +3,10 @@ import {
   Box,
   TableContainer,
   Paper,
-  Table,
   TableHead,
-  TableBody,
   TableRow,
   TableCell,
   Typography,
-  Stack,
   Toolbar,
   IconButton,
   Chip,
@@ -20,7 +17,6 @@ import {
   ArrowDownward,
   UnfoldMore,
   FilterList,
-  ViewColumn,
 } from '@mui/icons-material'
 
 interface TableContainerProps {
