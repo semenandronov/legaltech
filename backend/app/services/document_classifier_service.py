@@ -393,8 +393,8 @@ class DocumentClassifierService:
                             "sessionId": "debug-session",
                             "runId": "run1",
                             "hypothesisId": "E",
-                            "location": "document_classifier_service.py:235",
-                            "message": "LLM classification result received",
+                            "location": "document_classifier_service.py:387",
+                            "message": "LLM classification result received (structured)",
                             "data": {
                                 "filename": filename,
                                 "doc_type": getattr(classification, "doc_type", None),
@@ -406,6 +406,19 @@ class DocumentClassifierService:
                 except Exception:
                     pass
                 # #endregion
+                
+                # Преобразуем в нужный формат
+                confidence = float(classification.confidence) if isinstance(classification.confidence, (int, float)) else 0.5
+                needs_human_review = confidence < CLASSIFICATION_CONFIDENCE_THRESHOLD
+                
+                return {
+                    "doc_type": classification.doc_type,
+                    "tags": classification.key_topics or [],
+                    "confidence": confidence,
+                    "needs_human_review": needs_human_review,
+                    "reasoning": classification.reasoning or "Классифицировано через GigaChat LLM (structured output)",
+                    "classifier": "gigachat"
+                }
             except Exception as structured_error:
                 # Fallback: используем прямой вызов LLM без structured output
                 logger.warning(f"Structured output failed: {structured_error}, using direct LLM call")
@@ -415,7 +428,34 @@ class DocumentClassifierService:
                     HumanMessage(content=user_prompt)
                 ]
                 response = self.llm.invoke(messages)
-                response_text = response.content if hasattr(response, 'content') else str(response)
+                # Правильно извлекаем content из ChatResult
+                if hasattr(response, 'generations') and response.generations:
+                    response_text = response.generations[0].message.content if hasattr(response.generations[0].message, 'content') else str(response.generations[0].message)
+                elif hasattr(response, 'content'):
+                    response_text = response.content
+                else:
+                    response_text = str(response)
+                
+                # #region debug log
+                try:
+                    with open(debug_log_path, "a", encoding="utf-8") as f:
+                        f.write(json.dumps({
+                            "sessionId": "debug-session",
+                            "runId": "run1",
+                            "hypothesisId": "E",
+                            "location": "document_classifier_service.py:417",
+                            "message": "LLM response received (fallback)",
+                            "data": {
+                                "filename": filename,
+                                "response_length": len(response_text),
+                                "response_preview": response_text[:500]
+                            },
+                            "timestamp": int(__import__("time").time() * 1000)
+                        }, ensure_ascii=False) + "\n")
+                except Exception:
+                    pass
+                # #endregion
+                
                 from app.services.langchain_parsers import ParserService
                 classification = ParserService.parse_document_classification(response_text)
             
