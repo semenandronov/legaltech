@@ -17,52 +17,21 @@ class WebSearchSource(BaseSource):
     
     def __init__(self):
         super().__init__(name="web_search", enabled=True)
-        # #region agent log
-        import json as json_module
-        import time
-        try:
-            with open('/Users/semyon_andronov04/Desktop/C ДВ/.cursor/debug.log', 'a', encoding='utf-8') as f:
-                f.write(json_module.dumps({
-                    "sessionId": "debug-session",
-                    "runId": "run1",
-                    "hypothesisId": "A",
-                    "location": "web_search.py:18",
-                    "message": "WebSearchSource __init__ started",
-                    "data": {
-                        "has_YANDEX_SEARCH_API_KEY": hasattr(config, 'YANDEX_SEARCH_API_KEY'),
-                        "YANDEX_SEARCH_API_KEY_value": getattr(config, 'YANDEX_SEARCH_API_KEY', None) is not None,
-                        "has_YANDEX_API_KEY": hasattr(config, 'YANDEX_API_KEY'),
-                        "YANDEX_API_KEY_value": bool(getattr(config, 'YANDEX_API_KEY', '')),
-                        "YANDEX_FOLDER_ID": bool(getattr(config, 'YANDEX_FOLDER_ID', ''))
-                    },
-                    "timestamp": int(time.time() * 1000)
-                }, ensure_ascii=False) + '\n')
-        except:
-            pass
-        # #endregion
         # Используем YANDEX_API_KEY вместо YANDEX_SEARCH_API_KEY (которой нет в конфиге)
-        self.api_key = getattr(config, 'YANDEX_SEARCH_API_KEY', None) or getattr(config, 'YANDEX_API_KEY', None)
+        yandex_search_key = getattr(config, 'YANDEX_SEARCH_API_KEY', None)
+        yandex_api_key = getattr(config, 'YANDEX_API_KEY', None)
+        self.api_key = yandex_search_key or yandex_api_key
         self.folder_id = config.YANDEX_FOLDER_ID
+        
+        # Детальное логирование для отладки
+        logger.info(f"[WebSearch] Initialization: YANDEX_SEARCH_API_KEY={bool(yandex_search_key)}, "
+                   f"YANDEX_API_KEY={bool(yandex_api_key)}, "
+                   f"YANDEX_FOLDER_ID={bool(self.folder_id)}, "
+                   f"api_key_set={self.api_key is not None}, "
+                   f"api_key_length={len(self.api_key) if self.api_key else 0}, "
+                   f"folder_id_length={len(self.folder_id) if self.folder_id else 0}")
+        
         self.base_url = "https://yandex.ru/search/xml"
-        # #region agent log
-        try:
-            with open('/Users/semyon_andronov04/Desktop/C ДВ/.cursor/debug.log', 'a', encoding='utf-8') as f:
-                f.write(json_module.dumps({
-                    "sessionId": "debug-session",
-                    "runId": "run1",
-                    "hypothesisId": "A",
-                    "location": "web_search.py:22",
-                    "message": "WebSearchSource __init__ completed",
-                    "data": {
-                        "api_key_set": self.api_key is not None,
-                        "folder_id_set": bool(self.folder_id),
-                        "api_key_length": len(self.api_key) if self.api_key else 0
-                    },
-                    "timestamp": int(time.time() * 1000)
-                }, ensure_ascii=False) + '\n')
-        except:
-            pass
-        # #endregion
     
     async def initialize(self) -> bool:
         """Initialize web search source"""
@@ -103,67 +72,20 @@ class WebSearchSource(BaseSource):
         enhanced_query = self._enhance_legal_query(query, filters)
         
         try:
-            # #region agent log
-            import json as json_module
-            import time
-            try:
-                with open('/Users/semyon_andronov04/Desktop/C ДВ/.cursor/debug.log', 'a', encoding='utf-8') as f:
-                    f.write(json_module.dumps({
-                        "sessionId": "debug-session",
-                        "runId": "run1",
-                        "hypothesisId": "B",
-                        "location": "web_search.py:63",
-                        "message": "Checking API credentials before search",
-                        "data": {
-                            "has_api_key": self.api_key is not None,
-                            "has_folder_id": bool(self.folder_id),
-                            "api_key_length": len(self.api_key) if self.api_key else 0,
-                            "folder_id_length": len(self.folder_id) if self.folder_id else 0,
-                            "query": enhanced_query[:100]
-                        },
-                        "timestamp": int(time.time() * 1000)
-                    }, ensure_ascii=False) + '\n')
-            except:
-                pass
-            # #endregion
+            # Детальное логирование для отладки
+            logger.info(f"[WebSearch] Search request: query='{enhanced_query[:100]}', "
+                       f"has_api_key={self.api_key is not None}, "
+                       f"api_key_length={len(self.api_key) if self.api_key else 0}, "
+                       f"has_folder_id={bool(self.folder_id)}, "
+                       f"folder_id_length={len(self.folder_id) if self.folder_id else 0}")
+            
             if self.api_key and self.folder_id:
-                # #region agent log
-                try:
-                    with open('/Users/semyon_andronov04/Desktop/C ДВ/.cursor/debug.log', 'a', encoding='utf-8') as f:
-                        f.write(json_module.dumps({
-                            "sessionId": "debug-session",
-                            "runId": "run1",
-                            "hypothesisId": "C",
-                            "location": "web_search.py:66",
-                            "message": "Calling Yandex Search API",
-                            "data": {"query": enhanced_query[:100], "max_results": max_results},
-                            "timestamp": int(time.time() * 1000)
-                        }, ensure_ascii=False) + '\n')
-                except:
-                    pass
-                # #endregion
+                logger.info(f"[WebSearch] Calling Yandex Search API with query: {enhanced_query[:100]}")
                 return await self._search_yandex_api(enhanced_query, max_results, filters)
             else:
                 # Fallback: return empty results with a note
-                # #region agent log
-                try:
-                    with open('/Users/semyon_andronov04/Desktop/C ДВ/.cursor/debug.log', 'a', encoding='utf-8') as f:
-                        f.write(json_module.dumps({
-                            "sessionId": "debug-session",
-                            "runId": "run1",
-                            "hypothesisId": "B",
-                            "location": "web_search.py:70",
-                            "message": "No API configured - returning empty results",
-                            "data": {
-                                "api_key_missing": self.api_key is None,
-                                "folder_id_missing": not bool(self.folder_id)
-                            },
-                            "timestamp": int(time.time() * 1000)
-                        }, ensure_ascii=False) + '\n')
-                except:
-                    pass
-                # #endregion
-                logger.warning("Web search: No API configured, returning empty results")
+                logger.warning(f"[WebSearch] No API configured - api_key={self.api_key is not None}, "
+                             f"folder_id={bool(self.folder_id)}. Returning empty results.")
                 return []
         except Exception as e:
             logger.error(f"Web search error: {e}", exc_info=True)
@@ -214,29 +136,8 @@ class WebSearchSource(BaseSource):
         Returns:
             List of SourceResult
         """
-        # #region agent log
-        import json as json_module
-        import time
-        try:
-            with open('/Users/semyon_andronov04/Desktop/C ДВ/.cursor/debug.log', 'a', encoding='utf-8') as f:
-                f.write(json_module.dumps({
-                    "sessionId": "debug-session",
-                    "runId": "run1",
-                    "hypothesisId": "D",
-                    "location": "web_search.py:200",
-                    "message": "Starting Yandex Search API request",
-                    "data": {
-                        "query": query[:100],
-                        "max_results": max_results,
-                        "base_url": self.base_url,
-                        "has_api_key": self.api_key is not None,
-                        "has_folder_id": bool(self.folder_id)
-                    },
-                    "timestamp": int(time.time() * 1000)
-                }, ensure_ascii=False) + '\n')
-        except:
-            pass
-        # #endregion
+        logger.info(f"[WebSearch] Starting Yandex Search API request: query='{query[:100]}', "
+                   f"max_results={max_results}, base_url={self.base_url}")
         
         # Build request parameters for Yandex Search API (XML format)
         # Yandex Search API поддерживает как XML, так и REST API
@@ -265,26 +166,8 @@ class WebSearchSource(BaseSource):
         
         try:
             async with aiohttp.ClientSession() as session:
-                # #region agent log
-                try:
-                    with open('/Users/semyon_andronov04/Desktop/C ДВ/.cursor/debug.log', 'a', encoding='utf-8') as f:
-                        f.write(json_module.dumps({
-                            "sessionId": "debug-session",
-                            "runId": "run1",
-                            "hypothesisId": "D",
-                            "location": "web_search.py:245",
-                            "message": "Sending request to Yandex Search API",
-                            "data": {
-                                "url": self.base_url,
-                                "method": "GET",
-                                "has_headers": bool(headers),
-                                "params_count": len(params)
-                            },
-                            "timestamp": int(time.time() * 1000)
-                        }, ensure_ascii=False) + '\n')
-                except:
-                    pass
-                # #endregion
+                logger.info(f"[WebSearch] Sending request to Yandex Search API: url={self.base_url}, "
+                           f"has_headers={bool(headers)}, params_count={len(params)}")
                 
                 async with session.get(
                     self.base_url,
@@ -295,106 +178,24 @@ class WebSearchSource(BaseSource):
                     # Читаем ответ один раз
                     content = await response.text()
                     
-                    # #region agent log
-                    try:
-                        with open('/Users/semyon_andronov04/Desktop/C ДВ/.cursor/debug.log', 'a', encoding='utf-8') as f:
-                            f.write(json_module.dumps({
-                                "sessionId": "debug-session",
-                                "runId": "run1",
-                                "hypothesisId": "D",
-                                "location": "web_search.py:260",
-                                "message": "Received response from Yandex Search API",
-                                "data": {
-                                    "status": response.status,
-                                    "status_text": response.reason,
-                                    "content_type": response.headers.get("Content-Type", ""),
-                                    "content_length": len(content),
-                                    "response_preview": content[:200]
-                                },
-                                "timestamp": int(time.time() * 1000)
-                            }, ensure_ascii=False) + '\n')
-                    except:
-                        pass
-                    # #endregion
+                    logger.info(f"[WebSearch] Received response: status={response.status}, "
+                               f"content_type={response.headers.get('Content-Type', '')}, "
+                               f"content_length={len(content)}")
                     
                     if response.status != 200:
-                        logger.error(f"Yandex Search API error: {response.status} - {content[:200]}")
-                        # #region agent log
-                        try:
-                            with open('/Users/semyon_andronov04/Desktop/C ДВ/.cursor/debug.log', 'a', encoding='utf-8') as f:
-                                f.write(json_module.dumps({
-                                    "sessionId": "debug-session",
-                                    "runId": "run1",
-                                    "hypothesisId": "E",
-                                    "location": "web_search.py:275",
-                                    "message": "Yandex Search API returned error status",
-                                    "data": {
-                                        "status": response.status,
-                                        "error_text": content[:500]
-                                    },
-                                    "timestamp": int(time.time() * 1000)
-                                }, ensure_ascii=False) + '\n')
-                        except:
-                            pass
-                        # #endregion
+                        logger.error(f"[WebSearch] Yandex Search API error: status={response.status}, "
+                                   f"error_text={content[:500]}")
                         return []
                     
                     # Parse XML response
-                    # #region agent log
-                    try:
-                        with open('/Users/semyon_andronov04/Desktop/C ДВ/.cursor/debug.log', 'a', encoding='utf-8') as f:
-                            f.write(json_module.dumps({
-                                "sessionId": "debug-session",
-                                "runId": "run1",
-                                "hypothesisId": "D",
-                                "location": "web_search.py:290",
-                                "message": "Parsing XML response",
-                                "data": {
-                                    "content_length": len(content),
-                                    "content_preview": content[:200]
-                                },
-                                "timestamp": int(time.time() * 1000)
-                            }, ensure_ascii=False) + '\n')
-                    except:
-                        pass
-                    # #endregion
+                    logger.info(f"[WebSearch] Parsing XML response: content_length={len(content)}")
                     return self._parse_yandex_response(content)
                     
         except aiohttp.ClientError as e:
-            logger.error(f"Yandex Search API connection error: {e}")
-            # #region agent log
-            try:
-                with open('/Users/semyon_andronov04/Desktop/C ДВ/.cursor/debug.log', 'a', encoding='utf-8') as f:
-                    f.write(json_module.dumps({
-                        "sessionId": "debug-session",
-                        "runId": "run1",
-                        "hypothesisId": "E",
-                        "location": "web_search.py:300",
-                        "message": "Yandex Search API connection error",
-                        "data": {"error": str(e), "error_type": str(type(e).__name__)},
-                        "timestamp": int(time.time() * 1000)
-                    }, ensure_ascii=False) + '\n')
-            except:
-                pass
-            # #endregion
+            logger.error(f"[WebSearch] Yandex Search API connection error: {e}", exc_info=True)
             return []
         except Exception as e:
-            logger.error(f"Yandex Search API error: {e}", exc_info=True)
-            # #region agent log
-            try:
-                with open('/Users/semyon_andronov04/Desktop/C ДВ/.cursor/debug.log', 'a', encoding='utf-8') as f:
-                    f.write(json_module.dumps({
-                        "sessionId": "debug-session",
-                        "runId": "run1",
-                        "hypothesisId": "E",
-                        "location": "web_search.py:310",
-                        "message": "Yandex Search API exception",
-                        "data": {"error": str(e), "error_type": str(type(e).__name__)},
-                        "timestamp": int(time.time() * 1000)
-                    }, ensure_ascii=False) + '\n')
-            except:
-                pass
-            # #endregion
+            logger.error(f"[WebSearch] Yandex Search API error: {e}", exc_info=True)
             return []
     
     def _parse_yandex_response(self, xml_content: str) -> List[SourceResult]:
