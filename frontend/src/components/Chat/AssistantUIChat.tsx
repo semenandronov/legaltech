@@ -590,7 +590,7 @@ export const AssistantUIChat = forwardRef<{ clearMessages: () => void; loadHisto
     }
   }, [])
 
-  const handlePromptSubmit = useCallback(async (message: { text: string; files: any[] }, event: React.FormEvent<HTMLFormElement>) => {
+  const handlePromptSubmit = useCallback(async (message: { text: string; files: any[] }, _event: React.FormEvent<HTMLFormElement>) => {
     const { text } = message
     if (text.trim() && !isLoading && actualCaseId) {
       await sendMessage(text)
