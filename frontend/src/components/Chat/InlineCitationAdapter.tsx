@@ -48,10 +48,6 @@ export const InlineCitationAdapter: React.FC<InlineCitationAdapterProps> = ({
     return name.substring(0, 15)
   }
 
-  const shortName = formatShortName(source.file)
-  const pageInfo = source.page ? ` стр.${source.page}` : ''
-  const displayText = `${shortName}${pageInfo}`
-
   // Create full URL for the source (InlineCitationCardTrigger needs full URL for hostname extraction)
   const sourceUrl = source.file 
     ? (source.file.startsWith('http') 
@@ -69,7 +65,7 @@ export const InlineCitationAdapter: React.FC<InlineCitationAdapterProps> = ({
 
   return (
     <InlineCitation>
-      <InlineCitationText>{displayText}</InlineCitationText>
+      <InlineCitationText>[{index}]</InlineCitationText>
       <InlineCitationCard>
         <InlineCitationCardTrigger 
           sources={[sourceUrl]}
