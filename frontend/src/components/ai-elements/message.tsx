@@ -1,9 +1,8 @@
 import * as React from "react"
 import { cn } from "@/lib/utils"
-import ReactMarkdown from "react-markdown"
 import { Reasoning, ReasoningContent, ReasoningTrigger } from "./reasoning"
 import { Tool, ToolInput, ToolOutput } from "./tool"
-import { Response, ResponseContent, ResponseSources } from "./response"
+import { Response, ResponseContent } from "./response"
 import MessageContent from "../Chat/MessageContent"
 import { SourceInfo } from "@/services/api"
 
@@ -83,74 +82,6 @@ export const AssistantMessage = React.memo(function AssistantMessage({
   children,
   onSourceClick,
 }: AssistantMessageProps) {
-  const markdownComponents = {
-    p: ({ children }: any) => <p className="mb-3 last:mb-0">{children}</p>,
-    h1: ({ children }: any) => (
-      <h1 className="text-xl font-bold mb-3 mt-4 first:mt-0">{children}</h1>
-    ),
-    h2: ({ children }: any) => (
-      <h2 className="text-lg font-semibold mb-2 mt-3 first:mt-0">{children}</h2>
-    ),
-    h3: ({ children }: any) => (
-      <h3 className="text-base font-semibold mb-2 mt-3 first:mt-0">{children}</h3>
-    ),
-    ul: ({ children }: any) => (
-      <ul className="list-disc list-inside mb-3 space-y-1">{children}</ul>
-    ),
-    ol: ({ children }: any) => (
-      <ol className="list-decimal list-inside mb-3 space-y-1">{children}</ol>
-    ),
-    li: ({ children }: any) => <li className="ml-2">{children}</li>,
-    code: ({ children, className }: any) => {
-      const isInline = !className
-      return isInline ? (
-        <code className="bg-gray-200 dark:bg-gray-700 px-1.5 py-0.5 rounded text-xs font-mono">
-          {children}
-        </code>
-      ) : (
-        <code className="block bg-gray-200 dark:bg-gray-700 p-3 rounded text-xs font-mono overflow-x-auto mb-3">
-          {children}
-        </code>
-      )
-    },
-    pre: ({ children }: any) => (
-      <pre className="bg-gray-200 dark:bg-gray-700 p-3 rounded text-xs font-mono overflow-x-auto mb-3">
-        {children}
-      </pre>
-    ),
-    strong: ({ children }: any) => (
-      <strong className="font-semibold">{children}</strong>
-    ),
-    em: ({ children }: any) => <em className="italic">{children}</em>,
-    table: ({ children }: any) => (
-      <div className="overflow-x-auto mb-3">
-        <table className="min-w-full border-collapse border border-gray-300">
-          {children}
-        </table>
-      </div>
-    ),
-    thead: ({ children }: any) => (
-      <thead className="bg-gray-200">{children}</thead>
-    ),
-    tbody: ({ children }: any) => <tbody>{children}</tbody>,
-    tr: ({ children }: any) => (
-      <tr className="border-b border-gray-200">{children}</tr>
-    ),
-    th: ({ children }: any) => (
-      <th className="border border-gray-300 px-3 py-2 text-left font-semibold">
-        {children}
-      </th>
-    ),
-    td: ({ children }: any) => (
-      <td className="border border-gray-300 px-3 py-2">{children}</td>
-    ),
-    blockquote: ({ children }: any) => (
-      <blockquote className="border-l-4 border-gray-400 pl-4 italic my-3">
-        {children}
-      </blockquote>
-    ),
-  }
-
   return (
     <Message role="assistant" className={className}>
       <div className="text-sm leading-relaxed prose prose-sm max-w-none">
@@ -187,8 +118,6 @@ export const AssistantMessage = React.memo(function AssistantMessage({
               content={content}
               sources={sources?.map(s => ({
                 file: s.file || s.title || '',
-                title: s.title || s.file || '',
-                url: s.url,
                 page: s.page,
                 text_preview: s.text_preview,
               })) as SourceInfo[]}
@@ -196,8 +125,7 @@ export const AssistantMessage = React.memo(function AssistantMessage({
                 if (onSourceClick) {
                   onSourceClick({
                     file: source.file,
-                    title: source.title,
-                    url: source.url,
+                    title: source.file,
                     page: source.page,
                   })
                 }
@@ -214,8 +142,6 @@ export const AssistantMessage = React.memo(function AssistantMessage({
               content={response}
               sources={sources?.map(s => ({
                 file: s.file || s.title || '',
-                title: s.title || s.file || '',
-                url: s.url,
                 page: s.page,
                 text_preview: s.text_preview,
               })) as SourceInfo[]}
@@ -223,8 +149,7 @@ export const AssistantMessage = React.memo(function AssistantMessage({
                 if (onSourceClick) {
                   onSourceClick({
                     file: source.file,
-                    title: source.title,
-                    url: source.url,
+                    title: source.file,
                     page: source.page,
                   })
                 }

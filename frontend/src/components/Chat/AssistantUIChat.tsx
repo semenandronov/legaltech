@@ -21,6 +21,8 @@ import {
   PromptInputAttachment,
 } from '../ai-elements/prompt-input'
 import { Loader } from '../ai-elements/loader'
+import DocumentPreviewSheet from './DocumentPreviewSheet'
+import { SourceInfo } from '@/services/api'
 
 interface Message {
   id: string
@@ -41,6 +43,8 @@ interface Message {
     title?: string
     url?: string
     page?: number
+    file?: string
+    text_preview?: string
   }>
   tableCard?: {  // для отображения карточки таблицы (одна таблица)
     reviewId: string
@@ -577,11 +581,9 @@ export const AssistantUIChat = forwardRef<{ clearMessages: () => void; loadHisto
                 if (source.file) {
                   // Открываем документ справа в панели предпросмотра
                   const sourceInfo: SourceInfo = {
-                    file: source.file,
-                    title: source.title || source.file,
-                    url: source.url,
+                    file: source.file || source.title || '',
                     page: source.page,
-                    text_preview: undefined,
+                    text_preview: source.text_preview,
                   }
                   setPreviewSource(sourceInfo)
                   setPreviewOpen(true)
@@ -589,9 +591,8 @@ export const AssistantUIChat = forwardRef<{ clearMessages: () => void; loadHisto
                   if (message.sources) {
                     setAllCurrentSources(message.sources.map(s => ({
                       file: s.file || s.title || '',
-                      title: s.title || s.file || '',
-                      url: s.url,
                       page: s.page,
+                      text_preview: s.text_preview,
                     })))
                   }
                 }
