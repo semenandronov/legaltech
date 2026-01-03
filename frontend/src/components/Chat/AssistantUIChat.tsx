@@ -505,7 +505,7 @@ export const AssistantUIChat = ({ caseId, className, initialQuery, onQuerySelect
 
       {/* Input area - точно как на скриншоте Legora - ПО ЦЕНТРУ */}
       {messages.length === 0 ? (
-        <div className="flex-1 flex flex-col items-center justify-center px-6 py-8 border-t border-gray-200 bg-white">
+        <div className="flex-1 flex flex-col items-center justify-center px-6 pt-16 pb-8 bg-white">
           {/* Центрированный контейнер */}
           <div className="w-full max-w-4xl mx-auto space-y-6">
             {/* PromptInput с готовыми компонентами из @ai */}
@@ -586,7 +586,7 @@ export const AssistantUIChat = ({ caseId, className, initialQuery, onQuerySelect
           </div>
         </div>
       ) : (
-        <div className="border-t border-gray-200 bg-white px-6 py-4">
+        <div className="bg-white px-6 pt-8 pb-4">
           <div className="w-full max-w-4xl mx-auto space-y-4">
             <div className="relative">
               <PromptInput
