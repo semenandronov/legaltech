@@ -27,7 +27,7 @@ from app.services.langchain_agents.graph_optimizer import optimize_route_functio
 from sqlalchemy.orm import Session
 from app.services.rag_service import RAGService
 from app.services.document_processor import DocumentProcessor
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import ThreadPoolExecutor, as_completed, TimeoutError as FuturesTimeoutError
 import threading
 import logging
 import os
@@ -324,19 +324,36 @@ def create_analysis_graph(
         else:
             # Still waiting for response - but check timeout to prevent infinite loops
             # Track number of wait attempts
+            from app.config import config
             human_feedback_attempts = state.get("human_feedback_attempts", 0)
-            MAX_HUMAN_FEEDBACK_ATTEMPTS = 3  # Maximum attempts before skipping
+            MAX_HUMAN_FEEDBACK_ATTEMPTS = config.HUMAN_FEEDBACK_MAX_ATTEMPTS
+            FALLBACK_STRATEGY = config.HUMAN_FEEDBACK_FALLBACK_STRATEGY
             
             if human_feedback_attempts >= MAX_HUMAN_FEEDBACK_ATTEMPTS:
                 logger.warning(
                     f"[HumanFeedback] Timeout waiting for response to request {request_id} "
-                    f"after {human_feedback_attempts} attempts. Skipping human feedback and continuing."
+                    f"after {human_feedback_attempts} attempts. Using fallback strategy: {FALLBACK_STRATEGY}"
                 )
-                # Skip human feedback and continue
+                # Apply fallback strategy
                 new_state = dict(state)
                 new_state["waiting_for_human"] = False
                 new_state["current_feedback_request"] = None
                 new_state["human_feedback_attempts"] = 0
+                
+                # Store fallback info in metadata
+                if "metadata" not in new_state:
+                    new_state["metadata"] = {}
+                if "human_feedback_fallbacks" not in new_state["metadata"]:
+                    new_state["metadata"]["human_feedback_fallbacks"] = []
+                new_state["metadata"]["human_feedback_fallbacks"].append({
+                    "request_id": request_id,
+                    "attempts": human_feedback_attempts,
+                    "strategy": FALLBACK_STRATEGY,
+                    "timestamp": time.time()
+                })
+                
+                # Note: "abort" strategy would require additional logic to stop execution
+                # For now, "skip" and "retry" both continue execution
                 return new_state
             else:
                 # Increment attempt counter
@@ -440,15 +457,37 @@ def create_analysis_graph(
                     completed_agents.add(agent_name)
                     logger.info(f"[Parallel] Completed {agent_name} agent successfully")
                     
-                except TimeoutError:
-                    logger.error(f"[Parallel] Timeout ({DEFAULT_AGENT_TIMEOUT}s) for {agent_name} agent")
+                except (TimeoutError, FuturesTimeoutError) as timeout_error:
+                    logger.error(f"[Parallel] Timeout ({DEFAULT_AGENT_TIMEOUT}s) for {agent_name} agent: {timeout_error}")
+                    # Попытаться отменить future для освобождения ресурсов
+                    try:
+                        cancelled = future.cancel()
+                        if cancelled:
+                            logger.info(f"[Parallel] Successfully cancelled {agent_name} agent future")
+                        else:
+                            # Future уже выполнен или не может быть отменен
+                            if future.done():
+                                logger.debug(f"[Parallel] {agent_name} future already done, cannot cancel")
+                            else:
+                                logger.warning(f"[Parallel] Failed to cancel {agent_name} agent future")
+                    except Exception as cancel_error:
+                        logger.warning(f"[Parallel] Error cancelling {agent_name} future: {cancel_error}")
+                    
                     with state_lock:
                         errors.append({
                             "agent": agent_name,
-                            "error": f"Timeout after {DEFAULT_AGENT_TIMEOUT} seconds"
+                            "error": f"Timeout after {DEFAULT_AGENT_TIMEOUT} seconds",
+                            "cancelled": True
                         })
                 except Exception as e:
                     logger.error(f"[Parallel] Error in {agent_name} agent: {e}", exc_info=True)
+                    # Попытаться отменить future при любой ошибке
+                    try:
+                        if not future.done():
+                            future.cancel()
+                    except Exception as cancel_error:
+                        logger.debug(f"[Parallel] Error cancelling {agent_name} future after exception: {cancel_error}")
+                    
                     with state_lock:
                         errors.append({
                             "agent": agent_name,

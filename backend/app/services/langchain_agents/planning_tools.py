@@ -1,5 +1,5 @@
 """Planning tools for Planning Agent"""
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any, List, Optional, Tuple
 from langchain_core.tools import tool
 import json
 import logging
@@ -19,7 +19,26 @@ def initialize_document_analysis_tools(rag_service, document_processor):
 
 
 # Определение доступных анализов и их зависимостей
+# ВАЖНО: Это единый источник правды для всех агентов в системе
 AVAILABLE_ANALYSES = {
+    "document_classifier": {
+        "name": "document_classifier",
+        "description": "Классификация документов по типам и категориям",
+        "keywords": ["классификация", "типы документов", "категории", "document classifier", "классифицировать документы"],
+        "dependencies": []
+    },
+    "privilege_check": {
+        "name": "privilege_check",
+        "description": "Проверка документов на адвокатскую тайну и привилегии",
+        "keywords": ["привилегии", "адвокатская тайна", "privilege", "конфиденциальность", "проверка привилегий"],
+        "dependencies": []  # Может использовать document_classifier, но не требует обязательно
+    },
+    "entity_extraction": {
+        "name": "entity_extraction",
+        "description": "Извлечение сущностей из документов (люди, организации, суммы, даты, места)",
+        "keywords": ["сущности", "entities", "извлечение сущностей", "люди", "организации", "даты", "суммы"],
+        "dependencies": []
+    },
     "timeline": {
         "name": "timeline",
         "description": "Извлечение хронологии событий из документов (даты, события, временная линия)",
@@ -49,6 +68,12 @@ AVAILABLE_ANALYSES = {
         "description": "Генерация резюме дела на основе ключевых фактов",
         "keywords": ["резюме", "summary", "краткое содержание", "сводка", "краткое резюме"],
         "dependencies": ["key_facts"]  # Требует key_facts
+    },
+    "relationship": {
+        "name": "relationship",
+        "description": "Построение графа связей между сущностями (люди, организации, связи)",
+        "keywords": ["связи", "relationship", "граф связей", "взаимосвязи", "сеть связей"],
+        "dependencies": ["entity_extraction"]  # Требует entity_extraction
     }
 }
 
@@ -411,6 +436,31 @@ def classify_case_type_tool(case_id: str) -> str:
     except Exception as e:
         logger.error(f"Error in classify_case_type_tool: {e}")
         return json.dumps({"error": str(e)})
+
+
+def get_all_agent_types() -> List[str]:
+    """
+    Получить список всех доступных типов агентов.
+    
+    Returns:
+        Список строк с названиями агентов
+    """
+    return list(AVAILABLE_ANALYSES.keys())
+
+
+def validate_analysis_types(analysis_types: List[str]) -> tuple[bool, List[str]]:
+    """
+    Валидирует список типов анализов.
+    
+    Args:
+        analysis_types: Список типов анализов для валидации
+    
+    Returns:
+        Tuple (is_valid, invalid_types)
+    """
+    valid_types = set(AVAILABLE_ANALYSES.keys())
+    invalid_types = [t for t in analysis_types if t not in valid_types]
+    return len(invalid_types) == 0, invalid_types
 
 
 def get_planning_tools() -> List:

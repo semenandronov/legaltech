@@ -145,13 +145,12 @@ class AgentCoordinator:
         if not analysis_types or not isinstance(analysis_types, list):
             raise ValueError("analysis_types must be a non-empty list")
         
-        # Проверка валидности типов анализов
-        valid_types = set(AVAILABLE_ANALYSES.keys())
-        # Добавить дополнительные типы, которые используются в коде
-        valid_types.update(["document_classifier", "entity_extraction", "privilege_check", "relationship"])
+        # Проверка валидности типов анализов (используем единый источник правды)
+        from app.services.langchain_agents.planning_tools import validate_analysis_types
         
-        invalid_types = [t for t in analysis_types if t not in valid_types]
-        if invalid_types:
+        is_valid, invalid_types = validate_analysis_types(analysis_types)
+        if not is_valid:
+            valid_types = list(AVAILABLE_ANALYSES.keys())
             raise ValueError(f"Invalid analysis types: {invalid_types}. Valid types: {sorted(valid_types)}")
         
         # Проверка user_task (если передан)

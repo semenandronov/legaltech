@@ -17,8 +17,8 @@ class HumanFeedbackService:
     Enables Harvey-like agent behavior where agents can ask users for input.
     """
     
-    # Default timeout for waiting for human response
-    DEFAULT_TIMEOUT_SECONDS = 300  # 5 minutes
+    # Default timeout for waiting for human response (can be overridden via config)
+    DEFAULT_TIMEOUT_SECONDS = 300  # 5 minutes (deprecated: use config.HUMAN_FEEDBACK_TIMEOUT)
     
     def __init__(self, db: Session = None):
         """

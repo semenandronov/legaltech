@@ -45,6 +45,11 @@ class Config:
     AGENT_TIMEOUT: int = int(os.getenv("AGENT_TIMEOUT", "300"))  # Timeout per agent in seconds
     AGENT_RETRY_COUNT: int = int(os.getenv("AGENT_RETRY_COUNT", "2"))  # Retry count on failure
     
+    # Human-in-the-loop Settings
+    HUMAN_FEEDBACK_TIMEOUT: int = int(os.getenv("HUMAN_FEEDBACK_TIMEOUT", "300"))  # Timeout for human feedback in seconds (default: 5 minutes)
+    HUMAN_FEEDBACK_MAX_ATTEMPTS: int = int(os.getenv("HUMAN_FEEDBACK_MAX_ATTEMPTS", "3"))  # Maximum attempts before skipping
+    HUMAN_FEEDBACK_FALLBACK_STRATEGY: str = os.getenv("HUMAN_FEEDBACK_FALLBACK_STRATEGY", "skip")  # Fallback strategy: "skip", "retry", "abort"
+    
     # Yandex Cloud AI Studio (GPT + Embeddings + Vector Store)
     YANDEX_API_KEY: str = os.getenv("YANDEX_API_KEY", "")
     YANDEX_IAM_TOKEN: str = os.getenv("YANDEX_IAM_TOKEN", "")  # Альтернатива API ключу
