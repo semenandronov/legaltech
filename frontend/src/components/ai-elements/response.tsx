@@ -3,7 +3,6 @@ import { cn } from "@/lib/utils"
 import { FileText, CheckCircle2 } from "lucide-react"
 import { Card, CardContent, CardHeader } from "@/components/UI/Card"
 import ReactMarkdown from "react-markdown"
-import { Sources, SourcesTrigger, SourcesContent, Source } from "./sources"
 import { SourcePreview } from "@/components/Chat/SourcePreview"
 
 // Animation styles

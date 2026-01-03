@@ -2,8 +2,8 @@ import { useState, useEffect, useRef, useCallback, forwardRef, useImperativeHand
 import { useParams } from 'react-router-dom'
 import { getApiUrl } from '@/services/api'
 import { logger } from '@/lib/logger'
-import { loadChatHistory, type HistoryMessage } from '@/services/chatHistoryService'
-import { Conversation, ConversationContent, ConversationEmptyState } from '../ai-elements/conversation'
+import { loadChatHistory } from '@/services/chatHistoryService'
+import { Conversation, ConversationContent } from '../ai-elements/conversation'
 import { UserMessage, AssistantMessage } from '../ai-elements/message'
 import { PlanApprovalCard } from './PlanApprovalCard'
 import { AgentStep } from './AgentStepsView'
@@ -20,7 +20,6 @@ import {
   PromptInputAttachments,
   PromptInputAttachment,
 } from '../ai-elements/prompt-input'
-import { Switch } from '../UI/switch'
 import { Loader } from '../ai-elements/loader'
 
 interface Message {

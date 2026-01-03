@@ -8,14 +8,14 @@ import {
   DropdownMenuItem, 
   DropdownMenuTrigger 
 } from '../components/UI/dropdown-menu'
-import { ChevronDown, Upload, Share2, History, Plus, FileText, Download, MessageSquare, MoreVertical } from 'lucide-react'
+import { ChevronDown, Upload, Share2, History, FileText, Download, MessageSquare, MoreVertical } from 'lucide-react'
 import { toast } from 'sonner'
 import { getCase } from '../services/api'
 
 const AssistantChatPage = () => {
   const { caseId } = useParams<{ caseId: string }>()
   const navigate = useNavigate()
-  const [searchParams, setSearchParams] = useSearchParams()
+  const [searchParams] = useSearchParams()
   const [historyPanelOpen, setHistoryPanelOpen] = useState(false)
   const [selectedQuery, setSelectedQuery] = useState<string>('')
   const [caseInfo, setCaseInfo] = useState<{ title?: string; documentCount?: number } | null>(null)

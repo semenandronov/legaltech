@@ -25,7 +25,6 @@ export const SourcePreview: React.FC<SourcePreviewProps> = ({
   children,
 }) => {
   const displayTitle = source.title || source.file || 'Источник'
-  const pageInfo = source.page ? ` (стр. ${source.page})` : ''
 
   return (
     <TooltipProvider>
@@ -92,4 +91,5 @@ export const SourcePreview: React.FC<SourcePreviewProps> = ({
     </TooltipProvider>
   )
 }
+
 
