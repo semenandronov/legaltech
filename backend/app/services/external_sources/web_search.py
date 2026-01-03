@@ -372,18 +372,20 @@ class WebSearchSource(BaseSource):
             # Логируем структуру JSON для отладки
             logger.info(f"[WebSearch] JSON keys: {list(data.keys()) if isinstance(data, dict) else 'not a dict'}")
             
-            # Yandex Search API v2 может возвращать rawData в Base64
+            # Yandex Search API v2 может возвращать rawData в Base64 (XML закодирован в Base64)
             # Согласно документации: https://yandex.cloud/ru/docs/search-api
             if isinstance(data, dict) and "rawData" in data:
-                # Декодируем Base64 данные
+                # Декодируем Base64 данные (это XML, не JSON!)
                 try:
                     raw_data_b64 = data["rawData"]
                     raw_data_bytes = base64.b64decode(raw_data_b64)
-                    raw_data_str = raw_data_bytes.decode('utf-8')
-                    data = json.loads(raw_data_str)
-                    logger.info(f"[WebSearch] Decoded rawData, new keys: {list(data.keys()) if isinstance(data, dict) else 'not a dict'}")
+                    raw_data_xml = raw_data_bytes.decode('utf-8')
+                    logger.info(f"[WebSearch] Decoded rawData from Base64, XML length: {len(raw_data_xml)}")
+                    # Парсим декодированный XML используя существующий XML парсер
+                    return self._parse_yandex_response(raw_data_xml)
                 except Exception as decode_error:
                     logger.warning(f"[WebSearch] Failed to decode rawData: {decode_error}")
+                    return []
             
             # Yandex Search API v2 структура ответа
             # Проверяем разные возможные структуры
