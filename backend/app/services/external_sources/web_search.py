@@ -190,19 +190,26 @@ class WebSearchSource(BaseSource):
                     # Читаем ответ один раз
                     content = await response.text()
                     
+                    content_type = response.headers.get('Content-Type', '')
                     logger.info(f"[WebSearch] Received response: status={response.status}, "
-                               f"content_type={response.headers.get('Content-Type', '')}, "
+                               f"content_type={content_type}, "
                                f"content_length={len(content)}")
-                    logger.debug(f"[WebSearch] Response preview: {content[:1000]}")
                     
                     if response.status != 200:
                         logger.warning(f"[WebSearch] Yandex Search API v2 error: status={response.status}, "
                                      f"error_text={content[:500]}")
                         return []
                     
-                    # Parse XML response (v2 использует XML или HTML формат)
-                    logger.info(f"[WebSearch] Parsing XML response: content_length={len(content)}")
-                    return self._parse_yandex_response(content)
+                    # Yandex Search API v2 может вернуть JSON с rawData (Base64 XML) или напрямую XML
+                    # Проверяем Content-Type и формат ответа
+                    if 'application/json' in content_type or content.strip().startswith('{'):
+                        # JSON ответ - может содержать rawData с Base64 XML
+                        logger.info(f"[WebSearch] Parsing JSON response with potential rawData: content_length={len(content)}")
+                        return self._parse_yandex_v2_response(content)
+                    else:
+                        # Прямой XML ответ
+                        logger.info(f"[WebSearch] Parsing XML response: content_length={len(content)}")
+                        return self._parse_yandex_response(content)
                     
         except aiohttp.ClientError as e:
             logger.warning(f"[WebSearch] Yandex Search API v2 connection error: {e}")
