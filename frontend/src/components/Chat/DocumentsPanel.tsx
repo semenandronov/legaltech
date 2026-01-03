@@ -2,15 +2,13 @@ import React, { useState, useEffect } from 'react'
 import { X, FileText, Search, GripVertical } from 'lucide-react'
 import { getDocuments, type DocumentItem } from '@/services/api'
 import { ScrollArea } from '../UI/scroll-area'
-import { Input } from '../UI/Input'
-import { Button } from '../UI/button'
+import Input from '../UI/Input'
 
 interface DocumentsPanelProps {
   isOpen: boolean
   onClose: () => void
   caseId: string
   onDocumentClick?: (document: DocumentItem) => void
-  onDocumentDrag?: (document: DocumentItem) => void
 }
 
 export const DocumentsPanel: React.FC<DocumentsPanelProps> = ({
@@ -18,7 +16,6 @@ export const DocumentsPanel: React.FC<DocumentsPanelProps> = ({
   onClose,
   caseId,
   onDocumentClick,
-  onDocumentDrag,
 }) => {
   const [documents, setDocuments] = useState<DocumentItem[]>([])
   const [filteredDocuments, setFilteredDocuments] = useState<DocumentItem[]>([])
@@ -95,7 +92,7 @@ export const DocumentsPanel: React.FC<DocumentsPanelProps> = ({
             type="text"
             placeholder="Поиск документов..."
             value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
+            onChange={(e: React.ChangeEvent<HTMLInputElement>) => setSearchQuery(e.target.value)}
             className="pl-9"
           />
         </div>

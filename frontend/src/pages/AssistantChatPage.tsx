@@ -9,7 +9,7 @@ import {
   DropdownMenuItem, 
   DropdownMenuTrigger 
 } from '../components/UI/dropdown-menu'
-import { ChevronDown, Upload, Share2, History, FileText, Download, MessageSquare, MoreVertical } from 'lucide-react'
+import { ChevronDown, Share2, History, FileText, Download, MessageSquare, MoreVertical } from 'lucide-react'
 import { toast } from 'sonner'
 import { getCase } from '../services/api'
 
@@ -71,10 +71,6 @@ const AssistantChatPage = () => {
   const handleSelectQuery = (query: string) => {
     setSelectedQuery(query)
     setHistoryPanelOpen(false)
-  }
-
-  const handleUploadDocuments = () => {
-    navigate(`/cases/${caseId}/documents`)
   }
 
   const handleShare = async () => {
@@ -221,11 +217,6 @@ const AssistantChatPage = () => {
           onDocumentClick={(document) => {
             // Открыть документ в новой вкладке или модальном окне
             navigate(`/cases/${caseId}/documents?file=${encodeURIComponent(document.filename)}`)
-          }}
-          onDocumentDrag={(document) => {
-            // Обработка перетаскивания документа в чат
-            // Можно добавить логику для добавления документа в сообщение
-            console.log('Drag document:', document)
           }}
         />
       </div>
