@@ -296,36 +296,182 @@ async def stream_chat_response(
                 yield f"data: {json.dumps({'textDelta': error_msg}, ensure_ascii=False)}\n\n"
                 yield f"data: {json.dumps({'textDelta': ''})}\n\n"
         else:
-            # Это вопрос - используем RAG + LLM
+            # Это вопрос - используем RAG + LLM или веб-поиск
             # asyncio уже импортирован глобально, не нужно импортировать локально
             loop = asyncio.get_event_loop()
             
-            # Get relevant documents using RAG
-            documents = await loop.run_in_executor(
-                None,
-                lambda: rag_service.retrieve_context(
-                    case_id=case_id,
-                    query=question,
-                    k=10,
-                    db=db
-                )
-            )
+            # Web search integration - выполняем ПЕРВЫМ, если включен
+            web_search_context = ""
+            web_search_successful = False
             
-            # Build context from documents
-            context_parts = []
-            for i, doc in enumerate(documents[:5], 1):
-                if hasattr(doc, 'page_content'):
-                    content = doc.page_content[:500] if doc.page_content else ""
-                    source = doc.metadata.get("source_file", "unknown") if hasattr(doc, 'metadata') and doc.metadata else "unknown"
-                elif isinstance(doc, dict):
-                    content = doc.get("content", "")[:500]
-                    source = doc.get("file", "unknown")
-                else:
-                    continue
+            # #region agent log
+            try:
+                with open('/Users/semyon_andronov04/Desktop/C ДВ/.cursor/debug.log', 'a', encoding='utf-8') as f:
+                    f.write(json_module.dumps({
+                        "sessionId": "debug-session",
+                        "runId": "run1",
+                        "hypothesisId": "B",
+                        "location": "assistant_chat.py:330",
+                        "message": "Before web_search check",
+                        "data": {
+                            "web_search": web_search,
+                            "web_search_type": str(type(web_search)),
+                            "web_search_bool": bool(web_search),
+                            "question": question[:100]
+                        },
+                        "timestamp": int(__import__('time').time() * 1000)
+                    }, ensure_ascii=False) + '\n')
+            except:
+                pass
+            # #endregion
+            
+            # Log web_search check for debugging
+            logger.info(f"[DEBUG] Before web_search check: web_search={web_search}, type={type(web_search)}, bool={bool(web_search)}, question='{question[:100]}'")
+            
+            if web_search:
+                logger.info(f"[DEBUG] Web search condition TRUE - entering block for question: '{question[:100]}'")
+                # #region agent log
+                try:
+                    with open('/Users/semyon_andronov04/Desktop/C ДВ/.cursor/debug.log', 'a', encoding='utf-8') as f:
+                        f.write(json_module.dumps({
+                            "sessionId": "debug-session",
+                            "runId": "run1",
+                            "hypothesisId": "C",
+                            "location": "assistant_chat.py:348",
+                            "message": "Web search condition TRUE - entering block",
+                            "data": {"question": question[:100]},
+                            "timestamp": int(__import__('time').time() * 1000)
+                        }, ensure_ascii=False) + '\n')
+                except:
+                    pass
+                # #endregion
+                try:
+                    # #region agent log
+                    try:
+                        with open('/Users/semyon_andronov04/Desktop/C ДВ/.cursor/debug.log', 'a', encoding='utf-8') as f:
+                            f.write(json_module.dumps({
+                                "sessionId": "debug-session",
+                                "runId": "run1",
+                                "hypothesisId": "D",
+                                "location": "assistant_chat.py:395",
+                                "message": "Web search condition passed, starting research",
+                                "data": {"query": question[:100]},
+                                "timestamp": int(__import__('time').time() * 1000)
+                            }, ensure_ascii=False) + '\n')
+                    except:
+                        pass
+                    # #endregion
                     
-                context_parts.append(f"[Документ {i}: {source}]\n{content}")
+                    logger.info(f"Web search enabled for query: {question[:100]}...")
+                    web_research_service = get_web_research_service()
+                    research_result = await web_research_service.research(
+                        query=question,
+                        max_results=5,
+                        use_cache=True,
+                        validate_sources=True
+                    )
+                    
+                    # #region agent log
+                    try:
+                        with open('/Users/semyon_andronov04/Desktop/C ДВ/.cursor/debug.log', 'a', encoding='utf-8') as f:
+                            f.write(json_module.dumps({
+                                "sessionId": "debug-session",
+                                "runId": "run1",
+                                "hypothesisId": "D",
+                                "location": "assistant_chat.py:413",
+                                "message": "Web research result received",
+                                "data": {"sources_count": len(research_result.sources) if research_result.sources else 0, "has_summary": bool(research_result.summary)},
+                                "timestamp": int(__import__('time').time() * 1000)
+                            }, ensure_ascii=False) + '\n')
+                    except:
+                        pass
+                    # #endregion
+                    
+                    if research_result.sources:
+                        web_search_parts = []
+                        web_search_parts.append(f"\n\n=== Результаты веб-поиска ===")
+                        web_search_parts.append(f"Найдено источников: {len(research_result.sources)}")
+                        
+                        for i, source in enumerate(research_result.sources[:5], 1):
+                            title = source.get("title", "Без названия")
+                            url = source.get("url", "")
+                            content = source.get("content", "")
+                            if content:
+                                web_search_parts.append(f"\n[Источник {i}: {title}]")
+                                if url:
+                                    web_search_parts.append(f"URL: {url}")
+                                web_search_parts.append(f"Содержание: {content[:300]}...")
+                        
+                        web_search_context = "\n".join(web_search_parts)
+                        web_search_successful = True
+                        logger.info(f"Web search completed: {len(research_result.sources)} sources found")
+                    else:
+                        logger.warning("Web search returned no results")
+                        # #region agent log
+                        try:
+                            with open('/Users/semyon_andronov04/Desktop/C ДВ/.cursor/debug.log', 'a', encoding='utf-8') as f:
+                                f.write(json_module.dumps({
+                                    "sessionId": "debug-session",
+                                    "runId": "run1",
+                                    "hypothesisId": "F",
+                                    "location": "assistant_chat.py:450",
+                                    "message": "Web search returned no results",
+                                    "data": {"question": question[:100]},
+                                    "timestamp": int(__import__('time').time() * 1000)
+                                }, ensure_ascii=False) + '\n')
+                        except:
+                            pass
+                        # #endregion
+                except Exception as web_search_error:
+                    # #region agent log
+                    try:
+                        with open('/Users/semyon_andronov04/Desktop/C ДВ/.cursor/debug.log', 'a', encoding='utf-8') as f:
+                            f.write(json_module.dumps({
+                                "sessionId": "debug-session",
+                                "runId": "run1",
+                                "hypothesisId": "E",
+                                "location": "assistant_chat.py:471",
+                                "message": "Web search exception caught",
+                                "data": {"error": str(web_search_error), "error_type": str(type(web_search_error).__name__)},
+                                "timestamp": int(__import__('time').time() * 1000)
+                            }, ensure_ascii=False) + '\n')
+                    except:
+                        pass
+                    # #endregion
+                    
+                    logger.warning(f"Web search failed: {web_search_error}, continuing without web search")
+                    # Continue without web search - не критичная ошибка
             
-            context = "\n\n".join(context_parts)
+            # Get relevant documents using RAG - только если веб-поиск не дал результатов
+            # или если веб-поиск не включен
+            context = ""
+            if not web_search_successful:
+                # Выполняем RAG только если веб-поиск не дал результатов
+                documents = await loop.run_in_executor(
+                    None,
+                    lambda: rag_service.retrieve_context(
+                        case_id=case_id,
+                        query=question,
+                        k=10,
+                        db=db
+                    )
+                )
+                
+                # Build context from documents
+                context_parts = []
+                for i, doc in enumerate(documents[:5], 1):
+                    if hasattr(doc, 'page_content'):
+                        content = doc.page_content[:500] if doc.page_content else ""
+                        source = doc.metadata.get("source_file", "unknown") if hasattr(doc, 'metadata') and doc.metadata else "unknown"
+                    elif isinstance(doc, dict):
+                        content = doc.get("content", "")[:500]
+                        source = doc.get("file", "unknown")
+                    else:
+                        continue
+                        
+                    context_parts.append(f"[Документ {i}: {source}]\n{content}")
+                
+                context = "\n\n".join(context_parts)
             
             # Web search integration
             # #region agent log
