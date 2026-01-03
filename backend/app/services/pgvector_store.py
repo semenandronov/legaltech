@@ -23,6 +23,7 @@ class VectorEmbedding(VectorBase):
     
     uuid = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
     collection_id = Column(String, nullable=True)
+    case_id = Column(String, nullable=True)  # Case identifier for multi-tenant filtering
     embedding = Column(Vector(256), nullable=True)  # Vector dimension (Yandex text-search-query embeddings are 256)
     document = Column(JSON, nullable=True)
     custom_id = Column(String, nullable=True)
@@ -85,6 +86,7 @@ class CaseVectorStore:
                     CREATE TABLE IF NOT EXISTS {VectorEmbedding.__tablename__} (
                         uuid TEXT PRIMARY KEY,
                         collection_id TEXT,
+                        case_id TEXT,
                         embedding vector(256),
                         document JSONB,
                         custom_id TEXT
@@ -226,40 +228,49 @@ class CaseVectorStore:
         
         ids = []
         try:
-            with self.engine.begin() as conn:
-                for doc, embedding in zip(documents, embeddings):
-                    doc_id = str(uuid.uuid4())
-                    ids.append(doc_id)
-                    
-                    # Prepare document JSONB
-                    doc_json = {
-                        "page_content": doc.page_content,
-                        "metadata": doc.metadata
-                    }
-                    
-                    # Convert embedding list to PostgreSQL array format string
-                    embedding_array_str = '[' + ','.join(str(float(x)) for x in embedding) + ']'
-                    document_json_str = json.dumps(doc_json)
-                    
-                    # Insert using raw psycopg2 cursor to avoid SQLAlchemy parameter style conflicts
-                    table_name = VectorEmbedding.__tablename__
-                    sql = (
-                        f"INSERT INTO {table_name} "
-                        "(uuid, collection_id, embedding, document, custom_id) "
-                        "VALUES (%s, %s, %s::vector, %s::jsonb, %s)"
-                    )
-                    # Get raw connection properly - use conn.connection for SQLAlchemy 1.4+
-                    raw_conn = conn.connection
-                    cursor = raw_conn.cursor()
-                    try:
-                        cursor.execute(
-                            sql,
-                            (doc_id, self.collection_name, embedding_array_str, document_json_str, doc_id)
-                        )
-                    finally:
-                        cursor.close()
+            # Prepare all values for bulk insert
+            from psycopg2.extras import execute_values
             
-            logger.info(f"✅ Added {len(ids)} documents to PGVector store for case {case_id}")
+            values = []
+            for doc, embedding in zip(documents, embeddings):
+                doc_id = str(uuid.uuid4())
+                ids.append(doc_id)
+                
+                # Prepare document JSONB
+                doc_json = {
+                    "page_content": doc.page_content,
+                    "metadata": doc.metadata
+                }
+                
+                # Convert embedding list to PostgreSQL array format string
+                embedding_array_str = '[' + ','.join(str(float(x)) for x in embedding) + ']'
+                document_json_str = json.dumps(doc_json)
+                
+                values.append((doc_id, self.collection_name, case_id, embedding_array_str, document_json_str, doc_id))
+            
+            # Bulk insert using execute_values
+            with self.engine.begin() as conn:
+                table_name = VectorEmbedding.__tablename__
+                insert_sql = f"""
+                    INSERT INTO {table_name} 
+                    (uuid, collection_id, case_id, embedding, document, custom_id) 
+                    VALUES %s
+                """
+                
+                # Get raw connection properly - use conn.connection for SQLAlchemy 1.4+
+                raw_conn = conn.connection
+                cursor = raw_conn.cursor()
+                try:
+                    execute_values(
+                        cursor,
+                        insert_sql,
+                        values,
+                        template="(%s, %s, %s, %s::vector, %s::jsonb, %s)"
+                    )
+                finally:
+                    cursor.close()
+            
+            logger.info(f"✅ Added {len(ids)} documents to PGVector store for case {case_id} (bulk insert)")
             return ids
         except Exception as e:
             logger.error(f"Failed to add documents to PGVector store: {e}", exc_info=True)
@@ -295,37 +306,46 @@ class CaseVectorStore:
             ids = [str(uuid.uuid4()) for _ in texts]
         
         try:
-            with self.engine.begin() as conn:
-                for text_content, embedding, metadata, doc_id in zip(texts, embeddings, metadatas, ids):
-                    # Prepare document JSONB
-                    doc_json = {
-                        "page_content": text_content,
-                        "metadata": metadata
-                    }
-                    
-                    # Convert embedding list to PostgreSQL array format string
-                    embedding_array_str = '[' + ','.join(str(float(x)) for x in embedding) + ']'
-                    document_json_str = json.dumps(doc_json)
-                    
-                    # Insert using raw psycopg2 cursor to avoid SQLAlchemy parameter style conflicts
-                    table_name = VectorEmbedding.__tablename__
-                    sql = (
-                        f"INSERT INTO {table_name} "
-                        "(uuid, collection_id, embedding, document, custom_id) "
-                        "VALUES (%s, %s, %s::vector, %s::jsonb, %s)"
-                    )
-                    # Get raw connection properly - use conn.connection for SQLAlchemy 1.4+
-                    raw_conn = conn.connection
-                    cursor = raw_conn.cursor()
-                    try:
-                        cursor.execute(
-                            sql,
-                            (doc_id, self.collection_name, embedding_array_str, document_json_str, doc_id)
-                        )
-                    finally:
-                        cursor.close()
+            # Prepare all values for bulk insert
+            from psycopg2.extras import execute_values
             
-            logger.info(f"✅ Added {len(ids)} texts to PGVector store for case {case_id}")
+            values = []
+            for text_content, embedding, metadata, doc_id in zip(texts, embeddings, metadatas, ids):
+                # Prepare document JSONB
+                doc_json = {
+                    "page_content": text_content,
+                    "metadata": metadata
+                }
+                
+                # Convert embedding list to PostgreSQL array format string
+                embedding_array_str = '[' + ','.join(str(float(x)) for x in embedding) + ']'
+                document_json_str = json.dumps(doc_json)
+                
+                values.append((doc_id, self.collection_name, case_id, embedding_array_str, document_json_str, doc_id))
+            
+            # Bulk insert using execute_values
+            with self.engine.begin() as conn:
+                table_name = VectorEmbedding.__tablename__
+                insert_sql = f"""
+                    INSERT INTO {table_name} 
+                    (uuid, collection_id, case_id, embedding, document, custom_id) 
+                    VALUES %s
+                """
+                
+                # Get raw connection properly - use conn.connection for SQLAlchemy 1.4+
+                raw_conn = conn.connection
+                cursor = raw_conn.cursor()
+                try:
+                    execute_values(
+                        cursor,
+                        insert_sql,
+                        values,
+                        template="(%s, %s, %s, %s::vector, %s::jsonb, %s)"
+                    )
+                finally:
+                    cursor.close()
+            
+            logger.info(f"✅ Added {len(ids)} texts to PGVector store for case {case_id} (bulk insert)")
             return ids
         except Exception as e:
             logger.error(f"Failed to add texts to PGVector store: {e}", exc_info=True)
@@ -356,19 +376,25 @@ class CaseVectorStore:
         query_embedding_str = '[' + ','.join(str(float(x)) for x in query_embedding) + ']'
         
         # Combine case_id filter with additional filters
-        search_filter = {"case_id": case_id}
+        # Use case_id column for filtering (faster than JSONB)
+        search_filter = {}
         if filter:
             search_filter.update(filter)
         
         try:
             with self.engine.connect() as conn:
-                # Build filter condition for JSONB (escape single quotes for SQL safety)
-                filter_conditions = []
+                # Build filter condition with parameterized queries (prevents SQL injection)
+                # Use case_id column directly for better performance
+                filter_conditions = ["collection_id = %s", "case_id = %s"]
+                params = [self.collection_name, case_id]
+                
+                # Add additional filters using parameterized queries for JSONB
                 for key, value in search_filter.items():
-                    # Escape single quotes in value
-                    escaped_value = str(value).replace("'", "''")
-                    filter_conditions.append(f"document->'metadata'->>'{key}' = '{escaped_value}'")
-                filter_sql = " AND ".join(filter_conditions) if filter_conditions else "1=1"
+                    # Use parameterized query for JSONB access
+                    filter_conditions.append(f"document->'metadata'->>%s = %s")
+                    params.extend([key, str(value)])
+                
+                where_sql = " AND ".join(filter_conditions)
                 
                 # Use raw psycopg2 cursor to avoid SQLAlchemy parameter style conflicts
                 table_name = VectorEmbedding.__tablename__
@@ -376,21 +402,20 @@ class CaseVectorStore:
                     SELECT uuid, document, 
                            1 - (embedding <=> %s::vector) as similarity
                     FROM {table_name}
-                    WHERE collection_id = %s
-                      AND {filter_sql}
+                    WHERE {where_sql}
                     ORDER BY embedding <=> %s::vector
                     LIMIT %s
                 """
+                
+                # Add query embedding parameters
+                params.extend([query_embedding_str, query_embedding_str, k])
                 
                 # Get raw connection properly - use conn.connection for SQLAlchemy 1.4+
                 # conn.connection is the underlying DBAPI connection
                 raw_conn = conn.connection
                 cursor = raw_conn.cursor()
                 try:
-                    cursor.execute(
-                        sql,
-                        (query_embedding_str, self.collection_name, query_embedding_str, k)
-                    )
+                    cursor.execute(sql, params)
                     
                     documents = []
                     for row in cursor.fetchall():
@@ -441,19 +466,25 @@ class CaseVectorStore:
         query_embedding_str = '[' + ','.join(str(float(x)) for x in query_embedding) + ']'
         
         # Combine case_id filter with additional filters
-        search_filter = {"case_id": case_id}
+        # Use case_id column for filtering (faster than JSONB)
+        search_filter = {}
         if filter:
             search_filter.update(filter)
         
         try:
             with self.engine.connect() as conn:
-                # Build filter condition for JSONB (escape single quotes for SQL safety)
-                filter_conditions = []
+                # Build filter condition with parameterized queries (prevents SQL injection)
+                # Use case_id column directly for better performance
+                filter_conditions = ["collection_id = %s", "case_id = %s"]
+                params = [self.collection_name, case_id]
+                
+                # Add additional filters using parameterized queries for JSONB
                 for key, value in search_filter.items():
-                    # Escape single quotes in value
-                    escaped_value = str(value).replace("'", "''")
-                    filter_conditions.append(f"document->'metadata'->>'{key}' = '{escaped_value}'")
-                filter_sql = " AND ".join(filter_conditions) if filter_conditions else "1=1"
+                    # Use parameterized query for JSONB access
+                    filter_conditions.append(f"document->'metadata'->>%s = %s")
+                    params.extend([key, str(value)])
+                
+                where_sql = " AND ".join(filter_conditions)
                 
                 # Use raw psycopg2 cursor to avoid SQLAlchemy parameter style conflicts
                 table_name = VectorEmbedding.__tablename__
@@ -461,20 +492,19 @@ class CaseVectorStore:
                     SELECT uuid, document, 
                            1 - (embedding <=> %s::vector) as similarity
                     FROM {table_name}
-                    WHERE collection_id = %s
-                      AND {filter_sql}
+                    WHERE {where_sql}
                     ORDER BY embedding <=> %s::vector
                     LIMIT %s
                 """
+                
+                # Add query embedding parameters
+                params.extend([query_embedding_str, query_embedding_str, k])
                 
                 # Get raw connection properly - use conn.connection for SQLAlchemy 1.4+
                 raw_conn = conn.connection
                 cursor = raw_conn.cursor()
                 try:
-                    cursor.execute(
-                        sql,
-                        (query_embedding_str, self.collection_name, query_embedding_str, k)
-                    )
+                    cursor.execute(sql, params)
                     
                     documents_with_scores = []
                     for row in cursor.fetchall():

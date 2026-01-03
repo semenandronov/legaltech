@@ -5,7 +5,9 @@ from langchain_core.documents import Document
 from langchain_core.messages import HumanMessage, SystemMessage
 from app.services.rag_service import RAGService
 from app.services.llm_factory import create_llm
+from app.config import config
 import logging
+import time
 
 logger = logging.getLogger(__name__)
 
@@ -29,7 +31,8 @@ class IterativeRAGService:
         max_iterations: int = 3,
         initial_k: int = 5,
         db: Optional[Session] = None,
-        min_relevance_score: float = 0.5
+        min_relevance_score: float = 0.5,
+        use_reranker: bool = False
     ) -> List[Document]:
         """
         Итеративный поиск с переформулировкой запроса при необходимости
@@ -79,8 +82,11 @@ class IterativeRAGService:
                 else:
                     break
             
-            # Проверка релевантности с LLM-оценкой для лучшего качества
-            relevant_docs, quality_score = self._filter_relevant_with_llm(docs, query, adaptive_threshold)
+            # Проверка релевантности с LLM-оценкой или reranker для лучшего качества
+            if use_reranker:
+                relevant_docs, quality_score = self._filter_relevant_with_reranker(docs, query, adaptive_threshold)
+            else:
+                relevant_docs, quality_score = self._filter_relevant_with_llm(docs, query, adaptive_threshold)
             
             # Метрика качества найденных документов (0.0-1.0)
             logger.info(f"Iteration {iteration + 1}: Quality score: {quality_score:.2f}, Relevant docs: {len(relevant_docs)}/{len(docs)}")
@@ -200,6 +206,63 @@ class IterativeRAGService:
         
         return relevant
     
+    def _filter_relevant_with_reranker(
+        self,
+        documents: List[Document],
+        original_query: str,
+        min_relevance_score: float = 0.5
+    ) -> Tuple[List[Document], float]:
+        """
+        Фильтрует документы по релевантности с использованием cross-encoder reranker
+        
+        Args:
+            documents: List of documents to filter
+            original_query: Original search query
+            min_relevance_score: Minimum relevance score threshold
+            
+        Returns:
+            Tuple of (filtered documents, quality_score 0.0-1.0)
+        """
+        try:
+            # Try to use cross-encoder reranker if available
+            try:
+                from sentence_transformers import CrossEncoder
+                
+                # Initialize reranker (lazy loading)
+                if not hasattr(self, '_reranker'):
+                    self._reranker = CrossEncoder('cross-encoder/ms-marco-MiniLM-L-6-v2')
+                    logger.info("✅ Cross-encoder reranker initialized")
+                
+                # Prepare pairs for reranking
+                pairs = [[original_query, doc.page_content[:512]] for doc in documents]  # Limit content length
+                
+                # Get relevance scores
+                scores = self._reranker.predict(pairs)
+                
+                # Filter documents by scores
+                relevant = []
+                quality_scores = []
+                for doc, score in zip(documents, scores):
+                    quality_scores.append(float(score))
+                    if score >= min_relevance_score:
+                        relevant.append(doc)
+                
+                avg_quality = sum(quality_scores) / len(quality_scores) if quality_scores else 0.5
+                logger.debug(f"Reranker evaluation: {len(relevant)}/{len(documents)} relevant, avg quality: {avg_quality:.2f}")
+                return relevant, avg_quality
+                
+            except ImportError:
+                logger.warning("sentence-transformers not available, falling back to LLM evaluation")
+                return self._filter_relevant_with_llm(documents, original_query, min_relevance_score)
+            except Exception as e:
+                logger.warning(f"Error using reranker: {e}, falling back to LLM evaluation")
+                return self._filter_relevant_with_llm(documents, original_query, min_relevance_score)
+        except Exception as e:
+            logger.warning(f"Error in reranker evaluation: {e}, using simple filtering")
+            relevant = self._filter_relevant(documents, original_query, min_relevance_score)
+            quality_score = len(relevant) / len(documents) if documents else 0.0
+            return relevant, quality_score
+    
     def _filter_relevant_with_llm(
         self,
         documents: List[Document],
@@ -217,7 +280,13 @@ class IterativeRAGService:
         Returns:
             Tuple of (filtered documents, quality_score 0.0-1.0)
         """
+        # Check if LLM evaluation is enabled
+        if not config.RAG_LLM_EVALUATION_ENABLED:
+            logger.debug("LLM evaluation disabled, using similarity score fallback")
+            return self._filter_relevant_with_similarity(documents, original_query, min_relevance_score)
+        
         try:
+            start_time = time.time()
             # Если документов мало, используем простую фильтрацию
             if len(documents) <= 3:
                 relevant = self._filter_relevant(documents, original_query, min_relevance_score)
@@ -280,15 +349,65 @@ class IterativeRAGService:
             # Вычисляем средний quality score
             avg_quality = sum(quality_scores) / len(quality_scores) if quality_scores else 0.5
             
-            logger.debug(f"LLM relevance evaluation: {len(relevant)}/{len(documents)} relevant, avg quality: {avg_quality:.2f}")
+            elapsed_time = time.time() - start_time
+            logger.info(
+                f"LLM relevance evaluation: {len(relevant)}/{len(documents)} relevant, "
+                f"avg quality: {avg_quality:.2f}, time: {elapsed_time:.2f}s, "
+                f"query: {original_query[:50]}..."
+            )
             return relevant, avg_quality
             
         except Exception as e:
-            logger.warning(f"Error in LLM relevance evaluation: {e}, using simple filtering")
-            # Fallback на простую фильтрацию
-            relevant = self._filter_relevant(documents, original_query, min_relevance_score)
-            quality_score = len(relevant) / len(documents) if documents else 0.0
-            return relevant, quality_score
+            logger.warning(f"Error in LLM relevance evaluation: {e}, using similarity score fallback")
+            # Fallback на фильтрацию по similarity_score
+            return self._filter_relevant_with_similarity(documents, original_query, min_relevance_score)
+    
+    def _filter_relevant_with_similarity(
+        self,
+        documents: List[Document],
+        original_query: str,
+        min_relevance_score: float = 0.5
+    ) -> Tuple[List[Document], float]:
+        """
+        Фильтрует документы по similarity_score из metadata (fallback метод)
+        
+        Args:
+            documents: List of documents to filter
+            original_query: Original search query (not used, kept for API compatibility)
+            min_relevance_score: Minimum relevance score threshold
+            
+        Returns:
+            Tuple of (filtered documents, quality_score 0.0-1.0)
+        """
+        relevant = []
+        quality_scores = []
+        
+        for doc in documents:
+            metadata = doc.metadata if hasattr(doc, 'metadata') else {}
+            similarity_score = metadata.get('similarity_score')
+            
+            # Если есть similarity_score, используем его
+            if similarity_score is not None:
+                if isinstance(similarity_score, (int, float)):
+                    # Для pgvector: меньший score = лучше (distance)
+                    # Преобразуем в relevance (1 - normalized_distance)
+                    # Если score < 1.0, это хороший результат
+                    relevance = 1.0 - min(similarity_score, 1.0) if similarity_score < 1.0 else 0.0
+                    quality_scores.append(relevance)
+                    if relevance >= min_relevance_score:
+                        relevant.append(doc)
+                else:
+                    # Если score не число, считаем релевантным
+                    relevant.append(doc)
+                    quality_scores.append(0.7)
+            else:
+                # Если нет score, считаем релевантным (fallback)
+                relevant.append(doc)
+                quality_scores.append(0.7)
+        
+        avg_quality = sum(quality_scores) / len(quality_scores) if quality_scores else 0.5
+        logger.debug(f"Similarity score filtering: {len(relevant)}/{len(documents)} relevant, avg quality: {avg_quality:.2f}")
+        return relevant, avg_quality
     
     def _reformulate_query(
         self,

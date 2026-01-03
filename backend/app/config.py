@@ -39,6 +39,13 @@ class Config:
     # LLM context limits
     MAX_CONTEXT_CHARS: int = 60_000  # Приближённо к лимиту ~32k токенов
     
+    # RAG Settings
+    RAG_USE_RERANKER: bool = os.getenv("RAG_USE_RERANKER", "false").lower() == "true"  # Use cross-encoder reranker for relevance scoring
+    RAG_MIN_RELEVANCE_SCORE: float = float(os.getenv("RAG_MIN_RELEVANCE_SCORE", "0.5"))  # Minimum relevance score threshold
+    RAG_LLM_EVALUATION_ENABLED: bool = os.getenv("RAG_LLM_EVALUATION_ENABLED", "true").lower() == "true"  # Enable LLM-based relevance evaluation
+    RAG_REQUIRE_SOURCES: bool = os.getenv("RAG_REQUIRE_SOURCES", "true").lower() == "true"  # Require source citations in answers
+    RAG_ALLOW_UNCERTAINTY: bool = os.getenv("RAG_ALLOW_UNCERTAINTY", "true").lower() == "true"  # Allow model to express uncertainty when information is insufficient
+    
     # Multi-Agent System Settings
     AGENT_ENABLED: bool = os.getenv("AGENT_ENABLED", "true").lower() == "true"
     AGENT_MAX_PARALLEL: int = int(os.getenv("AGENT_MAX_PARALLEL", "3"))  # Max parallel agents

@@ -120,14 +120,28 @@ def ensure_schema():
     # Create pgvector indexes for optimization
     try:
         with engine.begin() as conn:
-            # Check if langchain_pg_embedding table exists (created by langchain-postgres)
+            # Check if langchain_pg_embedding table exists
             if "langchain_pg_embedding" in inspector.get_table_names():
-                # Check if cmetadata column exists before creating index
                 embedding_cols = inspector.get_columns("langchain_pg_embedding")
-                has_cmetadata = any(col["name"] == "cmetadata" for col in embedding_cols)
+                has_case_id = any(col["name"] == "case_id" for col in embedding_cols)
                 
-                if has_cmetadata:
-                    # Create GIN index on case_id in metadata for fast filtering
+                # Create B-tree index on case_id column if it exists (preferred over JSONB)
+                if has_case_id:
+                    try:
+                        conn.execute(
+                            text("""
+                                CREATE INDEX IF NOT EXISTS idx_embeddings_case_id_btree 
+                                ON langchain_pg_embedding(case_id)
+                            """)
+                        )
+                        logger.info("✅ Created B-tree index on case_id column")
+                    except Exception as e:
+                        logger.warning(f"Could not create case_id B-tree index: {e}")
+                
+                # Also check for cmetadata column (legacy support)
+                has_cmetadata = any(col["name"] == "cmetadata" for col in embedding_cols)
+                if has_cmetadata and not has_case_id:
+                    # Create GIN index on case_id in metadata for fast filtering (legacy)
                     try:
                         conn.execute(
                             text("""
@@ -135,11 +149,9 @@ def ensure_schema():
                                 ON langchain_pg_embedding USING GIN ((cmetadata->>'case_id'))
                             """)
                         )
-                        logger.info("✅ Created GIN index on case_id metadata")
+                        logger.info("✅ Created GIN index on case_id metadata (legacy)")
                     except Exception as e:
                         logger.warning(f"Could not create case_id index: {e}")
-                else:
-                    logger.info("⚠️  langchain_pg_embedding table exists but cmetadata column not found, skipping index creation")
                 
                 # Create HNSW index on embedding vector for fast similarity search (if pgvector supports it)
                 # Note: HNSW index requires pgvector >= 0.5.0 and may need specific configuration

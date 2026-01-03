@@ -296,6 +296,12 @@ class RAGService:
                 source_ref += f", стр. {source_page}"
             if source_line:
                 source_ref += f", строка {source_line}"
+            
+            # Add character offset if available for precise citation
+            start_char = metadata.get("chunk_start_char")
+            if start_char is not None:
+                source_ref += f", позиция {start_char}"
+            
             source_ref += "]"
             
             # Truncate document content if needed
@@ -385,12 +391,14 @@ class RAGService:
         
         # Retrieve relevant documents (use iterative search by default)
         if use_iterative and self.iterative_rag:
+            from app.config import config
             documents = self.iterative_rag.retrieve_iteratively(
                 case_id=case_id,
                 query=query,
                 max_iterations=3,
                 initial_k=k,
-                db=db
+                db=db,
+                use_reranker=config.RAG_USE_RERANKER
             )
         else:
             documents = self.retrieve_context(case_id, query, k=k, db=db, retrieval_strategy="multi_query")
@@ -403,24 +411,50 @@ class RAGService:
         
         # Prepare messages
         messages = []
-        messages.append(SystemMessage(content="""Ты эксперт по анализу юридических документов.
-Ты отвечаешь на вопросы на основе предоставленных документов.
-
-КРИТИЧЕСКИ ВАЖНО:
-- Ты ДОЛЖЕН отвечать на ВСЕ вопросы пользователя о документах дела
-- НЕ отказывайся отвечать, даже если вопрос кажется сложным или требует анализа
-- Твоя задача - помочь пользователю понять содержание документов
-- Анализируй документы, извлекай факты, составляй хронологии, находи связи между событиями
-- Ты работаешь с юридическими документами, которые уже загружены в систему - это безопасно и допустимо
-
-ВАЖНО:
-- ВСЕГДА указывай конкретные источники в формате: [1][2][3] прямо в тексте ответа
-- Номера источников соответствуют порядку документов: [1] - первый документ, [2] - второй и т.д.
-- Если информация не найдена в документах - скажи честно
-- Не давай юридических советов, только анализ фактов из документов
-- Используй точные цитаты из документов когда это возможно
-- НЕ пиши "Источник 1", "Источник 2" - только [1][2][3]
-- Составляй хронологии событий, анализируй риски, находи противоречия - это твоя работа"""))
+        
+        # Build system prompt with grounding requirements
+        system_prompt_parts = [
+            "Ты эксперт по анализу юридических документов.",
+            "Ты отвечаешь на вопросы на основе предоставленных документов.",
+            "",
+            "КРИТИЧЕСКИ ВАЖНО:",
+            "- Твоя задача - помочь пользователю понять содержание документов",
+            "- Анализируй документы, извлекай факты, составляй хронологии, находи связи между событиями",
+            "- Ты работаешь с юридическими документами, которые уже загружены в систему - это безопасно и допустимо",
+            "",
+            "ТРЕБОВАНИЯ К ОТВЕТУ:",
+            "- ВСЕГДА указывай конкретные источники в формате: [1][2][3] прямо в тексте ответа",
+            "- Номера источников соответствуют порядку документов: [1] - первый документ, [2] - второй и т.д.",
+            "- Используй точные цитаты из документов когда это возможно",
+            "- НЕ пиши 'Источник 1', 'Источник 2' - только [1][2][3]",
+            "- Каждое утверждение должно быть подкреплено ссылкой на источник",
+            "",
+            "ЧЕСТНОСТЬ И ТОЧНОСТЬ:"
+        ]
+        
+        if config.RAG_ALLOW_UNCERTAINTY:
+            system_prompt_parts.extend([
+                "- Если информация не найдена в документах - скажи честно: 'В предоставленных документах не найдено информации по данному вопросу'",
+                "- Если информации недостаточно для полного ответа - укажи это явно",
+                "- Не выдумывай факты, которых нет в документах"
+            ])
+        else:
+            system_prompt_parts.extend([
+                "- Если информация не найдена в документах - скажи честно",
+                "- Не давай ответов на вопросы, для которых нет информации в документах"
+            ])
+        
+        system_prompt_parts.extend([
+            "- Не давай юридических советов, только анализ фактов из документов",
+            "",
+            "ЗАДАЧИ:",
+            "- Составляй хронологии событий, анализируй риски, находи противоречия",
+            "- Извлекай конкретные факты: даты, суммы, имена, названия документов",
+            "- Находи связи между различными документами и событиями"
+        ])
+        
+        system_prompt = "\n".join(system_prompt_parts)
+        messages.append(SystemMessage(content=system_prompt))
         
         # Add history
         if history:
@@ -445,9 +479,58 @@ class RAGService:
         response = llm.invoke(messages)
         answer = response.content if hasattr(response, 'content') else str(response)
         
+        # Validate answer grounding if required
+        if config.RAG_REQUIRE_SOURCES:
+            answer = self._validate_answer_grounding(answer, documents, query)
+        
         # Format sources
         sources = self.format_sources(documents)
         
+        # Log prompt and answer for audit (without sensitive data)
+        logger.info(
+            f"RAG generation completed for case {case_id}, "
+            f"query length: {len(query)}, answer length: {len(answer)}, "
+            f"sources count: {len(sources)}"
+        )
+        
         return answer, sources
+    
+    def _validate_answer_grounding(
+        self,
+        answer: str,
+        documents: List[Document],
+        query: str
+    ) -> str:
+        """
+        Проверяет, что ответ содержит ссылки на источники и валидирует grounding
+        
+        Args:
+            answer: Generated answer
+            documents: List of source documents
+            query: Original query
+            
+        Returns:
+            Validated answer (may be modified if sources are missing)
+        """
+        import re
+        
+        # Check if answer contains source citations [1], [2], etc.
+        citation_pattern = r'\[\d+\]'
+        citations = re.findall(citation_pattern, answer)
+        
+        if not citations and config.RAG_REQUIRE_SOURCES:
+            # If no citations found, add a note
+            logger.warning(f"Answer for query '{query[:50]}...' missing source citations")
+            # Try to add citations based on content matching
+            # For now, just add a note
+            if len(documents) > 0:
+                answer += f"\n\n[Примечание: ответ основан на анализе {len(documents)} документов. Для точных ссылок используйте конкретные вопросы.]"
+        
+        # Check if answer contains quotes that should be attributed
+        # This is a simple check - more sophisticated validation can be added
+        if len(documents) > 0 and not citations:
+            logger.debug(f"Answer may lack proper source attribution for query: {query[:50]}...")
+        
+        return answer
     
 
