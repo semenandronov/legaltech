@@ -100,77 +100,94 @@ interface PromptInputWithDropProps {
 
 const PromptInputWithDrop = ({ actualCaseId, onDocumentDrop, handlePromptSubmit, isLoading }: PromptInputWithDropProps) => {
   const attachments = useOptionalProviderAttachments()
+  const containerRef = useRef<HTMLDivElement | null>(null)
   
-  return (
-    <div 
-      className="relative"
-      onDragOver={(e) => {
-        e.preventDefault()
-        e.stopPropagation()
-      }}
-      onDrop={async (e) => {
-        e.preventDefault()
-        e.stopPropagation()
+  useEffect(() => {
+    const container = containerRef.current
+    if (!container) return
+    
+    const form = container.querySelector('form')
+    if (!form) return
+    
+    const handleDragOver = (e: DragEvent) => {
+      e.preventDefault()
+      e.stopPropagation()
+    }
+    
+    const handleDrop = async (e: DragEvent) => {
+      e.preventDefault()
+      e.stopPropagation()
+      
+      // Проверяем, есть ли файлы в dataTransfer
+      if (e.dataTransfer?.files && e.dataTransfer.files.length > 0) {
+        // Если есть файлы, добавляем их через attachments API
+        if (attachments) {
+          attachments.add(e.dataTransfer.files)
+          logger.info(`Добавлено ${e.dataTransfer.files.length} файлов через drag&drop`)
+        }
+      } else {
+        // Если это drag из панели документов (только имя файла)
+        const documentFilename = e.dataTransfer?.getData('text/plain')
+        logger.info(`Drag&drop документа: "${documentFilename}", attachments доступен: ${!!attachments}, caseId: ${actualCaseId}`)
         
-        // Проверяем, есть ли файлы в dataTransfer
-        if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
-          // Если есть файлы, добавляем их через attachments API
-          if (attachments) {
-            attachments.add(e.dataTransfer.files)
-            logger.info(`Добавлено ${e.dataTransfer.files.length} файлов через drag&drop`)
-          }
-        } else {
-          // Если это drag из панели документов (только имя файла)
-          const documentFilename = e.dataTransfer.getData('text/plain')
-          logger.info(`Drag&drop документа: "${documentFilename}", attachments доступен: ${!!attachments}, caseId: ${actualCaseId}`)
-          
-          if (documentFilename && actualCaseId && attachments) {
-            try {
-              // Получаем список документов
-              const documentsData = await getDocuments(actualCaseId)
-              const document = documentsData.documents?.find(
-                (doc: any) => doc.filename === documentFilename
+        if (documentFilename && actualCaseId && attachments) {
+          try {
+            // Получаем список документов
+            const documentsData = await getDocuments(actualCaseId)
+            const document = documentsData.documents?.find(
+              (doc: any) => doc.filename === documentFilename
+            )
+            
+            if (document && document.id) {
+              logger.info(`Найден документ: ${document.id}, загружаю файл...`)
+              // Загружаем файл с сервера
+              const blob = await getDocumentContent(actualCaseId, document.id)
+              logger.info(`Файл загружен, размер: ${blob.size} байт, тип: ${blob.type}`)
+              
+              // Создаем File объект из Blob
+              const file = new File(
+                [blob],
+                document.filename || documentFilename,
+                { type: blob.type || 'application/octet-stream' }
               )
               
-              if (document && document.id) {
-                logger.info(`Найден документ: ${document.id}, загружаю файл...`)
-                // Загружаем файл с сервера
-                const blob = await getDocumentContent(actualCaseId, document.id)
-                logger.info(`Файл загружен, размер: ${blob.size} байт, тип: ${blob.type}`)
-                
-                // Создаем File объект из Blob
-                const file = new File(
-                  [blob],
-                  document.filename || documentFilename,
-                  { type: blob.type || 'application/octet-stream' }
-                )
-                
-                // Добавляем файл в attachments
-                attachments.add([file])
-                logger.info(`Файл "${file.name}" добавлен в attachments`)
-                
-                if (onDocumentDrop) {
-                  onDocumentDrop(documentFilename)
-                }
-              } else {
-                logger.warn(`Документ "${documentFilename}" не найден в списке документов`)
-                if (onDocumentDrop) {
-                  onDocumentDrop(documentFilename)
-                }
+              // Добавляем файл в attachments
+              attachments.add([file])
+              logger.info(`Файл "${file.name}" добавлен в attachments`)
+              
+              if (onDocumentDrop) {
+                onDocumentDrop(documentFilename)
               }
-            } catch (error) {
-              logger.error('Ошибка при загрузке документа:', error)
+            } else {
+              logger.warn(`Документ "${documentFilename}" не найден в списке документов`)
               if (onDocumentDrop) {
                 onDocumentDrop(documentFilename)
               }
             }
-          } else if (documentFilename && onDocumentDrop) {
-            logger.warn(`Не удалось добавить документ: attachments=${!!attachments}, caseId=${actualCaseId}`)
-            onDocumentDrop(documentFilename)
+          } catch (error) {
+            logger.error('Ошибка при загрузке документа:', error)
+            if (onDocumentDrop) {
+              onDocumentDrop(documentFilename)
+            }
           }
+        } else if (documentFilename && onDocumentDrop) {
+          logger.warn(`Не удалось добавить документ: attachments=${!!attachments}, caseId=${actualCaseId}`)
+          onDocumentDrop(documentFilename)
         }
-      }}
-    >
+      }
+    }
+    
+    form.addEventListener('dragover', handleDragOver)
+    form.addEventListener('drop', handleDrop)
+    
+    return () => {
+      form.removeEventListener('dragover', handleDragOver)
+      form.removeEventListener('drop', handleDrop)
+    }
+  }, [attachments, actualCaseId, onDocumentDrop])
+  
+  return (
+    <div ref={containerRef}>
       <PromptInput
         onSubmit={(message, event) => handlePromptSubmit(message, event)}
         className="w-full [&_form_input-group]:border-gray-300 [&_form_input-group]:focus-within:border-gray-400"
@@ -181,7 +198,7 @@ const PromptInputWithDrop = ({ actualCaseId, onDocumentDrop, handlePromptSubmit,
               placeholder="Введите вопрос или используйте промпт"
               className="min-h-[150px] text-base pr-20 text-gray-900"
             />
-            <div className="absolute top-3 right-3 z-10">
+            <div className="absolute top-3 right-3 z-20">
               <PromptInputSubmit 
                 variant="default"
                 className="bg-black text-white hover:bg-gray-800 rounded-lg h-8 w-8 p-0 flex items-center justify-center shrink-0"
