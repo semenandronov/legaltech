@@ -82,16 +82,18 @@ interface AssistantUIChatProps {
   caseTitle?: string
   documentCount?: number
   isLoadingCaseInfo?: boolean
+  onDocumentDrop?: (documentFilename: string) => void
 }
 
-export const AssistantUIChat = forwardRef<{ clearMessages: () => void }, AssistantUIChatProps>(({ 
+export const AssistantUIChat = forwardRef<{ clearMessages: () => void; loadHistory: () => Promise<void> }, AssistantUIChatProps>(({ 
   caseId, 
   className, 
   initialQuery, 
   onQuerySelected,
   caseTitle,
   documentCount,
-  isLoadingCaseInfo = false
+  isLoadingCaseInfo = false,
+  onDocumentDrop
 }, ref) => {
   const params = useParams<{ caseId: string }>()
   const actualCaseId = caseId || params.caseId || ''
@@ -103,6 +105,9 @@ export const AssistantUIChat = forwardRef<{ clearMessages: () => void }, Assista
   const [legalResearch, setLegalResearch] = useState(true)
   const [deepThink, setDeepThink] = useState(false)
   const abortControllerRef = useRef<AbortController | null>(null)
+  const [previewOpen, setPreviewOpen] = useState(false)
+  const [previewSource, setPreviewSource] = useState<SourceInfo | null>(null)
+  const [allCurrentSources, setAllCurrentSources] = useState<SourceInfo[]>([])
   
 
   // Load chat history on mount
@@ -482,10 +487,44 @@ export const AssistantUIChat = forwardRef<{ clearMessages: () => void }, Assista
     }
   }, [sendMessage, isLoading, actualCaseId])
 
-  // Expose clearMessages for parent component
+  // Expose clearMessages and loadHistory for parent component
   useImperativeHandle(ref, () => ({
     clearMessages: () => {
       setMessages([])
+    },
+    loadHistory: async () => {
+      if (!actualCaseId) return
+      setIsLoadingHistory(true)
+      try {
+        const historyMessages = await loadChatHistory(actualCaseId)
+        const convertedMessages: Message[] = historyMessages.map((msg, index) => {
+          let sources: Array<{ title?: string; url?: string; page?: number; file?: string }> = []
+          if (msg.sources && Array.isArray(msg.sources)) {
+            sources = msg.sources.map((source: any) => {
+              if (typeof source === 'string') {
+                return { title: source, file: source }
+              }
+              return {
+                title: source.title || source.file || 'Источник',
+                url: source.url,
+                page: source.page,
+                file: source.file,
+              }
+            })
+          }
+          return {
+            id: `msg-${msg.created_at || Date.now()}-${index}`,
+            role: msg.role,
+            content: msg.content || '',
+            sources: sources.length > 0 ? sources : undefined,
+          }
+        })
+        setMessages(convertedMessages)
+      } catch (error) {
+        logger.error('Error loading chat history:', error)
+      } finally {
+        setIsLoadingHistory(false)
+      }
     },
   }))
 
@@ -536,8 +575,25 @@ export const AssistantUIChat = forwardRef<{ clearMessages: () => void }, Assista
               isStreaming={isLoading && message.id === messages[messages.length - 1]?.id}
               onSourceClick={(source) => {
                 if (source.file) {
-                  // Navigate to documents page with file parameter
-                  window.location.href = `/cases/${actualCaseId}/documents?file=${encodeURIComponent(source.file)}`
+                  // Открываем документ справа в панели предпросмотра
+                  const sourceInfo: SourceInfo = {
+                    file: source.file,
+                    title: source.title || source.file,
+                    url: source.url,
+                    page: source.page,
+                    text_preview: undefined,
+                  }
+                  setPreviewSource(sourceInfo)
+                  setPreviewOpen(true)
+                  // Собираем все источники из текущего сообщения для навигации
+                  if (message.sources) {
+                    setAllCurrentSources(message.sources.map(s => ({
+                      file: s.file || s.title || '',
+                      title: s.title || s.file || '',
+                      url: s.url,
+                      page: s.page,
+                    })))
+                  }
                 }
               }}
             >
@@ -627,7 +683,21 @@ export const AssistantUIChat = forwardRef<{ clearMessages: () => void }, Assista
         <div className="flex-shrink-0 bg-white border-t border-gray-200">
           <div className="w-full max-w-4xl mx-auto px-6 py-4 space-y-4">
             {/* PromptInput с готовыми компонентами из @ai */}
-            <div className="relative">
+            <div 
+              className="relative"
+              onDragOver={(e) => {
+                e.preventDefault()
+                e.stopPropagation()
+              }}
+              onDrop={(e) => {
+                e.preventDefault()
+                e.stopPropagation()
+                const documentFilename = e.dataTransfer.getData('text/plain')
+                if (documentFilename && onDocumentDrop) {
+                  onDocumentDrop(documentFilename)
+                }
+              }}
+            >
               <PromptInput
                 onSubmit={handlePromptSubmit}
                 className="w-full"
@@ -636,7 +706,7 @@ export const AssistantUIChat = forwardRef<{ clearMessages: () => void }, Assista
                 <div className="relative w-full">
                   <PromptInputTextarea 
                     placeholder="Введите вопрос или используйте промпт"
-                    className="min-h-[60px] text-base pr-12"
+                    className="min-h-[100px] text-base pr-12"
                   />
                   <div className="absolute bottom-2 right-2">
                     <PromptInputSubmit 
@@ -672,7 +742,21 @@ export const AssistantUIChat = forwardRef<{ clearMessages: () => void }, Assista
       ) : (
         <div className="bg-white px-6 pt-8 pb-4">
           <div className="w-full max-w-4xl mx-auto space-y-4">
-            <div className="relative">
+            <div 
+              className="relative"
+              onDragOver={(e) => {
+                e.preventDefault()
+                e.stopPropagation()
+              }}
+              onDrop={(e) => {
+                e.preventDefault()
+                e.stopPropagation()
+                const documentFilename = e.dataTransfer.getData('text/plain')
+                if (documentFilename && onDocumentDrop) {
+                  onDocumentDrop(documentFilename)
+                }
+              }}
+            >
               <PromptInput
                 onSubmit={handlePromptSubmit}
                 className="w-full"
@@ -681,7 +765,7 @@ export const AssistantUIChat = forwardRef<{ clearMessages: () => void }, Assista
                 <div className="relative w-full">
                   <PromptInputTextarea 
                     placeholder="Введите вопрос или используйте промпт"
-                    className="min-h-[60px] text-base pr-12"
+                    className="min-h-[100px] text-base pr-12"
                   />
                   <div className="absolute bottom-2 right-2">
                     <PromptInputSubmit 
@@ -709,6 +793,16 @@ export const AssistantUIChat = forwardRef<{ clearMessages: () => void }, Assista
         </div>
       )}
       </div>
+
+      {/* Document Preview Sheet */}
+      <DocumentPreviewSheet
+        isOpen={previewOpen}
+        onClose={() => setPreviewOpen(false)}
+        source={previewSource}
+        caseId={actualCaseId}
+        allSources={allCurrentSources}
+        onNavigate={(source: SourceInfo) => setPreviewSource(source)}
+      />
     </PromptInputProvider>
   )
 })

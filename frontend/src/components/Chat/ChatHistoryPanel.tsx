@@ -40,6 +40,7 @@ interface ChatHistoryPanelProps {
   onClose: () => void
   currentCaseId?: string
   onSelectQuery?: (query: string) => void
+  onLoadHistory?: () => Promise<void>
 }
 
 export const ChatHistoryPanel: React.FC<ChatHistoryPanelProps> = ({
@@ -47,6 +48,7 @@ export const ChatHistoryPanel: React.FC<ChatHistoryPanelProps> = ({
   onClose,
   currentCaseId,
   onSelectQuery,
+  onLoadHistory,
 }) => {
   const [historyItems, setHistoryItems] = useState<HistoryItem[]>([])
   const [filteredItems, setFilteredItems] = useState<HistoryItem[]>([])
@@ -98,7 +100,11 @@ export const ChatHistoryPanel: React.FC<ChatHistoryPanelProps> = ({
     }
   }
 
-  const handleSelectQuery = (item: HistoryItem) => {
+  const handleSelectQuery = async (item: HistoryItem) => {
+    // Загружаем полную историю чата при выборе
+    if (onLoadHistory) {
+      await onLoadHistory()
+    }
     if (onSelectQuery) {
       onSelectQuery(item.content)
     }

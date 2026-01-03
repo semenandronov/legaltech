@@ -22,7 +22,7 @@ const AssistantChatPage = () => {
   const [selectedQuery, setSelectedQuery] = useState<string>('')
   const [caseInfo, setCaseInfo] = useState<{ title?: string; documentCount?: number } | null>(null)
   const [isLoadingCaseInfo, setIsLoadingCaseInfo] = useState(true)
-  const chatRef = useRef<{ clearMessages: () => void } | null>(null)
+  const chatRef = useRef<{ clearMessages: () => void; loadHistory: () => Promise<void> } | null>(null)
 
   // Load case info
   useEffect(() => {
@@ -205,6 +205,13 @@ const AssistantChatPage = () => {
             caseTitle={caseInfo?.title}
             documentCount={caseInfo?.documentCount}
             isLoadingCaseInfo={isLoadingCaseInfo}
+            onDocumentDrop={(documentFilename) => {
+              // Добавляем имя документа в поле ввода
+              if (chatRef.current) {
+                // Можно добавить логику для добавления документа в сообщение
+                toast.info(`Документ "${documentFilename}" добавлен`)
+              }
+            }}
             ref={chatRef}
           />
         </div>
@@ -215,8 +222,10 @@ const AssistantChatPage = () => {
           onClose={() => setDocumentsPanelOpen(false)}
           caseId={caseId}
           onDocumentClick={(document) => {
-            // Открыть документ в новой вкладке или модальном окне
-            navigate(`/cases/${caseId}/documents?file=${encodeURIComponent(document.filename)}`)
+            // Открываем документ справа в панели предпросмотра через AssistantUIChat
+            // Это будет обработано через DocumentPreviewSheet в AssistantUIChat
+            // Пока что просто показываем уведомление
+            toast.info(`Документ "${document.filename}" выбран. Перетащите его в чат для добавления.`)
           }}
         />
       </div>
@@ -227,6 +236,11 @@ const AssistantChatPage = () => {
         onClose={() => setHistoryPanelOpen(false)}
         currentCaseId={caseId}
         onSelectQuery={handleSelectQuery}
+        onLoadHistory={async () => {
+          if (chatRef.current) {
+            await chatRef.current.loadHistory()
+          }
+        }}
       />
     </div>
   )

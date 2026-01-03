@@ -4,6 +4,8 @@ import ReactMarkdown from "react-markdown"
 import { Reasoning, ReasoningContent, ReasoningTrigger } from "./reasoning"
 import { Tool, ToolInput, ToolOutput } from "./tool"
 import { Response, ResponseContent, ResponseSources } from "./response"
+import MessageContent from "../Chat/MessageContent"
+import { SourceInfo } from "@/services/api"
 
 // Animation styles
 const fadeIn = "animate-in fade-in slide-in-from-bottom-2 duration-300"
@@ -178,28 +180,57 @@ export const AssistantMessage = React.memo(function AssistantMessage({
           </div>
         )}
 
-        {/* Main Content */}
+        {/* Main Content - с обработкой встроенных сносок */}
         {content && (
           <div className="mb-4">
-            <ReactMarkdown components={markdownComponents}>
-              {content || "..."}
-            </ReactMarkdown>
+            <MessageContent
+              content={content}
+              sources={sources?.map(s => ({
+                file: s.file || s.title || '',
+                title: s.title || s.file || '',
+                url: s.url,
+                page: s.page,
+                text_preview: s.text_preview,
+              })) as SourceInfo[]}
+              onCitationClick={(source) => {
+                if (onSourceClick) {
+                  onSourceClick({
+                    file: source.file,
+                    title: source.title,
+                    url: source.url,
+                    page: source.page,
+                  })
+                }
+              }}
+              isStreaming={isStreaming}
+            />
           </div>
         )}
 
         {/* Response */}
         {response && (
           <div className="mb-4">
-            <Response status="completed">
-              <ResponseContent markdown={true}>{response}</ResponseContent>
-            </Response>
-          </div>
-        )}
-
-        {/* Sources - всегда показываем явно, если есть */}
-        {sources && sources.length > 0 && (
-          <div className="mt-3">
-            <ResponseSources sources={sources} onSourceClick={onSourceClick} />
+            <MessageContent
+              content={response}
+              sources={sources?.map(s => ({
+                file: s.file || s.title || '',
+                title: s.title || s.file || '',
+                url: s.url,
+                page: s.page,
+                text_preview: s.text_preview,
+              })) as SourceInfo[]}
+              onCitationClick={(source) => {
+                if (onSourceClick) {
+                  onSourceClick({
+                    file: source.file,
+                    title: source.title,
+                    url: source.url,
+                    page: source.page,
+                  })
+                }
+              }}
+              isStreaming={isStreaming}
+            />
           </div>
         )}
 
