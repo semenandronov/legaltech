@@ -157,7 +157,7 @@ class WebSearchSource(BaseSource):
                 "groupsOnPage": max_results,
                 "docsInGroup": 1
             },
-            "responseFormat": "FORMAT_JSON",
+            "responseFormat": "FORMAT_XML",
             "folderId": self.folder_id
         }
         
@@ -200,9 +200,9 @@ class WebSearchSource(BaseSource):
                                      f"error_text={content[:500]}")
                         return []
                     
-                    # Parse JSON response (v2 использует JSON вместо XML)
-                    logger.info(f"[WebSearch] Parsing JSON response: content_length={len(content)}")
-                    return self._parse_yandex_v2_response(content)
+                    # Parse XML response (v2 использует XML или HTML формат)
+                    logger.info(f"[WebSearch] Parsing XML response: content_length={len(content)}")
+                    return self._parse_yandex_response(content)
                     
         except aiohttp.ClientError as e:
             logger.warning(f"[WebSearch] Yandex Search API v2 connection error: {e}")
