@@ -94,7 +94,7 @@ interface AssistantUIChatProps {
 interface PromptInputWithDropProps {
   actualCaseId: string
   onDocumentDrop?: (documentFilename: string) => void
-  handlePromptSubmit: (e: React.FormEvent<HTMLFormElement>) => void | Promise<void>
+  handlePromptSubmit: (message: { text: string; files: any[] }, event: React.FormEvent<HTMLFormElement>) => void | Promise<void>
   isLoading: boolean
 }
 
@@ -172,7 +172,7 @@ const PromptInputWithDrop = ({ actualCaseId, onDocumentDrop, handlePromptSubmit,
       }}
     >
       <PromptInput
-        onSubmit={handlePromptSubmit}
+        onSubmit={(message, event) => handlePromptSubmit(message, event)}
         className="w-full [&_form_input-group]:border-gray-300 [&_form_input-group]:focus-within:border-gray-400"
       >
         <PromptInputBody>
@@ -590,7 +590,8 @@ export const AssistantUIChat = forwardRef<{ clearMessages: () => void; loadHisto
     }
   }, [])
 
-  const handlePromptSubmit = useCallback(async ({ text }: { text: string; files: any[] }) => {
+  const handlePromptSubmit = useCallback(async (message: { text: string; files: any[] }, event: React.FormEvent<HTMLFormElement>) => {
+    const { text } = message
     if (text.trim() && !isLoading && actualCaseId) {
       await sendMessage(text)
     }
