@@ -87,7 +87,6 @@ export const AssistantUIChat = ({ caseId, className, initialQuery, onQuerySelect
   const [messages, setMessages] = useState<Message[]>([])
   const [isLoading, setIsLoading] = useState(false)
   const [webSearch, setWebSearch] = useState(false)
-  const [databaseSearch, setDatabaseSearch] = useState(false)
   const [legalResearch, setLegalResearch] = useState(true)
   const [deepThink, setDeepThink] = useState(false)
   const abortControllerRef = useRef<AbortController | null>(null)
@@ -147,7 +146,6 @@ export const AssistantUIChat = ({ caseId, className, initialQuery, onQuerySelect
             content: m.content,
           })),
           web_search: webSearch,
-          database_search: databaseSearch,
           legal_research: legalResearch,
           deep_think: deepThink,
         }),
@@ -267,7 +265,7 @@ export const AssistantUIChat = ({ caseId, className, initialQuery, onQuerySelect
       setIsLoading(false)
       abortControllerRef.current = null
     }
-  }, [actualCaseId, isLoading, messages, webSearch, databaseSearch, legalResearch, deepThink])
+  }, [actualCaseId, isLoading, messages, webSearch, legalResearch, deepThink])
 
   const startPlanExecutionStream = useCallback(async (planId: string, messageId: string) => {
     try {
@@ -571,16 +569,17 @@ export const AssistantUIChat = ({ caseId, className, initialQuery, onQuerySelect
                 <p className="text-sm text-gray-600">Используйте веб для глубокого исследования любой темы</p>
               </div>
 
-              {/* Database search */}
+              {/* Deep Think */}
               <div className="flex flex-col p-4 bg-white border border-gray-200 rounded-lg hover:border-gray-300 transition-colors">
                 <div className="flex items-center justify-between mb-2">
-                  <span className="text-sm font-medium text-gray-900">Поиск в базе данных</span>
+                  <span className="text-sm font-medium text-gray-900">Глубокое размышление</span>
                   <Switch 
-                    checked={databaseSearch} 
-                    onCheckedChange={setDatabaseSearch}
+                    checked={deepThink} 
+                    onCheckedChange={setDeepThink}
+                    className="data-[state=checked]:bg-blue-600"
                   />
                 </div>
-                <p className="text-sm text-gray-600">Поиск в базах данных проекта или организации</p>
+                <p className="text-sm text-gray-600">Используйте более глубокий анализ для сложных вопросов</p>
               </div>
 
               {/* Legal research */}
@@ -593,6 +592,7 @@ export const AssistantUIChat = ({ caseId, className, initialQuery, onQuerySelect
                   <Switch 
                     checked={legalResearch} 
                     onCheckedChange={setLegalResearch}
+                    className="data-[state=checked]:bg-blue-600"
                   />
                 </div>
                 <p className="text-sm text-gray-600">Найдите ответы на свои вопросы в курируемых юридических источниках</p>
@@ -647,21 +647,23 @@ export const AssistantUIChat = ({ caseId, className, initialQuery, onQuerySelect
                   <Switch 
                     checked={webSearch} 
                     onCheckedChange={setWebSearch}
+                    className="data-[state=checked]:bg-blue-600"
                   />
                 </div>
                 <p className="text-sm text-gray-600">Используйте веб для глубокого исследования любой темы</p>
               </div>
 
-              {/* Database search */}
+              {/* Deep Think */}
               <div className="flex flex-col p-4 bg-white border border-gray-200 rounded-lg hover:border-gray-300 transition-colors">
                 <div className="flex items-center justify-between mb-2">
-                  <span className="text-sm font-medium text-gray-900">Поиск в базе данных</span>
+                  <span className="text-sm font-medium text-gray-900">Глубокое размышление</span>
                   <Switch 
-                    checked={databaseSearch} 
-                    onCheckedChange={setDatabaseSearch}
+                    checked={deepThink} 
+                    onCheckedChange={setDeepThink}
+                    className="data-[state=checked]:bg-blue-600"
                   />
                 </div>
-                <p className="text-sm text-gray-600">Поиск в базах данных проекта или организации</p>
+                <p className="text-sm text-gray-600">Используйте более глубокий анализ для сложных вопросов</p>
               </div>
 
               {/* Legal research */}
@@ -674,6 +676,7 @@ export const AssistantUIChat = ({ caseId, className, initialQuery, onQuerySelect
                   <Switch 
                     checked={legalResearch} 
                     onCheckedChange={setLegalResearch}
+                    className="data-[state=checked]:bg-blue-600"
                   />
                 </div>
                 <p className="text-sm text-gray-600">Найдите ответы на свои вопросы в курируемых юридических источниках</p>
