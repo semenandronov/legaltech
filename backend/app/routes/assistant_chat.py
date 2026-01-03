@@ -146,42 +146,9 @@ async def stream_chat_response(
             yield f"data: {json.dumps({'error': 'В деле нет загруженных документов. Пожалуйста, сначала загрузите документы.'})}\n\n"
             return
         
-        # #region agent log
-        import json as json_module
-        try:
-            with open('/Users/semyon_andronov04/Desktop/C ДВ/.cursor/debug.log', 'a', encoding='utf-8') as f:
-                f.write(json_module.dumps({
-                    "sessionId": "debug-session",
-                    "runId": "run1",
-                    "hypothesisId": "A",
-                    "location": "assistant_chat.py:148",
-                    "message": "Stream chat response started",
-                    "data": {"case_id": case_id, "question": question[:100], "web_search": web_search, "web_search_type": str(type(web_search))},
-                    "timestamp": int(__import__('time').time() * 1000)
-                }, ensure_ascii=False) + '\n')
-        except:
-            pass
-        # #endregion
-        
         # Классифицируем запрос - задача или вопрос?
         classification_llm = create_llm(temperature=0.0)
         is_task = await classify_request(question, classification_llm)
-        
-        # #region agent log
-        try:
-            with open('/Users/semyon_andronov04/Desktop/C ДВ/.cursor/debug.log', 'a', encoding='utf-8') as f:
-                f.write(json_module.dumps({
-                    "sessionId": "debug-session",
-                    "runId": "run1",
-                    "hypothesisId": "C",
-                    "location": "assistant_chat.py:152",
-                    "message": "Request classified",
-                    "data": {"is_task": is_task, "web_search": web_search},
-                    "timestamp": int(__import__('time').time() * 1000)
-                }, ensure_ascii=False) + '\n')
-        except:
-            pass
-        # #endregion
         
         if is_task:
             # Это задача - используем Planning Agent и агентов
@@ -304,60 +271,8 @@ async def stream_chat_response(
             web_search_context = ""
             web_search_successful = False
             
-            # #region agent log
-            try:
-                with open('/Users/semyon_andronov04/Desktop/C ДВ/.cursor/debug.log', 'a', encoding='utf-8') as f:
-                    f.write(json_module.dumps({
-                        "sessionId": "debug-session",
-                        "runId": "run1",
-                        "hypothesisId": "B",
-                        "location": "assistant_chat.py:330",
-                        "message": "Before web_search check",
-                        "data": {
-                            "web_search": web_search,
-                            "web_search_type": str(type(web_search)),
-                            "web_search_bool": bool(web_search),
-                            "question": question[:100]
-                        },
-                        "timestamp": int(__import__('time').time() * 1000)
-                    }, ensure_ascii=False) + '\n')
-            except:
-                pass
-            # #endregion
-            
             if web_search:
-                # #region agent log
                 try:
-                    with open('/Users/semyon_andronov04/Desktop/C ДВ/.cursor/debug.log', 'a', encoding='utf-8') as f:
-                        f.write(json_module.dumps({
-                            "sessionId": "debug-session",
-                            "runId": "run1",
-                            "hypothesisId": "C",
-                            "location": "assistant_chat.py:348",
-                            "message": "Web search condition TRUE - entering block",
-                            "data": {"question": question[:100]},
-                            "timestamp": int(__import__('time').time() * 1000)
-                        }, ensure_ascii=False) + '\n')
-                except:
-                    pass
-                # #endregion
-                try:
-                    # #region agent log
-                    try:
-                        with open('/Users/semyon_andronov04/Desktop/C ДВ/.cursor/debug.log', 'a', encoding='utf-8') as f:
-                            f.write(json_module.dumps({
-                                "sessionId": "debug-session",
-                                "runId": "run1",
-                                "hypothesisId": "D",
-                                "location": "assistant_chat.py:395",
-                                "message": "Web search condition passed, starting research",
-                                "data": {"query": question[:100]},
-                                "timestamp": int(__import__('time').time() * 1000)
-                            }, ensure_ascii=False) + '\n')
-                    except:
-                        pass
-                    # #endregion
-                    
                     logger.info(f"Web search enabled for query: {question[:100]}...")
                     web_research_service = get_web_research_service()
                     research_result = await web_research_service.research(
@@ -366,22 +281,6 @@ async def stream_chat_response(
                         use_cache=True,
                         validate_sources=True
                     )
-                    
-                    # #region agent log
-                    try:
-                        with open('/Users/semyon_andronov04/Desktop/C ДВ/.cursor/debug.log', 'a', encoding='utf-8') as f:
-                            f.write(json_module.dumps({
-                                "sessionId": "debug-session",
-                                "runId": "run1",
-                                "hypothesisId": "D",
-                                "location": "assistant_chat.py:413",
-                                "message": "Web research result received",
-                                "data": {"sources_count": len(research_result.sources) if research_result.sources else 0, "has_summary": bool(research_result.summary)},
-                                "timestamp": int(__import__('time').time() * 1000)
-                            }, ensure_ascii=False) + '\n')
-                    except:
-                        pass
-                    # #endregion
                     
                     if research_result.sources:
                         web_search_parts = []
@@ -403,38 +302,7 @@ async def stream_chat_response(
                         logger.info(f"Web search completed: {len(research_result.sources)} sources found")
                     else:
                         logger.warning("Web search returned no results")
-                        # #region agent log
-                        try:
-                            with open('/Users/semyon_andronov04/Desktop/C ДВ/.cursor/debug.log', 'a', encoding='utf-8') as f:
-                                f.write(json_module.dumps({
-                                    "sessionId": "debug-session",
-                                    "runId": "run1",
-                                    "hypothesisId": "F",
-                                    "location": "assistant_chat.py:450",
-                                    "message": "Web search returned no results",
-                                    "data": {"question": question[:100]},
-                                    "timestamp": int(__import__('time').time() * 1000)
-                                }, ensure_ascii=False) + '\n')
-                        except:
-                            pass
-                        # #endregion
                 except Exception as web_search_error:
-                    # #region agent log
-                    try:
-                        with open('/Users/semyon_andronov04/Desktop/C ДВ/.cursor/debug.log', 'a', encoding='utf-8') as f:
-                            f.write(json_module.dumps({
-                                "sessionId": "debug-session",
-                                "runId": "run1",
-                                "hypothesisId": "E",
-                                "location": "assistant_chat.py:471",
-                                "message": "Web search exception caught",
-                                "data": {"error": str(web_search_error), "error_type": str(type(web_search_error).__name__)},
-                                "timestamp": int(__import__('time').time() * 1000)
-                            }, ensure_ascii=False) + '\n')
-                    except:
-                        pass
-                    # #endregion
-                    
                     logger.warning(f"Web search failed: {web_search_error}, continuing without web search")
                     # Continue without web search - не критичная ошибка
             
@@ -531,9 +399,13 @@ async def stream_chat_response(
                 llm = create_llm(temperature=0.7)  # Использует config.GIGACHAT_MODEL (обычно "GigaChat")
             
             # Stream response
+            # Преобразуем строку prompt в список сообщений для GigaChat
+            from langchain_core.messages import HumanMessage
+            messages = [HumanMessage(content=prompt)]
+            
             try:
                 if hasattr(llm, 'astream'):
-                    async for chunk in llm.astream(prompt):
+                    async for chunk in llm.astream(messages):
                         if hasattr(chunk, 'content'):
                             content = chunk.content
                         elif isinstance(chunk, str):
@@ -546,7 +418,7 @@ async def stream_chat_response(
                     yield f"data: {json.dumps({'textDelta': ''})}\n\n"
                 else:
                     # Fallback: get full response and chunk it
-                    response = await loop.run_in_executor(None, lambda: llm.invoke(prompt))
+                    response = await loop.run_in_executor(None, lambda: llm.invoke(messages))
                     response_text = response.content if hasattr(response, 'content') else str(response)
                     
                     chunk_size = 20
@@ -558,7 +430,7 @@ async def stream_chat_response(
                     yield f"data: {json.dumps({'textDelta': ''})}\n\n"
             except Exception as stream_error:
                 logger.warning(f"Streaming failed, using fallback: {stream_error}")
-                response = await loop.run_in_executor(None, lambda: llm.invoke(prompt))
+                response = await loop.run_in_executor(None, lambda: llm.invoke(messages))
                 response_text = response.content if hasattr(response, 'content') else str(response)
                 
                 chunk_size = 20
@@ -600,32 +472,6 @@ async def assistant_chat(
         else:
             web_search = bool(web_search_raw)
         deep_think = body.get("deep_think", False)
-        
-        
-        # #region agent log
-        import json as json_module
-        try:
-            with open('/Users/semyon_andronov04/Desktop/C ДВ/.cursor/debug.log', 'a', encoding='utf-8') as f:
-                f.write(json_module.dumps({
-                    "sessionId": "debug-session",
-                    "runId": "run1",
-                    "hypothesisId": "A",
-                    "location": "assistant_chat.py:554",
-                    "message": "Request body parsed",
-                    "data": {
-                        "web_search_raw": web_search_raw,
-                        "web_search_raw_type": str(type(web_search_raw)),
-                        "web_search": web_search,
-                        "web_search_type": str(type(web_search)),
-                        "web_search_bool": bool(web_search),
-                        "body_keys": list(body.keys()),
-                        "body_web_search_value": body.get("web_search")
-                    },
-                    "timestamp": int(__import__('time').time() * 1000)
-                }, ensure_ascii=False) + '\n')
-        except:
-            pass
-        # #endregion
         
         if not case_id:
             raise HTTPException(status_code=400, detail="case_id is required")
