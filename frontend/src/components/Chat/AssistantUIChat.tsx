@@ -14,7 +14,6 @@ import {
   PromptInputBody,
   PromptInputTextarea,
   PromptInputSubmit,
-  PromptInputFooter,
   PromptInputAttachments,
   PromptInputAttachment,
 } from '../ai-elements/prompt-input'
@@ -537,21 +536,6 @@ export const AssistantUIChat = ({ caseId, className, initialQuery, onQuerySelect
                   <PromptInputAttachment data={attachment} />
                 )}
               </PromptInputAttachments>
-              
-              {/* Footer с Deep think */}
-              <PromptInputFooter>
-                <label className="flex items-center gap-2 cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={deepThink}
-                    onChange={(e) => setDeepThink(e.target.checked)}
-                    className="w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500"
-                  />
-                  <span className="text-sm text-gray-700">
-                    Глубокое размышление <span className="text-gray-500">Более мощные, но медленные ответы</span>
-                  </span>
-                </label>
-              </PromptInputFooter>
             </PromptInput>
             </div>
 
@@ -624,17 +608,6 @@ export const AssistantUIChat = ({ caseId, className, initialQuery, onQuerySelect
                   </div>
                 </div>
               </PromptInputBody>
-                <PromptInputFooter>
-                  <label className="flex items-center gap-2 cursor-pointer">
-                    <input
-                      type="checkbox"
-                      checked={deepThink}
-                      onChange={(e) => setDeepThink(e.target.checked)}
-                      className="w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500"
-                    />
-                    <span className="text-sm text-gray-700">Глубокое размышление</span>
-                  </label>
-                </PromptInputFooter>
               </PromptInput>
             </div>
 
