@@ -583,7 +583,7 @@ export const AssistantUIChat = forwardRef<{ clearMessages: () => void; loadHisto
                   const sourceInfo: SourceInfo = {
                     file: source.file || source.title || '',
                     page: source.page,
-                    text_preview: source.text_preview,
+                    text_preview: (source as any).text_preview,
                   }
                   setPreviewSource(sourceInfo)
                   setPreviewOpen(true)

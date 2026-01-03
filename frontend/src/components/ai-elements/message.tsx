@@ -2,7 +2,6 @@ import * as React from "react"
 import { cn } from "@/lib/utils"
 import { Reasoning, ReasoningContent, ReasoningTrigger } from "./reasoning"
 import { Tool, ToolInput, ToolOutput } from "./tool"
-import { Response, ResponseContent } from "./response"
 import MessageContent from "../Chat/MessageContent"
 import { SourceInfo } from "@/services/api"
 
