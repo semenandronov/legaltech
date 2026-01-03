@@ -179,9 +179,9 @@ const PromptInputWithDrop = ({ actualCaseId, onDocumentDrop, handlePromptSubmit,
           <div className="relative w-full">
             <PromptInputTextarea 
               placeholder="Введите вопрос или используйте промпт"
-              className="min-h-[150px] text-base pr-20"
+              className="min-h-[150px] text-base pr-20 text-gray-900"
             />
-            <div className="absolute bottom-3 right-3 z-10">
+            <div className="absolute top-3 right-3 z-10">
               <PromptInputSubmit 
                 variant="default"
                 className="bg-black text-white hover:bg-gray-800 rounded-lg h-8 w-8 p-0 flex items-center justify-center shrink-0"
