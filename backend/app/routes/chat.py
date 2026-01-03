@@ -1294,6 +1294,82 @@ async def get_history(
     }
 
 
+@router.post("/{case_id}/export")
+async def export_chat_history(
+    case_id: str,
+    format: str = "markdown",  # markdown or pdf
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """
+    Export chat history for a case
+    
+    Returns: Markdown or PDF file with chat history
+    """
+    from fastapi.responses import Response
+    
+    # Check if case exists and verify ownership
+    case = db.query(Case).filter(
+        Case.id == case_id,
+        Case.user_id == current_user.id
+    ).first()
+    if not case:
+        raise HTTPException(status_code=404, detail="Дело не найдено")
+    
+    # Get messages
+    messages = db.query(ChatMessage).filter(
+        ChatMessage.case_id == case_id
+    ).order_by(ChatMessage.created_at.asc()).all()
+    
+    if format == "markdown":
+        # Generate Markdown
+        markdown_lines = []
+        markdown_lines.append(f"# История чата - {case.title or 'Без названия'}")
+        markdown_lines.append(f"**Дата экспорта:** {datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')}")
+        markdown_lines.append(f"**Количество сообщений:** {len(messages)}")
+        markdown_lines.append("")
+        markdown_lines.append("---")
+        markdown_lines.append("")
+        
+        for i, msg in enumerate(messages, 1):
+            timestamp = msg.created_at.strftime('%Y-%m-%d %H:%M:%S') if msg.created_at else 'Неизвестно'
+            markdown_lines.append(f"## Сообщение {i}")
+            markdown_lines.append(f"**Роль:** {msg.role}")
+            markdown_lines.append(f"**Время:** {timestamp}")
+            markdown_lines.append("")
+            markdown_lines.append("**Содержание:**")
+            markdown_lines.append("")
+            markdown_lines.append(msg.content or "")
+            markdown_lines.append("")
+            
+            if msg.source_references:
+                markdown_lines.append("**Источники:**")
+                for source in msg.source_references:
+                    if isinstance(source, dict):
+                        source_text = source.get('file') or source.get('title', 'Источник')
+                        if source.get('page'):
+                            source_text += f" (стр. {source['page']})"
+                        markdown_lines.append(f"- {source_text}")
+                    else:
+                        markdown_lines.append(f"- {source}")
+                markdown_lines.append("")
+            
+            markdown_lines.append("---")
+            markdown_lines.append("")
+        
+        markdown_content = "\n".join(markdown_lines)
+        
+        return Response(
+            content=markdown_content.encode('utf-8'),
+            media_type="text/markdown",
+            headers={
+                "Content-Disposition": f'attachment; filename="chat-history-{case_id}-{datetime.utcnow().strftime("%Y%m%d")}.md"'
+            }
+        )
+    else:
+        raise HTTPException(status_code=400, detail="Неподдерживаемый формат. Используйте 'markdown'")
+
+
 @router.post("/improve-prompt", response_model=ImprovePromptResponse)
 async def improve_prompt_endpoint(
     request: ImprovePromptRequest,

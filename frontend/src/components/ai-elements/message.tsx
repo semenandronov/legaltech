@@ -63,8 +63,9 @@ export interface AssistantMessageProps {
     status?: "pending" | "running" | "completed" | "error"
   }>
   response?: string
-  sources?: Array<{ title?: string; url?: string; page?: number }>
+  sources?: Array<{ title?: string; url?: string; page?: number; text_preview?: string; file?: string }>
   isStreaming?: boolean
+  onSourceClick?: (source: { title?: string; url?: string; page?: number; file?: string }) => void
   className?: string
   children?: React.ReactNode
 }
@@ -78,6 +79,7 @@ export const AssistantMessage = React.memo(function AssistantMessage({
   isStreaming = false,
   className,
   children,
+  onSourceClick,
 }: AssistantMessageProps) {
   const markdownComponents = {
     p: ({ children }: any) => <p className="mb-3 last:mb-0">{children}</p>,
@@ -190,10 +192,14 @@ export const AssistantMessage = React.memo(function AssistantMessage({
           <div className="mb-4">
             <Response status="completed">
               <ResponseContent markdown={true}>{response}</ResponseContent>
-              {sources && sources.length > 0 && (
-                <ResponseSources sources={sources} />
-              )}
             </Response>
+          </div>
+        )}
+
+        {/* Sources - всегда показываем явно, если есть */}
+        {sources && sources.length > 0 && (
+          <div className="mt-3">
+            <ResponseSources sources={sources} onSourceClick={onSourceClick} />
           </div>
         )}
 

@@ -6,16 +6,25 @@ import {
   Card,
   CardContent,
   Grow,
+  CircularProgress,
+  Chip,
 } from '@mui/material'
 import {
   AutoAwesome as SparklesIcon,
   Chat as ChatIcon,
   Timeline as TimelineIcon,
   Search as SearchIcon,
+  FactCheck as FactCheckIcon,
+  Warning as WarningIcon,
+  TableChart as TableChartIcon,
+  Description as DescriptionIcon,
 } from '@mui/icons-material'
 
 interface WelcomeScreenProps {
   onQuickAction?: (prompt: string) => void
+  caseTitle?: string
+  documentCount?: number
+  isLoading?: boolean
 }
 
 const QUICK_ACTIONS = [
@@ -37,9 +46,39 @@ const QUICK_ACTIONS = [
     description: 'Найди противоречия между документами',
     prompt: 'Найди противоречия между документами',
   },
+  {
+    icon: <FactCheckIcon />,
+    title: 'Извлечь ключевые факты',
+    description: 'Извлеки ключевые факты из документов дела',
+    prompt: 'Извлеки ключевые факты из документов дела',
+  },
+  {
+    icon: <WarningIcon />,
+    title: 'Проанализировать риски',
+    description: 'Проанализируй риски в этом деле',
+    prompt: 'Проанализируй риски в этом деле',
+  },
+  {
+    icon: <TableChartIcon />,
+    title: 'Создать таблицу',
+    description: 'Создай таблицу с данными из документов',
+    prompt: 'Создай таблицу с данными из документов',
+  },
 ]
 
-export const WelcomeScreen: React.FC<WelcomeScreenProps> = ({ onQuickAction }) => {
+const EXAMPLE_QUESTIONS = [
+  'Какие ключевые сроки важны в этом деле?',
+  'Что говорится в договоре о сроках?',
+  'Какие документы относятся к судебным заседаниям?',
+  'Какие суммы упоминаются в документах?',
+]
+
+export const WelcomeScreen: React.FC<WelcomeScreenProps> = ({ 
+  onQuickAction, 
+  caseTitle, 
+  documentCount, 
+  isLoading = false 
+}) => {
   return (
     <Grow in timeout={500}>
       <Box
@@ -52,7 +91,7 @@ export const WelcomeScreen: React.FC<WelcomeScreenProps> = ({ onQuickAction }) =
           p: 4,
         }}
       >
-        <Stack spacing={4} alignItems="center" sx={{ maxWidth: 600, width: '100%' }}>
+        <Stack spacing={4} alignItems="center" sx={{ maxWidth: 700, width: '100%' }}>
           {/* Header */}
           <Stack spacing={2} alignItems="center">
             <Box
@@ -70,11 +109,35 @@ export const WelcomeScreen: React.FC<WelcomeScreenProps> = ({ onQuickAction }) =
               <SparklesIcon sx={{ fontSize: 32, color: 'white' }} />
             </Box>
             <Typography variant="h4" fontWeight={600} textAlign="center">
-              How can I assist?
+              Чем могу помочь?
             </Typography>
             <Typography variant="body1" color="text.secondary" textAlign="center">
               Задайте вопрос о ваших документах или выберите одно из быстрых действий
             </Typography>
+            
+            {/* Case Info */}
+            {(caseTitle || documentCount !== undefined) && (
+              <Stack direction="row" spacing={2} alignItems="center" sx={{ mt: 1 }}>
+                {caseTitle && (
+                  <Chip 
+                    icon={<DescriptionIcon />}
+                    label={caseTitle}
+                    size="small"
+                    sx={{ bgcolor: 'primary.light', color: 'primary.main' }}
+                  />
+                )}
+                {documentCount !== undefined && (
+                  <Chip 
+                    label={`${documentCount} ${documentCount === 1 ? 'документ' : documentCount < 5 ? 'документа' : 'документов'}`}
+                    size="small"
+                    sx={{ bgcolor: 'grey.100', color: 'text.secondary' }}
+                  />
+                )}
+                {isLoading && (
+                  <CircularProgress size={16} sx={{ color: 'text.secondary' }} />
+                )}
+              </Stack>
+            )}
           </Stack>
 
           {/* Quick Actions */}
@@ -121,6 +184,30 @@ export const WelcomeScreen: React.FC<WelcomeScreenProps> = ({ onQuickAction }) =
                 </Card>
               </Grow>
             ))}
+          </Stack>
+
+          {/* Example Questions */}
+          <Stack spacing={1} sx={{ width: '100%', mt: 2 }}>
+            <Typography variant="caption" color="text.secondary" textAlign="center" fontWeight={600}>
+              Примеры вопросов:
+            </Typography>
+            <Stack direction="row" spacing={1} flexWrap="wrap" justifyContent="center">
+              {EXAMPLE_QUESTIONS.map((question, idx) => (
+                <Chip
+                  key={idx}
+                  label={question}
+                  size="small"
+                  onClick={() => onQuickAction?.(question)}
+                  sx={{
+                    cursor: 'pointer',
+                    '&:hover': {
+                      bgcolor: 'primary.light',
+                      color: 'primary.main',
+                    },
+                  }}
+                />
+              ))}
+            </Stack>
           </Stack>
 
           {/* Help Text */}

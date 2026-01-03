@@ -6,7 +6,7 @@ from sqlalchemy.orm import Session
 from typing import AsyncGenerator, Optional
 from app.utils.database import get_db
 from app.utils.auth import get_current_user
-from app.models.case import Case, File as FileModel
+from app.models.case import Case, File as FileModel, ChatMessage
 from app.models.user import User
 from app.services.rag_service import RAGService
 from app.services.document_processor import DocumentProcessor
@@ -19,6 +19,7 @@ from app.services.external_sources.web_research_service import get_web_research_
 import json
 import logging
 import asyncio
+from datetime import datetime
 
 logger = logging.getLogger(__name__)
 
@@ -146,9 +147,33 @@ async def stream_chat_response(
             yield f"data: {json.dumps({'error': 'В деле нет загруженных документов. Пожалуйста, сначала загрузите документы.'})}\n\n"
             return
         
+        # Сохраняем пользовательское сообщение в БД
+        import uuid
+        from datetime import datetime
+        user_message_id = str(uuid.uuid4())
+        try:
+            user_message = ChatMessage(
+                id=user_message_id,
+                case_id=case_id,
+                role="user",
+                content=question,
+                session_id=None
+            )
+            db.add(user_message)
+            db.commit()
+            logger.info(f"User message saved to DB with id: {user_message_id}")
+        except Exception as save_error:
+            db.rollback()
+            logger.error(f"Error saving user message to DB: {save_error}", exc_info=True)
+            # Продолжаем без сохранения - не критичная ошибка
+        
         # Классифицируем запрос - задача или вопрос?
         classification_llm = create_llm(temperature=0.0)
         is_task = await classify_request(question, classification_llm)
+        
+        # Переменные для накопления ответа и источников
+        full_response_text = ""
+        sources_list = []
         
         if is_task:
             # Это задача - используем Planning Agent и агентов
@@ -248,6 +273,8 @@ async def stream_chat_response(
 
 Пожалуйста, проверьте план и подтвердите выполнение."""
                 
+                full_response_text = plan_text
+                
                 # Stream plan response
                 for chunk in plan_text:
                     yield f"data: {json.dumps({'textDelta': chunk}, ensure_ascii=False)}\n\n"
@@ -256,6 +283,22 @@ async def stream_chat_response(
                 # Отправляем план для одобрения через SSE
                 yield f"data: {json.dumps({'type': 'plan_ready', 'planId': plan_id, 'plan': plan}, ensure_ascii=False)}\n\n"
                 yield f"data: {json.dumps({'textDelta': ''})}\n\n"
+                
+                # Сохраняем ответ ассистента в БД
+                try:
+                    assistant_message = ChatMessage(
+                        case_id=case_id,
+                        role="assistant",
+                        content=full_response_text,
+                        source_references=sources_list,
+                        session_id=None
+                    )
+                    db.add(assistant_message)
+                    db.commit()
+                    logger.info(f"Assistant message (plan) saved to DB for case {case_id}")
+                except Exception as save_error:
+                    db.rollback()
+                    logger.error(f"Error saving assistant message to DB: {save_error}", exc_info=True)
                 
             except Exception as e:
                 logger.error(f"Error in task planning: {e}", exc_info=True)
@@ -321,21 +364,42 @@ async def stream_chat_response(
                     )
                 )
                 
-                # Build context from documents
+                # Build context from documents and collect sources
                 context_parts = []
                 for i, doc in enumerate(documents[:5], 1):
                     if hasattr(doc, 'page_content'):
                         content = doc.page_content[:500] if doc.page_content else ""
                         source = doc.metadata.get("source_file", "unknown") if hasattr(doc, 'metadata') and doc.metadata else "unknown"
+                        page = doc.metadata.get("page", None) if hasattr(doc, 'metadata') and doc.metadata else None
                     elif isinstance(doc, dict):
                         content = doc.get("content", "")[:500]
                         source = doc.get("file", "unknown")
+                        page = doc.get("page", None)
                     else:
                         continue
+                    
+                    # Добавляем источник в список
+                    source_info = {"file": source}
+                    if page is not None:
+                        source_info["page"] = page
+                    if content:
+                        source_info["text_preview"] = content[:200]
+                    sources_list.append(source_info)
                         
                     context_parts.append(f"[Документ {i}: {source}]\n{content}")
                 
                 context = "\n\n".join(context_parts)
+            
+            # Добавляем источники из веб-поиска
+            if web_search_successful and 'research_result' in locals() and research_result.sources:
+                for source in research_result.sources[:5]:
+                    source_info = {
+                        "title": source.get("title", "Веб-источник"),
+                        "url": source.get("url", ""),
+                    }
+                    if source.get("content"):
+                        source_info["text_preview"] = source.get("content", "")[:200]
+                    sources_list.append(source_info)
             
             # Create prompt
             web_search_instructions = ""
@@ -413,13 +477,19 @@ async def stream_chat_response(
                         else:
                             content = str(chunk)
                         
+                        full_response_text += content
                         yield f"data: {json.dumps({'textDelta': content}, ensure_ascii=False)}\n\n"
+                    
+                    # Отправляем источники через SSE
+                    if sources_list:
+                        yield f"data: {json.dumps({'type': 'sources', 'sources': sources_list}, ensure_ascii=False)}\n\n"
                     
                     yield f"data: {json.dumps({'textDelta': ''})}\n\n"
                 else:
                     # Fallback: get full response and chunk it
                     response = await loop.run_in_executor(None, lambda: llm.invoke(messages))
                     response_text = response.content if hasattr(response, 'content') else str(response)
+                    full_response_text = response_text
                     
                     chunk_size = 20
                     for i in range(0, len(response_text), chunk_size):
@@ -427,11 +497,16 @@ async def stream_chat_response(
                         yield f"data: {json.dumps({'textDelta': chunk}, ensure_ascii=False)}\n\n"
                         await asyncio.sleep(0.05)
                     
+                    # Отправляем источники через SSE
+                    if sources_list:
+                        yield f"data: {json.dumps({'type': 'sources', 'sources': sources_list}, ensure_ascii=False)}\n\n"
+                    
                     yield f"data: {json.dumps({'textDelta': ''})}\n\n"
             except Exception as stream_error:
                 logger.warning(f"Streaming failed, using fallback: {stream_error}")
                 response = await loop.run_in_executor(None, lambda: llm.invoke(messages))
                 response_text = response.content if hasattr(response, 'content') else str(response)
+                full_response_text = response_text
                 
                 chunk_size = 20
                 for i in range(0, len(response_text), chunk_size):
@@ -439,7 +514,27 @@ async def stream_chat_response(
                     yield f"data: {json.dumps({'textDelta': chunk}, ensure_ascii=False)}\n\n"
                     await asyncio.sleep(0.05)
                 
+                # Отправляем источники через SSE
+                if sources_list:
+                    yield f"data: {json.dumps({'type': 'sources', 'sources': sources_list}, ensure_ascii=False)}\n\n"
+                
                 yield f"data: {json.dumps({'textDelta': ''})}\n\n"
+            
+            # Сохраняем ответ ассистента в БД после завершения streaming
+            try:
+                assistant_message = ChatMessage(
+                    case_id=case_id,
+                    role="assistant",
+                    content=full_response_text,
+                    source_references=sources_list if sources_list else None,
+                    session_id=None
+                )
+                db.add(assistant_message)
+                db.commit()
+                logger.info(f"Assistant message saved to DB for case {case_id}")
+            except Exception as save_error:
+                db.rollback()
+                logger.error(f"Error saving assistant message to DB: {save_error}", exc_info=True)
     
     except Exception as e:
         logger.error(f"Error in stream_chat_response: {e}", exc_info=True)
@@ -510,4 +605,41 @@ async def assistant_chat(
     except Exception as e:
         logger.error(f"Error in assistant_chat endpoint: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/api/assistant/chat/{case_id}/history")
+async def get_assistant_chat_history(
+    case_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """
+    Get chat history for assistant chat
+    
+    Returns: list of messages with role, content, sources, created_at
+    """
+    # Check if case exists and verify ownership
+    case = db.query(Case).filter(
+        Case.id == case_id,
+        Case.user_id == current_user.id
+    ).first()
+    if not case:
+        raise HTTPException(status_code=404, detail="Дело не найдено")
+    
+    # Get messages
+    messages = db.query(ChatMessage).filter(
+        ChatMessage.case_id == case_id
+    ).order_by(ChatMessage.created_at.asc()).all()
+    
+    return {
+        "messages": [
+            {
+                "role": msg.role,
+                "content": msg.content or "",
+                "sources": msg.source_references if msg.source_references is not None else [],
+                "created_at": msg.created_at.isoformat() if msg.created_at else datetime.utcnow().isoformat()
+            }
+            for msg in messages
+        ]
+    }
 

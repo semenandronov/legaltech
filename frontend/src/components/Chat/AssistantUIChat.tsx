@@ -1,13 +1,16 @@
-import { useState, useEffect, useRef, useCallback } from 'react'
+import { useState, useEffect, useRef, useCallback, forwardRef, useImperativeHandle } from 'react'
 import { useParams } from 'react-router-dom'
 import { getApiUrl } from '@/services/api'
 import { logger } from '@/lib/logger'
+import { loadChatHistory, type HistoryMessage } from '@/services/chatHistoryService'
 import { Conversation, ConversationContent, ConversationEmptyState } from '../ai-elements/conversation'
 import { UserMessage, AssistantMessage } from '../ai-elements/message'
 import { PlanApprovalCard } from './PlanApprovalCard'
 import { AgentStep } from './AgentStepsView'
 import { EnhancedAgentStepsView } from './EnhancedAgentStepsView'
 import { TableCard } from './TableCard'
+import { WelcomeScreen } from './WelcomeScreen'
+import { SettingsPanel } from './SettingsPanel'
 import {
   PromptInputProvider,
   PromptInput,
@@ -77,19 +80,67 @@ interface AssistantUIChatProps {
   className?: string
   initialQuery?: string
   onQuerySelected?: () => void
+  caseTitle?: string
+  documentCount?: number
+  isLoadingCaseInfo?: boolean
 }
 
-export const AssistantUIChat = ({ caseId, className, initialQuery, onQuerySelected }: AssistantUIChatProps) => {
+export const AssistantUIChat = forwardRef<{ clearMessages: () => void }, AssistantUIChatProps>(({ 
+  caseId, 
+  className, 
+  initialQuery, 
+  onQuerySelected,
+  caseTitle,
+  documentCount,
+  isLoadingCaseInfo = false
+}, ref) => {
   const params = useParams<{ caseId: string }>()
   const actualCaseId = caseId || params.caseId || ''
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const [messages, setMessages] = useState<Message[]>([])
   const [isLoading, setIsLoading] = useState(false)
+  const [isLoadingHistory, setIsLoadingHistory] = useState(true)
   const [webSearch, setWebSearch] = useState(false)
   const [legalResearch, setLegalResearch] = useState(true)
   const [deepThink, setDeepThink] = useState(false)
   const abortControllerRef = useRef<AbortController | null>(null)
   
+
+  // Load chat history on mount
+  useEffect(() => {
+    if (!actualCaseId) {
+      setIsLoadingHistory(false)
+      return
+    }
+
+    const loadHistory = async () => {
+      setIsLoadingHistory(true)
+      try {
+        const historyMessages = await loadChatHistory(actualCaseId)
+        
+        // Convert HistoryMessage to Message format
+        const convertedMessages: Message[] = historyMessages.map((msg) => ({
+          id: `msg-${msg.created_at || Date.now()}-${Math.random()}`,
+          role: msg.role,
+          content: msg.content,
+          sources: msg.sources?.map((source) => ({
+            title: source.title || source.file,
+            url: source.url,
+            page: source.page,
+          })),
+        }))
+        
+        setMessages(convertedMessages)
+      } catch (error) {
+        logger.error('Error loading chat history:', error)
+        // Continue with empty messages
+      } finally {
+        setIsLoadingHistory(false)
+      }
+    }
+
+    loadHistory()
+  }, [actualCaseId])
 
   // Update input when initialQuery changes
   useEffect(() => {
@@ -236,6 +287,23 @@ export const AssistantUIChat = ({ caseId, className, initialQuery, onQuerySelect
                     }
                     return msg
                   })
+                )
+              }
+              // Обработка источников из SSE
+              if (data.type === 'sources' && data.sources) {
+                setMessages((prev) =>
+                  prev.map((msg) =>
+                    msg.id === assistantMsgId
+                      ? {
+                          ...msg,
+                          sources: data.sources.map((source: any) => ({
+                            title: source.title || source.file,
+                            url: source.url,
+                            page: source.page,
+                          })),
+                        }
+                      : msg
+                  )
                 )
               }
               if (data.error) {
@@ -391,11 +459,32 @@ export const AssistantUIChat = ({ caseId, className, initialQuery, onQuerySelect
     }
   }, [sendMessage, isLoading, actualCaseId])
 
+  // Expose sendMessage for WelcomeScreen
+  const handleQuickAction = useCallback((prompt: string) => {
+    if (prompt.trim() && !isLoading && actualCaseId) {
+      sendMessage(prompt)
+    }
+  }, [sendMessage, isLoading, actualCaseId])
+
+  // Expose clearMessages for parent component
+  useImperativeHandle(ref, () => ({
+    clearMessages: () => {
+      setMessages([])
+    },
+  }))
+
+  // Expose clearMessages for parent component
+  useImperativeHandle(ref, () => ({
+    clearMessages: () => {
+      setMessages([])
+    },
+  }))
+
   return (
     <PromptInputProvider initialInput={initialQuery || ''}>
     <div className={`flex flex-col h-full bg-white ${className || ''}`}>
-        {/* Header */}
-        {messages.length === 0 && (
+        {/* Header - показываем только если есть сообщения */}
+        {messages.length > 0 && (
           <div className="flex items-center justify-center px-6 py-8">
             <h1 className="text-3xl font-semibold text-gray-900">Чем могу помочь?</h1>
           </div>
@@ -404,7 +493,21 @@ export const AssistantUIChat = ({ caseId, className, initialQuery, onQuerySelect
       {/* Messages area */}
       <Conversation>
         <ConversationContent>
-            {messages.length === 0 && <ConversationEmptyState title="" description="" />}
+            {isLoadingHistory ? (
+              <div className="flex items-center justify-center py-8">
+                <Loader size={24} className="text-gray-400" />
+                <span className="ml-3 text-sm text-gray-500">Загрузка истории...</span>
+              </div>
+            ) : messages.length === 0 && !isLoadingHistory ? (
+              <div className="h-full flex items-center justify-center">
+                <WelcomeScreen
+                  onQuickAction={handleQuickAction}
+                  caseTitle={caseTitle}
+                  documentCount={documentCount}
+                  isLoading={isLoadingCaseInfo}
+                />
+              </div>
+            ) : null}
 
         {messages.map((message) => {
           if (message.role === 'user') {
@@ -422,6 +525,12 @@ export const AssistantUIChat = ({ caseId, className, initialQuery, onQuerySelect
               response={message.response}
               sources={message.sources}
               isStreaming={isLoading && message.id === messages[messages.length - 1]?.id}
+              onSourceClick={(source) => {
+                if (source.file) {
+                  // Navigate to documents page with file parameter
+                  window.location.href = `/cases/${actualCaseId}/documents?file=${encodeURIComponent(source.file)}`
+                }
+              }}
             >
               {message.planId && message.plan && (
                 <PlanApprovalCard
@@ -539,49 +648,15 @@ export const AssistantUIChat = ({ caseId, className, initialQuery, onQuerySelect
             </PromptInput>
             </div>
 
-            {/* Три карточки функций ГОРИЗОНТАЛЬНО */}
-            <div className="grid grid-cols-3 gap-4">
-              {/* Web search */}
-              <div className="flex flex-col p-4 bg-white border border-gray-200 rounded-lg hover:border-gray-300 transition-colors">
-                <div className="flex items-center justify-between mb-2">
-                  <span className="text-sm font-medium text-gray-900">Веб-поиск</span>
-                  <Switch 
-                    checked={webSearch} 
-                    onCheckedChange={setWebSearch}
-                  />
-                </div>
-                <p className="text-sm text-gray-600">Используйте веб для глубокого исследования любой темы</p>
-              </div>
-
-              {/* Deep Think */}
-              <div className="flex flex-col p-4 bg-white border border-gray-200 rounded-lg hover:border-gray-300 transition-colors">
-                <div className="flex items-center justify-between mb-2">
-                  <span className="text-sm font-medium text-gray-900">Глубокое размышление</span>
-                  <Switch 
-                    checked={deepThink} 
-                    onCheckedChange={setDeepThink}
-                    className="data-[state=checked]:bg-blue-600"
-                  />
-                </div>
-                <p className="text-sm text-gray-600">Используйте более глубокий анализ для сложных вопросов</p>
-              </div>
-
-              {/* Legal research */}
-              <div className="flex flex-col p-4 bg-white border border-gray-200 rounded-lg hover:border-gray-300 transition-colors">
-                <div className="flex items-center justify-between mb-2">
-                  <div className="flex items-center gap-2">
-                    <span className="text-sm font-medium text-gray-900">Юридическое исследование</span>
-                    <span className="px-2 py-0.5 text-xs font-medium bg-blue-100 text-blue-700 rounded">Early</span>
-                  </div>
-                  <Switch 
-                    checked={legalResearch} 
-                    onCheckedChange={setLegalResearch}
-                    className="data-[state=checked]:bg-blue-600"
-                  />
-                </div>
-                <p className="text-sm text-gray-600">Найдите ответы на свои вопросы в курируемых юридических источниках</p>
-              </div>
-            </div>
+            {/* Компактная панель настроек */}
+            <SettingsPanel
+              webSearch={webSearch}
+              deepThink={deepThink}
+              legalResearch={legalResearch}
+              onWebSearchChange={setWebSearch}
+              onDeepThinkChange={setDeepThink}
+              onLegalResearchChange={setLegalResearch}
+            />
 
           </div>
         </div>
@@ -611,50 +686,15 @@ export const AssistantUIChat = ({ caseId, className, initialQuery, onQuerySelect
               </PromptInput>
             </div>
 
-            {/* Три карточки функций ГОРИЗОНТАЛЬНО - показываем и когда есть сообщения */}
-            <div className="grid grid-cols-3 gap-4">
-              {/* Web search */}
-              <div className="flex flex-col p-4 bg-white border border-gray-200 rounded-lg hover:border-gray-300 transition-colors">
-                <div className="flex items-center justify-between mb-2">
-                  <span className="text-sm font-medium text-gray-900">Веб-поиск</span>
-                  <Switch 
-                    checked={webSearch} 
-                    onCheckedChange={setWebSearch}
-                    className="data-[state=checked]:bg-blue-600"
-                  />
-                </div>
-                <p className="text-sm text-gray-600">Используйте веб для глубокого исследования любой темы</p>
-              </div>
-
-              {/* Deep Think */}
-              <div className="flex flex-col p-4 bg-white border border-gray-200 rounded-lg hover:border-gray-300 transition-colors">
-                <div className="flex items-center justify-between mb-2">
-                  <span className="text-sm font-medium text-gray-900">Глубокое размышление</span>
-                  <Switch 
-                    checked={deepThink} 
-                    onCheckedChange={setDeepThink}
-                    className="data-[state=checked]:bg-blue-600"
-                  />
-                </div>
-                <p className="text-sm text-gray-600">Используйте более глубокий анализ для сложных вопросов</p>
-              </div>
-
-              {/* Legal research */}
-              <div className="flex flex-col p-4 bg-white border border-gray-200 rounded-lg hover:border-gray-300 transition-colors">
-                <div className="flex items-center justify-between mb-2">
-                  <div className="flex items-center gap-2">
-                    <span className="text-sm font-medium text-gray-900">Юридическое исследование</span>
-                    <span className="px-2 py-0.5 text-xs font-medium bg-blue-100 text-blue-700 rounded">Early</span>
-                  </div>
-                  <Switch 
-                    checked={legalResearch} 
-                    onCheckedChange={setLegalResearch}
-                    className="data-[state=checked]:bg-blue-600"
-                  />
-                </div>
-                <p className="text-sm text-gray-600">Найдите ответы на свои вопросы в курируемых юридических источниках</p>
-              </div>
-            </div>
+            {/* Компактная панель настроек */}
+            <SettingsPanel
+              webSearch={webSearch}
+              deepThink={deepThink}
+              legalResearch={legalResearch}
+              onWebSearchChange={setWebSearch}
+              onDeepThinkChange={setDeepThink}
+              onLegalResearchChange={setLegalResearch}
+            />
 
           </div>
         </div>
@@ -662,5 +702,5 @@ export const AssistantUIChat = ({ caseId, className, initialQuery, onQuerySelect
       </div>
     </PromptInputProvider>
   )
-}
+})
 
