@@ -738,7 +738,7 @@ export const AssistantUIChat = forwardRef<{ clearMessages: () => void; loadHisto
                           onDocumentDrop(documentFilename)
                         }
                       } else {
-                        logger.warning(`Документ "${documentFilename}" не найден в списке документов`)
+                        logger.warn(`Документ "${documentFilename}" не найден в списке документов`)
                         if (onDocumentDrop) {
                           onDocumentDrop(documentFilename)
                         }
@@ -750,7 +750,7 @@ export const AssistantUIChat = forwardRef<{ clearMessages: () => void; loadHisto
                       }
                     }
                   } else if (documentFilename && onDocumentDrop) {
-                    logger.warning(`Не удалось добавить документ: attachments=${!!attachments}, caseId=${actualCaseId}`)
+                    logger.warn(`Не удалось добавить документ: attachments=${!!attachments}, caseId=${actualCaseId}`)
                     onDocumentDrop(documentFilename)
                   }
                 }
@@ -851,7 +851,7 @@ export const AssistantUIChat = forwardRef<{ clearMessages: () => void; loadHisto
                           onDocumentDrop(documentFilename)
                         }
                       } else {
-                        logger.warning(`Документ "${documentFilename}" не найден в списке документов`)
+                        logger.warn(`Документ "${documentFilename}" не найден в списке документов`)
                         if (onDocumentDrop) {
                           onDocumentDrop(documentFilename)
                         }
@@ -863,7 +863,7 @@ export const AssistantUIChat = forwardRef<{ clearMessages: () => void; loadHisto
                       }
                     }
                   } else if (documentFilename && onDocumentDrop) {
-                    logger.warning(`Не удалось добавить документ: attachments=${!!attachments}, caseId=${actualCaseId}`)
+                    logger.warn(`Не удалось добавить документ: attachments=${!!attachments}, caseId=${actualCaseId}`)
                     onDocumentDrop(documentFilename)
                   }
                 }

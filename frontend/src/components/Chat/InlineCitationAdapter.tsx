@@ -34,20 +34,6 @@ export const InlineCitationAdapter: React.FC<InlineCitationAdapterProps> = ({
     )
   }
 
-  // Format short document name
-  const formatShortName = (filename: string): string => {
-    let name = filename.replace(/\.[^/.]+$/, '') // Remove extension
-    const parts = name.split(/[_\-]/)
-    if (parts.length > 2) {
-      const dateMatch = parts.find(p => /^\d{8}$/.test(p))
-      const typeMatch = parts.find(p => p.length > 5 && !/^\d+$/.test(p))
-      if (dateMatch && typeMatch) {
-        return `${typeMatch.substring(0, 12)}`
-      }
-    }
-    return name.substring(0, 15)
-  }
-
   // Create full URL for the source (InlineCitationCardTrigger needs full URL for hostname extraction)
   const sourceUrl = source.file 
     ? (source.file.startsWith('http') 
