@@ -118,16 +118,33 @@ export const AssistantUIChat = forwardRef<{ clearMessages: () => void }, Assista
         const historyMessages = await loadChatHistory(actualCaseId)
         
         // Convert HistoryMessage to Message format
-        const convertedMessages: Message[] = historyMessages.map((msg) => ({
-          id: `msg-${msg.created_at || Date.now()}-${Math.random()}`,
-          role: msg.role,
-          content: msg.content,
-          sources: msg.sources?.map((source) => ({
-            title: source.title || source.file,
-            url: source.url,
-            page: source.page,
-          })),
-        }))
+        const convertedMessages: Message[] = historyMessages.map((msg, index) => {
+          // Обрабатываем источники - они могут быть в разных форматах
+          let sources: Array<{ title?: string; url?: string; page?: number; file?: string }> = []
+          
+          if (msg.sources && Array.isArray(msg.sources)) {
+            sources = msg.sources.map((source: any) => {
+              // Если источник - строка (старый формат)
+              if (typeof source === 'string') {
+                return { title: source, file: source }
+              }
+              // Если источник - объект
+              return {
+                title: source.title || source.file || 'Источник',
+                url: source.url,
+                page: source.page,
+                file: source.file,
+              }
+            })
+          }
+          
+          return {
+            id: `msg-${msg.created_at || Date.now()}-${index}`,
+            role: msg.role,
+            content: msg.content || '',
+            sources: sources.length > 0 ? sources : undefined,
+          }
+        })
         
         setMessages(convertedMessages)
       } catch (error) {
@@ -472,41 +489,34 @@ export const AssistantUIChat = forwardRef<{ clearMessages: () => void }, Assista
     },
   }))
 
-  // Expose clearMessages for parent component
-  useImperativeHandle(ref, () => ({
-    clearMessages: () => {
-      setMessages([])
-    },
-  }))
-
   return (
     <PromptInputProvider initialInput={initialQuery || ''}>
     <div className={`flex flex-col h-full bg-white ${className || ''}`}>
-        {/* Header - показываем только если есть сообщения */}
+      {/* Messages area */}
+      <div className="flex-1 min-h-0 flex flex-col">
         {messages.length > 0 && (
-          <div className="flex items-center justify-center px-6 py-8">
-            <h1 className="text-3xl font-semibold text-gray-900">Чем могу помочь?</h1>
+          <div className="flex items-center justify-center px-6 py-4 flex-shrink-0">
+            <h1 className="text-2xl font-semibold text-gray-900">Чем могу помочь?</h1>
           </div>
         )}
 
-      {/* Messages area */}
-      <Conversation>
-        <ConversationContent>
-            {isLoadingHistory ? (
-              <div className="flex items-center justify-center py-8">
-                <Loader size={24} className="text-gray-400" />
-                <span className="ml-3 text-sm text-gray-500">Загрузка истории...</span>
-              </div>
-            ) : messages.length === 0 && !isLoadingHistory ? (
-              <div className="h-full flex items-center justify-center">
-                <WelcomeScreen
-                  onQuickAction={handleQuickAction}
-                  caseTitle={caseTitle}
-                  documentCount={documentCount}
-                  isLoading={isLoadingCaseInfo}
-                />
-              </div>
-            ) : null}
+        <Conversation className="flex-1 min-h-0 flex flex-col">
+          <ConversationContent className="flex-1 overflow-y-auto">
+              {isLoadingHistory ? (
+                <div className="flex items-center justify-center py-8">
+                  <Loader size={24} className="text-gray-400" />
+                  <span className="ml-3 text-sm text-gray-500">Загрузка истории...</span>
+                </div>
+              ) : messages.length === 0 && !isLoadingHistory ? (
+                <div className="h-full flex items-start justify-center pt-8 pb-4 overflow-y-auto">
+                  <WelcomeScreen
+                    onQuickAction={handleQuickAction}
+                    caseTitle={caseTitle}
+                    documentCount={documentCount}
+                    isLoading={isLoadingCaseInfo}
+                  />
+                </div>
+              ) : null}
 
         {messages.map((message) => {
           if (message.role === 'user') {
@@ -601,21 +611,21 @@ export const AssistantUIChat = forwardRef<{ clearMessages: () => void }, Assista
           )
         })}
 
-        {isLoading && (
-          <div className="flex justify-start">
-            <div className="bg-gray-100 rounded-2xl px-4 py-3">
-              <Loader size={20} className="text-gray-600" />
-            </div>
-          </div>
-        )}
-        </ConversationContent>
-      </Conversation>
+            {isLoading && (
+              <div className="flex justify-start">
+                <div className="bg-gray-100 rounded-2xl px-4 py-3">
+                  <Loader size={20} className="text-gray-600" />
+                </div>
+              </div>
+            )}
+          </ConversationContent>
+        </Conversation>
+      </div>
 
-      {/* Input area - точно как на скриншоте Legora - ПО ЦЕНТРУ */}
+      {/* Input area - когда нет сообщений, поле ввода внизу, Welcome Screen выше */}
       {messages.length === 0 ? (
-        <div className="flex-1 flex flex-col items-center justify-center px-6 pt-16 pb-8 bg-white">
-          {/* Центрированный контейнер */}
-          <div className="w-full max-w-4xl mx-auto space-y-6">
+        <div className="flex-shrink-0 bg-white border-t border-gray-200">
+          <div className="w-full max-w-4xl mx-auto px-6 py-4 space-y-4">
             {/* PromptInput с готовыми компонентами из @ai */}
             <div className="relative">
               <PromptInput

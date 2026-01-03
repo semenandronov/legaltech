@@ -86,12 +86,14 @@ export const WelcomeScreen: React.FC<WelcomeScreenProps> = ({
           display: 'flex',
           flexDirection: 'column',
           alignItems: 'center',
-          justifyContent: 'center',
-          height: '100%',
+          justifyContent: 'flex-start',
+          width: '100%',
+          maxHeight: '100%',
+          overflowY: 'auto',
           p: 4,
         }}
       >
-        <Stack spacing={4} alignItems="center" sx={{ maxWidth: 700, width: '100%' }}>
+        <Stack spacing={3} alignItems="center" sx={{ maxWidth: 700, width: '100%', py: 2 }}>
           {/* Header */}
           <Stack spacing={2} alignItems="center">
             <Box

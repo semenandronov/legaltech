@@ -2,6 +2,7 @@ import { useState, useEffect, useRef } from 'react'
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom'
 import { AssistantUIChat } from '../components/Chat/AssistantUIChat'
 import { ChatHistoryPanel } from '../components/Chat/ChatHistoryPanel'
+import { DocumentsPanel } from '../components/Chat/DocumentsPanel'
 import { 
   DropdownMenu, 
   DropdownMenuContent, 
@@ -17,6 +18,7 @@ const AssistantChatPage = () => {
   const navigate = useNavigate()
   const [searchParams] = useSearchParams()
   const [historyPanelOpen, setHistoryPanelOpen] = useState(false)
+  const [documentsPanelOpen, setDocumentsPanelOpen] = useState(false)
   const [selectedQuery, setSelectedQuery] = useState<string>('')
   const [caseInfo, setCaseInfo] = useState<{ title?: string; documentCount?: number } | null>(null)
   const [isLoadingCaseInfo, setIsLoadingCaseInfo] = useState(true)
@@ -87,10 +89,8 @@ const AssistantChatPage = () => {
   }
 
   const handleNewChat = () => {
-    if (window.confirm('Вы уверены, что хотите начать новый чат? Текущая история будет очищена.')) {
-      chatRef.current?.clearMessages()
-      toast.success('Новый чат начат')
-    }
+    chatRef.current?.clearMessages()
+    toast.success('Новый чат начат')
   }
 
   const handleExport = async () => {
@@ -130,25 +130,14 @@ const AssistantChatPage = () => {
       {/* Top toolbar */}
       <div className="flex items-center justify-between px-6 py-3 border-b border-gray-200 bg-white">
         <div className="flex items-center gap-4">
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <button className="flex items-center gap-2 px-3 py-1.5 text-sm font-medium text-gray-700 hover:bg-gray-100 rounded-lg transition-colors">
-                <FileText className="w-4 h-4" />
-                Документы
-                <ChevronDown className="w-4 h-4" />
-              </button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="start">
-              <DropdownMenuItem onClick={() => navigate(`/cases/${caseId}/documents`)}>
-                <FileText className="w-4 h-4 mr-2" />
-                Просмотр документов
-              </DropdownMenuItem>
-              <DropdownMenuItem onClick={handleUploadDocuments}>
-                <Upload className="w-4 h-4 mr-2" />
-                Загрузить документы
-              </DropdownMenuItem>
-            </DropdownMenuContent>
-          </DropdownMenu>
+          <button
+            onClick={() => setDocumentsPanelOpen(!documentsPanelOpen)}
+            className="flex items-center gap-2 px-3 py-1.5 text-sm font-medium text-gray-700 hover:bg-gray-100 rounded-lg transition-colors"
+            title="Открыть панель документов"
+          >
+            <FileText className="w-4 h-4" />
+            Документы
+          </button>
           
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
@@ -209,17 +198,35 @@ const AssistantChatPage = () => {
         </div>
       </div>
 
-      {/* Main chat area */}
-      <div className="flex-1 overflow-hidden">
-        <AssistantUIChat 
-          caseId={caseId} 
-          className="h-full"
-          initialQuery={selectedQuery}
-          onQuerySelected={() => setSelectedQuery('')}
-          caseTitle={caseInfo?.title}
-          documentCount={caseInfo?.documentCount}
-          isLoadingCaseInfo={isLoadingCaseInfo}
-          ref={chatRef}
+      {/* Main chat area with documents panel */}
+      <div className="flex-1 overflow-hidden flex relative">
+        <div className={`flex-1 transition-all duration-300 ${documentsPanelOpen ? 'mr-80' : ''}`}>
+          <AssistantUIChat 
+            caseId={caseId} 
+            className="h-full"
+            initialQuery={selectedQuery}
+            onQuerySelected={() => setSelectedQuery('')}
+            caseTitle={caseInfo?.title}
+            documentCount={caseInfo?.documentCount}
+            isLoadingCaseInfo={isLoadingCaseInfo}
+            ref={chatRef}
+          />
+        </div>
+
+        {/* Documents Panel - узкое окно справа */}
+        <DocumentsPanel
+          isOpen={documentsPanelOpen}
+          onClose={() => setDocumentsPanelOpen(false)}
+          caseId={caseId}
+          onDocumentClick={(document) => {
+            // Открыть документ в новой вкладке или модальном окне
+            navigate(`/cases/${caseId}/documents?file=${encodeURIComponent(document.filename)}`)
+          }}
+          onDocumentDrag={(document) => {
+            // Обработка перетаскивания документа в чат
+            // Можно добавить логику для добавления документа в сообщение
+            console.log('Drag document:', document)
+          }}
         />
       </div>
 
