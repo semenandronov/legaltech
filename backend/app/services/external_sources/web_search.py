@@ -31,7 +31,11 @@ class WebSearchSource(BaseSource):
                    f"api_key_length={len(self.api_key) if self.api_key else 0}, "
                    f"folder_id_length={len(self.folder_id) if self.folder_id else 0}")
         
-        self.base_url = "https://yandex.ru/search/xml"
+        # Yandex Search API v2 через Yandex Cloud gateway
+        # Старый v1 (XML) отключен с 31 декабря 2025
+        # Используем endpoint для v2 согласно документации: https://yandex.cloud/ru/docs/search-api
+        # Endpoint для v2: https://search-api.cloud.yandex.net/v2/search
+        self.base_url = "https://search-api.cloud.yandex.net/v2/search"
     
     async def initialize(self) -> bool:
         """Initialize web search source"""
@@ -126,7 +130,7 @@ class WebSearchSource(BaseSource):
         filters: Optional[Dict[str, Any]] = None
     ) -> List[SourceResult]:
         """
-        Search using Yandex Search API
+        Search using Yandex Search API v2 (Yandex Cloud gateway)
         
         Args:
             query: Search query
@@ -136,42 +140,43 @@ class WebSearchSource(BaseSource):
         Returns:
             List of SourceResult
         """
-        logger.info(f"[WebSearch] Starting Yandex Search API request: query='{query[:100]}', "
+        logger.info(f"[WebSearch] Starting Yandex Search API v2 request: query='{query[:100]}', "
                    f"max_results={max_results}, base_url={self.base_url}")
         
-        # Build request parameters for Yandex Search API (XML format)
-        # Yandex Search API поддерживает как XML, так и REST API
-        # Используем XML API с правильной аутентификацией через заголовки
-        params = {
+        # Yandex Search API v2 использует JSON формат и POST запросы
+        # Согласно документации: https://yandex.cloud/ru/docs/search-api
+        # Формат запроса для v2 может отличаться, используем стандартный формат
+        request_body = {
             "query": query,
-            "l10n": "ru",
-            "sortby": "rlv",  # Sort by relevance
-            "filter": "moderate",
-            "maxpassages": "3",
-            "groupby": f"attr=d.mode=deep.groups-on-page={max_results}.docs-in-group=1",
+            "page": 1,
+            "pageSize": max_results,
         }
         
         # Add site restriction if specified
         if filters and filters.get("sites"):
             sites = filters["sites"]
             if isinstance(sites, list):
-                site_query = " | ".join(f"site:{s}" for s in sites)
-                params["query"] = f"({params['query']}) ({site_query})"
+                # В v2 можно использовать фильтры по доменам
+                if len(sites) == 1:
+                    request_body["filters"] = {
+                        "domain": sites[0]
+                    }
         
-        # Правильная аутентификация через заголовки согласно документации
+        # Правильная аутентификация через заголовки для v2
         headers = {
             "Authorization": f"Api-Key {self.api_key}",
             "x-folder-id": self.folder_id,
+            "Content-Type": "application/json",
         }
         
         try:
             async with aiohttp.ClientSession() as session:
-                logger.info(f"[WebSearch] Sending request to Yandex Search API: url={self.base_url}, "
-                           f"has_headers={bool(headers)}, params_count={len(params)}")
+                logger.info(f"[WebSearch] Sending POST request to Yandex Search API v2: url={self.base_url}, "
+                           f"has_headers={bool(headers)}, body_keys={list(request_body.keys())}")
                 
-                async with session.get(
+                async with session.post(
                     self.base_url,
-                    params=params,
+                    json=request_body,
                     headers=headers,
                     timeout=aiohttp.ClientTimeout(total=30)
                 ) as response:
@@ -181,21 +186,22 @@ class WebSearchSource(BaseSource):
                     logger.info(f"[WebSearch] Received response: status={response.status}, "
                                f"content_type={response.headers.get('Content-Type', '')}, "
                                f"content_length={len(content)}")
+                    logger.debug(f"[WebSearch] Response preview: {content[:1000]}")
                     
                     if response.status != 200:
-                        logger.error(f"[WebSearch] Yandex Search API error: status={response.status}, "
+                        logger.error(f"[WebSearch] Yandex Search API v2 error: status={response.status}, "
                                    f"error_text={content[:500]}")
                         return []
                     
-                    # Parse XML response
-                    logger.info(f"[WebSearch] Parsing XML response: content_length={len(content)}")
-                    return self._parse_yandex_response(content)
+                    # Parse JSON response (v2 использует JSON вместо XML)
+                    logger.info(f"[WebSearch] Parsing JSON response: content_length={len(content)}")
+                    return self._parse_yandex_v2_response(content)
                     
         except aiohttp.ClientError as e:
-            logger.error(f"[WebSearch] Yandex Search API connection error: {e}", exc_info=True)
+            logger.error(f"[WebSearch] Yandex Search API v2 connection error: {e}", exc_info=True)
             return []
         except Exception as e:
-            logger.error(f"[WebSearch] Yandex Search API error: {e}", exc_info=True)
+            logger.error(f"[WebSearch] Yandex Search API v2 error: {e}", exc_info=True)
             return []
     
     def _parse_yandex_response(self, xml_content: str) -> List[SourceResult]:
@@ -329,6 +335,102 @@ class WebSearchSource(BaseSource):
         except Exception as e:
             logger.error(f"[WebSearch] Error processing Yandex response: {e}", exc_info=True)
             logger.error(f"[WebSearch] XML content preview: {xml_content[:500]}")
+        
+        return results
+    
+    def _parse_yandex_v2_response(self, json_content: str) -> List[SourceResult]:
+        """
+        Parse Yandex Search API v2 JSON response
+        
+        Args:
+            json_content: JSON response string
+            
+        Returns:
+            List of SourceResult
+        """
+        results = []
+        
+        try:
+            import json
+            
+            # Логируем полную структуру JSON для отладки
+            logger.info(f"[WebSearch] JSON response (full, {len(json_content)} chars): {json_content}")
+            logger.info(f"[WebSearch] JSON response preview (first 1000 chars): {json_content[:1000]}")
+            
+            data = json.loads(json_content)
+            
+            # Логируем структуру JSON
+            logger.info(f"[WebSearch] JSON keys: {list(data.keys()) if isinstance(data, dict) else 'not a dict'}")
+            
+            # Yandex Search API v2 структура ответа может отличаться
+            # Проверяем разные возможные структуры
+            items = []
+            
+            if isinstance(data, dict):
+                # Вариант 1: результаты в поле "results" или "items"
+                if "results" in data:
+                    items = data["results"]
+                elif "items" in data:
+                    items = data["items"]
+                elif "response" in data:
+                    # Вложенная структура
+                    response = data["response"]
+                    if isinstance(response, dict):
+                        if "results" in response:
+                            items = response["results"]
+                        elif "items" in response:
+                            items = response["items"]
+                        elif "groups" in response:
+                            # Группированные результаты
+                            for group in response["groups"]:
+                                if "items" in group:
+                                    items.extend(group["items"])
+                elif "groups" in data:
+                    # Прямые группы
+                    for group in data["groups"]:
+                        if "items" in group:
+                            items.extend(group["items"])
+            
+            logger.info(f"[WebSearch] Found {len(items)} items in JSON response")
+            
+            # Парсим каждый элемент
+            for item in items:
+                try:
+                    if isinstance(item, dict):
+                        # Извлекаем данные из элемента
+                        url = item.get("url", item.get("link", ""))
+                        title = item.get("title", item.get("headline", "Без названия"))
+                        # Контент может быть в разных полях
+                        content = item.get("snippet", item.get("description", item.get("text", "")))
+                        
+                        # Очищаем HTML из контента
+                        if content:
+                            content = self._clean_html(content)
+                        
+                        if content or title:
+                            result = SourceResult(
+                                content=content,
+                                title=self._clean_html(title),
+                                source_name="web_search",
+                                url=url,
+                                relevance_score=item.get("relevance", 0.7),
+                                metadata={
+                                    "domain": self._extract_domain(url),
+                                }
+                            )
+                            results.append(result)
+                            
+                except Exception as e:
+                    logger.warning(f"[WebSearch] Error parsing item: {e}, item: {str(item)[:200]}")
+                    continue
+            
+            logger.info(f"[WebSearch] Parsed {len(results)} results from Yandex Search API v2")
+            
+        except json.JSONDecodeError as e:
+            logger.error(f"[WebSearch] Error parsing Yandex JSON response: {e}, content preview: {json_content[:500]}")
+        except Exception as e:
+            logger.error(f"[WebSearch] Error processing Yandex v2 response: {e}", exc_info=True)
+            logger.error(f"[WebSearch] JSON content preview: {json_content[:500]}")
         
         return results
     
