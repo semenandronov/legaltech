@@ -325,11 +325,7 @@ async def stream_chat_response(
                 pass
             # #endregion
             
-            # Log web_search check for debugging
-            logger.info(f"[DEBUG] Before web_search check: web_search={web_search}, type={type(web_search)}, bool={bool(web_search)}, question='{question[:100]}'")
-            
             if web_search:
-                logger.info(f"[DEBUG] Web search condition TRUE - entering block for question: '{question[:100]}'")
                 # #region agent log
                 try:
                     with open('/Users/semyon_andronov04/Desktop/C ДВ/.cursor/debug.log', 'a', encoding='utf-8') as f:
@@ -605,8 +601,6 @@ async def assistant_chat(
             web_search = bool(web_search_raw)
         deep_think = body.get("deep_think", False)
         
-        # Log web_search parameter for debugging
-        logger.info(f"[DEBUG] Request body web_search: raw={web_search_raw}, type={type(web_search_raw)}, normalized={web_search}, bool={bool(web_search)}")
         
         # #region agent log
         import json as json_module

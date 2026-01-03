@@ -92,7 +92,7 @@ class WebSearchSource(BaseSource):
                              f"folder_id={bool(self.folder_id)}. Returning empty results.")
                 return []
         except Exception as e:
-            logger.error(f"Web search error: {e}", exc_info=True)
+            logger.warning(f"Web search error: {e}")
             return []
     
     def _enhance_legal_query(
@@ -189,8 +189,8 @@ class WebSearchSource(BaseSource):
                     logger.debug(f"[WebSearch] Response preview: {content[:1000]}")
                     
                     if response.status != 200:
-                        logger.error(f"[WebSearch] Yandex Search API v2 error: status={response.status}, "
-                                   f"error_text={content[:500]}")
+                        logger.warning(f"[WebSearch] Yandex Search API v2 error: status={response.status}, "
+                                     f"error_text={content[:500]}")
                         return []
                     
                     # Parse JSON response (v2 использует JSON вместо XML)
@@ -198,10 +198,10 @@ class WebSearchSource(BaseSource):
                     return self._parse_yandex_v2_response(content)
                     
         except aiohttp.ClientError as e:
-            logger.error(f"[WebSearch] Yandex Search API v2 connection error: {e}", exc_info=True)
+            logger.warning(f"[WebSearch] Yandex Search API v2 connection error: {e}")
             return []
         except Exception as e:
-            logger.error(f"[WebSearch] Yandex Search API v2 error: {e}", exc_info=True)
+            logger.warning(f"[WebSearch] Yandex Search API v2 error: {e}")
             return []
     
     def _parse_yandex_response(self, xml_content: str) -> List[SourceResult]:
@@ -331,10 +331,9 @@ class WebSearchSource(BaseSource):
             logger.info(f"[WebSearch] Parsed {len(results)} results from Yandex Search API")
             
         except ET.ParseError as e:
-            logger.error(f"[WebSearch] Error parsing Yandex XML response: {e}, content preview: {xml_content[:500]}")
+            logger.warning(f"[WebSearch] Error parsing Yandex XML response: {e}")
         except Exception as e:
-            logger.error(f"[WebSearch] Error processing Yandex response: {e}", exc_info=True)
-            logger.error(f"[WebSearch] XML content preview: {xml_content[:500]}")
+            logger.warning(f"[WebSearch] Error processing Yandex response: {e}")
         
         return results
     
@@ -427,10 +426,9 @@ class WebSearchSource(BaseSource):
             logger.info(f"[WebSearch] Parsed {len(results)} results from Yandex Search API v2")
             
         except json.JSONDecodeError as e:
-            logger.error(f"[WebSearch] Error parsing Yandex JSON response: {e}, content preview: {json_content[:500]}")
+            logger.warning(f"[WebSearch] Error parsing Yandex JSON response: {e}")
         except Exception as e:
-            logger.error(f"[WebSearch] Error processing Yandex v2 response: {e}", exc_info=True)
-            logger.error(f"[WebSearch] JSON content preview: {json_content[:500]}")
+            logger.warning(f"[WebSearch] Error processing Yandex v2 response: {e}")
         
         return results
     
