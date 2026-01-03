@@ -34,8 +34,8 @@ class WebSearchSource(BaseSource):
         # Yandex Search API v2 через Yandex Cloud gateway
         # Старый v1 (XML) отключен с 31 декабря 2025
         # Используем endpoint для v2 согласно документации: https://yandex.cloud/ru/docs/search-api
-        # Endpoint для v2: https://search-api.cloud.yandex.net/v2/search
-        self.base_url = "https://search-api.cloud.yandex.net/v2/search"
+        # Правильный endpoint: https://searchapi.api.cloud.yandex.net/v2/web/search
+        self.base_url = "https://searchapi.api.cloud.yandex.net/v2/web/search"
     
     async def initialize(self) -> bool:
         """Initialize web search source"""
@@ -145,27 +145,34 @@ class WebSearchSource(BaseSource):
         
         # Yandex Search API v2 использует JSON формат и POST запросы
         # Согласно документации: https://yandex.cloud/ru/docs/search-api
-        # Формат запроса для v2 может отличаться, используем стандартный формат
+        # Правильный формат запроса для v2
         request_body = {
-            "query": query,
-            "page": 1,
-            "pageSize": max_results,
+            "query": {
+                "searchType": "SEARCH_TYPE_COM",
+                "queryText": query,
+                "familyMode": "FAMILY_MODE_MODERATE"
+            },
+            "groupSpec": {
+                "groupMode": "GROUP_MODE_FLAT",
+                "groupsOnPage": max_results,
+                "docsInGroup": 1
+            },
+            "responseFormat": "FORMAT_JSON",
+            "folderId": self.folder_id
         }
         
         # Add site restriction if specified
         if filters and filters.get("sites"):
             sites = filters["sites"]
             if isinstance(sites, list):
-                # В v2 можно использовать фильтры по доменам
+                # В v2 можно использовать фильтры по доменам через queryText
                 if len(sites) == 1:
-                    request_body["filters"] = {
-                        "domain": sites[0]
-                    }
+                    request_body["query"]["queryText"] = f"{query} site:{sites[0]}"
         
         # Правильная аутентификация через заголовки для v2
+        # Поддерживаем как API ключ, так и IAM токен
         headers = {
             "Authorization": f"Api-Key {self.api_key}",
-            "x-folder-id": self.folder_id,
             "Content-Type": "application/json",
         }
         
@@ -351,17 +358,27 @@ class WebSearchSource(BaseSource):
         
         try:
             import json
-            
-            # Логируем полную структуру JSON для отладки
-            logger.info(f"[WebSearch] JSON response (full, {len(json_content)} chars): {json_content}")
-            logger.info(f"[WebSearch] JSON response preview (first 1000 chars): {json_content[:1000]}")
+            import base64
             
             data = json.loads(json_content)
             
-            # Логируем структуру JSON
+            # Логируем структуру JSON для отладки
             logger.info(f"[WebSearch] JSON keys: {list(data.keys()) if isinstance(data, dict) else 'not a dict'}")
             
-            # Yandex Search API v2 структура ответа может отличаться
+            # Yandex Search API v2 может возвращать rawData в Base64
+            # Согласно документации: https://yandex.cloud/ru/docs/search-api
+            if isinstance(data, dict) and "rawData" in data:
+                # Декодируем Base64 данные
+                try:
+                    raw_data_b64 = data["rawData"]
+                    raw_data_bytes = base64.b64decode(raw_data_b64)
+                    raw_data_str = raw_data_bytes.decode('utf-8')
+                    data = json.loads(raw_data_str)
+                    logger.info(f"[WebSearch] Decoded rawData, new keys: {list(data.keys()) if isinstance(data, dict) else 'not a dict'}")
+                except Exception as decode_error:
+                    logger.warning(f"[WebSearch] Failed to decode rawData: {decode_error}")
+            
+            # Yandex Search API v2 структура ответа
             # Проверяем разные возможные структуры
             items = []
             
@@ -389,6 +406,14 @@ class WebSearchSource(BaseSource):
                     for group in data["groups"]:
                         if "items" in group:
                             items.extend(group["items"])
+                elif "web" in data:
+                    # Структура с web результатами
+                    web_data = data["web"]
+                    if isinstance(web_data, dict):
+                        if "results" in web_data:
+                            items = web_data["results"]
+                        elif "items" in web_data:
+                            items = web_data["items"]
             
             logger.info(f"[WebSearch] Found {len(items)} items in JSON response")
             
