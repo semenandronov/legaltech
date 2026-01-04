@@ -225,7 +225,7 @@ class ResultEvaluator:
                                 other_findings.append({
                                     "type": other_agent,
                                     "agent_name": other_agent,
-                                    **other_result if isinstance(other_result, dict) else {"data": other_result}
+                                    **(other_result if isinstance(other_result, dict) else {"data": other_result})
                                 })
                     
                     logger.debug(f"Collected {len(other_agent_results)} other agent results for cross-validation")
