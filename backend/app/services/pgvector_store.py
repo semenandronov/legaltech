@@ -407,8 +407,12 @@ class CaseVectorStore:
                     LIMIT %s
                 """
                 
-                # Add query embedding parameters
-                params.extend([query_embedding_str, query_embedding_str, k])
+                # ПРАВИЛЬНЫЙ ПОРЯДОК ПАРАМЕТРОВ:
+                # SQL использует: %s::vector (SELECT), затем WHERE параметры, затем %s::vector (ORDER BY), затем LIMIT
+                # Поэтому порядок: [query_embedding_str, collection_id, case_id, ...filters..., query_embedding_str, k]
+                # Текущий params = [collection_id, case_id, ...filters...]
+                # Нужно: [query_embedding_str] + params + [query_embedding_str, k]
+                params = [query_embedding_str] + params + [query_embedding_str, k]
                 
                 # Get raw connection properly - use conn.connection for SQLAlchemy 1.4+
                 # conn.connection is the underlying DBAPI connection
@@ -497,8 +501,12 @@ class CaseVectorStore:
                     LIMIT %s
                 """
                 
-                # Add query embedding parameters
-                params.extend([query_embedding_str, query_embedding_str, k])
+                # ПРАВИЛЬНЫЙ ПОРЯДОК ПАРАМЕТРОВ:
+                # SQL использует: %s::vector (SELECT), затем WHERE параметры, затем %s::vector (ORDER BY), затем LIMIT
+                # Поэтому порядок: [query_embedding_str, collection_id, case_id, ...filters..., query_embedding_str, k]
+                # Текущий params = [collection_id, case_id, ...filters...]
+                # Нужно: [query_embedding_str] + params + [query_embedding_str, k]
+                params = [query_embedding_str] + params + [query_embedding_str, k]
                 
                 # Get raw connection properly - use conn.connection for SQLAlchemy 1.4+
                 raw_conn = conn.connection
