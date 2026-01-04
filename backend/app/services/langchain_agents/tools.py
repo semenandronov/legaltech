@@ -270,11 +270,17 @@ def retrieve_documents_iterative_tool(query: str, case_id: str, k: int = 20, doc
 
 
 def get_all_tools() -> List:
-    """Get all available tools for agents"""
+    """Get all available tools including official legal sources"""
     from app.services.langchain_agents.legal_research_tool import get_legal_research_tools
     from app.services.langchain_agents.file_system_tools import get_file_system_tools
     from app.services.langchain_agents.web_research_tool import web_research_tool
     from app.services.langchain_agents.table_creator_tool import create_table_tool
+    from app.services.langchain_agents.official_legal_sources_tool import (
+        search_legislation_tool,
+        search_supreme_court_tool,
+        search_case_law_tool,
+        smart_legal_search_tool
+    )
     
     tools = [
         retrieve_documents_tool,
@@ -286,6 +292,18 @@ def get_all_tools() -> List:
         save_summary_tool,
         web_research_tool,  # Add web research tool
     ]
+    
+    # Add official legal sources tools
+    try:
+        tools.extend([
+            search_legislation_tool,
+            search_supreme_court_tool,
+            search_case_law_tool,
+            smart_legal_search_tool
+        ])
+        logger.debug("Official legal sources tools added to agent tools")
+    except Exception as e:
+        logger.warning(f"Official legal sources tools not available: {e}")
     
     # Add legal research tools
     try:
@@ -319,6 +337,12 @@ def get_critical_agent_tools() -> List:
     from app.services.langchain_agents.file_system_tools import get_file_system_tools
     from app.services.langchain_agents.web_research_tool import web_research_tool
     from app.services.langchain_agents.table_creator_tool import create_table_tool
+    from app.services.langchain_agents.official_legal_sources_tool import (
+        search_legislation_tool,
+        search_supreme_court_tool,
+        search_case_law_tool,
+        smart_legal_search_tool
+    )
     
     tools = [
         retrieve_documents_tool,
@@ -327,6 +351,18 @@ def get_critical_agent_tools() -> List:
         save_risk_analysis_tool,
         web_research_tool,  # Web research for critical analysis
     ]
+    
+    # Add official legal sources tools for critical agents
+    try:
+        tools.extend([
+            search_legislation_tool,
+            search_supreme_court_tool,
+            search_case_law_tool,
+            smart_legal_search_tool
+        ])
+        logger.debug("Official legal sources tools added to critical agent tools")
+    except Exception as e:
+        logger.warning(f"Official legal sources tools not available: {e}")
     
     # Add legal research tools for critical agents
     try:

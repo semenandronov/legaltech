@@ -209,7 +209,7 @@ class WebSearchSource(BaseSource):
                     else:
                         # Прямой XML ответ
                         logger.info(f"[WebSearch] Parsing XML response: content_length={len(content)}")
-                        return self._parse_yandex_response(content)
+                    return self._parse_yandex_response(content)
                     
         except aiohttp.ClientError as e:
             logger.warning(f"[WebSearch] Yandex Search API v2 connection error: {e}")
@@ -497,4 +497,55 @@ class WebSearchSource(BaseSource):
         info = super().get_info()
         info["api_configured"] = bool(self.api_key and self.folder_id)
         return info
+    
+    async def search_legislation(self, query: str, max_results: int = 5) -> List[SourceResult]:
+        """
+        Поиск на pravo.gov.ru (официальное законодательство)
+        
+        Args:
+            query: Поисковый запрос
+            max_results: Максимальное количество результатов
+        
+        Returns:
+            Список результатов поиска
+        """
+        return await self._search_yandex_api(
+            query=query,
+            max_results=max_results,
+            filters={"sites": ["pravo.gov.ru"]}
+        )
+    
+    async def search_supreme_court(self, query: str, max_results: int = 5) -> List[SourceResult]:
+        """
+        Поиск на vsrf.ru (позиции Верховного Суда РФ)
+        
+        Args:
+            query: Поисковый запрос
+            max_results: Максимальное количество результатов
+        
+        Returns:
+            Список результатов поиска
+        """
+        return await self._search_yandex_api(
+            query=query,
+            max_results=max_results,
+            filters={"sites": ["vsrf.ru"]}
+        )
+    
+    async def search_case_law(self, query: str, max_results: int = 5) -> List[SourceResult]:
+        """
+        Поиск на kad.arbitr.ru (картотека арбитражных дел)
+        
+        Args:
+            query: Поисковый запрос
+            max_results: Максимальное количество результатов
+        
+        Returns:
+            Список результатов поиска
+        """
+        return await self._search_yandex_api(
+            query=query,
+            max_results=max_results,
+            filters={"sites": ["kad.arbitr.ru"]}
+        )
 

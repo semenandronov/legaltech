@@ -9,6 +9,7 @@ from app.services.langchain_agents.prompts import get_agent_prompt
 from app.services.rag_service import RAGService
 from app.services.document_processor import DocumentProcessor
 from app.services.citation_verifier import CitationVerifier
+from app.services.agent_self_awareness import SelfAwarenessService
 from sqlalchemy.orm import Session
 from app.models.analysis import AnalysisResult
 from app.models.case import Case
@@ -223,6 +224,44 @@ def risk_agent_node(
                 temperature=0.1,
                 callbacks=[callback]
             )
+        
+        # 1. Анализ пробелов в знаниях (Self-Awareness)
+        try:
+            self_awareness = SelfAwarenessService()
+            
+            # Получаем текст документов для анализа
+            case_documents_text = ""
+            if rag_service:
+                try:
+                    # Получаем несколько документов для контекста
+                    documents = rag_service.retrieve_context(
+                        case_id=case_id,
+                        query="риски противоречия",
+                        k=10,
+                        db=db
+                    )
+                    case_documents_text = "\n".join([doc.page_content for doc in documents[:5]])
+                except Exception as e:
+                    logger.debug(f"Could not retrieve documents for self-awareness: {e}")
+            
+            # Анализируем пробелы в знаниях
+            gaps = self_awareness.identify_knowledge_gaps(
+                case_documents=case_documents_text,
+                agent_output=response_text,  # Используем ответ агента как вывод
+                task_type="risk_analysis"
+            )
+            
+            # 2. Если есть пробелы - генерируем стратегию поиска
+            if self_awareness.should_search(gaps):
+                search_strategy = self_awareness.generate_search_strategy(gaps)
+                logger.info(f"[Risk Agent] Found {len(gaps)} knowledge gaps, search strategy: {search_strategy}")
+                
+                # Логируем стратегию для будущей интеграции с инструментами
+                # Инструменты будут доступны через tools в agent
+                # Агент сам вызовет нужные инструменты через function calling
+                # (на данном этапе MVP просто логируем)
+        except Exception as e:
+            logger.warning(f"[Risk Agent] Self-awareness analysis failed: {e}")
         
         # Parse risks
         from app.services.langchain_agents.llm_helper import extract_json_from_response, parse_with_fixing
