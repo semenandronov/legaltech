@@ -154,8 +154,7 @@ class PravoGovSource(BaseSource):
                 fallback_results = await self.fallback_source.search(
                     query=query,
                     max_results=max_results,
-                    filters={"sites": ["pravo.gov.ru"]},
-                    use_cache=use_cache
+                    filters={"sites": ["pravo.gov.ru"]}
                 )
                 # Сохраняем fallback результаты в кэш
                 if use_cache and fallback_results:

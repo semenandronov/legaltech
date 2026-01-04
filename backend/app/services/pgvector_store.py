@@ -99,6 +99,25 @@ class CaseVectorStore:
                     ON {VectorEmbedding.__tablename__}(collection_id)
                 """))
                 
+                # Add case_id column if it doesn't exist (migration for existing tables)
+                try:
+                    conn.execute(text(f"""
+                        ALTER TABLE {VectorEmbedding.__tablename__} 
+                        ADD COLUMN IF NOT EXISTS case_id TEXT
+                    """))
+                    logger.info(f"✅ Ensured case_id column exists in {VectorEmbedding.__tablename__}")
+                except Exception as e:
+                    logger.debug(f"Could not add case_id column (may already exist): {e}")
+                
+                # Create index on case_id for faster filtering
+                try:
+                    conn.execute(text(f"""
+                        CREATE INDEX IF NOT EXISTS idx_{VectorEmbedding.__tablename__}_case_id 
+                        ON {VectorEmbedding.__tablename__}(case_id)
+                    """))
+                except Exception as e:
+                    logger.debug(f"Could not create case_id index: {e}")
+                
                 # Check if embedding column has correct dimension (256)
                 # If table was created with wrong dimension (1536), we need to fix it
                 try:

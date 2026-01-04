@@ -131,7 +131,7 @@ class VSRFSource(BaseSource):
                     logger.error(f"Fallback search also failed: {fallback_error}")
             return []
     
-    def _parse_search_results(self, html_content: str, max_results: int) -> List[SourceResult]:
+    async def _parse_search_results(self, html_content: str, max_results: int) -> List[SourceResult]:
         """
         Парсит результаты поиска из HTML
         
