@@ -16,6 +16,7 @@ from app.services.langchain_agents import PlanningAgent
 from app.services.langchain_agents.advanced_planning_agent import AdvancedPlanningAgent
 from app.services.analysis_service import AnalysisService
 from app.services.external_sources.web_research_service import get_web_research_service
+from app.services.external_sources.source_router import get_source_router
 import json
 import logging
 import asyncio
@@ -122,6 +123,7 @@ async def stream_chat_response(
     current_user: User,
     background_tasks: BackgroundTasks,
     web_search: bool = False,
+    legal_research: bool = False,
     deep_think: bool = False
 ) -> AsyncGenerator[str, None]:
     """
@@ -349,10 +351,76 @@ async def stream_chat_response(
                     logger.warning(f"Web search failed: {web_search_error}, continuing without web search")
                     # Continue without web search - не критичная ошибка
             
-            # Get relevant documents using RAG - только если веб-поиск не дал результатов
-            # или если веб-поиск не включен
+            # Legal research integration - поиск в юридических источниках
+            legal_research_context = ""
+            legal_research_successful = False
+            
+            if legal_research:
+                try:
+                    logger.info(f"Legal research enabled for query: {question[:100]}...")
+                    source_router = get_source_router()
+                    
+                    # Определяем источники для поиска (приоритет pravo_gov для статей кодексов)
+                    sources_to_search = ["pravo_gov", "vsrf", "web"]  # pravo_gov для законодательства, vsrf для позиций ВС
+                    
+                    # Выполняем поиск через source router
+                    search_results = await source_router.search(
+                        query=question,
+                        source_names=sources_to_search,
+                        max_results_per_source=5,
+                        parallel=True
+                    )
+                    
+                    # Агрегируем результаты
+                    aggregated = source_router.aggregate_results(
+                        search_results,
+                        max_total=10,
+                        dedup_threshold=0.9
+                    )
+                    
+                    if aggregated:
+                        legal_research_parts = []
+                        legal_research_parts.append(f"\n\n=== Результаты юридического исследования ===")
+                        legal_research_parts.append(f"Найдено источников: {len(aggregated)}")
+                        
+                        for i, result in enumerate(aggregated[:5], 1):
+                            title = result.title or "Без названия"
+                            url = result.url or ""
+                            content = result.content[:500] if result.content else ""
+                            source_name = result.source_name or "unknown"
+                            
+                            if content:
+                                legal_research_parts.append(f"\n[Источник {i}: {title}]")
+                                legal_research_parts.append(f"Источник: {source_name}")
+                                if url:
+                                    legal_research_parts.append(f"URL: {url}")
+                                legal_research_parts.append(f"Содержание: {content}...")
+                        
+                        legal_research_context = "\n".join(legal_research_parts)
+                        legal_research_successful = True
+                        
+                        # Добавляем источники в sources_list
+                        for result in aggregated[:5]:
+                            source_info = {
+                                "title": result.title or "Юридический источник",
+                                "url": result.url or "",
+                                "source": result.source_name or "legal"
+                            }
+                            if result.content:
+                                source_info["text_preview"] = result.content[:200]
+                            sources_list.append(source_info)
+                        
+                        logger.info(f"Legal research completed: {len(aggregated)} sources found from {len(search_results)} sources")
+                    else:
+                        logger.warning("Legal research returned no results")
+                except Exception as legal_research_error:
+                    logger.warning(f"Legal research failed: {legal_research_error}, continuing without legal research", exc_info=True)
+                    # Continue without legal research - не критичная ошибка
+            
+            # Get relevant documents using RAG - только если веб-поиск и юридическое исследование не дали результатов
+            # или если они не включены
             context = ""
-            if not web_search_successful:
+            if not web_search_successful and not legal_research_successful:
                 # Выполняем RAG только если веб-поиск не дал результатов
                 documents = await loop.run_in_executor(
                     None,
@@ -412,12 +480,22 @@ async def stream_chat_response(
 - Если информация из веб-поиска противоречит документам дела, укажи это и приоритизируй документы дела
 """
 
+            legal_research_instructions = ""
+            if legal_research_context:
+                legal_research_instructions = """
+ИНСТРУКЦИИ ПО ИСПОЛЬЗОВАНИЮ РЕЗУЛЬТАТОВ ЮРИДИЧЕСКОГО ИССЛЕДОВАНИЯ:
+- Используй информацию из юридических источников (pravo.gov.ru, vsrf.ru и др.) для ответа на вопросы о нормах права
+- При цитировании статей кодексов или позиций ВС указывай источник (название и URL если доступен)
+- Информация из официальных юридических источников имеет приоритет над информацией из документов дела при вопросах о законодательстве
+- Если пользователь просит конкретную статью кодекса, приведи полный текст статьи из результатов юридического исследования
+"""
+
             prompt = f"""Ты - юридический AI-ассистент. Ты помогаешь анализировать документы дела.
 
 Контекст из документов дела:
-{context}{web_search_context}
+{context}{web_search_context}{legal_research_context}
 
-Вопрос пользователя: {question}{web_search_instructions}
+Вопрос пользователя: {question}{web_search_instructions}{legal_research_instructions}
 
 ВАЖНО - ФОРМАТИРОВАНИЕ ОТВЕТА:
 1. ВСЕГДА используй Markdown форматирование для ответов:
@@ -449,9 +527,9 @@ async def stream_chat_response(
    | 22.08.2016 | Не указан | A83-6426-2015 |
    | 15.03.2017 | Е.А. Остапов | A83-6426-2015 |
 
-Ответь на вопрос, используя информацию из документов дела. {f"Если информации из документов недостаточно, используй результаты веб-поиска для дополнения ответа." if web_search_context else "Если информации недостаточно, укажи это."}
+Ответь на вопрос, используя информацию из документов дела. {f"Если информации из документов недостаточно, используй результаты веб-поиска для дополнения ответа." if web_search_context else ""}{f" Используй результаты юридического исследования для ответа на вопросы о нормах права и законодательстве." if legal_research_context else ""}{" Если информации недостаточно, укажи это." if not web_search_context and not legal_research_context else ""}
 Будь точным и профессиональным. ВСЕГДА используй Markdown форматирование.
-{f"При цитировании информации из веб-поиска указывай источник в формате: [Название источника](URL) или просто название источника, если URL недоступен." if web_search_context else ""}"""
+{f"При цитировании информации из веб-поиска указывай источник в формате: [Название источника](URL) или просто название источника, если URL недоступен." if web_search_context else ""}{f" При цитировании статей кодексов или норм права указывай источник: [Название статьи](URL) или просто название источника." if legal_research_context else ""}"""
 
             # Initialize LLM
             # Используем GigaChat SDK через create_llm()
@@ -566,6 +644,12 @@ async def assistant_chat(
             web_search = web_search_raw.lower() in ("true", "1", "yes")
         else:
             web_search = bool(web_search_raw)
+        legal_research_raw = body.get("legal_research", False)
+        # Normalize legal_research to boolean
+        if isinstance(legal_research_raw, str):
+            legal_research = legal_research_raw.lower() in ("true", "1", "yes")
+        else:
+            legal_research = bool(legal_research_raw)
         deep_think = body.get("deep_think", False)
         
         if not case_id:
@@ -590,6 +674,7 @@ async def assistant_chat(
                 current_user=current_user,
                 background_tasks=background_tasks,
                 web_search=web_search,
+                legal_research=legal_research,
                 deep_think=deep_think
             ),
             media_type="text/event-stream",
