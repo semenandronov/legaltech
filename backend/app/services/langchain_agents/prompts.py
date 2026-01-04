@@ -1033,10 +1033,6 @@ def get_agent_prompt(agent_name: str, version: str = "extreme") -> str:
     # Log which version is being used
     logger.debug(f"Using prompt version {version} for agent {agent_name}")
     
-    # Добавляем инструкции по цитированию, если включено
-    if include_citation:
-        prompt = prompt + "\n\n" + CITATION_INSTRUCTION
-    
     return prompt
 
 
