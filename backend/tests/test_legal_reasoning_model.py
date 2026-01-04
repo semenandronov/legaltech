@@ -66,3 +66,4 @@ def test_should_search():
     # Should not search
     assert not model.should_search("все понятно и ясно")
 
+

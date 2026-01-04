@@ -152,3 +152,4 @@ class LegalReasoningModel:
         
         return facts[:200].strip()
 
+

@@ -405,10 +405,21 @@ def create_analysis_graph(
         # Thread safety: Lock for protecting shared state modifications
         state_lock = threading.Lock()
         
-        # Timeout per agent (5 minutes default, can be configured)
-        DEFAULT_AGENT_TIMEOUT = 300  # 5 minutes
+        # Adaptive timeouts per agent type (reduced from 5 minutes)
+        AGENT_TIMEOUTS = {
+            "document_classifier": 60,   # Fast - simple classification
+            "timeline": 120,             # 2 minutes - date extraction
+            "key_facts": 120,            # 2 minutes - fact extraction
+            "discrepancy": 180,          # 3 minutes - comparison analysis
+            "entity_extraction": 120,    # 2 minutes - entity extraction
+        }
         
-        with ThreadPoolExecutor(max_workers=len(agents_to_run)) as executor:
+        # Get max parallel from config (increased from 3 to 5)
+        from app.config import config
+        max_parallel = min(config.AGENT_MAX_PARALLEL, 5)  # Cap at 5 for safety
+        
+        # Use max_parallel workers (not one per agent) for better resource management
+        with ThreadPoolExecutor(max_workers=max_parallel) as executor:
             # Submit all tasks - IMPORTANT: pass a copy of state to each agent to avoid conflicts
             future_to_agent = {}
             for agent_name, agent_func in agents_to_run:
@@ -417,13 +428,18 @@ def create_analysis_graph(
                 future = executor.submit(agent_func, agent_state)
                 future_to_agent[future] = agent_name
             
+            # Calculate total timeout (max of all agent timeouts + buffer)
+            max_timeout = max(AGENT_TIMEOUTS.get(name, 120) for name, _ in agents_to_run)
+            total_timeout = max_timeout * len(agents_to_run) + 60  # Buffer for overhead
+            
             # Collect results with timeout handling
             completed_agents = set()
-            for future in as_completed(future_to_agent, timeout=DEFAULT_AGENT_TIMEOUT * len(agents_to_run)):
+            for future in as_completed(future_to_agent, timeout=total_timeout):
                 agent_name = future_to_agent[future]
                 try:
-                    # Get result with individual timeout
-                    result_state = future.result(timeout=DEFAULT_AGENT_TIMEOUT)
+                    # Get result with agent-specific timeout
+                    agent_timeout = AGENT_TIMEOUTS.get(agent_name, 120)
+                    result_state = future.result(timeout=agent_timeout)
                     
                     # Merge ALL state fields, not just the result
                     result_key = f"{agent_name}_result"
@@ -458,7 +474,8 @@ def create_analysis_graph(
                     logger.info(f"[Parallel] Completed {agent_name} agent successfully")
                     
                 except (TimeoutError, FuturesTimeoutError) as timeout_error:
-                    logger.error(f"[Parallel] Timeout ({DEFAULT_AGENT_TIMEOUT}s) for {agent_name} agent: {timeout_error}")
+                    agent_timeout = AGENT_TIMEOUTS.get(agent_name, 120)
+                    logger.error(f"[Parallel] Timeout ({agent_timeout}s) for {agent_name} agent: {timeout_error}")
                     # Попытаться отменить future для освобождения ресурсов
                     try:
                         cancelled = future.cancel()
@@ -476,7 +493,7 @@ def create_analysis_graph(
                     with state_lock:
                         errors.append({
                             "agent": agent_name,
-                            "error": f"Timeout after {DEFAULT_AGENT_TIMEOUT} seconds",
+                            "error": f"Timeout after {agent_timeout} seconds",
                             "cancelled": True
                         })
                 except Exception as e:
@@ -634,43 +651,38 @@ def create_analysis_graph(
     # Spawn subagents node goes to evaluation
     graph.add_edge("spawn_subagents", "evaluation")
     
-    # Evaluation node conditionally routes to adaptation, deliver, or supervisor
-    # Note: Human feedback is now handled via LangGraph interrupts, not routing
+    # Simplified evaluation routing
     def route_after_evaluation(state: AnalysisState) -> str:
         """Route after evaluation: adaptation, deliver, or supervisor"""
-        needs_adaptation = state.get("needs_replanning", False)
-        evaluation_result = state.get("evaluation_result", {})
+        needs_adaptation = state.get("needs_replanning", False) or \
+                          state.get("evaluation_result", {}).get("needs_adaptation", False)
         
-        # Note: waiting_for_human is handled via interrupts, not routing
-        # If interrupt was triggered, execution will pause automatically
-        
-        # Check if adaptation is needed
-        if needs_adaptation or evaluation_result.get("needs_adaptation", False):
-            logger.info(f"[Graph] Routing to adaptation after evaluation for case {state.get('case_id', 'unknown')}")
+        if needs_adaptation:
+            logger.info(f"[Graph] Routing to adaptation for case {state.get('case_id', 'unknown')}")
             return "adaptation"
         
-        # Check if all work is done (supervisor says "end")
-        # If LEGORA workflow is enabled, go to deliver
+        # If LEGORA workflow enabled and work complete, go to deliver
         if use_legora_workflow:
-            # Check if supervisor has finished all tasks
-            # This is a simple check - in production, supervisor should set a flag
-            completed_steps = state.get("completed_steps", [])
-            analysis_types = state.get("analysis_types", [])
+            # Check if supervisor finished (all requested types completed)
+            analysis_types = set(state.get("analysis_types", []))
+            completed = {
+                "timeline" if state.get("timeline_result") else None,
+                "key_facts" if state.get("key_facts_result") else None,
+                "discrepancy" if state.get("discrepancy_result") else None,
+                "risk" if state.get("risk_result") else None,
+                "summary" if state.get("summary_result") else None,
+                "document_classifier" if state.get("classification_result") else None,
+                "entity_extraction" if state.get("entities_result") else None,
+                "privilege_check" if state.get("privilege_result") else None,
+                "relationship" if state.get("relationship_result") else None,
+            }
+            completed.discard(None)
             
-            # If we have results for all requested analyses, go to deliver
-            has_results = any([
-                state.get("timeline_result"),
-                state.get("key_facts_result"),
-                state.get("discrepancy_result"),
-                state.get("risk_result"),
-                state.get("summary_result")
-            ])
-            
-            if has_results and not needs_adaptation:
-                logger.info(f"[Graph] Routing to deliver after evaluation for case {state.get('case_id', 'unknown')}")
+            if analysis_types.issubset(completed):
+                logger.info(f"[Graph] Routing to deliver for case {state.get('case_id', 'unknown')}")
                 return "deliver"
         
-            return "supervisor"
+        return "supervisor"
     
     if use_legora_workflow:
         graph.add_conditional_edges(

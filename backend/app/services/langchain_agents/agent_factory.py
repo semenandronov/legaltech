@@ -86,59 +86,11 @@ def safe_agent_invoke(
     try:
         agent_config = config or {}
         agent_config.setdefault("recursion_limit", 25)
-        # #region agent log
-        import json
-        import os
-        try:
-            log_path = os.path.join(os.getcwd(), '.cursor', 'debug.log')
-            os.makedirs(os.path.dirname(log_path), exist_ok=True)
-            with open(log_path, 'a') as f:
-                f.write(json.dumps({
-                    "sessionId": "debug-session",
-                    "runId": "agent-invoke-start",
-                    "hypothesisId": "H4",
-                    "location": "agent_factory.py:safe_agent_invoke",
-                    "message": "Invoking agent",
-                    "data": {
-                        "has_messages": "messages" in input_data,
-                        "messages_count": len(input_data.get("messages", [])),
-                        "case_id": input_data.get("case_id"),
-                        "recursion_limit": agent_config.get("recursion_limit")
-                    },
-                    "timestamp": int(__import__('time').time() * 1000)
-                }) + '\n')
-        except Exception:
-            pass
-        # #endregion
         result = agent.invoke(input_data, config=agent_config)
         return result
     except Exception as e:
         error_msg = str(e)
         error_type = type(e).__name__
-        # #region agent log
-        try:
-            import json
-            import os
-            import traceback
-            log_path = os.path.join(os.getcwd(), '.cursor', 'debug.log')
-            with open(log_path, 'a') as f:
-                f.write(json.dumps({
-                    "sessionId": "debug-session",
-                    "runId": "agent-invoke-error",
-                    "hypothesisId": "H5",
-                    "location": "agent_factory.py:safe_agent_invoke:exception",
-                    "message": "Agent invoke error",
-                    "data": {
-                        "error_type": error_type,
-                        "error_message": error_msg[:500],
-                        "is_tool_error": "bind_tools" in error_msg or "tool use" in error_msg.lower(),
-                        "traceback": traceback.format_exc()[:1000]
-                    },
-                    "timestamp": int(__import__('time').time() * 1000)
-                }) + '\n')
-        except Exception:
-            pass
-        # #endregion
         
         # Check if error is related to tool use not being supported
         # Check if error is related to tool use not being supported

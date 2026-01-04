@@ -369,14 +369,10 @@ def deliver_node(
         
         state["delivery_result"] = delivery_result
         
-        # #region agent log
-        table_results_summary = {k: {"table_id": v.get("table_id"), "status": v.get("status")} for k, v in table_results.items()}
-        logger.info(f"[DEBUG-HYP-A] deliver_node: table_results_keys={list(table_results.keys())}, "
-                   f"table_results={table_results_summary}, "
-                   f"delivery_result_tables_keys={list(delivery_result.get('tables', {}).keys()) if delivery_result.get('tables') else None}, "
-                   f"delivery_result_keys={list(delivery_result.keys())}, "
-                   f"case_id={case_id}")
-        # #endregion
+        logger.debug(
+            f"[DELIVER] Table results: {len(table_results)} tables, "
+            f"delivery_result keys: {list(delivery_result.keys())}"
+        )
         
         logger.info(
             f"[DELIVER] Delivery completed: {len(table_results)} tables, "

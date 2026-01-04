@@ -1,24 +1,13 @@
 """Agent coordinator for managing multi-agent analysis"""
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any, List, Optional, Callable
 from sqlalchemy.orm import Session
 from app.services.langchain_agents.graph import create_analysis_graph
 from app.services.langchain_agents.state import AnalysisState, create_initial_state
-from app.services.langchain_agents.planning_agent import PlanningAgent
-from app.services.langchain_agents.advanced_planning_agent import AdvancedPlanningAgent
-from app.services.langchain_agents.human_feedback import get_feedback_service
-from app.services.langchain_agents.fallback_handler import FallbackHandler
-from app.services.langchain_agents.subagent_manager import SubAgentManager
-from app.services.context_manager import ContextManager
-from app.services.metrics.planning_metrics import MetricsCollector
-from app.services.langchain_agents.learning_service import ContinuousLearningService
+from app.services.langchain_agents.component_factory import ComponentFactory
 from app.services.rag_service import RAGService
 from app.services.document_processor import DocumentProcessor
-from langchain_core.messages import HumanMessage
-from concurrent.futures import ThreadPoolExecutor, as_completed
 import logging
 import time
-import os
-import json
 
 logger = logging.getLogger(__name__)
 
@@ -47,70 +36,43 @@ class AgentCoordinator:
         self.document_processor = document_processor
         self.use_legora_workflow = use_legora_workflow
         
-        # Create graph with LEGORA workflow flag
-        self.graph = create_analysis_graph(
-            db, 
-            rag_service, 
-            document_processor,
-            use_legora_workflow=use_legora_workflow
+        # Initialize all components using unified factory
+        self._initialize_components()
+    
+    def _initialize_components(self) -> None:
+        """
+        Initialize all components with clear separation of required and optional components.
+        Uses ComponentFactory for unified error handling.
+        """
+        # Required components (fail fast if initialization fails)
+        self.graph = ComponentFactory.create_required_component(
+            "AnalysisGraph",
+            lambda: create_analysis_graph(
+                self.db,
+                self.rag_service,
+                self.document_processor,
+                use_legora_workflow=self.use_legora_workflow
+            ),
+            "Failed to create analysis graph - this is a required component"
         )
         
-        # Initialize planning agents with RAG service for document access
-        try:
-            # Try to use AdvancedPlanningAgent first
-            self.advanced_planning_agent = AdvancedPlanningAgent(
-                rag_service=rag_service,
-                document_processor=document_processor
-            )
-            self.planning_agent = self.advanced_planning_agent.base_planning_agent
-            logger.info("✅ Advanced Planning Agent initialized")
-        except Exception as e:
-            logger.warning(f"Failed to initialize AdvancedPlanningAgent: {e}, falling back to base PlanningAgent")
-            self.advanced_planning_agent = None
-            try:
-                self.planning_agent = PlanningAgent(
-                    rag_service=rag_service,
-                    document_processor=document_processor
-                )
-            except Exception as e2:
-                logger.warning(f"Failed to initialize PlanningAgent: {e2}, will use analysis_types directly")
-                self.planning_agent = None
+        # Optional components (graceful degradation)
+        components = ComponentFactory.create_all_components(
+            self.db,
+            self.rag_service,
+            self.document_processor
+        )
         
-        # Initialize human feedback service
-        self.feedback_service = get_feedback_service(db)
+        self.advanced_planning_agent = components.get('advanced_planning_agent')
+        self.planning_agent = components.get('planning_agent')
+        self.feedback_service = components.get('feedback_service')
+        self.fallback_handler = components.get('fallback_handler')
+        self.metrics_collector = components.get('metrics_collector')
+        self.subagent_manager = components.get('subagent_manager')
+        self.context_manager = components.get('context_manager')
+        self.learning_service = components.get('learning_service')
         
-        # Initialize fallback handler
-        self.fallback_handler = FallbackHandler()
-        
-        # Initialize metrics collector
-        self.metrics_collector = MetricsCollector(db)
-        
-        # Initialize SubAgent Manager
-        try:
-            self.subagent_manager = SubAgentManager(
-                rag_service=rag_service,
-                document_processor=document_processor
-            )
-            logger.info("✅ SubAgent Manager initialized in AgentCoordinator")
-        except Exception as e:
-            logger.warning(f"Failed to initialize SubAgentManager: {e}")
-            self.subagent_manager = None
-        
-        # Initialize Context Manager
-        try:
-            self.context_manager = ContextManager()
-            logger.info("✅ Context Manager initialized in AgentCoordinator")
-        except Exception as e:
-            logger.warning(f"Failed to initialize ContextManager: {e}")
-            self.context_manager = None
-        
-        # Initialize Continuous Learning Service
-        try:
-            self.learning_service = ContinuousLearningService(db)
-            logger.info("✅ Continuous Learning Service initialized in AgentCoordinator")
-        except Exception as e:
-            logger.warning(f"Failed to initialize ContinuousLearningService: {e}")
-            self.learning_service = None
+        logger.info("AgentCoordinator initialization completed")
     
     def run_analysis(
         self,
@@ -170,25 +132,6 @@ class AgentCoordinator:
         
         try:
             logger.info(f"Starting multi-agent analysis for case {case_id}, types: {analysis_types}")
-            # #region agent log
-            import json
-            import os
-            try:
-                log_path = os.path.join(os.getcwd(), '.cursor', 'debug.log')
-                os.makedirs(os.path.dirname(log_path), exist_ok=True)
-                with open(log_path, 'a') as f:
-                    f.write(json.dumps({
-                        "sessionId": "debug-session",
-                        "runId": "coordinator-start",
-                        "hypothesisId": "H1",
-                        "location": "coordinator.py:run_analysis",
-                        "message": "Starting multi-agent analysis",
-                        "data": {"case_id": case_id, "analysis_types": analysis_types, "user_task": user_task is not None},
-                        "timestamp": int(time.time() * 1000)
-                    }) + '\n')
-            except Exception:
-                pass
-            # #endregion
             
             # Initialize plan_goals and current_plan
             plan_goals = []
@@ -453,27 +396,6 @@ class AgentCoordinator:
                     logger.info(f"Graph execution: {node_name} completed")
                     # Don't set final_state here - we'll get it from graph state at the end
                     # This ensures we get the complete state including delivery_result
-                    
-                    # #region agent log
-                    try:
-                        log_path = os.path.join(os.getcwd(), '.cursor', 'debug.log')
-                        with open(log_path, 'a') as f:
-                            f.write(json.dumps({
-                                "sessionId": "debug-session",
-                                "runId": "coordinator-stream",
-                                "hypothesisId": "H2",
-                                "location": "coordinator.py:graph.stream",
-                                "message": "Node execution completed",
-                                "data": {
-                                    "node_name": node_name,
-                                    "has_final_state": final_state is not None,
-                                    "state_keys": list(state.keys()) if state else []
-                                },
-                                "timestamp": int(time.time() * 1000)
-                            }) + '\n')
-                    except Exception:
-                        pass
-                    # #endregion
                     
                     # Track step for streaming
                     if node_name and node_name != "supervisor":
@@ -763,31 +685,6 @@ class AgentCoordinator:
                 f"Error in multi-agent analysis for case {case_id}: {e}",
                 exc_info=True
             )
-            # #region agent log
-            try:
-                import json
-                import os
-                import traceback
-                log_path = os.path.join(os.getcwd(), '.cursor', 'debug.log')
-                with open(log_path, 'a') as f:
-                    f.write(json.dumps({
-                        "sessionId": "debug-session",
-                        "runId": "coordinator-error",
-                        "hypothesisId": "H3",
-                        "location": "coordinator.py:run_analysis:exception",
-                        "message": "Error in multi-agent analysis",
-                        "data": {
-                            "case_id": case_id,
-                            "error_type": type(e).__name__,
-                            "error_message": str(e),
-                            "execution_time": execution_time,
-                            "traceback": traceback.format_exc()[:1000]
-                        },
-                        "timestamp": int(time.time() * 1000)
-                    }) + '\n')
-            except Exception:
-                pass
-            # #endregion
             
             # Определить тип ошибки
             error_type = "fatal"

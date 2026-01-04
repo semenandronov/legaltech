@@ -48,8 +48,8 @@ class Config:
     
     # Multi-Agent System Settings
     AGENT_ENABLED: bool = os.getenv("AGENT_ENABLED", "true").lower() == "true"
-    AGENT_MAX_PARALLEL: int = int(os.getenv("AGENT_MAX_PARALLEL", "3"))  # Max parallel agents
-    AGENT_TIMEOUT: int = int(os.getenv("AGENT_TIMEOUT", "300"))  # Timeout per agent in seconds
+    AGENT_MAX_PARALLEL: int = int(os.getenv("AGENT_MAX_PARALLEL", "5"))  # Max parallel agents (increased from 3)
+    AGENT_TIMEOUT: int = int(os.getenv("AGENT_TIMEOUT", "120"))  # Default timeout per agent in seconds (reduced from 300)
     AGENT_RETRY_COUNT: int = int(os.getenv("AGENT_RETRY_COUNT", "2"))  # Retry count on failure
     
     # Human-in-the-loop Settings

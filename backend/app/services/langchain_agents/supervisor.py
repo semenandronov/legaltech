@@ -152,34 +152,28 @@ def route_to_agent(state: AnalysisState) -> str:
             logger.info(f"[Супервизор] Retrying agent {agent_name} based on evaluation")
             return agent_name
     
-    # Check what's already done
-    completed = set()
-    if state.get("timeline_result"):
-        completed.add("timeline")
-    if state.get("key_facts_result"):
-        completed.add("key_facts")
-    if state.get("discrepancy_result"):
-        completed.add("discrepancy")
-    if state.get("risk_result"):
-        completed.add("risk")
-    if state.get("summary_result"):
-        completed.add("summary")
-    if state.get("classification_result"):
-        completed.add("document_classifier")
-    if state.get("entities_result"):
-        completed.add("entity_extraction")
-    if state.get("privilege_result"):
-        completed.add("privilege_check")
-    if state.get("relationship_result"):
-        completed.add("relationship")
-    if state.get("deep_analysis_result"):
-        completed.add("deep_analysis")
+    # Simplified check for completed agents and dependencies
+    result_keys = {
+        "timeline": "timeline_result",
+        "key_facts": "key_facts_result",
+        "discrepancy": "discrepancy_result",
+        "risk": "risk_result",
+        "summary": "summary_result",
+        "document_classifier": "classification_result",
+        "entity_extraction": "entities_result",
+        "privilege_check": "privilege_result",
+        "relationship": "relationship_result",
+        "deep_analysis": "deep_analysis_result"
+    }
     
-    # Check dependencies
-    entities_ready = state.get("entities_result") is not None
-    discrepancy_ready = state.get("discrepancy_result") is not None
-    key_facts_ready = state.get("key_facts_result") is not None
-    classification_ready = state.get("classification_result") is not None
+    # Build completed set and dependency flags in one pass
+    completed = {agent for agent, key in result_keys.items() if state.get(key) is not None}
+    
+    # Dependency readiness flags
+    entities_ready = "entity_extraction" in completed
+    discrepancy_ready = "discrepancy" in completed
+    key_facts_ready = "key_facts" in completed
+    classification_ready = "document_classifier" in completed
     
     # Determine next agent with reasoning (как бригадир объясняет решение)
     reasoning_parts = []
@@ -226,93 +220,61 @@ def route_to_agent(state: AnalysisState) -> str:
             reasoning_parts.append("Relationship требует entities, ждем...")
             next_agent = "entity_extraction" if "entity_extraction" in requested_types else "supervisor"
     
-    # 4. Независимые агенты могут работать параллельно
-    # Автоматическое определение независимых агентов (улучшенная версия)
-    INDEPENDENT_AGENTS = {
-        "timeline": [],
-        "key_facts": [],
-        "discrepancy": [],
-        "entity_extraction": [],
-        "document_classifier": []
-    }
-    
+    # Simplified routing logic: independent vs dependent agents
+    INDEPENDENT_AGENTS = {"timeline", "key_facts", "discrepancy", "entity_extraction", "document_classifier"}
     DEPENDENT_AGENTS = {
-        "risk": ["discrepancy"],
-        "summary": ["key_facts"],
-        "relationship": ["entity_extraction"],
-        "privilege_check": []  # Может быть независимым, но обычно выполняется отдельно
+        "risk": {"discrepancy"},
+        "summary": {"key_facts"},
+        "relationship": {"entity_extraction"}
     }
     
-    # Находим все независимые агенты, которые запрошены и не завершены
+    # Find pending independent agents
     pending_independent = [
-        agent for agent in INDEPENDENT_AGENTS.keys()
+        agent for agent in INDEPENDENT_AGENTS
         if agent in requested_types and agent not in completed
     ]
     
-    # Проверяем, есть ли зависимые агенты, которые готовы к выполнению
-    pending_dependent_ready = []
-    for agent, deps in DEPENDENT_AGENTS.items():
-        if agent in requested_types and agent not in completed:
-            # Проверяем, готовы ли все зависимости
-            deps_ready = all(
-                dep in completed or dep not in requested_types
-                for dep in deps
-            )
-            if deps_ready:
-                pending_dependent_ready.append(agent)
+    # Find ready dependent agents (dependencies satisfied)
+    pending_dependent_ready = [
+        agent for agent, deps in DEPENDENT_AGENTS.items()
+        if agent in requested_types and agent not in completed
+        and all(dep in completed for dep in deps)
+    ]
     
-    # Приоритет 1: Если есть несколько независимых агентов - ВСЕГДА запускаем параллельно (даже если их 2)
+    # Routing priority:
+    # 1. Multiple independent agents → parallel execution
     if len(pending_independent) >= 2:
-        reasoning_parts.append(
-            f"Найдено {len(pending_independent)} независимых агентов для параллельного выполнения: {', '.join(pending_independent)}"
-        )
+        reasoning_parts.append(f"{len(pending_independent)} независимых агентов → параллельное выполнение")
         next_agent = "parallel_independent"
-        logger.info(
-            f"[Супервизор] Дело {case_id}: → Параллельное выполнение {len(pending_independent)} агентов: {', '.join(pending_independent)}"
-        )
-    # Приоритет 2: Если есть один независимый агент - запускаем его отдельно
+        logger.info(f"[Супервизор] {case_id}: → Параллельно {len(pending_independent)} агентов")
+    # 2. Single independent agent → run directly
     elif len(pending_independent) == 1:
-        agent_name = pending_independent[0]
-        reasoning_parts.append(f"{agent_name} агент независим, выполняется отдельно")
-        next_agent = agent_name
-        logger.info(f"[Супервизор] Дело {case_id}: → {agent_name}: выполняется отдельно")
-    # Приоритет 3: Если есть готовые зависимые агенты - запускаем их
+        next_agent = pending_independent[0]
+        reasoning_parts.append(f"{next_agent} независим → выполняется отдельно")
+        logger.info(f"[Супервизор] {case_id}: → {next_agent}")
+    # 3. Ready dependent agents → run in priority order
     elif pending_dependent_ready:
-        agent_name = pending_dependent_ready[0]
-        reasoning_parts.append(f"{agent_name} агент готов к выполнению (зависимости выполнены)")
-        next_agent = agent_name
-        logger.info(f"[Супервизор] Дело {case_id}: → {agent_name}: зависимости готовы, запускаю")
-    # Приоритет 4: Fallback на отдельные независимые агенты (для обратной совместимости)
-    elif "timeline" in requested_types and "timeline" not in completed:
-        reasoning_parts.append("Timeline агент независим, может работать параллельно")
-        next_agent = "timeline"
-        logger.info(f"[Супервизор] Дело {case_id}: → Timeline: 'Извлекаю события'")
-    elif "key_facts" in requested_types and "key_facts" not in completed:
-        reasoning_parts.append("Key Facts агент независим, может работать параллельно")
-        next_agent = "key_facts"
-        logger.info(f"[Супервизор] Дело {case_id}: → Key Facts: 'Извлекаю ключевые факты'")
-    elif "discrepancy" in requested_types and "discrepancy" not in completed:
-        reasoning_parts.append("Discrepancy агент независим, может работать параллельно")
-        next_agent = "discrepancy"
-        logger.info(f"[Супервизор] Дело {case_id}: → Discrepancy: 'Ищу противоречия'")
-    
-    # 5. Зависимые агенты (требуют результаты других)
+        # Use priority order from graph_optimizer
+        from app.services.langchain_agents.graph_optimizer import AgentPriorities
+        sorted_dependent = AgentPriorities.sort_by_priority(pending_dependent_ready)
+        next_agent = sorted_dependent[0]
+        reasoning_parts.append(f"{next_agent} готов (зависимости выполнены)")
+        logger.info(f"[Супервизор] {case_id}: → {next_agent} (зависимости готовы)")
+    # 4. Check individual dependent agents (fallback)
     elif "risk" in requested_types and "risk" not in completed:
         if discrepancy_ready:
-            reasoning_parts.append("Discrepancy готов → Risk агент может анализировать риски")
             next_agent = "risk"
-            logger.info(f"[Супервизор] Дело {case_id}: Discrepancy готов → Risk: 'Анализирую риски'")
+            reasoning_parts.append("Risk готов к выполнению")
+            logger.info(f"[Супервизор] {case_id}: → Risk")
         else:
-            reasoning_parts.append("Risk требует Discrepancy, ждем...")
-            next_agent = "supervisor"  # Ждем
+            next_agent = "supervisor"  # Wait
     elif "summary" in requested_types and "summary" not in completed:
         if key_facts_ready:
-            reasoning_parts.append("Key Facts готов → Summary агент может создать резюме")
             next_agent = "summary"
-            logger.info(f"[Супервизор] Дело {case_id}: Key Facts готов → Summary: 'Создаю резюме'")
+            reasoning_parts.append("Summary готов к выполнению")
+            logger.info(f"[Супервизор] {case_id}: → Summary")
         else:
-            reasoning_parts.append("Summary требует Key Facts, ждем...")
-            next_agent = "supervisor"  # Ждем
+            next_agent = "supervisor"  # Wait
     
     # Все готово
     elif requested_types.issubset(completed):

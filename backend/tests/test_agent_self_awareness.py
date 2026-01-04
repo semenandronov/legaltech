@@ -75,3 +75,4 @@ def test_generate_search_strategy():
     assert strategy[0]["tool"] == "search_legislation_tool"
     assert strategy[1]["tool"] == "search_case_law_tool"
 
+

@@ -38,3 +38,4 @@ def test_tool_descriptions():
     assert "vsrf.ru" in search_supreme_court_tool.description.lower()
     assert "kad.arbitr.ru" in search_case_law_tool.description.lower()
 
+
