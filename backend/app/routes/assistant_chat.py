@@ -16,7 +16,7 @@ from app.services.langchain_agents import PlanningAgent
 from app.services.langchain_agents.advanced_planning_agent import AdvancedPlanningAgent
 from app.services.analysis_service import AnalysisService
 from app.services.external_sources.web_research_service import get_web_research_service
-from app.services.external_sources.source_router import get_source_router
+from app.services.external_sources.source_router import get_source_router, initialize_source_router
 import json
 import logging
 import asyncio
@@ -186,7 +186,8 @@ async def stream_chat_response(
             if legal_research:
                 try:
                     logger.info(f"Legal research enabled for TASK query: {question[:100]}...")
-                    source_router = get_source_router()
+                    # Инициализируем source_router с официальными источниками
+                    source_router = initialize_source_router(rag_service=rag_service, register_official_sources=True)
                     
                     # Определяем источники для поиска
                     sources_to_search = ["pravo_gov", "vsrf", "web"]
@@ -425,7 +426,8 @@ async def stream_chat_response(
             if legal_research:
                 try:
                     logger.info(f"Legal research enabled for query: {question[:100]}...")
-                    source_router = get_source_router()
+                    # Инициализируем source_router с официальными источниками
+                    source_router = initialize_source_router(rag_service=rag_service, register_official_sources=True)
                     
                     # Определяем источники для поиска (приоритет pravo_gov для статей кодексов)
                     sources_to_search = ["pravo_gov", "vsrf", "web"]  # pravo_gov для законодательства, vsrf для позиций ВС
