@@ -62,7 +62,8 @@ class BaseSource(ABC):
         self, 
         query: str, 
         max_results: int = 10,
-        filters: Optional[Dict[str, Any]] = None
+        filters: Optional[Dict[str, Any]] = None,
+        use_cache: bool = True
     ) -> List[SourceResult]:
         """
         Search the source for relevant content

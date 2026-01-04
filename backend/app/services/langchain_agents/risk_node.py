@@ -316,15 +316,15 @@ def risk_agent_node(
                     verification_status = "verified" if verification_result.get("verified", False) else "unverified"
                     if hasattr(risk, 'verification_status'):
                         risk.verification_status = verification_status
-                        # Снижаем confidence если не верифицировано
+                        # Снижаем confidence если не верифицировано (увеличено до -0.4 согласно плану)
                         if not verification_result.get("verified", False):
                             current_confidence = getattr(risk, 'confidence', 0.8)
-                            risk.confidence = max(0.3, current_confidence - 0.2)
+                            risk.confidence = max(0.3, current_confidence - 0.4)
                     elif isinstance(risk, dict):
                         risk['verification_status'] = verification_status
                         if not verification_result.get("verified", False):
                             current_confidence = risk.get('confidence', 0.8)
-                            risk['confidence'] = max(0.3, current_confidence - 0.2)
+                            risk['confidence'] = max(0.3, current_confidence - 0.4)
                 
                 logger.info(f"Citation verification completed for {len(parsed_risks)} risks")
             except Exception as e:

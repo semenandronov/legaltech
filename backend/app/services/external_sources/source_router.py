@@ -18,15 +18,19 @@ class SourceRouter:
         self._sources: Dict[str, BaseSource] = {}
         self._default_sources: Set[str] = {"vault"}  # Always include vault by default
     
-    def register_source(self, source: BaseSource) -> None:
+    def register_source(self, source: BaseSource, priority: int = 50) -> None:
         """
         Register a data source
         
         Args:
             source: Source instance to register
+            priority: Priority of the source (higher = more priority, default: 50)
+                      Прямые парсеры должны иметь priority > 100
+                      Web search fallback должен иметь priority < 50
         """
         self._sources[source.name] = source
-        logger.info(f"Registered source: {source.name}")
+        self._source_priority[source.name] = priority
+        logger.info(f"Registered source: {source.name} with priority {priority}")
     
     def unregister_source(self, name: str) -> bool:
         """
@@ -278,7 +282,7 @@ def get_source_router() -> SourceRouter:
     return _global_router
 
 
-def initialize_source_router(rag_service=None) -> SourceRouter:
+def initialize_source_router(rag_service=None, register_official_sources: bool = True) -> SourceRouter:
     """
     Initialize the global source router with services
     
@@ -293,23 +297,52 @@ def initialize_source_router(rag_service=None) -> SourceRouter:
     
     # Register vault source with RAG service
     vault_source = VaultSource(rag_service=rag_service)
-    _global_router.register_source(vault_source)
+    _global_router.register_source(vault_source, priority=100)  # Vault имеет высокий приоритет
     
-    # Register legal research sources
+    # Register official legal sources (прямые парсеры имеют приоритет над web search)
+    if register_official_sources:
+        try:
+            # PravoGovSource - прямой парсер для pravo.gov.ru
+            pravo_source = PravoGovSource()
+            _global_router.register_source(pravo_source, priority=150)  # Высокий приоритет (прямой парсер)
+            logger.info("Registered PravoGovSource")
+        except Exception as e:
+            logger.warning(f"Failed to register PravoGovSource: {e}")
+        
+        try:
+            # VSRFSource - прямой парсер для vsrf.ru
+            vsrf_source = VSRFSource()
+            _global_router.register_source(vsrf_source, priority=150)  # Высокий приоритет (прямой парсер)
+            logger.info("Registered VSRFSource")
+        except Exception as e:
+            logger.warning(f"Failed to register VSRFSource: {e}")
+        
+        try:
+            # KadArbitrSource - прямой парсер для kad.arbitr.ru
+            kad_source = KadArbitrSource()
+            _global_router.register_source(kad_source, priority=150)  # Высокий приоритет (прямой парсер)
+            logger.info("Registered KadArbitrSource")
+        except Exception as e:
+            logger.warning(f"Failed to register KadArbitrSource: {e}")
+    
+    # Register legal research sources (fallback sources)
     try:
         from .moyarbitr_source import MoyArbitrSource
         from .vas_practice_source import VASPracticeSource
         
         moyarbitr_source = MoyArbitrSource()
-        _global_router.register_source(moyarbitr_source)
+        _global_router.register_source(moyarbitr_source, priority=50)  # Средний приоритет (fallback)
         
         vas_source = VASPracticeSource()
-        _global_router.register_source(vas_source)
+        _global_router.register_source(vas_source, priority=50)  # Средний приоритет (fallback)
         
-        logger.info("Source router initialized with vault, МойАрбитр, and ВАС sources")
+        logger.info("Source router initialized with vault, official sources, МойАрбитр, and ВАС sources")
     except Exception as e:
         logger.warning(f"Failed to register legal research sources: {e}")
-        logger.info("Source router initialized with vault source only")
+        if register_official_sources:
+            logger.info("Source router initialized with vault and official sources only")
+        else:
+            logger.info("Source router initialized with vault source only")
     
     return _global_router
 

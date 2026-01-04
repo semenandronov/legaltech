@@ -200,3 +200,4 @@ def get_result_cache() -> ResultCache:
         _global_cache = ResultCache()
     return _global_cache
 
+

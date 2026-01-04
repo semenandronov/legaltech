@@ -56,16 +56,18 @@ class BaseAgentNode(ABC):
         state: AnalysisState,
         db: Optional[Session] = None,
         rag_service: Optional[RAGService] = None,
-        document_processor: Optional[DocumentProcessor] = None
+        document_processor: Optional[DocumentProcessor] = None,
+        retry_count: int = 0
     ) -> AnalysisState:
         """
-        Execute agent node - main entry point
+        Execute agent node - main entry point with smart retry
         
         Args:
             state: Current graph state
             db: Database session (overrides instance db if provided)
             rag_service: RAG service (overrides instance if provided)
             document_processor: Document processor (overrides instance if provided)
+            retry_count: Current retry attempt (for smart retry)
             
         Returns:
             Updated state with agent result
@@ -78,7 +80,7 @@ class BaseAgentNode(ABC):
         case_id = state.get("case_id", "unknown")
         
         try:
-            logger.info(f"{self.agent_name} agent: Starting for case {case_id}")
+            logger.info(f"{self.agent_name} agent: Starting for case {case_id} (attempt {retry_count + 1})")
             
             # Initialize file system context
             self._initialize_file_system_context(state)
@@ -89,25 +91,35 @@ class BaseAgentNode(ABC):
             # Get tools
             tools = get_all_tools()
             
-            # Initialize LLM
-            llm = create_llm(temperature=0.1)
+            # Initialize LLM with temperature based on retry count (increase for retries)
+            temperature = 0.1 if retry_count == 0 else min(0.3 + retry_count * 0.1, 0.7)
+            llm = create_llm(temperature=temperature)
             
             # Initialize memory manager
             memory_manager = AgentMemoryManager(case_id, llm)
             memory_context = memory_manager.get_context_for_agent(self.agent_name, "")
             
+            # Reduce memory context on retries (simplify context)
+            if retry_count > 0 and memory_context:
+                # Truncate memory context for retries
+                max_context_length = 500 if retry_count == 1 else 300
+                if len(memory_context) > max_context_length:
+                    memory_context = memory_context[:max_context_length] + "... [truncated for retry]"
+                    logger.info(f"{self.agent_name} agent: Reduced memory context to {max_context_length} chars for retry")
+            
             # Check if LLM supports function calling
             use_tools = hasattr(llm, 'bind_tools')
             
             if use_tools and rag_service:
-                # Use agent with tools
+                # Use agent with tools (with simplified prompt on retry)
                 result = self._execute_with_tools(
                     state=state,
                     llm=llm,
                     tools=tools,
                     memory_context=memory_context,
                     rag_service=rag_service,
-                    case_id=case_id
+                    case_id=case_id,
+                    retry_count=retry_count
                 )
             else:
                 # Fallback to direct LLM call
@@ -116,7 +128,8 @@ class BaseAgentNode(ABC):
                     state=state,
                     llm=llm,
                     memory_context=memory_context,
-                    case_id=case_id
+                    case_id=case_id,
+                    retry_count=retry_count
                 )
             
             # Process and format result
@@ -146,7 +159,23 @@ class BaseAgentNode(ABC):
             return new_state
             
         except Exception as e:
-            logger.error(f"{self.agent_name} agent error for case {case_id}: {e}", exc_info=True)
+            logger.error(f"{self.agent_name} agent error for case {case_id} (attempt {retry_count + 1}): {e}", exc_info=True)
+            
+            # Try smart retry with simplified parameters
+            if retry_count < 2:  # Max 2 retries with smart modifications
+                logger.info(f"{self.agent_name} agent: Attempting smart retry {retry_count + 1}/2 with simplified parameters")
+                try:
+                    return self.execute(
+                        state=state,
+                        db=db,
+                        rag_service=rag_service,
+                        document_processor=document_processor,
+                        retry_count=retry_count + 1
+                    )
+                except Exception as retry_error:
+                    logger.error(f"{self.agent_name} agent: Smart retry also failed: {retry_error}")
+                    return self._handle_error(state, retry_error)
+            
             return self._handle_error(state, e)
     
     def _initialize_file_system_context(self, state: AnalysisState) -> None:
@@ -174,10 +203,11 @@ class BaseAgentNode(ABC):
         tools: List[Any],
         memory_context: Optional[str],
         rag_service: RAGService,
-        case_id: str
+        case_id: str,
+        retry_count: int = 0
     ) -> Dict[str, Any]:
         """
-        Execute agent with tools support
+        Execute agent with tools support (with smart retry simplifications)
         
         Args:
             state: Current state
@@ -186,33 +216,41 @@ class BaseAgentNode(ABC):
             memory_context: Memory context from previous runs
             rag_service: RAG service
             case_id: Case identifier
+            retry_count: Current retry attempt (for prompt simplification)
             
         Returns:
             Agent result
         """
         base_prompt = get_agent_prompt(self.agent_name)
         
-        # Add memory context if available
-        if memory_context:
-            prompt = f"""{base_prompt}
+        # Simplify prompt on retries
+        if retry_count > 0:
+            prompt = self._simplify_prompt(base_prompt, retry_count)
+            logger.info(f"{self.agent_name} agent: Using simplified prompt for retry {retry_count}")
+        else:
+            prompt = base_prompt
+        
+        # Add memory context if available (but only if not retry or first retry)
+        if memory_context and retry_count <= 1:
+            prompt = f"""{prompt}
 
 Предыдущий контекст из памяти:
 {memory_context}
 
 Используй этот контекст для улучшения анализа."""
-        else:
-            prompt = base_prompt
         
         # Create agent
         agent = create_legal_agent(llm, tools, system_prompt=prompt)
         
-        # Create user query
-        user_query = self._create_user_query(case_id, state)
+        # Create user query (simplified on retries)
+        user_query = self._create_user_query(case_id, state, retry_count=retry_count)
         initial_message = HumanMessage(content=user_query)
         
-        # Invoke agent
+        # Invoke agent with reduced recursion limit on retries
         from app.services.langchain_agents.callbacks import AnalysisCallbackHandler
         callback = AnalysisCallbackHandler(agent_name=self.agent_name)
+        
+        recursion_limit = 15 if retry_count == 0 else max(10 - retry_count * 2, 5)
         
         result = safe_agent_invoke(
             agent,
@@ -221,7 +259,7 @@ class BaseAgentNode(ABC):
                 "messages": [initial_message],
                 "case_id": case_id
             },
-            config={"recursion_limit": 15, "callbacks": [callback]}
+            config={"recursion_limit": recursion_limit, "callbacks": [callback]}
         )
         
         return result
@@ -231,32 +269,42 @@ class BaseAgentNode(ABC):
         state: AnalysisState,
         llm: Any,
         memory_context: Optional[str],
-        case_id: str
+        case_id: str,
+        retry_count: int = 0
     ) -> Dict[str, Any]:
         """
-        Execute agent without tools (fallback)
+        Execute agent without tools (fallback) with smart retry
         
         Args:
             state: Current state
             llm: LLM instance
             memory_context: Memory context
             case_id: Case identifier
+            retry_count: Current retry attempt (for prompt simplification)
             
         Returns:
             Agent result
         """
         base_prompt = get_agent_prompt(self.agent_name)
-        user_query = self._create_user_query(case_id, state)
         
-        if memory_context:
-            full_prompt = f"""{base_prompt}
+        # Simplify prompt on retries
+        if retry_count > 0:
+            prompt = self._simplify_prompt(base_prompt, retry_count)
+        else:
+            prompt = base_prompt
+        
+        user_query = self._create_user_query(case_id, state, retry_count=retry_count)
+        
+        # Include memory context only if not retry or first retry
+        if memory_context and retry_count <= 1:
+            full_prompt = f"""{prompt}
 
 Предыдущий контекст:
 {memory_context}
 
 Запрос: {user_query}"""
         else:
-            full_prompt = f"""{base_prompt}
+            full_prompt = f"""{prompt}
 
 Запрос: {user_query}"""
         
@@ -267,14 +315,62 @@ class BaseAgentNode(ABC):
             "case_id": case_id
         }
     
+    def _simplify_prompt(self, base_prompt: str, retry_count: int) -> str:
+        """
+        Simplify prompt for retries
+        
+        Args:
+            base_prompt: Original prompt
+            retry_count: Current retry attempt
+            
+        Returns:
+            Simplified prompt
+        """
+        # Extract key instructions (first 500 chars usually contain main instructions)
+        # Remove detailed examples and verbose explanations on retries
+        lines = base_prompt.split('\n')
+        simplified_lines = []
+        
+        # Keep first few lines (usually main instructions)
+        # Remove examples and verbose sections
+        in_example_section = False
+        example_markers = ["Пример:", "Example:", "Примеры:", "Examples:", "```"]
+        
+        for i, line in enumerate(lines):
+            # Keep first 20 lines (main instructions)
+            if i < 20:
+                simplified_lines.append(line)
+            # Skip example sections on retries
+            elif any(marker in line for marker in example_markers):
+                if retry_count >= 1:
+                    in_example_section = True
+                    continue
+                simplified_lines.append(line)
+            elif in_example_section and line.strip() == "":
+                in_example_section = False
+                simplified_lines.append(line)
+            elif not in_example_section:
+                # Keep important sections but truncate verbose ones
+                if len(line) > 200 and retry_count >= 2:
+                    simplified_lines.append(line[:200] + "...")
+                else:
+                    simplified_lines.append(line)
+        
+        simplified = '\n'.join(simplified_lines)
+        
+        # Add retry instruction
+        retry_note = f"\n\n[Повторная попытка {retry_count}: Используй упрощенный подход]"
+        return simplified + retry_note
+    
     @abstractmethod
-    def _create_user_query(self, case_id: str, state: AnalysisState) -> str:
+    def _create_user_query(self, case_id: str, state: AnalysisState, retry_count: int = 0) -> str:
         """
         Create user query for the agent (must be implemented by subclasses)
         
         Args:
             case_id: Case identifier
             state: Current state
+            retry_count: Current retry attempt (for query simplification)
             
         Returns:
             User query string
@@ -319,4 +415,5 @@ class BaseAgentNode(ABC):
         new_state[result_key] = None
         
         return new_state
+
 

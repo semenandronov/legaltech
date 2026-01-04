@@ -393,15 +393,15 @@ def key_facts_agent_node(
                     verification_status = "verified" if verification_result.get("verified", False) else "unverified"
                     if hasattr(fact, 'verification_status'):
                         fact.verification_status = verification_status
-                        # Снижаем confidence если не верифицировано
+                        # Снижаем confidence если не верифицировано (увеличено до -0.4 согласно плану)
                         if not verification_result.get("verified", False):
                             current_confidence = getattr(fact, 'confidence', 0.8)
-                            fact.confidence = max(0.3, current_confidence - 0.2)
+                            fact.confidence = max(0.3, current_confidence - 0.4)
                     elif isinstance(fact, dict):
                         fact['verification_status'] = verification_status
                         if not verification_result.get("verified", False):
                             current_confidence = fact.get('confidence', 0.8)
-                            fact['confidence'] = max(0.3, current_confidence - 0.2)
+                            fact['confidence'] = max(0.3, current_confidence - 0.4)
                 
                 logger.info(f"Citation verification completed for {len(parsed_facts)} key facts")
             except Exception as e:

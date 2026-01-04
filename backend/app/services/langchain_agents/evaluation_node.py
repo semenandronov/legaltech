@@ -3,6 +3,7 @@ from typing import Dict, Any, Optional, List
 from app.services.langchain_agents.state import AnalysisState
 from app.services.langchain_agents.evaluation_metrics import EvaluationMetrics
 from app.services.langchain_agents.multi_level_validator import MultiLevelValidator
+from app.services.langchain_agents.self_critique import SelfCritiqueService
 from app.services.llm_factory import create_llm
 from app.config import config
 from langchain_core.documents import Document
@@ -38,6 +39,14 @@ class ResultEvaluator:
         except Exception as e:
             logger.warning(f"Failed to initialize Multi-Level Validator: {e}")
             self.validator = None
+        
+        # Initialize self-critique service
+        try:
+            self.self_critique = SelfCritiqueService()
+            logger.info("✅ Self-Critique Service initialized in ResultEvaluator")
+        except Exception as e:
+            logger.warning(f"Failed to initialize Self-Critique Service: {e}")
+            self.self_critique = None
     
     def evaluate_step_result(
         self,
@@ -119,6 +128,66 @@ class ResultEvaluator:
         if quality_metrics["overall_score"] > 0:
             evaluation["confidence"] = quality_metrics["overall_score"]
         
+        # Self-critique: агент проверяет свой ответ
+        if self.self_critique:
+            try:
+                critique_result = self.self_critique.critique_agent_result(
+                    agent_name=agent_name,
+                    agent_result=result
+                )
+                
+                # Добавляем результаты self-critique в evaluation
+                evaluation["self_critique"] = {
+                    "logical_issues": critique_result.get("logical_issues", []),
+                    "completeness_issues": critique_result.get("completeness_issues", []),
+                    "contradictions": critique_result.get("contradictions", []),
+                    "overall_quality": critique_result.get("overall_quality", 0.5),
+                    "suggestions": critique_result.get("suggestions", [])
+                }
+                
+                # Обновляем issues и recommendations на основе self-critique
+                if critique_result.get("logical_issues"):
+                    evaluation["issues"].extend([
+                        f"Self-critique (logic): {issue}" 
+                        for issue in critique_result["logical_issues"]
+                    ])
+                
+                if critique_result.get("completeness_issues"):
+                    evaluation["issues"].extend([
+                        f"Self-critique (completeness): {issue}" 
+                        for issue in critique_result["completeness_issues"]
+                    ])
+                
+                if critique_result.get("contradictions"):
+                    evaluation["issues"].extend([
+                        f"Self-critique (contradiction): {contradiction}" 
+                        for contradiction in critique_result["contradictions"]
+                    ])
+                
+                if critique_result.get("suggestions"):
+                    evaluation["recommendations"].extend(critique_result["suggestions"])
+                
+                # Обновляем confidence с учётом self-critique (взвешенное среднее)
+                critique_quality = critique_result.get("overall_quality", 0.5)
+                if evaluation["confidence"] > 0:
+                    # Комбинируем: 70% от metrics, 30% от self-critique
+                    evaluation["confidence"] = 0.7 * evaluation["confidence"] + 0.3 * critique_quality
+                else:
+                    evaluation["confidence"] = critique_quality
+                
+                # Если self-critique рекомендует retry, добавляем к needs_retry
+                if critique_result.get("should_retry", False):
+                    evaluation["needs_retry"] = True
+                    evaluation["recommendations"].append("Self-critique recommends retry")
+                
+                logger.info(
+                    f"Self-critique completed for {agent_name}: "
+                    f"quality={critique_quality:.2f}, issues={len(critique_result.get('logical_issues', [])) + len(critique_result.get('completeness_issues', [])) + len(critique_result.get('contradictions', []))}"
+                )
+                
+            except Exception as e:
+                logger.warning(f"Self-critique failed for {agent_name}: {e}", exc_info=True)
+        
         # Multi-level validation for low-quality results
         if quality_metrics["overall_score"] < 0.7 and self.validator:
             try:
@@ -170,6 +239,15 @@ class ResultEvaluator:
                             "agreement": validation_result.level_4.agreement_score,
                             "reasoning": validation_result.level_4.reasoning
                         },
+                        "level_5_cross_agent": {
+                            "passed": validation_result.level_5.passed,
+                            "agent_name": validation_result.level_5.agent_name,
+                            "related_agents": validation_result.level_5.related_agents,
+                            "conflicts": validation_result.level_5.conflicts,
+                            "agreements": validation_result.level_5.agreements,
+                            "consistency_score": validation_result.level_5.consistency_score,
+                            "reasoning": validation_result.level_5.reasoning
+                        } if validation_result.level_5 else None,
                         "overall_confidence": validation_result.overall_confidence,
                         "issues": validation_result.issues,
                         "recommendations": validation_result.recommendations

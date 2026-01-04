@@ -273,15 +273,15 @@ def discrepancy_agent_node(
                     verification_status = "verified" if verification_result.get("verified", False) else "unverified"
                     if hasattr(discrepancy, 'verification_status'):
                         discrepancy.verification_status = verification_status
-                        # Снижаем confidence если не верифицировано
+                        # Снижаем confidence если не верифицировано (увеличено до -0.4 согласно плану)
                         if not verification_result.get("verified", False):
                             current_confidence = getattr(discrepancy, 'confidence', 0.8)
-                            discrepancy.confidence = max(0.3, current_confidence - 0.2)
+                            discrepancy.confidence = max(0.3, current_confidence - 0.4)
                     elif isinstance(discrepancy, dict):
                         discrepancy['verification_status'] = verification_status
                         if not verification_result.get("verified", False):
                             current_confidence = discrepancy.get('confidence', 0.8)
-                            discrepancy['confidence'] = max(0.3, current_confidence - 0.2)
+                            discrepancy['confidence'] = max(0.3, current_confidence - 0.4)
                 
                 logger.info(f"Citation verification completed for {len(parsed_discrepancies)} discrepancies")
             except Exception as e:

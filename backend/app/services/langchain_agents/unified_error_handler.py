@@ -13,6 +13,10 @@ class ErrorType(str, Enum):
     TIMEOUT = "timeout"
     TOOL_ERROR = "tool_error"
     LLM_ERROR = "llm_error"
+    LLM_RATE_LIMIT = "llm_rate_limit"
+    LLM_TIMEOUT = "llm_timeout"
+    LLM_INVALID_RESPONSE = "llm_invalid_response"
+    LLM_UNAVAILABLE = "llm_unavailable"
     DEPENDENCY_ERROR = "dependency_error"
     VALIDATION_ERROR = "validation_error"
     NETWORK_ERROR = "network_error"
@@ -66,23 +70,45 @@ class UnifiedErrorHandler:
     LLM_ERROR_PATTERNS = [
         "llm", "model", "api", "rate limit", "quota", "token"
     ]
+    LLM_RATE_LIMIT_PATTERNS = [
+        "429", "too many requests", "rate limit", "rate_limit", 
+        "quota exceeded", "quota_exceeded", "throttle", "throttling"
+    ]
+    LLM_TIMEOUT_PATTERNS = [
+        "timeout", "timed out", "deadline exceeded", "request timeout"
+    ]
+    LLM_INVALID_RESPONSE_PATTERNS = [
+        "invalid response", "parse error", "json decode", "malformed",
+        "unexpected format", "schema validation", "invalid format"
+    ]
+    LLM_UNAVAILABLE_PATTERNS = [
+        "503", "service unavailable", "unavailable", "502", "bad gateway",
+        "connection refused", "connection error", "cannot connect"
+    ]
     DEPENDENCY_PATTERNS = ["dependency", "requires", "missing", "not found"]
     NETWORK_PATTERNS = ["connection", "network", "dns", "socket", "http"]
     
-    def __init__(self, max_retries: int = 3, base_retry_delay: float = 1.0):
+    def __init__(
+        self, 
+        max_retries: int = 3, 
+        base_retry_delay: float = 1.0,
+        enable_graceful_degradation: bool = True
+    ):
         """
         Initialize unified error handler
         
         Args:
             max_retries: Maximum number of retries for retryable errors
             base_retry_delay: Base delay in seconds for exponential backoff
+            enable_graceful_degradation: Enable graceful degradation when services unavailable
         """
         self.max_retries = max_retries
         self.base_retry_delay = base_retry_delay
+        self.enable_graceful_degradation = enable_graceful_degradation
     
     def classify_error(self, error: Exception) -> ErrorType:
         """
-        Classify error type based on error message and type
+        Classify error type based on error message and type with detailed LLM error classification
         
         Args:
             error: Exception that occurred
@@ -93,7 +119,24 @@ class UnifiedErrorHandler:
         error_str = str(error).lower()
         error_type_name = type(error).__name__.lower()
         
-        # Check timeout patterns
+        # Check for detailed LLM error subtypes first (more specific)
+        if any(pattern in error_str for pattern in self.LLM_RATE_LIMIT_PATTERNS):
+            return ErrorType.LLM_RATE_LIMIT
+        
+        if any(pattern in error_str for pattern in self.LLM_UNAVAILABLE_PATTERNS):
+            return ErrorType.LLM_UNAVAILABLE
+        
+        if any(pattern in error_str for pattern in self.LLM_TIMEOUT_PATTERNS):
+            # Check if it's LLM-specific timeout (not general timeout)
+            if any(llm_pattern in error_str for llm_pattern in ["llm", "model", "api", "gigachat", "yandex"]):
+                return ErrorType.LLM_TIMEOUT
+        
+        if any(pattern in error_str for pattern in self.LLM_INVALID_RESPONSE_PATTERNS):
+            # Check if it's LLM response parsing error
+            if any(llm_pattern in error_str for llm_pattern in ["llm", "model", "response", "generation"]):
+                return ErrorType.LLM_INVALID_RESPONSE
+        
+        # Check general timeout patterns
         if any(pattern in error_str for pattern in self.TIMEOUT_PATTERNS):
             return ErrorType.TIMEOUT
         
@@ -101,7 +144,7 @@ class UnifiedErrorHandler:
         if any(pattern in error_str for pattern in self.TOOL_ERROR_PATTERNS):
             return ErrorType.TOOL_ERROR
         
-        # Check LLM error patterns
+        # Check general LLM error patterns (fallback for other LLM errors)
         if any(pattern in error_str for pattern in self.LLM_ERROR_PATTERNS):
             return ErrorType.LLM_ERROR
         
@@ -113,7 +156,7 @@ class UnifiedErrorHandler:
         if any(pattern in error_str for pattern in self.NETWORK_PATTERNS):
             return ErrorType.NETWORK_ERROR
         
-        # Check error type
+        # Check error type by class name
         if "timeout" in error_type_name:
             return ErrorType.TIMEOUT
         if "connection" in error_type_name or "network" in error_type_name:
@@ -121,11 +164,21 @@ class UnifiedErrorHandler:
         if "validation" in error_type_name or "value" in error_type_name:
             return ErrorType.VALIDATION_ERROR
         
+        # Check HTTP status codes in error attributes
+        if hasattr(error, 'status_code'):
+            status_code = error.status_code
+            if status_code == 429:
+                return ErrorType.LLM_RATE_LIMIT
+            elif status_code in [502, 503, 504]:
+                return ErrorType.LLM_UNAVAILABLE
+            elif status_code == 408:
+                return ErrorType.LLM_TIMEOUT
+        
         return ErrorType.UNKNOWN
     
     def select_strategy(self, error_type: ErrorType, agent_name: str) -> ErrorStrategy:
         """
-        Select error handling strategy based on error type
+        Select error handling strategy based on error type with detailed LLM error handling
         
         Args:
             error_type: Classified error type
@@ -134,7 +187,21 @@ class UnifiedErrorHandler:
         Returns:
             ErrorStrategy to use
         """
-        # Retryable errors
+        # LLM-specific error strategies
+        if error_type == ErrorType.LLM_RATE_LIMIT:
+            # Rate limit: retry with longer backoff
+            return ErrorStrategy.RETRY
+        if error_type == ErrorType.LLM_TIMEOUT:
+            # LLM timeout: retry with shorter timeout or simplified request
+            return ErrorStrategy.RETRY
+        if error_type == ErrorType.LLM_UNAVAILABLE:
+            # LLM unavailable: retry (might be transient) or graceful degradation
+            return ErrorStrategy.RETRY
+        if error_type == ErrorType.LLM_INVALID_RESPONSE:
+            # Invalid response: retry (might be parsing error) or fallback
+            return ErrorStrategy.RETRY
+        
+        # General retryable errors
         if error_type in [ErrorType.TIMEOUT, ErrorType.NETWORK_ERROR, ErrorType.LLM_ERROR]:
             return ErrorStrategy.RETRY
         
@@ -187,13 +254,27 @@ class UnifiedErrorHandler:
         )
         
         if should_retry:
-            # Calculate exponential backoff delay
-            retry_delay = self.base_retry_delay * (2 ** retry_count)
+            # Calculate exponential backoff delay with different multipliers for different error types
+            if error_type == ErrorType.LLM_RATE_LIMIT:
+                # Rate limit: longer backoff (3x base delay)
+                retry_delay = self.base_retry_delay * 3 * (2 ** retry_count)
+            elif error_type == ErrorType.LLM_UNAVAILABLE:
+                # Service unavailable: medium backoff (2x base delay)
+                retry_delay = self.base_retry_delay * 2 * (2 ** retry_count)
+            elif error_type == ErrorType.LLM_TIMEOUT:
+                # Timeout: standard backoff
+                retry_delay = self.base_retry_delay * (2 ** retry_count)
+            else:
+                # Other errors: standard exponential backoff
+                retry_delay = self.base_retry_delay * (2 ** retry_count)
+            
+            # Cap maximum delay at 60 seconds
+            retry_delay = min(retry_delay, 60.0)
             
             return ErrorResult(
                 success=False,
                 strategy=strategy,
-                message=f"Error in {agent_name}: {str(error)[:200]}. Will retry after {retry_delay}s",
+                message=f"Error in {agent_name}: {str(error)[:200]}. Will retry after {retry_delay:.1f}s",
                 retry_after=retry_delay,
                 should_retry=True,
                 max_retries=self.max_retries,
@@ -217,6 +298,27 @@ class UnifiedErrorHandler:
                 should_retry=False
             )
         
+        # Graceful degradation for LLM unavailable errors after max retries
+        if (
+            error_type in [ErrorType.LLM_UNAVAILABLE, ErrorType.LLM_RATE_LIMIT] and
+            retry_count >= self.max_retries and
+            self.enable_graceful_degradation
+        ):
+            logger.warning(
+                f"[ErrorHandler] Graceful degradation for {agent_name} after {retry_count} retries. "
+                f"Service unavailable, continuing with reduced functionality."
+            )
+            return ErrorResult(
+                success=False,
+                strategy=ErrorStrategy.FALLBACK,
+                message=(
+                    f"Error in {agent_name}: {str(error)[:200]}. "
+                    f"Service unavailable after {retry_count} retries. "
+                    f"Graceful degradation enabled - continuing with reduced functionality."
+                ),
+                should_retry=False
+            )
+        
         # FAIL strategy
         return ErrorResult(
             success=False,
@@ -229,7 +331,27 @@ class UnifiedErrorHandler:
         """Check if error should be retried"""
         return error_result.should_retry and error_result.retry_count <= error_result.max_retries
     
-    def get_retry_delay(self, retry_count: int) -> float:
-        """Calculate retry delay with exponential backoff"""
-        return self.base_retry_delay * (2 ** retry_count)
+    def get_retry_delay(self, retry_count: int, error_type: Optional[ErrorType] = None) -> float:
+        """
+        Calculate retry delay with exponential backoff
+        
+        Args:
+            retry_count: Current retry count
+            error_type: Optional error type for specialized delay calculation
+            
+        Returns:
+            Retry delay in seconds (capped at 60 seconds)
+        """
+        if error_type == ErrorType.LLM_RATE_LIMIT:
+            # Rate limit: longer backoff (3x base delay)
+            delay = self.base_retry_delay * 3 * (2 ** retry_count)
+        elif error_type == ErrorType.LLM_UNAVAILABLE:
+            # Service unavailable: medium backoff (2x base delay)
+            delay = self.base_retry_delay * 2 * (2 ** retry_count)
+        else:
+            # Standard exponential backoff
+            delay = self.base_retry_delay * (2 ** retry_count)
+        
+        # Cap maximum delay at 60 seconds
+        return min(delay, 60.0)
 

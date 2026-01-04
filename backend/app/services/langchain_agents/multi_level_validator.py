@@ -47,26 +47,80 @@ class CircularVerification:
 
 
 @dataclass
+class CrossAgentValidation:
+    """Level 5: Cross-agent validation result"""
+    passed: bool
+    agent_name: str  # Name of the agent being validated
+    related_agents: List[str]  # List of related agents checked
+    conflicts: List[Dict[str, Any]]  # Conflicts with other agents
+    agreements: List[Dict[str, Any]]  # Agreements with other agents
+    consistency_score: float  # Consistency score across agents (0.0-1.0)
+    reasoning: str
+
+
+@dataclass
 class ValidationResult:
-    """Complete validation result with all 4 levels"""
+    """Complete validation result with all 5 levels"""
     is_valid: bool
     level_1: EvidenceCheck
     level_2: ConsistencyCheck
     level_3: ConfidenceScore
     level_4: CircularVerification
-    overall_confidence: float
-    issues: List[str]
-    recommendations: List[str]
+    level_5: Optional[CrossAgentValidation] = None  # Optional cross-agent validation
+    overall_confidence: float = 0.0
+    issues: List[str] = None
+    recommendations: List[str] = None
+    
+    def __post_init__(self):
+        """Initialize default values"""
+        if self.issues is None:
+            self.issues = []
+        if self.recommendations is None:
+            self.recommendations = []
 
 
 class MultiLevelValidator:
-    """4-уровневая валидация результатов агентов"""
+    """5-уровневая валидация результатов агентов"""
     
-    def __init__(self):
-        """Initialize multi-level validator"""
+    # Пороги для разных типов дел (автоматическое определение)
+    CASE_TYPE_THRESHOLDS = {
+        "general": {
+            "min_confidence": 0.7,
+            "min_consistency": 0.7,
+            "min_evidence": 0.6
+        },
+        "contract": {
+            "min_confidence": 0.8,
+            "min_consistency": 0.75,
+            "min_evidence": 0.7
+        },
+        "litigation": {
+            "min_confidence": 0.75,
+            "min_consistency": 0.7,
+            "min_evidence": 0.65
+        },
+        "compliance": {
+            "min_confidence": 0.8,
+            "min_consistency": 0.8,
+            "min_evidence": 0.7
+        }
+    }
+    
+    def __init__(self, case_type: Optional[str] = None):
+        """
+        Initialize multi-level validator
+        
+        Args:
+            case_type: Тип дела для автоматического определения порогов (general, contract, litigation, compliance)
+        """
         try:
             self.llm = create_llm(temperature=0.1)  # Низкая температура для консистентности
-            logger.info("✅ Multi-Level Validator initialized")
+            self.case_type = case_type or "general"
+            self.thresholds = self.CASE_TYPE_THRESHOLDS.get(
+                self.case_type.lower(),
+                self.CASE_TYPE_THRESHOLDS["general"]
+            )
+            logger.info(f"✅ Multi-Level Validator initialized (case_type={self.case_type}, thresholds={self.thresholds})")
         except Exception as e:
             logger.error(f"Failed to initialize LLM: {e}")
             raise
@@ -76,19 +130,23 @@ class MultiLevelValidator:
         finding: Dict[str, Any],
         source_docs: List[Document],
         other_findings: List[Dict[str, Any]],
-        verifying_agent: Optional[str] = None
+        verifying_agent: Optional[str] = None,
+        agent_name: Optional[str] = None,
+        other_agent_results: Optional[Dict[str, Dict[str, Any]]] = None
     ) -> ValidationResult:
         """
-        Валидация на 4 уровнях
+        Валидация на 5 уровнях (включая cross-agent validation)
         
         Args:
             finding: Finding to validate (result from agent)
             source_docs: Source documents for evidence check
             other_findings: Other findings for consistency check
             verifying_agent: Optional agent name for circular verification
+            agent_name: Name of the agent that produced this finding (for cross-agent validation)
+            other_agent_results: Dictionary of results from other agents (agent_name -> result) for cross-agent validation
             
         Returns:
-            ValidationResult with all 4 levels
+            ValidationResult with all 5 levels
         """
         try:
             logger.info(f"Validating finding: {finding.get('type', 'unknown')}...")
@@ -113,21 +171,45 @@ class MultiLevelValidator:
                     reasoning="Circular verification skipped (no verifying agent provided)"
                 )
             
-            # Determine overall validity
+            # Level 5: Cross-agent validation (если есть результаты других агентов)
+            cross_agent_validation = None
+            if agent_name and other_agent_results:
+                cross_agent_validation = await self._cross_agent_validate(
+                    finding=finding,
+                    agent_name=agent_name,
+                    other_agent_results=other_agent_results,
+                    source_docs=source_docs
+                )
+            
+            # Determine overall validity using case-specific thresholds
+            min_confidence = self.thresholds["min_confidence"]
+            min_consistency = self.thresholds["min_consistency"]
+            
             is_valid = all([
                 evidence_check.passed,
                 consistency_check.passed,
-                confidence_score.score > 0.7,
+                confidence_score.score >= min_confidence,
                 circular_verification.confirmed
             ])
             
-            # Calculate overall confidence
-            overall_confidence = (
-                evidence_check.confidence * 0.3 +
-                consistency_check.confidence * 0.2 +
-                confidence_score.score * 0.3 +
-                circular_verification.agreement_score * 0.2
-            )
+            # Если есть cross-agent validation, учитываем его
+            if cross_agent_validation:
+                is_valid = is_valid and (
+                    cross_agent_validation.passed and 
+                    cross_agent_validation.consistency_score >= min_consistency
+                )
+            
+            # Calculate overall confidence (взвешенное среднее)
+            weights = [0.25, 0.15, 0.25, 0.15, 0.20] if cross_agent_validation else [0.3, 0.2, 0.3, 0.2, 0.0]
+            confidence_scores = [
+                evidence_check.confidence,
+                consistency_check.confidence,
+                confidence_score.score,
+                circular_verification.agreement_score,
+                cross_agent_validation.consistency_score if cross_agent_validation else 1.0
+            ]
+            
+            overall_confidence = sum(score * weight for score, weight in zip(confidence_scores, weights))
             
             # Collect issues and recommendations
             issues = []
@@ -149,12 +231,20 @@ class MultiLevelValidator:
                 issues.append("Circular verification failed")
                 recommendations.append("Re-verify finding with different agent")
             
+            if cross_agent_validation and not cross_agent_validation.passed:
+                issues.append(
+                    f"Cross-agent validation failed: {len(cross_agent_validation.conflicts)} conflicts "
+                    f"with {', '.join(cross_agent_validation.related_agents)}"
+                )
+                recommendations.append("Review conflicts with other agents and reconcile")
+            
             return ValidationResult(
                 is_valid=is_valid,
                 level_1=evidence_check,
                 level_2=consistency_check,
                 level_3=confidence_score,
                 level_4=circular_verification,
+                level_5=cross_agent_validation,
                 overall_confidence=overall_confidence,
                 issues=issues,
                 recommendations=recommendations
@@ -169,6 +259,7 @@ class MultiLevelValidator:
                 level_2=ConsistencyCheck(False, [], [], 0.0, f"Error: {str(e)}"),
                 level_3=ConfidenceScore(0.0, {}, f"Error: {str(e)}"),
                 level_4=CircularVerification(False, "none", 0.0, f"Error: {str(e)}"),
+                level_5=None,
                 overall_confidence=0.0,
                 issues=[f"Validation error: {str(e)}"],
                 recommendations=["Review finding manually"]
@@ -438,6 +529,134 @@ Finding: {finding_text}
             )
             
         except Exception as e:
+            logger.error(f"Error in circular verification: {e}", exc_info=True)
+            return CircularVerification(
+                confirmed=False,
+                verifying_agent=verifying_agent,
+                agreement_score=0.0,
+                reasoning=f"Error: {str(e)}"
+            )
+    
+    async def _cross_agent_validate(
+        self,
+        finding: Dict[str, Any],
+        agent_name: str,
+        other_agent_results: Dict[str, Dict[str, Any]],
+        source_docs: List[Document]
+    ) -> CrossAgentValidation:
+        """
+        Level 5: Cross-agent validation - проверка согласованности между агентами
+        
+        Args:
+            finding: Finding to validate
+            agent_name: Name of the agent that produced this finding
+            other_agent_results: Dictionary of results from other agents (agent_name -> result)
+            source_docs: Source documents
+            
+        Returns:
+            CrossAgentValidation result
+        """
+        try:
+            finding_text = self._extract_finding_text(finding)
+            
+            # Определяем связанные агенты (например, timeline и key_facts связаны)
+            related_agents_map = {
+                "timeline": ["key_facts", "discrepancy"],
+                "key_facts": ["timeline", "discrepancy", "risk"],
+                "discrepancy": ["timeline", "key_facts", "risk"],
+                "risk": ["key_facts", "discrepancy"],
+                "summary": ["key_facts", "timeline", "risk"]
+            }
+            
+            related_agent_names = related_agents_map.get(agent_name, list(other_agent_results.keys()))
+            related_agents = [name for name in related_agent_names if name in other_agent_results]
+            
+            if not related_agents:
+                return CrossAgentValidation(
+                    passed=True,
+                    agent_name=agent_name,
+                    related_agents=[],
+                    conflicts=[],
+                    agreements=[],
+                    consistency_score=1.0,
+                    reasoning="No related agents available for cross-agent validation"
+                )
+            
+            # Форматируем результаты связанных агентов
+            related_results_text = []
+            for related_agent_name in related_agents:
+                related_result = other_agent_results[related_agent_name]
+                related_text = self._extract_finding_text(related_result)
+                related_results_text.append(f"{related_agent_name}:\n{related_text[:500]}")
+            
+            # Используем LLM для проверки согласованности
+            validation_prompt = f"""Проверь согласованность результатов между агентами.
+
+Текущий агент ({agent_name}):
+{finding_text[:500]}
+
+Результаты связанных агентов:
+{chr(10).join(related_results_text)}
+
+Проверь:
+1. Согласуются ли результаты между агентами?
+2. Есть ли противоречия?
+3. Дополняют ли результаты друг друга?
+
+Верни JSON:
+{{
+    "passed": true/false,
+    "conflicts": [{{"agent": "agent_name", "conflict": "описание противоречия"}}],
+    "agreements": [{{"agent": "agent_name", "agreement": "описание согласия"}}],
+    "consistency_score": 0.0-1.0,
+    "reasoning": "объяснение"
+}}"""
+            
+            messages = [
+                SystemMessage(content="Ты эксперт по проверке согласованности результатов разных AI-агентов."),
+                HumanMessage(content=validation_prompt)
+            ]
+            
+            response = self.llm.invoke(messages)
+            response_text = response.content if hasattr(response, 'content') else str(response)
+            
+            # Парсим JSON
+            import json
+            import re
+            
+            json_match = re.search(r'\{.*\}', response_text, re.DOTALL)
+            if json_match:
+                validation_result = json.loads(json_match.group())
+            else:
+                validation_result = json.loads(response_text)
+            
+            passed = validation_result.get("passed", True)
+            conflicts = validation_result.get("conflicts", [])
+            agreements = validation_result.get("agreements", [])
+            consistency_score = float(validation_result.get("consistency_score", 0.8))
+            reasoning = validation_result.get("reasoning", "No reasoning provided")
+            
+            return CrossAgentValidation(
+                passed=passed,
+                agent_name=agent_name,
+                related_agents=related_agents,
+                conflicts=conflicts,
+                agreements=agreements,
+                consistency_score=consistency_score,
+                reasoning=reasoning
+            )
+            
+        except Exception as e:
+            logger.error(f"Error in cross-agent validation: {e}", exc_info=True)
+            return CrossAgentValidation(
+                passed=False,
+                agent_name=agent_name,
+                related_agents=[],
+                conflicts=[],
+                agreements=[],
+                consistency_score=0.0,
+                reasoning=f"Error: {str(e)}"
+            )
             logger.error(f"Error in circular verification: {e}", exc_info=True)
             return CircularVerification(
                 confirmed=False,
