@@ -4,7 +4,14 @@ from langchain_core.tools import tool
 from langchain_core.documents import Document
 from app.services.rag_service import RAGService
 from app.services.document_processor import DocumentProcessor
-from app.services.langchain_agents.tool_schemas import DocumentSearchInput
+from app.services.langchain_agents.tool_schemas import (
+    DocumentSearchInput,
+    SaveTimelineInput,
+    SaveKeyFactsInput,
+    SaveDiscrepancyInput,
+    SaveRiskInput,
+    SaveSummaryInput
+)
 from app.services.langchain_agents.tool_runtime import ToolRuntime
 import logging
 
