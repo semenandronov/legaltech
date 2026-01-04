@@ -16,6 +16,7 @@ class SourceRouter:
     def __init__(self):
         """Initialize the source router"""
         self._sources: Dict[str, BaseSource] = {}
+        self._source_priority: Dict[str, int] = {}
         self._default_sources: Set[str] = {"vault"}  # Always include vault by default
     
     def register_source(self, source: BaseSource, priority: int = 50) -> None:
@@ -44,6 +45,8 @@ class SourceRouter:
         """
         if name in self._sources:
             del self._sources[name]
+            if name in self._source_priority:
+                del self._source_priority[name]
             logger.info(f"Unregistered source: {name}")
             return True
         return False
