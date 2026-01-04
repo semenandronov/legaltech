@@ -54,6 +54,26 @@ async def classify_request(question: str, llm) -> bool:
     Returns:
         True если это задача, False если вопрос
     """
+    import re
+    
+    # Предварительная проверка на запросы статей кодексов - всегда QUESTION
+    question_lower = question.lower()
+    # Паттерны для запросов статей: "статья 135 гпк", "статья 123 гк", "135 статья гпк рф" и т.д.
+    article_patterns = [
+        r'статья\s+\d+\s+(гпк|гк|апк|ук|нк|тк|ск|жк|зкпп|кас)',
+        r'\d+\s+статья\s+(гпк|гк|апк|ук|нк|тк|ск|жк|зкпп|кас)',
+        r'статья\s+\d+\s+(гражданск|арбитраж|уголовн|налогов|трудов|семейн|жилищн|земельн|конституционн)',
+        r'пришли\s+статью',
+        r'покажи\s+статью',
+        r'найди\s+статью',
+        r'текст\s+статьи',
+    ]
+    
+    for pattern in article_patterns:
+        if re.search(pattern, question_lower):
+            logger.info(f"Pre-classified '{question[:50]}...' as QUESTION (matches article request pattern: {pattern})")
+            return False
+    
     from langchain_core.prompts import ChatPromptTemplate
     from langchain_core.messages import SystemMessage, HumanMessage
     
