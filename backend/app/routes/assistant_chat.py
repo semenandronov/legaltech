@@ -181,11 +181,78 @@ async def stream_chat_response(
             # Это задача - используем Planning Agent и агентов
             logger.info(f"Detected task request for case {case_id}: {question[:100]}...")
             
+            # Legal research для TASK запросов (если включено)
+            legal_research_context_for_task = ""
+            if legal_research:
+                try:
+                    logger.info(f"Legal research enabled for TASK query: {question[:100]}...")
+                    source_router = get_source_router()
+                    
+                    # Определяем источники для поиска
+                    sources_to_search = ["pravo_gov", "vsrf", "web"]
+                    
+                    # Выполняем поиск через source router
+                    search_results = await source_router.search(
+                        query=question,
+                        source_names=sources_to_search,
+                        max_results_per_source=5,
+                        parallel=True
+                    )
+                    
+                    # Агрегируем результаты
+                    aggregated = source_router.aggregate_results(
+                        search_results,
+                        max_total=10,
+                        dedup_threshold=0.9
+                    )
+                    
+                    if aggregated:
+                        legal_research_parts = []
+                        legal_research_parts.append(f"\n\n=== Результаты юридического исследования для планирования ===")
+                        legal_research_parts.append(f"Найдено источников: {len(aggregated)}")
+                        
+                        for i, result in enumerate(aggregated[:5], 1):
+                            title = result.title or "Без названия"
+                            url = result.url or ""
+                            content = result.content[:500] if result.content else ""
+                            source_name = result.source_name or "unknown"
+                            
+                            if content:
+                                legal_research_parts.append(f"\n[Источник {i}: {title}]")
+                                legal_research_parts.append(f"Источник: {source_name}")
+                                if url:
+                                    legal_research_parts.append(f"URL: {url}")
+                                legal_research_parts.append(f"Содержание: {content}...")
+                        
+                        legal_research_context_for_task = "\n".join(legal_research_parts)
+                        
+                        # Добавляем источники в sources_list
+                        for result in aggregated[:5]:
+                            source_info = {
+                                "title": result.title or "Юридический источник",
+                                "url": result.url or "",
+                                "source": result.source_name or "legal"
+                            }
+                            if result.content:
+                                source_info["text_preview"] = result.content[:200]
+                            sources_list.append(source_info)
+                        
+                        logger.info(f"Legal research completed for TASK: {len(aggregated)} sources found")
+                    else:
+                        logger.warning("Legal research returned no results for TASK")
+                except Exception as legal_research_error:
+                    logger.warning(f"Legal research failed for TASK: {legal_research_error}, continuing without legal research", exc_info=True)
+            
             try:
                 # Get case info
                 case = db.query(Case).filter(Case.id == case_id).first()
                 num_documents = case.num_documents if case else 0
                 file_names = case.file_names if case and case.file_names else []
+                
+                # Добавляем контекст юридического исследования к задаче пользователя для Planning Agent
+                user_task_with_context = question
+                if legal_research_context_for_task:
+                    user_task_with_context = f"{question}\n\n{legal_research_context_for_task}"
                 
                 # Use Advanced Planning Agent
                 try:
@@ -203,14 +270,14 @@ async def stream_chat_response(
                 # Create analysis plan
                 if use_subtasks:
                     plan = planning_agent.plan_with_subtasks(
-                        user_task=question,
+                        user_task=user_task_with_context,
                         case_id=case_id,
                         available_documents=file_names[:10] if file_names else None,
                         num_documents=num_documents
                     )
                 else:
                     plan = planning_agent.plan_analysis(
-                        user_task=question,
+                        user_task=user_task_with_context,
                         case_id=case_id,
                         available_documents=file_names[:10] if file_names else None,
                         num_documents=num_documents
