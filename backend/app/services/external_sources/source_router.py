@@ -306,6 +306,7 @@ def initialize_source_router(rag_service=None, register_official_sources: bool =
     if register_official_sources:
         try:
             # PravoGovSource - прямой парсер для pravo.gov.ru
+            from .pravo_gov_source import PravoGovSource
             pravo_source = PravoGovSource()
             _global_router.register_source(pravo_source, priority=150)  # Высокий приоритет (прямой парсер)
             logger.info("Registered PravoGovSource")
@@ -314,6 +315,7 @@ def initialize_source_router(rag_service=None, register_official_sources: bool =
         
         try:
             # VSRFSource - прямой парсер для vsrf.ru
+            from .vsrf_source import VSRFSource
             vsrf_source = VSRFSource()
             _global_router.register_source(vsrf_source, priority=150)  # Высокий приоритет (прямой парсер)
             logger.info("Registered VSRFSource")
@@ -322,6 +324,7 @@ def initialize_source_router(rag_service=None, register_official_sources: bool =
         
         try:
             # KadArbitrSource - прямой парсер для kad.arbitr.ru
+            from .kad_arbitr_source import KadArbitrSource
             kad_source = KadArbitrSource()
             _global_router.register_source(kad_source, priority=150)  # Высокий приоритет (прямой парсер)
             logger.info("Registered KadArbitrSource")
