@@ -187,22 +187,24 @@ const PromptInputWithDrop = ({ actualCaseId, onDocumentDrop, handlePromptSubmit,
   }, [attachments, actualCaseId, onDocumentDrop])
   
   return (
-    <div ref={containerRef}>
+    <div ref={containerRef} className="w-full">
       <PromptInput
         onSubmit={(message, event) => handlePromptSubmit(message, event)}
-        className="w-full [&_form_input-group]:border-gray-300 [&_form_input-group]:focus-within:border-gray-400"
+        className="w-full [&_form_input-group]:border-2 [&_form_input-group]:border-gray-200 [&_form_input-group]:rounded-xl [&_form_input-group]:bg-white [&_form_input-group]:shadow-sm [&_form_input-group]:focus-within:border-blue-500 [&_form_input-group]:focus-within:shadow-md [&_form_input-group]:transition-all [&_form_input-group]:hover:border-gray-300"
       >
         <PromptInputBody>
           <div className="relative w-full">
             <PromptInputTextarea 
-              placeholder="Введите вопрос или используйте промпт"
-              className="min-h-[150px] text-base pr-20 text-gray-900"
+              placeholder="Введите вопрос или используйте промпт..."
+              className="min-h-[120px] max-h-[300px] text-base pr-14 py-4 px-4 text-gray-900 placeholder:text-gray-400 resize-none focus:outline-none leading-relaxed"
             />
-            <div className="absolute top-3 right-3 z-20">
+            <div className="absolute bottom-3 right-3 z-20">
               <PromptInputSubmit 
                 variant="default"
-                className="bg-black text-white hover:bg-gray-800 rounded-lg h-8 w-8 p-0 flex items-center justify-center shrink-0"
+                className="bg-blue-600 hover:bg-blue-700 active:bg-blue-800 text-white rounded-lg h-10 w-10 p-0 flex items-center justify-center shrink-0 shadow-md hover:shadow-lg hover:scale-105 active:scale-95 transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:bg-blue-600 disabled:hover:scale-100"
                 disabled={isLoading || !actualCaseId}
+                status={isLoading ? "submitted" : undefined}
+                aria-label="Отправить сообщение"
               />
             </div>
           </div>
