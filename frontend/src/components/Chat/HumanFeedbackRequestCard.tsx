@@ -1,6 +1,5 @@
 import React, { useState } from 'react'
-import { CheckCircle2, XCircle, AlertCircle, Send } from 'lucide-react'
-import { getApiUrl } from '@/services/api'
+import { CheckCircle2, AlertCircle, Send } from 'lucide-react'
 import { logger } from '@/lib/logger'
 import { Button } from '@/components/UI/Button'
 import { Badge } from '@/components/UI/Badge'
