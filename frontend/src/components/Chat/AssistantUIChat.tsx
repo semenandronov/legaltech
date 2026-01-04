@@ -9,6 +9,7 @@ import { PlanApprovalCard } from './PlanApprovalCard'
 import { AgentStep } from './AgentStepsView'
 import { EnhancedAgentStepsView } from './EnhancedAgentStepsView'
 import { TableCard } from './TableCard'
+import { HumanFeedbackRequestCard } from './HumanFeedbackRequestCard'
 import { WelcomeScreen } from './WelcomeScreen'
 import { SettingsPanel } from './SettingsPanel'
 import {
@@ -77,6 +78,16 @@ interface Message {
       }
     }
   }>
+  // Фаза 9.3: Human feedback request
+  feedbackRequest?: {
+    requestId: string
+    question: string
+    options?: Array<{ id: string; label: string }> | string[]
+    requiresApproval?: boolean
+    context?: any
+    agentName?: string
+    inputSchema?: any // JSON Schema for structured input
+  }
 }
 
 interface AssistantUIChatProps {
@@ -462,6 +473,27 @@ export const AssistantUIChat = forwardRef<{ clearMessages: () => void; loadHisto
                   )
                 )
               }
+              // Фаза 9.3: Обработка human feedback request events
+              if (data.type === 'human_feedback_request' || data.type === 'humanFeedbackRequest' || data.event === 'humanFeedbackRequest') {
+                const feedbackData = {
+                  requestId: data.request_id || data.requestId,
+                  question: data.question || data.message,
+                  options: data.options || [],
+                  requiresApproval: data.requires_approval || data.requiresApproval || false,
+                  context: data.context || {},
+                  agentName: data.agent_name || data.agentName,
+                  inputSchema: data.input_schema || data.inputSchema
+                }
+                
+                // Сохраняем feedback request в сообщении
+                setMessages((prev) =>
+                  prev.map((msg) =>
+                    msg.id === assistantMsgId
+                      ? { ...msg, feedbackRequest: feedbackData }
+                      : msg
+                  )
+                )
+              }
               if (data.error) {
                 throw new Error(data.error)
               }
@@ -796,6 +828,58 @@ export const AssistantUIChat = forwardRef<{ clearMessages: () => void; loadHisto
                   />
                 </div>
               ) : null}
+              {/* Фаза 9.3: Human feedback request card */}
+              {message.feedbackRequest && (
+                <HumanFeedbackRequestCard
+                  requestId={message.feedbackRequest.requestId}
+                  message={message.feedbackRequest.question}
+                  options={message.feedbackRequest.options?.map((opt: any) => 
+                    typeof opt === 'string' ? { id: opt, label: opt } : opt
+                  )}
+                  agentName={message.feedbackRequest.agentName}
+                  onResponse={async (response: string) => {
+                    try {
+                      const token = localStorage.getItem('access_token')
+                      const response_data = await fetch(getApiUrl('/api/assistant/chat/human-feedback'), {
+                        method: 'POST',
+                        headers: {
+                          'Content-Type': 'application/json',
+                          'Authorization': `Bearer ${token}`,
+                        },
+                        body: JSON.stringify({
+                          request_id: message.feedbackRequest?.requestId,
+                          response: response,
+                          case_id: actualCaseId,
+                        }),
+                      })
+
+                      if (!response_data.ok) {
+                        const errorData = await response_data.json().catch(() => ({}))
+                        throw new Error(errorData.detail || 'Ошибка при отправке ответа')
+                      }
+
+                      const result = await response_data.json()
+                      logger.info('Human feedback response submitted:', result)
+
+                      // Clear feedback request from message
+                      setMessages((prev) =>
+                        prev.map((msg) =>
+                          msg.id === message.id
+                            ? {
+                                ...msg,
+                                feedbackRequest: undefined,
+                                content: msg.content + `\n\n**Ваш ответ:** ${response}\n\n`,
+                              }
+                            : msg
+                        )
+                      )
+                    } catch (error) {
+                      logger.error('Error submitting human feedback response:', error)
+                      throw error // Re-throw to let HumanFeedbackRequestCard handle it
+                    }
+                  }}
+                />
+              )}
             </AssistantMessage>
           )
         })}

@@ -126,6 +126,15 @@ class AgentCoordinator:
         if not case:
             raise ValueError(f"Case {case_id} not found in database")
         
+        # Создаём CaseContext из модели Case (Фаза 6.1)
+        from app.services.langchain_agents.context_schema import CaseContext
+        try:
+            case_context = CaseContext.from_case_model(case)
+            logger.debug(f"Created CaseContext for case {case_id}, user_id={case_context.user_id}")
+        except Exception as e:
+            logger.warning(f"Failed to create CaseContext from Case model: {e}, using minimal context")
+            case_context = CaseContext.from_minimal(case_id=case_id, user_id=case.user_id or "")
+        
         start_time = time.time()
         planning_start_time = time.time()
         metrics_id = None
@@ -253,10 +262,12 @@ class AgentCoordinator:
                     metadata["plan_data"] = plan  # Сохраняем весь план для доступа
                     logger.info(f"Added {len(tables_to_create)} tables_to_create to metadata")
             
+            # Создаём initial state с CaseContext (Фаза 6.1)
             initial_state = create_initial_state(
                 case_id=case_id,
                 analysis_types=analysis_types,
-                metadata=metadata
+                metadata=metadata,
+                context=case_context  # Передаём CaseContext
             )
             
             # Add plan goals and current_plan if created
@@ -274,7 +285,8 @@ class AgentCoordinator:
             if user_task:
                 initial_state["user_task"] = user_task
             
-            # Load context from ContextManager if available
+            # Load context from ContextManager if available (это другой context - контекст планирования)
+            # CaseContext уже установлен в initial_state через create_initial_state
             if self.context_manager and user_task:
                 try:
                     previous_context = self.context_manager.load_context(
@@ -282,18 +294,24 @@ class AgentCoordinator:
                         analysis_type="planning"
                     )
                     if previous_context:
-                        initial_state["context"] = previous_context.get("data", {})
-                        logger.info("Loaded previous planning context")
+                        # Сохраняем planning context в metadata, чтобы не перезаписывать CaseContext
+                        if "metadata" not in initial_state:
+                            initial_state["metadata"] = {}
+                        initial_state["metadata"]["planning_context"] = previous_context.get("data", {})
+                        logger.info("Loaded previous planning context to metadata")
                 except Exception as ctx_error:
                     logger.warning(f"Failed to load planning context: {ctx_error}")
             
             # Create thread config for graph execution with increased recursion limit
             thread_config = config or {"configurable": {"thread_id": f"case_{case_id}"}}
             # Increase recursion limit to prevent premature termination
-            if "configurable" in thread_config:
-                thread_config["configurable"]["recursion_limit"] = 50
-            else:
-                thread_config["recursion_limit"] = 50
+            if "configurable" not in thread_config:
+                thread_config["configurable"] = {}
+            thread_config["configurable"]["recursion_limit"] = 50
+            
+            # Фаза 3.1: Runtime injection теперь происходит в agent nodes через get_tools_with_runtime()
+            # State уже содержит context, который используется в agent nodes для создания ToolRuntime
+            # Нет необходимости в дополнительных hooks через config
             
             # Run graph with parallel processing for independent agents
             # Note: LangGraph handles parallelization internally, but we can optimize
@@ -322,9 +340,17 @@ class AgentCoordinator:
                     logger.warning(f"⚠️ Graph checkpointer is not PostgresSaver: {type(self.graph.checkpointer)}")
             
             logger.info(f"Starting graph stream for case {case_id} with {len(analysis_types)} analysis types")
+            
+            # Фаза 8.1: Поддержка streaming промежуточных результатов через callback
+            # step_callback будет вызываться для каждого шага выполнения
             try:
                 stream_iter = self.graph.stream(initial_state, thread_config)
                 logger.debug(f"Graph stream iterator created: {type(stream_iter)}")
+                
+                # Отслеживаем прогресс выполнения
+                total_steps = len(analysis_types) if analysis_types else 1
+                completed_steps = 0
+                
                 for event in stream_iter:
                     # Check for interrupts (LangGraph interrupts are returned as special events)
                     if isinstance(event, dict):
@@ -334,6 +360,22 @@ class AgentCoordinator:
                             interrupt_type = event.get("__interrupt__") or event.get("interrupt")
                             if interrupt_type == "human_feedback_needed":
                                 logger.info(f"[Interrupt] Human feedback needed for case {case_id}")
+                                
+                                # Фаза 8.1: Отправляем событие human feedback request через step_callback
+                                if step_callback:
+                                    try:
+                                        from app.services.langchain_agents.streaming_events import HumanFeedbackRequestEvent
+                                        feedback_event = HumanFeedbackRequestEvent(
+                                            request_id=str(uuid.uuid4()),
+                                            question=current_state.get("current_feedback_request", {}).get("question", "Требуется обратная связь"),
+                                            requires_approval=True
+                                        )
+                                        if asyncio.iscoroutinefunction(step_callback):
+                                            await step_callback(feedback_event)
+                                        else:
+                                            step_callback(feedback_event)
+                                    except Exception as callback_error:
+                                        logger.warning(f"Error sending feedback event: {callback_error}")
                                 
                                 # Get current state to extract feedback request
                                 current_state = self.graph.get_state(thread_config).values

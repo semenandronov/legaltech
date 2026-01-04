@@ -3,7 +3,8 @@ from fastapi import APIRouter, HTTPException, Depends, Request, BackgroundTasks
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
-from typing import AsyncGenerator, Optional
+from typing import AsyncGenerator, Optional, Literal
+import hashlib
 from app.utils.database import get_db
 from app.utils.auth import get_current_user
 from app.models.case import Case, File as FileModel, ChatMessage
@@ -15,8 +16,11 @@ from app.services.llm_factory import create_llm
 from app.services.langchain_agents import PlanningAgent
 from app.services.langchain_agents.advanced_planning_agent import AdvancedPlanningAgent
 from app.services.analysis_service import AnalysisService
+from app.services.langchain_agents.pipeline_service import PipelineService
 from app.services.external_sources.web_research_service import get_web_research_service
 from app.services.external_sources.source_router import get_source_router, initialize_source_router
+from app.services.external_sources.cache_manager import get_cache_manager
+from app.config import config
 import json
 import logging
 import asyncio
@@ -31,6 +35,20 @@ rag_service = RAGService()
 document_processor = DocumentProcessor()
 memory_service = MemoryService()
 
+# Initialize classification cache
+_classification_cache = None
+
+
+def get_classification_cache():
+    """Get or create classification cache manager"""
+    global _classification_cache
+    if _classification_cache is None:
+        from app.config import config
+        redis_url = getattr(config, 'REDIS_URL', None)
+        ttl = getattr(config, 'CACHE_TTL_SECONDS', 3600)
+        _classification_cache = get_cache_manager(redis_url=redis_url, default_ttl=ttl)
+    return _classification_cache
+
 
 class AssistantMessage(BaseModel):
     """Message model for assistant-ui"""
@@ -38,8 +56,43 @@ class AssistantMessage(BaseModel):
     content: str = Field(..., description="Message content")
 
 
+class ClassificationResult(BaseModel):
+    """Результат классификации запроса пользователя"""
+    label: Literal["task", "question"] = Field(..., description="Метка классификации: task или question")
+    confidence: float = Field(..., ge=0.0, le=1.0, description="Уровень уверенности от 0.0 до 1.0")
+    rationale: Optional[str] = Field(None, description="Краткое объяснение решения классификации")
+
+
 # Note: Request body is parsed manually to support assistant-ui format
 # Assistant-ui sends: { messages: [...], case_id: "..." }
+
+
+def normalize_text(text: str) -> str:
+    """
+    Нормализует текст для кэширования: lower, strip, убирает лишние пробелы
+    
+    Args:
+        text: Исходный текст
+        
+    Returns:
+        Нормализованный текст
+    """
+    return " ".join(text.lower().strip().split())
+
+
+def make_classification_cache_key(question: str) -> str:
+    """
+    Создает cache key для результата классификации
+    
+    Args:
+        question: Входной вопрос
+        
+    Returns:
+        Cache key (хеш нормализованного текста)
+    """
+    normalized = normalize_text(question)
+    key_hash = hashlib.sha256(normalized.encode('utf-8')).hexdigest()
+    return f"classification:{key_hash}"
 
 
 async def classify_request(question: str, llm) -> bool:
@@ -56,9 +109,12 @@ async def classify_request(question: str, llm) -> bool:
     """
     import re
     
-    # Предварительная проверка на запросы статей кодексов - всегда QUESTION
-    question_lower = question.lower()
-    # Паттерны для запросов статей: "статья 135 гпк", "статья 123 гк", "135 статья гпк рф" и т.д.
+    # 1. Нормализация входного текста
+    normalized_question = normalize_text(question)
+    question_lower = normalized_question.lower()
+    
+    # 2. Rule-based проверка (fast path)
+    # Паттерны для запросов статей кодексов - всегда QUESTION
     article_patterns = [
         r'статья\s+\d+\s+(гпк|гк|апк|ук|нк|тк|ск|жк|зкпп|кас)',
         r'\d+\s+статья\s+(гпк|гк|апк|ук|нк|тк|ск|жк|зкпп|кас)',
@@ -74,8 +130,29 @@ async def classify_request(question: str, llm) -> bool:
             logger.info(f"Pre-classified '{question[:50]}...' as QUESTION (matches article request pattern: {pattern})")
             return False
     
+    # Паттерны для приветствий - всегда QUESTION
+    greeting_patterns = [
+        r'^(привет|здравствуй|здравствуйте|добрый\s+(день|вечер|утро)|hello|hi)',
+    ]
+    
+    for pattern in greeting_patterns:
+        if re.search(pattern, question_lower):
+            logger.info(f"Pre-classified '{question[:50]}...' as QUESTION (matches greeting pattern: {pattern})")
+            return False
+    
+    # 3. Проверка кэша
+    cache = get_classification_cache()
+    cached_result = cache.get("classification", normalized_question)
+    
+    if cached_result:
+        label = cached_result.get("label", "question")
+        cached_confidence = cached_result.get("confidence", 1.0)
+        logger.info(f"Cache hit for classification: '{question[:50]}...' -> {label} (confidence: {cached_confidence:.2f})")
+        return label == "task"
+    
+    # 4. LLM классификация с structured output
     from langchain_core.prompts import ChatPromptTemplate
-    from langchain_core.messages import SystemMessage, HumanMessage
+    from langchain_core.messages import SystemMessage, HumanMessage, AIMessage
     
     # Получаем список доступных агентов для промпта
     from app.services.langchain_agents.planning_tools import AVAILABLE_ANALYSES
@@ -88,8 +165,23 @@ async def classify_request(question: str, llm) -> bool:
     
     agents_text = "\n".join(agents_list)
     
-    classification_prompt = ChatPromptTemplate.from_messages([
-        SystemMessage(content=f"""Ты классификатор запросов пользователя в системе анализа юридических документов.
+    # Few-shot примеры для классификации
+    few_shot_examples = [
+        (HumanMessage(content="Запрос: Извлеки все даты из документов"), 
+         AIMessage(content='{"label": "task", "confidence": 0.95, "rationale": "Требует выполнения агента entity_extraction"}')),
+        (HumanMessage(content="Запрос: Какие ключевые сроки важны в этом деле?"), 
+         AIMessage(content='{"label": "question", "confidence": 0.98, "rationale": "Информационный вопрос для RAG чата"}')),
+        (HumanMessage(content="Запрос: Пришли статью 135 ГПК"), 
+         AIMessage(content='{"label": "question", "confidence": 0.99, "rationale": "Запрос на получение текста статьи кодекса"}')),
+        (HumanMessage(content="Запрос: Найди противоречия между документами"), 
+         AIMessage(content='{"label": "task", "confidence": 0.92, "rationale": "Требует выполнения агента discrepancy"}')),
+        (HumanMessage(content="Запрос: Что говорится в договоре о сроках?"), 
+         AIMessage(content='{"label": "question", "confidence": 0.96, "rationale": "Вопрос о содержании документов для RAG"}')),
+        (HumanMessage(content="Запрос: Составь таблицу с судьями и судами"), 
+         AIMessage(content='{"label": "task", "confidence": 0.94, "rationale": "Требует создания структурированной таблицы через агентов"}')),
+    ]
+    
+    system_content = f"""Ты классификатор запросов пользователя в системе анализа юридических документов.
 
 В системе доступны следующие агенты для выполнения задач:
 
@@ -115,26 +207,129 @@ async def classify_request(question: str, llm) -> bool:
 - Требует немедленного ответа на основе уже загруженных документов или юридических источников
 - Примеры: "Какие ключевые сроки важны в этом деле?", "Что говорится в договоре о сроках?", "Пришли статью 135 ГПК", "Покажи текст статьи 123 ГК РФ"
 
-Отвечай ТОЛЬКО: task или question"""),
-        HumanMessage(content=f"Запрос: {question}")
-    ])
+Возвращай строго JSON с полями:
+- label: "task" или "question"
+- confidence: число от 0.0 до 1.0 (уверенность в классификации)
+- rationale: краткое объяснение решения (1-2 предложения)
+
+Отвечай ТОЛЬКО валидным JSON, без дополнительного текста."""
+    
+    # Создаем промпт с few-shot примерами
+    messages = [SystemMessage(content=system_content)]
+    for human_msg, ai_msg in few_shot_examples:
+        messages.append(human_msg)
+        messages.append(ai_msg)
+    messages.append(HumanMessage(content=f"Запрос: {question}"))
     
     try:
-        formatted_messages = classification_prompt.format_messages()
-        response = llm.invoke(formatted_messages)
-        result = response.content.lower().strip()
-        result_clean = result.replace(".", "").replace(",", "").strip()
-        if "task" in result_clean:
-            task_pos = result_clean.find("task")
-            question_pos = result_clean.find("question")
-            if question_pos == -1 or (task_pos != -1 and task_pos < question_pos):
-                logger.info(f"LLM classified '{question[:50]}...' as TASK (result: {result_clean})")
-                return True
-        logger.info(f"LLM classified '{question[:50]}...' as QUESTION (result: {result_clean})")
-        return False
+        # Используем structured output если поддерживается
+        if hasattr(llm, 'with_structured_output'):
+            try:
+                structured_llm = llm.with_structured_output(ClassificationResult, include_raw=True)
+                response = structured_llm.invoke(messages)
+                
+                if hasattr(response, 'parsed') and response.parsed:
+                    classification = response.parsed
+                elif isinstance(response, dict) and 'parsed' in response:
+                    classification = response['parsed']
+                elif isinstance(response, ClassificationResult):
+                    classification = response
+                else:
+                    # Fallback: парсим raw ответ
+                    raw_content = getattr(response, 'raw', None) or (response.get('raw') if isinstance(response, dict) else str(response))
+                    logger.warning(f"Structured output parsing failed, using raw response: {raw_content}")
+                    raise ValueError("Failed to parse structured output")
+                
+                label = classification.label
+                confidence = classification.confidence
+                rationale = classification.rationale or ""
+                
+            except Exception as structured_error:
+                logger.warning(f"Structured output failed: {structured_error}, falling back to JSON parsing")
+                # Fallback на обычный вызов и парсинг JSON
+                response = llm.invoke(messages)
+                response_text = response.content if hasattr(response, 'content') else str(response)
+                
+                # Пытаемся извлечь JSON из ответа
+                import json
+                try:
+                    # Ищем JSON в ответе
+                    json_match = re.search(r'\{[^}]+\}', response_text)
+                    if json_match:
+                        result_dict = json.loads(json_match.group())
+                        label = result_dict.get("label", "question")
+                        confidence = float(result_dict.get("confidence", 0.5))
+                        rationale = result_dict.get("rationale", "")
+                    else:
+                        raise ValueError("No JSON found in response")
+                except Exception as json_error:
+                    logger.error(f"JSON parsing failed: {json_error}, response: {response_text}")
+                    # Последний fallback: простой текстовый парсинг
+                    response_lower = response_text.lower()
+                    if "task" in response_lower and response_lower.find("task") < response_lower.find("question", response_lower.find("task")):
+                        label = "task"
+                        confidence = 0.5
+                    else:
+                        label = "question"
+                        confidence = 0.5
+                    rationale = ""
+        else:
+            # LLM не поддерживает structured output, используем обычный вызов
+            response = llm.invoke(messages)
+            response_text = response.content if hasattr(response, 'content') else str(response)
+            
+            import json
+            try:
+                json_match = re.search(r'\{[^}]+\}', response_text)
+                if json_match:
+                    result_dict = json.loads(json_match.group())
+                    label = result_dict.get("label", "question")
+                    confidence = float(result_dict.get("confidence", 0.5))
+                    rationale = result_dict.get("rationale", "")
+                else:
+                    raise ValueError("No JSON found in response")
+            except Exception:
+                response_lower = response_text.lower()
+                if "task" in response_lower:
+                    label = "task"
+                    confidence = 0.5
+                else:
+                    label = "question"
+                    confidence = 0.5
+                rationale = ""
+        
+        # 5. Обработка confidence threshold
+        if confidence >= 0.85:
+            # Высокая уверенность - принимаем результат
+            final_label = label
+        elif confidence >= 0.6:
+            # Средняя уверенность - принимаем, но логируем
+            final_label = label
+            logger.info(f"Medium confidence classification: '{question[:50]}...' -> {label} (confidence: {confidence:.2f})")
+        else:
+            # Низкая уверенность - fallback на безопасную метку
+            final_label = "question"
+            logger.warning(f"Low confidence classification for '{question[:50]}...': {label} (confidence: {confidence:.2f}), falling back to 'question'")
+            rationale = f"Low confidence ({confidence:.2f}), fallback to question"
+        
+        # 6. Сохранение в кэш
+        cache_data = {
+            "label": final_label,
+            "confidence": confidence,
+            "rationale": rationale
+        }
+        cache.set("classification", normalized_question, cache_data, ttl=3600)
+        
+        # 7. Логирование и возврат результата
+        logger.info(f"Classified '{question[:50]}...' as {final_label.upper()} (confidence: {confidence:.2f}, rationale: {rationale[:50] if rationale else 'N/A'})")
+        return final_label == "task"
+        
     except Exception as e:
-        logger.error(f"Error in LLM classification: {e}")
+        logger.error(f"Error in LLM classification: {e}", exc_info=True)
         logger.warning("LLM classification failed, defaulting to QUESTION")
+        # Сохраняем ошибку в кэш с коротким TTL, чтобы не повторять неудачные вызовы
+        cache_data = {"label": "question", "confidence": 0.5, "rationale": f"Error: {str(e)[:50]}"}
+        cache.set("classification", normalized_question, cache_data, ttl=60)
         return False
 
 
@@ -192,7 +387,8 @@ async def stream_chat_response(
             # Продолжаем без сохранения - не критичная ошибка
         
         # Классифицируем запрос - задача или вопрос?
-        classification_llm = create_llm(temperature=0.0)
+        # Оптимизированные параметры для классификации: temperature=0.0 (детерминированность), top_p=1.0, max_tokens ограничен
+        classification_llm = create_llm(temperature=0.0, top_p=1.0, max_tokens=100)
         is_task = await classify_request(question, classification_llm)
         
         # Переменные для накопления ответа и источников
@@ -757,14 +953,19 @@ async def assistant_chat(
         
         question = last_message.get("content", "")
         
-        # Create streaming response
+        # Create PipelineService instance for unified processing
+        pipeline_service = PipelineService(
+            db=db,
+            rag_service=rag_service,
+            document_processor=document_processor
+        )
+        
+        # Use PipelineService for unified request processing
         return StreamingResponse(
-            stream_chat_response(
+            pipeline_service.stream_response(
                 case_id=case_id,
-                question=question,
-                db=db,
+                query=question,
                 current_user=current_user,
-                background_tasks=background_tasks,
                 web_search=web_search,
                 legal_research=legal_research,
                 deep_think=deep_think
@@ -819,4 +1020,74 @@ async def get_assistant_chat_history(
             for msg in messages
         ]
     }
+
+
+class HumanFeedbackResponseRequest(BaseModel):
+    """Request model for submitting human feedback response"""
+    request_id: str = Field(..., description="Идентификатор запроса обратной связи")
+    response: str = Field(..., description="Ответ пользователя")
+    case_id: Optional[str] = Field(None, description="Идентификатор дела (опционально, для валидации)")
+
+
+@router.post("/api/assistant/chat/human-feedback")
+async def submit_human_feedback(
+    request: HumanFeedbackResponseRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """
+    Submit human feedback response for agent requests
+    
+    This endpoint receives user responses to agent feedback requests
+    (e.g., approval requests, clarification questions, etc.)
+    """
+    try:
+        from app.services.langchain_agents.human_feedback import get_feedback_service
+        
+        # Get feedback service
+        feedback_service = get_feedback_service(db)
+        
+        # Submit response
+        success = feedback_service.receive_response(
+            request_id=request.request_id,
+            response=request.response,
+            run_id=None  # run_id can be extracted from state if needed
+        )
+        
+        if not success:
+            logger.warning(f"Failed to submit feedback response for request {request.request_id}: request not found or already answered")
+            raise HTTPException(
+                status_code=404,
+                detail="Запрос обратной связи не найден или уже обработан"
+            )
+        
+        # Log feedback submission
+        if request.case_id:
+            from app.services.langchain_agents.audit_logger import get_audit_logger
+            audit_logger = get_audit_logger()
+            audit_logger.log_human_feedback(
+                request_id=request.request_id,
+                question="",  # Question is stored in the request itself
+                response=request.response,
+                case_id=request.case_id,
+                user_id=str(current_user.id),
+                approved=None  # Can be determined from response if needed
+            )
+        
+        logger.info(f"Human feedback response submitted successfully for request {request.request_id}")
+        
+        return {
+            "status": "success",
+            "request_id": request.request_id,
+            "message": "Ответ успешно отправлен"
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error submitting human feedback response: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=500,
+            detail=f"Ошибка при отправке ответа: {str(e)}"
+        )
 

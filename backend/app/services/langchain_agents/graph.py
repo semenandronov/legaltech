@@ -3,6 +3,8 @@ from langgraph.graph import StateGraph, END, START
 from langgraph.checkpoint.memory import MemorySaver
 from app.services.langchain_agents.state import AnalysisState
 from app.config import config
+# Runtime middleware для инжекции ToolRuntime в tools (см. runtime_middleware.py)
+# TODO: Интегрировать runtime middleware в agent nodes при обновлении для использования state.context
 from app.services.langchain_agents.supervisor import route_to_agent, create_supervisor_agent
 from app.services.langchain_agents.timeline_node import timeline_agent_node
 from app.services.langchain_agents.key_facts_node import key_facts_agent_node

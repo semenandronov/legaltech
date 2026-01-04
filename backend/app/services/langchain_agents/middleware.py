@@ -6,6 +6,10 @@ from functools import wraps
 
 logger = logging.getLogger(__name__)
 
+# Импортируем новые middleware
+from app.services.langchain_agents.security_middleware import SecurityMiddleware
+from app.services.langchain_agents.routing_middleware import RoutingMiddleware
+
 
 class NodeMiddleware:
     """Базовый класс для middleware узлов графа"""
@@ -222,4 +226,45 @@ def with_middleware(
         return wrapped_node
     
     return decorator
+
+
+def create_default_middleware_chain(
+    enable_security: bool = True,
+    enable_routing: bool = True,
+    enable_logging: bool = True,
+    enable_monitoring: bool = True
+) -> MiddlewareChain:
+    """
+    Создать цепочку middleware по умолчанию
+    
+    Порядок middleware:
+    1. SecurityMiddleware (первым - для PII redaction)
+    2. RoutingMiddleware (для динамической маршрутизации)
+    3. LoggingMiddleware (для логирования)
+    4. MonitoringMiddleware (для мониторинга)
+    
+    Args:
+        enable_security: Включить SecurityMiddleware
+        enable_routing: Включить RoutingMiddleware
+        enable_logging: Включить LoggingMiddleware
+        enable_monitoring: Включить MonitoringMiddleware
+        
+    Returns:
+        MiddlewareChain с настроенными middleware
+    """
+    middlewares = []
+    
+    if enable_security:
+        middlewares.append(SecurityMiddleware(enable_pii_redaction=True))
+    
+    if enable_routing:
+        middlewares.append(RoutingMiddleware(enable_dynamic_routing=True))
+    
+    if enable_logging:
+        middlewares.append(LoggingMiddleware())
+    
+    if enable_monitoring:
+        middlewares.append(MonitoringMiddleware())
+    
+    return MiddlewareChain(middlewares)
 

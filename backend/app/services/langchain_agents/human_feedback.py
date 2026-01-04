@@ -52,6 +52,99 @@ class HumanFeedbackService:
         if case_id in self._websocket_callbacks:
             del self._websocket_callbacks[case_id]
     
+    def request_approval(
+        self,
+        case_id: str,
+        action: str,
+        context: Optional[Dict[str, Any]] = None,
+        timeout: Optional[int] = None
+    ) -> bool:
+        """
+        Запросить одобрение критичного действия (Фаза 9.1)
+        
+        Args:
+            case_id: Идентификатор дела
+            action: Описание действия, требующего одобрения
+            context: Контекст действия
+            timeout: Таймаут ожидания в секундах
+            
+        Returns:
+            True если одобрено, False если отклонено или timeout
+        """
+        request_id = str(uuid.uuid4())
+        question = f"Одобрить выполнение действия: {action}?"
+        
+        # Создаём событие для streaming
+        from app.services.langchain_agents.streaming_events import HumanFeedbackRequestEvent
+        feedback_event = HumanFeedbackRequestEvent(
+            request_id=request_id,
+            question=question,
+            context=context or {},
+            options=["Одобрить", "Отклонить"],
+            requires_approval=True
+        )
+        
+        # Отправляем через WebSocket если доступен
+        callback = self._websocket_callbacks.get(case_id)
+        if callback:
+            try:
+                if asyncio.iscoroutinefunction(callback):
+                    asyncio.create_task(callback(feedback_event))
+                else:
+                    callback(feedback_event)
+            except Exception as e:
+                logger.warning(f"Error sending approval request via WebSocket: {e}")
+        
+        # Ждём ответа через wait_for_feedback
+        response = self.wait_for_feedback(request_id, timeout=timeout or self.DEFAULT_TIMEOUT_SECONDS)
+        return response == "Одобрить" if response else False
+    
+    def wait_for_feedback(self, request_id: str, timeout: Optional[int] = None) -> Optional[str]:
+        """
+        Ждать ответа на запрос обратной связи (синхронная версия для request_approval)
+        
+        Args:
+            request_id: Идентификатор запроса
+            timeout: Таймаут в секундах
+            
+        Returns:
+            Ответ пользователя или None если timeout
+        """
+        timeout = timeout or self.DEFAULT_TIMEOUT_SECONDS
+        
+        if request_id not in self._pending_requests:
+            logger.warning(f"Request {request_id} not found in pending requests")
+            return None
+        
+        event = self._pending_requests[request_id]
+        
+        try:
+            # Ждём с таймаутом
+            loop = asyncio.get_event_loop()
+            if loop.is_running():
+                # Если loop уже запущен, используем asyncio.wait_for
+                async def wait():
+                    await asyncio.wait_for(event.wait(), timeout=timeout)
+                    return self._responses.get(request_id)
+                
+                # Создаём task и ждём
+                task = asyncio.create_task(wait())
+                # Не можем синхронно ждать в async контексте, возвращаем None
+                logger.warning("Cannot synchronously wait in async context, returning None")
+                return None
+            else:
+                # Если loop не запущен, можем использовать run_until_complete
+                result = loop.run_until_complete(
+                    asyncio.wait_for(event.wait(), timeout=timeout)
+                )
+                return self._responses.get(request_id)
+        except asyncio.TimeoutError:
+            logger.warning(f"Timeout waiting for feedback: {request_id}")
+            return None
+        except Exception as e:
+            logger.error(f"Error waiting for feedback: {e}")
+            return None
+    
     async def request_clarification(
         self,
         state: AnalysisState,

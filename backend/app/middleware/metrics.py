@@ -92,7 +92,7 @@ def track_llm_call(
     _metrics_store["llm_total_tokens"] += total_tokens
     
     logger.debug(f"LLM call: {model}, duration: {duration:.2f}s, tokens: {total_tokens}")
-    
+
     # Record to Prometheus if available
     if HAS_PROMETHEUS and get_metrics_collector:
         collector = get_metrics_collector()

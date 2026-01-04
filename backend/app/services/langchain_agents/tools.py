@@ -4,6 +4,8 @@ from langchain_core.tools import tool
 from langchain_core.documents import Document
 from app.services.rag_service import RAGService
 from app.services.document_processor import DocumentProcessor
+from app.services.langchain_agents.tool_schemas import DocumentSearchInput
+from app.services.langchain_agents.tool_runtime import ToolRuntime
 import logging
 
 logger = logging.getLogger(__name__)
@@ -20,8 +22,16 @@ def initialize_tools(rag_service: RAGService, document_processor: DocumentProces
     _document_processor = document_processor
 
 
-@tool
-def retrieve_documents_tool(query: str, case_id: str, k: int = 20, use_iterative: bool = False, use_hybrid: bool = False, doc_types: Optional[List[str]] = None) -> str:
+@tool(args_schema=DocumentSearchInput)
+def retrieve_documents_tool(
+    query: str,
+    case_id: str,
+    k: int = 20,
+    use_iterative: bool = False,
+    use_hybrid: bool = False,
+    doc_types: Optional[List[str]] = None,
+    **kwargs
+) -> str:
     """
     Retrieve relevant documents from the case using semantic search.
     
@@ -37,17 +47,50 @@ def retrieve_documents_tool(query: str, case_id: str, k: int = 20, use_iterative
                     Recommended for critical agents (risk, discrepancy)
         doc_types: Optional list of document types to filter by (e.g., ['statement_of_claim', 'contract'])
                    Use this when the user asks to work with specific document types
+        **kwargs: Дополнительные параметры (runtime инжектируется middleware через kwargs)
     
     Returns:
         Formatted string with retrieved documents and their sources
     """
-    if not _rag_service:
-        raise ValueError("RAG service not initialized. Call initialize_tools() first.")
+    # Проверяем, есть ли runtime в kwargs (инжектируется middleware)
+    runtime: Optional[ToolRuntime] = kwargs.get("runtime")
     
     try:
+        # Новый путь: использовать runtime.store если доступен
+        if runtime and runtime.store:
+            filters = {"doc_types": doc_types} if doc_types else None
+            retrieval_strategy = "iterative" if use_iterative else ("hybrid" if use_hybrid else "multi_query")
+            
+            documents = runtime.store.search(
+                query=query,
+                filters=filters,
+                k=k,
+                retrieval_strategy=retrieval_strategy,
+                use_iterative=use_iterative,
+                use_hybrid=use_hybrid
+            )
+            
+            # Форматируем документы через RAG service
+            if documents and runtime.store.rag_service:
+                formatted_docs = runtime.store.rag_service.format_sources_for_prompt(documents)
+                logger.info(f"Retrieved {len(documents)} documents via runtime.store for query: {query[:50]}...")
+                return formatted_docs
+            elif documents:
+                # Простое форматирование если нет доступа к format_sources_for_prompt
+                formatted_parts = []
+                for i, doc in enumerate(documents[:k], 1):
+                    content = doc.page_content[:500] if hasattr(doc, 'page_content') else str(doc)[:500]
+                    source = doc.metadata.get("source_file", "unknown") if hasattr(doc, 'metadata') else "unknown"
+                    formatted_parts.append(f"[{i}] {source}\n{content}...")
+                return "\n\n".join(formatted_parts)
+        
+        # Старый путь: fallback на глобальный _rag_service (обратная совместимость)
+        if not _rag_service:
+            raise ValueError("RAG service not initialized. Call initialize_tools() first.")
+        
         # Use hybrid search if requested (best for critical agents)
         if use_hybrid:
-            logger.info(f"Using hybrid search for query: {query[:50]}...")
+            logger.info(f"Using hybrid search for query: {query[:50]}... (fallback mode)")
             documents = _rag_service.retrieve_context(
                 case_id=case_id,
                 query=query,
@@ -58,7 +101,7 @@ def retrieve_documents_tool(query: str, case_id: str, k: int = 20, use_iterative
             )
         # Use iterative search if requested (better for critical agents)
         elif use_iterative:
-            logger.info(f"Using iterative search for query: {query[:50]}...")
+            logger.info(f"Using iterative search for query: {query[:50]}... (fallback mode)")
             documents = _rag_service.retrieve_context(
                 case_id=case_id,
                 query=query,
@@ -83,15 +126,15 @@ def retrieve_documents_tool(query: str, case_id: str, k: int = 20, use_iterative
         # Format documents for agent
         formatted_docs = _rag_service.format_sources_for_prompt(documents)
         
-        logger.info(f"Retrieved {len(documents)} documents for query: {query[:50]}... (iterative={use_iterative})")
+        logger.info(f"Retrieved {len(documents)} documents for query: {query[:50]}... (iterative={use_iterative}, fallback mode)")
         return formatted_docs
     except Exception as e:
         logger.error(f"Error retrieving documents: {e}")
         return f"Error retrieving documents: {str(e)}"
 
 
-@tool
-def save_timeline_tool(timeline_data: str, case_id: str) -> str:
+@tool(args_schema=SaveTimelineInput)
+def save_timeline_tool(timeline_data: str, case_id: str, **kwargs) -> str:
     """
     Save timeline extraction results to the state and database.
     
@@ -100,19 +143,33 @@ def save_timeline_tool(timeline_data: str, case_id: str) -> str:
     Args:
         timeline_data: JSON string with timeline events
         case_id: Case identifier
+        **kwargs: Дополнительные параметры (runtime инжектируется middleware через kwargs)
     
     Returns:
         Success message
     """
+    # Проверяем, есть ли runtime в kwargs (инжектируется middleware)
+    runtime: Optional[ToolRuntime] = kwargs.get("runtime")
+    
     try:
         import json
         from app.services.langchain_parsers import ParserService
+        
+        # Используем case_id из runtime если доступен
+        actual_case_id = runtime.case_id if runtime else case_id
         
         # Parse timeline data
         events = ParserService.parse_timeline_events(timeline_data)
         
         # Save to database (will be done in the node, this is just for state)
-        logger.info(f"Timeline tool: Parsed {len(events)} events for case {case_id}")
+        logger.info(f"Timeline tool: Parsed {len(events)} events for case {actual_case_id}")
+        
+        # Сохраняем событие анализа через runtime.store если доступен
+        if runtime and runtime.store:
+            runtime.store.save_analysis_event(
+                event_type="timeline_extraction",
+                data={"events_count": len(events), "case_id": actual_case_id}
+            )
         
         return f"Successfully processed {len(events)} timeline events."
     except Exception as e:
@@ -120,8 +177,8 @@ def save_timeline_tool(timeline_data: str, case_id: str) -> str:
         return f"Error saving timeline: {str(e)}"
 
 
-@tool
-def save_key_facts_tool(key_facts_data: str, case_id: str) -> str:
+@tool(args_schema=SaveKeyFactsInput)
+def save_key_facts_tool(key_facts_data: str, case_id: str, **kwargs) -> str:
     """
     Save key facts extraction results to the state and database.
     
@@ -130,18 +187,32 @@ def save_key_facts_tool(key_facts_data: str, case_id: str) -> str:
     Args:
         key_facts_data: JSON string with key facts
         case_id: Case identifier
+        **kwargs: Дополнительные параметры (runtime инжектируется middleware через kwargs)
     
     Returns:
         Success message
     """
+    # Проверяем, есть ли runtime в kwargs (инжектируется middleware)
+    runtime: Optional[ToolRuntime] = kwargs.get("runtime")
+    
     try:
         import json
         from app.services.langchain_parsers import ParserService
         
+        # Используем case_id из runtime если доступен
+        actual_case_id = runtime.case_id if runtime else case_id
+        
         # Parse key facts
         facts = ParserService.parse_key_facts(key_facts_data)
         
-        logger.info(f"Key facts tool: Parsed {len(facts)} facts for case {case_id}")
+        logger.info(f"Key facts tool: Parsed {len(facts)} facts for case {actual_case_id}")
+        
+        # Сохраняем событие анализа через runtime.store если доступен
+        if runtime and runtime.store:
+            runtime.store.save_analysis_event(
+                event_type="key_facts_extraction",
+                data={"facts_count": len(facts), "case_id": actual_case_id}
+            )
         
         return f"Successfully processed {len(facts)} key facts."
     except Exception as e:
@@ -149,8 +220,8 @@ def save_key_facts_tool(key_facts_data: str, case_id: str) -> str:
         return f"Error saving key facts: {str(e)}"
 
 
-@tool
-def save_discrepancy_tool(discrepancy_data: str, case_id: str) -> str:
+@tool(args_schema=SaveDiscrepancyInput)
+def save_discrepancy_tool(discrepancy_data: str, case_id: str, **kwargs) -> str:
     """
     Save discrepancy findings to the state and database.
     
@@ -159,18 +230,32 @@ def save_discrepancy_tool(discrepancy_data: str, case_id: str) -> str:
     Args:
         discrepancy_data: JSON string with discrepancies
         case_id: Case identifier
+        **kwargs: Дополнительные параметры (runtime инжектируется middleware через kwargs)
     
     Returns:
         Success message
     """
+    # Проверяем, есть ли runtime в kwargs (инжектируется middleware)
+    runtime: Optional[ToolRuntime] = kwargs.get("runtime")
+    
     try:
         import json
         from app.services.langchain_parsers import ParserService
         
+        # Используем case_id из runtime если доступен
+        actual_case_id = runtime.case_id if runtime else case_id
+        
         # Parse discrepancies
         discrepancies = ParserService.parse_discrepancies(discrepancy_data)
         
-        logger.info(f"Discrepancy tool: Parsed {len(discrepancies)} discrepancies for case {case_id}")
+        logger.info(f"Discrepancy tool: Parsed {len(discrepancies)} discrepancies for case {actual_case_id}")
+        
+        # Сохраняем событие анализа через runtime.store если доступен
+        if runtime and runtime.store:
+            runtime.store.save_analysis_event(
+                event_type="discrepancy_finding",
+                data={"discrepancies_count": len(discrepancies), "case_id": actual_case_id}
+            )
         
         return f"Successfully processed {len(discrepancies)} discrepancies."
     except Exception as e:
@@ -178,30 +263,71 @@ def save_discrepancy_tool(discrepancy_data: str, case_id: str) -> str:
         return f"Error saving discrepancies: {str(e)}"
 
 
-@tool
-def save_risk_analysis_tool(risk_data: str, case_id: str) -> str:
+@tool(args_schema=SaveRiskInput)
+def save_risk_analysis_tool(risk_data: str, case_id: str, **kwargs) -> str:
     """
     Save risk analysis results to the state and database.
     
     Use this tool after analyzing risks based on discrepancies.
     
+    КРИТИЧНЫЙ TOOL - требует human approval перед сохранением (Фаза 9.2)
+    
     Args:
         risk_data: JSON string or text with risk analysis
         case_id: Case identifier
+        **kwargs: Дополнительные параметры (runtime инжектируется middleware через kwargs)
     
     Returns:
         Success message
     """
+    # Проверяем, есть ли runtime в kwargs (инжектируется middleware)
+    runtime: Optional[ToolRuntime] = kwargs.get("runtime")
+    
+    # Фаза 9.2: Проверяем requires_approval флаг
+    requires_approval = True  # Критичный tool - всегда требует одобрения
+    
+    if requires_approval and runtime:
+        try:
+            from app.services.langchain_agents.human_feedback import get_feedback_service
+            feedback_service = get_feedback_service()
+            
+            # Запрашиваем одобрение
+            action = f"Сохранение анализа рисков для дела {runtime.case_id}"
+            approved = feedback_service.request_approval(
+                case_id=runtime.case_id,
+                action=action,
+                context={"tool": "save_risk_analysis"},
+                timeout=300  # 5 минут таймаут
+            )
+            
+            if not approved:
+                logger.warning(f"Risk analysis tool: Approval denied for case {runtime.case_id}")
+                return "Сохранение анализа рисков отклонено пользователем."
+        except Exception as approval_error:
+            logger.warning(f"Error requesting approval for risk tool: {approval_error}")
+            # Продолжаем выполнение если approval service недоступен
+    
     try:
-        logger.info(f"Risk analysis tool: Processing risk data for case {case_id}")
+        # Используем case_id из runtime если доступен
+        actual_case_id = runtime.case_id if runtime else case_id
+        
+        logger.info(f"Risk analysis tool: Processing risk data for case {actual_case_id}")
+        
+        # Сохраняем событие анализа через runtime.store если доступен
+        if runtime and runtime.store:
+            runtime.store.save_analysis_event(
+                event_type="risk_analysis",
+                data={"case_id": actual_case_id}
+            )
+        
         return "Successfully processed risk analysis."
     except Exception as e:
         logger.error(f"Error in save_risk_analysis_tool: {e}")
         return f"Error saving risk analysis: {str(e)}"
 
 
-@tool
-def save_summary_tool(summary_data: str, case_id: str) -> str:
+@tool(args_schema=SaveSummaryInput)
+def save_summary_tool(summary_data: str, case_id: str, **kwargs) -> str:
     """
     Save case summary to the state and database.
     
@@ -210,12 +336,27 @@ def save_summary_tool(summary_data: str, case_id: str) -> str:
     Args:
         summary_data: Text with case summary
         case_id: Case identifier
+        **kwargs: Дополнительные параметры (runtime инжектируется middleware через kwargs)
     
     Returns:
         Success message
     """
+    # Проверяем, есть ли runtime в kwargs (инжектируется middleware)
+    runtime: Optional[ToolRuntime] = kwargs.get("runtime")
+    
     try:
-        logger.info(f"Summary tool: Processing summary for case {case_id}")
+        # Используем case_id из runtime если доступен
+        actual_case_id = runtime.case_id if runtime else case_id
+        
+        logger.info(f"Summary tool: Processing summary for case {actual_case_id}")
+        
+        # Сохраняем событие анализа через runtime.store если доступен
+        if runtime and runtime.store:
+            runtime.store.save_analysis_event(
+                event_type="summary_generation",
+                data={"case_id": actual_case_id}
+            )
+        
         return "Successfully processed case summary."
     except Exception as e:
         logger.error(f"Error in save_summary_tool: {e}")

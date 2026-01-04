@@ -58,7 +58,10 @@ def risk_agent_node(
         
         # Get tools - include iterative search tool for critical agents
         from app.services.langchain_agents.tools import get_critical_agent_tools
-        tools = get_critical_agent_tools()
+        # Фаза 3.1: Получаем tools с runtime injection через LangGraph hooks
+        from app.services.langchain_agents.runtime_middleware import get_tools_with_runtime
+        tools = get_tools_with_runtime(state, db, rag_service, critical_only=True)
+        logger.debug(f"Risk agent: got {len(tools)} tools with runtime injection")
         
         # Initialize LLM через factory (GigaChat)
         llm = create_llm(temperature=0.1)

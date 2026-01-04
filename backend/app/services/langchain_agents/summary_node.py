@@ -53,7 +53,10 @@ def summary_agent_node(
             initialize_tools(rag_service, document_processor)
         
         # Get tools
-        tools = get_all_tools()
+        # Фаза 3.1: Получаем tools с runtime injection через LangGraph hooks
+        from app.services.langchain_agents.runtime_middleware import get_tools_with_runtime
+        tools = get_tools_with_runtime(state, db, rag_service, critical_only=False)
+        logger.debug(f"Summary agent: got {len(tools)} tools with runtime injection")
         
         # Initialize LLM через factory (GigaChat)
         llm = create_llm(temperature=0.3)  # Creative задача, но все еще контролируемая

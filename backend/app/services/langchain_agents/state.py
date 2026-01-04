@@ -3,6 +3,7 @@ from typing import TypedDict, List, Dict, Any, Optional
 from langchain_core.messages import BaseMessage
 from dataclasses import dataclass, field
 from enum import Enum
+from app.services.langchain_agents.context_schema import CaseContext
 
 
 class PlanStepStatus(str, Enum):
@@ -114,8 +115,11 @@ class HumanFeedbackRequest:
 class AnalysisState(TypedDict):
     """State object for the analysis graph"""
     
-    # Case identifier
+    # Case identifier (deprecated: использовать context.case_id)
     case_id: str
+    
+    # Context (неизменяемые метаданные дела)
+    context: Optional[CaseContext]
     
     # Messages for agent communication
     messages: List[BaseMessage]
@@ -206,7 +210,8 @@ class AnalysisState(TypedDict):
 def create_initial_state(
     case_id: str,
     analysis_types: List[str],
-    metadata: Optional[Dict[str, Any]] = None
+    metadata: Optional[Dict[str, Any]] = None,
+    context: Optional[CaseContext] = None
 ) -> AnalysisState:
     """
     Create initial state for analysis
@@ -215,12 +220,19 @@ def create_initial_state(
         case_id: Case identifier
         analysis_types: List of analysis types to run
         metadata: Optional metadata
+        context: Optional CaseContext (если не передан, создаётся минимальный из case_id)
         
     Returns:
         Initialized AnalysisState
     """
+    # Создаём минимальный context если не передан
+    if context is None:
+        from app.services.langchain_agents.context_schema import CaseContext
+        context = CaseContext.from_minimal(case_id=case_id)
+    
     return AnalysisState(
         case_id=case_id,
+        context=context,
         messages=[],
         timeline_result=None,
         key_facts_result=None,
@@ -251,4 +263,6 @@ def create_initial_state(
         workspace_path=None,
         workspace_files=[],
         current_working_file=None,
+        # Context field
+        context=context,
     )
