@@ -364,6 +364,7 @@ class AgentCoordinator:
                                 # Фаза 8.1: Отправляем событие human feedback request через step_callback
                                 if step_callback:
                                     try:
+                                        import asyncio
                                         from app.services.langchain_agents.streaming_events import HumanFeedbackRequestEvent
                                         feedback_event = HumanFeedbackRequestEvent(
                                             request_id=str(uuid.uuid4()),
@@ -371,8 +372,14 @@ class AgentCoordinator:
                                             requires_approval=True
                                         )
                                         if asyncio.iscoroutinefunction(step_callback):
-                                            await step_callback(feedback_event)
+                                            # Async callback
+                                            loop = asyncio.get_event_loop()
+                                            if loop.is_running():
+                                                asyncio.create_task(step_callback(feedback_event))
+                                            else:
+                                                loop.run_until_complete(step_callback(feedback_event))
                                         else:
+                                            # Sync callback
                                             step_callback(feedback_event)
                                     except Exception as callback_error:
                                         logger.warning(f"Error sending feedback event: {callback_error}")
