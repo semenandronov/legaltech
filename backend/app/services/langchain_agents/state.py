@@ -263,6 +263,4 @@ def create_initial_state(
         workspace_path=None,
         workspace_files=[],
         current_working_file=None,
-        # Context field
-        context=context,
     )
