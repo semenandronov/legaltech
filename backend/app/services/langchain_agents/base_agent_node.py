@@ -1,4 +1,7 @@
-"""Base agent node class to eliminate code duplication across agent nodes"""
+"""Base agent node class to eliminate code duplication across agent nodes
+
+Phase 1.2: Added PostgresStore-based caching support.
+"""
 from typing import Dict, Any, Optional, List
 from abc import ABC, abstractmethod
 from app.services.langchain_agents.state import AnalysisState
@@ -13,9 +16,15 @@ from app.services.langchain_agents.file_system_helper import get_file_system_con
 from app.services.langchain_agents.file_system_tools import initialize_file_system_tools
 from sqlalchemy.orm import Session
 from langchain_core.messages import HumanMessage
+import hashlib
+import json
 import logging
 
 logger = logging.getLogger(__name__)
+
+# Cache configuration
+CACHE_ENABLED = True  # Can be overridden by config
+CACHE_PROMPT_VERSION = "v1"  # Increment when prompts change significantly
 
 
 class BaseAgentNode(ABC):
@@ -50,6 +59,113 @@ class BaseAgentNode(ABC):
         self.db = db
         self.rag_service = rag_service
         self.document_processor = document_processor
+        self._cache_service = None
+        self._use_cache = CACHE_ENABLED
+    
+    def _get_cache_service(self, db: Session):
+        """Get or create the cache service instance."""
+        if not self._use_cache or db is None:
+            return None
+        
+        if self._cache_service is None:
+            try:
+                from app.services.langchain_agents.store_cache_service import get_store_cache_service
+                self._cache_service = get_store_cache_service(db)
+            except Exception as e:
+                logger.warning(f"Cache service not available: {e}")
+                self._use_cache = False
+                return None
+        
+        return self._cache_service
+    
+    def _get_document_hash(self, state: AnalysisState) -> Optional[str]:
+        """Generate a hash of documents for cache invalidation."""
+        try:
+            documents = state.get("documents", [])
+            if not documents:
+                return None
+            
+            # Create a hash of document IDs and modification times
+            doc_data = []
+            for doc in documents:
+                if isinstance(doc, dict):
+                    doc_data.append({
+                        "id": doc.get("id", ""),
+                        "content_hash": hashlib.md5(
+                            str(doc.get("content", ""))[:1000].encode()
+                        ).hexdigest()[:8]
+                    })
+            
+            return hashlib.md5(
+                json.dumps(doc_data, sort_keys=True).encode()
+            ).hexdigest()[:16]
+        except Exception:
+            return None
+    
+    def _check_cache(
+        self,
+        state: AnalysisState,
+        db: Session,
+        case_id: str
+    ) -> Optional[Dict[str, Any]]:
+        """Check if result is cached."""
+        cache_service = self._get_cache_service(db)
+        if not cache_service:
+            return None
+        
+        try:
+            # Create cache key from analysis types
+            query = json.dumps(state.get("analysis_types", []), sort_keys=True)
+            document_hash = self._get_document_hash(state)
+            
+            cached = cache_service.get(
+                query=query,
+                agent_name=self.agent_name,
+                case_id=case_id,
+                prompt_version=CACHE_PROMPT_VERSION,
+                document_hash=document_hash
+            )
+            
+            if cached:
+                logger.info(f"{self.agent_name} agent: Using cached result for case {case_id}")
+                return cached
+            
+            return None
+        except Exception as e:
+            logger.warning(f"Cache lookup error: {e}")
+            return None
+    
+    def _save_to_cache(
+        self,
+        state: AnalysisState,
+        result: Dict[str, Any],
+        db: Session,
+        case_id: str
+    ) -> None:
+        """Save result to cache."""
+        cache_service = self._get_cache_service(db)
+        if not cache_service:
+            return
+        
+        try:
+            query = json.dumps(state.get("analysis_types", []), sort_keys=True)
+            document_hash = self._get_document_hash(state)
+            
+            cache_service.set(
+                query=query,
+                agent_name=self.agent_name,
+                result=result,
+                case_id=case_id,
+                prompt_version=CACHE_PROMPT_VERSION,
+                document_hash=document_hash,
+                metadata={
+                    "analysis_types": state.get("analysis_types", [])
+                }
+            )
+            
+            logger.debug(f"{self.agent_name} agent: Cached result for case {case_id}")
+        except Exception as e:
+            logger.warning(f"Cache save error: {e}")
     
     def execute(
         self,
@@ -81,6 +197,23 @@ class BaseAgentNode(ABC):
         
         try:
             logger.info(f"{self.agent_name} agent: Starting for case {case_id} (attempt {retry_count + 1})")
+            
+            # Check cache first (only on first attempt)
+            if retry_count == 0:
+                cached_result = self._check_cache(state, db, case_id)
+                if cached_result:
+                    # Return cached result
+                    new_state = dict(state)
+                    result_key = f"{self.agent_name}_result"
+                    new_state[result_key] = cached_result
+                    
+                    if "completed_steps" not in new_state:
+                        new_state["completed_steps"] = []
+                    step_id = f"{self.agent_name}_{case_id}_{len(new_state['completed_steps'])}_cached"
+                    if step_id not in new_state["completed_steps"]:
+                        new_state["completed_steps"].append(step_id)
+                    
+                    return new_state
             
             # Initialize file system context
             self._initialize_file_system_context(state)
@@ -154,6 +287,9 @@ class BaseAgentNode(ABC):
                     str(state.get("analysis_types", [])),
                     str(formatted_result)[:500]
                 )
+            
+            # Save to cache (Phase 1.2)
+            self._save_to_cache(state, formatted_result, db, case_id)
             
             logger.info(f"{self.agent_name} agent: Completed successfully for case {case_id}")
             return new_state

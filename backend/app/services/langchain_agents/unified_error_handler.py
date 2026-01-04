@@ -1,34 +1,62 @@
-"""Unified error handler for all agents with clear error classification and strategies"""
-from typing import Dict, Any, Optional
+"""Unified error handler for all agents with clear error classification and strategies
+
+Phase 2.3-2.4: Enhanced with production-ready error handling.
+"""
+from typing import Dict, Any, Optional, List, Callable
 from enum import Enum
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from app.services.langchain_agents.state import AnalysisState
 import logging
+import time
+import traceback
 
 logger = logging.getLogger(__name__)
 
 
 class ErrorType(str, Enum):
     """Types of errors that can occur in agent execution"""
+    # LLM errors
     TIMEOUT = "timeout"
-    TOOL_ERROR = "tool_error"
     LLM_ERROR = "llm_error"
     LLM_RATE_LIMIT = "llm_rate_limit"
     LLM_TIMEOUT = "llm_timeout"
     LLM_INVALID_RESPONSE = "llm_invalid_response"
     LLM_UNAVAILABLE = "llm_unavailable"
-    DEPENDENCY_ERROR = "dependency_error"
+    MODEL_TIMEOUT = "model_timeout"
+    
+    # Tool errors
+    TOOL_ERROR = "tool_error"
+    TOOL_TIMEOUT = "tool_timeout"
+    
+    # Retrieval errors
+    RETRIEVER_TIMEOUT = "retriever_timeout"
+    RETRIEVER_ERROR = "retriever_error"
+    
+    # Validation errors
     VALIDATION_ERROR = "validation_error"
+    SCHEMA_ERROR = "schema_error"
+    INCONSISTENT_OUTPUT = "inconsistent_output"
+    
+    # Infrastructure errors
+    DEPENDENCY_ERROR = "dependency_error"
     NETWORK_ERROR = "network_error"
+    DATABASE_ERROR = "database_error"
+    CIRCUIT_BREAKER_OPEN = "circuit_breaker_open"
+    
+    # Other
     UNKNOWN = "unknown"
 
 
 class ErrorStrategy(str, Enum):
     """Strategies for handling errors"""
     RETRY = "retry"
+    RETRY_WITH_BACKOFF = "retry_with_backoff"
     FALLBACK = "fallback"
+    FALLBACK_RULE_BASED = "fallback_rule_based"
     SKIP = "skip"
+    SKIP_AND_CONTINUE = "skip_and_continue"
     FAIL = "fail"
+    FAIL_GRACEFULLY = "fail_gracefully"
 
 
 @dataclass
@@ -37,21 +65,46 @@ class ErrorResult:
     success: bool
     strategy: ErrorStrategy
     message: str
-    retry_after: Optional[float] = None  # Seconds to wait before retry
+    error_type: ErrorType = ErrorType.UNKNOWN
+    retry_after: Optional[float] = None
     should_retry: bool = False
     max_retries: int = 3
     retry_count: int = 0
+    fallback_result: Optional[Dict[str, Any]] = None
+    stack_trace: Optional[str] = None
     
     def to_dict(self) -> Dict[str, Any]:
-        return {
+        result = {
             "success": self.success,
             "strategy": self.strategy.value,
+            "error_type": self.error_type.value,
             "message": self.message,
             "retry_after": self.retry_after,
             "should_retry": self.should_retry,
             "max_retries": self.max_retries,
             "retry_count": self.retry_count
         }
+        if self.fallback_result:
+            result["fallback_result"] = self.fallback_result
+        return result
+
+
+@dataclass
+class ErrorContext:
+    """Context for error analysis and handling"""
+    error: Exception
+    agent_name: str
+    case_id: str
+    operation: str = "unknown"
+    attempt: int = 1
+    start_time: Optional[float] = None
+    metadata: Dict[str, Any] = field(default_factory=dict)
+    
+    @property
+    def duration(self) -> Optional[float]:
+        if self.start_time:
+            return time.time() - self.start_time
+        return None
 
 
 class UnifiedErrorHandler:

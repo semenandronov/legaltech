@@ -53,7 +53,8 @@ class ResultEvaluator:
         step_id: str,
         agent_name: str,
         result: Optional[Dict[str, Any]],
-        expected_output: Optional[str] = None
+        expected_output: Optional[str] = None,
+        state: Optional[Dict[str, Any]] = None
     ) -> Dict[str, Any]:
         """
         Evaluate a single step's result
@@ -63,6 +64,7 @@ class ResultEvaluator:
             agent_name: Name of the agent
             result: Result from the agent
             expected_output: Optional expected output description
+            state: Optional analysis state for cross-agent validation
             
         Returns:
             Evaluation result with scores and recommendations
@@ -196,9 +198,37 @@ class ResultEvaluator:
                 # Note: rag_service is not available in this context, skip for now
                 # In production, this should be passed from evaluation_node
                 
-                # Collect other findings from state
+                # Collect other findings from state for cross-agent validation
                 other_findings = []
-                # This would be passed from evaluation_node if available
+                other_agent_results = {}
+                
+                if state:
+                    # Map agent names to their result keys
+                    agent_result_mapping = {
+                        "timeline": "timeline_result",
+                        "key_facts": "key_facts_result",
+                        "discrepancy": "discrepancy_result",
+                        "risk": "risk_result",
+                        "summary": "summary_result",
+                        "document_classifier": "classification_result",
+                        "entity_extraction": "entities_result",
+                        "privilege_check": "privilege_result",
+                        "relationship": "relationship_result",
+                    }
+                    
+                    # Collect results from other agents
+                    for other_agent, result_key in agent_result_mapping.items():
+                        if other_agent != agent_name:  # Exclude current agent
+                            other_result = state.get(result_key)
+                            if other_result is not None:
+                                other_agent_results[other_agent] = other_result
+                                other_findings.append({
+                                    "type": other_agent,
+                                    "agent_name": other_agent,
+                                    **other_result if isinstance(other_result, dict) else {"data": other_result}
+                                })
+                    
+                    logger.debug(f"Collected {len(other_agent_results)} other agent results for cross-validation")
                 
                 # Perform multi-level validation (synchronous wrapper)
                 from app.utils.async_utils import run_async_safe
@@ -208,7 +238,9 @@ class ResultEvaluator:
                             finding=result,
                             source_docs=source_docs,
                             other_findings=other_findings,
-                            verifying_agent="key_facts" if agent_name != "key_facts" else "timeline"
+                            verifying_agent="key_facts" if agent_name != "key_facts" else "timeline",
+                            agent_name=agent_name,  # Pass agent name for Level 5
+                            other_agent_results=other_agent_results if other_agent_results else None  # Pass for cross-agent validation
                         )
                     )
                 except Exception as e:
@@ -570,10 +602,11 @@ def evaluation_node(
     # Evaluate the step
     try:
         step_evaluation = evaluator.evaluate_step_result(
-        step_id=current_step_id,
-        agent_name=agent_name,
-        result=result
-    )
+            step_id=current_step_id,
+            agent_name=agent_name,
+            result=result,
+            state=state  # Pass state for cross-agent validation (Level 5)
+        )
     except Exception as eval_error:
         logger.error(f"Error in step evaluation: {eval_error}", exc_info=True)
         # Fallback evaluation with default values

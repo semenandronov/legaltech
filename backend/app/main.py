@@ -11,7 +11,7 @@ import logging
 import sys
 from datetime import datetime
 from app.config import config
-from app.routes import upload, chat, auth, cases, dashboard, analysis, reports, settings, websocket, tabular_review, prompts, workflows, folders, review_table, assistant_chat, workflow_execution, plan_execution
+from app.routes import upload, chat, auth, cases, dashboard, analysis, reports, settings, websocket, tabular_review, prompts, workflows, folders, review_table, assistant_chat, workflow_execution, plan_execution, metrics
 from app.utils.database import init_db
 
 # Configure structured logging
@@ -138,19 +138,13 @@ app.include_router(workflows.router, prefix="/api", tags=["workflows"])
 app.include_router(workflow_execution.router, prefix="/api", tags=["workflow-execution"])
 app.include_router(folders.router, prefix="/api", tags=["folders"])
 app.include_router(plan_execution.router, prefix="/api/plan", tags=["plan-execution"])
+app.include_router(metrics.router, prefix="/api/metrics", tags=["metrics"])
 
 
 @app.get("/api/health")
 async def health():
     """Health check endpoint"""
     return {"status": "ok"}
-
-
-@app.get("/api/metrics")
-async def metrics():
-    """Metrics endpoint (for monitoring)"""
-    from app.middleware.metrics import get_metrics
-    return get_metrics()
 
 
 # Debug endpoint to check routes

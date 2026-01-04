@@ -1,4 +1,7 @@
-"""RAG (Retrieval Augmented Generation) service"""
+"""RAG (Retrieval Augmented Generation) service
+
+Phase 1.3: Added multi-stage RAG pipeline with reranking and query condensation.
+"""
 from typing import List, Dict, Any, Tuple, Optional
 from sqlalchemy.orm import Session
 from langchain_core.documents import Document
@@ -10,6 +13,13 @@ from app.services.langchain_memory import MemoryService
 import logging
 
 logger = logging.getLogger(__name__)
+
+# Phase 1.3: Multi-stage RAG configuration
+MULTI_STAGE_RAG_ENABLED = True
+INITIAL_RETRIEVE_K = 100  # First stage: retrieve many candidates
+RERANK_TOP_K = 20  # Second stage: rerank to top candidates
+CONDENSE_TOP_K = 10  # Third stage: condense context
+FINAL_TOP_K = 5  # Final stage: use for synthesis
 
 # Словарь для перевода типов документов на русский язык
 DOC_TYPE_LABELS = {
@@ -101,6 +111,24 @@ class RAGService:
         except Exception as e:
             logger.warning(f"Failed to initialize IterativeRAGService: {e}")
             self.iterative_rag = None
+        
+        # Phase 1.3: Initialize reranker and query condenser
+        self._reranker = None
+        self._query_condenser = None
+        
+        try:
+            from app.services.reranker_service import get_reranker_service
+            self._reranker = get_reranker_service()
+            logger.info("✅ Reranker service initialized")
+        except Exception as e:
+            logger.warning(f"Reranker not available: {e}")
+        
+        try:
+            from app.services.query_condenser import get_query_condenser
+            self._query_condenser = get_query_condenser()
+            logger.info("✅ Query condenser initialized")
+        except Exception as e:
+            logger.warning(f"Query condenser not available: {e}")
         
         # Using direct RAG with GigaChat + pgvector
         logger.info("✅ Using direct RAG with GigaChat + pgvector")
@@ -228,6 +256,173 @@ class RAGService:
         except Exception as e:
             logger.error(f"Error retrieving context for case {case_id}: {e}", exc_info=True)
             return []
+    
+    def retrieve_multi_stage(
+        self,
+        case_id: str,
+        query: str,
+        db: Optional[Session] = None,
+        chat_history: Optional[List[Dict[str, str]]] = None,
+        initial_k: int = INITIAL_RETRIEVE_K,
+        rerank_k: int = RERANK_TOP_K,
+        final_k: int = FINAL_TOP_K
+    ) -> List[Document]:
+        """
+        Multi-stage RAG retrieval pipeline (Phase 1.3).
+        
+        Pipeline:
+        1. Query condensation (if chat history)
+        2. Initial retrieval (BM25 + vector, top-initial_k)
+        3. Reranking (cross-encoder, top-rerank_k)
+        4. Context condensation (summarization)
+        5. Final selection (top-final_k)
+        
+        Args:
+            case_id: Case identifier
+            query: User query
+            db: Optional database session
+            chat_history: Optional chat history for query condensation
+            initial_k: Number of candidates for initial retrieval
+            rerank_k: Number of documents after reranking
+            final_k: Final number of documents to return
+            
+        Returns:
+            List of relevant documents
+        """
+        try:
+            logger.info(f"Multi-stage RAG for case {case_id}: initial_k={initial_k}, rerank_k={rerank_k}, final_k={final_k}")
+            
+            # Stage 1: Query condensation (if history available)
+            condensed_query = query
+            if chat_history and self._query_condenser:
+                condensed_query = self._query_condenser.condense_query(query, chat_history)
+                if condensed_query != query:
+                    logger.debug(f"Query condensed: '{query[:50]}...' → '{condensed_query[:50]}...'")
+            
+            # Stage 2: Initial retrieval (hybrid search for more candidates)
+            logger.debug(f"Stage 2: Retrieving {initial_k} candidates with hybrid search")
+            candidates = self.document_processor.hybrid_search(
+                case_id=case_id,
+                query=condensed_query,
+                k=initial_k,
+                alpha=0.6,  # 60% dense, 40% sparse (slightly favor BM25 for initial)
+                db=db
+            )
+            
+            # Filter valid documents
+            candidates = [doc for doc in candidates if doc is not None and hasattr(doc, 'page_content')]
+            
+            if not candidates:
+                logger.warning(f"No candidates retrieved for case {case_id}")
+                return []
+            
+            logger.debug(f"Stage 2: Retrieved {len(candidates)} candidates")
+            
+            # Stage 3: Reranking with cross-encoder
+            if self._reranker and len(candidates) > final_k:
+                logger.debug(f"Stage 3: Reranking to top {rerank_k}")
+                reranked = self._reranker.rerank_to_documents(
+                    query=condensed_query,
+                    documents=candidates,
+                    top_k=rerank_k
+                )
+                
+                if reranked:
+                    candidates = reranked
+                    logger.debug(f"Stage 3: Reranked to {len(candidates)} documents")
+            
+            # Stage 4: Optional context condensation
+            # (Generate summaries for very long documents)
+            # This is a placeholder for per-chunk summary generation
+            # which should be done at indexing time, not retrieval time
+            
+            # Stage 5: Final selection
+            final_docs = candidates[:final_k]
+            
+            logger.info(
+                f"Multi-stage RAG completed for case {case_id}: "
+                f"initial={len(candidates)} → final={len(final_docs)}"
+            )
+            
+            return final_docs
+            
+        except Exception as e:
+            logger.error(f"Multi-stage RAG error for case {case_id}: {e}", exc_info=True)
+            # Fallback to simple retrieval
+            return self.retrieve_context(case_id, query, k=final_k, db=db)
+    
+    def retrieve_with_multi_query(
+        self,
+        case_id: str,
+        query: str,
+        db: Optional[Session] = None,
+        num_queries: int = 3,
+        k_per_query: int = 10,
+        final_k: int = FINAL_TOP_K
+    ) -> List[Document]:
+        """
+        Retrieve using multiple query formulations.
+        
+        Generates diverse query formulations and retrieves documents for each,
+        then deduplicates and reranks the combined results.
+        
+        Args:
+            case_id: Case identifier
+            query: Original user query
+            db: Optional database session
+            num_queries: Number of query variants to generate
+            k_per_query: Documents to retrieve per query
+            final_k: Final number of documents to return
+            
+        Returns:
+            List of relevant documents
+        """
+        try:
+            queries = [query]
+            
+            # Generate multi-queries
+            if self._query_condenser:
+                queries = self._query_condenser.generate_multi_queries(query, num_queries)
+                logger.debug(f"Generated {len(queries)} query variants")
+            
+            # Retrieve for each query
+            all_docs = []
+            seen_content_hashes = set()
+            
+            for q in queries:
+                docs = self.document_processor.hybrid_search(
+                    case_id=case_id,
+                    query=q,
+                    k=k_per_query,
+                    alpha=0.7,
+                    db=db
+                )
+                
+                # Deduplicate by content hash
+                for doc in docs:
+                    if doc is None:
+                        continue
+                    content_hash = hash(doc.page_content[:500])
+                    if content_hash not in seen_content_hashes:
+                        seen_content_hashes.add(content_hash)
+                        all_docs.append(doc)
+            
+            # Rerank combined results
+            if self._reranker and len(all_docs) > final_k:
+                all_docs = self._reranker.rerank_to_documents(
+                    query=query,
+                    documents=all_docs,
+                    top_k=final_k
+                )
+            else:
+                all_docs = all_docs[:final_k]
+            
+            logger.info(f"Multi-query retrieval: {len(queries)} queries → {len(all_docs)} docs")
+            return all_docs
+            
+        except Exception as e:
+            logger.error(f"Multi-query retrieval error: {e}")
+            return self.retrieve_context(case_id, query, k=final_k, db=db)
     
     def format_sources(self, documents: List[Document]) -> List[Dict[str, Any]]:
         """
@@ -373,9 +568,12 @@ class RAGService:
         k: int,
         db: Optional[Session],
         history: Optional[List[Dict[str, str]]],
-        use_iterative: bool = True
+        use_iterative: bool = True,
+        use_multi_stage: bool = True
     ) -> Tuple[str, List[Dict[str, Any]]]:
         """Generate using direct RAG with pgvector + GigaChat
+        
+        Phase 1.3: Added multi-stage RAG pipeline support.
         
         Args:
             case_id: Case identifier
@@ -384,13 +582,26 @@ class RAGService:
             db: Optional database session
             history: Optional chat history
             use_iterative: Use iterative search for better results
+            use_multi_stage: Use multi-stage RAG pipeline (Phase 1.3)
         """
         from app.services.llm_factory import create_llm
         from langchain_core.prompts import ChatPromptTemplate
         from langchain_core.messages import HumanMessage, AIMessage, SystemMessage
         
-        # Retrieve relevant documents (use iterative search by default)
-        if use_iterative and self.iterative_rag:
+        # Phase 1.3: Use multi-stage RAG pipeline if available
+        if use_multi_stage and MULTI_STAGE_RAG_ENABLED:
+            logger.info(f"Using multi-stage RAG pipeline for case {case_id}")
+            documents = self.retrieve_multi_stage(
+                case_id=case_id,
+                query=query,
+                db=db,
+                chat_history=history,
+                initial_k=max(k * 10, INITIAL_RETRIEVE_K),
+                rerank_k=max(k * 3, RERANK_TOP_K),
+                final_k=k
+            )
+        # Fallback to iterative or multi-query retrieval
+        elif use_iterative and self.iterative_rag:
             from app.config import config
             documents = self.iterative_rag.retrieve_iteratively(
                 case_id=case_id,

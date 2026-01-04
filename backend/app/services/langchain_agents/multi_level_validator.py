@@ -657,13 +657,6 @@ Finding: {finding_text}
                 consistency_score=0.0,
                 reasoning=f"Error: {str(e)}"
             )
-            logger.error(f"Error in circular verification: {e}", exc_info=True)
-            return CircularVerification(
-                confirmed=False,
-                verifying_agent=verifying_agent,
-                agreement_score=0.0,
-                reasoning=f"Error: {str(e)}"
-            )
     
     def _extract_finding_text(self, finding: Dict[str, Any]) -> str:
         """Извлекает текстовое представление finding"""

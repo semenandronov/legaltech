@@ -52,6 +52,19 @@ class Config:
     AGENT_TIMEOUT: int = int(os.getenv("AGENT_TIMEOUT", "120"))  # Default timeout per agent in seconds (reduced from 300)
     AGENT_RETRY_COUNT: int = int(os.getenv("AGENT_RETRY_COUNT", "2"))  # Retry count on failure
     
+    # Rate Limiting Settings (Phase 4.1)
+    RATE_LIMIT_RPS: float = float(os.getenv("RATE_LIMIT_RPS", "2.0"))  # Requests per second to LLM
+    RATE_LIMIT_MAX_BUCKET_SIZE: int = int(os.getenv("RATE_LIMIT_MAX_BUCKET_SIZE", "10"))  # Max burst size
+    RATE_LIMIT_CHECK_INTERVAL: float = float(os.getenv("RATE_LIMIT_CHECK_INTERVAL", "0.1"))  # Check interval in seconds
+    MAX_PARALLEL_LLM_CALLS: int = int(os.getenv("MAX_PARALLEL_LLM_CALLS", "8"))  # Max concurrent LLM calls
+    RATE_LIMIT_ENABLED: bool = os.getenv("RATE_LIMIT_ENABLED", "true").lower() == "true"  # Enable rate limiting
+    
+    # Cache Settings (Phase 1.2)
+    CACHE_TTL_SECONDS: int = int(os.getenv("CACHE_TTL_SECONDS", "3600"))  # Default cache TTL (1 hour)
+    CACHE_SEMANTIC_ENABLED: bool = os.getenv("CACHE_SEMANTIC_ENABLED", "false").lower() == "true"  # Enable semantic cache
+    CACHE_SIMILARITY_THRESHOLD: float = float(os.getenv("CACHE_SIMILARITY_THRESHOLD", "0.85"))  # Similarity threshold for semantic cache
+    CACHE_CLEANUP_INTERVAL: int = int(os.getenv("CACHE_CLEANUP_INTERVAL", "3600"))  # How often to clean expired cache (seconds)
+    
     # Human-in-the-loop Settings
     HUMAN_FEEDBACK_TIMEOUT: int = int(os.getenv("HUMAN_FEEDBACK_TIMEOUT", "300"))  # Timeout for human feedback in seconds (default: 5 minutes)
     HUMAN_FEEDBACK_MAX_ATTEMPTS: int = int(os.getenv("HUMAN_FEEDBACK_MAX_ATTEMPTS", "3"))  # Maximum attempts before skipping
