@@ -134,6 +134,11 @@ class TabularReviewService:
         columns_before = self.db.query(TabularColumn).filter(
             TabularColumn.tabular_review_id == review_id
         ).all()
+        # #region agent log
+        import json
+        with open('/Users/semyon_andronov04/Desktop/C ДВ/.cursor/debug.log', 'a') as f:
+            f.write(json.dumps({"location":"backend/app/services/tabular_review_service.py:137","message":"[add_column] Before adding column","data":{"review_id":review_id,"columns_before_count":len(columns_before),"columns_before_labels":[c.column_label for c in columns_before],"new_column_label":column_label,"new_column_type":column_type},"timestamp":int(__import__('time').time()*1000),"sessionId":"debug-session","runId":"run1","hypothesisId":"A"})+"\n")
+        # #endregion
         logger.info(f"[add_column] Before adding: {len(columns_before)} columns in review {review_id}: {[c.column_label for c in columns_before]}")
         
         order_index = (max_order[0] + 1) if max_order else 0
@@ -148,6 +153,10 @@ class TabularReviewService:
         )
         
         self.db.add(column)
+        # #region agent log
+        with open('/Users/semyon_andronov04/Desktop/C ДВ/.cursor/debug.log', 'a') as f:
+            f.write(json.dumps({"location":"backend/app/services/tabular_review_service.py:155","message":"[add_column] About to commit new column","data":{"review_id":review_id,"column_id":column.id,"column_label":column_label},"timestamp":int(__import__('time').time()*1000),"sessionId":"debug-session","runId":"run1","hypothesisId":"B"})+"\n")
+        # #endregion
         self.db.commit()
         self.db.refresh(column)
         
@@ -156,11 +165,21 @@ class TabularReviewService:
             TabularColumn.tabular_review_id == review_id
         ).all()
         
+        # #region agent log
+        with open('/Users/semyon_andronov04/Desktop/C ДВ/.cursor/debug.log', 'a') as f:
+            f.write(json.dumps({"location":"backend/app/services/tabular_review_service.py:160","message":"[add_column] After commit, checking columns","data":{"review_id":review_id,"columns_after_count":len(columns_after),"columns_after_labels":[c.column_label for c in columns_after],"expected_count":len(columns_before)+1},"timestamp":int(__import__('time').time()*1000),"sessionId":"debug-session","runId":"run1","hypothesisId":"C"})+"\n")
+        # #endregion
         logger.info(f"[add_column] After adding: {len(columns_after)} columns in review {review_id}: {[c.column_label for c in columns_after]}")
         
         # CRITICAL: Check for unwanted default columns and delete them immediately
         unwanted_column_labels = ["Date", "Document type", "Summary", "Author", "Persons mentioned", "Language"]
         unwanted_columns = [c for c in columns_after if c.column_label in unwanted_column_labels and c.id != column.id]
+        
+        # #region agent log
+        if unwanted_columns:
+            with open('/Users/semyon_andronov04/Desktop/C ДВ/.cursor/debug.log', 'a') as f:
+                f.write(json.dumps({"location":"backend/app/services/tabular_review_service.py:168","message":"[add_column] Found unwanted columns after commit","data":{"review_id":review_id,"unwanted_count":len(unwanted_columns),"unwanted_labels":[c.column_label for c in unwanted_columns],"unwanted_ids":[c.id for c in unwanted_columns]},"timestamp":int(__import__('time').time()*1000),"sessionId":"debug-session","runId":"run1","hypothesisId":"D"})+"\n")
+        # #endregion
         
         if unwanted_columns:
             logger.error(f"[add_column] CRITICAL: Found {len(unwanted_columns)} unwanted default columns! Deleting them immediately: {[c.column_label for c in unwanted_columns]}")

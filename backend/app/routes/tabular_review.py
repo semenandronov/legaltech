@@ -232,6 +232,13 @@ async def add_column(
         ).count()
         logger.info(f"Adding column to review {review_id}. Columns before: {columns_before}, new column: {request.column_label} (type: {request.column_type})")
         
+        # #region agent log
+        import json
+        import time
+        with open('/Users/semyon_andronov04/Desktop/C ДВ/.cursor/debug.log', 'a') as f:
+            f.write(json.dumps({"location":"backend/app/routes/tabular_review.py:235","message":"[API add_column] About to call service.add_column","data":{"review_id":review_id,"columns_before":columns_before,"new_column_label":request.column_label,"new_column_type":request.column_type,"user_id":current_user.id},"timestamp":int(time.time()*1000),"sessionId":"debug-session","runId":"run1","hypothesisId":"E"})+"\n")
+        # #endregion
+        
         service = TabularReviewService(db)
         column = service.add_column(
             review_id=review_id,
@@ -242,10 +249,19 @@ async def add_column(
             column_config=request.column_config
         )
         
+        # #region agent log
+        with open('/Users/semyon_andronov04/Desktop/C ДВ/.cursor/debug.log', 'a') as f:
+            f.write(json.dumps({"location":"backend/app/routes/tabular_review.py:243","message":"[API add_column] service.add_column returned","data":{"review_id":review_id,"column_id":column.id,"column_label":column.column_label},"timestamp":int(time.time()*1000),"sessionId":"debug-session","runId":"run1","hypothesisId":"F"})+"\n")
+        # #endregion
+        
         # Check columns count after adding
         columns_after = db.query(TabularColumn).filter(
             TabularColumn.tabular_review_id == review_id
         ).count()
+        # #region agent log
+        with open('/Users/semyon_andronov04/Desktop/C ДВ/.cursor/debug.log', 'a') as f:
+            f.write(json.dumps({"location":"backend/app/routes/tabular_review.py:250","message":"[API add_column] Columns count after service call","data":{"review_id":review_id,"columns_before":columns_before,"columns_after":columns_after,"expected":columns_before+1},"timestamp":int(time.time()*1000),"sessionId":"debug-session","runId":"run1","hypothesisId":"G"})+"\n")
+        # #endregion
         logger.info(f"Column added. Columns after: {columns_after}")
         if columns_after > columns_before + 1:
             logger.error(f"ERROR: More than one column was added! Expected {columns_before + 1}, got {columns_after}")
@@ -1141,6 +1157,12 @@ async def apply_template(
 ):
     """Apply a template to a tabular review - adds all columns from template"""
     try:
+        # #region agent log
+        import json
+        import time
+        with open('/Users/semyon_andronov04/Desktop/C ДВ/.cursor/debug.log', 'a') as f:
+            f.write(json.dumps({"location":"backend/app/routes/tabular_review.py:1158","message":"[API apply_template] Template application called","data":{"review_id":review_id,"template_id":template_id,"user_id":current_user.id},"timestamp":int(time.time()*1000),"sessionId":"debug-session","runId":"run1","hypothesisId":"H"})+"\n")
+        # #endregion
         logger.info(f"Applying template {template_id} to review {review_id} by user {current_user.id}")
         from app.models.tabular_review import TabularColumnTemplate
         from app.services.tabular_review_service import TabularReviewService
@@ -1184,6 +1206,10 @@ async def apply_template(
         
         # Add all columns from template
         added_columns = []
+        # #region agent log
+        with open('/Users/semyon_andronov04/Desktop/C ДВ/.cursor/debug.log', 'a') as f:
+            f.write(json.dumps({"location":"backend/app/routes/tabular_review.py:1203","message":"[API apply_template] About to add columns from template","data":{"review_id":review_id,"template_id":template_id,"template_name":template.name,"columns_count":len(template.columns),"column_labels":[col.get("column_label") for col in template.columns]},"timestamp":int(time.time()*1000),"sessionId":"debug-session","runId":"run1","hypothesisId":"I"})+"\n")
+        # #endregion
         logger.info(f"Template '{template.name}' has {len(template.columns)} columns. Adding them to review {review_id}")
         for idx, col_def in enumerate(template.columns):
             logger.info(f"  Adding column {idx + 1}/{len(template.columns)}: {col_def.get('column_label')} (type: {col_def.get('column_type')})")
