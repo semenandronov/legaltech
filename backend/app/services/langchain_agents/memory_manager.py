@@ -1,6 +1,7 @@
 """LangChain Memory Manager for agent context between requests"""
 from typing import Dict, Any, Optional
 from app.services.llm_factory import create_llm
+import json
 import logging
 
 logger = logging.getLogger(__name__)
@@ -80,6 +81,10 @@ class AgentMemoryManager:
         """
         Получить контекст из памяти агента
         
+        Использует:
+        - ConversationSummaryMemory для кратких сводок
+        - FactStore для структурированных фактов (semantic search)
+        
         Args:
             agent_type: Type of agent
             query: Current query (for context)
@@ -87,56 +92,110 @@ class AgentMemoryManager:
         Returns:
             Context string from memory or empty string
         """
+        context_parts = []
+        
+        # Загрузить структурированные факты из FactStore
+        structured_fact_types = ["entity_extraction", "key_facts", "timeline"]
+        
+        if agent_type in structured_fact_types:
+            try:
+                from app.services.langchain_agents.fact_store import get_fact_store
+                fact_store = get_fact_store(self.case_id)
+                
+                # Поиск релевантных фактов
+                relevant_facts = fact_store.search_facts(
+                    fact_type=agent_type,
+                    query=query,
+                    limit=5
+                )
+                
+                if relevant_facts:
+                    facts_text = "\n".join([
+                        json.dumps(fact, ensure_ascii=False) for fact in relevant_facts[:3]
+                    ])
+                    context_parts.append(f"Relevant {agent_type} facts:\n{facts_text}")
+                    logger.debug(f"Loaded {len(relevant_facts)} relevant facts from FactStore for {agent_type}")
+            except Exception as fact_error:
+                logger.debug(f"FactStore load failed (non-critical): {fact_error}")
+        
+        # Загрузить краткие сводки из ConversationSummaryMemory
         memory = self._get_memory_for_agent(agent_type)
         
-        if memory is None:
-            return ""
-        
-        try:
-            # Load memory variables
-            memory_vars = memory.load_memory_variables({})
-            
-            # Extract history
-            history = memory_vars.get("history", "")
-            
-            if isinstance(history, list):
-                # Convert messages to string
-                history_str = "\n".join([
-                    f"{msg.type}: {msg.content}" if hasattr(msg, 'type') and hasattr(msg, 'content')
-                    else str(msg)
-                    for msg in history
-                ])
-                return history_str
-            elif isinstance(history, str):
-                return history
-            else:
-                return str(history) if history else ""
+        if memory is not None:
+            try:
+                # Load memory variables
+                memory_vars = memory.load_memory_variables({})
                 
-        except Exception as e:
-            logger.warning(f"Error loading memory for {agent_type}: {e}")
-            return ""
+                # Extract history
+                history = memory_vars.get("history", "")
+                
+                if isinstance(history, list):
+                    # Convert messages to string
+                    history_str = "\n".join([
+                        f"{msg.type}: {msg.content}" if hasattr(msg, 'type') and hasattr(msg, 'content')
+                        else str(msg)
+                        for msg in history
+                    ])
+                    if history_str:
+                        context_parts.append(f"Previous interactions:\n{history_str}")
+                elif isinstance(history, str) and history:
+                    context_parts.append(f"Previous interactions:\n{history}")
+                    
+            except Exception as e:
+                logger.warning(f"Error loading memory for {agent_type}: {e}")
+        
+        return "\n\n".join(context_parts) if context_parts else ""
     
     def save_to_memory(self, agent_type: str, input_text: str, output_text: str):
         """
         Сохранить взаимодействие в память
+        
+        Использует:
+        - ConversationSummaryMemory для кратких сводок (<500 токенов)
+        - FactStore для структурированных фактов (entities, key_facts, timeline events)
         
         Args:
             agent_type: Type of agent
             input_text: Input/query text
             output_text: Output/result text
         """
+        # Для структурированных фактов использовать FactStore
+        structured_fact_types = ["entity_extraction", "key_facts", "timeline"]
+        
+        if agent_type in structured_fact_types:
+            try:
+                from app.services.langchain_agents.fact_store import get_fact_store
+                fact_store = get_fact_store(self.case_id)
+                
+                # Попытаться извлечь структурированные факты из output_text
+                # (в production можно парсить JSON или использовать structured output)
+                # Пока сохраняем как текст, но в будущем можно улучшить
+                facts = [{"text": output_text, "source": input_text}]
+                fact_store.save_facts(
+                    fact_type=agent_type,
+                    facts=facts,
+                    metadata={"input": input_text[:200]}
+                )
+                logger.debug(f"Saved structured facts to FactStore for {agent_type}")
+            except Exception as fact_error:
+                logger.debug(f"FactStore save failed (non-critical): {fact_error}")
+        
+        # Для кратких сводок использовать ConversationSummaryMemory
         memory = self._get_memory_for_agent(agent_type)
         
         if memory is None:
             return
         
         try:
-            # Save context
-            memory.save_context(
-                {"input": input_text},
-                {"output": output_text}
-            )
-            logger.debug(f"Saved interaction to memory for {agent_type}")
+            # Сохранить только если output_text короткий (<500 токенов)
+            # Для длинных результатов используем только FactStore
+            output_length = len(output_text.split())
+            if output_length < 500:  # Приблизительно <500 токенов
+                memory.save_context(
+                    {"input": input_text},
+                    {"output": output_text}
+                )
+                logger.debug(f"Saved interaction to ConversationSummaryMemory for {agent_type}")
         except Exception as e:
             logger.warning(f"Error saving memory for {agent_type}: {e}")
     

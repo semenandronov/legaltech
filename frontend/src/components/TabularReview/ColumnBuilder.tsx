@@ -175,14 +175,22 @@ export function ColumnBuilder({ isOpen, onClose, onSave }: ColumnBuilderProps) {
             value={columnType} 
             onValueChange={handleColumnTypeChange}
           >
-            <SelectTrigger>
+            <SelectTrigger 
+              onClick={(e) => e.stopPropagation()}
+              onPointerDown={(e) => e.stopPropagation()}
+            >
               <SelectValue placeholder="Выберите тип колонки" />
             </SelectTrigger>
-            <SelectContent>
+            <SelectContent 
+              onPointerDownOutside={(e) => e.preventDefault()}
+              onEscapeKeyDown={(e) => e.preventDefault()}
+            >
               {COLUMN_TYPES.map((type) => (
                 <SelectItem 
                   key={type.value} 
                   value={type.value}
+                  onPointerDown={(e) => e.stopPropagation()}
+                  onClick={(e) => e.stopPropagation()}
                 >
                   <span className="flex items-center gap-2">
                     <span>{type.icon}</span>

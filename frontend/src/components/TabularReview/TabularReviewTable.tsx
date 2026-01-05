@@ -444,8 +444,17 @@ export const TabularReviewTable = React.memo(({ reviewId, tableData, onTableData
                 } : {},
               position: 'relative',
             }}
-            onClick={async () => {
+            onDoubleClick={(e) => {
+              e.stopPropagation()
+              // Start editing cell
+              if (onCellEdit) {
+                onCellEdit(row.original.file_id, col.id, cell)
+              }
+            }}
+            onClick={async (e) => {
                 if (cellValue === "-") return
+                // Don't open document if double-clicking (editing)
+                if (e.detail === 2) return
                 
               const cacheKey = `${row.original.file_id}_${col.id}`
               

@@ -75,13 +75,13 @@ export const TabularDocumentViewer: React.FC<TabularDocumentViewerProps> = ({
 
   useEffect(() => {
     const activeDoc = documentTabs[activeTab]
-    if (activeDoc?.fileId && caseId) {
+    if (activeDoc?.fileId && caseId && activeDoc.fileId !== currentFileId) {
       setCurrentFileId(activeDoc.fileId)
       setCurrentFileName(activeDoc.fileName)
-      loadDocumentInfo(activeDoc.fileId, activeDoc.fileType || "pdf")
+      loadDocumentInfo(activeDoc.fileId, propFileType || activeDoc.fileType || "pdf")
       onDocumentChange?.(activeDoc.fileId)
     }
-  }, [activeTab, caseId, documentTabs])
+  }, [activeTab, caseId, documentTabs, propFileType])
 
   useEffect(() => {
     if (initialFileId && initialFileId !== currentFileId) {

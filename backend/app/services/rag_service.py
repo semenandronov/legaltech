@@ -160,6 +160,25 @@ class RAGService:
         Returns:
             List of relevant Document objects
         """
+        # Проверить кэш RAG перед выполнением запроса
+        try:
+            from app.services.langchain_agents.rag_cache import get_rag_cache
+            rag_cache = get_rag_cache()
+            
+            cached_docs = rag_cache.get(
+                case_id=case_id,
+                query=query,
+                k=k,
+                retrieval_strategy=retrieval_strategy if not use_iterative and not use_hybrid else None,
+                doc_types=doc_types
+            )
+            
+            if cached_docs:
+                logger.debug(f"[RAGService] Cache hit for query: {query[:50]}... (case: {case_id})")
+                return cached_docs
+        except Exception as cache_error:
+            logger.debug(f"RAG cache check failed (non-critical): {cache_error}")
+        
         try:
             # Use hybrid search if requested or if strategy is 'hybrid'
             if use_hybrid or retrieval_strategy == "hybrid":
@@ -251,6 +270,25 @@ class RAGService:
             
             if not valid_docs:
                 logger.warning(f"No valid documents retrieved for case {case_id} with query: {query[:100]}")
+            
+            # Сохранить результаты в кэш RAG
+            try:
+                from app.services.langchain_agents.rag_cache import get_rag_cache
+                rag_cache = get_rag_cache()
+                
+                # Сохранить только если есть результаты
+                if valid_docs:
+                    rag_cache.set(
+                        case_id=case_id,
+                        query=query,
+                        documents=valid_docs,
+                        k=k,
+                        retrieval_strategy=retrieval_strategy if not use_iterative and not use_hybrid else None,
+                        doc_types=doc_types
+                    )
+                    logger.debug(f"[RAGService] Cached RAG result: {len(valid_docs)} documents (case: {case_id})")
+            except Exception as cache_error:
+                logger.debug(f"RAG cache save failed (non-critical): {cache_error}")
             
             return valid_docs
         except Exception as e:

@@ -198,6 +198,39 @@ class BaseAgentNode(ABC):
         try:
             logger.info(f"{self.agent_name} agent: Starting for case {case_id} (attempt {retry_count + 1})")
             
+            # Check circuit breaker before execution
+            from app.services.langchain_agents.unified_error_handler import UnifiedErrorHandler
+            error_handler = UnifiedErrorHandler()
+            circuit_check = error_handler.check_circuit_breaker(self.agent_name)
+            
+            if circuit_check:
+                # Circuit открыт, использовать fallback
+                logger.warning(
+                    f"{self.agent_name} agent: Circuit breaker OPEN, using fallback strategy"
+                )
+                # Попробовать получить cached result как fallback
+                if retry_count == 0:
+                    cached_result = self._check_cache(state, db, case_id)
+                    if cached_result:
+                        new_state = dict(state)
+                        result_key = f"{self.agent_name}_result"
+                        new_state[result_key] = cached_result
+                        new_state["errors"] = state.get("errors", []) + [{
+                            "agent": self.agent_name,
+                            "error": "Circuit breaker open, used cached result",
+                            "circuit_breaker": True
+                        }]
+                        return new_state
+                
+                # Если нет кэша, пропустить агента
+                new_state = dict(state)
+                new_state["errors"] = state.get("errors", []) + [{
+                    "agent": self.agent_name,
+                    "error": "Circuit breaker open, agent skipped",
+                    "circuit_breaker": True
+                }]
+                return new_state
+            
             # Check cache first (only on first attempt)
             if retry_count == 0:
                 cached_result = self._check_cache(state, db, case_id)
@@ -214,6 +247,19 @@ class BaseAgentNode(ABC):
                         new_state["completed_steps"].append(step_id)
                     
                     return new_state
+            
+            # Check for intermediate checkpoint (для длительных операций)
+            try:
+                from app.services.langchain_agents.checkpoint_manager import CheckpointManager
+                # Получить checkpointer из context если доступен
+                checkpointer = context.get("checkpointer") if context else None
+                checkpoint_manager = CheckpointManager(state, checkpointer)
+                
+                if checkpoint_manager.should_checkpoint():
+                    checkpoint_manager.save_checkpoint()
+                    logger.debug(f"{self.agent_name} agent: Saved intermediate checkpoint")
+            except Exception as checkpoint_error:
+                logger.debug(f"Checkpoint manager error (non-critical): {checkpoint_error}")
             
             # Initialize file system context
             self._initialize_file_system_context(state)
@@ -321,6 +367,12 @@ class BaseAgentNode(ABC):
             self._save_to_cache(state, formatted_result, db, case_id)
             
             logger.info(f"{self.agent_name} agent: Completed successfully for case {case_id}")
+            
+            # Записать успех в circuit breaker
+            from app.services.langchain_agents.circuit_breaker import get_circuit_breaker
+            circuit_breaker = get_circuit_breaker()
+            circuit_breaker.record_success(self.agent_name)
+            
             return new_state
             
         except Exception as e:

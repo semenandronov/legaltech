@@ -273,6 +273,37 @@ class UnifiedErrorHandler:
         # Default: retry for unknown errors (might be transient)
         return ErrorStrategy.RETRY
     
+    def check_circuit_breaker(self, agent_name: str) -> Optional[ErrorResult]:
+        """
+        Проверить circuit breaker перед выполнением агента
+        
+        Args:
+            agent_name: Имя агента
+        
+        Returns:
+            ErrorResult если circuit открыт, None если можно выполнять
+        """
+        from app.services.langchain_agents.circuit_breaker import get_circuit_breaker
+        
+        circuit_breaker = get_circuit_breaker()
+        
+        if circuit_breaker.is_circuit_open(agent_name):
+            state = circuit_breaker.get_state(agent_name)
+            logger.warning(
+                f"[ErrorHandler] Circuit breaker OPEN for {agent_name}, "
+                f"using fallback strategy"
+            )
+            
+            return ErrorResult(
+                success=False,
+                strategy=ErrorStrategy.FALLBACK,
+                error_type=ErrorType.CIRCUIT_BREAKER_OPEN,
+                message=f"Circuit breaker is open for {agent_name}, using fallback",
+                should_retry=False
+            )
+        
+        return None
+    
     def handle_agent_error(
         self,
         agent_name: str,
@@ -292,6 +323,13 @@ class UnifiedErrorHandler:
         Returns:
             ErrorResult with handling strategy
         """
+        # Обновить circuit breaker метрики
+        from app.services.langchain_agents.circuit_breaker import get_circuit_breaker
+        
+        circuit_breaker = get_circuit_breaker()
+        error_type_str = type(error).__name__
+        circuit_breaker.record_error(agent_name, error_type_str)
+        
         error_type = self.classify_error(error)
         strategy = self.select_strategy(error_type, agent_name)
         

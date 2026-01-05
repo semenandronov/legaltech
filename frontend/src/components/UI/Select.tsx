@@ -80,7 +80,8 @@ const SelectContent = React.forwardRef<
       )}
       position={position}
       {...props}
-      style={{ zIndex: 9999, ...props.style }}
+      style={{ zIndex: 10000, ...props.style }}
+      modal={true}
     >
       <SelectScrollUpButton />
       <SelectPrimitive.Viewport
