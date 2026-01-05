@@ -37,6 +37,14 @@ const Modal = ({ isOpen, onClose, title, children, size = 'md', className = '' }
       PaperProps={{
         sx: {
           borderRadius: 2,
+          zIndex: 1300, // Material-UI default, but ensure it's lower than Select
+        },
+      }}
+      slotProps={{
+        backdrop: {
+          sx: {
+            zIndex: 1300, // Ensure backdrop doesn't block Select
+          },
         },
       }}
     >

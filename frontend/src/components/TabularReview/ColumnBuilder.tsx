@@ -176,21 +176,56 @@ export function ColumnBuilder({ isOpen, onClose, onSave }: ColumnBuilderProps) {
             onValueChange={handleColumnTypeChange}
           >
             <SelectTrigger 
-              onClick={(e) => e.stopPropagation()}
-              onPointerDown={(e) => e.stopPropagation()}
+              onClick={(e) => {
+                // #region agent log
+                fetch('http://127.0.0.1:7242/ingest/2db1e09b-2b5d-4ee0-85d8-a551f942254c',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'frontend/src/components/TabularReview/ColumnBuilder.tsx:178',message:'SelectTrigger onClick fired',data:{columnType:columnType},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A'})}).catch(()=>{});
+                // #endregion
+                e.stopPropagation()
+              }}
+              onPointerDown={(e) => {
+                // #region agent log
+                fetch('http://127.0.0.1:7242/ingest/2db1e09b-2b5d-4ee0-85d8-a551f942254c',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'frontend/src/components/TabularReview/ColumnBuilder.tsx:183',message:'SelectTrigger onPointerDown fired',data:{},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'B'})}).catch(()=>{});
+                // #endregion
+                e.stopPropagation()
+              }}
             >
               <SelectValue placeholder="Выберите тип колонки" />
             </SelectTrigger>
             <SelectContent 
-              onPointerDownOutside={(e) => e.preventDefault()}
-              onEscapeKeyDown={(e) => e.preventDefault()}
+              onPointerDownOutside={(e) => {
+                // #region agent log
+                fetch('http://127.0.0.1:7242/ingest/2db1e09b-2b5d-4ee0-85d8-a551f942254c',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'frontend/src/components/TabularReview/ColumnBuilder.tsx:192',message:'SelectContent onPointerDownOutside fired',data:{target:e.target},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'C'})}).catch(()=>{});
+                // #endregion
+                e.preventDefault()
+              }}
+              onEscapeKeyDown={(e) => {
+                // #region agent log
+                fetch('http://127.0.0.1:7242/ingest/2db1e09b-2b5d-4ee0-85d8-a551f942254c',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'frontend/src/components/TabularReview/ColumnBuilder.tsx:198',message:'SelectContent onEscapeKeyDown fired',data:{},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'D'})}).catch(()=>{});
+                // #endregion
+                e.preventDefault()
+              }}
+              onOpenAutoFocus={(e) => {
+                // #region agent log
+                fetch('http://127.0.0.1:7242/ingest/2db1e09b-2b5d-4ee0-85d8-a551f942254c',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'frontend/src/components/TabularReview/ColumnBuilder.tsx:204',message:'SelectContent onOpenAutoFocus fired',data:{},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'E'})}).catch(()=>{});
+                // #endregion
+              }}
             >
               {COLUMN_TYPES.map((type) => (
                 <SelectItem 
                   key={type.value} 
                   value={type.value}
-                  onPointerDown={(e) => e.stopPropagation()}
-                  onClick={(e) => e.stopPropagation()}
+                  onPointerDown={(e) => {
+                    // #region agent log
+                    fetch('http://127.0.0.1:7242/ingest/2db1e09b-2b5d-4ee0-85d8-a551f942254c',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'frontend/src/components/TabularReview/ColumnBuilder.tsx:212',message:'SelectItem onPointerDown fired',data:{value:type.value},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'F'})}).catch(()=>{});
+                    // #endregion
+                    e.stopPropagation()
+                  }}
+                  onClick={(e) => {
+                    // #region agent log
+                    fetch('http://127.0.0.1:7242/ingest/2db1e09b-2b5d-4ee0-85d8-a551f942254c',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'frontend/src/components/TabularReview/ColumnBuilder.tsx:218',message:'SelectItem onClick fired',data:{value:type.value},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'G'})}).catch(()=>{});
+                    // #endregion
+                    e.stopPropagation()
+                  }}
                 >
                   <span className="flex items-center gap-2">
                     <span>{type.icon}</span>
