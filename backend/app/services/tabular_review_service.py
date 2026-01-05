@@ -280,6 +280,9 @@ class TabularReviewService:
             TabularColumn.tabular_review_id == review_id
         ).order_by(TabularColumn.order_index).all()
         
+        # Log all columns found
+        logger.info(f"[get_table_data] Found {len(columns)} columns for review {review_id}: {[c.column_label for c in columns]}")
+        
         # Get all cells
         cells = self.db.query(TabularCell).filter(
             TabularCell.tabular_review_id == review_id

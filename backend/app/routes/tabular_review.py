@@ -400,8 +400,19 @@ async def get_table_data(
 ):
     """Get table data for tabular review"""
     try:
+        # Log columns before getting data
+        from app.models.tabular_review import TabularColumn
+        columns_before = db.query(TabularColumn).filter(
+            TabularColumn.tabular_review_id == review_id
+        ).all()
+        logger.info(f"[get_table_data] Review {review_id} has {len(columns_before)} columns: {[c.column_label for c in columns_before]}")
+        
         service = TabularReviewService(db)
         data = service.get_table_data(review_id, current_user.id)
+        
+        # Log columns after getting data
+        logger.info(f"[get_table_data] Returned {len(data['columns'])} columns: {[c['column_label'] for c in data['columns']]}")
+        
         return data
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
