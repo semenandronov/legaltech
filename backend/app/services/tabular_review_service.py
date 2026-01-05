@@ -326,6 +326,10 @@ class TabularReviewService:
     
     def get_table_data(self, review_id: str, user_id: str) -> Dict[str, Any]:
         """Get table data for tabular review"""
+        # #region agent log
+        logger.error(f"[DEBUG HYPOTHESIS J] [get_table_data] Called: review_id={review_id}, user_id={user_id}")
+        # #endregion
+        
         # Verify review belongs to user
         review = self.db.query(TabularReview).filter(
             and_(TabularReview.id == review_id, TabularReview.user_id == user_id)
@@ -345,12 +349,19 @@ class TabularReviewService:
             TabularColumn.tabular_review_id == review_id
         ).order_by(TabularColumn.order_index).all()
         
+        # #region agent log
+        logger.error(f"[DEBUG HYPOTHESIS K] [get_table_data] Before cleanup: review_id={review_id}, columns_count={len(columns)}, column_labels={[c.column_label for c in columns]}")
+        # #endregion
+        
         # CRITICAL: Check for unwanted default columns and delete them immediately
         unwanted_column_labels = ["Date", "Document type", "Summary", "Author", "Persons mentioned", "Language"]
         unwanted_columns = [c for c in columns if c.column_label in unwanted_column_labels]
         
         if unwanted_columns:
             logger.error(f"[get_table_data] CRITICAL: Found {len(unwanted_columns)} unwanted default columns! Deleting them immediately: {[c.column_label for c in unwanted_columns]}")
+            # #region agent log
+            logger.error(f"[DEBUG HYPOTHESIS L] [get_table_data] Found unwanted columns: review_id={review_id}, unwanted_count={len(unwanted_columns)}, unwanted_labels={[c.column_label for c in unwanted_columns]}")
+            # #endregion
             for unwanted_col in unwanted_columns:
                 # Delete all cells for this column first
                 from app.models.tabular_review import TabularCell
@@ -363,6 +374,10 @@ class TabularReviewService:
             columns = self.db.query(TabularColumn).filter(
                 TabularColumn.tabular_review_id == review_id
             ).order_by(TabularColumn.order_index).all()
+        
+        # #region agent log
+        logger.error(f"[DEBUG HYPOTHESIS M] [get_table_data] After cleanup: review_id={review_id}, columns_count={len(columns)}, column_labels={[c.column_label for c in columns]}")
+        # #endregion
         
         # Log all columns found
         logger.info(f"[get_table_data] Found {len(columns)} columns for review {review_id}: {[c.column_label for c in columns]}")

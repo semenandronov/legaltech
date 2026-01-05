@@ -411,15 +411,26 @@ async def get_table_data(
 ):
     """Get table data for tabular review"""
     try:
+        # #region agent log
+        logger.error(f"[DEBUG HYPOTHESIS N] [API get_table_data] Called: review_id={review_id}, user_id={current_user.id}")
+        # #endregion
+        
         # Log columns before getting data
         from app.models.tabular_review import TabularColumn
         columns_before = db.query(TabularColumn).filter(
             TabularColumn.tabular_review_id == review_id
         ).all()
+        # #region agent log
+        logger.error(f"[DEBUG HYPOTHESIS O] [API get_table_data] Before service call: review_id={review_id}, columns_count={len(columns_before)}, column_labels={[c.column_label for c in columns_before]}")
+        # #endregion
         logger.info(f"[get_table_data] Review {review_id} has {len(columns_before)} columns: {[c.column_label for c in columns_before]}")
         
         service = TabularReviewService(db)
         data = service.get_table_data(review_id, current_user.id)
+        
+        # #region agent log
+        logger.error(f"[DEBUG HYPOTHESIS P] [API get_table_data] After service call: review_id={review_id}, columns_count={len(data['columns'])}, column_labels={[c['column_label'] for c in data['columns']]}")
+        # #endregion
         
         # Log columns after getting data
         logger.info(f"[get_table_data] Returned {len(data['columns'])} columns: {[c['column_label'] for c in data['columns']]}")
