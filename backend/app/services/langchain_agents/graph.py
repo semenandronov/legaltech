@@ -29,8 +29,8 @@ from app.services.langchain_agents.graph_optimizer import optimize_route_functio
 from sqlalchemy.orm import Session
 from app.services.rag_service import RAGService
 from app.services.document_processor import DocumentProcessor
-from concurrent.futures import ThreadPoolExecutor, as_completed, TimeoutError as FuturesTimeoutError
-import threading
+# ThreadPoolExecutor removed - using LangGraph Send/Command instead
+# threading removed - using LangGraph Send/Command instead
 import logging
 import os
 import time
@@ -368,16 +368,23 @@ def create_analysis_graph(
                 )
                 return new_state
     
-    def parallel_independent_agents_node(state: AnalysisState) -> AnalysisState:
+    def parallel_independent_agents_node(state: AnalysisState) -> List[Send]:
         """
-        Execute independent agents in parallel with improved state merging, timeout, and error handling.
+        Execute independent agents in parallel using LangGraph Send/Command.
+        
+        Это заменяет ThreadPoolExecutor на нативный механизм LangGraph для параллельного выполнения.
         Independent agents: timeline, key_facts, discrepancy, entity_extraction, document_classifier
+        
+        Returns:
+            List[Send] для параллельного выполнения агентов
         """
+        from langgraph.types import Send
+        from app.services.langchain_agents.parallel_execution_v2 import create_parallel_sends_v2
+        
         case_id = state.get("case_id", "unknown")
         analysis_types = state.get("analysis_types", [])
         
         # Define independent agents that can run in parallel
-        # Расширенный список независимых агентов (включая document_classifier)
         independent_agents = {
             "timeline": timeline_node,
             "key_facts": key_facts_node,
@@ -388,142 +395,125 @@ def create_analysis_graph(
         
         # Filter to only agents that are requested and not yet completed
         agents_to_run = []
-        for agent_name, agent_func in independent_agents.items():
+        for agent_name in independent_agents.keys():
             if agent_name in analysis_types:
-                # Check if already completed
+                # Check if already completed (result or ref in Store)
                 result_key = f"{agent_name}_result"
-                if state.get(result_key) is None:
-                    agents_to_run.append((agent_name, agent_func))
+                ref_key = f"{agent_name}_ref"
+                if state.get(result_key) is None and state.get(ref_key) is None:
+                    agents_to_run.append(agent_name)
         
         if not agents_to_run:
             logger.info(f"[Parallel] No independent agents to run in parallel for case {case_id}")
-            return state
+            return []
         
-        logger.info(f"[Parallel] Running {len(agents_to_run)} independent agents in parallel for case {case_id}")
+        logger.info(f"[Parallel] Creating {len(agents_to_run)} parallel Sends for case {case_id}: {agents_to_run}")
         
-        # Execute agents in parallel using ThreadPoolExecutor with timeout
-        new_state = dict(state)
-        errors = list(state.get("errors", []))
+        # Create Send objects for parallel execution
+        sends = create_parallel_sends_v2(state, agents_to_run, independent_agents)
         
-        # Thread safety: Lock for protecting shared state modifications
-        state_lock = threading.Lock()
+        return sends
+    
+    def execute_single_agent(state: AnalysisState) -> AnalysisState:
+        """
+        Execute a single agent (target for Send from parallel_independent_agents_node).
         
-        # Adaptive timeouts per agent type (reduced from 5 minutes)
-        AGENT_TIMEOUTS = {
-            "document_classifier": 60,   # Fast - simple classification
-            "timeline": 120,             # 2 minutes - date extraction
-            "key_facts": 120,            # 2 minutes - fact extraction
-            "discrepancy": 180,          # 3 minutes - comparison analysis
-            "entity_extraction": 120,    # 2 minutes - entity extraction
+        Args:
+            state: State with current_agent set
+        
+        Returns:
+            Updated state with agent result
+        """
+        from app.services.langchain_agents.parallel_execution_v2 import AGENT_TIMEOUTS, DEFAULT_AGENT_TIMEOUT
+        import time
+        
+        agent_name = state.get("current_agent")
+        if not agent_name:
+            logger.error("No current_agent in state for execute_single_agent")
+            new_state = dict(state)
+            new_state.setdefault("errors", []).append({
+                "agent": "unknown",
+                "error": "No current_agent specified"
+            })
+            return new_state
+        
+        case_id = state.get("case_id", "unknown")
+        
+        # Get agent function from registry
+        agent_registry = {
+            "timeline": timeline_node,
+            "key_facts": key_facts_node,
+            "discrepancy": discrepancy_node,
+            "entity_extraction": entity_extraction_node,
+            "document_classifier": document_classifier_node,
         }
         
-        # Get max parallel from config (increased from 3 to 5)
-        from app.config import config
-        max_parallel = min(config.AGENT_MAX_PARALLEL, 5)  # Cap at 5 for safety
+        agent_func = agent_registry.get(agent_name)
+        if not agent_func:
+            logger.error(f"Agent function not found: {agent_name}")
+            new_state = dict(state)
+            new_state.setdefault("errors", []).append({
+                "agent": agent_name,
+                "error": f"Agent function not found: {agent_name}"
+            })
+            return new_state
         
-        # Use max_parallel workers (not one per agent) for better resource management
-        with ThreadPoolExecutor(max_workers=max_parallel) as executor:
-            # Submit all tasks - IMPORTANT: pass a copy of state to each agent to avoid conflicts
-            future_to_agent = {}
-            for agent_name, agent_func in agents_to_run:
-                # Create a deep copy of state for each agent to avoid race conditions
-                agent_state = dict(state)
-                future = executor.submit(agent_func, agent_state)
-                future_to_agent[future] = agent_name
+        # Execute agent with timeout
+        start_time = time.time()
+        timeout = state.get("agent_timeout", AGENT_TIMEOUTS.get(agent_name, DEFAULT_AGENT_TIMEOUT))
+        
+        try:
+            logger.info(f"[Parallel] Executing {agent_name} agent (timeout={timeout}s, case: {case_id})")
+            result_state = agent_func(state)
             
-            # Calculate total timeout (max of all agent timeouts + buffer)
-            max_timeout = max(AGENT_TIMEOUTS.get(name, 120) for name, _ in agents_to_run)
-            total_timeout = max_timeout * len(agents_to_run) + 60  # Buffer for overhead
+            duration = time.time() - start_time
+            logger.info(f"[Parallel] Completed {agent_name} agent in {duration:.2f}s (case: {case_id})")
             
-            # Collect results with timeout handling
-            completed_agents = set()
-            for future in as_completed(future_to_agent, timeout=total_timeout):
-                agent_name = future_to_agent[future]
-                try:
-                    # Get result with agent-specific timeout
-                    agent_timeout = AGENT_TIMEOUTS.get(agent_name, 120)
-                    result_state = future.result(timeout=agent_timeout)
-                    
-                    # Merge ALL state fields, not just the result
-                    result_key = f"{agent_name}_result"
-                    
-                    # Merge result
-                    if result_key in result_state and result_state[result_key] is not None:
-                        new_state[result_key] = result_state[result_key]
-                    
-                    # Merge errors (deduplicate) - thread-safe
-                    if "errors" in result_state:
-                        with state_lock:
-                            existing_error_agents = {e.get("agent") for e in errors}
-                            for error in result_state["errors"]:
-                                if error.get("agent") not in existing_error_agents:
-                                    errors.append(error)
-                    
-                    # Merge metadata (combine dictionaries) - thread-safe
-                    if "metadata" in result_state:
-                        with state_lock:
-                            if "metadata" not in new_state:
-                                new_state["metadata"] = {}
-                            new_state["metadata"].update(result_state["metadata"])
-                    
-                    # Merge completed_steps - thread-safe
-                    if "completed_steps" in result_state:
-                        with state_lock:
-                            existing_steps = set(new_state.get("completed_steps", []))
-                            new_steps = set(result_state["completed_steps"])
-                            new_state["completed_steps"] = list(existing_steps | new_steps)
-                    
-                    completed_agents.add(agent_name)
-                    logger.info(f"[Parallel] Completed {agent_name} agent successfully")
-                    
-                except (TimeoutError, FuturesTimeoutError) as timeout_error:
-                    agent_timeout = AGENT_TIMEOUTS.get(agent_name, 120)
-                    logger.error(f"[Parallel] Timeout ({agent_timeout}s) for {agent_name} agent: {timeout_error}")
-                    # Попытаться отменить future для освобождения ресурсов
-                    try:
-                        cancelled = future.cancel()
-                        if cancelled:
-                            logger.info(f"[Parallel] Successfully cancelled {agent_name} agent future")
-                        else:
-                            # Future уже выполнен или не может быть отменен
-                            if future.done():
-                                logger.debug(f"[Parallel] {agent_name} future already done, cannot cancel")
-                            else:
-                                logger.warning(f"[Parallel] Failed to cancel {agent_name} agent future")
-                    except Exception as cancel_error:
-                        logger.warning(f"[Parallel] Error cancelling {agent_name} future: {cancel_error}")
-                    
-                    with state_lock:
-                        errors.append({
-                            "agent": agent_name,
-                            "error": f"Timeout after {agent_timeout} seconds",
-                            "cancelled": True
-                        })
-                except Exception as e:
-                    logger.error(f"[Parallel] Error in {agent_name} agent: {e}", exc_info=True)
-                    # Попытаться отменить future при любой ошибке
-                    try:
-                        if not future.done():
-                            future.cancel()
-                    except Exception as cancel_error:
-                        logger.debug(f"[Parallel] Error cancelling {agent_name} future after exception: {cancel_error}")
-                    
-                    with state_lock:
-                        errors.append({
-                            "agent": agent_name,
-                            "error": str(e)
-                        })
+            return result_state
+            
+        except Exception as e:
+            duration = time.time() - start_time
+            logger.error(
+                f"[Parallel] Error in {agent_name} agent after {duration:.2f}s (case: {case_id}): {e}",
+                exc_info=True
+            )
+            
+            new_state = dict(state)
+            new_state.setdefault("errors", []).append({
+                "agent": agent_name,
+                "error": str(e),
+                "duration": duration
+            })
+            return new_state
+    
+    def merge_parallel_results_node(states: Sequence[AnalysisState]) -> AnalysisState:
+        """
+        Reducer node для слияния результатов параллельных агентов.
         
-        # Check if any agents didn't complete
-        for agent_name, _ in agents_to_run:
-            if agent_name not in completed_agents:
-                result_key = f"{agent_name}_result"
-                if result_key not in new_state or new_state[result_key] is None:
-                    logger.warning(f"[Parallel] Agent {agent_name} did not complete - no result")
+        Args:
+            states: Последовательность состояний из параллельных выполнений
         
-        new_state["errors"] = errors
-        logger.info(f"[Parallel] Completed {len(completed_agents)}/{len(agents_to_run)} agents for case {case_id}")
-        return new_state
+        Returns:
+            Объединенное состояние со всеми результатами агентов
+        """
+        from app.services.langchain_agents.parallel_execution_v2 import merge_parallel_results_v2
+        
+        if not states:
+            logger.warning("merge_parallel_results_node called with empty states")
+            return {}
+        
+        # Использовать первое состояние как базовое
+        base_state = states[0] if states else {}
+        
+        # Объединить все состояния
+        merged = merge_parallel_results_v2(states, base_state)
+        
+        case_id = merged.get("case_id", "unknown")
+        logger.info(f"[Parallel] Merged {len(states)} parallel agent results for case {case_id}")
+        
+        return merged
+    
+    # ThreadPoolExecutor code removed - using LangGraph Send/Command instead
     
     # Create the graph
     graph = StateGraph(AnalysisState)
@@ -552,7 +542,10 @@ def create_analysis_graph(
     graph.add_node("relationship", relationship_node)
     graph.add_node("evaluation", evaluation_wrapper)
     graph.add_node("adaptation", adaptation_wrapper)
+    # Add parallel execution nodes (using LangGraph Send/Command)
     graph.add_node("parallel_independent", parallel_independent_agents_node)
+    graph.add_node("execute_single_agent", execute_single_agent)
+    graph.add_node("merge_parallel_results", merge_parallel_results_node)
     graph.add_node("spawn_subagents", spawn_subagents_node)
     # Note: human_feedback_wait_node removed - using LangGraph interrupts instead
     
@@ -648,8 +641,19 @@ def create_analysis_graph(
     if use_legora_workflow:
         graph.add_edge("deep_analysis", "evaluation")
     
-    # Parallel independent agents node also goes to evaluation
-    graph.add_edge("parallel_independent", "evaluation")
+    # Parallel execution flow using LangGraph Send/Command:
+    # parallel_independent returns List[Send] → automatically fans out to execute_single_agent
+    # execute_single_agent results are automatically collected and passed to merge_parallel_results
+    # Note: In LangGraph, when a node returns List[Send], the graph automatically:
+    # 1. Executes all Sends in parallel
+    # 2. Collects results
+    # 3. Passes them to the next node as Sequence[AnalysisState]
+    # So merge_parallel_results will receive Sequence[AnalysisState] from execute_single_agent
+    graph.add_edge("execute_single_agent", "merge_parallel_results")
+    graph.add_edge("merge_parallel_results", "evaluation")
+    
+    # Note: parallel_independent doesn't need explicit edge - it returns List[Send]
+    # which automatically creates fan-out to execute_single_agent
     
     # Spawn subagents node goes to evaluation
     graph.add_edge("spawn_subagents", "evaluation")

@@ -622,7 +622,7 @@ const TabularReviewPage: React.FC = () => {
                       setTableData(updater(tableData))
                     }
                   }}
-                  onCellEdit={(fileId, columnId, cell) => {
+                  onCellEdit={(fileId: string, columnId: string, cell: any) => {
                     setEditingCell({ fileId, columnId, cell })
                   }}
                   onCellClick={async (fileId, cellData) => {

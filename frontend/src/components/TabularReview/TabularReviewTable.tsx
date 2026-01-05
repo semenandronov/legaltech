@@ -78,6 +78,7 @@ interface TabularReviewTableProps {
     highlightMode?: 'verbatim' | 'page' | 'none'
     sourceReferences?: Array<{ page?: number | null; section?: string | null; text: string }>
   }) => void
+  onCellEdit?: (fileId: string, columnId: string, cell: TabularCell) => void
   onRemoveDocument?: (fileId: string) => void
   onRunColumn?: (columnId: string) => void
 }
