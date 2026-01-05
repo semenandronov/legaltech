@@ -238,7 +238,7 @@ export const TabularReviewTable = React.memo(({ reviewId, tableData, onTableData
     // Apply advanced filters
     rows = applyAdvancedFilters(rows, advancedFilters, tableData.columns)
 
-    return rows.map((row) => {
+    const transformedRows = rows.map((row) => {
       const rowData: Record<string, any> = {
         file_id: row.file_id,
         file_name: row.file_name,
@@ -256,6 +256,17 @@ export const TabularReviewTable = React.memo(({ reviewId, tableData, onTableData
       
       return rowData
     })
+    
+    // #region agent log
+    if (transformedRows.length > 0) {
+      const firstRowKeys = Object.keys(transformedRows[0])
+      const allRowKeys = new Set<string>()
+      transformedRows.forEach(row => Object.keys(row).forEach(key => allRowKeys.add(key)))
+      fetch('http://127.0.0.1:7242/ingest/2db1e09b-2b5d-4ee0-85d8-a551f942254c',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'frontend/src/components/TabularReview/TabularReviewTable.tsx:259',message:'[FRONTEND] tableRows created',data:{rowsCount:transformedRows.length,firstRowKeys:firstRowKeys,allRowKeys:Array.from(allRowKeys),tableDataColumnsCount:tableData.columns.length,tableDataColumnIds:tableData.columns.map(c => c.id),rowCellsKeys:rows.length > 0 ? Object.keys(rows[0].cells || {}) : []},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'DD'})}).catch(()=>{});
+    }
+    // #endregion
+    
+    return transformedRows
   }, [tableData, advancedFilters, applyAdvancedFilters])
 
   // Build columns dynamically
