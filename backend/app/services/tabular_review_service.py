@@ -113,6 +113,12 @@ class TabularReviewService:
             TabularColumn.tabular_review_id == review_id
         ).order_by(TabularColumn.order_index.desc()).first()
         
+        # Log columns count before adding
+        columns_before = self.db.query(TabularColumn).filter(
+            TabularColumn.tabular_review_id == review_id
+        ).all()
+        logger.info(f"[add_column] Before adding: {len(columns_before)} columns in review {review_id}: {[c.column_label for c in columns_before]}")
+        
         order_index = (max_order[0] + 1) if max_order else 0
         
         column = TabularColumn(
@@ -129,11 +135,16 @@ class TabularReviewService:
         self.db.refresh(column)
         
         # Check total columns count after adding
-        total_columns = self.db.query(TabularColumn).filter(
+        columns_after = self.db.query(TabularColumn).filter(
             TabularColumn.tabular_review_id == review_id
-        ).count()
+        ).all()
         
-        logger.info(f"Added column {column.id} ({column.column_label}, type: {column.column_type}) to review {review_id}. Total columns: {total_columns}")
+        logger.info(f"[add_column] After adding: {len(columns_after)} columns in review {review_id}: {[c.column_label for c in columns_after]}")
+        if len(columns_after) > len(columns_before) + 1:
+            logger.error(f"[add_column] ERROR: More than one column was added! Expected {len(columns_before) + 1}, got {len(columns_after)}")
+            logger.error(f"[add_column] Added columns: {[c.column_label for c in columns_after if c.id != column.id and c not in columns_before]}")
+        
+        logger.info(f"Added column {column.id} ({column.column_label}, type: {column.column_type}) to review {review_id}. Total columns: {len(columns_after)}")
         return column
     
     def update_column(
