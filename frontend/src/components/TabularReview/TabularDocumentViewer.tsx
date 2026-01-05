@@ -96,7 +96,7 @@ export const TabularDocumentViewer: React.FC<TabularDocumentViewerProps> = ({
     try {
       setLoading(true)
       setError(null)
-      setFileType(fileTypeToLoad)
+      setFileType(fileTypeToLoad || "pdf")
 
       // For non-PDF files, load text content
       if (fileTypeToLoad !== "pdf") {

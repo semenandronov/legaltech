@@ -296,8 +296,21 @@ class TabularReviewService:
             for column in columns:
                 key = (file.id, column.id)
                 cell = cell_map.get(key)
+                cell_value = cell.cell_value if cell else None
+                
+                # Parse JSON if cell_value is a JSON string
+                if cell_value and isinstance(cell_value, str) and cell_value.strip().startswith("{"):
+                    try:
+                        import json
+                        parsed = json.loads(cell_value)
+                        if isinstance(parsed, dict) and "cell_value" in parsed:
+                            cell_value = parsed["cell_value"]
+                    except (json.JSONDecodeError, ValueError):
+                        # Not valid JSON, keep original value
+                        pass
+                
                 row["cells"][column.id] = {
-                    "cell_value": cell.cell_value if cell else None,
+                    "cell_value": cell_value,
                     "verbatim_extract": cell.verbatim_extract if cell else None,
                     "reasoning": cell.reasoning if cell else None,
                     "confidence_score": float(cell.confidence_score) if cell and cell.confidence_score else None,

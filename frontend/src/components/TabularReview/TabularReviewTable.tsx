@@ -311,7 +311,27 @@ export const TabularReviewTable = React.memo(({ reviewId, tableData, onTableData
         )
       },
       cell: ({ row }) => (
-        <Stack direction="row" spacing={1} alignItems="center" sx={{ py: 1 }}>
+        <Stack 
+          direction="row" 
+          spacing={1} 
+          alignItems="center" 
+          sx={{ 
+            py: 1,
+            cursor: 'pointer',
+            '&:hover': {
+              bgcolor: 'action.hover',
+            }
+          }}
+          onClick={async () => {
+            // Open document when clicking on file name
+            if (onCellClick) {
+              const fileId = row.original.file_id
+              onCellClick(fileId, {
+                highlightMode: 'none',
+              })
+            }
+          }}
+        >
           <FileTextIcon fontSize="small" sx={{ color: '#6B7280' }} />
           <Typography variant="body2" sx={{ color: '#1F2937', flex: 1 }}>
             {row.getValue("file_name")}
@@ -389,7 +409,20 @@ export const TabularReviewTable = React.memo(({ reviewId, tableData, onTableData
       },
       cell: ({ row }) => {
         const cell: TabularCell = row.getValue(col.id)
-        const cellValue = cell?.cell_value || "-"
+        let cellValue = cell?.cell_value || "-"
+        
+        // Parse JSON if cell_value is a JSON string
+        if (cellValue !== "-" && typeof cellValue === "string" && cellValue.trim().startsWith("{")) {
+          try {
+            const parsed = JSON.parse(cellValue)
+            if (parsed && typeof parsed === "object" && "cell_value" in parsed) {
+              cellValue = parsed.cell_value || cellValue
+            }
+          } catch (e) {
+            // Not valid JSON, keep original value
+          }
+        }
+        
         const cellStatus = cell?.status || "pending"
         const isTagType = col.column_type === "tag" || col.column_type === "multiple_tags"
         
