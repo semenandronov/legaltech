@@ -6,7 +6,6 @@ import {
   Typography,
   List,
   ListItem,
-  ListItemText,
   Button,
   Chip,
   Stack,
@@ -18,19 +17,15 @@ import {
   TextField,
   Paper,
   IconButton,
-  Tooltip,
 } from "@mui/material"
 import {
   History as HistoryIcon,
   Restore as RestoreIcon,
-  CompareArrows as CompareIcon,
   Close as CloseIcon,
   ExpandMore as ExpandMoreIcon,
   ExpandLess as ExpandLessIcon,
 } from "@mui/icons-material"
 import { tabularReviewApi } from "@/services/tabularReviewApi"
-import { formatDistanceToNow } from "date-fns"
-import { ru } from "date-fns/locale"
 
 interface CellHistoryRecord {
   id: string
@@ -71,7 +66,6 @@ export const CellHistoryPanel: React.FC<CellHistoryPanelProps> = ({
   const [history, setHistory] = useState<CellHistoryRecord[]>([])
   const [loading, setLoading] = useState(false)
   const [expandedId, setExpandedId] = useState<string | null>(null)
-  const [selectedIds, setSelectedIds] = useState<string[]>([])
   const [showRevertDialog, setShowRevertDialog] = useState(false)
   const [revertHistoryId, setRevertHistoryId] = useState<string | null>(null)
   const [revertReason, setRevertReason] = useState("")
@@ -200,7 +194,7 @@ export const CellHistoryPanel: React.FC<CellHistoryPanelProps> = ({
                         size="small"
                       />
                       <Typography variant="body2" sx={{ flex: 1 }}>
-                        {formatDate(record.created_at)}
+                        {new Date(record.created_at).toLocaleString('ru-RU')}
                       </Typography>
                       {index === 0 && (
                         <Chip label="Текущая версия" color="success" size="small" />

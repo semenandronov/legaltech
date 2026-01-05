@@ -7,14 +7,11 @@ import {
   Stack,
   Typography,
   Divider,
-  Menu,
-  MenuItem,
 } from "@mui/material"
 import {
   CheckCircle as CheckCircleIcon,
   Delete as DeleteIcon,
   PlayArrow as PlayArrowIcon,
-  MoreVert as MoreVertIcon,
 } from "@mui/icons-material"
 
 interface BulkActionsToolbarProps {
@@ -32,8 +29,6 @@ export const BulkActionsToolbar: React.FC<BulkActionsToolbarProps> = ({
   onDelete,
   onClearSelection,
 }) => {
-  const [menuAnchor, setMenuAnchor] = React.useState<null | HTMLElement>(null)
-
   if (selectedCount === 0) {
     return null
   }

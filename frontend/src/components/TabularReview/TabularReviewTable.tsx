@@ -33,7 +33,6 @@ import {
   Checkbox,
   Typography,
   IconButton,
-  Link,
   Chip,
   Pagination,
   Select,
@@ -46,7 +45,6 @@ import {
   Description as FileTextIcon,
   PlayArrow as PlayArrowIcon,
   Close as CloseIcon,
-  OpenInNew as OpenInNewIcon,
   FilterList as FilterIcon,
 } from '@mui/icons-material'
 import { TabularRow, TabularColumn, TabularCell, CellDetails } from "@/services/tabularReviewApi"
@@ -71,7 +69,7 @@ interface TabularReviewTableProps {
     columns: TabularColumn[]
     rows: TabularRow[]
   }
-  onTableDataUpdate?: (updater: (prev: typeof tableData) => typeof tableData) => void
+  onTableDataUpdate?: (updater: (prev: TabularReviewTableProps['tableData']) => TabularReviewTableProps['tableData']) => void
   onCellClick?: (fileId: string, cellData: {
     verbatimExtract?: string | null
     sourcePage?: number | null
@@ -84,7 +82,7 @@ interface TabularReviewTableProps {
   onRunColumn?: (columnId: string) => void
 }
 
-export const TabularReviewTable = React.memo(({ reviewId, tableData, onTableDataUpdate, onCellClick, onRemoveDocument, onRunColumn }: TabularReviewTableProps) => {
+export const TabularReviewTable = React.memo(({ reviewId, tableData, onTableDataUpdate: _onTableDataUpdate, onCellClick, onRemoveDocument, onRunColumn }: TabularReviewTableProps) => {
   const [sorting, setSorting] = React.useState<SortingState>([])
   const [columnFilters, setColumnFilters] = React.useState<ColumnFiltersState>([])
   const [columnVisibility, setColumnVisibility] = React.useState<VisibilityState>({})
@@ -109,10 +107,6 @@ export const TabularReviewTable = React.memo(({ reviewId, tableData, onTableData
   } | null>(null)
   const [anchorEl, setAnchorEl] = React.useState<null | HTMLElement>(null)
   const [runningColumns, setRunningColumns] = React.useState<Set<string>>(new Set())
-  const [editingCell, setEditingCell] = React.useState<{
-    fileId: string
-    columnId: string
-  } | null>(null)
   const [advancedFilters, setAdvancedFilters] = React.useState<AdvancedFilters>({
     cellStatuses: [],
     documentStatuses: [],
@@ -146,19 +140,6 @@ export const TabularReviewTable = React.memo(({ reviewId, tableData, onTableData
   
   // Кеш для cellDetails
   const cellDetailsCache = React.useRef<Map<string, CellDetails>>(new Map())
-  
-  // Мемоизация findColumnByLabel
-  const columnMap = React.useMemo(() => {
-    const map = new Map<string, TabularColumn>()
-    tableData.columns.forEach(col => {
-      map.set(col.column_label.toLowerCase(), col)
-    })
-    return map
-  }, [tableData.columns])
-  
-  const findColumnByLabel = React.useCallback((label: string): TabularColumn | undefined => {
-    return columnMap.get(label.toLowerCase())
-  }, [columnMap])
   
   // Debounced глобальный фильтр
   React.useEffect(() => {
@@ -275,13 +256,6 @@ export const TabularReviewTable = React.memo(({ reviewId, tableData, onTableData
       return rowData
     })
   }, [tableData, advancedFilters, applyAdvancedFilters])
-
-  // Helper function to get cell value from dynamic columns
-  const getCellValue = (row: any, columnId: string): string | null => {
-    const cell: TabularCell = row.getValue(columnId)
-    return cell?.cell_value || null
-  }
-
 
   // Build columns dynamically
   const columns = React.useMemo<ColumnDef<any>[]>(() => {
@@ -610,13 +584,13 @@ export const TabularReviewTable = React.memo(({ reviewId, tableData, onTableData
   useKeyboardNavigation({
     table,
     enabled: !filtersPanelOpen && !historyPanelOpen && !selectedCell,
-    onCellEdit: (rowId, columnId) => {
+    onCellEdit: (rowId) => {
       const row = table.getRowModel().rows.find((r) => r.id === rowId)
       if (row) {
-        setEditingCell({ fileId: row.original.file_id, columnId })
+        // TODO: Implement cell editing
       }
     },
-    onCellSelect: (rowId, columnId) => {
+    onCellSelect: () => {
       // Focus cell visually (could add highlight)
     },
     onRowDelete: (rowId) => {

@@ -23,7 +23,6 @@ import {
   FormLabel,
 } from "@mui/material"
 import {
-  FilterList as FilterIcon,
   Close as CloseIcon,
   Clear as ClearIcon,
 } from "@mui/icons-material"
