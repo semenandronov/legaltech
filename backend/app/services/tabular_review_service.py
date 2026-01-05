@@ -397,7 +397,25 @@ class TabularReviewService:
         # Log all columns found
         logger.info(f"[get_table_data] Found {len(columns)} columns for review {review_id}: {[c.column_label for c in columns]}")
         
-        # Get all cells
+        # CRITICAL: Check for orphaned cells (cells with column_id that doesn't exist in columns)
+        from app.models.tabular_review import TabularCell
+        all_cells = self.db.query(TabularCell).filter(
+            TabularCell.tabular_review_id == review_id
+        ).all()
+        column_ids_set = {col.id for col in columns}
+        orphaned_cells = [cell for cell in all_cells if cell.column_id not in column_ids_set]
+        if orphaned_cells:
+            logger.error(f"[get_table_data] CRITICAL: Found {len(orphaned_cells)} orphaned cells (cells with column_id that doesn't exist)! Orphaned column_ids: {set(cell.column_id for cell in orphaned_cells)}")
+            # #region agent log
+            logger.error(f"[DEBUG HYPOTHESIS N] [get_table_data] Found orphaned cells: review_id={review_id}, orphaned_count={len(orphaned_cells)}, orphaned_column_ids={list(set(cell.column_id for cell in orphaned_cells))}")
+            # #endregion
+            # Delete orphaned cells
+            for orphaned_cell in orphaned_cells:
+                self.db.delete(orphaned_cell)
+            self.db.commit()
+            logger.info(f"[get_table_data] Deleted {len(orphaned_cells)} orphaned cells")
+        
+        # Get all cells (after deleting orphaned ones)
         cells = self.db.query(TabularCell).filter(
             TabularCell.tabular_review_id == review_id
         ).all()
