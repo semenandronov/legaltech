@@ -835,13 +835,28 @@ export const TabularReviewTable = React.memo(({ reviewId, tableData, onTableData
         >
           {table
             .getAllColumns()
-            .filter((column) => column.getCanHide())
-            .map((column) => {
+            .filter((column) => {
+              // Only show columns that are in tableData.columns (user-created columns)
+              // Exclude: "select" (selection column), "file_name" (file name column), and any auto-generated columns
+              if (column.id === "select") return false
+              if (column.id === "file_name") return false
+              
+              // Check if this column exists in tableData.columns
+              const existsInTableData = tableData.columns.some(col => col.id === column.id)
+              
               // #region agent log
-              fetch('http://127.0.0.1:7242/ingest/2db1e09b-2b5d-4ee0-85d8-a551f942254c',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'frontend/src/components/TabularReview/TabularReviewTable.tsx:810',message:'[FRONTEND] Column in dropdown menu',data:{columnId:column.id,accessorKey:column.columnDef.accessorKey,allColumns:table.getAllColumns().map(c => ({id:c.id,accessorKey:c.columnDef.accessorKey})),tableDataColumns:tableData.columns.map(c => ({id:c.id,label:c.column_label}))},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'BB'})}).catch(()=>{});
+              if (!existsInTableData) {
+                fetch('http://127.0.0.1:7242/ingest/2db1e09b-2b5d-4ee0-85d8-a551f942254c',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'frontend/src/components/TabularReview/TabularReviewTable.tsx:840',message:'[FRONTEND] Filtering out column not in tableData.columns',data:{columnId:column.id,accessorKey:column.columnDef.accessorKey,tableDataColumnIds:tableData.columns.map(c => c.id)},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'EE'})}).catch(()=>{});
+              }
               // #endregion
-              // Get column label from columnDef meta or use id
-              const columnLabel = (column.columnDef as any)?.meta?.columnLabel || column.id
+              
+              return existsInTableData && column.getCanHide()
+            })
+            .map((column) => {
+              // Get column label from tableData.columns
+              const tableDataColumn = tableData.columns.find(col => col.id === column.id)
+              const columnLabel = tableDataColumn?.column_label || (column.columnDef as any)?.meta?.column_label || column.id
+              
               return (
               <MenuItem key={column.id} onClick={() => column.toggleVisibility(!column.getIsVisible())}>
                 <Checkbox checked={column.getIsVisible()} />
