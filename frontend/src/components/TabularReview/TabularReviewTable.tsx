@@ -246,24 +246,13 @@ export const TabularReviewTable = React.memo(({ reviewId, tableData, onTableData
         status: row.status,
       }
       
-      // Add cells as columns (ONLY for columns that exist in tableData.columns)
-      const validColumnIds = new Set(tableData.columns.map(col => col.id))
+      // Add cells as columns
       tableData.columns.forEach((col) => {
         rowData[col.id] = row.cells[col.id] || {
           cell_value: null,
           status: 'pending',
         }
       })
-      
-      // CRITICAL: Check for orphaned cells (cells with column_id that doesn't exist in tableData.columns)
-      const orphanedCellKeys = Object.keys(row.cells || {}).filter(cellKey => !validColumnIds.has(cellKey))
-      if (orphanedCellKeys.length > 0) {
-        // #region agent log
-        fetch('http://127.0.0.1:7242/ingest/2db1e09b-2b5d-4ee0-85d8-a551f942254c',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'frontend/src/components/TabularReview/TabularReviewTable.tsx:256',message:'[FRONTEND] Found orphaned cells in rowData',data:{fileId:row.file_id,orphanedCellKeys:orphanedCellKeys,validColumnIds:Array.from(validColumnIds),allCellKeys:Object.keys(row.cells || {})},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'BB'})}).catch(()=>{});
-        // #endregion
-        console.warn(`[TabularReviewTable] Found orphaned cells for file ${row.file_id}:`, orphanedCellKeys)
-        // DO NOT add orphaned cells to rowData - they will create unwanted columns
-      }
       
       return rowData
     })
@@ -288,11 +277,11 @@ export const TabularReviewTable = React.memo(({ reviewId, tableData, onTableData
           onClick={(e) => e.stopPropagation()}
         />
       ),
-      cell: ({ row }) => (
+        cell: ({ row }) => (
         <Checkbox
           checked={selectedIds.has(row.original.file_id)}
           onChange={(e) => {
-            e.stopPropagation()
+                  e.stopPropagation()
             toggleSelection(row.original.file_id)
           }}
           onClick={(e) => e.stopPropagation()}
@@ -304,31 +293,35 @@ export const TabularReviewTable = React.memo(({ reviewId, tableData, onTableData
 
     // File name column
     const fileColumn: ColumnDef<any> = {
+      id: "file_name", // Explicitly set id
       accessorKey: "file_name",
       size: 250, // Default column width
       minSize: 150,
       maxSize: 500,
-      header: ({ column }) => {
-        return (
-          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-            <Button
-              variant="text"
-              onClick={() => column.toggleSorting(column.getIsSorted() === "asc")}
-              endIcon={<ArrowUpDownIcon />}
-              sx={{ textTransform: 'none', fontWeight: 600, color: '#1F2937' }}
-            >
+      meta: {
+        columnLabel: "Document", // Store column label in meta for dropdown
+        },
+        header: ({ column }) => {
+          return (
+            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+              <Button
+                variant="text"
+                onClick={() => column.toggleSorting(column.getIsSorted() === "asc")}
+                endIcon={<ArrowUpDownIcon />}
+                sx={{ textTransform: 'none', fontWeight: 600, color: '#1F2937' }}
+              >
               Document
-            </Button>
-          </Box>
-        )
-      },
+              </Button>
+            </Box>
+          )
+        },
       cell: ({ row }) => (
         <Stack 
           direction="row" 
           spacing={1} 
           alignItems="center" 
-          sx={{ 
-            py: 1,
+              sx={{ 
+                py: 1,
             cursor: 'pointer',
             '&:hover': {
               bgcolor: 'action.hover',
@@ -347,22 +340,22 @@ export const TabularReviewTable = React.memo(({ reviewId, tableData, onTableData
           <FileTextIcon fontSize="small" sx={{ color: '#6B7280' }} />
           <Typography variant="body2" sx={{ color: '#1F2937', flex: 1 }}>
             {row.getValue("file_name")}
-          </Typography>
+            </Typography>
           {onRemoveDocument && (
-            <IconButton
-              size="small"
-              onClick={(e) => {
-                e.stopPropagation()
+              <IconButton
+                size="small"
+                onClick={(e) => {
+                  e.stopPropagation()
                 onRemoveDocument(row.original.file_id)
-              }}
-              sx={{ 
-                p: 0.5,
-                color: '#6B7280',
+                }}
+                sx={{ 
+                  p: 0.5,
+                  color: '#6B7280',
                 '&:hover': { color: '#DC2626', bgcolor: 'error.light' }
-              }}
-            >
+                }}
+              >
               <CloseIcon fontSize="small" />
-            </IconButton>
+              </IconButton>
           )}
         </Stack>
       ),
@@ -370,10 +363,14 @@ export const TabularReviewTable = React.memo(({ reviewId, tableData, onTableData
 
     // All columns from tableData.columns (all dynamic, no filtering)
     const dynamicColumns: ColumnDef<any>[] = tableData.columns.map((col) => ({
+      id: col.id, // Explicitly set id to column.id
       accessorKey: col.id,
       size: 200, // Default column width
       minSize: 100,
       maxSize: 800,
+      meta: {
+        columnLabel: col.column_label, // Store column label in meta for dropdown
+      },
       header: ({ column }) => {
         return (
           <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
@@ -389,21 +386,21 @@ export const TabularReviewTable = React.memo(({ reviewId, tableData, onTableData
                 size="small"
                 onClick={async (e) => {
                   e.stopPropagation()
-                  setRunningColumns(prev => new Set(prev).add(col.id))
+                    setRunningColumns(prev => new Set(prev).add(col.id))
                   try {
                     await tabularReviewApi.runColumnExtraction(reviewId, col.id)
                     // WebSocket обновит ячейки автоматически
                     if (onRunColumn) {
-                      onRunColumn(col.id)
+                    onRunColumn(col.id)
                     }
                   } catch (error) {
                     console.error("Error running column extraction:", error)
                   } finally {
-                    setRunningColumns(prev => {
-                      const next = new Set(prev)
-                      next.delete(col.id)
-                      return next
-                    })
+                      setRunningColumns(prev => {
+                        const next = new Set(prev)
+                        next.delete(col.id)
+                        return next
+                      })
                   }
                 }}
                 disabled={runningColumns.has(col.id)}
@@ -630,6 +627,7 @@ export const TabularReviewTable = React.memo(({ reviewId, tableData, onTableData
     enableColumnResizing: true,
     columnResizeMode: 'onChange',
     enablePinning: true,
+    enableColumnHiding: true, // Explicitly enable column hiding
     state: {
       sorting,
       columnFilters,
@@ -639,6 +637,15 @@ export const TabularReviewTable = React.memo(({ reviewId, tableData, onTableData
       globalFilter,
     },
   })
+  
+  // #region agent log
+  React.useEffect(() => {
+    const allColumns = table.getAllColumns()
+    const columnIds = allColumns.map(c => c.id)
+    const accessorKeys = allColumns.map(c => c.columnDef.accessorKey)
+    fetch('http://127.0.0.1:7242/ingest/2db1e09b-2b5d-4ee0-85d8-a551f942254c',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'frontend/src/components/TabularReview/TabularReviewTable.tsx:635',message:'[FRONTEND] Table columns after useReactTable',data:{allColumnsCount:allColumns.length,columnIds:columnIds,accessorKeys:accessorKeys,tableDataColumnsCount:tableData.columns.length,tableDataColumnIds:tableData.columns.map(c => c.id),tableDataColumnLabels:tableData.columns.map(c => c.column_label),firstRowKeys:tableRows.length > 0 ? Object.keys(tableRows[0]) : []},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'CC'})}).catch(()=>{});
+  }, [table, tableData.columns, tableRows])
+  // #endregion
   
   // Keyboard navigation
   useKeyboardNavigation({
@@ -820,21 +827,17 @@ export const TabularReviewTable = React.memo(({ reviewId, tableData, onTableData
             .filter((column) => column.getCanHide())
             .map((column) => {
               // #region agent log
-              fetch('http://127.0.0.1:7242/ingest/2db1e09b-2b5d-4ee0-85d8-a551f942254c',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'frontend/src/components/TabularReview/TabularReviewTable.tsx:810',message:'[FRONTEND] Column in dropdown menu',data:{columnId:column.id,columnDef:column.columnDef?.header ? 'has header' : 'no header',accessorKey:column.columnDef?.accessorKey},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'CC'})}).catch(()=>{});
+              fetch('http://127.0.0.1:7242/ingest/2db1e09b-2b5d-4ee0-85d8-a551f942254c',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'frontend/src/components/TabularReview/TabularReviewTable.tsx:810',message:'[FRONTEND] Column in dropdown menu',data:{columnId:column.id,accessorKey:column.columnDef.accessorKey,allColumns:table.getAllColumns().map(c => ({id:c.id,accessorKey:c.columnDef.accessorKey})),tableDataColumns:tableData.columns.map(c => ({id:c.id,label:c.column_label}))},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'BB'})}).catch(()=>{});
               // #endregion
-              // Get column label from column definition or use column.id
-              const columnLabel = column.columnDef?.header 
-                ? (typeof column.columnDef.header === 'function' 
-                    ? (column.columnDef.header as any)({ column })?.props?.children?.props?.children || column.id
-                    : column.columnDef.header)
-                : column.id
+              // Get column label from columnDef meta or use id
+              const columnLabel = (column.columnDef as any)?.meta?.columnLabel || column.id
               return (
-                <MenuItem key={column.id} onClick={() => column.toggleVisibility(!column.getIsVisible())}>
-                  <Checkbox checked={column.getIsVisible()} />
-                  <Typography sx={{ textTransform: 'capitalize' }}>
+              <MenuItem key={column.id} onClick={() => column.toggleVisibility(!column.getIsVisible())}>
+                <Checkbox checked={column.getIsVisible()} />
+                <Typography sx={{ textTransform: 'capitalize' }}>
                     {columnLabel}
-                  </Typography>
-                </MenuItem>
+                </Typography>
+              </MenuItem>
               )
             })}
         </Menu>
