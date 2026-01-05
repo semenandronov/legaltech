@@ -606,6 +606,7 @@ const TabularReviewPage: React.FC = () => {
                 <TabularReviewTable
                   reviewId={reviewId}
                   tableData={tableData}
+                  onTableDataUpdate={setTableData}
                   onCellClick={async (fileId, cellData) => {
                     // Find file type and name from table data
                     const row = tableData.rows.find(r => r.file_id === fileId)

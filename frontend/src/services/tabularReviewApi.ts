@@ -222,6 +222,51 @@ export const tabularReviewApi = {
     }
   },
 
+  // Update column
+  async updateColumn(
+    reviewId: string,
+    columnId: string,
+    updates: {
+      column_label?: string
+      prompt?: string
+      column_config?: {
+        options?: Array<{ label: string; color: string }>
+        allow_custom?: boolean
+      }
+    }
+  ): Promise<TabularColumn> {
+    try {
+      const response = await apiClient.patch(
+        `/api/tabular-review/${reviewId}/columns/${columnId}`,
+        updates
+      )
+      return response.data
+    } catch (error) {
+      throw new Error(extractErrorMessage(error))
+    }
+  },
+
+  // Delete column
+  async deleteColumn(reviewId: string, columnId: string): Promise<void> {
+    try {
+      await apiClient.delete(`/api/tabular-review/${reviewId}/columns/${columnId}`)
+    } catch (error) {
+      throw new Error(extractErrorMessage(error))
+    }
+  },
+
+  // Reorder columns
+  async reorderColumns(reviewId: string, columnIds: string[]): Promise<TabularColumn[]> {
+    try {
+      const response = await apiClient.post(`/api/tabular-review/${reviewId}/columns/reorder`, {
+        column_ids: columnIds,
+      })
+      return response.data.columns
+    } catch (error) {
+      throw new Error(extractErrorMessage(error))
+    }
+  },
+
   // Run extraction
   async runExtraction(reviewId: string): Promise<{
     status: string
@@ -231,6 +276,27 @@ export const tabularReviewApi = {
   }> {
     try {
       const response = await apiClient.post(`/api/tabular-review/${reviewId}/run`)
+      return response.data
+    } catch (error) {
+      throw new Error(extractErrorMessage(error))
+    }
+  },
+
+  // Run extraction for a specific column
+  async runColumnExtraction(
+    reviewId: string,
+    columnId: string
+  ): Promise<{
+    status: string
+    saved_count: number
+    error_count: number
+    total_tasks: number
+    column_id: string
+  }> {
+    try {
+      const response = await apiClient.post(
+        `/api/tabular-review/${reviewId}/columns/${columnId}/run`
+      )
       return response.data
     } catch (error) {
       throw new Error(extractErrorMessage(error))
@@ -253,6 +319,33 @@ export const tabularReviewApi = {
     }
   },
 
+  // Update cell
+  async updateCell(
+    reviewId: string,
+    fileId: string,
+    columnId: string,
+    cellValue: string,
+    isManualOverride: boolean = true
+  ): Promise<{
+    id: string
+    cell_value: string
+    status: string
+    updated_at?: string
+  }> {
+    try {
+      const response = await apiClient.patch(
+        `/api/tabular-review/${reviewId}/cells/${fileId}/${columnId}`,
+        {
+          cell_value: cellValue,
+          is_manual_override: isManualOverride,
+        }
+      )
+      return response.data
+    } catch (error) {
+      throw new Error(extractErrorMessage(error))
+    }
+  },
+
   // Update document status
   async updateDocumentStatus(
     reviewId: string,
@@ -265,6 +358,164 @@ export const tabularReviewApi = {
         {
           file_id: fileId,
           status,
+        }
+      )
+      return response.data
+    } catch (error) {
+      throw new Error(extractErrorMessage(error))
+    }
+  },
+
+  // Bulk update document status
+  async bulkUpdateStatus(
+    reviewId: string,
+    fileIds: string[],
+    status: string
+  ): Promise<{ success: boolean; updated_count: number }> {
+    try {
+      const response = await apiClient.post(
+        `/api/tabular-review/${reviewId}/bulk/status`,
+        {
+          file_ids: fileIds,
+          status,
+        }
+      )
+      return response.data
+    } catch (error) {
+      throw new Error(extractErrorMessage(error))
+    }
+  },
+
+  // Bulk run extraction
+  async bulkRunExtraction(
+    reviewId: string,
+    fileIds: string[],
+    columnIds: string[]
+  ): Promise<{
+    status: string
+    saved_count: number
+    error_count: number
+    total_tasks: number
+    files_processed: number
+    columns_processed: number
+  }> {
+    try {
+      const response = await apiClient.post(
+        `/api/tabular-review/${reviewId}/bulk/run`,
+        {
+          file_ids: fileIds,
+          column_ids: columnIds,
+        }
+      )
+      return response.data
+    } catch (error) {
+      throw new Error(extractErrorMessage(error))
+    }
+  },
+
+  // Bulk delete rows
+  async bulkDeleteRows(
+    reviewId: string,
+    fileIds: string[]
+  ): Promise<{ success: boolean; deleted_count: number }> {
+    try {
+      const response = await apiClient.delete(
+        `/api/tabular-review/${reviewId}/bulk/rows`,
+        {
+          data: {
+            file_ids: fileIds,
+          },
+        }
+      )
+      return response.data
+    } catch (error) {
+      throw new Error(extractErrorMessage(error))
+    }
+  },
+
+  // Get cell history
+  async getCellHistory(
+    reviewId: string,
+    fileId: string,
+    columnId: string,
+    limit: number = 50
+  ): Promise<
+    Array<{
+      id: string
+      cell_value: string | null
+      verbatim_extract: string | null
+      reasoning: string | null
+      source_references: any
+      confidence_score: number | null
+      source_page: number | null
+      source_section: string | null
+      status: string
+      changed_by: string | null
+      change_type: string
+      previous_cell_value: string | null
+      change_reason: string | null
+      created_at: string
+    }>
+  > {
+    try {
+      const response = await apiClient.get(
+        `/api/tabular-review/${reviewId}/cells/${fileId}/${columnId}/history`,
+        {
+          params: { limit },
+        }
+      )
+      return response.data
+    } catch (error) {
+      throw new Error(extractErrorMessage(error))
+    }
+  },
+
+  // Revert cell to version
+  async revertCell(
+    reviewId: string,
+    fileId: string,
+    columnId: string,
+    historyId: string,
+    changeReason?: string
+  ): Promise<{ id: string; cell_value: string | null; status: string; updated_at: string }> {
+    try {
+      const response = await apiClient.post(
+        `/api/tabular-review/${reviewId}/cells/${fileId}/${columnId}/revert`,
+        {
+          history_id: historyId,
+          change_reason: changeReason,
+        }
+      )
+      return response.data
+    } catch (error) {
+      throw new Error(extractErrorMessage(error))
+    }
+  },
+
+  // Get cell diff
+  async getCellDiff(
+    reviewId: string,
+    fileId: string,
+    columnId: string,
+    historyId1: string,
+    historyId2: string
+  ): Promise<{
+    cell_value: { old: string | null; new: string | null; changed: boolean }
+    verbatim_extract: { old: string | null; new: string | null; changed: boolean }
+    reasoning: { old: string | null; new: string | null; changed: boolean }
+    confidence_score: { old: number | null; new: number | null; changed: boolean }
+    source_page: { old: number | null; new: number | null; changed: boolean }
+    source_section: { old: string | null; new: string | null; changed: boolean }
+    status: { old: string; new: string; changed: boolean }
+  }> {
+    try {
+      const response = await apiClient.get(
+        `/api/tabular-review/${reviewId}/cells/${fileId}/${columnId}/diff`,
+        {
+          params: {
+            history_id_1: historyId1,
+            history_id_2: historyId2,
+          },
         }
       )
       return response.data

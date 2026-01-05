@@ -7,11 +7,13 @@ import {
   LinearProgress,
   Stack,
   Divider,
+  Button,
 } from '@mui/material'
 import {
   Description as FileTextIcon,
   ErrorOutline as AlertCircleIcon,
   CheckCircleOutline as CheckCircleIcon,
+  History as HistoryIcon,
 } from '@mui/icons-material'
 
 interface CellExpansionModalProps {
@@ -22,6 +24,7 @@ interface CellExpansionModalProps {
   fileName: string
   columnLabel: string
   loading: boolean
+  onShowHistory?: () => void
 }
 
 export function CellExpansionModal({
@@ -32,6 +35,7 @@ export function CellExpansionModal({
   fileName,
   columnLabel,
   loading,
+  onShowHistory,
 }: CellExpansionModalProps) {
   const details = cellDetails || {
     id: "",
@@ -228,6 +232,17 @@ export function CellExpansionModal({
           </Box>
         )}
       </Stack>
+      {onShowHistory && (
+        <Box sx={{ mt: 2, display: 'flex', justifyContent: 'flex-end' }}>
+          <Button
+            variant="outlined"
+            startIcon={<HistoryIcon />}
+            onClick={onShowHistory}
+          >
+            История
+          </Button>
+        </Box>
+      )}
     </Modal>
   )
 }

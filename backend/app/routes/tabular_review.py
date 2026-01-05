@@ -35,6 +35,43 @@ class DocumentStatusUpdateRequest(BaseModel):
     status: str  # not_reviewed, reviewed, flagged, pending_clarification
 
 
+class CellUpdateRequest(BaseModel):
+    cell_value: str
+    is_manual_override: bool = True
+
+
+class ColumnUpdateRequest(BaseModel):
+    column_label: Optional[str] = None
+    prompt: Optional[str] = None
+    column_config: Optional[dict] = None
+
+
+class ReorderColumnsRequest(BaseModel):
+    column_ids: List[str]
+
+
+class CommentCreateRequest(BaseModel):
+    comment_text: str
+
+
+class CommentUpdateRequest(BaseModel):
+    comment_text: str
+
+
+class BulkStatusRequest(BaseModel):
+    file_ids: List[str]
+    status: str  # not_reviewed, reviewed, flagged, pending_clarification
+
+
+class BulkRunRequest(BaseModel):
+    file_ids: List[str]
+    column_ids: List[str]
+
+
+class BulkDeleteRequest(BaseModel):
+    file_ids: List[str]
+
+
 class TemplateCreateRequest(BaseModel):
     name: str
     description: Optional[str] = None
@@ -90,57 +127,9 @@ async def get_templates(
     current_user: User = Depends(get_current_user)
 ):
     """Get available column templates with filtering"""
-    # #region agent log
-    import json
-    import os
-    log_path = '/Users/semyon_andronov04/Desktop/C ДВ/.cursor/debug.log'
-    try:
-        with open(log_path, 'a', encoding='utf-8') as f:
-            f.write(json.dumps({
-                "location": "tabular_review.py:get_templates:entry",
-                "message": "Templates endpoint called",
-                "data": {
-                    "category": category,
-                    "featured": featured,
-                    "search": search,
-                    "user_id": current_user.id if current_user else None
-                },
-                "timestamp": int(__import__('time').time() * 1000),
-                "sessionId": "debug-session",
-                "runId": "run1",
-                "hypothesisId": "A"
-            }) + '\n')
-    except Exception:
-        pass
-    # #endregion
-    
     try:
         from app.models.tabular_review import TabularColumnTemplate
         from sqlalchemy import inspect as sqlalchemy_inspect
-        
-        # #region agent log
-        try:
-            # Check if table exists
-            inspector = sqlalchemy_inspect(db.bind)
-            table_exists = "tabular_column_templates" in inspector.get_table_names()
-            with open(log_path, 'a', encoding='utf-8') as f:
-                f.write(json.dumps({
-                    "location": "tabular_review.py:get_templates:before_query",
-                    "message": "About to query TabularColumnTemplate",
-                    "data": {
-                        "model_imported": True,
-                        "has_table": hasattr(TabularColumnTemplate, '__table__'),
-                        "table_name": TabularColumnTemplate.__table__.name if hasattr(TabularColumnTemplate, '__table__') else None,
-                        "table_exists_in_db": table_exists
-                    },
-                    "timestamp": int(__import__('time').time() * 1000),
-                    "sessionId": "debug-session",
-                    "runId": "run1",
-                    "hypothesisId": "A"
-                }) + '\n')
-        except Exception as log_err:
-            logger.error(f"Error in debug log: {log_err}")
-        # #endregion
         
         # Check if table exists, if not return empty list
         try:
@@ -174,45 +163,7 @@ async def get_templates(
                 )
             )
         
-        # #region agent log
-        try:
-            with open(log_path, 'a', encoding='utf-8') as f:
-                f.write(json.dumps({
-                    "location": "tabular_review.py:get_templates:before_all",
-                    "message": "About to execute query.all()",
-                    "data": {
-                        "query_str": str(query)
-                    },
-                    "timestamp": int(__import__('time').time() * 1000),
-                    "sessionId": "debug-session",
-                    "runId": "run1",
-                    "hypothesisId": "A"
-                }) + '\n')
-        except Exception:
-            pass
-        # #endregion
-        
         templates = query.all()
-        
-        # #region agent log
-        try:
-            with open(log_path, 'a', encoding='utf-8') as f:
-                f.write(json.dumps({
-                    "location": "tabular_review.py:get_templates:after_all",
-                    "message": "Query executed successfully",
-                    "data": {
-                        "templates_count": len(templates) if templates else 0,
-                        "first_template_has_columns": hasattr(templates[0], 'columns') if templates and len(templates) > 0 else False,
-                        "first_template_columns_type": type(templates[0].columns).__name__ if templates and len(templates) > 0 and hasattr(templates[0], 'columns') else None
-                    },
-                    "timestamp": int(__import__('time').time() * 1000),
-                    "sessionId": "debug-session",
-                    "runId": "run1",
-                    "hypothesisId": "A"
-                }) + '\n')
-        except Exception:
-            pass
-        # #endregion
         
         result = []
         for t in templates:
@@ -238,67 +189,11 @@ async def get_templates(
                 })
             except Exception as e:
                 logger.error(f"Error processing template {t.id if hasattr(t, 'id') else 'unknown'}: {e}", exc_info=True)
-                # #region agent log
-                try:
-                    with open(log_path, 'a', encoding='utf-8') as f:
-                        f.write(json.dumps({
-                            "location": "tabular_review.py:get_templates:template_processing_error",
-                            "message": "Error processing template",
-                            "data": {
-                                "template_id": t.id if hasattr(t, 'id') else None,
-                                "error": str(e),
-                                "error_type": type(e).__name__
-                            },
-                            "timestamp": int(__import__('time').time() * 1000),
-                            "sessionId": "debug-session",
-                            "runId": "run1",
-                            "hypothesisId": "A"
-                        }) + '\n')
-                except Exception:
-                    pass
-                # #endregion
                 logger.warning(f"Error processing template {t.id}: {e}")
                 continue
         
-        # #region agent log
-        try:
-            with open(log_path, 'a', encoding='utf-8') as f:
-                f.write(json.dumps({
-                    "location": "tabular_review.py:get_templates:before_return",
-                    "message": "About to return result",
-                    "data": {
-                        "result_templates_count": len(result.get("templates", []))
-                    },
-                    "timestamp": int(__import__('time').time() * 1000),
-                    "sessionId": "debug-session",
-                    "runId": "run1",
-                    "hypothesisId": "A"
-                }) + '\n')
-        except Exception:
-            pass
-        # #endregion
-        
         return result
     except Exception as e:
-        # #region agent log
-        try:
-            with open(log_path, 'a', encoding='utf-8') as f:
-                f.write(json.dumps({
-                    "location": "tabular_review.py:get_templates:error",
-                    "message": "Exception caught",
-                    "data": {
-                        "error_type": type(e).__name__,
-                        "error_message": str(e),
-                        "error_args": str(e.args) if hasattr(e, 'args') else None
-                    },
-                    "timestamp": int(__import__('time').time() * 1000),
-                    "sessionId": "debug-session",
-                    "runId": "run1",
-                    "hypothesisId": "A"
-                }) + '\n')
-        except Exception:
-            pass
-        # #endregion
         logger.error(f"Error getting templates: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Failed to get templates: {str(e)}")
 
@@ -354,6 +249,96 @@ async def add_column(
         raise HTTPException(status_code=500, detail="Failed to add column")
 
 
+@router.patch("/{review_id}/columns/{column_id}")
+async def update_column(
+    review_id: str,
+    column_id: str,
+    request: ColumnUpdateRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """Update a column (rename, update prompt, config)"""
+    try:
+        service = TabularReviewService(db)
+        column = service.update_column(
+            review_id=review_id,
+            column_id=column_id,
+            user_id=current_user.id,
+            column_label=request.column_label,
+            prompt=request.prompt,
+            column_config=request.column_config
+        )
+        return {
+            "id": column.id,
+            "column_label": column.column_label,
+            "column_type": column.column_type,
+            "prompt": column.prompt,
+            "column_config": column.column_config,
+            "order_index": column.order_index,
+        }
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        logger.error(f"Error updating column: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Failed to update column")
+
+
+@router.delete("/{review_id}/columns/{column_id}")
+async def delete_column(
+    review_id: str,
+    column_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """Delete a column (cascade deletes all cells)"""
+    try:
+        service = TabularReviewService(db)
+        service.delete_column(
+            review_id=review_id,
+            column_id=column_id,
+            user_id=current_user.id
+        )
+        return {"success": True}
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        logger.error(f"Error deleting column: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Failed to delete column")
+
+
+@router.post("/{review_id}/columns/reorder")
+async def reorder_columns(
+    review_id: str,
+    request: ReorderColumnsRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """Reorder columns by providing ordered list of column IDs"""
+    try:
+        service = TabularReviewService(db)
+        columns = service.reorder_columns(
+            review_id=review_id,
+            column_ids=request.column_ids,
+            user_id=current_user.id
+        )
+        return {
+            "columns": [
+                {
+                    "id": col.id,
+                    "column_label": col.column_label,
+                    "column_type": col.column_type,
+                    "order_index": col.order_index,
+                }
+                for col in columns
+            ]
+        }
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        logger.error(f"Error reordering columns: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Failed to reorder columns")
+
+
 @router.post("/{review_id}/run")
 async def run_extraction(
     review_id: str,
@@ -370,6 +355,25 @@ async def run_extraction(
     except Exception as e:
         logger.error(f"Error running extraction: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail="Failed to run extraction")
+
+
+@router.post("/{review_id}/columns/{column_id}/run")
+async def run_column_extraction(
+    review_id: str,
+    column_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """Run extraction for a specific column across all documents"""
+    try:
+        service = TabularReviewService(db)
+        result = await service.run_column_extraction(review_id, column_id, current_user.id)
+        return result
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        logger.error(f"Error running column extraction: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Failed to run column extraction")
 
 
 @router.get("/{review_id}/table-data")
@@ -445,6 +449,39 @@ async def get_cell_details(
         raise HTTPException(status_code=500, detail="Failed to get cell details")
 
 
+@router.patch("/{review_id}/cells/{file_id}/{column_id}")
+async def update_cell(
+    review_id: str,
+    file_id: str,
+    column_id: str,
+    request: CellUpdateRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """Update a cell value (manual edit) by file_id and column_id"""
+    try:
+        service = TabularReviewService(db)
+        cell = service.update_cell(
+            review_id=review_id,
+            file_id=file_id,
+            column_id=column_id,
+            cell_value=request.cell_value,
+            user_id=current_user.id,
+            is_manual_override=request.is_manual_override
+        )
+        return {
+            "id": cell.id,
+            "cell_value": cell.cell_value,
+            "status": cell.status,
+            "updated_at": cell.updated_at.isoformat() if cell.updated_at else None,
+        }
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        logger.error(f"Error updating cell: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Failed to update cell")
+
+
 @router.post("/{review_id}/document-status")
 async def update_document_status(
     review_id: str,
@@ -472,6 +509,501 @@ async def update_document_status(
     except Exception as e:
         logger.error(f"Error updating document status: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail="Failed to update document status")
+
+
+@router.post("/{review_id}/bulk/status")
+async def bulk_update_status(
+    review_id: str,
+    request: BulkStatusRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """Bulk update document status for multiple files"""
+    try:
+        service = TabularReviewService(db)
+        updated_count = service.bulk_update_status(
+            review_id=review_id,
+            file_ids=request.file_ids,
+            status=request.status,
+            user_id=current_user.id
+        )
+        return {
+            "success": True,
+            "updated_count": updated_count
+        }
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        logger.error(f"Error bulk updating status: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Failed to bulk update status")
+
+
+@router.post("/{review_id}/bulk/run")
+async def bulk_run_extraction(
+    review_id: str,
+    request: BulkRunRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """Bulk run extraction for specific files and columns"""
+    try:
+        service = TabularReviewService(db)
+        result = await service.bulk_run_extraction(
+            review_id=review_id,
+            file_ids=request.file_ids,
+            column_ids=request.column_ids,
+            user_id=current_user.id
+        )
+        return result
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        logger.error(f"Error bulk running extraction: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Failed to bulk run extraction")
+
+
+@router.delete("/{review_id}/bulk/rows")
+async def bulk_delete_rows(
+    review_id: str,
+    request: BulkDeleteRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """Bulk delete rows (remove files from review)"""
+    try:
+        service = TabularReviewService(db)
+        deleted_count = service.bulk_delete_rows(
+            review_id=review_id,
+            file_ids=request.file_ids,
+            user_id=current_user.id
+        )
+        return {
+            "success": True,
+            "deleted_count": deleted_count
+        }
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        logger.error(f"Error bulk deleting rows: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Failed to bulk delete rows")
+
+
+@router.get("/{review_id}/cells/{file_id}/{column_id}/history")
+async def get_cell_history(
+    review_id: str,
+    file_id: str,
+    column_id: str,
+    limit: int = 50,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """Get history for a specific cell"""
+    try:
+        from app.services.cell_history_service import CellHistoryService
+        history_service = CellHistoryService(db)
+        history = history_service.get_cell_history(
+            review_id=review_id,
+            file_id=file_id,
+            column_id=column_id,
+            limit=limit
+        )
+        return [
+            {
+                "id": record.id,
+                "cell_value": record.cell_value,
+                "verbatim_extract": record.verbatim_extract,
+                "reasoning": record.reasoning,
+                "source_references": record.source_references,
+                "confidence_score": float(record.confidence_score) if record.confidence_score else None,
+                "source_page": record.source_page,
+                "source_section": record.source_section,
+                "status": record.status,
+                "changed_by": record.changed_by,
+                "change_type": record.change_type,
+                "previous_cell_value": record.previous_cell_value,
+                "change_reason": record.change_reason,
+                "created_at": record.created_at.isoformat() if record.created_at else None,
+            }
+            for record in history
+        ]
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        logger.error(f"Error getting cell history: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Failed to get cell history")
+
+
+@router.post("/{review_id}/cells/{file_id}/{column_id}/revert")
+async def revert_cell(
+    review_id: str,
+    file_id: str,
+    column_id: str,
+    request: dict,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """Revert a cell to a previous version"""
+    try:
+        from app.services.cell_history_service import CellHistoryService
+        from app.services.tabular_review_service import TabularReviewService
+        
+        history_service = CellHistoryService(db)
+        review_service = TabularReviewService(db)
+        
+        history_id = request.get("history_id")
+        change_reason = request.get("change_reason")
+        
+        if not history_id:
+            raise ValueError("history_id is required")
+        
+        # Get current cell
+        cell = db.query(TabularCell).filter(
+            and_(
+                TabularCell.tabular_review_id == review_id,
+                TabularCell.file_id == file_id,
+                TabularCell.column_id == column_id
+            )
+        ).first()
+        
+        if not cell:
+            raise ValueError(f"Cell not found for file {file_id}, column {column_id}")
+        
+        # Revert to version
+        reverted_cell = history_service.revert_to_version(
+            history_id=history_id,
+            current_cell=cell,
+            user_id=current_user.id,
+            change_reason=change_reason
+        )
+        
+        return {
+            "id": reverted_cell.id,
+            "cell_value": reverted_cell.cell_value,
+            "status": reverted_cell.status,
+            "updated_at": reverted_cell.updated_at.isoformat() if reverted_cell.updated_at else None,
+        }
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        logger.error(f"Error reverting cell: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Failed to revert cell")
+
+
+@router.get("/{review_id}/cells/{file_id}/{column_id}/diff")
+async def get_cell_diff(
+    review_id: str,
+    file_id: str,
+    column_id: str,
+    history_id_1: str,
+    history_id_2: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """Get diff between two cell history versions"""
+    try:
+        from app.services.cell_history_service import CellHistoryService
+        history_service = CellHistoryService(db)
+        diff = history_service.get_diff(
+            history_id_1=history_id_1,
+            history_id_2=history_id_2
+        )
+        return diff
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        logger.error(f"Error getting cell diff: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Failed to get cell diff")
+
+
+@router.post("/{review_id}/cells/{file_id}/{column_id}/lock")
+async def lock_cell(
+    review_id: str,
+    file_id: str,
+    column_id: str,
+    request: dict = None,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """Lock a cell for editing"""
+    try:
+        service = TabularReviewService(db)
+        lock_duration = request.get("lock_duration_seconds", 300) if request else 300
+        cell = service.lock_cell(
+            review_id=review_id,
+            file_id=file_id,
+            column_id=column_id,
+            user_id=current_user.id,
+            lock_duration_seconds=lock_duration
+        )
+        return {
+            "id": cell.id,
+            "locked_by": cell.locked_by,
+            "locked_at": cell.locked_at.isoformat() if cell.locked_at else None,
+            "lock_expires_at": cell.lock_expires_at.isoformat() if cell.lock_expires_at else None,
+        }
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.error(f"Error locking cell: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Failed to lock cell")
+
+
+@router.post("/{review_id}/cells/{file_id}/{column_id}/unlock")
+async def unlock_cell(
+    review_id: str,
+    file_id: str,
+    column_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """Unlock a cell"""
+    try:
+        service = TabularReviewService(db)
+        cell = service.unlock_cell(
+            review_id=review_id,
+            file_id=file_id,
+            column_id=column_id,
+            user_id=current_user.id
+        )
+        return {
+            "id": cell.id,
+            "locked_by": None,
+            "locked_at": None,
+            "lock_expires_at": None,
+        }
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.error(f"Error unlocking cell: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Failed to unlock cell")
+
+
+@router.post("/{review_id}/cells/{file_id}/{column_id}/comments")
+async def create_comment(
+    review_id: str,
+    file_id: str,
+    column_id: str,
+    request: CommentCreateRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """Create a comment on a cell"""
+    try:
+        from app.services.cell_comment_service import CellCommentService
+        comment_service = CellCommentService(db)
+        comment = comment_service.create_comment(
+            review_id=review_id,
+            file_id=file_id,
+            column_id=column_id,
+            comment_text=request.comment_text,
+            user_id=current_user.id
+        )
+        # Broadcast comment via WebSocket
+        from app.services.websocket_manager import websocket_manager
+        await websocket_manager.broadcast_to_review(
+            review_id,
+            {
+                "type": "comment_added",
+                "file_id": file_id,
+                "column_id": column_id,
+                "comment": {
+                    "id": comment.id,
+                    "comment_text": comment.comment_text,
+                    "created_by": current_user.full_name,
+                    "created_by_id": current_user.id,
+                    "created_at": comment.created_at.isoformat() if comment.created_at else None,
+                }
+            }
+        )
+        return {
+            "id": comment.id,
+            "comment_text": comment.comment_text,
+            "created_by": current_user.full_name,
+            "created_by_id": current_user.id,
+            "created_at": comment.created_at.isoformat() if comment.created_at else None,
+            "is_resolved": comment.is_resolved,
+        }
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.error(f"Error creating comment: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Failed to create comment")
+
+
+@router.get("/{review_id}/cells/{file_id}/{column_id}/comments")
+async def get_comments(
+    review_id: str,
+    file_id: str,
+    column_id: str,
+    include_resolved: bool = Query(False, description="Include resolved comments"),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """Get all comments for a cell"""
+    try:
+        from app.services.cell_comment_service import CellCommentService
+        comment_service = CellCommentService(db)
+        comments = comment_service.get_comments(
+            review_id=review_id,
+            file_id=file_id,
+            column_id=column_id,
+            user_id=current_user.id,
+            include_resolved=include_resolved
+        )
+        return comments
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        logger.error(f"Error getting comments: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Failed to get comments")
+
+
+@router.patch("/{review_id}/comments/{comment_id}")
+async def update_comment(
+    review_id: str,
+    comment_id: str,
+    request: CommentUpdateRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """Update a comment"""
+    try:
+        from app.services.cell_comment_service import CellCommentService
+        comment_service = CellCommentService(db)
+        comment = comment_service.update_comment(
+            comment_id=comment_id,
+            comment_text=request.comment_text,
+            user_id=current_user.id
+        )
+        # Broadcast update via WebSocket
+        from app.services.websocket_manager import websocket_manager
+        await websocket_manager.broadcast_to_review(
+            review_id,
+            {
+                "type": "comment_updated",
+                "comment_id": comment_id,
+                "comment": {
+                    "id": comment.id,
+                    "comment_text": comment.comment_text,
+                    "updated_at": comment.updated_at.isoformat() if comment.updated_at else None,
+                }
+            }
+        )
+        return {
+            "id": comment.id,
+            "comment_text": comment.comment_text,
+            "updated_at": comment.updated_at.isoformat() if comment.updated_at else None,
+        }
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.error(f"Error updating comment: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Failed to update comment")
+
+
+@router.delete("/{review_id}/comments/{comment_id}")
+async def delete_comment(
+    review_id: str,
+    comment_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """Delete a comment"""
+    try:
+        from app.services.cell_comment_service import CellCommentService
+        comment_service = CellCommentService(db)
+        comment_service.delete_comment(
+            comment_id=comment_id,
+            user_id=current_user.id
+        )
+        # Broadcast deletion via WebSocket
+        from app.services.websocket_manager import websocket_manager
+        await websocket_manager.broadcast_to_review(
+            review_id,
+            {
+                "type": "comment_deleted",
+                "comment_id": comment_id,
+            }
+        )
+        return {"success": True}
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.error(f"Error deleting comment: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Failed to delete comment")
+
+
+@router.post("/{review_id}/comments/{comment_id}/resolve")
+async def resolve_comment(
+    review_id: str,
+    comment_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """Mark a comment as resolved"""
+    try:
+        from app.services.cell_comment_service import CellCommentService
+        comment_service = CellCommentService(db)
+        comment = comment_service.resolve_comment(
+            comment_id=comment_id,
+            user_id=current_user.id
+        )
+        # Broadcast resolution via WebSocket
+        from app.services.websocket_manager import websocket_manager
+        await websocket_manager.broadcast_to_review(
+            review_id,
+            {
+                "type": "comment_resolved",
+                "comment_id": comment_id,
+                "resolved_by": current_user.full_name,
+            }
+        )
+        return {
+            "id": comment.id,
+            "is_resolved": comment.is_resolved,
+            "resolved_at": comment.resolved_at.isoformat() if comment.resolved_at else None,
+            "resolved_by": current_user.full_name,
+        }
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.error(f"Error resolving comment: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Failed to resolve comment")
+
+
+@router.post("/{review_id}/comments/{comment_id}/unresolve")
+async def unresolve_comment(
+    review_id: str,
+    comment_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """Mark a comment as unresolved"""
+    try:
+        from app.services.cell_comment_service import CellCommentService
+        comment_service = CellCommentService(db)
+        comment = comment_service.unresolve_comment(
+            comment_id=comment_id,
+            user_id=current_user.id
+        )
+        # Broadcast unresolution via WebSocket
+        from app.services.websocket_manager import websocket_manager
+        await websocket_manager.broadcast_to_review(
+            review_id,
+            {
+                "type": "comment_unresolved",
+                "comment_id": comment_id,
+            }
+        )
+        return {
+            "id": comment.id,
+            "is_resolved": comment.is_resolved,
+        }
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.error(f"Error unresolving comment: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Failed to unresolve comment")
 
 
 @router.post("/{review_id}/export/csv")

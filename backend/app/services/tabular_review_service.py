@@ -15,7 +15,7 @@ from langchain_core.documents import Document
 from langchain_core.prompts import ChatPromptTemplate
 import logging
 import asyncio
-from datetime import datetime
+from datetime import datetime, timedelta
 
 logger = logging.getLogger(__name__)
 
@@ -117,6 +117,129 @@ class TabularReviewService:
         
         logger.info(f"Added column {column.id} to review {review_id}")
         return column
+    
+    def update_column(
+        self,
+        review_id: str,
+        column_id: str,
+        user_id: str,
+        column_label: Optional[str] = None,
+        prompt: Optional[str] = None,
+        column_config: Optional[Dict[str, Any]] = None
+    ) -> TabularColumn:
+        """Update a column (rename, update prompt, config)"""
+        # Verify review belongs to user
+        review = self.db.query(TabularReview).filter(
+            and_(TabularReview.id == review_id, TabularReview.user_id == user_id)
+        ).first()
+        
+        if not review:
+            raise ValueError(f"Tabular review {review_id} not found or access denied")
+        
+        # Get the column
+        column = self.db.query(TabularColumn).filter(
+            and_(
+                TabularColumn.id == column_id,
+                TabularColumn.tabular_review_id == review_id
+            )
+        ).first()
+        
+        if not column:
+            raise ValueError(f"Column {column_id} not found in review {review_id}")
+        
+        # Update fields
+        if column_label is not None:
+            column.column_label = column_label
+        if prompt is not None:
+            column.prompt = prompt
+        if column_config is not None:
+            column.column_config = column_config
+        
+        self.db.commit()
+        self.db.refresh(column)
+        
+        logger.info(f"Updated column {column_id} in review {review_id}")
+        return column
+    
+    def delete_column(
+        self,
+        review_id: str,
+        column_id: str,
+        user_id: str
+    ) -> bool:
+        """Delete a column (cascade deletes all cells)"""
+        # Verify review belongs to user
+        review = self.db.query(TabularReview).filter(
+            and_(TabularReview.id == review_id, TabularReview.user_id == user_id)
+        ).first()
+        
+        if not review:
+            raise ValueError(f"Tabular review {review_id} not found or access denied")
+        
+        # Get the column
+        column = self.db.query(TabularColumn).filter(
+            and_(
+                TabularColumn.id == column_id,
+                TabularColumn.tabular_review_id == review_id
+            )
+        ).first()
+        
+        if not column:
+            raise ValueError(f"Column {column_id} not found in review {review_id}")
+        
+        # Delete column (cascade will delete all cells)
+        self.db.delete(column)
+        self.db.commit()
+        
+        logger.info(f"Deleted column {column_id} from review {review_id}")
+        return True
+    
+    def reorder_columns(
+        self,
+        review_id: str,
+        column_ids: List[str],
+        user_id: str
+    ) -> List[TabularColumn]:
+        """Reorder columns by providing ordered list of column IDs"""
+        # Verify review belongs to user
+        review = self.db.query(TabularReview).filter(
+            and_(TabularReview.id == review_id, TabularReview.user_id == user_id)
+        ).first()
+        
+        if not review:
+            raise ValueError(f"Tabular review {review_id} not found or access denied")
+        
+        # Get all columns for this review
+        columns = self.db.query(TabularColumn).filter(
+            TabularColumn.tabular_review_id == review_id
+        ).all()
+        
+        column_map = {col.id: col for col in columns}
+        
+        # Verify all provided IDs exist and belong to this review
+        for col_id in column_ids:
+            if col_id not in column_map:
+                raise ValueError(f"Column {col_id} not found in review {review_id}")
+        
+        # Update order_index for each column
+        for index, col_id in enumerate(column_ids):
+            column_map[col_id].order_index = index
+        
+        # Handle columns not in the list (shouldn't happen, but be safe)
+        for col in columns:
+            if col.id not in column_ids:
+                # Put them at the end
+                col.order_index = len(column_ids) + columns.index(col)
+        
+        self.db.commit()
+        
+        # Return columns in new order
+        updated_columns = self.db.query(TabularColumn).filter(
+            TabularColumn.tabular_review_id == review_id
+        ).order_by(TabularColumn.order_index).all()
+        
+        logger.info(f"Reordered columns for review {review_id}")
+        return updated_columns
     
     def get_table_data(self, review_id: str, user_id: str) -> Dict[str, Any]:
         """Get table data for tabular review"""
@@ -849,6 +972,128 @@ class TabularReviewService:
             self.db.commit()
             raise
     
+    async def run_column_extraction(self, review_id: str, column_id: str, user_id: str) -> Dict[str, Any]:
+        """Run extraction for a specific column across all documents"""
+        # Verify review belongs to user
+        review = self.db.query(TabularReview).filter(
+            and_(TabularReview.id == review_id, TabularReview.user_id == user_id)
+        ).first()
+        
+        if not review:
+            raise ValueError(f"Tabular review {review_id} not found or access denied")
+        
+        # Get the specific column
+        column = self.db.query(TabularColumn).filter(
+            and_(
+                TabularColumn.id == column_id,
+                TabularColumn.tabular_review_id == review_id
+            )
+        ).first()
+        
+        if not column:
+            raise ValueError(f"Column {column_id} not found in review {review_id}")
+        
+        # Get files - filter by selected_file_ids if specified
+        files_query = self.db.query(File).filter(File.case_id == review.case_id)
+        if review.selected_file_ids:
+            files_query = files_query.filter(File.id.in_(review.selected_file_ids))
+        files = files_query.all()
+        
+        if not files:
+            raise ValueError("No files found for this case")
+        
+        # Create tasks for parallel processing (only for this column)
+        tasks = []
+        for file in files:
+            task = self.extract_cell_value_smart(file, column)
+            tasks.append(task)
+        
+        # Execute tasks in parallel
+        logger.info(f"Starting parallel extraction for column {column_id}: {len(tasks)} tasks")
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+        
+        # Save results to database
+        saved_count = 0
+        error_count = 0
+        
+        for result in results:
+            if isinstance(result, Exception):
+                error_count += 1
+                logger.error(f"Extraction task failed: {result}")
+                continue
+            
+            if result.get("error"):
+                error_count += 1
+                continue
+            
+            # Check if cell already exists
+            existing_cell = self.db.query(TabularCell).filter(
+                and_(
+                    TabularCell.file_id == result["file_id"],
+                    TabularCell.column_id == result["column_id"]
+                )
+            ).first()
+            
+            if existing_cell:
+                # Update existing cell with all new fields
+                existing_cell.cell_value = result.get("cell_value")
+                existing_cell.verbatim_extract = result.get("verbatim_extract")
+                existing_cell.reasoning = result.get("reasoning")
+                existing_cell.source_references = result.get("source_references")
+                existing_cell.confidence_score = result.get("confidence_score")
+                # Extract source_page from first source_reference if available
+                source_refs = result.get("source_references", [])
+                if source_refs and isinstance(source_refs, list) and len(source_refs) > 0:
+                    first_ref = source_refs[0]
+                    if isinstance(first_ref, dict):
+                        existing_cell.source_page = first_ref.get("page")
+                        existing_cell.source_section = first_ref.get("section")
+                else:
+                    existing_cell.source_page = result.get("source_page")
+                    existing_cell.source_section = result.get("source_section")
+                existing_cell.status = "completed"
+                existing_cell.updated_at = datetime.utcnow()
+            else:
+                # Extract source_page from first source_reference if available
+                source_refs = result.get("source_references", [])
+                source_page = result.get("source_page")
+                source_section = result.get("source_section")
+                if source_refs and isinstance(source_refs, list) and len(source_refs) > 0:
+                    first_ref = source_refs[0]
+                    if isinstance(first_ref, dict):
+                        source_page = first_ref.get("page") or source_page
+                        source_section = first_ref.get("section") or source_section
+                
+                # Create new cell with all fields
+                cell = TabularCell(
+                    tabular_review_id=review_id,
+                    file_id=result["file_id"],
+                    column_id=result["column_id"],
+                    cell_value=result.get("cell_value"),
+                    verbatim_extract=result.get("verbatim_extract"),
+                    reasoning=result.get("reasoning"),
+                    source_references=result.get("source_references"),
+                    confidence_score=result.get("confidence_score"),
+                    source_page=source_page,
+                    source_section=source_section,
+                    status="completed"
+                )
+                self.db.add(cell)
+            
+            saved_count += 1
+        
+        self.db.commit()
+        
+        logger.info(f"Column extraction completed: {saved_count} cells saved, {error_count} errors")
+        
+        return {
+            "status": "completed",
+            "saved_count": saved_count,
+            "error_count": error_count,
+            "total_tasks": len(tasks),
+            "column_id": column_id
+        }
+    
     def update_selected_files(
         self,
         review_id: str,
@@ -924,6 +1169,337 @@ class TabularReviewService:
         self.db.refresh(doc_status)
         
         return doc_status
+    
+    def update_cell(
+        self,
+        review_id: str,
+        file_id: str,
+        column_id: str,
+        cell_value: str,
+        user_id: str,
+        is_manual_override: bool = True
+    ) -> TabularCell:
+        """Update a cell value (manual edit) by file_id and column_id"""
+        # Verify review belongs to user
+        review = self.db.query(TabularReview).filter(
+            and_(TabularReview.id == review_id, TabularReview.user_id == user_id)
+        ).first()
+        
+        if not review:
+            raise ValueError(f"Tabular review {review_id} not found or access denied")
+        
+        # Get or create the cell (using unique constraint on file_id + column_id)
+        cell = self.db.query(TabularCell).filter(
+            and_(
+                TabularCell.tabular_review_id == review_id,
+                TabularCell.file_id == file_id,
+                TabularCell.column_id == column_id
+            )
+        ).first()
+        
+        # Save previous value for history
+        previous_cell_value = cell.cell_value if cell else None
+        change_type = "updated" if cell else "created"
+        
+        if not cell:
+            # Create new cell if it doesn't exist
+            cell = TabularCell(
+                tabular_review_id=review_id,
+                file_id=file_id,
+                column_id=column_id,
+                cell_value=cell_value,
+                status="reviewed" if is_manual_override else "pending"
+            )
+            self.db.add(cell)
+            self.db.flush()  # Flush to get the cell ID
+        else:
+            # Check if cell is locked by another user
+            if cell.locked_by and cell.locked_by != user_id:
+                # Check if lock has expired
+                if cell.lock_expires_at and cell.lock_expires_at > datetime.utcnow():
+                    locked_user = self.db.query(User).filter(User.id == cell.locked_by).first()
+                    locked_user_name = locked_user.full_name if locked_user else "Unknown"
+                    raise ValueError(f"Cell is locked by {locked_user_name}")
+                # Lock has expired, allow update and unlock
+                cell.locked_by = None
+                cell.locked_at = None
+                cell.lock_expires_at = None
+            
+            # Update existing cell
+            cell.cell_value = cell_value
+            cell.status = "reviewed" if is_manual_override else cell.status
+            cell.updated_at = datetime.utcnow()
+            # For manual edits, clear AI-related fields
+            if is_manual_override:
+                cell.verbatim_extract = None
+                cell.reasoning = None
+                cell.source_references = None
+                cell.confidence_score = None
+                cell.source_page = None
+                cell.source_section = None
+            
+            # Unlock cell after update (if it was locked by this user)
+            if cell.locked_by == user_id:
+                cell.locked_by = None
+                cell.locked_at = None
+                cell.lock_expires_at = None
+        
+        self.db.commit()
+        self.db.refresh(cell)
+        
+        # Log the change to history
+        try:
+            from app.services.cell_history_service import CellHistoryService
+            history_service = CellHistoryService(self.db)
+            history_service.log_cell_change(
+                cell=cell,
+                change_type=change_type,
+                changed_by=user_id,
+                previous_cell_value=previous_cell_value,
+                change_reason="Manual edit" if is_manual_override else "Cell update"
+            )
+        except Exception as e:
+            logger.warning(f"Failed to log cell history: {e}", exc_info=True)
+            # Don't fail the update if history logging fails
+        
+        logger.info(f"Updated cell for file {file_id}, column {column_id} in review {review_id}")
+        return cell
+    
+    def bulk_update_status(
+        self,
+        review_id: str,
+        file_ids: List[str],
+        status: str,
+        user_id: str
+    ) -> int:
+        """Bulk update document status for multiple files"""
+        # Verify review belongs to user
+        review = self.db.query(TabularReview).filter(
+            and_(TabularReview.id == review_id, TabularReview.user_id == user_id)
+        ).first()
+        
+        if not review:
+            raise ValueError(f"Tabular review {review_id} not found or access denied")
+        
+        # Verify files belong to the case
+        files = self.db.query(File).filter(
+            and_(
+                File.id.in_(file_ids),
+                File.case_id == review.case_id
+            )
+        ).all()
+        
+        if len(files) != len(file_ids):
+            raise ValueError("Some files do not belong to this case")
+        
+        updated_count = 0
+        for file_id in file_ids:
+            # Get or create document status
+            doc_status = self.db.query(TabularDocumentStatus).filter(
+                and_(
+                    TabularDocumentStatus.tabular_review_id == review_id,
+                    TabularDocumentStatus.file_id == file_id,
+                    TabularDocumentStatus.user_id == user_id
+                )
+            ).first()
+            
+            if doc_status:
+                doc_status.status = status
+                doc_status.updated_at = datetime.utcnow()
+            else:
+                doc_status = TabularDocumentStatus(
+                    tabular_review_id=review_id,
+                    file_id=file_id,
+                    user_id=user_id,
+                    status=status
+                )
+                self.db.add(doc_status)
+            
+            updated_count += 1
+        
+        self.db.commit()
+        logger.info(f"Bulk updated status for {updated_count} files in review {review_id}")
+        return updated_count
+    
+    async def bulk_run_extraction(
+        self,
+        review_id: str,
+        file_ids: List[str],
+        column_ids: List[str],
+        user_id: str
+    ) -> Dict[str, Any]:
+        """Bulk run extraction for specific files and columns"""
+        # Verify review belongs to user
+        review = self.db.query(TabularReview).filter(
+            and_(TabularReview.id == review_id, TabularReview.user_id == user_id)
+        ).first()
+        
+        if not review:
+            raise ValueError(f"Tabular review {review_id} not found or access denied")
+        
+        # Get files
+        files = self.db.query(File).filter(
+            and_(
+                File.id.in_(file_ids),
+                File.case_id == review.case_id
+            )
+        ).all()
+        
+        if len(files) != len(file_ids):
+            raise ValueError("Some files do not belong to this case")
+        
+        # Get columns
+        columns = self.db.query(TabularColumn).filter(
+            and_(
+                TabularColumn.tabular_review_id == review_id,
+                TabularColumn.id.in_(column_ids)
+            )
+        ).all()
+        
+        if len(columns) != len(column_ids):
+            raise ValueError("Some columns do not belong to this review")
+        
+        # Create tasks for parallel processing
+        tasks = []
+        for file in files:
+            for column in columns:
+                task = self.extract_cell_value_smart(file, column)
+                tasks.append(task)
+        
+        # Execute tasks in parallel
+        logger.info(f"Starting bulk extraction: {len(tasks)} tasks for {len(file_ids)} files, {len(column_ids)} columns")
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+        
+        # Save results to database
+        saved_count = 0
+        error_count = 0
+        
+        for result in results:
+            if isinstance(result, Exception):
+                error_count += 1
+                logger.error(f"Extraction task failed: {result}")
+                continue
+            
+            if result.get("error"):
+                error_count += 1
+                continue
+            
+            # Check if cell already exists
+            existing_cell = self.db.query(TabularCell).filter(
+                and_(
+                    TabularCell.file_id == result["file_id"],
+                    TabularCell.column_id == result["column_id"]
+                )
+            ).first()
+            
+            if existing_cell:
+                # Update existing cell
+                existing_cell.cell_value = result.get("cell_value")
+                existing_cell.verbatim_extract = result.get("verbatim_extract")
+                existing_cell.reasoning = result.get("reasoning")
+                existing_cell.source_references = result.get("source_references")
+                existing_cell.confidence_score = result.get("confidence_score")
+                source_refs = result.get("source_references", [])
+                if source_refs and isinstance(source_refs, list) and len(source_refs) > 0:
+                    first_ref = source_refs[0]
+                    if isinstance(first_ref, dict):
+                        existing_cell.source_page = first_ref.get("page")
+                        existing_cell.source_section = first_ref.get("section")
+                else:
+                    existing_cell.source_page = result.get("source_page")
+                    existing_cell.source_section = result.get("source_section")
+                existing_cell.status = "completed"
+                existing_cell.updated_at = datetime.utcnow()
+            else:
+                # Create new cell
+                source_refs = result.get("source_references", [])
+                source_page = result.get("source_page")
+                source_section = result.get("source_section")
+                if source_refs and isinstance(source_refs, list) and len(source_refs) > 0:
+                    first_ref = source_refs[0]
+                    if isinstance(first_ref, dict):
+                        source_page = first_ref.get("page") or source_page
+                        source_section = first_ref.get("section") or source_section
+                
+                cell = TabularCell(
+                    tabular_review_id=review_id,
+                    file_id=result["file_id"],
+                    column_id=result["column_id"],
+                    cell_value=result.get("cell_value"),
+                    verbatim_extract=result.get("verbatim_extract"),
+                    reasoning=result.get("reasoning"),
+                    source_references=result.get("source_references"),
+                    confidence_score=result.get("confidence_score"),
+                    source_page=source_page,
+                    source_section=source_section,
+                    status="completed"
+                )
+                self.db.add(cell)
+            
+            saved_count += 1
+        
+        self.db.commit()
+        
+        logger.info(f"Bulk extraction completed: {saved_count} cells saved, {error_count} errors")
+        
+        return {
+            "status": "completed",
+            "saved_count": saved_count,
+            "error_count": error_count,
+            "total_tasks": len(tasks),
+            "files_processed": len(file_ids),
+            "columns_processed": len(column_ids)
+        }
+    
+    def bulk_delete_rows(
+        self,
+        review_id: str,
+        file_ids: List[str],
+        user_id: str
+    ) -> int:
+        """Bulk delete rows (remove files from selected_file_ids)"""
+        # Verify review belongs to user
+        review = self.db.query(TabularReview).filter(
+            and_(TabularReview.id == review_id, TabularReview.user_id == user_id)
+        ).first()
+        
+        if not review:
+            raise ValueError(f"Tabular review {review_id} not found or access denied")
+        
+        # Update selected_file_ids to remove deleted files
+        if review.selected_file_ids:
+            updated_file_ids = [fid for fid in review.selected_file_ids if fid not in file_ids]
+            review.selected_file_ids = updated_file_ids if updated_file_ids else None
+        else:
+            # If no selected_file_ids, all files are included, so we can't "delete" them
+            # Instead, we'll set selected_file_ids to exclude these files
+            # Get all files for the case
+            all_files = self.db.query(File).filter(File.case_id == review.case_id).all()
+            all_file_ids = [f.id for f in all_files]
+            updated_file_ids = [fid for fid in all_file_ids if fid not in file_ids]
+            review.selected_file_ids = updated_file_ids if updated_file_ids else None
+        
+        # Delete cells for these files (cascade should handle this, but explicit for clarity)
+        deleted_cells = self.db.query(TabularCell).filter(
+            and_(
+                TabularCell.tabular_review_id == review_id,
+                TabularCell.file_id.in_(file_ids)
+            )
+        ).delete(synchronize_session=False)
+        
+        # Delete document statuses for these files
+        deleted_statuses = self.db.query(TabularDocumentStatus).filter(
+            and_(
+                TabularDocumentStatus.tabular_review_id == review_id,
+                TabularDocumentStatus.file_id.in_(file_ids)
+            )
+        ).delete(synchronize_session=False)
+        
+        review.updated_at = datetime.utcnow()
+        self.db.commit()
+        
+        logger.info(f"Bulk deleted {len(file_ids)} rows from review {review_id} (removed {deleted_cells} cells, {deleted_statuses} statuses)")
+        return len(file_ids)
     
     def export_to_csv(self, review_id: str, user_id: str) -> str:
         """Export tabular review to CSV format"""
@@ -1655,4 +2231,114 @@ class TabularReviewService:
         self.db.commit()
         logger.info(f"Created key_facts table {review.id} with {len(facts_to_add)} facts")
         return review
+    
+    def lock_cell(
+        self,
+        review_id: str,
+        file_id: str,
+        column_id: str,
+        user_id: str,
+        lock_duration_seconds: int = 300  # Default 5 minutes
+    ) -> TabularCell:
+        """Lock a cell for editing by a specific user"""
+        # Verify review belongs to user
+        review = self.db.query(TabularReview).filter(
+            and_(TabularReview.id == review_id, TabularReview.user_id == user_id)
+        ).first()
+        
+        if not review:
+            raise ValueError(f"Tabular review {review_id} not found or access denied")
+        
+        # Get or create the cell
+        cell = self.db.query(TabularCell).filter(
+            and_(
+                TabularCell.tabular_review_id == review_id,
+                TabularCell.file_id == file_id,
+                TabularCell.column_id == column_id
+            )
+        ).first()
+        
+        if not cell:
+            # Create cell if it doesn't exist
+            cell = TabularCell(
+                tabular_review_id=review_id,
+                file_id=file_id,
+                column_id=column_id,
+                cell_value=None,
+                status="pending"
+            )
+            self.db.add(cell)
+            self.db.flush()
+        
+        # Check if cell is already locked by another user
+        if cell.locked_by and cell.locked_by != user_id:
+            # Check if lock has expired
+            if cell.lock_expires_at and cell.lock_expires_at > datetime.utcnow():
+                locked_user = self.db.query(User).filter(User.id == cell.locked_by).first()
+                locked_user_name = locked_user.full_name if locked_user else "Unknown"
+                raise ValueError(f"Cell is locked by {locked_user_name}")
+            # Lock has expired, allow new lock
+        elif cell.locked_by == user_id:
+            # Already locked by this user, extend lock
+            pass
+        
+        # Lock the cell
+        now = datetime.utcnow()
+        cell.locked_by = user_id
+        cell.locked_at = now
+        cell.lock_expires_at = now + timedelta(seconds=lock_duration_seconds)
+        
+        self.db.commit()
+        self.db.refresh(cell)
+        
+        logger.info(f"Locked cell for file {file_id}, column {column_id} in review {review_id} by user {user_id}")
+        return cell
+    
+    def unlock_cell(
+        self,
+        review_id: str,
+        file_id: str,
+        column_id: str,
+        user_id: str
+    ) -> TabularCell:
+        """Unlock a cell"""
+        # Verify review belongs to user
+        review = self.db.query(TabularReview).filter(
+            and_(TabularReview.id == review_id, TabularReview.user_id == user_id)
+        ).first()
+        
+        if not review:
+            raise ValueError(f"Tabular review {review_id} not found or access denied")
+        
+        # Get the cell
+        cell = self.db.query(TabularCell).filter(
+            and_(
+                TabularCell.tabular_review_id == review_id,
+                TabularCell.file_id == file_id,
+                TabularCell.column_id == column_id
+            )
+        ).first()
+        
+        if not cell:
+            raise ValueError(f"Cell not found")
+        
+        # Check if cell is locked
+        if not cell.locked_by:
+            # Already unlocked
+            return cell
+        
+        # Check if user can unlock (must be the one who locked it or review owner)
+        if cell.locked_by != user_id and review.user_id != user_id:
+            raise ValueError("You don't have permission to unlock this cell")
+        
+        # Unlock the cell
+        cell.locked_by = None
+        cell.locked_at = None
+        cell.lock_expires_at = None
+        
+        self.db.commit()
+        self.db.refresh(cell)
+        
+        logger.info(f"Unlocked cell for file {file_id}, column {column_id} in review {review_id} by user {user_id}")
+        return cell
 

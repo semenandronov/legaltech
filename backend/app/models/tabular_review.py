@@ -62,6 +62,9 @@ class TabularCell(Base):
     source_page = Column(Integer, nullable=True)
     source_section = Column(String(255), nullable=True)
     status = Column(String(50), default="pending")  # pending, processing, completed, reviewed
+    locked_by = Column(String, ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True)
+    locked_at = Column(DateTime, nullable=True)
+    lock_expires_at = Column(DateTime, nullable=True, index=True)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     
@@ -121,4 +124,57 @@ class TabularDocumentStatus(Base):
     review = relationship("TabularReview", back_populates="document_statuses")
     file = relationship("File", backref="tabular_document_statuses")
     user = relationship("User", backref="tabular_document_statuses")
+
+
+class CellHistory(Base):
+    """CellHistory model - stores version history for cell values"""
+    __tablename__ = "cell_history"
+    
+    id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    tabular_review_id = Column(String, ForeignKey("tabular_reviews.id", ondelete="CASCADE"), nullable=False, index=True)
+    file_id = Column(String, ForeignKey("files.id", ondelete="CASCADE"), nullable=False, index=True)
+    column_id = Column(String, ForeignKey("tabular_columns.id", ondelete="CASCADE"), nullable=False, index=True)
+    cell_value = Column(Text, nullable=True)
+    verbatim_extract = Column(Text, nullable=True)
+    reasoning = Column(Text, nullable=True)
+    source_references = Column(JSON, nullable=True)
+    confidence_score = Column(DECIMAL(3, 2), nullable=True)
+    source_page = Column(Integer, nullable=True)
+    source_section = Column(String(255), nullable=True)
+    status = Column(String(50), default="pending")
+    changed_by = Column(String, ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True)
+    change_type = Column(String(50), nullable=False)  # 'created', 'updated', 'deleted', 'reverted'
+    previous_cell_value = Column(Text, nullable=True)
+    change_reason = Column(Text, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow, index=True)
+    
+    # Relationships
+    review = relationship("TabularReview", backref="cell_history_records")
+    file = relationship("File", backref="cell_history_records")
+    column = relationship("TabularColumn", backref="cell_history_records")
+    user = relationship("User", backref="cell_history_records")
+
+
+class CellComment(Base):
+    """CellComment model - stores comments on tabular cells"""
+    __tablename__ = "cell_comments"
+    
+    id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    tabular_review_id = Column(String, ForeignKey("tabular_reviews.id", ondelete="CASCADE"), nullable=False, index=True)
+    file_id = Column(String, ForeignKey("files.id", ondelete="CASCADE"), nullable=False, index=True)
+    column_id = Column(String, ForeignKey("tabular_columns.id", ondelete="CASCADE"), nullable=False, index=True)
+    comment_text = Column(Text, nullable=False)
+    created_by = Column(String, ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True)
+    created_at = Column(DateTime, default=datetime.utcnow, index=True)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    is_resolved = Column(Boolean, default=False)
+    resolved_at = Column(DateTime, nullable=True)
+    resolved_by = Column(String, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    
+    # Relationships
+    review = relationship("TabularReview", backref="cell_comments")
+    file = relationship("File", backref="cell_comments")
+    column = relationship("TabularColumn", backref="cell_comments")
+    author = relationship("User", foreign_keys=[created_by], backref="cell_comments_authored")
+    resolver = relationship("User", foreign_keys=[resolved_by], backref="cell_comments_resolved")
 

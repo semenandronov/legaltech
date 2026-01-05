@@ -1,13 +1,18 @@
 """WebSocket routes for streaming analysis"""
-from fastapi import WebSocket, WebSocketDisconnect, APIRouter, Depends
+from fastapi import WebSocket, WebSocketDisconnect, APIRouter, Depends, Query
 from app.services.langchain_agents.coordinator import AgentCoordinator
 from app.services.rag_service import RAGService
 from app.services.document_processor import DocumentProcessor
 from app.services.tabular_review_service import TabularReviewService
+from app.services.presence_service import get_presence_service
+from app.services.websocket_manager import websocket_manager
 from app.utils.database import get_db
-from app.utils.auth import get_current_user
+from app.utils.auth import get_current_user, decode_token
 from app.models.user import User
+from app.config import config as app_config
 from sqlalchemy.orm import Session
+from datetime import datetime
+from typing import Optional
 import json
 import logging
 import asyncio
@@ -339,7 +344,8 @@ async def stream_chat(
 @router.websocket("/ws/tabular-review/{review_id}")
 async def stream_tabular_review_updates(
     websocket: WebSocket,
-    review_id: str
+    review_id: str,
+    token: Optional[str] = Query(None)
 ):
     """
     WebSocket endpoint for streaming tabular review updates in real-time
@@ -348,25 +354,57 @@ async def stream_tabular_review_updates(
     - Cells are updated during extraction
     - Columns are added
     - Extraction progress changes
+    - Presence updates
     """
-    await websocket.accept()
-    logger.info(f"WebSocket tabular review connection opened for review {review_id}")
+    # Initialize presence service
+    presence_service = get_presence_service(redis_url=app_config.REDIS_URL)
     
     # Get database session
     from app.utils.database import SessionLocal
     db = SessionLocal()
+    user_id: Optional[str] = None
+    connection_id: Optional[str] = None
+    presence_task: Optional[asyncio.Task] = None
+    message_task: Optional[asyncio.Task] = None
     
     try:
+        # Authenticate user if token is provided
+        if token:
+            payload = decode_token(token)
+            if payload and "sub" in payload:
+                user_id = payload["sub"]
+            else:
+                await websocket.accept()
+                await websocket.send_json({
+                    "type": "error",
+                    "message": "Authentication failed"
+                })
+                await websocket.close()
+                return
+        
         # Verify review exists
         from app.models.tabular_review import TabularReview
         review = db.query(TabularReview).filter(TabularReview.id == review_id).first()
         if not review:
+            await websocket.accept()
             await websocket.send_json({
                 "type": "error",
                 "message": "Review not found"
             })
             await websocket.close()
             return
+        
+        # Connect to WebSocketManager (this will accept the websocket)
+        if user_id:
+            connection_id = await websocket_manager.connect(websocket, review_id, user_id)
+            logger.info(f"WebSocket tabular review connection opened for review {review_id}, user {user_id}")
+            # Update presence
+            user = db.query(User).filter(User.id == user_id).first()
+            user_name = user.full_name if user else None
+            presence_service.update_presence(review_id, user_id, user_name)
+        else:
+            await websocket.accept()
+            logger.info(f"WebSocket tabular review connection opened for review {review_id} (anonymous)")
         
         # Send initial connection confirmation
         await websocket.send_json({
@@ -375,22 +413,63 @@ async def stream_tabular_review_updates(
             "message": "Connected to tabular review updates"
         })
         
+        # Send initial presence update
+        if user_id:
+            present_users = presence_service.get_present_users(review_id)
+            await websocket_manager.broadcast_presence_update(review_id, {"users": present_users})
+        
         # Poll for updates (in production, use database triggers or pub/sub)
         last_update_time = None
+        
+        # Send periodic presence updates
+        async def send_presence_updates():
+            while True:
+                try:
+                    await asyncio.sleep(30)  # Update every 30 seconds
+                    if user_id:
+                        user = db.query(User).filter(User.id == user_id).first()
+                        user_name = user.full_name if user else None
+                        presence_service.update_presence(review_id, user_id, user_name)
+                        present_users = presence_service.get_present_users(review_id)
+                        await websocket_manager.broadcast_presence_update(
+                            review_id,
+                            {"users": present_users},
+                            exclude_connection_id=connection_id
+                        )
+                except asyncio.CancelledError:
+                    break
+                except Exception as e:
+                    logger.error(f"Error in presence updates: {e}", exc_info=True)
+        
+        if user_id:
+            presence_task = asyncio.create_task(send_presence_updates())
+        
+        # Handle incoming messages (for future features like lock requests)
+        async def handle_messages():
+            while True:
+                try:
+                    data = await websocket.receive_json()
+                    # Handle incoming messages (e.g., lock requests)
+                    # Can be extended for future features
+                except Exception as e:
+                    logger.debug(f"WebSocket message handling error: {e}")
+                    break
+        
+        message_task = asyncio.create_task(handle_messages())
+        
         while True:
             try:
                 # Check for new cells
                 from app.models.tabular_review import TabularCell
-                from datetime import datetime
                 
-                query = db.query(TabularCell).filter(
+                cell_query = db.query(TabularCell).filter(
                     TabularCell.tabular_review_id == review_id
                 )
                 
                 if last_update_time:
-                    query = query.filter(TabularCell.updated_at > last_update_time)
+                    cell_query = cell_query.filter(TabularCell.updated_at > last_update_time)
                 
-                new_cells = query.all()
+                new_cells = cell_query.all()
                 
                 if new_cells:
                     for cell in new_cells:
@@ -410,12 +489,12 @@ async def stream_tabular_review_updates(
                 
                 # Check for new columns
                 from app.models.tabular_review import TabularColumn
-                new_columns = db.query(TabularColumn).filter(
+                column_query = db.query(TabularColumn).filter(
                     TabularColumn.tabular_review_id == review_id
                 )
                 if last_update_time:
-                    new_columns = new_columns.filter(TabularColumn.created_at > last_update_time)
-                new_columns = new_columns.all()
+                    column_query = column_query.filter(TabularColumn.created_at > last_update_time)
+                new_columns = column_query.all()
                 
                 if new_columns:
                     for column in new_columns:
@@ -439,10 +518,13 @@ async def stream_tabular_review_updates(
                 break
             except Exception as e:
                 logger.error(f"Error in tabular review WebSocket: {e}", exc_info=True)
-                await websocket.send_json({
-                    "type": "error",
-                    "message": str(e)
-                })
+                try:
+                    await websocket.send_json({
+                        "type": "error",
+                        "message": str(e)
+                    })
+                except:
+                    pass
                 await asyncio.sleep(1)
                 
     except Exception as e:
@@ -455,6 +537,27 @@ async def stream_tabular_review_updates(
         except:
             pass
     finally:
+        # Clean up
+        if presence_task:
+            presence_task.cancel()
+            try:
+                await presence_task
+            except asyncio.CancelledError:
+                pass
+        if message_task:
+            message_task.cancel()
+            try:
+                await message_task
+            except asyncio.CancelledError:
+                pass
+        
+        if user_id and connection_id:
+            presence_service.remove_presence(review_id, user_id)
+            websocket_manager.disconnect(review_id, connection_id)
+            # Broadcast updated presence
+            present_users = presence_service.get_present_users(review_id)
+            await websocket_manager.broadcast_presence_update(review_id, {"users": present_users})
+        
         db.close()
         try:
             await websocket.close()

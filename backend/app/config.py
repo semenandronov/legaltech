@@ -1,7 +1,7 @@
 """Configuration for Legal AI Vault Backend"""
 import os
 import logging
-from typing import List
+from typing import List, Optional
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -111,6 +111,10 @@ class Config:
     JWT_ALGORITHM: str = os.getenv("JWT_ALGORITHM", "HS256")
     ALGORITHM: str = "HS256"  # Alias for JWT_ALGORITHM
     ACCESS_TOKEN_EXPIRE_MINUTES: int = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "1440"))  # 24 hours
+    
+    # Redis for Caching and Presence (Phase 4.1)
+    REDIS_URL: Optional[str] = os.getenv("REDIS_URL", None)
+    PRESENCE_TTL_SECONDS: int = int(os.getenv("PRESENCE_TTL_SECONDS", "60"))  # TTL for user presence in seconds
 
 
 # Create config instance

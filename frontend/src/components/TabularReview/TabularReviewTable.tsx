@@ -47,11 +47,17 @@ import {
   PlayArrow as PlayArrowIcon,
   Close as CloseIcon,
   OpenInNew as OpenInNewIcon,
+  FilterList as FilterIcon,
 } from '@mui/icons-material'
 import { TabularRow, TabularColumn, TabularCell, CellDetails } from "@/services/tabularReviewApi"
 import { tabularReviewApi } from "@/services/tabularReviewApi"
 import { CellExpansionModal } from "./CellExpansionModal"
 import { TagCell } from "./TagCell"
+import { BulkActionsToolbar } from "./BulkActionsToolbar"
+import { useBatchSelection } from "@/hooks/useBatchSelection"
+import { CellHistoryPanel } from "./CellHistoryPanel"
+import { AdvancedFiltersPanel, AdvancedFilters } from "./AdvancedFiltersPanel"
+import { useKeyboardNavigation } from "@/hooks/useKeyboardNavigation"
 
 interface TabularReviewTableProps {
   reviewId: string
@@ -65,6 +71,7 @@ interface TabularReviewTableProps {
     columns: TabularColumn[]
     rows: TabularRow[]
   }
+  onTableDataUpdate?: (updater: (prev: typeof tableData) => typeof tableData) => void
   onCellClick?: (fileId: string, cellData: {
     verbatimExtract?: string | null
     sourcePage?: number | null
@@ -77,7 +84,7 @@ interface TabularReviewTableProps {
   onRunColumn?: (columnId: string) => void
 }
 
-export const TabularReviewTable = React.memo(({ reviewId, tableData, onCellClick, onRemoveDocument, onRunColumn }: TabularReviewTableProps) => {
+export const TabularReviewTable = React.memo(({ reviewId, tableData, onTableDataUpdate, onCellClick, onRemoveDocument, onRunColumn }: TabularReviewTableProps) => {
   const [sorting, setSorting] = React.useState<SortingState>([])
   const [columnFilters, setColumnFilters] = React.useState<ColumnFiltersState>([])
   const [columnVisibility, setColumnVisibility] = React.useState<VisibilityState>({})
@@ -94,8 +101,48 @@ export const TabularReviewTable = React.memo(({ reviewId, tableData, onCellClick
   } | null>(null)
   const [cellDetails, setCellDetails] = React.useState<CellDetails | null>(null)
   const [loadingCell, setLoadingCell] = React.useState(false)
+  const [historyPanelOpen, setHistoryPanelOpen] = React.useState(false)
+  const [historyCellInfo, setHistoryCellInfo] = React.useState<{
+    fileId: string
+    columnId: string
+    columnLabel: string
+  } | null>(null)
   const [anchorEl, setAnchorEl] = React.useState<null | HTMLElement>(null)
   const [runningColumns, setRunningColumns] = React.useState<Set<string>>(new Set())
+  const [editingCell, setEditingCell] = React.useState<{
+    fileId: string
+    columnId: string
+  } | null>(null)
+  const [advancedFilters, setAdvancedFilters] = React.useState<AdvancedFilters>({
+    cellStatuses: [],
+    documentStatuses: [],
+    confidenceMin: null,
+    confidenceMax: null,
+    hasComments: null,
+    hasUnresolvedComments: null,
+    isLocked: null,
+    columnTypes: [],
+    createdAfter: null,
+    createdBefore: null,
+    updatedAfter: null,
+    updatedBefore: null,
+    columnTextFilters: {},
+    logicOperator: "AND",
+  })
+  const [filtersPanelOpen, setFiltersPanelOpen] = React.useState(false)
+  
+  // Batch selection - get all file IDs
+  const allFileIds = React.useMemo(() => tableData.rows.map(row => row.file_id), [tableData.rows])
+  const {
+    selectedItems,
+    toggleSelection,
+    selectAll,
+    clearSelection,
+  } = useBatchSelection(allFileIds)
+  
+  const selectedIds = selectedItems
+  const isAllSelected = selectedIds.size === allFileIds.length && allFileIds.length > 0
+  const selectedCount = selectedIds.size
   
   // Кеш для cellDetails
   const cellDetailsCache = React.useRef<Map<string, CellDetails>>(new Map())
@@ -121,9 +168,95 @@ export const TabularReviewTable = React.memo(({ reviewId, tableData, onCellClick
     return () => clearTimeout(timer)
   }, [globalFilterInput])
 
+  // Apply advanced filters to rows
+  const applyAdvancedFilters = React.useCallback((rows: typeof tableData.rows, filters: AdvancedFilters, columns: TabularColumn[]) => {
+    // Check if any filters are active
+    const hasActiveFilters = 
+      filters.cellStatuses.length > 0 ||
+      filters.documentStatuses.length > 0 ||
+      filters.confidenceMin !== null ||
+      filters.confidenceMax !== null ||
+      filters.hasComments !== null ||
+      filters.hasUnresolvedComments !== null ||
+      filters.isLocked !== null ||
+      filters.columnTypes.length > 0 ||
+      filters.createdAfter !== null ||
+      filters.createdBefore !== null ||
+      filters.updatedAfter !== null ||
+      filters.updatedBefore !== null ||
+      Object.keys(filters.columnTextFilters).length > 0
+
+    if (!hasActiveFilters) return rows
+
+    return rows.filter((row) => {
+      const conditions: boolean[] = []
+
+      // Cell status filter
+      if (filters.cellStatuses.length > 0) {
+        const hasMatchingStatus = columns.some((col) => {
+          const cell = row.cells[col.id]
+          return cell && filters.cellStatuses.includes(cell.status)
+        })
+        conditions.push(hasMatchingStatus)
+      }
+
+      // Document status filter
+      if (filters.documentStatuses.length > 0) {
+        conditions.push(filters.documentStatuses.includes(row.status))
+      }
+
+      // Confidence filter
+      if (filters.confidenceMin !== null || filters.confidenceMax !== null) {
+        const hasMatchingConfidence = columns.some((col) => {
+          const cell = row.cells[col.id]
+          if (!cell || cell.confidence_score === null || cell.confidence_score === undefined) return false
+          const score = cell.confidence_score
+          const minMatch = filters.confidenceMin === null || score >= filters.confidenceMin
+          const maxMatch = filters.confidenceMax === null || score <= filters.confidenceMax
+          return minMatch && maxMatch
+        })
+        conditions.push(hasMatchingConfidence)
+      }
+
+      // Column type filter
+      if (filters.columnTypes.length > 0) {
+        const hasMatchingColumnType = columns.some((col) => {
+          return filters.columnTypes.includes(col.column_type)
+        })
+        conditions.push(hasMatchingColumnType)
+      }
+
+      // Column text filters
+      if (Object.keys(filters.columnTextFilters).length > 0) {
+        const textMatches = Object.entries(filters.columnTextFilters).some(([columnId, searchText]) => {
+          if (!searchText) return false
+          const cell = row.cells[columnId]
+          if (!cell || !cell.cell_value) return false
+          return cell.cell_value.toLowerCase().includes(searchText.toLowerCase())
+        })
+        conditions.push(textMatches)
+      }
+
+      // If no conditions, include row
+      if (conditions.length === 0) return true
+
+      // Apply logic operator
+      if (filters.logicOperator === "AND") {
+        return conditions.every((c) => c)
+      } else {
+        return conditions.some((c) => c)
+      }
+    })
+  }, [])
+
   // Transform data for table
   const tableRows = React.useMemo(() => {
-    return tableData.rows.map((row) => {
+    let rows = tableData.rows
+
+    // Apply advanced filters
+    rows = applyAdvancedFilters(rows, advancedFilters, tableData.columns)
+
+    return rows.map((row) => {
       const rowData: Record<string, any> = {
         file_id: row.file_id,
         file_name: row.file_name,
@@ -141,7 +274,7 @@ export const TabularReviewTable = React.memo(({ reviewId, tableData, onCellClick
       
       return rowData
     })
-  }, [tableData])
+  }, [tableData, advancedFilters, applyAdvancedFilters])
 
   // Helper function to get cell value from dynamic columns
   const getCellValue = (row: any, columnId: string): string | null => {
@@ -152,391 +285,82 @@ export const TabularReviewTable = React.memo(({ reviewId, tableData, onCellClick
 
   // Build columns dynamically
   const columns = React.useMemo<ColumnDef<any>[]>(() => {
-    const baseColumns: ColumnDef<any>[] = [
-      {
-        accessorKey: "file_name",
-        header: ({ column }) => {
-          return (
-            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-            <Button
-              variant="text"
-              onClick={() => column.toggleSorting(column.getIsSorted() === "asc")}
-              endIcon={<ArrowUpDownIcon />}
-                sx={{ textTransform: 'none', fontWeight: 600, color: '#1F2937' }}
-            >
-              Document
-            </Button>
-              <IconButton
-                size="small"
-                onClick={(e) => {
-                  e.stopPropagation()
-                  // Run extraction for all columns (or handle as needed)
-                  if (onRunColumn) {
-                    onRunColumn('document')
-                  }
-                }}
-                sx={{ 
-                  p: 0.5,
-                  color: '#6B7280',
-                  '&:hover': { color: '#1F2937', bgcolor: 'action.hover' }
-                }}
-              >
-                <PlayArrowIcon fontSize="small" />
-              </IconButton>
-            </Box>
-          )
-        },
-        cell: ({ row }) => (
-          <Stack direction="row" spacing={1} alignItems="center" sx={{ py: 1 }}>
-            <FileTextIcon fontSize="small" sx={{ color: '#6B7280' }} />
-            <Typography variant="body2" sx={{ color: '#1F2937', flex: 1 }}>
-              {row.getValue("file_name")}
-            </Typography>
-            {onRemoveDocument && (
-              <IconButton
-                size="small"
-                onClick={(e) => {
-                  e.stopPropagation()
-                  onRemoveDocument(row.original.file_id)
-                }}
-                sx={{ 
-                  p: 0.5,
-                  color: '#6B7280',
-                  '&:hover': { color: '#DC2626', bgcolor: 'error.light' }
-                }}
-              >
-                <CloseIcon fontSize="small" />
-              </IconButton>
-            )}
-          </Stack>
-        ),
-      },
-      {
-        id: "date",
-        accessorFn: (row) => {
-          const dateCol = findColumnByLabel('Date')
-          return dateCol ? getCellValue(row, dateCol.id) : null
-        },
-        header: ({ column }) => {
-          return (
+    // Selection column (first)
+    const selectionColumn: ColumnDef<any> = {
+      id: "select",
+      header: () => (
+        <Checkbox
+          checked={isAllSelected}
+          indeterminate={selectedCount > 0 && !isAllSelected}
+          onChange={(e) => {
+            if (e.target.checked) {
+              selectAll()
+            } else {
+              clearSelection()
+            }
+          }}
+          onClick={(e) => e.stopPropagation()}
+        />
+      ),
+      cell: ({ row }) => (
+        <Checkbox
+          checked={selectedIds.has(row.original.file_id)}
+          onChange={(e) => {
+            e.stopPropagation()
+            toggleSelection(row.original.file_id)
+          }}
+          onClick={(e) => e.stopPropagation()}
+        />
+      ),
+      enableSorting: false,
+      enableHiding: false,
+    }
+
+    // File name column
+    const fileColumn: ColumnDef<any> = {
+      accessorKey: "file_name",
+      header: ({ column }) => {
+        return (
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
             <Button
               variant="text"
               onClick={() => column.toggleSorting(column.getIsSorted() === "asc")}
               endIcon={<ArrowUpDownIcon />}
               sx={{ textTransform: 'none', fontWeight: 600, color: '#1F2937' }}
             >
-              Date
+              Document
             </Button>
-          )
-        },
-        cell: ({ row }) => {
-          const dateCol = findColumnByLabel('Date')
-          const value = dateCol ? getCellValue(row, dateCol.id) : null
-          return (
-            <Typography variant="body2" sx={{ color: '#1F2937', py: 1 }}>
-              {value || "-"}
-            </Typography>
-          )
-        },
+          </Box>
+        )
       },
-      {
-        id: "document_type",
-        accessorFn: (row) => {
-          const docTypeCol = findColumnByLabel('Document type')
-          return docTypeCol ? getCellValue(row, docTypeCol.id) : row.original.file_type || null
-        },
-        header: ({ column }) => {
-          return (
-            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-              <Button
-                variant="text"
-                onClick={() => column.toggleSorting(column.getIsSorted() === "asc")}
-                endIcon={<ArrowUpDownIcon />}
-                sx={{ textTransform: 'none', fontWeight: 600, color: '#1F2937' }}
-              >
-                Document type
-              </Button>
-              <IconButton
-                size="small"
-                onClick={(e) => {
-                  e.stopPropagation()
-                  const docTypeCol = findColumnByLabel('Document type')
-                  if (docTypeCol && onRunColumn) {
-                    onRunColumn(docTypeCol.id)
-                  }
-                }}
-                sx={{ 
-                  p: 0.5,
-                  color: '#6B7280',
-                  '&:hover': { color: '#1F2937', bgcolor: 'action.hover' }
-                }}
-              >
-                <PlayArrowIcon fontSize="small" />
-              </IconButton>
-            </Box>
-          )
-        },
-        cell: ({ row }) => {
-          const docTypeCol = findColumnByLabel('Document type')
-          const value = docTypeCol ? getCellValue(row, docTypeCol.id) : row.original.file_type
-          const displayValue = value || "-"
-          
-          return (
-            <Stack direction="row" spacing={1} alignItems="center" sx={{ py: 1 }}>
-              {displayValue !== "-" && (
-                <Link
-                  component="button"
-                  variant="body2"
-                  onClick={(e) => {
-                    e.stopPropagation()
-                    if (onCellClick) {
-                      onCellClick(row.original.file_id, { highlightMode: 'none' })
-                    }
-                  }}
-                  sx={{ 
-                    color: '#2563EB',
-                    textDecoration: 'none',
-                    '&:hover': { textDecoration: 'underline' },
-                    cursor: 'pointer'
-                  }}
-                >
-                  {displayValue}
-                </Link>
-              )}
-              {displayValue === "-" && (
-                <Typography variant="body2" sx={{ color: '#6B7280' }}>
-                  {displayValue}
-                </Typography>
-              )}
-              {displayValue !== "-" && (
-                <IconButton
-                  size="small"
-                  onClick={(e) => {
-                    e.stopPropagation()
-                    if (onCellClick) {
-                      onCellClick(row.original.file_id, { highlightMode: 'none' })
-                    }
-                  }}
-                  sx={{ 
-                    p: 0.5,
-                    color: '#6B7280',
-                    '&:hover': { color: '#2563EB', bgcolor: 'action.hover' }
-                  }}
-                >
-                  <OpenInNewIcon fontSize="small" />
-                </IconButton>
-              )}
-            </Stack>
-          )
-        },
-      },
-      {
-        id: "summary",
-        accessorFn: (row) => {
-          const summaryCol = findColumnByLabel('Summary')
-          return summaryCol ? getCellValue(row, summaryCol.id) : null
-        },
-        header: ({ column }) => {
-          return (
-            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-              <Button
-                variant="text"
-                onClick={() => column.toggleSorting(column.getIsSorted() === "asc")}
-                endIcon={<ArrowUpDownIcon />}
-                sx={{ textTransform: 'none', fontWeight: 600, color: '#1F2937' }}
-              >
-                Summary
-              </Button>
-              <IconButton
-                size="small"
-                onClick={(e) => {
-                  e.stopPropagation()
-                  const summaryCol = findColumnByLabel('Summary')
-                  if (summaryCol && onRunColumn) {
-                    onRunColumn(summaryCol.id)
-                  }
-                }}
-                sx={{ 
-                  p: 0.5,
-                  color: '#6B7280',
-                  '&:hover': { color: '#1F2937', bgcolor: 'action.hover' }
-                }}
-              >
-                <PlayArrowIcon fontSize="small" />
-              </IconButton>
-            </Box>
-          )
-        },
-        cell: ({ row }) => {
-          const summaryCol = findColumnByLabel('Summary')
-          const value = summaryCol ? getCellValue(row, summaryCol.id) : null
-          return (
-            <Typography 
-              variant="body2" 
+      cell: ({ row }) => (
+        <Stack direction="row" spacing={1} alignItems="center" sx={{ py: 1 }}>
+          <FileTextIcon fontSize="small" sx={{ color: '#6B7280' }} />
+          <Typography variant="body2" sx={{ color: '#1F2937', flex: 1 }}>
+            {row.getValue("file_name")}
+          </Typography>
+          {onRemoveDocument && (
+            <IconButton
+              size="small"
+              onClick={(e) => {
+                e.stopPropagation()
+                onRemoveDocument(row.original.file_id)
+              }}
               sx={{ 
-                color: '#1F2937', 
-                py: 1,
-                maxWidth: 400,
-                overflow: 'hidden',
-                textOverflow: 'ellipsis',
-                display: '-webkit-box',
-                WebkitLineClamp: 3,
-                WebkitBoxOrient: 'vertical',
+                p: 0.5,
+                color: '#6B7280',
+                '&:hover': { color: '#DC2626', bgcolor: 'error.light' }
               }}
             >
-              {value || "-"}
-            </Typography>
-          )
-        },
-      },
-      {
-        id: "author",
-        accessorFn: (row) => {
-          const authorCol = findColumnByLabel('Author')
-          return authorCol ? getCellValue(row, authorCol.id) : null
-        },
-        header: ({ column }) => {
-          return (
-            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-              <Button
-                variant="text"
-                onClick={() => column.toggleSorting(column.getIsSorted() === "asc")}
-                endIcon={<ArrowUpDownIcon />}
-                sx={{ textTransform: 'none', fontWeight: 600, color: '#1F2937' }}
-              >
-                Author
-              </Button>
-              <IconButton
-                size="small"
-                onClick={(e) => {
-                  e.stopPropagation()
-                  const authorCol = findColumnByLabel('Author')
-                  if (authorCol && onRunColumn) {
-                    onRunColumn(authorCol.id)
-                  }
-                }}
-                sx={{ 
-                  p: 0.5,
-                  color: '#6B7280',
-                  '&:hover': { color: '#1F2937', bgcolor: 'action.hover' }
-                }}
-              >
-                <PlayArrowIcon fontSize="small" />
-              </IconButton>
-            </Box>
-          )
-        },
-        cell: ({ row }) => {
-          const authorCol = findColumnByLabel('Author')
-          const value = authorCol ? getCellValue(row, authorCol.id) : null
-          return (
-            <Typography variant="body2" sx={{ color: '#1F2937', py: 1 }}>
-              {value || "-"}
-            </Typography>
-          )
-        },
-      },
-      {
-        id: "persons_mentioned",
-        accessorFn: (row) => {
-          const persCol = findColumnByLabel('Persons mentioned') || findColumnByLabel('Pers')
-          return persCol ? getCellValue(row, persCol.id) : null
-        },
-        header: ({ column }) => {
-          return (
-            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-              <Button
-                variant="text"
-                onClick={() => column.toggleSorting(column.getIsSorted() === "asc")}
-                endIcon={<ArrowUpDownIcon />}
-                sx={{ textTransform: 'none', fontWeight: 600, color: '#1F2937' }}
-              >
-                Persons mentioned
-              </Button>
-              <IconButton
-                size="small"
-                onClick={(e) => {
-                  e.stopPropagation()
-                  const persCol = findColumnByLabel('Persons mentioned') || findColumnByLabel('Pers')
-                  if (persCol && onRunColumn) {
-                    onRunColumn(persCol.id)
-                  }
-                }}
-                sx={{ 
-                  p: 0.5,
-                  color: '#6B7280',
-                  '&:hover': { color: '#1F2937', bgcolor: 'action.hover' }
-                }}
-              >
-                <PlayArrowIcon fontSize="small" />
-              </IconButton>
-            </Box>
-          )
-        },
-        cell: ({ row }) => {
-          const persCol = findColumnByLabel('Persons mentioned') || findColumnByLabel('Pers')
-          const value = persCol ? getCellValue(row, persCol.id) : null
-          return (
-            <Typography variant="body2" sx={{ color: '#1F2937', py: 1 }}>
-              {value || "-"}
-            </Typography>
-          )
-        },
-      },
-      {
-        id: "language",
-        accessorFn: (row) => {
-          const langCol = findColumnByLabel('Language')
-          return langCol ? getCellValue(row, langCol.id) : null
-        },
-        header: ({ column }) => {
-          return (
-            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-              <Button
-                variant="text"
-                onClick={() => column.toggleSorting(column.getIsSorted() === "asc")}
-                endIcon={<ArrowUpDownIcon />}
-                sx={{ textTransform: 'none', fontWeight: 600, color: '#1F2937' }}
-              >
-                Language
-              </Button>
-              <IconButton
-                size="small"
-                onClick={(e) => {
-                  e.stopPropagation()
-                  const langCol = findColumnByLabel('Language')
-                  if (langCol && onRunColumn) {
-                    onRunColumn(langCol.id)
-                  }
-                }}
-                sx={{ 
-                  p: 0.5,
-                  color: '#6B7280',
-                  '&:hover': { color: '#1F2937', bgcolor: 'action.hover' }
-                }}
-              >
-                <PlayArrowIcon fontSize="small" />
-              </IconButton>
-            </Box>
-          )
-        },
-        cell: ({ row }) => {
-          const langCol = findColumnByLabel('Language')
-          const value = langCol ? getCellValue(row, langCol.id) : null
-          return (
-            <Typography variant="body2" sx={{ color: '#1F2937', py: 1 }}>
-              {value || "-"}
-            </Typography>
-          )
-        },
-      },
-    ]
+              <CloseIcon fontSize="small" />
+            </IconButton>
+          )}
+        </Stack>
+      ),
+    }
 
-    // Add dynamic columns from tableData.columns (excluding base columns)
-    const baseColumnLabels = ['Date', 'Document type', 'Summary', 'Author', 'Persons mentioned', 'Pers', 'Language']
-    const dynamicColumns: ColumnDef<any>[] = tableData.columns
-      .filter(col => !baseColumnLabels.some(label => col.column_label.toLowerCase() === label.toLowerCase()))
-      .map((col) => ({
+    // All columns from tableData.columns (all dynamic, no filtering)
+    const dynamicColumns: ColumnDef<any>[] = tableData.columns.map((col) => ({
       accessorKey: col.id,
       header: ({ column }) => {
         return (
@@ -551,19 +375,23 @@ export const TabularReviewTable = React.memo(({ reviewId, tableData, onCellClick
             </Button>
               <IconButton
                 size="small"
-                onClick={(e) => {
+                onClick={async (e) => {
                   e.stopPropagation()
-                  if (onRunColumn) {
-                    setRunningColumns(prev => new Set(prev).add(col.id))
-                    onRunColumn(col.id)
-                    // Reset after a delay (you might want to handle this differently)
-                    setTimeout(() => {
-                      setRunningColumns(prev => {
-                        const next = new Set(prev)
-                        next.delete(col.id)
-                        return next
-                      })
-                    }, 2000)
+                  setRunningColumns(prev => new Set(prev).add(col.id))
+                  try {
+                    await tabularReviewApi.runColumnExtraction(reviewId, col.id)
+                    // WebSocket обновит ячейки автоматически
+                    if (onRunColumn) {
+                      onRunColumn(col.id)
+                    }
+                  } catch (error) {
+                    console.error("Error running column extraction:", error)
+                  } finally {
+                    setRunningColumns(prev => {
+                      const next = new Set(prev)
+                      next.delete(col.id)
+                      return next
+                    })
                   }
                 }}
                 disabled={runningColumns.has(col.id)}
@@ -748,8 +576,8 @@ export const TabularReviewTable = React.memo(({ reviewId, tableData, onCellClick
       },
     }))
 
-    return [...baseColumns, ...dynamicColumns]
-  }, [tableData.columns, reviewId, onCellClick, onRunColumn, onRemoveDocument, runningColumns])
+    return [selectionColumn, fileColumn, ...dynamicColumns]
+  }, [tableData.columns, reviewId, onCellClick, onRunColumn, onRemoveDocument, runningColumns, selectedIds, isAllSelected, selectedCount, toggleSelection, selectAll, clearSelection])
 
   const table = useReactTable({
     data: tableRows,
@@ -778,6 +606,55 @@ export const TabularReviewTable = React.memo(({ reviewId, tableData, onCellClick
     },
   })
   
+  // Keyboard navigation
+  useKeyboardNavigation({
+    table,
+    enabled: !filtersPanelOpen && !historyPanelOpen && !selectedCell,
+    onCellEdit: (rowId, columnId) => {
+      const row = table.getRowModel().rows.find((r) => r.id === rowId)
+      if (row) {
+        setEditingCell({ fileId: row.original.file_id, columnId })
+      }
+    },
+    onCellSelect: (rowId, columnId) => {
+      // Focus cell visually (could add highlight)
+    },
+    onRowDelete: (rowId) => {
+      const row = table.getRowModel().rows.find((r) => r.id === rowId)
+      if (row && onRemoveDocument) {
+        onRemoveDocument(row.original.file_id)
+      }
+    },
+    onSearch: () => {
+      // Focus search input
+      const searchInput = document.querySelector('input[placeholder*="Поиск"]') as HTMLInputElement
+      if (searchInput) {
+        searchInput.focus()
+      }
+    },
+    onFilter: () => {
+      setFiltersPanelOpen(true)
+    },
+    onSelectAll: () => {
+      selectAll()
+    },
+    onDeselectAll: () => {
+      clearSelection()
+    },
+    onNextPage: () => {
+      table.nextPage()
+    },
+    onPreviousPage: () => {
+      table.previousPage()
+    },
+    onFirstPage: () => {
+      table.setPageIndex(0)
+    },
+    onLastPage: () => {
+      table.setPageIndex(table.getPageCount() - 1)
+    },
+  })
+  
   // Виртуализация для больших таблиц (>100 строк)
   const shouldVirtualize = table.getRowModel().rows.length > 100
   const tableContainerRef = React.useRef<HTMLDivElement>(null)
@@ -800,8 +677,65 @@ export const TabularReviewTable = React.memo(({ reviewId, tableData, onCellClick
     setAnchorEl(null)
   }, [])
 
+  // Bulk action handlers
+  const handleBulkMarkAsReviewed = React.useCallback(async () => {
+    if (selectedIds.size === 0) return
+    try {
+      await tabularReviewApi.bulkUpdateStatus(
+        reviewId,
+        Array.from(selectedIds),
+        "reviewed"
+      )
+      clearSelection()
+      // TODO: Reload data or show success message
+    } catch (error) {
+      console.error("Error bulk updating status:", error)
+    }
+  }, [reviewId, selectedIds, clearSelection])
+
+  const handleBulkReRun = React.useCallback(async () => {
+    if (selectedIds.size === 0) return
+    try {
+      const columnIds = tableData.columns.map(col => col.id)
+      await tabularReviewApi.bulkRunExtraction(
+        reviewId,
+        Array.from(selectedIds),
+        columnIds
+      )
+      clearSelection()
+      // WebSocket will update cells automatically
+    } catch (error) {
+      console.error("Error bulk running extraction:", error)
+    }
+  }, [reviewId, selectedIds, tableData.columns, clearSelection])
+
+  const handleBulkDelete = React.useCallback(async () => {
+    if (selectedIds.size === 0) return
+    if (!confirm(`Удалить ${selectedIds.size} строк?`)) return
+    try {
+      await tabularReviewApi.bulkDeleteRows(
+        reviewId,
+        Array.from(selectedIds)
+      )
+      clearSelection()
+      // TODO: Replace with proper data reload
+      window.location.reload()
+    } catch (error) {
+      console.error("Error bulk deleting rows:", error)
+    }
+  }, [reviewId, selectedIds, clearSelection])
+
   return (
     <Box sx={{ width: '100%' }}>
+      {/* Bulk Actions Toolbar */}
+      <BulkActionsToolbar
+        selectedCount={selectedCount}
+        onMarkAsReviewed={handleBulkMarkAsReviewed}
+        onReRunExtraction={handleBulkReRun}
+        onDelete={handleBulkDelete}
+        onClearSelection={clearSelection}
+      />
+      
       <Stack direction="row" spacing={2} alignItems="center" sx={{ py: 2 }}>
         <TextField
           placeholder="Поиск по всем полям..."
@@ -814,9 +748,31 @@ export const TabularReviewTable = React.memo(({ reviewId, tableData, onCellClick
         />
         <Button
           variant="outlined"
+          startIcon={<FilterIcon />}
+          onClick={() => setFiltersPanelOpen(true)}
+          sx={{ ml: 'auto' }}
+        >
+          Фильтры
+          {Object.values(advancedFilters).some((v) => {
+            if (Array.isArray(v)) return v.length > 0
+            if (typeof v === 'object' && v !== null) return Object.keys(v).length > 0
+            return v !== null && v !== undefined && v !== ""
+          }) && (
+            <Chip
+              label={Object.values(advancedFilters).filter((v) => {
+                if (Array.isArray(v)) return v.length > 0
+                if (typeof v === 'object' && v !== null) return Object.keys(v).length > 0
+                return v !== null && v !== undefined && v !== ""
+              }).length}
+              size="small"
+              sx={{ ml: 1, height: 20 }}
+            />
+          )}
+        </Button>
+        <Button
+          variant="outlined"
           endIcon={<ExpandMoreIcon />}
           onClick={handleMenuOpen}
-          sx={{ ml: 'auto' }}
         >
           Колонки
         </Button>
@@ -1074,8 +1030,42 @@ export const TabularReviewTable = React.memo(({ reviewId, tableData, onCellClick
           fileName={selectedCell.fileName}
           columnLabel={selectedCell.columnLabel}
           loading={loadingCell}
+          onShowHistory={() => {
+            setHistoryCellInfo({
+              fileId: selectedCell.fileId,
+              columnId: selectedCell.columnId,
+              columnLabel: selectedCell.columnLabel,
+            })
+            setHistoryPanelOpen(true)
+          }}
         />
       )}
+      
+      {/* Cell History Panel */}
+      <CellHistoryPanel
+        reviewId={reviewId}
+        fileId={historyCellInfo?.fileId || ""}
+        columnId={historyCellInfo?.columnId || ""}
+        columnLabel={historyCellInfo?.columnLabel || ""}
+        open={historyPanelOpen}
+        onClose={() => {
+          setHistoryPanelOpen(false)
+          setHistoryCellInfo(null)
+        }}
+        onRevert={() => {
+          // Reload table data after revert
+          // This would typically trigger a data refresh
+        }}
+      />
+
+      {/* Advanced Filters Panel */}
+      <AdvancedFiltersPanel
+        open={filtersPanelOpen}
+        onClose={() => setFiltersPanelOpen(false)}
+        filters={advancedFilters}
+        onFiltersChange={setAdvancedFilters}
+        columns={tableData.columns}
+      />
     </Box>
   )
 })
