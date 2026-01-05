@@ -143,6 +143,9 @@ class TabularReviewService:
         if len(columns_after) > len(columns_before) + 1:
             logger.error(f"[add_column] ERROR: More than one column was added! Expected {len(columns_before) + 1}, got {len(columns_after)}")
             logger.error(f"[add_column] Added columns: {[c.column_label for c in columns_after if c.id != column.id and c not in columns_before]}")
+            # CRITICAL: If more than one column was added, something is wrong - rollback and raise error
+            self.db.rollback()
+            raise ValueError(f"ERROR: More than one column was added automatically! This should not happen. Expected {len(columns_before) + 1}, got {len(columns_after)}")
         
         logger.info(f"Added column {column.id} ({column.column_label}, type: {column.column_type}) to review {review_id}. Total columns: {len(columns_after)}")
         return column
