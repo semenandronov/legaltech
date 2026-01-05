@@ -135,15 +135,7 @@ class TabularReviewService:
             TabularColumn.tabular_review_id == review_id
         ).all()
         # #region agent log
-        import json
-        import os
-        log_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__file__)))), '.cursor', 'debug.log')
-        try:
-            os.makedirs(os.path.dirname(log_path), exist_ok=True)
-            with open(log_path, 'a') as f:
-                f.write(json.dumps({"location":"backend/app/services/tabular_review_service.py:137","message":"[add_column] Before adding column","data":{"review_id":review_id,"columns_before_count":len(columns_before),"columns_before_labels":[c.column_label for c in columns_before],"new_column_label":column_label,"new_column_type":column_type},"timestamp":int(__import__('time').time()*1000),"sessionId":"debug-session","runId":"run1","hypothesisId":"A"})+"\n")
-        except Exception as e:
-            logger.error(f"Failed to write debug log: {e}")
+        logger.error(f"[DEBUG HYPOTHESIS A] [add_column] Before adding column: review_id={review_id}, columns_before_count={len(columns_before)}, columns_before_labels={[c.column_label for c in columns_before]}, new_column_label={column_label}, new_column_type={column_type}")
         # #endregion
         logger.info(f"[add_column] Before adding: {len(columns_before)} columns in review {review_id}: {[c.column_label for c in columns_before]}")
         
@@ -160,11 +152,7 @@ class TabularReviewService:
         
         self.db.add(column)
         # #region agent log
-        try:
-            with open(log_path, 'a') as f:
-                f.write(json.dumps({"location":"backend/app/services/tabular_review_service.py:155","message":"[add_column] About to commit new column","data":{"review_id":review_id,"column_id":column.id,"column_label":column_label},"timestamp":int(__import__('time').time()*1000),"sessionId":"debug-session","runId":"run1","hypothesisId":"B"})+"\n")
-        except Exception as e:
-            logger.error(f"Failed to write debug log: {e}")
+        logger.error(f"[DEBUG HYPOTHESIS B] [add_column] About to commit new column: review_id={review_id}, column_id={column.id}, column_label={column_label}")
         # #endregion
         self.db.commit()
         self.db.refresh(column)
@@ -175,11 +163,7 @@ class TabularReviewService:
         ).all()
         
         # #region agent log
-        try:
-            with open(log_path, 'a') as f:
-                f.write(json.dumps({"location":"backend/app/services/tabular_review_service.py:160","message":"[add_column] After commit, checking columns","data":{"review_id":review_id,"columns_after_count":len(columns_after),"columns_after_labels":[c.column_label for c in columns_after],"expected_count":len(columns_before)+1},"timestamp":int(__import__('time').time()*1000),"sessionId":"debug-session","runId":"run1","hypothesisId":"C"})+"\n")
-        except Exception as e:
-            logger.error(f"Failed to write debug log: {e}")
+        logger.error(f"[DEBUG HYPOTHESIS C] [add_column] After commit, checking columns: review_id={review_id}, columns_after_count={len(columns_after)}, columns_after_labels={[c.column_label for c in columns_after]}, expected_count={len(columns_before)+1}")
         # #endregion
         logger.info(f"[add_column] After adding: {len(columns_after)} columns in review {review_id}: {[c.column_label for c in columns_after]}")
         
@@ -189,11 +173,7 @@ class TabularReviewService:
         
         # #region agent log
         if unwanted_columns:
-            try:
-                with open(log_path, 'a') as f:
-                    f.write(json.dumps({"location":"backend/app/services/tabular_review_service.py:168","message":"[add_column] Found unwanted columns after commit","data":{"review_id":review_id,"unwanted_count":len(unwanted_columns),"unwanted_labels":[c.column_label for c in unwanted_columns],"unwanted_ids":[c.id for c in unwanted_columns]},"timestamp":int(__import__('time').time()*1000),"sessionId":"debug-session","runId":"run1","hypothesisId":"D"})+"\n")
-            except Exception as e:
-                logger.error(f"Failed to write debug log: {e}")
+            logger.error(f"[DEBUG HYPOTHESIS D] [add_column] Found unwanted columns after commit: review_id={review_id}, unwanted_count={len(unwanted_columns)}, unwanted_labels={[c.column_label for c in unwanted_columns]}, unwanted_ids={[c.id for c in unwanted_columns]}")
         # #endregion
         
         if unwanted_columns:
