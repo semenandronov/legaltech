@@ -217,12 +217,12 @@ export function ColumnBuilder({ isOpen, onClose, onSave }: ColumnBuilderProps) {
                 <SelectItem 
                   key={type.value} 
                   value={type.value}
-                  onPointerDown={(e) => {
+                  onPointerDown={() => {
                     // #region agent log
                     fetch('http://127.0.0.1:7242/ingest/2db1e09b-2b5d-4ee0-85d8-a551f942254c',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'frontend/src/components/TabularReview/ColumnBuilder.tsx:212',message:'SelectItem onPointerDown fired',data:{value:type.value},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'F'})}).catch(()=>{});
                     // #endregion
                   }}
-                  onClick={(e) => {
+                  onClick={() => {
                     // #region agent log
                     fetch('http://127.0.0.1:7242/ingest/2db1e09b-2b5d-4ee0-85d8-a551f942254c',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'frontend/src/components/TabularReview/ColumnBuilder.tsx:218',message:'SelectItem onClick fired',data:{value:type.value},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'G'})}).catch(()=>{});
                     // #endregion
