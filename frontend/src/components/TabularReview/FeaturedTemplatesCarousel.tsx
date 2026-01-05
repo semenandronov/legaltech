@@ -54,6 +54,7 @@ export const FeaturedTemplatesCarousel: React.FC<FeaturedTemplatesCarouselProps>
     if (!reviewId) return
     
     try {
+      console.log("Applying template:", { reviewId, templateId: template.id, templateName: template.name, columnsCount: template.columns.length })
       await tabularReviewApi.applyTemplate(reviewId, template.id)
       toast.success(`Шаблон "${template.name}" применен: добавлено ${template.columns.length} колонок`)
       onTemplateApplied?.()

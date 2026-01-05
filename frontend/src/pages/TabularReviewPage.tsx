@@ -147,6 +147,11 @@ const TabularReviewPage: React.FC = () => {
       setLoading(true)
       setError(null)
       const data = await tabularReviewApi.getTableData(reviewId)
+      console.log("Loaded table data:", { 
+        reviewId, 
+        columnsCount: data.columns.length, 
+        columnLabels: data.columns.map(c => c.column_label) 
+      })
       setTableData(data)
       // Load selected file IDs from review
       if (data.review.selected_file_ids) {

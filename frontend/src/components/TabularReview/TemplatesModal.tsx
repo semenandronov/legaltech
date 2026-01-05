@@ -129,6 +129,7 @@ export const TemplatesModal: React.FC<TemplatesModalProps> = ({
     
     setIsApplying(true)
     try {
+      console.log("Applying template from modal:", { reviewId, templateId: template.id, templateName: template.name, columnsCount: template.columns.length })
       await tabularReviewApi.applyTemplate(reviewId, template.id)
       toast.success(`Шаблон "${template.name}" применен: добавлено ${template.columns.length} колонок`)
       onTemplateApplied?.()
