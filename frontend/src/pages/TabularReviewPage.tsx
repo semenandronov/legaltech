@@ -152,7 +152,13 @@ const TabularReviewPage: React.FC = () => {
       loadingRef.current = true
       setLoading(true)
       setError(null)
+      // #region agent log
+      fetch('http://127.0.0.1:7242/ingest/2db1e09b-2b5d-4ee0-85d8-a551f942254c',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'frontend/src/pages/TabularReviewPage.tsx:155',message:'[FRONTEND] loadReviewData called',data:{reviewId},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'X'})}).catch(()=>{});
+      // #endregion
       const data = await tabularReviewApi.getTableData(reviewId)
+      // #region agent log
+      fetch('http://127.0.0.1:7242/ingest/2db1e09b-2b5d-4ee0-85d8-a551f942254c',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'frontend/src/pages/TabularReviewPage.tsx:161',message:'[FRONTEND] getTableData returned',data:{reviewId,columnsCount:data.columns.length,columnLabels:data.columns.map(c => c.column_label)},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'Y'})}).catch(()=>{});
+      // #endregion
       console.log("Loaded table data:", { 
         reviewId, 
         columnsCount: data.columns.length, 
@@ -200,6 +206,9 @@ const TabularReviewPage: React.FC = () => {
     if (!reviewId) return
     
     try {
+      // #region agent log
+      fetch('http://127.0.0.1:7242/ingest/2db1e09b-2b5d-4ee0-85d8-a551f942254c',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'frontend/src/pages/TabularReviewPage.tsx:203',message:'[FRONTEND] handleAddColumn called',data:{reviewId,columnLabel:column.column_label,columnType:column.column_type},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'Z'})}).catch(()=>{});
+      // #endregion
       await tabularReviewApi.addColumn(
         reviewId,
         column.column_label,
@@ -207,6 +216,9 @@ const TabularReviewPage: React.FC = () => {
         column.prompt,
         column.column_config
       )
+      // #region agent log
+      fetch('http://127.0.0.1:7242/ingest/2db1e09b-2b5d-4ee0-85d8-a551f942254c',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'frontend/src/pages/TabularReviewPage.tsx:211',message:'[FRONTEND] addColumn API call completed',data:{reviewId},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'AA'})}).catch(()=>{});
+      // #endregion
       toast.success("Колонка добавлена")
       await loadReviewData()
     } catch (err: any) {
