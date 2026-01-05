@@ -176,7 +176,12 @@ export function ColumnBuilder({ isOpen, onClose, onSave }: ColumnBuilderProps) {
           </label>
           <Select 
             value={columnType} 
-            onValueChange={handleColumnTypeChange}
+            onValueChange={(value) => {
+              // #region agent log
+              fetch('http://127.0.0.1:7242/ingest/2db1e09b-2b5d-4ee0-85d8-a551f942254c',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'frontend/src/components/TabularReview/ColumnBuilder.tsx:177',message:'Select onValueChange fired',data:{value:value,oldValue:columnType},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'J'})}).catch(()=>{});
+              // #endregion
+              handleColumnTypeChange(value)
+            }}
           >
             <SelectTrigger 
               onClick={(e) => {
