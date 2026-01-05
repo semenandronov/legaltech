@@ -151,14 +151,12 @@ export const FeaturedTemplatesCarousel: React.FC<FeaturedTemplatesCarouselProps>
               sx={{
                 minWidth: 280,
                 maxWidth: 280,
-                cursor: 'pointer',
                 transition: 'all 0.2s',
                 '&:hover': {
                   boxShadow: 4,
                   transform: 'translateY(-4px)',
                 },
               }}
-              onClick={() => handleApplyTemplate(template)}
             >
               <CardContent>
                 <Stack spacing={1.5}>

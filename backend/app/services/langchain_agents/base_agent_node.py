@@ -7,7 +7,7 @@ from abc import ABC, abstractmethod
 from app.services.langchain_agents.state import AnalysisState
 from app.services.rag_service import RAGService
 from app.services.document_processor import DocumentProcessor
-from app.services.llm_factory import create_llm
+from app.services.llm_factory import create_llm, create_llm_for_agent
 from app.services.langchain_agents.agent_factory import create_legal_agent, safe_agent_invoke
 from app.services.langchain_agents.tools import get_all_tools, initialize_tools
 from app.services.langchain_agents.prompts import get_agent_prompt
@@ -226,7 +226,36 @@ class BaseAgentNode(ABC):
             
             # Initialize LLM with temperature based on retry count (increase for retries)
             temperature = 0.1 if retry_count == 0 else min(0.3 + retry_count * 0.1, 0.7)
-            llm = create_llm(temperature=temperature)
+            
+            # Determine complexity and context for model selection
+            complexity = None
+            context_size = None
+            document_count = None
+            
+            # Extract complexity from state if available
+            understanding_result = state.get("understanding_result", {})
+            if understanding_result:
+                complexity = understanding_result.get("complexity")
+            
+            # Extract document count from context
+            context = state.get("context")
+            if context and hasattr(context, 'num_documents'):
+                document_count = context.num_documents
+            
+            # Estimate context size (rough approximation)
+            messages = state.get("messages", [])
+            if messages:
+                context_size = sum(len(str(msg)) for msg in messages)
+            
+            # Use dynamic model selection
+            llm = create_llm_for_agent(
+                agent_name=self.agent_name,
+                complexity=complexity,
+                context_size=context_size,
+                document_count=document_count,
+                state=state,
+                temperature=temperature
+            )
             
             # Initialize memory manager
             memory_manager = AgentMemoryManager(case_id, llm)

@@ -277,7 +277,29 @@ def entity_extraction_agent_node(
         
         # Update state
         new_state = state.copy()
-        new_state["entities_result"] = result_data
+        
+        # Оптимизация: сохранить большие результаты в Store
+        from app.services.langchain_agents.store_helper import (
+            should_store_result,
+            save_large_result_to_store
+        )
+        
+        if should_store_result(result_data):
+            # Сохранить в Store и получить ссылку
+            entities_ref = save_large_result_to_store(
+                state=state,
+                result_key="entities_result",
+                data=result_data,
+                case_id=case_id
+            )
+            new_state["entities_ref"] = entities_ref
+            # Сохранить summary в state для быстрого доступа
+            if entities_ref.get("summary"):
+                new_state["entities_summary"] = entities_ref["summary"]
+            logger.info(f"Entities result stored in Store (size: {len(all_entities)} entities)")
+        else:
+            # Маленький результат - сохранить напрямую в state
+            new_state["entities_result"] = result_data
         
         return new_state
         

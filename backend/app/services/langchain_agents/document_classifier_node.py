@@ -272,7 +272,29 @@ def document_classifier_agent_node(
         
         # Update state
         new_state = state.copy()
-        new_state["classification_result"] = result_data
+        
+        # Оптимизация: сохранить большие результаты в Store
+        from app.services.langchain_agents.store_helper import (
+            should_store_result,
+            save_large_result_to_store
+        )
+        
+        if should_store_result(result_data):
+            # Сохранить в Store и получить ссылку
+            classification_ref = save_large_result_to_store(
+                state=state,
+                result_key="classification_result",
+                data=result_data,
+                case_id=case_id
+            )
+            new_state["classification_ref"] = classification_ref
+            # Сохранить summary в state для быстрого доступа
+            if classification_ref.get("summary"):
+                new_state["classification_summary"] = classification_ref["summary"]
+            logger.info(f"Classification result stored in Store (size: {len(classifications)} classifications)")
+        else:
+            # Маленький результат - сохранить напрямую в state
+            new_state["classification_result"] = result_data
         
         return new_state
         

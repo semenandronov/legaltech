@@ -189,7 +189,29 @@ def privilege_check_agent_node(
         
         # Update state
         new_state = state.copy()
-        new_state["privilege_result"] = result_data
+        
+        # Оптимизация: сохранить большие результаты в Store
+        from app.services.langchain_agents.store_helper import (
+            should_store_result,
+            save_large_result_to_store
+        )
+        
+        if should_store_result(result_data):
+            # Сохранить в Store и получить ссылку
+            privilege_ref = save_large_result_to_store(
+                state=state,
+                result_key="privilege_result",
+                data=result_data,
+                case_id=case_id
+            )
+            new_state["privilege_ref"] = privilege_ref
+            # Сохранить summary в state для быстрого доступа
+            if privilege_ref.get("summary"):
+                new_state["privilege_summary"] = privilege_ref["summary"]
+            logger.info(f"Privilege result stored in Store")
+        else:
+            # Маленький результат - сохранить напрямую в state
+            new_state["privilege_result"] = result_data
         
         return new_state
         

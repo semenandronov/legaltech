@@ -369,7 +369,29 @@ def discrepancy_agent_node(
         
         # Update state
         new_state = state.copy()
-        new_state["discrepancy_result"] = result_data
+        
+        # Оптимизация: сохранить большие результаты в Store
+        from app.services.langchain_agents.store_helper import (
+            should_store_result,
+            save_large_result_to_store
+        )
+        
+        if should_store_result(result_data):
+            # Сохранить в Store и получить ссылку
+            discrepancy_ref = save_large_result_to_store(
+                state=state,
+                result_key="discrepancy_result",
+                data=result_data,
+                case_id=case_id
+            )
+            new_state["discrepancy_ref"] = discrepancy_ref
+            # Сохранить summary в state для быстрого доступа
+            if discrepancy_ref.get("summary"):
+                new_state["discrepancy_summary"] = discrepancy_ref["summary"]
+            logger.info(f"Discrepancy result stored in Store (size: {len(parsed_discrepancies)} discrepancies)")
+        else:
+            # Маленький результат - сохранить напрямую в state
+            new_state["discrepancy_result"] = result_data
         
         # Save to memory for context in future requests
         try:

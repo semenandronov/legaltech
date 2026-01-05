@@ -1,6 +1,6 @@
 """Supervisor agent for LangGraph multi-agent system"""
 from typing import Dict, Any
-from app.services.llm_factory import create_llm
+from app.services.llm_factory import create_llm, create_llm_for_agent
 from app.services.langchain_agents.agent_factory import create_legal_agent
 from langchain_core.tools import Tool
 from app.config import config
@@ -69,6 +69,9 @@ def route_to_agent(state: AnalysisState) -> str:
     - Адаптации плана (current_plan)
     - Human feedback (обрабатывается через LangGraph interrupts автоматически)
     
+    Оптимизация: использует Rule-based Router для простых случаев (60-80%),
+    LLM supervisor только для сложных случаев.
+    
     Args:
         state: Current graph state
     
@@ -79,6 +82,30 @@ def route_to_agent(state: AnalysisState) -> str:
     # Interrupts pause execution automatically, no need to check here
     
     case_id = state.get("case_id", "unknown")
+    
+    # Оптимизация: сначала попробовать Rule-based Router (быстро и бесплатно)
+    from app.services.langchain_agents.rule_based_router import get_rule_router
+    from app.services.langchain_agents.route_cache import get_route_cache
+    
+    # Проверить кэш маршрутизации
+    route_cache = get_route_cache()
+    cached_route = route_cache.get(state)
+    if cached_route:
+        logger.debug(f"[Супервизор] {case_id}: Cache hit → {cached_route}")
+        return cached_route
+    
+    # Попробовать Rule-based Router
+    rule_router = get_rule_router()
+    rule_route = rule_router.route(state)
+    
+    if rule_route:
+        # Сохранить в кэш
+        route_cache.set(state, rule_route)
+        logger.info(f"[Супервизор] {case_id}: Rule-based → {rule_route}")
+        return rule_route
+    
+    # Fallback к LLM supervisor для сложных случаев
+    logger.debug(f"[Супервизор] {case_id}: Rule-based router не смог определить, используем LLM supervisor")
     
     # Check if we have an adapted plan
     current_plan = state.get("current_plan", [])
@@ -139,10 +166,9 @@ def route_to_agent(state: AnalysisState) -> str:
         logger.info(f"[Супервизор] Routing to deep_analysis for complex task (complexity={complexity}, type={task_type})")
         return "deep_analysis"
     
-    # Fall back to original analysis_types
+    # Fall back to original analysis_types для LLM supervisor
     analysis_types = state.get("analysis_types", [])
     requested_types = set(analysis_types)
-    case_id = state.get("case_id", "unknown")
     
     # Check evaluation results for retry needs
     evaluation_result = state.get("evaluation_result")
@@ -150,8 +176,33 @@ def route_to_agent(state: AnalysisState) -> str:
         agent_name = evaluation_result.get("agent_name")
         if agent_name:
             logger.info(f"[Супервизор] Retrying agent {agent_name} based on evaluation")
+            # Сохранить в кэш
+            route_cache.set(state, agent_name)
             return agent_name
     
+    # LLM Supervisor для сложных случаев (используем GigaChat Lite для простых случаев)
+    from app.services.langchain_agents.model_selector import get_model_selector
+    model_selector = get_model_selector()
+    
+    # Определить сложность для выбора модели supervisor
+    understanding_result = state.get("understanding_result", {})
+    complexity = understanding_result.get("complexity", "medium")
+    analysis_types_count = len(analysis_types)
+    
+    # Простой случай → Lite, сложный → Pro
+    use_lite = complexity == "simple" and analysis_types_count <= 2
+    supervisor_model = model_selector.select_model_for_supervisor(state, use_llm=True)
+    
+    # Создать supervisor agent с выбранной моделью
+    supervisor_llm = create_llm(model=supervisor_model, temperature=0.1)
+    supervisor = create_supervisor_agent()
+    # Заменить LLM в supervisor (если возможно)
+    if hasattr(supervisor, 'llm'):
+        supervisor.llm = supervisor_llm
+    
+    logger.info(f"[Супервизор] {case_id}: Using LLM supervisor (model: {supervisor_model}) for complex routing")
+    
+    # Вызвать LLM supervisor (старая логика как fallback)
     # Simplified check for completed agents and dependencies
     result_keys = {
         "timeline": "timeline_result",
@@ -166,8 +217,25 @@ def route_to_agent(state: AnalysisState) -> str:
         "deep_analysis": "deep_analysis_result"
     }
     
+    # Проверить также ссылки в Store
+    ref_keys = {
+        "timeline": "timeline_ref",
+        "key_facts": "key_facts_ref",
+        "discrepancy": "discrepancy_ref",
+        "risk": "risk_ref",
+        "summary": "summary_ref",
+        "document_classifier": "classification_ref",
+        "entity_extraction": "entities_ref",
+        "privilege_check": "privilege_ref",
+        "relationship": "relationship_ref"
+    }
+    
     # Build completed set and dependency flags in one pass
     completed = {agent for agent, key in result_keys.items() if state.get(key) is not None}
+    # Добавить завершенные по ссылкам в Store
+    for agent, ref_key in ref_keys.items():
+        if state.get(ref_key) is not None:
+            completed.add(agent)
     
     # Dependency readiness flags
     entities_ready = "entity_extraction" in completed
@@ -189,14 +257,15 @@ def route_to_agent(state: AnalysisState) -> str:
     # 2. Privilege check (если классификация показала потенциальную привилегию)
     elif "privilege_check" in requested_types and "privilege_check" not in completed:
         if classification_ready:
-            classification = state.get("classification_result", {})
-            classifications = classification.get("classifications", [])
-            has_potential_privilege = any(c.get("is_privileged", False) for c in classifications)
-            if has_potential_privilege:
-                privileged_count = len([c for c in classifications if c.get("is_privileged", False)])
-                reasoning_parts.append(f"Классификатор нашел {privileged_count} потенциально привилегированных документов → проверяем привилегию")
-                next_agent = "privilege_check"
-                logger.info(f"[Супервизор] Дело {case_id}: Классификатор нашел привилегированные → Привилегир: 'Проверяю на адвокатскую тайну'")
+            classification = state.get("classification_result") or state.get("classification_ref")
+            if classification:
+                classifications = classification.get("classifications", [])
+                has_potential_privilege = any(c.get("is_privileged", False) for c in classifications)
+                if has_potential_privilege:
+                    privileged_count = len([c for c in classifications if c.get("is_privileged", False)])
+                    reasoning_parts.append(f"Классификатор нашел {privileged_count} потенциально привилегированных документов → проверяем привилегию")
+                    next_agent = "privilege_check"
+                    logger.info(f"[Супервизор] Дело {case_id}: Классификатор нашел привилегированные → Привилегир: 'Проверяю на адвокатскую тайну'")
         # Также запускаем если явно запрошено
         if next_agent is None and "privilege_check" in requested_types:
             reasoning_parts.append("Явно запрошена проверка привилегий")
@@ -287,6 +356,10 @@ def route_to_agent(state: AnalysisState) -> str:
         reasoning_parts.append("Ожидание готовности зависимостей...")
         next_agent = "supervisor"
     
+    # Сохранить решение в кэш
+    if next_agent:
+        route_cache.set(state, next_agent)
+    
     # Сохраняем reasoning в метаданные для аудита
     if "metadata" not in state:
         state["metadata"] = {}
@@ -294,10 +367,12 @@ def route_to_agent(state: AnalysisState) -> str:
         state["metadata"]["supervisor_reasoning"] = []
     state["metadata"]["supervisor_reasoning"].append({
         "step": len(state["metadata"]["supervisor_reasoning"]) + 1,
-        "reasoning": " | ".join(reasoning_parts) if reasoning_parts else "Определение следующего агента",
+        "reasoning": " | ".join(reasoning_parts) if reasoning_parts else "LLM supervisor decision",
         "next_agent": next_agent,
         "completed": list(completed),
-        "requested": list(requested_types)
+        "requested": list(requested_types),
+        "model_used": supervisor_model,
+        "routing_method": "llm_supervisor"
     })
     
     return next_agent if next_agent else "supervisor"

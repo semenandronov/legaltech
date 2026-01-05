@@ -30,6 +30,16 @@ def _create_checkpointer_with_pooling():
     db_url = config.DATABASE_URL
     if db_url.startswith("postgresql+psycopg://"):
         db_url = db_url.replace("postgresql+psycopg://", "postgresql://", 1)
+    elif db_url.startswith("postgresql+psycopg2://"):
+        db_url = db_url.replace("postgresql+psycopg2://", "postgresql://", 1)
+    
+    # Настройка connection pooling через переменные окружения
+    # PostgresSaver использует asyncpg, который читает ASYNCPG_POOL_MAX_SIZE
+    import os
+    pool_max_size = config.LANGGRAPH_POSTGRES_POOL_MAX_SIZE
+    if "ASYNCPG_POOL_MAX_SIZE" not in os.environ:
+        os.environ["ASYNCPG_POOL_MAX_SIZE"] = str(pool_max_size)
+        logger.info(f"Set ASYNCPG_POOL_MAX_SIZE={pool_max_size} for PostgresSaver connection pooling")
     
     # Create PostgresSaver with connection string
     # IMPORTANT: In langgraph-checkpoint-postgres, from_conn_string() returns a context manager

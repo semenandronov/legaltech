@@ -256,7 +256,29 @@ def relationship_agent_node(
         
         # Update state
         new_state = state.copy()
-        new_state["relationship_result"] = result_data
+        
+        # Оптимизация: сохранить большие результаты в Store
+        from app.services.langchain_agents.store_helper import (
+            should_store_result,
+            save_large_result_to_store
+        )
+        
+        if should_store_result(result_data):
+            # Сохранить в Store и получить ссылку
+            relationship_ref = save_large_result_to_store(
+                state=state,
+                result_key="relationship_result",
+                data=result_data,
+                case_id=case_id
+            )
+            new_state["relationship_ref"] = relationship_ref
+            # Сохранить summary в state для быстрого доступа
+            if relationship_ref.get("summary"):
+                new_state["relationship_summary"] = relationship_ref["summary"]
+            logger.info(f"Relationship result stored in Store")
+        else:
+            # Маленький результат - сохранить напрямую в state
+            new_state["relationship_result"] = result_data
         
         return new_state
         

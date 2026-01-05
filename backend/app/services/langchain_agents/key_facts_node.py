@@ -504,7 +504,29 @@ def key_facts_agent_node(
         
         # Update state
         new_state = state.copy()
-        new_state["key_facts_result"] = result_data
+        
+        # Оптимизация: сохранить большие результаты в Store
+        from app.services.langchain_agents.store_helper import (
+            should_store_result,
+            save_large_result_to_store
+        )
+        
+        if should_store_result(result_data):
+            # Сохранить в Store и получить ссылку
+            key_facts_ref = save_large_result_to_store(
+                state=state,
+                result_key="key_facts_result",
+                data=result_data,
+                case_id=case_id
+            )
+            new_state["key_facts_ref"] = key_facts_ref
+            # Сохранить summary в state для быстрого доступа
+            if key_facts_ref.get("summary"):
+                new_state["key_facts_summary"] = key_facts_ref["summary"]
+            logger.info(f"Key facts result stored in Store (size: {len(parsed_facts)} facts)")
+        else:
+            # Маленький результат - сохранить напрямую в state
+            new_state["key_facts_result"] = result_data
         
         # Save to memory for context in future requests
         try:

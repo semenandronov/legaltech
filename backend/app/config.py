@@ -91,6 +91,11 @@ class Config:
     GIGACHAT_VERIFY_SSL: bool = os.getenv("GIGACHAT_VERIFY_SSL", "false").lower() == "true"
     GIGACHAT_SCOPE: str = os.getenv("GIGACHAT_SCOPE", "GIGACHAT_API_PERS")  # Scope для получения токена (GIGACHAT_API_PERS для физических лиц)
     
+    # GigaChat Model Selection (Lite/Pro)
+    GIGACHAT_LITE_MODEL: str = os.getenv("GIGACHAT_LITE_MODEL", "GigaChat-Lite")
+    GIGACHAT_PRO_MODEL: str = os.getenv("GIGACHAT_PRO_MODEL", "GigaChat-Pro")
+    MODEL_SELECTION_ENABLED: bool = os.getenv("MODEL_SELECTION_ENABLED", "true").lower() == "true"
+    
     # Выбор LLM провайдера для агентов (только gigachat)
     LLM_PROVIDER: str = os.getenv("LLM_PROVIDER", "gigachat")  # "gigachat"
     # Yandex Index prefix - removed (Yandex Vector Store no longer used)
@@ -115,6 +120,9 @@ class Config:
     # Redis for Caching and Presence (Phase 4.1)
     REDIS_URL: Optional[str] = os.getenv("REDIS_URL", None)
     PRESENCE_TTL_SECONDS: int = int(os.getenv("PRESENCE_TTL_SECONDS", "60"))  # TTL for user presence in seconds
+    
+    # LangGraph Postgres Checkpointer Pool Settings
+    LANGGRAPH_POSTGRES_POOL_MAX_SIZE: int = int(os.getenv("LANGGRAPH_POSTGRES_POOL_MAX_SIZE", "20"))  # Max connections in pool
 
 
 # Create config instance

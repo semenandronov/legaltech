@@ -135,6 +135,17 @@ class AnalysisState(TypedDict):
     privilege_result: Optional[Dict[str, Any]]  # Privilege check
     relationship_result: Optional[Dict[str, Any]]  # Relationship graph
     
+    # Store references for large results (optimization)
+    timeline_ref: Optional[Dict[str, Any]]  # Reference to timeline_result in Store
+    key_facts_ref: Optional[Dict[str, Any]]  # Reference to key_facts_result in Store
+    discrepancy_ref: Optional[Dict[str, Any]]  # Reference to discrepancy_result in Store
+    risk_ref: Optional[Dict[str, Any]]  # Reference to risk_result in Store
+    summary_ref: Optional[Dict[str, Any]]  # Reference to summary_result in Store
+    classification_ref: Optional[Dict[str, Any]]  # Reference to classification_result in Store
+    entities_ref: Optional[Dict[str, Any]]  # Reference to entities_result in Store
+    privilege_ref: Optional[Dict[str, Any]]  # Reference to privilege_result in Store
+    relationship_ref: Optional[Dict[str, Any]]  # Reference to relationship_result in Store
+    
     # Analysis types requested
     analysis_types: List[str]
     
@@ -243,6 +254,16 @@ def create_initial_state(
         entities_result=None,
         privilege_result=None,
         relationship_result=None,
+        # Store references
+        timeline_ref=None,
+        key_facts_ref=None,
+        discrepancy_ref=None,
+        risk_ref=None,
+        summary_ref=None,
+        classification_ref=None,
+        entities_ref=None,
+        privilege_ref=None,
+        relationship_ref=None,
         analysis_types=analysis_types,
         errors=[],
         metadata=metadata or {},

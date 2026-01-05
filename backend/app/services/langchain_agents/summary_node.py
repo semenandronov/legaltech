@@ -242,7 +242,29 @@ def summary_agent_node(
         
         # Update state
         new_state = state.copy()
-        new_state["summary_result"] = result_data
+        
+        # Оптимизация: сохранить большие результаты в Store
+        from app.services.langchain_agents.store_helper import (
+            should_store_result,
+            save_large_result_to_store
+        )
+        
+        if should_store_result(result_data):
+            # Сохранить в Store и получить ссылку
+            summary_ref = save_large_result_to_store(
+                state=state,
+                result_key="summary_result",
+                data=result_data,
+                case_id=case_id
+            )
+            new_state["summary_ref"] = summary_ref
+            # Сохранить summary в state для быстрого доступа
+            if summary_ref.get("summary"):
+                new_state["summary_summary"] = summary_ref["summary"]
+            logger.info(f"Summary result stored in Store")
+        else:
+            # Маленький результат - сохранить напрямую в state
+            new_state["summary_result"] = result_data
         
         # Add metrics to state (optional)
         try:

@@ -620,7 +620,29 @@ def timeline_agent_node(
         
         # Update state
         new_state = state.copy()
-        new_state["timeline_result"] = result_data
+        
+        # Оптимизация: сохранить большие результаты в Store
+        from app.services.langchain_agents.store_helper import (
+            should_store_result,
+            save_large_result_to_store
+        )
+        
+        if should_store_result(result_data):
+            # Сохранить в Store и получить ссылку
+            timeline_ref = save_large_result_to_store(
+                state=state,
+                result_key="timeline_result",
+                data=result_data,
+                case_id=case_id
+            )
+            new_state["timeline_ref"] = timeline_ref
+            # Сохранить summary в state для быстрого доступа
+            if timeline_ref.get("summary"):
+                new_state["timeline_summary"] = timeline_ref["summary"]
+            logger.info(f"Timeline result stored in Store (size: {len(parsed_events)} events)")
+        else:
+            # Маленький результат - сохранить напрямую в state
+            new_state["timeline_result"] = result_data
         
         # Add metrics to state (optional)
         try:

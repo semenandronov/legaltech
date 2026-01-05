@@ -1,12 +1,16 @@
 """Factory for creating LLM instances (GigaChat only)
 
 Phase 4.1: Added rate limiting and throttling support.
+Phase 5.0: Added dynamic model selection (Lite/Pro) with connection pooling.
 """
-from typing import Optional, Any
+from typing import Optional, Any, Dict
 from app.config import config
 import logging
 
 logger = logging.getLogger(__name__)
+
+# Кэш экземпляров моделей для connection pooling
+_llm_cache: Dict[str, Any] = {}
 
 
 def create_llm(
@@ -120,4 +124,83 @@ def create_llm_without_rate_limiting(
         use_rate_limiting=False,
         **kwargs
     )
+
+
+def create_llm_for_agent(
+    agent_name: str,
+    complexity: Optional[str] = None,
+    context_size: Optional[int] = None,
+    document_count: Optional[int] = None,
+    state: Optional[Any] = None,
+    temperature: float = 0.1,
+    use_rate_limiting: bool = True,
+    **kwargs
+) -> Any:
+    """
+    Create LLM instance optimized for specific agent with dynamic model selection.
+    
+    Uses ModelSelector to choose between GigaChat Lite (simple tasks) and 
+    GigaChat Pro (complex tasks) based on agent type, complexity, and context.
+    
+    Args:
+        agent_name: Name of the agent (e.g., "timeline", "risk")
+        complexity: Task complexity ("simple", "medium", "high")
+        context_size: Size of context in tokens
+        document_count: Number of documents
+        state: AnalysisState (optional, for extracting complexity)
+        temperature: Temperature for generation
+        use_rate_limiting: Whether to wrap with rate limiter
+        **kwargs: Additional arguments
+    
+    Returns:
+        LLM instance (ChatGigaChat) with appropriate model selected
+    """
+    from app.services.langchain_agents.model_selector import get_model_selector
+    
+    # Получить модель через ModelSelector
+    model_selector = get_model_selector()
+    selected_model = model_selector.select_model(
+        agent_name=agent_name,
+        state=state,
+        complexity=complexity,
+        context_size=context_size,
+        document_count=document_count
+    )
+    
+    # Кэширование экземпляров моделей для connection pooling
+    cache_key = f"{selected_model}_{temperature}_{use_rate_limiting}"
+    
+    if cache_key in _llm_cache:
+        logger.debug(f"Reusing cached LLM instance: {cache_key}")
+        return _llm_cache[cache_key]
+    
+    # Создать новый экземпляр
+    llm = create_llm(
+        model=selected_model,
+        temperature=temperature,
+        use_rate_limiting=use_rate_limiting,
+        **kwargs
+    )
+    
+    # Сохранить в кэш (ограничить размер кэша)
+    if len(_llm_cache) < 10:  # Максимум 10 экземпляров в кэше
+        _llm_cache[cache_key] = llm
+        logger.debug(f"Cached LLM instance: {cache_key}")
+    else:
+        logger.debug(f"Cache full, not caching: {cache_key}")
+    
+    model_info = model_selector.get_model_info(selected_model)
+    logger.info(
+        f"Created LLM for agent {agent_name}: {selected_model} "
+        f"(type: {model_info['type']}, cost: {model_info['cost_tier']})"
+    )
+    
+    return llm
+
+
+def clear_llm_cache():
+    """Clear the LLM instance cache (useful for testing or memory management)"""
+    global _llm_cache
+    _llm_cache.clear()
+    logger.info("LLM cache cleared")
 
