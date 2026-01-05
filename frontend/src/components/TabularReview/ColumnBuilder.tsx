@@ -141,6 +141,9 @@ export function ColumnBuilder({ isOpen, onClose, onSave }: ColumnBuilderProps) {
 
   // Сброс тегов при смене типа колонки
   const handleColumnTypeChange = (newType: string) => {
+    // #region agent log
+    fetch('http://127.0.0.1:7242/ingest/2db1e09b-2b5d-4ee0-85d8-a551f942254c',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'frontend/src/components/TabularReview/ColumnBuilder.tsx:143',message:'handleColumnTypeChange called',data:{newType:newType,oldType:columnType},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'I'})}).catch(()=>{});
+    // #endregion
     setColumnType(newType)
     if (newType !== "tag" && newType !== "multiple_tags") {
       setTagOptions([])
