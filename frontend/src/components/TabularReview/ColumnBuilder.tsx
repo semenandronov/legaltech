@@ -207,11 +207,6 @@ export function ColumnBuilder({ isOpen, onClose, onSave }: ColumnBuilderProps) {
                 // #endregion
                 e.preventDefault()
               }}
-              onOpenAutoFocus={(e) => {
-                // #region agent log
-                fetch('http://127.0.0.1:7242/ingest/2db1e09b-2b5d-4ee0-85d8-a551f942254c',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'frontend/src/components/TabularReview/ColumnBuilder.tsx:204',message:'SelectContent onOpenAutoFocus fired',data:{},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'E'})}).catch(()=>{});
-                // #endregion
-              }}
             >
               {COLUMN_TYPES.map((type) => (
                 <SelectItem 
