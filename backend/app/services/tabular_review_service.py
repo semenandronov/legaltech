@@ -331,6 +331,25 @@ class TabularReviewService:
             TabularColumn.tabular_review_id == review_id
         ).order_by(TabularColumn.order_index).all()
         
+        # CRITICAL: Check for unwanted default columns and delete them immediately
+        unwanted_column_labels = ["Date", "Document type", "Summary", "Author", "Persons mentioned", "Language"]
+        unwanted_columns = [c for c in columns if c.column_label in unwanted_column_labels]
+        
+        if unwanted_columns:
+            logger.error(f"[get_table_data] CRITICAL: Found {len(unwanted_columns)} unwanted default columns! Deleting them immediately: {[c.column_label for c in unwanted_columns]}")
+            for unwanted_col in unwanted_columns:
+                # Delete all cells for this column first
+                from app.models.tabular_review import TabularCell
+                self.db.query(TabularCell).filter(TabularCell.column_id == unwanted_col.id).delete()
+                # Delete the column
+                self.db.delete(unwanted_col)
+            self.db.commit()
+            logger.info(f"[get_table_data] Deleted {len(unwanted_columns)} unwanted columns")
+            # Refresh columns after deletion
+            columns = self.db.query(TabularColumn).filter(
+                TabularColumn.tabular_review_id == review_id
+            ).order_by(TabularColumn.order_index).all()
+        
         # Log all columns found
         logger.info(f"[get_table_data] Found {len(columns)} columns for review {review_id}: {[c.column_label for c in columns]}")
         
