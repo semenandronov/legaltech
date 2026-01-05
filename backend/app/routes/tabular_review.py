@@ -1130,6 +1130,7 @@ async def apply_template(
 ):
     """Apply a template to a tabular review - adds all columns from template"""
     try:
+        logger.info(f"Applying template {template_id} to review {review_id} by user {current_user.id}")
         from app.models.tabular_review import TabularColumnTemplate
         from app.services.tabular_review_service import TabularReviewService
         
@@ -1172,7 +1173,9 @@ async def apply_template(
         
         # Add all columns from template
         added_columns = []
+        logger.info(f"Template '{template.name}' has {len(template.columns)} columns. Adding them to review {review_id}")
         for idx, col_def in enumerate(template.columns):
+            logger.info(f"  Adding column {idx + 1}/{len(template.columns)}: {col_def.get('column_label')} (type: {col_def.get('column_type')})")
             column = service.add_column(
                 review_id=review_id,
                 column_label=col_def.get("column_label", f"Column {idx + 1}"),
@@ -1190,7 +1193,7 @@ async def apply_template(
         template.usage_count = (template.usage_count or 0) + 1
         db.commit()
         
-        
+        logger.info(f"Template '{template.name}' applied successfully: {len(added_columns)} columns added to review {review_id}")
         return {
             "message": f"Template applied: {len(added_columns)} columns added",
             "columns": added_columns
