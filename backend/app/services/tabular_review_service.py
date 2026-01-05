@@ -484,7 +484,8 @@ class TabularReviewService:
                     import json
                     import re
                     # Extract JSON from response (might be wrapped in markdown code blocks)
-                    json_match = re.search(r'\{[^{}]*"cell_value"[^{}]*\}', response_text, re.DOTALL)
+                    # Improved regex to match nested JSON objects
+                    json_match = re.search(r'\{[^{}]*(?:\{[^{}]*\}[^{}]*)*"cell_value"[^{}]*(?:\{[^{}]*\}[^{}]*)*\}', response_text, re.DOTALL)
                     if json_match:
                         try:
                             parsed = json.loads(json_match.group(0))
