@@ -246,13 +246,24 @@ export const TabularReviewTable = React.memo(({ reviewId, tableData, onTableData
         status: row.status,
       }
       
-      // Add cells as columns
+      // Add cells as columns (ONLY for columns that exist in tableData.columns)
+      const validColumnIds = new Set(tableData.columns.map(col => col.id))
       tableData.columns.forEach((col) => {
         rowData[col.id] = row.cells[col.id] || {
           cell_value: null,
           status: 'pending',
         }
       })
+      
+      // CRITICAL: Check for orphaned cells (cells with column_id that doesn't exist in tableData.columns)
+      const orphanedCellKeys = Object.keys(row.cells || {}).filter(cellKey => !validColumnIds.has(cellKey))
+      if (orphanedCellKeys.length > 0) {
+        // #region agent log
+        fetch('http://127.0.0.1:7242/ingest/2db1e09b-2b5d-4ee0-85d8-a551f942254c',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'frontend/src/components/TabularReview/TabularReviewTable.tsx:256',message:'[FRONTEND] Found orphaned cells in rowData',data:{fileId:row.file_id,orphanedCellKeys:orphanedCellKeys,validColumnIds:Array.from(validColumnIds),allCellKeys:Object.keys(row.cells || {})},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'BB'})}).catch(()=>{});
+        // #endregion
+        console.warn(`[TabularReviewTable] Found orphaned cells for file ${row.file_id}:`, orphanedCellKeys)
+        // DO NOT add orphaned cells to rowData - they will create unwanted columns
+      }
       
       return rowData
     })
@@ -807,14 +818,25 @@ export const TabularReviewTable = React.memo(({ reviewId, tableData, onTableData
           {table
             .getAllColumns()
             .filter((column) => column.getCanHide())
-            .map((column) => (
-              <MenuItem key={column.id} onClick={() => column.toggleVisibility(!column.getIsVisible())}>
-                <Checkbox checked={column.getIsVisible()} />
-                <Typography sx={{ textTransform: 'capitalize' }}>
-                  {column.id}
-                </Typography>
-              </MenuItem>
-            ))}
+            .map((column) => {
+              // #region agent log
+              fetch('http://127.0.0.1:7242/ingest/2db1e09b-2b5d-4ee0-85d8-a551f942254c',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'frontend/src/components/TabularReview/TabularReviewTable.tsx:810',message:'[FRONTEND] Column in dropdown menu',data:{columnId:column.id,columnDef:column.columnDef?.header ? 'has header' : 'no header',accessorKey:column.columnDef?.accessorKey},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'CC'})}).catch(()=>{});
+              // #endregion
+              // Get column label from column definition or use column.id
+              const columnLabel = column.columnDef?.header 
+                ? (typeof column.columnDef.header === 'function' 
+                    ? (column.columnDef.header as any)({ column })?.props?.children?.props?.children || column.id
+                    : column.columnDef.header)
+                : column.id
+              return (
+                <MenuItem key={column.id} onClick={() => column.toggleVisibility(!column.getIsVisible())}>
+                  <Checkbox checked={column.getIsVisible()} />
+                  <Typography sx={{ textTransform: 'capitalize' }}>
+                    {columnLabel}
+                  </Typography>
+                </MenuItem>
+              )
+            })}
         </Menu>
       </Stack>
       <TableContainer 
