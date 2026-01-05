@@ -75,16 +75,33 @@ class TabularReviewService:
         self.db.refresh(review)
         
         # Check if any columns were automatically created
-        columns_count = self.db.query(TabularColumn).filter(
+        columns = self.db.query(TabularColumn).filter(
             TabularColumn.tabular_review_id == review.id
-        ).count()
+        ).all()
         
-        logger.info(f"Created tabular review {review.id} for case {case_id} with {len(selected_file_ids) if selected_file_ids else 0} selected files. Columns count: {columns_count}")
-        if columns_count > 0:
-            logger.warning(f"WARNING: Tabular review {review.id} was created with {columns_count} columns automatically! This should not happen.")
+        # CRITICAL: Check for unwanted default columns and delete them immediately
+        unwanted_column_labels = ["Date", "Document type", "Summary", "Author", "Persons mentioned", "Language"]
+        unwanted_columns = [c for c in columns if c.column_label in unwanted_column_labels]
+        
+        if unwanted_columns:
+            logger.error(f"[create_tabular_review] CRITICAL: Found {len(unwanted_columns)} unwanted default columns! Deleting them immediately: {[c.column_label for c in unwanted_columns]}")
+            for unwanted_col in unwanted_columns:
+                # Delete all cells for this column first
+                from app.models.tabular_review import TabularCell
+                self.db.query(TabularCell).filter(TabularCell.column_id == unwanted_col.id).delete()
+                # Delete the column
+                self.db.delete(unwanted_col)
+            self.db.commit()
+            logger.info(f"[create_tabular_review] Deleted {len(unwanted_columns)} unwanted columns")
+            # Refresh columns after deletion
             columns = self.db.query(TabularColumn).filter(
                 TabularColumn.tabular_review_id == review.id
             ).all()
+        
+        columns_count = len(columns)
+        logger.info(f"Created tabular review {review.id} for case {case_id} with {len(selected_file_ids) if selected_file_ids else 0} selected files. Columns count: {columns_count}")
+        if columns_count > 0:
+            logger.warning(f"WARNING: Tabular review {review.id} was created with {columns_count} columns automatically! This should not happen.")
             for col in columns:
                 logger.warning(f"  - Auto-created column: {col.column_label} (type: {col.column_type}, order: {col.order_index})")
         
@@ -140,6 +157,26 @@ class TabularReviewService:
         ).all()
         
         logger.info(f"[add_column] After adding: {len(columns_after)} columns in review {review_id}: {[c.column_label for c in columns_after]}")
+        
+        # CRITICAL: Check for unwanted default columns and delete them immediately
+        unwanted_column_labels = ["Date", "Document type", "Summary", "Author", "Persons mentioned", "Language"]
+        unwanted_columns = [c for c in columns_after if c.column_label in unwanted_column_labels and c.id != column.id]
+        
+        if unwanted_columns:
+            logger.error(f"[add_column] CRITICAL: Found {len(unwanted_columns)} unwanted default columns! Deleting them immediately: {[c.column_label for c in unwanted_columns]}")
+            for unwanted_col in unwanted_columns:
+                # Delete all cells for this column first
+                from app.models.tabular_review import TabularCell
+                self.db.query(TabularCell).filter(TabularCell.column_id == unwanted_col.id).delete()
+                # Delete the column
+                self.db.delete(unwanted_col)
+            self.db.commit()
+            logger.info(f"[add_column] Deleted {len(unwanted_columns)} unwanted columns")
+            # Refresh columns_after after deletion
+            columns_after = self.db.query(TabularColumn).filter(
+                TabularColumn.tabular_review_id == review_id
+            ).all()
+        
         if len(columns_after) > len(columns_before) + 1:
             logger.error(f"[add_column] ERROR: More than one column was added! Expected {len(columns_before) + 1}, got {len(columns_after)}")
             logger.error(f"[add_column] Added columns: {[c.column_label for c in columns_after if c.id != column.id and c not in columns_before]}")
