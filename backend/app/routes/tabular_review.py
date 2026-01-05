@@ -225,6 +225,13 @@ async def add_column(
 ):
     """Add a column to tabular review"""
     try:
+        # Check columns count before adding
+        from app.models.tabular_review import TabularColumn
+        columns_before = db.query(TabularColumn).filter(
+            TabularColumn.tabular_review_id == review_id
+        ).count()
+        logger.info(f"Adding column to review {review_id}. Columns before: {columns_before}, new column: {request.column_label} (type: {request.column_type})")
+        
         service = TabularReviewService(db)
         column = service.add_column(
             review_id=review_id,
@@ -234,6 +241,15 @@ async def add_column(
             user_id=current_user.id,
             column_config=request.column_config
         )
+        
+        # Check columns count after adding
+        columns_after = db.query(TabularColumn).filter(
+            TabularColumn.tabular_review_id == review_id
+        ).count()
+        logger.info(f"Column added. Columns after: {columns_after}")
+        if columns_after > columns_before + 1:
+            logger.error(f"ERROR: More than one column was added! Expected {columns_before + 1}, got {columns_after}")
+        
         return {
             "id": column.id,
             "column_label": column.column_label,

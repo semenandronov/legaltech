@@ -74,7 +74,20 @@ class TabularReviewService:
         self.db.commit()
         self.db.refresh(review)
         
-        logger.info(f"Created tabular review {review.id} for case {case_id} with {len(selected_file_ids) if selected_file_ids else 0} selected files")
+        # Check if any columns were automatically created
+        columns_count = self.db.query(TabularColumn).filter(
+            TabularColumn.tabular_review_id == review.id
+        ).count()
+        
+        logger.info(f"Created tabular review {review.id} for case {case_id} with {len(selected_file_ids) if selected_file_ids else 0} selected files. Columns count: {columns_count}")
+        if columns_count > 0:
+            logger.warning(f"WARNING: Tabular review {review.id} was created with {columns_count} columns automatically! This should not happen.")
+            columns = self.db.query(TabularColumn).filter(
+                TabularColumn.tabular_review_id == review.id
+            ).all()
+            for col in columns:
+                logger.warning(f"  - Auto-created column: {col.column_label} (type: {col.column_type}, order: {col.order_index})")
+        
         return review
     
     def add_column(
@@ -115,7 +128,12 @@ class TabularReviewService:
         self.db.commit()
         self.db.refresh(column)
         
-        logger.info(f"Added column {column.id} to review {review_id}")
+        # Check total columns count after adding
+        total_columns = self.db.query(TabularColumn).filter(
+            TabularColumn.tabular_review_id == review_id
+        ).count()
+        
+        logger.info(f"Added column {column.id} ({column.column_label}, type: {column.column_type}) to review {review_id}. Total columns: {total_columns}")
         return column
     
     def update_column(
