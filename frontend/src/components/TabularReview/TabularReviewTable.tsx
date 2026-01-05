@@ -246,13 +246,29 @@ export const TabularReviewTable = React.memo(({ reviewId, tableData, onTableData
         status: row.status,
       }
       
-      // Add cells as columns
+      // Add cells as columns - ONLY for columns that exist in tableData.columns
+      // This prevents automatic column creation from orphaned cells or extra keys
+      const validColumnIds = new Set(tableData.columns.map(col => col.id))
       tableData.columns.forEach((col) => {
-        rowData[col.id] = row.cells[col.id] || {
-          cell_value: null,
-          status: 'pending',
+        // Only add cell if column exists in tableData.columns
+        if (validColumnIds.has(col.id)) {
+          rowData[col.id] = row.cells[col.id] || {
+            cell_value: null,
+            status: 'pending',
+          }
         }
       })
+      
+      // #region agent log
+      // Check if row.cells contains keys that are not in tableData.columns
+      if (row.cells) {
+        const cellKeys = Object.keys(row.cells)
+        const orphanedCellKeys = cellKeys.filter(key => !validColumnIds.has(key))
+        if (orphanedCellKeys.length > 0) {
+          fetch('http://127.0.0.1:7242/ingest/2db1e09b-2b5d-4ee0-85d8-a551f942254c',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'frontend/src/components/TabularReview/TabularReviewTable.tsx:256',message:'[FRONTEND] Found orphaned cell keys in row.cells',data:{fileId:row.file_id,orphanedCellKeys:orphanedCellKeys,validColumnIds:Array.from(validColumnIds),allCellKeys:cellKeys},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'FF'})}).catch(()=>{});
+        }
+      }
+      // #endregion
       
       return rowData
     })
