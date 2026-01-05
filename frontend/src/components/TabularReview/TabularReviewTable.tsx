@@ -241,7 +241,7 @@ export const TabularReviewTable = React.memo(({ reviewId, tableData, onTableData
       const rowData: Record<string, any> = {
         file_id: row.file_id,
         file_name: row.file_name,
-        file_type: row.file_type,
+        file_type: row.file_type || null,
         status: row.status,
       }
       
@@ -293,6 +293,9 @@ export const TabularReviewTable = React.memo(({ reviewId, tableData, onTableData
     // File name column
     const fileColumn: ColumnDef<any> = {
       accessorKey: "file_name",
+      size: 250, // Default column width
+      minSize: 150,
+      maxSize: 500,
       header: ({ column }) => {
         return (
           <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
@@ -336,6 +339,9 @@ export const TabularReviewTable = React.memo(({ reviewId, tableData, onTableData
     // All columns from tableData.columns (all dynamic, no filtering)
     const dynamicColumns: ColumnDef<any>[] = tableData.columns.map((col) => ({
       accessorKey: col.id,
+      size: 200, // Default column width
+      minSize: 100,
+      maxSize: 800,
       header: ({ column }) => {
         return (
           <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>

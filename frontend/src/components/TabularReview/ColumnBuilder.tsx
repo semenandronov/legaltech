@@ -171,13 +171,19 @@ export function ColumnBuilder({ isOpen, onClose, onSave }: ColumnBuilderProps) {
           <label className="text-sm font-medium mb-2 block">
             Format
           </label>
-          <Select value={columnType} onValueChange={handleColumnTypeChange}>
+          <Select 
+            value={columnType} 
+            onValueChange={handleColumnTypeChange}
+          >
             <SelectTrigger>
-              <SelectValue />
+              <SelectValue placeholder="Выберите тип колонки" />
             </SelectTrigger>
             <SelectContent>
               {COLUMN_TYPES.map((type) => (
-                <SelectItem key={type.value} value={type.value}>
+                <SelectItem 
+                  key={type.value} 
+                  value={type.value}
+                >
                   <span className="flex items-center gap-2">
                     <span>{type.icon}</span>
                     <span>{type.label}</span>

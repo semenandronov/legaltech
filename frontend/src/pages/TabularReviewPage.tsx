@@ -647,8 +647,8 @@ const TabularReviewPage: React.FC = () => {
                     
                     setSelectedDocument({ 
                       fileId, 
-                      fileType: row?.file_type,
-                      fileName: row?.file_name,
+                      fileType: row?.file_type || undefined,
+                      fileName: row?.file_name || undefined,
                       cellData: {
                         ...cellData,
                         sourceReferences: cellDetails?.source_references,

@@ -443,6 +443,30 @@ class TabularReviewService:
                     response = await self.llm.ainvoke(messages)
                     response_text = response.content.strip() if hasattr(response, 'content') else str(response).strip()
                     
+                    # Filter out refusal responses from LLM
+                    refusal_patterns = [
+                        r'не обладаю.*мнением',
+                        r'не транслирую.*мнение',
+                        r'ответ сгенерирован.*моделью',
+                        r'разговоры.*ограничены',
+                        r'не могу.*ответить',
+                        r'ограничены.*темы',
+                        r'неправильного толкования',
+                        r'чувствительные темы',
+                    ]
+                    for pattern in refusal_patterns:
+                        if re.search(pattern, response_text, re.IGNORECASE):
+                            logger.warning(f"LLM returned refusal response, retrying with different prompt")
+                            # Retry with a more direct prompt
+                            retry_prompt = f"Извлеки информацию из документа. Вопрос: {column.prompt}\n\nДокумент:\n{limited_text}\n\nВерни только JSON с полями cell_value, reasoning, source_references."
+                            retry_messages = [
+                                SystemMessage(content="Ты помощник для извлечения информации из юридических документов. Всегда отвечай на русском языке."),
+                                HumanMessage(content=retry_prompt)
+                            ]
+                            response = await self.llm.ainvoke(retry_messages)
+                            response_text = response.content.strip() if hasattr(response, 'content') else str(response).strip()
+                            break
+                    
                     # Try to parse JSON from response
                     import json
                     import re
