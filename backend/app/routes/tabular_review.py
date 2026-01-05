@@ -95,6 +95,10 @@ async def create_review(
 ):
     """Create a new tabular review"""
     try:
+        # #region agent log
+        logger.error(f"[DEBUG HYPOTHESIS U] [API create_review] Called: case_id={request.case_id}, user_id={current_user.id}, name={request.name}, selected_file_ids={request.selected_file_ids}")
+        # #endregion
+        
         service = TabularReviewService(db)
         review = service.create_tabular_review(
             case_id=request.case_id,
@@ -103,6 +107,16 @@ async def create_review(
             description=request.description,
             selected_file_ids=request.selected_file_ids
         )
+        
+        # #region agent log
+        logger.error(f"[DEBUG HYPOTHESIS V] [API create_review] Review created: review_id={review.id}, checking columns")
+        from app.models.tabular_review import TabularColumn
+        columns_after_create = db.query(TabularColumn).filter(
+            TabularColumn.tabular_review_id == review.id
+        ).all()
+        logger.error(f"[DEBUG HYPOTHESIS W] [API create_review] Columns after create: review_id={review.id}, columns_count={len(columns_after_create)}, column_labels={[c.column_label for c in columns_after_create]}")
+        # #endregion
+        
         return {
             "id": review.id,
             "case_id": review.case_id,

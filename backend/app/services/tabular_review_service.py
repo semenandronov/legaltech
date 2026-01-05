@@ -70,14 +70,26 @@ class TabularReviewService:
             selected_file_ids=selected_file_ids
         )
         
+        # #region agent log
+        logger.error(f"[DEBUG HYPOTHESIS Q] [create_tabular_review] Before commit: review_id will be {review.id if hasattr(review, 'id') else 'NEW'}, case_id={case_id}, user_id={user_id}")
+        # #endregion
+        
         self.db.add(review)
         self.db.commit()
         self.db.refresh(review)
+        
+        # #region agent log
+        logger.error(f"[DEBUG HYPOTHESIS R] [create_tabular_review] After commit: review_id={review.id}, checking for columns")
+        # #endregion
         
         # Check if any columns were automatically created
         columns = self.db.query(TabularColumn).filter(
             TabularColumn.tabular_review_id == review.id
         ).all()
+        
+        # #region agent log
+        logger.error(f"[DEBUG HYPOTHESIS S] [create_tabular_review] Found columns after commit: review_id={review.id}, columns_count={len(columns)}, column_labels={[c.column_label for c in columns]}")
+        # #endregion
         
         # CRITICAL: Check for unwanted default columns and delete them immediately
         unwanted_column_labels = ["Date", "Document type", "Summary", "Author", "Persons mentioned", "Language"]
@@ -85,6 +97,9 @@ class TabularReviewService:
         
         if unwanted_columns:
             logger.error(f"[create_tabular_review] CRITICAL: Found {len(unwanted_columns)} unwanted default columns! Deleting them immediately: {[c.column_label for c in unwanted_columns]}")
+            # #region agent log
+            logger.error(f"[DEBUG HYPOTHESIS T] [create_tabular_review] Found unwanted columns: review_id={review.id}, unwanted_count={len(unwanted_columns)}, unwanted_labels={[c.column_label for c in unwanted_columns]}")
+            # #endregion
             for unwanted_col in unwanted_columns:
                 # Delete all cells for this column first
                 from app.models.tabular_review import TabularCell
