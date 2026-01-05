@@ -174,6 +174,20 @@ const TabularReviewPage: React.FC = () => {
     }
   }
 
+  const handleCellEditSave = async (fileId: string, columnId: string, value: string) => {
+    if (!reviewId) return
+    
+    try {
+      await tabularReviewApi.updateCell(reviewId, fileId, columnId, value)
+      toast.success("Ячейка обновлена")
+      setEditingCell(null)
+      await loadReviewData()
+    } catch (err: any) {
+      toast.error("Не удалось обновить ячейку: " + (err.message || ""))
+      throw err
+    }
+  }
+
   const handleAddColumn = async (column: {
     column_label: string
     column_type: string
