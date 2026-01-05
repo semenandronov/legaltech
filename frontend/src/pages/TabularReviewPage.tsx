@@ -50,6 +50,11 @@ const TabularReviewPage: React.FC = () => {
   } | null>(null)
   const [cellDetails, setCellDetails] = useState<any>(null)
   const [_loadingCellDetails, setLoadingCellDetails] = useState(false)
+  const [editingCell, setEditingCell] = useState<{
+    fileId: string
+    columnId: string
+    cell: any
+  } | null>(null)
   const [error, setError] = useState<string | null>(null)
   const loadingRef = useRef(false)
   
@@ -800,6 +805,23 @@ const TabularReviewPage: React.FC = () => {
             reviewId={reviewId}
             onTemplateApplied={loadReviewData}
           />
+        )}
+
+        {/* Cell Editor Modal */}
+        {editingCell && tableData && (
+          <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50" onClick={() => setEditingCell(null)}>
+            <div className="bg-white rounded-lg p-6 max-w-2xl w-full mx-4" onClick={(e) => e.stopPropagation()}>
+              <h3 className="text-lg font-semibold mb-4">Редактировать ячейку</h3>
+              <InlineCellEditor
+                cell={editingCell.cell}
+                column={tableData.columns.find(c => c.id === editingCell.columnId)!}
+                onSave={async (value) => {
+                  await handleCellEditSave(editingCell.fileId, editingCell.columnId, value)
+                }}
+                onCancel={() => setEditingCell(null)}
+              />
+            </div>
+          </div>
         )}
       </div>
     </div>
