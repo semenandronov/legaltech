@@ -86,7 +86,9 @@ class MetricsCollector:
         self,
         case_id: str,
         agent_type: str,
-        metrics: Dict[str, Any]
+        metrics: Dict[str, Any],
+        model_info: Optional[Dict[str, Any]] = None,
+        cache_stats: Optional[Dict[str, Any]] = None
     ) -> Optional[int]:
         """
         Record metrics for an agent execution
@@ -95,6 +97,8 @@ class MetricsCollector:
             case_id: Case identifier
             agent_type: Type of agent (timeline, key_facts, etc.)
             metrics: Metrics dictionary from callback.get_metrics()
+            model_info: Optional model information (model name, type, cost_tier)
+            cache_stats: Optional cache statistics (route_cache_hit, rag_cache_hit)
             
         Returns:
             Record ID or None if failed
@@ -102,6 +106,35 @@ class MetricsCollector:
         try:
             # Ensure table exists
             self._ensure_table()
+            
+            # Расширить metrics с информацией о модели и кэше
+            extended_metrics = metrics.copy()
+            
+            # Добавить информацию о модели
+            if model_info:
+                extended_metrics["model"] = {
+                    "name": model_info.get("model", "unknown"),
+                    "type": model_info.get("type", "unknown"),  # lite/pro
+                    "cost_tier": model_info.get("cost_tier", "unknown")  # low/high
+                }
+            
+            # Добавить статистику кэша
+            if cache_stats:
+                extended_metrics["cache"] = {
+                    "route_cache_hit": cache_stats.get("route_cache_hit", False),
+                    "rag_cache_hit": cache_stats.get("rag_cache_hit", False),
+                    "rule_based_router_used": cache_stats.get("rule_based_router_used", False)
+                }
+            
+            # Вычислить стоимость (приблизительно)
+            if model_info and "tokens_used" in metrics:
+                tokens_used = metrics.get("tokens_used", 0)
+                model_type = model_info.get("type", "pro")
+                # Приблизительные цены (нужно обновить на реальные)
+                cost_per_1k_tokens = 0.01 if model_type == "lite" else 0.05
+                estimated_cost = (tokens_used / 1000) * cost_per_1k_tokens
+                extended_metrics["estimated_cost"] = estimated_cost
+                extended_metrics["cost_per_1k_tokens"] = cost_per_1k_tokens
             
             # Insert metrics
             result = self.db.execute(
@@ -113,14 +146,18 @@ class MetricsCollector:
                 {
                     "case_id": case_id,
                     "agent_type": agent_type,
-                    "metrics": json.dumps(metrics, ensure_ascii=False)
+                    "metrics": json.dumps(extended_metrics, ensure_ascii=False)
                 }
             )
             
             record_id = result.scalar()
             self.db.commit()
             
-            logger.debug(f"Recorded metrics for {agent_type} agent in case {case_id}")
+            logger.debug(
+                f"Recorded metrics for {agent_type} agent in case {case_id} "
+                f"(model: {model_info.get('type', 'unknown') if model_info else 'unknown'}, "
+                f"tokens: {metrics.get('tokens_used', 0)})"
+            )
             return record_id
             
         except Exception as e:

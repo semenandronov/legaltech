@@ -610,10 +610,28 @@ def timeline_agent_node(
         # Collect and save metrics
         try:
             from app.services.langchain_agents.metrics_collector import MetricsCollector
+            from app.services.langchain_agents.model_selector import get_model_selector
+            
             if db:
                 metrics_collector = MetricsCollector(db)
                 callback_metrics = callback.get_metrics()
-                metrics_collector.record_agent_metrics(case_id, "timeline", callback_metrics)
+                
+                # Получить информацию о модели
+                model_selector = get_model_selector()
+                model_info = None
+                if hasattr(llm, 'model') or hasattr(llm, '_model'):
+                    model_name = getattr(llm, 'model', None) or getattr(llm, '_model', None)
+                    if model_name:
+                        model_info = model_selector.get_model_info(model_name)
+                
+                # Получить статистику кэша из state metadata
+                cache_stats = state.get("metadata", {}).get("cache_stats", {})
+                
+                metrics_collector.record_agent_metrics(
+                    case_id, "timeline", callback_metrics,
+                    model_info=model_info,
+                    cache_stats=cache_stats
+                )
                 logger.debug(f"Saved metrics for timeline agent: {callback_metrics.get('tokens_used', 0)} tokens, {callback_metrics.get('tool_calls', 0)} tools")
         except Exception as metrics_error:
             logger.debug(f"Failed to save timeline metrics: {metrics_error}")

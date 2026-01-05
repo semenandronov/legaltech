@@ -617,6 +617,9 @@ const TabularReviewPage: React.FC = () => {
                       setTableData(updater(tableData))
                     }
                   }}
+                  onCellEdit={(fileId, columnId, cell) => {
+                    setEditingCell({ fileId, columnId, cell })
+                  }}
                   onCellClick={async (fileId, cellData) => {
                     // Find file type and name from table data
                     const row = tableData.rows.find(r => r.file_id === fileId)

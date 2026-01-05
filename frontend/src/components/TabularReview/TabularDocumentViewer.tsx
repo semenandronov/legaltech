@@ -56,7 +56,7 @@ export const TabularDocumentViewer: React.FC<TabularDocumentViewerProps> = ({
   onDocumentChange,
 }) => {
   const [documentText, setDocumentText] = useState<string>("")
-  const [loading, setLoading] = useState(true)
+  const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [fileType, setFileType] = useState<string>(propFileType || "pdf")
   const [currentFileId, setCurrentFileId] = useState<string | undefined>(initialFileId)
