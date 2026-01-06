@@ -59,8 +59,8 @@ export const TabularDocumentViewer: React.FC<TabularDocumentViewerProps> = ({
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [fileType, setFileType] = useState<string>(propFileType || "pdf")
-  const [currentFileId, setCurrentFileId] = useState<string | undefined>(initialFileId)
-  const [currentFileName, setCurrentFileName] = useState<string | undefined>(initialFileName)
+  const [currentFileId, setCurrentFileId] = useState<string | undefined>(undefined)
+  const [currentFileName, setCurrentFileName] = useState<string | undefined>(undefined)
   const [activeTab, setActiveTab] = useState(0)
   const [searchQuery, setSearchQuery] = useState("")
   const [showAbout, setShowAbout] = useState(false)
@@ -73,24 +73,29 @@ export const TabularDocumentViewer: React.FC<TabularDocumentViewerProps> = ({
     fileType: propFileType || "pdf"
   }] : [])
 
+  // Load document when initialFileId or caseId changes
   useEffect(() => {
     const activeDoc = documentTabs[activeTab]
-    if (activeDoc?.fileId && caseId && activeDoc.fileId !== currentFileId) {
-      setCurrentFileId(activeDoc.fileId)
-      setCurrentFileName(activeDoc.fileName)
-      loadDocumentInfo(activeDoc.fileId, propFileType || activeDoc.fileType || "pdf")
-      onDocumentChange?.(activeDoc.fileId)
+    if (activeDoc?.fileId && caseId) {
+      // Always load if fileId changed or if currentFileId is not set
+      if (activeDoc.fileId !== currentFileId) {
+        setCurrentFileId(activeDoc.fileId)
+        setCurrentFileName(activeDoc.fileName)
+        loadDocumentInfo(activeDoc.fileId, propFileType || activeDoc.fileType || "pdf")
+        onDocumentChange?.(activeDoc.fileId)
+      }
     }
-  }, [activeTab, caseId, documentTabs, propFileType])
+  }, [initialFileId, caseId, activeTab, documentTabs, propFileType, currentFileId, onDocumentChange])
 
+  // Update active tab when initialFileId changes
   useEffect(() => {
-    if (initialFileId && initialFileId !== currentFileId) {
+    if (initialFileId) {
       const tabIndex = documentTabs.findIndex(doc => doc.fileId === initialFileId)
-      if (tabIndex >= 0) {
+      if (tabIndex >= 0 && tabIndex !== activeTab) {
         setActiveTab(tabIndex)
       }
     }
-  }, [initialFileId])
+  }, [initialFileId, documentTabs, activeTab])
 
   const loadDocumentInfo = async (fileIdToLoad: string, fileTypeToLoad: string) => {
     try {
