@@ -1,7 +1,7 @@
 import React, { useState } from 'react'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/UI/dialog'
 import { Button } from '@/components/UI/Button'
-import { Checkbox } from '@/components/UI/Checkbox'
+import Checkbox from '@/components/UI/Checkbox'
 import { Textarea } from '@/components/UI/Textarea'
 import { AlertCircle, AlertTriangle, CheckCircle2 } from 'lucide-react'
 import { logger } from '@/lib/logger'
