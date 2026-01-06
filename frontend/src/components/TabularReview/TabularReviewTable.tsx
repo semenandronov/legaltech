@@ -654,6 +654,11 @@ export const TabularReviewTable = React.memo(({ reviewId, tableData, onTableData
     enableColumnResizing: true,
     columnResizeMode: 'onChange',
     enablePinning: true,
+    // CRITICAL: Disable automatic column creation from rowData keys
+    // Only use explicitly defined columns
+    defaultColumn: {
+      enableHiding: false, // Disable hiding for auto-generated columns
+    },
     state: {
       sorting,
       columnFilters,
