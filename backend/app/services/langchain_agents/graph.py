@@ -1,5 +1,5 @@
 """LangGraph graph for multi-agent analysis system"""
-from typing import List
+from typing import List, Sequence
 from langgraph.graph import StateGraph, END, START
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.types import Send
