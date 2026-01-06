@@ -489,21 +489,37 @@ def init_db():
             else:
                 logger.info("✅ column_config and is_pinned already exist in tabular_columns")
 
-        # ---- tabular_cells: ensure source_references / normalized_value exist ----
+        # ---- tabular_cells: ensure source_references / normalized_value / candidates / conflict_resolution exist ----
         if "tabular_cells" in inspector.get_table_names():
             cells_columns = [col['name'] for col in inspector.get_columns("tabular_cells")]
-            if "source_references" not in cells_columns or "normalized_value" not in cells_columns:
-                logger.info("⚠️  Applying migration: adding source_references/normalized_value to tabular_cells")
+            missing_columns = []
+            if "source_references" not in cells_columns:
+                missing_columns.append("source_references")
+            if "normalized_value" not in cells_columns:
+                missing_columns.append("normalized_value")
+            if "candidates" not in cells_columns:
+                missing_columns.append("candidates")
+            if "conflict_resolution" not in cells_columns:
+                missing_columns.append("conflict_resolution")
+            
+            if missing_columns:
+                logger.info(f"⚠️  Applying migration: adding {', '.join(missing_columns)} to tabular_cells")
                 try:
                     with engine.begin() as conn:
-                        conn.execute(text("ALTER TABLE tabular_cells ADD COLUMN IF NOT EXISTS source_references JSONB"))
-                        conn.execute(text("ALTER TABLE tabular_cells ADD COLUMN IF NOT EXISTS normalized_value TEXT"))
-                    logger.info("✅ Migration applied: source_references/normalized_value added to tabular_cells")
+                        if "source_references" in missing_columns:
+                            conn.execute(text("ALTER TABLE tabular_cells ADD COLUMN IF NOT EXISTS source_references JSONB"))
+                        if "normalized_value" in missing_columns:
+                            conn.execute(text("ALTER TABLE tabular_cells ADD COLUMN IF NOT EXISTS normalized_value TEXT"))
+                        if "candidates" in missing_columns:
+                            conn.execute(text("ALTER TABLE tabular_cells ADD COLUMN IF NOT EXISTS candidates JSONB"))
+                        if "conflict_resolution" in missing_columns:
+                            conn.execute(text("ALTER TABLE tabular_cells ADD COLUMN IF NOT EXISTS conflict_resolution JSONB"))
+                    logger.info(f"✅ Migration applied: {', '.join(missing_columns)} added to tabular_cells")
                 except Exception as mig_error:
                     logger.error(f"❌ Failed to apply tabular_cells migration: {mig_error}", exc_info=True)
                     raise
             else:
-                logger.info("✅ source_references and normalized_value already exist in tabular_cells")
+                logger.info("✅ source_references, normalized_value, candidates, and conflict_resolution already exist in tabular_cells")
     except Exception as e:
         logger.warning(f"Could not apply tabular_columns migration: {e}", exc_info=True)
     
