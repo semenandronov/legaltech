@@ -237,12 +237,14 @@ const PromptInputWithDrop = ({ actualCaseId, onDocumentDrop, handlePromptSubmit,
           </div>
         </PromptInputBody>
         
-        {/* Вложения под полем ввода */}
-        <PromptInputAttachments>
-          {(attachment) => (
-            <PromptInputAttachment data={attachment} />
-          )}
-        </PromptInputAttachments>
+        {/* Вложения под полем ввода - внутри формы, но не влияют на layout SettingsPanel */}
+        <div style={{ padding: '0 var(--space-4) var(--space-2)', minHeight: 0 }}>
+          <PromptInputAttachments>
+            {(attachment) => (
+              <PromptInputAttachment data={attachment} />
+            )}
+          </PromptInputAttachments>
+        </div>
       </PromptInput>
     </div>
   )
@@ -962,8 +964,12 @@ export const AssistantUIChat = forwardRef<{ clearMessages: () => void; loadHisto
           }}
         >
           <div 
-            className="w-full max-w-4xl mx-auto space-y-4"
-            style={{ gap: 'var(--space-4)' }}
+            className="w-full max-w-4xl mx-auto"
+            style={{ 
+              display: 'flex', 
+              flexDirection: 'column', 
+              gap: 'var(--space-4)' 
+            }}
           >
             <PromptInputProvider>
               <PromptInputWithDrop
@@ -974,7 +980,7 @@ export const AssistantUIChat = forwardRef<{ clearMessages: () => void; loadHisto
               />
             </PromptInputProvider>
 
-            {/* Компактная панель настроек */}
+            {/* Компактная панель настроек - всегда под полем ввода */}
             <SettingsPanel
               webSearch={webSearch}
               deepThink={deepThink}
