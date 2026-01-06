@@ -655,9 +655,14 @@ export const TabularReviewTable = React.memo(({ reviewId, tableData, onTableData
     columnResizeMode: 'onChange',
     enablePinning: true,
     // CRITICAL: Disable automatic column creation from rowData keys
-    // Only use explicitly defined columns
+    // Only use explicitly defined columns - TanStack Table should NOT auto-create columns
+    manualPagination: false,
+    manualSorting: false,
+    manualFiltering: false,
     defaultColumn: {
-      enableHiding: false, // Disable hiding for auto-generated columns
+      enableHiding: false,
+      // Prevent auto-creation of columns from data keys
+      enableColumnFilter: false,
     },
     state: {
       sorting,
