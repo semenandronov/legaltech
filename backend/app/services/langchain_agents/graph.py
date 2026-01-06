@@ -1,6 +1,8 @@
 """LangGraph graph for multi-agent analysis system"""
+from typing import List
 from langgraph.graph import StateGraph, END, START
 from langgraph.checkpoint.memory import MemorySaver
+from langgraph.types import Send
 from app.services.langchain_agents.state import AnalysisState
 from app.config import config
 # Runtime middleware для инжекции ToolRuntime в tools (см. runtime_middleware.py)
@@ -378,7 +380,6 @@ def create_analysis_graph(
         Returns:
             List[Send] для параллельного выполнения агентов
         """
-        from langgraph.types import Send
         from app.services.langchain_agents.parallel_execution_v2 import create_parallel_sends_v2
         
         case_id = state.get("case_id", "unknown")
