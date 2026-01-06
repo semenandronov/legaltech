@@ -3,13 +3,7 @@ import { useParams, useNavigate, useSearchParams } from 'react-router-dom'
 import { AssistantUIChat } from '../components/Chat/AssistantUIChat'
 import { ChatHistoryPanel } from '../components/Chat/ChatHistoryPanel'
 import { DocumentsPanel } from '../components/Chat/DocumentsPanel'
-import { 
-  DropdownMenu, 
-  DropdownMenuContent, 
-  DropdownMenuItem, 
-  DropdownMenuTrigger 
-} from '../components/UI/dropdown-menu'
-import { ChevronDown, Share2, History, FileText, Download, MessageSquare, MoreVertical } from 'lucide-react'
+import { History, FileText, MessageSquare } from 'lucide-react'
 import { toast } from 'sonner'
 import { getCase } from '../services/api'
 
@@ -73,52 +67,9 @@ const AssistantChatPage = () => {
     setHistoryPanelOpen(false)
   }
 
-  const handleShare = async () => {
-    try {
-      const url = window.location.href
-      await navigator.clipboard.writeText(url)
-      toast.success('Ссылка на чат скопирована в буфер обмена')
-    } catch (error) {
-      console.error('Ошибка при копировании URL:', error)
-      toast.error('Не удалось скопировать ссылку')
-    }
-  }
-
   const handleNewChat = () => {
     chatRef.current?.clearMessages()
     toast.success('Новый чат начат')
-  }
-
-  const handleExport = async () => {
-    try {
-      const token = localStorage.getItem('access_token')
-      const apiUrl = import.meta.env.VITE_API_URL || ''
-      const baseUrl = apiUrl.endsWith('/') ? apiUrl.slice(0, -1) : apiUrl
-      const response = await fetch(`${baseUrl}/api/chat/${caseId}/export?format=markdown`, {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${token}`,
-        },
-      })
-
-      if (!response.ok) {
-        throw new Error('Ошибка экспорта')
-      }
-
-      const blob = await response.blob()
-      const url = window.URL.createObjectURL(blob)
-      const a = document.createElement('a')
-      a.href = url
-      a.download = `chat-history-${caseId}-${new Date().toISOString().split('T')[0]}.md`
-      document.body.appendChild(a)
-      a.click()
-      document.body.removeChild(a)
-      window.URL.revokeObjectURL(url)
-      toast.success('История чата экспортирована')
-    } catch (error) {
-      console.error('Ошибка при экспорте:', error)
-      toast.error('Не удалось экспортировать историю')
-    }
   }
 
   return (
@@ -128,9 +79,9 @@ const AssistantChatPage = () => {
     >
       {/* Top toolbar */}
       <div 
-        className="flex items-center justify-between px-6 py-3 border-b"
+        className="flex items-center justify-between px-6 py-6 border-b"
         style={{ 
-          padding: 'var(--space-3) var(--space-6)',
+          padding: 'var(--space-6) var(--space-6)',
           borderBottomColor: 'var(--color-border)',
           backgroundColor: 'var(--color-bg-primary)'
         }}
@@ -155,43 +106,6 @@ const AssistantChatPage = () => {
             <FileText className="w-4 h-4" />
             Документы
           </button>
-          
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <button 
-                className="flex items-center gap-2 px-3 py-1.5 text-sm font-medium rounded-lg transition-all duration-150"
-                style={{
-                  color: 'var(--color-text-secondary)',
-                }}
-                onMouseEnter={(e) => {
-                  e.currentTarget.style.backgroundColor = 'var(--color-bg-hover)'
-                  e.currentTarget.style.color = 'var(--color-text-primary)'
-                }}
-                onMouseLeave={(e) => {
-                  e.currentTarget.style.backgroundColor = 'transparent'
-                  e.currentTarget.style.color = 'var(--color-text-secondary)'
-                }}
-              >
-                <MoreVertical className="w-4 h-4" />
-                Еще
-                <ChevronDown className="w-4 h-4" />
-              </button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="start">
-              <DropdownMenuItem onClick={() => navigate(`/cases/${caseId}/tabular-review`)}>
-                Tabular Review
-              </DropdownMenuItem>
-              <DropdownMenuItem onClick={() => navigate(`/cases/${caseId}/analysis`)}>
-                Анализ
-              </DropdownMenuItem>
-              <DropdownMenuItem onClick={() => navigate(`/cases/${caseId}/contradictions`)}>
-                Противоречия
-              </DropdownMenuItem>
-              <DropdownMenuItem onClick={() => navigate(`/cases/${caseId}/reports`)}>
-                Отчеты
-              </DropdownMenuItem>
-            </DropdownMenuContent>
-          </DropdownMenu>
         </div>
 
         <div className="flex items-center gap-2">
@@ -213,43 +127,6 @@ const AssistantChatPage = () => {
           >
             <MessageSquare className="w-4 h-4" />
             <span className="hidden sm:inline">Новый чат</span>
-          </button>
-          <button 
-            onClick={handleExport}
-            className="flex items-center gap-2 px-3 py-1.5 text-sm font-medium rounded-lg transition-all duration-150"
-            style={{
-              color: 'var(--color-text-secondary)',
-            }}
-            onMouseEnter={(e) => {
-              e.currentTarget.style.backgroundColor = 'var(--color-bg-hover)'
-              e.currentTarget.style.color = 'var(--color-text-primary)'
-            }}
-            onMouseLeave={(e) => {
-              e.currentTarget.style.backgroundColor = 'transparent'
-              e.currentTarget.style.color = 'var(--color-text-secondary)'
-            }}
-            title="Экспортировать историю"
-          >
-            <Download className="w-4 h-4" />
-            <span className="hidden sm:inline">Экспорт</span>
-          </button>
-          <button 
-            onClick={handleShare}
-            className="px-3 py-1.5 text-sm font-medium rounded-lg transition-all duration-150"
-            style={{
-              color: 'var(--color-text-secondary)',
-            }}
-            onMouseEnter={(e) => {
-              e.currentTarget.style.backgroundColor = 'var(--color-bg-hover)'
-              e.currentTarget.style.color = 'var(--color-text-primary)'
-            }}
-            onMouseLeave={(e) => {
-              e.currentTarget.style.backgroundColor = 'transparent'
-              e.currentTarget.style.color = 'var(--color-text-secondary)'
-            }}
-            title="Скопировать ссылку на чат"
-          >
-            <Share2 className="w-4 h-4" />
           </button>
           <button 
             onClick={() => setHistoryPanelOpen(true)}

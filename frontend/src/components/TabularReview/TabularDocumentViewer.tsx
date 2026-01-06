@@ -196,14 +196,29 @@ export const TabularDocumentViewer: React.FC<TabularDocumentViewerProps> = ({
   }
 
   const highlightMode = cellData?.highlightMode || "none"
-  const showHighlight = highlightMode === "verbatim" && cellData?.verbatimExtract
   const activeDoc = documentTabs[activeTab]
 
-  // Highlight source references in text
-  const highlightTexts = cellData?.sourceReferences?.map(ref => ref.text) || []
-  if (cellData?.verbatimExtract && !highlightTexts.includes(cellData.verbatimExtract)) {
+  // Collect all texts to highlight for non-PDF documents
+  // Include verbatim extract and all source references
+  const highlightTexts: string[] = []
+  
+  // Add verbatim extract if available (highest priority for highlighting)
+  if (cellData?.verbatimExtract) {
     highlightTexts.push(cellData.verbatimExtract)
   }
+  
+  // Add all source reference texts
+  if (cellData?.sourceReferences && cellData.sourceReferences.length > 0) {
+    cellData.sourceReferences.forEach(ref => {
+      if (ref.text && !highlightTexts.includes(ref.text)) {
+        highlightTexts.push(ref.text)
+      }
+    })
+  }
+  
+  // Determine if we should show highlighting for text documents
+  // Show highlighting if we have verbatim extract OR source references with text
+  const showHighlight = highlightTexts.length > 0 || (highlightMode !== "none" && (cellData?.verbatimExtract || cellData?.sourceReferences?.length))
 
   return (
     <Box sx={{ display: "flex", flexDirection: "column", height: "100%" }}>

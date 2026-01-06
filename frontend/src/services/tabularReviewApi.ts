@@ -220,6 +220,15 @@ export const tabularReviewApi = {
     }
   },
 
+  // Delete a tabular review
+  async deleteReview(reviewId: string): Promise<void> {
+    try {
+      await apiClient.delete(`/api/tabular-review/${reviewId}`)
+    } catch (error) {
+      throw new Error(extractErrorMessage(error))
+    }
+  },
+
   // Get tabular review details (use table-data endpoint for consistency)
   async getReview(reviewId: string): Promise<TableData> {
     try {

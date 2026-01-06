@@ -209,18 +209,19 @@ const PromptInputWithDrop = ({ actualCaseId, onDocumentDrop, handlePromptSubmit,
         } as React.CSSProperties}
       >
         <PromptInputBody>
-          <div className="relative w-full">
-            <PromptInputTextarea 
-              placeholder="Введите вопрос или используйте промпт..."
-              className="min-h-[120px] max-h-[300px] text-base pr-14 py-4 px-4 resize-none focus:outline-none leading-relaxed"
-              style={{
-                color: 'var(--color-text-primary)',
-                backgroundColor: 'transparent',
-                padding: 'var(--space-4)',
-                paddingRight: '3.5rem',
-              }}
-            />
-            <div className="absolute bottom-3 right-3 z-20">
+          <div className="flex items-end gap-2 w-full">
+            <div className="flex-1 relative">
+              <PromptInputTextarea 
+                placeholder="Введите вопрос или используйте промпт..."
+                className="w-full min-h-[120px] max-h-[300px] text-base py-4 px-4 resize-none focus:outline-none leading-relaxed overflow-y-auto"
+                style={{
+                  color: 'var(--color-text-primary)',
+                  backgroundColor: 'transparent',
+                  padding: 'var(--space-4)',
+                }}
+              />
+            </div>
+            <div className="flex-shrink-0 pb-3">
               <PromptInputSubmit 
                 variant="default"
                 className="rounded-md h-10 w-10 p-0 flex items-center justify-center shrink-0 transition-all duration-150 disabled:opacity-50 disabled:cursor-not-allowed"
@@ -719,24 +720,6 @@ export const AssistantUIChat = forwardRef<{ clearMessages: () => void; loadHisto
     >
       {/* Messages area */}
       <div className="flex-1 min-h-0 flex flex-col">
-        {messages.length > 0 && (
-          <div 
-            className="flex items-center justify-center px-6 py-4 flex-shrink-0"
-            style={{ padding: 'var(--space-6) var(--space-4)' }}
-          >
-            <h1 
-              className="text-2xl font-display text-text-primary"
-              style={{ 
-                fontFamily: 'var(--font-display)',
-                color: 'var(--color-text-primary)',
-                fontWeight: 400
-              }}
-            >
-              Чем могу помочь?
-            </h1>
-          </div>
-        )}
-
         <Conversation className="flex-1 min-h-0 flex flex-col">
           <ConversationContent className="flex-1 overflow-y-auto">
               {isLoadingHistory ? (

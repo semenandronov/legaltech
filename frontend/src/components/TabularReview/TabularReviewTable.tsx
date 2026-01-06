@@ -70,7 +70,7 @@ interface TabularReviewTableProps {
     rows: TabularRow[]
   }
   onTableDataUpdate?: (updater: (prev: TabularReviewTableProps['tableData']) => TabularReviewTableProps['tableData']) => void
-  onCellClick?: (fileId: string, cellData: {
+  onCellClick?: (fileId: string, columnId: string, cellData: {
     verbatimExtract?: string | null
     sourcePage?: number | null
     sourceSection?: string | null
@@ -494,7 +494,7 @@ export const TabularReviewTable = React.memo(({ reviewId, tableData, onTableData
                 }
                 
                 if (onCellClick) {
-                  onCellClick(row.original.file_id, {
+                  onCellClick(row.original.file_id, col.id, {
                     verbatimExtract: cachedDetails.verbatim_extract,
                     sourcePage: cachedDetails.source_page,
                     sourceSection: cachedDetails.source_section,
@@ -537,7 +537,7 @@ export const TabularReviewTable = React.memo(({ reviewId, tableData, onTableData
                 
                 // Call onCellClick callback to open document
                 if (onCellClick) {
-                  onCellClick(row.original.file_id, {
+                  onCellClick(row.original.file_id, col.id, {
                     verbatimExtract: details.verbatim_extract,
                     sourcePage: details.source_page,
                     sourceSection: details.source_section,

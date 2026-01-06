@@ -17,7 +17,16 @@ import { tabularReviewApi, TableData } from "../services/tabularReviewApi"
 import { Card } from "../components/UI/Card"
 import Spinner from "../components/UI/Spinner"
 import { toast } from "sonner"
-import { ArrowLeft, Edit2, X } from "lucide-react"
+import { ArrowLeft, Edit2, X, Trash2 } from "lucide-react"
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogFooter,
+} from "../components/UI/dialog"
+import { Input } from "../components/UI/Input"
+import { Button } from "../components/UI/Button"
 
 const TabularReviewPage: React.FC = () => {
   const { reviewId, caseId } = useParams<{ reviewId?: string; caseId: string }>()
@@ -71,6 +80,9 @@ const TabularReviewPage: React.FC = () => {
   }>>([])
   const [loadingReviews, setLoadingReviews] = useState(false)
   const [showReviewSelector, setShowReviewSelector] = useState(true)
+  const [showNameDialog, setShowNameDialog] = useState(false)
+  const [reviewName, setReviewName] = useState("")
+  const [pendingFileIds, setPendingFileIds] = useState<string[]>([])
 
   // Load existing reviews when caseId is available but no reviewId
   useEffect(() => {
@@ -111,20 +123,50 @@ const TabularReviewPage: React.FC = () => {
     setShowDocumentSelector(true)
   }
 
+  const handleDeleteReview = async (reviewIdToDelete: string, event: React.MouseEvent) => {
+    event.stopPropagation() // Prevent card click
+    
+    if (!confirm(`Вы уверены, что хотите удалить таблицу "${existingReviews.find(r => r.id === reviewIdToDelete)?.name}"? Это действие нельзя отменить.`)) {
+      return
+    }
+    
+    try {
+      await tabularReviewApi.deleteReview(reviewIdToDelete)
+      toast.success("Таблица удалена")
+      // Reload reviews list
+      const data = await tabularReviewApi.listReviews(caseId)
+      setExistingReviews(data.reviews)
+    } catch (err: any) {
+      toast.error("Не удалось удалить таблицу: " + (err.message || ""))
+    }
+  }
+
   const handleDocumentSelectorConfirm = async (fileIds: string[]) => {
     if (!caseId) return
     
     setShowDocumentSelector(false)
-    setSelectedFileIds(fileIds)
+    setPendingFileIds(fileIds)
+    setReviewName("")
+    setShowNameDialog(true)
+  }
+
+  const handleCreateReviewWithName = async () => {
+    if (!caseId || !reviewName.trim()) {
+      toast.error("Введите название таблицы")
+      return
+    }
     
     try {
+      setShowNameDialog(false)
       setLoading(true)
       const review = await tabularReviewApi.createReview(
         caseId,
-        "Tabular Review",
-        "Automatic tabular review",
-        fileIds
+        reviewName.trim(),
+        undefined,
+        pendingFileIds
       )
+      setSelectedFileIds(pendingFileIds)
+      setPendingFileIds([])
       navigate(`/cases/${caseId}/tabular-review/${review.id}`, { replace: true })
     } catch (err: any) {
       setError(err.message || "Ошибка при создании review")
@@ -399,11 +441,18 @@ const TabularReviewPage: React.FC = () => {
                     {existingReviews.map((review, index) => (
                       <Card
                         key={review.id}
-                        className="p-6 cursor-pointer hoverable transition-all duration-300"
+                        className="p-6 cursor-pointer hoverable transition-all duration-300 relative"
                         style={{ animationDelay: `${index * 0.05}s` }}
                         onClick={() => handleSelectReview(review.id)}
                       >
-                        <div className="flex items-start justify-between mb-3">
+                        <button
+                          onClick={(e) => handleDeleteReview(review.id, e)}
+                          className="absolute top-4 right-4 p-2 rounded-lg hover:bg-error-bg text-error hover:text-error transition-all duration-150 z-10"
+                          title="Удалить таблицу"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </button>
+                        <div className="flex items-start justify-between mb-3 pr-8">
                           <h3 className="font-display text-h3 text-text-primary">{review.name}</h3>
                           <span className={`text-xs px-3 py-1 rounded-full font-medium ${
                             review.status === 'completed' ? 'bg-success-bg text-success border border-success/30' :
@@ -583,7 +632,6 @@ const TabularReviewPage: React.FC = () => {
           onTemplates={reviewId ? () => setShowTemplatesModal(true) : undefined}
           onRunAll={handleRunAll}
           onDownload={handleDownload}
-          onShare={handleShare}
           processing={processing}
         />
 
@@ -643,7 +691,7 @@ const TabularReviewPage: React.FC = () => {
           {/* Table, Cell Detail, and Document Split View */}
           <div className="flex-1 overflow-hidden flex">
             {/* Table */}
-            <div className={`overflow-auto p-6 transition-all bg-bg-primary ${selectedCell ? 'w-2/5' : selectedDocument ? 'w-1/2' : 'flex-1'}`}>
+            <div className={`overflow-auto p-6 transition-all bg-bg-primary ${selectedDocument ? 'w-1/4 min-w-[300px]' : selectedCell ? 'w-2/5' : 'flex-1'}`}>
               {tableData.columns.length === 0 ? (
                 <Card className="p-6 hoverable">
                   <div className="text-center">
@@ -673,48 +721,67 @@ const TabularReviewPage: React.FC = () => {
                   onCellEdit={(fileId: string, columnId: string, cell: any) => {
                     setEditingCell({ fileId, columnId, cell })
                   }}
-                  onCellClick={async (fileId, cellData) => {
+                  onCellClick={async (fileId, columnId, cellData) => {
                     // Find file type and name from table data
                     const row = tableData.rows.find(r => r.file_id === fileId)
-                    const column = tableData.columns.find(() => {
-                      // Try to find column by matching cell data or use first column
-                      return true
-                    })
                     
-                    if (column) {
+                    // Find the column by columnId (now passed directly from table)
+                    const clickedColumn = tableData.columns.find(col => col.id === columnId)
+                    
+                    // If column not found, use first column as fallback
+                    if (!clickedColumn && tableData.columns.length > 0) {
+                      console.warn(`Column ${columnId} not found, using first column as fallback`)
+                    }
+                    
+                    // Load cell details first to get all source information for highlighting
+                    let details = null
+                    if (reviewId && clickedColumn) {
+                      setLoadingCellDetails(true)
+                      try {
+                        details = await tabularReviewApi.getCellDetails(
+                          reviewId,
+                          fileId,
+                          clickedColumn.id
+                        )
+                        setCellDetails(details)
+                      } catch (err) {
+                        console.error("Error loading cell details:", err)
+                      } finally {
+                        setLoadingCellDetails(false)
+                      }
+                    }
+                    
+                    // Set selected cell for detail panel (but we'll hide panel when document is open)
+                    if (clickedColumn) {
                       setSelectedCell({
                         fileId,
-                        columnId: column.id,
+                        columnId: clickedColumn.id,
                         fileName: row?.file_name || "Document",
-                        columnLabel: column.column_label,
+                        columnLabel: clickedColumn.column_label,
                       })
-                      
-                      // Load cell details
-                      if (reviewId) {
-                        setLoadingCellDetails(true)
-                        try {
-                          const details = await tabularReviewApi.getCellDetails(
-                            reviewId,
-                            fileId,
-                            column.id
-                          )
-                          setCellDetails(details)
-                        } catch (err) {
-                          console.error("Error loading cell details:", err)
-                        } finally {
-                          setLoadingCellDetails(false)
-                        }
-                      }
+                    }
+                    
+                    // Open document with full highlighting data
+                    // Use details from API if available (more complete), otherwise use cellData from table
+                    const finalCellData = details ? {
+                      verbatimExtract: details.verbatim_extract,
+                      sourcePage: details.source_page,
+                      sourceSection: details.source_section,
+                      columnType: details.column_type,
+                      highlightMode: details.highlight_mode || cellData.highlightMode || (details.verbatim_extract ? 'verbatim' : (details.source_page ? 'page' : 'none')),
+                      sourceReferences: details.source_references || cellData.sourceReferences || [],
+                    } : {
+                      ...cellData,
+                      // Ensure highlightMode is set correctly
+                      highlightMode: cellData.highlightMode || (cellData.verbatimExtract ? 'verbatim' : (cellData.sourcePage ? 'page' : 'none')),
+                      sourceReferences: cellData.sourceReferences || [],
                     }
                     
                     setSelectedDocument({ 
                       fileId, 
                       fileType: row?.file_type || undefined,
                       fileName: row?.file_name || undefined,
-                      cellData: {
-                        ...cellData,
-                        sourceReferences: cellDetails?.source_references,
-                      }
+                      cellData: finalCellData,
                     })
                   }}
                   onRemoveDocument={async (fileId) => {
@@ -750,8 +817,8 @@ const TabularReviewPage: React.FC = () => {
               )}
             </div>
 
-            {/* Cell Detail Panel */}
-            {selectedCell && (
+            {/* Cell Detail Panel - скрываем когда открыт документ, чтобы документ был во всю ширину */}
+            {selectedCell && !selectedDocument && (
               <CellDetailPanel
                 fileName={selectedCell.fileName}
                 columnLabel={selectedCell.columnLabel}
@@ -799,13 +866,16 @@ const TabularReviewPage: React.FC = () => {
               />
             )}
 
-            {/* Document Viewer */}
+            {/* Document Viewer - открывается во всю ширину при клике на ячейку */}
             {selectedDocument && (
-              <div className={`border-l border-border bg-bg-elevated flex flex-col shrink-0 ${selectedCell ? 'w-2/5' : 'w-1/3'}`}>
+              <div className="border-l border-border bg-bg-elevated flex flex-col shrink-0 flex-1 min-w-0">
                 <div className="border-b border-border p-3 flex items-center justify-between bg-bg-elevated/80 backdrop-blur-sm">
                   <span className="text-sm font-medium text-text-primary">Документ</span>
                   <button
-                    onClick={() => setSelectedDocument(null)}
+                    onClick={() => {
+                      setSelectedDocument(null)
+                      // Если была выбрана ячейка, оставляем её выбранной для показа панели деталей
+                    }}
                     className="p-2 rounded-lg hover:bg-bg-hover transition-colors duration-200 text-text-secondary hover:text-text-primary"
                   >
                     <X className="w-4 h-4" />
@@ -854,6 +924,47 @@ const TabularReviewPage: React.FC = () => {
             onTemplateApplied={loadReviewData}
           />
         )}
+
+        {/* Name Dialog for creating new review */}
+        <Dialog open={showNameDialog} onOpenChange={setShowNameDialog}>
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle>Введите название таблицы</DialogTitle>
+            </DialogHeader>
+            <div className="py-4">
+              <Input
+                label="Название таблицы"
+                value={reviewName}
+                onChange={(e) => setReviewName(e.target.value)}
+                placeholder="Например: Анализ договоров"
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' && reviewName.trim()) {
+                    handleCreateReviewWithName()
+                  }
+                }}
+                autoFocus
+              />
+            </div>
+            <DialogFooter>
+              <Button
+                variant="outline"
+                onClick={() => {
+                  setShowNameDialog(false)
+                  setPendingFileIds([])
+                  setReviewName("")
+                }}
+              >
+                Отмена
+              </Button>
+              <Button
+                onClick={handleCreateReviewWithName}
+                disabled={!reviewName.trim()}
+              >
+                Создать
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
 
         {/* Cell Editor Modal */}
         {editingCell && tableData && (

@@ -123,6 +123,27 @@ class TabularReviewService:
         
         return review
     
+    def delete_review(
+        self,
+        review_id: str,
+        user_id: str
+    ) -> bool:
+        """Delete a tabular review (cascade deletes all columns, cells, etc.)"""
+        # Verify review belongs to user
+        review = self.db.query(TabularReview).filter(
+            and_(TabularReview.id == review_id, TabularReview.user_id == user_id)
+        ).first()
+        
+        if not review:
+            raise ValueError(f"Tabular review {review_id} not found or access denied")
+        
+        # Delete review (cascade will delete all columns, cells, document_statuses, etc.)
+        self.db.delete(review)
+        self.db.commit()
+        
+        logger.info(f"Deleted tabular review {review_id}")
+        return True
+    
     def add_column(
         self,
         review_id: str,

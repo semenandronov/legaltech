@@ -150,6 +150,27 @@ async def create_review(
         raise HTTPException(status_code=500, detail="Failed to create tabular review")
 
 
+@router.delete("/{review_id}")
+async def delete_review(
+    review_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """Delete a tabular review"""
+    try:
+        service = TabularReviewService(db)
+        service.delete_review(
+            review_id=review_id,
+            user_id=current_user.id
+        )
+        return {"success": True}
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        logger.error(f"Error deleting tabular review: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Failed to delete tabular review")
+
+
 @router.get("/templates")
 async def get_templates(
     category: Optional[str] = Query(None),

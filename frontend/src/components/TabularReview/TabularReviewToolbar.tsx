@@ -9,7 +9,6 @@ import {
   FileText,
   Play,
   Download,
-  Share2,
   ChevronDown,
   FolderOpen,
   LayoutTemplate,
@@ -21,11 +20,8 @@ interface TabularReviewToolbarProps {
   onUpdateDocuments?: () => void
   onRunAll?: () => void
   onDownload?: (format: "csv" | "excel") => void
-  onShare?: () => void
   onTemplates?: () => void
   processing?: boolean
-  creditsUsed?: number
-  creditsLimit?: number
 }
 
 export function TabularReviewToolbar({
@@ -34,15 +30,9 @@ export function TabularReviewToolbar({
   onUpdateDocuments,
   onRunAll,
   onDownload,
-  onShare,
   onTemplates,
   processing = false,
-  creditsUsed = 0,
-  creditsLimit = 1000,
 }: TabularReviewToolbarProps) {
-  const creditsPercentage = creditsLimit > 0 ? (creditsUsed / creditsLimit) * 100 : 0
-  const isWarning = creditsPercentage >= 80
-  const isError = creditsPercentage >= 95
 
   return (
     <div className="flex items-center justify-between py-4 px-6 border-b border-[#E5E7EB] bg-white/80 backdrop-blur-sm">
@@ -86,25 +76,6 @@ export function TabularReviewToolbar({
       </div>
       
       <div className="flex items-center gap-3">
-        {/* Credits indicator */}
-        {(creditsUsed > 0 || creditsLimit > 0) && (
-          <div
-            className={`px-3 py-1.5 rounded-lg text-xs font-medium flex items-center gap-2 ${
-              isError
-                ? "bg-red-50 text-red-700 border border-red-200"
-                : isWarning
-                ? "bg-yellow-50 text-yellow-700 border border-yellow-200"
-                : "bg-gray-50 text-gray-700 border border-gray-200"
-            }`}
-            title={`Использовано ${creditsUsed} из ${creditsLimit} кредитов`}
-          >
-            <span>{creditsUsed}/{creditsLimit}</span>
-            {isWarning && (
-              <span className="text-[10px] opacity-75">⚠️</span>
-            )}
-          </div>
-        )}
-        
         <button
           onClick={onRunAll}
           disabled={processing}
@@ -140,15 +111,6 @@ export function TabularReviewToolbar({
             </DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>
-        
-        <button
-          onClick={onShare}
-          disabled={processing}
-          className="px-4 py-2 bg-white border border-[#E5E7EB] text-[#6B7280] text-sm font-medium rounded-lg hover:bg-[#F3F4F6] hover:text-[#1F2937] transition-all duration-300 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
-        >
-          <Share2 className="w-4 h-4" />
-          Share
-        </button>
       </div>
     </div>
   )
