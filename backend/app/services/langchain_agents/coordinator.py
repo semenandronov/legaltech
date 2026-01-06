@@ -672,6 +672,41 @@ class AgentCoordinator:
                 "execution_time": execution_time,
                 "execution_steps": execution_steps
             }
+            
+        except Exception as e:
+            execution_time = time.time() - start_time
+            logger.error(
+                f"Error in multi-agent analysis for case {case_id}: {e}",
+                exc_info=True
+            )
+            
+            # Определить тип ошибки
+            error_type = "fatal"
+            if isinstance(e, ValueError):
+                error_type = "validation"
+            elif isinstance(e, TimeoutError):
+                error_type = "timeout"
+            elif isinstance(e, ConnectionError):
+                error_type = "connection"
+            
+            return {
+                "case_id": case_id,
+                "timeline": None,
+                "key_facts": None,
+                "discrepancies": None,
+                "risk_analysis": None,
+                "summary": None,
+                "classification": None,
+                "entities": None,
+                "privilege": None,
+                "errors": [{
+                    "coordinator": str(e),
+                    "type": error_type,
+                    "recoverable": error_type in ["timeout", "connection"]
+                }],
+                "execution_time": execution_time,
+                "metadata": {"error_type": error_type}
+            }
     
     def resume_after_interrupt(
         self,
@@ -754,38 +789,3 @@ class AgentCoordinator:
         except Exception as e:
             logger.error(f"[Resume] Error resuming graph execution: {e}", exc_info=True)
             raise
-            
-        except Exception as e:
-            execution_time = time.time() - start_time
-            logger.error(
-                f"Error in multi-agent analysis for case {case_id}: {e}",
-                exc_info=True
-            )
-            
-            # Определить тип ошибки
-            error_type = "fatal"
-            if isinstance(e, ValueError):
-                error_type = "validation"
-            elif isinstance(e, TimeoutError):
-                error_type = "timeout"
-            elif isinstance(e, ConnectionError):
-                error_type = "connection"
-            
-            return {
-                "case_id": case_id,
-                "timeline": None,
-                "key_facts": None,
-                "discrepancies": None,
-                "risk_analysis": None,
-                "summary": None,
-                "classification": None,
-                "entities": None,
-                "privilege": None,
-                "errors": [{
-                    "coordinator": str(e),
-                    "type": error_type,
-                    "recoverable": error_type in ["timeout", "connection"]
-                }],
-                "execution_time": execution_time,
-                "metadata": {"error_type": error_type}
-            }
