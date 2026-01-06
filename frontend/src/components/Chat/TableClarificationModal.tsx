@@ -147,7 +147,7 @@ export const TableClarificationModal: React.FC<TableClarificationModalProps> = (
                     >
                       <Checkbox
                         checked={isSelected}
-                        onCheckedChange={() => handleDocTypeToggle(docType)}
+                        onChange={() => handleDocTypeToggle(docType)}
                       />
                       <span className="text-sm text-gray-700">{label}</span>
                     </label>
