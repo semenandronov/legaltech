@@ -730,7 +730,6 @@ const TabularReviewPage: React.FC = () => {
                           fileId,
                           clickedColumn.id
                         )
-                        setCellDetails(details)
                       } catch (err) {
                         console.error("Error loading cell details:", err)
                       } finally {

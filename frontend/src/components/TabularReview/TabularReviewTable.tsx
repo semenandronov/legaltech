@@ -90,7 +90,7 @@ export const TabularReviewTable = React.memo(({ reviewId, tableData, onTableData
   const [columnPinning, setColumnPinning] = React.useState<ColumnPinningState>({ left: ['file_name'], right: [] })
   const [globalFilter, setGlobalFilter] = React.useState("")
   const [globalFilterInput, setGlobalFilterInput] = React.useState("")
-  const [loadingCell, setLoadingCell] = React.useState(false)
+  const [_loadingCell, setLoadingCell] = React.useState(false)
   const [historyPanelOpen, setHistoryPanelOpen] = React.useState(false)
   const [historyCellInfo, setHistoryCellInfo] = React.useState<{
     fileId: string
