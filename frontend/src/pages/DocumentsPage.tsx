@@ -285,32 +285,7 @@ const DocumentsPage = () => {
                 // Прочие
                 'other': 'Другое'
               }
-              
-              const getDocTypeColor = (docType: string) => {
-                // Судебные акты - фиолетовый
-                if (['court_order', 'court_decision', 'court_ruling', 'court_resolution'].includes(docType)) {
-                  return 'from-purple-500/20 to-purple-600/20 text-purple-600 border-purple-500/30'
-                }
-                // Процессуальные документы - синий
-                if (['statement_of_claim', 'order_application', 'bankruptcy_application', 'response_to_claim', 
-                      'counterclaim', 'third_party_application', 'third_party_objection', 'motion', 'motion_evidence', 
-                      'motion_security', 'motion_cancel_security', 'motion_recusation', 'motion_reinstatement',
-                      'appeal', 'cassation', 'supervisory_appeal', 'arbitral_annulment', 'arbitral_enforcement',
-                      'creditor_registry', 'administrative_challenge', 'admin_penalty_challenge', 'settlement_agreement',
-                      'protocol_remarks', 'pre_claim', 'written_explanation', 'power_of_attorney', 'egrul_extract', 
-                      'state_duty'].includes(docType)) {
-                  return 'from-blue-500/20 to-blue-600/20 text-blue-600 border-blue-500/30'
-                }
-                // Доказательства - зеленый
-                if (['contract', 'act', 'certificate', 'correspondence', 'electronic_document', 'protocol', 
-                      'expert_opinion', 'specialist_consultation', 'witness_statement', 'audio_recording', 
-                      'video_recording', 'physical_evidence'].includes(docType)) {
-                  return 'from-green-500/20 to-green-600/20 text-green-600 border-green-500/30'
-                }
-                // Прочие - серый
-                return 'from-gray-500/20 to-gray-600/20 text-gray-600 border-gray-500/30'
-              }
-              
+
               return (
               <div
                 key={doc.id}

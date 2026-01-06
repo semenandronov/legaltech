@@ -59,6 +59,8 @@ export interface TabularReview {
   name: string
   description?: string
   status: 'draft' | 'processing' | 'completed'
+  table_mode?: 'document' | 'entity' | 'fact'
+  entity_config?: any
   created_at: string
 }
 
@@ -137,6 +139,8 @@ export interface TableData {
     description?: string
     status: string
     selected_file_ids?: string[]
+    table_mode?: 'document' | 'entity' | 'fact'
+    entity_config?: any
   }
   columns: TabularColumn[]
   rows: TabularRow[]
@@ -230,6 +234,26 @@ export const tabularReviewApi = {
   async getTableData(reviewId: string): Promise<TableData> {
     try {
       const response = await apiClient.get(`/api/tabular-review/${reviewId}/table-data`)
+      return response.data
+    } catch (error) {
+      throw new Error(extractErrorMessage(error))
+    }
+  },
+
+  async updateTableMode(
+    reviewId: string,
+    tableMode: "document" | "entity" | "fact",
+    entityConfig?: any
+  ): Promise<{
+    id: string
+    table_mode: "document" | "entity" | "fact"
+    entity_config?: any
+  }> {
+    try {
+      const response = await apiClient.patch(`/api/tabular-review/${reviewId}/mode`, {
+        table_mode: tableMode,
+        entity_config: entityConfig,
+      })
       return response.data
     } catch (error) {
       throw new Error(extractErrorMessage(error))

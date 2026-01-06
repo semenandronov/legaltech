@@ -12,6 +12,7 @@ import { TabularReviewContextChat } from "../components/TabularReview/TabularRev
 import { TemplatesModal } from "../components/TabularReview/TemplatesModal"
 import { FeaturedTemplatesCarousel } from "../components/TabularReview/FeaturedTemplatesCarousel"
 import { CellDetailPanel } from "../components/TabularReview/CellDetailPanel"
+import { TableModeSelector } from "../components/TabularReview/TableModeSelector"
 import { tabularReviewApi, TableData } from "../services/tabularReviewApi"
 import { Card } from "../components/UI/Card"
 import Spinner from "../components/UI/Spinner"
@@ -57,6 +58,7 @@ const TabularReviewPage: React.FC = () => {
   } | null>(null)
   const [error, setError] = useState<string | null>(null)
   const loadingRef = useRef(false)
+  const [tableMode, setTableMode] = useState<"document" | "entity" | "fact">("document")
   
   // State for review selector (when no reviewId)
   const [existingReviews, setExistingReviews] = useState<Array<{
@@ -165,6 +167,7 @@ const TabularReviewPage: React.FC = () => {
         columnLabels: data.columns.map(c => c.column_label) 
       })
       setTableData(data)
+      setTableMode((data.review.table_mode as any) || "document")
       // Load selected file IDs from review
       if (data.review.selected_file_ids) {
         setSelectedFileIds(data.review.selected_file_ids)
@@ -583,6 +586,25 @@ const TabularReviewPage: React.FC = () => {
           onShare={handleShare}
           processing={processing}
         />
+
+        {/* Table mode selector */}
+        {reviewId && (
+          <div className="px-6 pt-2">
+            <TableModeSelector
+              mode={tableMode}
+              onChange={async (mode) => {
+                if (!reviewId) return
+                try {
+                  setTableMode(mode)
+                  await tabularReviewApi.updateTableMode(reviewId, mode)
+                  // В будущем здесь можно триггерить entity/fact extraction
+                } catch (err: any) {
+                  toast.error("Не удалось изменить режим таблицы: " + (err.message || ""))
+                }
+              }}
+            />
+          </div>
+        )}
 
         {/* Featured Templates Carousel */}
         {reviewId && tableData.columns.length === 0 && (

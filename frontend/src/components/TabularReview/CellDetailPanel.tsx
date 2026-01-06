@@ -28,9 +28,6 @@ interface CellDetailPanelProps {
   onRefresh?: () => void
   onJumpToSource?: (reference: SourceReference) => void
   onResolveConflict?: () => void
-  reviewId?: string
-  fileId?: string
-  columnId?: string
 }
 
 export const CellDetailPanel: React.FC<CellDetailPanelProps> = ({
@@ -42,9 +39,6 @@ export const CellDetailPanel: React.FC<CellDetailPanelProps> = ({
   onRefresh,
   onJumpToSource,
   onResolveConflict,
-  reviewId,
-  fileId,
-  columnId,
 }) => {
   if (!cellDetails) {
     return (

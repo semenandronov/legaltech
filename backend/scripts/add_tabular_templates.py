@@ -73,6 +73,105 @@ DEFAULT_TEMPLATES = [
             }
         ]
     },
+    # Entity mode templates
+    {
+        "name": "Payments (Entity Table)",
+        "description": "Template for extracting individual payments as entities from documents.",
+        "category": "entity_payment",
+        "tags": ["Entity", "Payment"],
+        "is_system": True,
+        "is_public": True,
+        "is_featured": False,
+        "columns": [
+            {
+                "column_label": "Payment Date",
+                "column_type": "date",
+                "prompt": "For each payment in the document, extract the payment date."
+            },
+            {
+                "column_label": "Amount",
+                "column_type": "currency",
+                "prompt": "For each payment in the document, extract the payment amount with currency."
+            },
+            {
+                "column_label": "Payer",
+                "column_type": "text",
+                "prompt": "For each payment in the document, extract the name of the payer."
+            },
+            {
+                "column_label": "Payee",
+                "column_type": "text",
+                "prompt": "For each payment in the document, extract the name of the payee."
+            },
+            {
+                "column_label": "Payment Purpose",
+                "column_type": "text",
+                "prompt": "For each payment in the document, extract the description or purpose of the payment."
+            }
+        ]
+    },
+    {
+        "name": "Shipments / Deliveries (Entity Table)",
+        "description": "Template for extracting shipments or deliveries as entities from documents.",
+        "category": "entity_shipment",
+        "tags": ["Entity", "Shipment"],
+        "is_system": True,
+        "is_public": True,
+        "is_featured": False,
+        "columns": [
+            {
+                "column_label": "Shipment Date",
+                "column_type": "date",
+                "prompt": "For each shipment/delivery in the document, extract the shipment date."
+            },
+            {
+                "column_label": "Goods / Services",
+                "column_type": "text",
+                "prompt": "For each shipment/delivery in the document, describe the goods or services provided."
+            },
+            {
+                "column_label": "Quantity",
+                "column_type": "number",
+                "prompt": "For each shipment/delivery in the document, extract the quantity if specified."
+            },
+            {
+                "column_label": "Counterparty",
+                "column_type": "text",
+                "prompt": "For each shipment/delivery in the document, extract the counterparty name."
+            }
+        ]
+    },
+    {
+        "name": "Correspondence (Entity Table)",
+        "description": "Template for extracting individual letters/emails as entities from documents.",
+        "category": "entity_correspondence",
+        "tags": ["Entity", "Correspondence"],
+        "is_system": True,
+        "is_public": True,
+        "is_featured": False,
+        "columns": [
+            {
+                "column_label": "Date",
+                "column_type": "date",
+                "prompt": "For each letter/email in the document, extract the date."
+            },
+            {
+                "column_label": "Sender",
+                "column_type": "text",
+                "prompt": "For each letter/email in the document, extract the sender."
+            },
+            {
+                "column_label": "Recipient",
+                "column_type": "text",
+                "prompt": "For each letter/email in the document, extract the recipient."
+            },
+            {
+                "column_label": "Subject / Topic",
+                "column_type": "text",
+                "prompt": "For each letter/email in the document, summarize the subject or main topic."
+            }
+        ]
+    }
     {
         "name": "SPA Review (template)",
         "description": "Template for reviewing Sale and Purchase Agreements (SPAs).",

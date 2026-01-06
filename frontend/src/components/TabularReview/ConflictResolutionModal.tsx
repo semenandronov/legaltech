@@ -22,7 +22,6 @@ import {
 import {
   Check as CheckIcon,
   Warning as WarningIcon,
-  Cancel as CancelIcon,
 } from "@mui/icons-material"
 import { Candidate } from "@/services/tabularReviewApi"
 import { tabularReviewApi } from "@/services/tabularReviewApi"
@@ -36,7 +35,6 @@ interface ConflictResolutionModalProps {
   columnId: string
   columnLabel: string
   candidates: Candidate[]
-  currentValue: string | null
   onResolved: () => void
 }
 
@@ -48,7 +46,6 @@ export const ConflictResolutionModal: React.FC<ConflictResolutionModalProps> = (
   columnId,
   columnLabel,
   candidates,
-  currentValue,
   onResolved,
 }) => {
   const [selectedCandidateId, setSelectedCandidateId] = useState<number>(0)

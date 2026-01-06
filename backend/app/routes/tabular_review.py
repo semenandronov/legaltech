@@ -101,6 +101,10 @@ class ColumnExamplesRequest(BaseModel):
     examples: List[ColumnExampleRequest]
 
 
+class TableModeUpdateRequest(BaseModel):
+    table_mode: str  # 'document', 'entity', 'fact'
+    entity_config: Optional[dict] = None
+
 @router.post("/")
 async def create_review(
     request: TabularReviewCreateRequest,
@@ -469,6 +473,44 @@ async def get_table_data(
     except Exception as e:
         logger.error(f"Error getting table data: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail="Failed to get table data")
+
+
+@router.patch("/{review_id}/mode")
+async def update_table_mode(
+    review_id: str,
+    request: TableModeUpdateRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """Update table mode and entity configuration for a review"""
+    from app.models.tabular_review import TabularReview
+    try:
+        # Verify review belongs to user
+        review = db.query(TabularReview).filter(
+            and_(TabularReview.id == review_id, TabularReview.user_id == current_user.id)
+        ).first()
+
+        if not review:
+            raise HTTPException(status_code=404, detail="Tabular review not found or access denied")
+
+        if request.table_mode not in ("document", "entity", "fact"):
+            raise HTTPException(status_code=400, detail="Invalid table_mode")
+
+        review.table_mode = request.table_mode
+        review.entity_config = request.entity_config
+        db.commit()
+        db.refresh(review)
+
+        return {
+            "id": review.id,
+            "table_mode": review.table_mode,
+            "entity_config": review.entity_config,
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error updating table mode: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Failed to update table mode")
 
 
 @router.get("/{review_id}/cell/{file_id}/{column_id}")

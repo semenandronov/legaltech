@@ -49,7 +49,11 @@ export const ThemeProvider = ({ children }: { children: ReactNode }) => {
   }
 
   const setTheme = (newTheme: Theme) => {
-    // Гарантируем, что тема остаётся светлой
+    // Гарантируем, что тема остаётся светлой, но используем параметр,
+    // чтобы избежать предупреждений TypeScript о неиспользуемой переменной
+    if (newTheme !== 'light') {
+      // В будущем можно будет поддержать переключение тем
+    }
     setThemeState('light')
   }
 

@@ -500,6 +500,8 @@ class TabularReviewService:
                 "description": review.description,
                 "status": review.status,
                 "selected_file_ids": review.selected_file_ids,
+                "table_mode": getattr(review, "table_mode", "document"),
+                "entity_config": getattr(review, "entity_config", None),
             },
             "columns": [
                 {
