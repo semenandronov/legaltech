@@ -568,6 +568,110 @@ class AgentCoordinator:
             # This ensures we get delivery_result and all other state data
             try:
                 graph_state = self.graph.get_state(thread_config)
+                final_state = graph_state.values if graph_state else None
+                logger.info(f"[Coordinator] Retrieved final state from graph, keys: {list(final_state.keys()) if final_state and isinstance(final_state, dict) else 'N/A'}")
+            except Exception as e:
+                logger.warning(f"[Coordinator] Failed to get final state from graph: {e}, using last node state")
+                # Fallback to last node state if graph state retrieval fails
+                if final_state is None:
+                    final_state = {}
+            
+            execution_time = time.time() - start_time
+            
+            # Track agent execution metrics
+            try:
+                from app.middleware.metrics import track_agent_execution
+                track_agent_execution("multi_agent_analysis", execution_time, success=True)
+            except Exception as metrics_error:
+                logger.warning(f"Failed to track metrics: {metrics_error}")
+            
+            # Update execution metrics
+            if metrics_id and final_state:
+                try:
+                    completed_steps = len(final_state.get("completed_steps", []))
+                    failed_steps = len([e for e in final_state.get("errors", []) if e])
+                    adaptations = len(final_state.get("adaptation_history", []))
+                    
+                    # Calculate average quality metrics
+                    quality_metrics = None
+                    evaluation_result = final_state.get("evaluation_result")
+                    if evaluation_result and isinstance(evaluation_result, dict):
+                        quality_metrics_data = evaluation_result.get("quality_metrics", {})
+                        if quality_metrics_data:
+                            quality_metrics = {
+                                "average_confidence": quality_metrics_data.get("overall_score", 0.0),
+                                "average_completeness": quality_metrics_data.get("completeness", 0.0),
+                                "average_accuracy": quality_metrics_data.get("accuracy", 0.0)
+                            }
+                    
+                    self.metrics_collector.update_execution_metrics(
+                        metrics_id=metrics_id,
+                        execution_time=execution_time,
+                        completed_steps=completed_steps,
+                        failed_steps=failed_steps,
+                        adaptations_count=adaptations,
+                        quality_metrics=quality_metrics
+                    )
+                except Exception as metrics_error:
+                    logger.warning(f"Failed to update execution metrics: {metrics_error}")
+            
+            logger.info(
+                f"Multi-agent analysis completed for case {case_id} in {execution_time:.2f}s"
+            )
+            
+            # Save patterns for continuous learning
+            if self.learning_service and final_state:
+                try:
+                    import asyncio
+                    
+                    # Collect successful and failed patterns
+                    for agent_name in analysis_types:
+                        result_key = f"{agent_name}_result"
+                        result = final_state.get(result_key)
+                        
+                        if result:
+                            # Determine outcome
+                            evaluation = final_state.get("evaluation_result", {})
+                            if isinstance(evaluation, dict):
+                                agent_eval = evaluation.get("agent_name") == agent_name
+                                success = evaluation.get("success", False) if agent_eval else True
+                            else:
+                                success = True  # Assume success if no evaluation
+                            
+                            outcome = "success" if success else "failure"
+                            
+                            # Save pattern
+                            if asyncio.iscoroutinefunction(self.learning_service.save_pattern):
+                                loop = asyncio.get_event_loop()
+                                if loop.is_running():
+                                    asyncio.create_task(self.learning_service.save_pattern(
+                                        agent_name=agent_name,
+                                        case_id=case_id,
+                                        outcome=outcome,
+                                        context=final_state
+                                    ))
+                                else:
+                                    loop.run_until_complete(self.learning_service.save_pattern(
+                                        agent_name=agent_name,
+                                        case_id=case_id,
+                                        outcome=outcome,
+                                        context=final_state
+                                    ))
+                            else:
+                                self.learning_service.save_pattern(
+                                    agent_name=agent_name,
+                                    case_id=case_id,
+                                    outcome=outcome,
+                                    context=final_state
+                                )
+                except Exception as learning_error:
+                    logger.warning(f"Failed to save learning patterns: {learning_error}")
+            
+            return {
+                "final_state": final_state,
+                "execution_time": execution_time,
+                "execution_steps": execution_steps
+            }
     
     def resume_after_interrupt(
         self,
@@ -650,258 +754,6 @@ class AgentCoordinator:
         except Exception as e:
             logger.error(f"[Resume] Error resuming graph execution: {e}", exc_info=True)
             raise
-                final_state = graph_state.values if graph_state else None
-                logger.info(f"[Coordinator] Retrieved final state from graph, keys: {list(final_state.keys()) if final_state and isinstance(final_state, dict) else 'N/A'}")
-            except Exception as e:
-                logger.warning(f"[Coordinator] Failed to get final state from graph: {e}, using last node state")
-                # Fallback to last node state if graph state retrieval fails
-                if final_state is None:
-                    final_state = {}
-            
-            execution_time = time.time() - start_time
-            
-            # Track agent execution metrics
-            try:
-                from app.middleware.metrics import track_agent_execution
-                track_agent_execution("multi_agent_analysis", execution_time, success=True)
-            except Exception:
-                pass  # Metrics middleware might not be available
-            
-            # Update execution metrics
-            if metrics_id and final_state:
-                try:
-                    completed_steps = len(final_state.get("completed_steps", []))
-                    failed_steps = len([e for e in final_state.get("errors", []) if e])
-                    adaptations = len(final_state.get("adaptation_history", []))
-                    
-                    # Calculate average quality metrics
-                    quality_metrics = None
-                    evaluation_result = final_state.get("evaluation_result")
-                    if evaluation_result and isinstance(evaluation_result, dict):
-                        quality_metrics_data = evaluation_result.get("quality_metrics", {})
-                        if quality_metrics_data:
-                            quality_metrics = {
-                                "average_confidence": quality_metrics_data.get("overall_score", 0.0),
-                                "average_completeness": quality_metrics_data.get("completeness", 0.0),
-                                "average_accuracy": quality_metrics_data.get("accuracy", 0.0)
-                            }
-                    
-                    self.metrics_collector.update_execution_metrics(
-                        metrics_id=metrics_id,
-                        execution_time=execution_time,
-                        completed_steps=completed_steps,
-                        failed_steps=failed_steps,
-                        adaptations_count=adaptations,
-                        quality_metrics=quality_metrics
-                    )
-                except Exception as metrics_error:
-                    logger.warning(f"Failed to update execution metrics: {metrics_error}")
-            
-            logger.info(
-                f"Multi-agent analysis completed for case {case_id} in {execution_time:.2f}s"
-            )
-            
-            # Save patterns for continuous learning
-            if self.learning_service and final_state:
-                try:
-                    import asyncio
-                    
-                    # Collect successful and failed patterns
-                    for agent_name in analysis_types:
-                        result_key = f"{agent_name}_result"
-                        result = final_state.get(result_key)
-                        
-                        if result:
-                            # Determine outcome
-                            evaluation = final_state.get("evaluation_result", {})
-                            if isinstance(evaluation, dict):
-                                agent_eval = evaluation.get("agent_name") == agent_name
-                                success = evaluation.get("success", False) if agent_eval else True
-                            else:
-                                success = True  # Assume success if no evaluation
-                            
-                            outcome = "success" if success else "failure"
-                            
-                            # Save pattern
-                            pattern = {
-                                "result": result,
-                                "user_task": user_task,
-                                "execution_time": execution_time,
-                                "evaluation": evaluation if isinstance(evaluation, dict) else {}
-                            }
-                            
-                            try:
-                                # Try to get existing event loop
-                                try:
-                                    loop = asyncio.get_event_loop()
-                                    if loop.is_running():
-                                        # If loop is running, schedule task
-                                        asyncio.create_task(
-                                            self.learning_service.save_successful_pattern(
-                                                case_id=case_id,
-                                                agent_name=agent_name,
-                                                pattern=pattern,
-                                                outcome=outcome
-                                            )
-                                        )
-                                    else:
-                                        # If loop exists but not running, run until complete
-                                        loop.run_until_complete(
-                                            self.learning_service.save_successful_pattern(
-                                                case_id=case_id,
-                                                agent_name=agent_name,
-                                                pattern=pattern,
-                                                outcome=outcome
-                                            )
-                                        )
-                                except RuntimeError:
-                                    # No event loop, create new one
-                                    try:
-                                        asyncio.run(
-                                            self.learning_service.save_successful_pattern(
-                                                case_id=case_id,
-                                                agent_name=agent_name,
-                                                pattern=pattern,
-                                                outcome=outcome
-                                            )
-                                        )
-                                    except RuntimeError:
-                                        # If asyncio.run fails (e.g., in thread), use new event loop
-                                        loop = asyncio.new_event_loop()
-                                        asyncio.set_event_loop(loop)
-                                        try:
-                                            loop.run_until_complete(
-                                                self.learning_service.save_successful_pattern(
-                                                    case_id=case_id,
-                                                    agent_name=agent_name,
-                                                    pattern=pattern,
-                                                    outcome=outcome
-                                                )
-                                            )
-                                        finally:
-                                            loop.close()
-                            except Exception as e:
-                                logger.warning(f"Failed to save pattern asynchronously: {e}, saving synchronously")
-                                # Fallback to synchronous save
-                                try:
-                                    self.learning_service.save_successful_pattern(
-                                        case_id=case_id,
-                                        agent_name=agent_name,
-                                        pattern=pattern,
-                                        outcome=outcome
-                                    )
-                                except Exception as sync_error:
-                                    logger.error(f"Failed to save pattern synchronously: {sync_error}")
-                            
-                            logger.debug(f"Saved {outcome} pattern for {agent_name} agent")
-                    
-                    # Generate evaluation dataset for LangSmith
-                    try:
-                        dataset = asyncio.run(
-                            self.learning_service.generate_evaluation_dataset(case_id)
-                        )
-                        if dataset.get("langsmith_dataset_id"):
-                            logger.info(f"Created LangSmith dataset: {dataset['langsmith_dataset_id']}")
-                    except Exception as e:
-                        logger.warning(f"Failed to generate evaluation dataset: {e}")
-                        
-                except Exception as e:
-                    logger.warning(f"Failed to save patterns for continuous learning: {e}")
-            
-            # Check if DELIVER phase was executed (LEGORA workflow)
-            delivery_result = final_state.get("delivery_result") if final_state else None
-            
-            if delivery_result:
-                # Use delivery_result from DELIVER phase (LEGORA workflow)
-                logger.info(f"[Coordinator] Using delivery_result from DELIVER phase for case {case_id}")
-                results = {
-                    "case_id": case_id,
-                    "delivery": delivery_result,
-                    "tables": delivery_result.get("tables", {}),
-                    "reports": delivery_result.get("reports", {}),
-                    "summary": delivery_result.get("summary", ""),
-                    # Also include raw results for backward compatibility
-                    "timeline": final_state.get("timeline_result") if final_state else None,
-                    "key_facts": final_state.get("key_facts_result") if final_state else None,
-                    "discrepancies": final_state.get("discrepancy_result") if final_state else None,
-                    "risk_analysis": final_state.get("risk_result") if final_state else None,
-                    "summary": final_state.get("summary_result") if final_state else None,
-                    "classification": final_state.get("classification_result") if final_state else None,
-                    "entities": final_state.get("entities_result") if final_state else None,
-                    "privilege": final_state.get("privilege_result") if final_state else None,
-                    "errors": final_state.get("errors", []) if final_state else [],
-                    "execution_time": execution_time,
-                    "metadata": final_state.get("metadata", {}) if final_state else {},
-                    "adaptation_history": final_state.get("adaptation_history", []) if final_state else [],
-                    "evaluation_results": final_state.get("evaluation_result") if final_state else None,
-                    "workflow": "legora"  # Indicate LEGORA workflow was used
-                }
-            else:
-                # Legacy format (backward compatibility)
-                logger.info(f"[Coordinator] Using legacy result format for case {case_id}")
-                results = {
-                "case_id": case_id,
-                "timeline": final_state.get("timeline_result") if final_state else None,
-                "key_facts": final_state.get("key_facts_result") if final_state else None,
-                "discrepancies": final_state.get("discrepancy_result") if final_state else None,
-                "risk_analysis": final_state.get("risk_result") if final_state else None,
-                "summary": final_state.get("summary_result") if final_state else None,
-                "classification": final_state.get("classification_result") if final_state else None,
-                "entities": final_state.get("entities_result") if final_state else None,
-                "privilege": final_state.get("privilege_result") if final_state else None,
-                "errors": final_state.get("errors", []) if final_state else [],
-                "execution_time": execution_time,
-                "metadata": final_state.get("metadata", {}) if final_state else {},
-                "adaptation_history": final_state.get("adaptation_history", []) if final_state else [],
-                    "evaluation_results": final_state.get("evaluation_result") if final_state else None,
-                    "workflow": "legacy"  # Indicate legacy workflow was used
-            }
-            
-            # Apply fallback handling for failed agents
-            if final_state:
-                errors = final_state.get("errors", [])
-                for error_info in errors:
-                    agent_name = error_info.get("agent", "unknown")
-                    error_msg = error_info.get("error", "Unknown error")
-                    
-                    # Try fallback for this agent
-                    try:
-                        from app.services.langchain_agents.state import PlanStepStatus
-                        fallback_result = self.fallback_handler.handle_failure(
-                            agent_name=agent_name,
-                            error=Exception(error_msg),
-                            state=final_state
-                        )
-                        
-                        if fallback_result.success and fallback_result.result:
-                            # Update result with fallback
-                            result_key = f"{agent_name}_result"
-                            if result_key in results:
-                                # Combine with existing result if partial
-                                if fallback_result.partial and results[result_key]:
-                                    combined = self.fallback_handler.combine_results(
-                                        [results[result_key], fallback_result.result],
-                                        agent_name
-                                    )
-                                    results[result_key] = combined
-                                else:
-                                    results[result_key] = fallback_result.result
-                            
-                            logger.info(
-                                f"Fallback successful for {agent_name}: {fallback_result.strategy}"
-                            )
-                    except Exception as fallback_error:
-                        logger.warning(f"Fallback handling failed for {agent_name}: {fallback_error}")
-            
-            # Add execution steps to results
-            if execution_steps:
-                results["execution_steps"] = execution_steps
-            
-            # Unregister WebSocket callback
-            if websocket_callback:
-                self.feedback_service.unregister_websocket_callback(case_id)
-            
-            return results
             
         except Exception as e:
             execution_time = time.time() - start_time
