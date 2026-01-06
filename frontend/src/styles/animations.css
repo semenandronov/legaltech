@@ -1,10 +1,11 @@
-/* Expressive Animations for Legal AI */
+/* Subtle Animations - Harvey/Legora style */
+/* Principles: Subtle, Purposeful, Fast (150-300ms) */
 
-/* Fade in from bottom */
-@keyframes fadeInUp {
+/* Fade in - subtle and fast */
+@keyframes fadeIn {
   from {
     opacity: 0;
-    transform: translateY(12px);
+    transform: translateY(8px);
   }
   to {
     opacity: 1;
@@ -12,125 +13,49 @@
   }
 }
 
-/* Slide in from left */
-@keyframes slideInLeft {
-  from {
-    opacity: 0;
-    transform: translateX(-20px);
-  }
-  to {
-    opacity: 1;
-    transform: translateX(0);
-  }
-}
-
-/* Shimmer effect for active elements */
+/* Shimmer for loading states - subtle */
 @keyframes shimmer {
   0% {
-    background-position: -1000px 0;
+    background-position: -200% 0;
   }
   100% {
-    background-position: 1000px 0;
+    background-position: 200% 0;
   }
 }
 
-/* Pulse for loading states */
+/* Pulse for loading - subtle */
 @keyframes pulse {
   0%, 100% {
     opacity: 1;
   }
   50% {
-    opacity: 0.5;
+    opacity: 0.6;
   }
 }
 
-/* Scale in with bounce */
-@keyframes scaleIn {
-  from {
-    opacity: 0;
-    transform: scale(0.95);
-  }
-  to {
-    opacity: 1;
-    transform: scale(1);
-  }
-}
-
-/* Fade in */
-@keyframes fadeIn {
-  from {
-    opacity: 0;
-  }
-  to {
-    opacity: 1;
-  }
-}
-
-/* Utility classes */
-.sidebar-item {
-  animation: fadeInUp 0.4s ease-out;
-  animation-fill-mode: both;
-}
-
-.fade-in-up {
-  animation: fadeInUp 0.5s ease-out;
-  animation-fill-mode: both;
-}
-
-.slide-in-left {
-  animation: slideInLeft 0.4s ease-out;
-  animation-fill-mode: both;
-}
-
-.scale-in {
-  animation: scaleIn 0.3s ease-out;
+/* Utility classes - fast and subtle */
+.animate-fade-in {
+  animation: fadeIn var(--transition-base);
   animation-fill-mode: both;
 }
 
 .fade-in {
-  animation: fadeIn 0.4s ease-out;
+  animation: fadeIn var(--transition-base);
   animation-fill-mode: both;
 }
 
-/* Staggered reveal for lists */
-.stagger-item {
-  animation: fadeInUp 0.5s ease-out;
-  animation-fill-mode: both;
-}
-
-.stagger-item:nth-child(1) { animation-delay: 0.05s; }
-.stagger-item:nth-child(2) { animation-delay: 0.1s; }
-.stagger-item:nth-child(3) { animation-delay: 0.15s; }
-.stagger-item:nth-child(4) { animation-delay: 0.2s; }
-.stagger-item:nth-child(5) { animation-delay: 0.25s; }
-.stagger-item:nth-child(6) { animation-delay: 0.3s; }
-.stagger-item:nth-child(7) { animation-delay: 0.35s; }
-.stagger-item:nth-child(8) { animation-delay: 0.4s; }
-.stagger-item:nth-child(9) { animation-delay: 0.45s; }
-.stagger-item:nth-child(10) { animation-delay: 0.5s; }
-
-/* Smooth transitions */
+/* Smooth transitions - using CSS variables */
 .smooth-transition {
-  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  transition: all var(--transition-base);
 }
 
-/* Hover scale effect */
-.hover-scale {
-  transition: transform 0.3s ease-out;
+/* Interactive elements - subtle hover effects */
+.interactive {
+  transition: background-color var(--transition-fast),
+              border-color var(--transition-fast),
+              color var(--transition-fast);
 }
 
-.hover-scale:hover {
-  transform: scale(1.02);
-}
-
-/* Hover lift effect */
-.hover-lift {
-  transition: transform 0.3s ease-out, box-shadow 0.3s ease-out;
-}
-
-.hover-lift:hover {
-  transform: translateY(-2px);
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12);
-}
+/* No scale effects - removed for Harvey style */
 
 

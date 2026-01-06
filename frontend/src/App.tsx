@@ -140,9 +140,15 @@ const CaseChatPage = () => {
 
   return (
     <Suspense fallback={<PageLoader />}>
-      <div className="flex h-screen bg-gradient-to-br from-[#F8F9FA] via-white to-[#F0F4F8]">
+      <div 
+        className="flex h-screen"
+        style={{ backgroundColor: 'var(--color-bg-primary)' }}
+      >
         <UnifiedSidebar navItems={navItems} title="Legal AI" />
-        <div className="flex-1 flex flex-col overflow-hidden content-background">
+        <div 
+          className="flex-1 flex flex-col overflow-hidden"
+          style={{ backgroundColor: 'var(--color-bg-primary)' }}
+        >
           <main className="flex-1 overflow-y-auto">
             <div className="h-full">
               <AssistantChatPage />

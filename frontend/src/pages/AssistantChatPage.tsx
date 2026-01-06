@@ -122,13 +122,34 @@ const AssistantChatPage = () => {
   }
 
   return (
-    <div className="h-full w-full flex flex-col fade-in-up relative">
+    <div 
+      className="h-full w-full flex flex-col relative animate-fade-in"
+      style={{ backgroundColor: 'var(--color-bg-primary)' }}
+    >
       {/* Top toolbar */}
-      <div className="flex items-center justify-between px-6 py-3 border-b border-gray-200 bg-white">
+      <div 
+        className="flex items-center justify-between px-6 py-3 border-b"
+        style={{ 
+          padding: 'var(--space-3) var(--space-6)',
+          borderBottomColor: 'var(--color-border)',
+          backgroundColor: 'var(--color-bg-primary)'
+        }}
+      >
         <div className="flex items-center gap-4">
           <button
             onClick={() => setDocumentsPanelOpen(!documentsPanelOpen)}
-            className="flex items-center gap-2 px-3 py-1.5 text-sm font-medium text-gray-700 hover:bg-gray-100 rounded-lg transition-colors"
+            className="flex items-center gap-2 px-3 py-1.5 text-sm font-medium rounded-lg transition-all duration-150"
+            style={{
+              color: 'var(--color-text-secondary)',
+            }}
+            onMouseEnter={(e) => {
+              e.currentTarget.style.backgroundColor = 'var(--color-bg-hover)'
+              e.currentTarget.style.color = 'var(--color-text-primary)'
+            }}
+            onMouseLeave={(e) => {
+              e.currentTarget.style.backgroundColor = 'transparent'
+              e.currentTarget.style.color = 'var(--color-text-secondary)'
+            }}
             title="Открыть панель документов"
           >
             <FileText className="w-4 h-4" />
@@ -137,7 +158,20 @@ const AssistantChatPage = () => {
           
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
-              <button className="flex items-center gap-2 px-3 py-1.5 text-sm font-medium text-gray-700 hover:bg-gray-100 rounded-lg transition-colors">
+              <button 
+                className="flex items-center gap-2 px-3 py-1.5 text-sm font-medium rounded-lg transition-all duration-150"
+                style={{
+                  color: 'var(--color-text-secondary)',
+                }}
+                onMouseEnter={(e) => {
+                  e.currentTarget.style.backgroundColor = 'var(--color-bg-hover)'
+                  e.currentTarget.style.color = 'var(--color-text-primary)'
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.backgroundColor = 'transparent'
+                  e.currentTarget.style.color = 'var(--color-text-secondary)'
+                }}
+              >
                 <MoreVertical className="w-4 h-4" />
                 Еще
                 <ChevronDown className="w-4 h-4" />
@@ -163,7 +197,18 @@ const AssistantChatPage = () => {
         <div className="flex items-center gap-2">
           <button 
             onClick={handleNewChat}
-            className="flex items-center gap-2 px-3 py-1.5 text-sm font-medium text-gray-700 hover:bg-gray-100 rounded-lg transition-colors"
+            className="flex items-center gap-2 px-3 py-1.5 text-sm font-medium rounded-lg transition-all duration-150"
+            style={{
+              color: 'var(--color-text-secondary)',
+            }}
+            onMouseEnter={(e) => {
+              e.currentTarget.style.backgroundColor = 'var(--color-bg-hover)'
+              e.currentTarget.style.color = 'var(--color-text-primary)'
+            }}
+            onMouseLeave={(e) => {
+              e.currentTarget.style.backgroundColor = 'transparent'
+              e.currentTarget.style.color = 'var(--color-text-secondary)'
+            }}
             title="Начать новый чат"
           >
             <MessageSquare className="w-4 h-4" />
@@ -171,7 +216,18 @@ const AssistantChatPage = () => {
           </button>
           <button 
             onClick={handleExport}
-            className="flex items-center gap-2 px-3 py-1.5 text-sm font-medium text-gray-700 hover:bg-gray-100 rounded-lg transition-colors"
+            className="flex items-center gap-2 px-3 py-1.5 text-sm font-medium rounded-lg transition-all duration-150"
+            style={{
+              color: 'var(--color-text-secondary)',
+            }}
+            onMouseEnter={(e) => {
+              e.currentTarget.style.backgroundColor = 'var(--color-bg-hover)'
+              e.currentTarget.style.color = 'var(--color-text-primary)'
+            }}
+            onMouseLeave={(e) => {
+              e.currentTarget.style.backgroundColor = 'transparent'
+              e.currentTarget.style.color = 'var(--color-text-secondary)'
+            }}
             title="Экспортировать историю"
           >
             <Download className="w-4 h-4" />
@@ -179,14 +235,36 @@ const AssistantChatPage = () => {
           </button>
           <button 
             onClick={handleShare}
-            className="px-3 py-1.5 text-sm font-medium text-gray-700 hover:bg-gray-100 rounded-lg transition-colors"
+            className="px-3 py-1.5 text-sm font-medium rounded-lg transition-all duration-150"
+            style={{
+              color: 'var(--color-text-secondary)',
+            }}
+            onMouseEnter={(e) => {
+              e.currentTarget.style.backgroundColor = 'var(--color-bg-hover)'
+              e.currentTarget.style.color = 'var(--color-text-primary)'
+            }}
+            onMouseLeave={(e) => {
+              e.currentTarget.style.backgroundColor = 'transparent'
+              e.currentTarget.style.color = 'var(--color-text-secondary)'
+            }}
             title="Скопировать ссылку на чат"
           >
             <Share2 className="w-4 h-4" />
           </button>
           <button 
             onClick={() => setHistoryPanelOpen(true)}
-            className="flex items-center gap-2 px-3 py-1.5 text-sm font-medium text-gray-700 hover:bg-gray-100 rounded-lg transition-colors"
+            className="flex items-center gap-2 px-3 py-1.5 text-sm font-medium rounded-lg transition-all duration-150"
+            style={{
+              color: 'var(--color-text-secondary)',
+            }}
+            onMouseEnter={(e) => {
+              e.currentTarget.style.backgroundColor = 'var(--color-bg-hover)'
+              e.currentTarget.style.color = 'var(--color-text-primary)'
+            }}
+            onMouseLeave={(e) => {
+              e.currentTarget.style.backgroundColor = 'transparent'
+              e.currentTarget.style.color = 'var(--color-text-secondary)'
+            }}
           >
             <History className="w-4 h-4" />
             <span className="hidden sm:inline">История</span>

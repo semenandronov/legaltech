@@ -43,16 +43,22 @@ const CasesListPage = () => {
   }
   
   return (
-    <div className="h-screen flex overflow-hidden bg-[#0F0F23]">
+    <div 
+      className="h-screen flex overflow-hidden"
+      style={{ backgroundColor: 'var(--color-bg-primary)' }}
+    >
       {/* Unified Sidebar */}
       <UnifiedSidebar navItems={mainNavItems} title="Legal AI" />
       
-      {/* Main Content Area with expressive design */}
+      {/* Main Content Area */}
       <div className="flex-1 flex flex-col overflow-hidden">
-        {/* Content with gradient mesh background */}
-        <div className="flex-1 content-background overflow-auto">
+        {/* Content */}
+        <div 
+          className="flex-1 overflow-auto"
+          style={{ backgroundColor: 'var(--color-bg-primary)' }}
+        >
           {/* Cases Grid */}
-          <div className="fade-in-up" style={{ animationDelay: '0.1s' }}>
+          <div className="animate-fade-in">
             <CasesGrid
               cases={cases}
               total={total}

@@ -1,36 +1,8 @@
 import React, { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
-import {
-  Box,
-  Container,
-  Grid,
-  Card,
-  CardContent,
-  CardHeader,
-  Typography,
-  Button,
-  Avatar,
-  Chip,
-  Stack,
-  List,
-  ListItem,
-  ListItemButton,
-  ListItemAvatar,
-  ListItemText,
-  IconButton,
-  Skeleton,
-  Divider,
-  Fade,
-  Grow,
-} from '@mui/material'
-import {
-  Add as AddIcon,
-  FolderOpen as FolderOpenIcon,
-  TableChart as TableChartIcon,
-  Chat as ChatIcon,
-  MoreVert as MoreVertIcon,
-  ArrowForward as ArrowForwardIcon,
-} from '@mui/icons-material'
+import { Plus, FolderOpen, Table2, MessageSquare, MoreVertical, ArrowRight } from 'lucide-react'
+import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '../components/UI/Card'
+import { Button } from '../components/UI/button'
 import MainLayout from '../components/Layout/MainLayout'
 import { getCasesList } from '../services/api'
 import { tabularReviewApi } from '../services/tabularReviewApi'
@@ -119,229 +91,323 @@ const Dashboard: React.FC = () => {
 
   return (
     <MainLayout>
-      <Container maxWidth="xl" sx={{ py: 4 }}>
-        <Stack spacing={4}>
+      <div 
+        className="max-w-7xl mx-auto py-8 px-4"
+        style={{ 
+          padding: 'var(--space-8) var(--space-4)',
+          backgroundColor: 'var(--color-bg-primary)'
+        }}
+      >
+        <div className="space-y-6" style={{ gap: 'var(--space-6)' }}>
           {/* Header */}
-          <Box>
-            <Typography variant="h4" fontWeight={600} gutterBottom>
+          <div>
+            <h1 
+              className="text-4xl font-display mb-2"
+              style={{ 
+                fontFamily: 'var(--font-display)',
+                color: 'var(--color-text-primary)',
+                fontWeight: 400,
+                letterSpacing: 'var(--tracking-tight)'
+              }}
+            >
               Проекты
-            </Typography>
-            <Typography variant="body2" color="text.secondary">
+            </h1>
+            <p 
+              className="text-sm"
+              style={{ color: 'var(--color-text-secondary)' }}
+            >
               Управляйте вашими делами и Tabular Reviews
-            </Typography>
-          </Box>
+            </p>
+          </div>
 
           {/* Quick Actions */}
-          <Grow in timeout={400}>
-            <Card>
-              <CardContent>
-                <Stack direction="row" spacing={2}>
+          <Card className="animate-fade-in">
+            <CardContent style={{ padding: 'var(--space-6)' }}>
+              <div className="flex flex-wrap gap-3">
                 <Button
-                  variant="contained"
-                  startIcon={<AddIcon />}
+                  variant="default"
                   onClick={() => navigate('/cases/new')}
+                  className="flex items-center gap-2"
                 >
+                  <Plus className="w-4 h-4" />
                   Новое дело
                 </Button>
                 <Button
-                  variant="outlined"
-                  startIcon={<TableChartIcon />}
+                  variant="secondary"
                   onClick={() => navigate('/cases')}
+                  className="flex items-center gap-2"
                 >
+                  <Table2 className="w-4 h-4" />
                   Все дела
                 </Button>
                 <Button
-                  variant="outlined"
-                  startIcon={<ChatIcon />}
+                  variant="secondary"
                   onClick={() => navigate('/cases')}
+                  className="flex items-center gap-2"
                 >
+                  <MessageSquare className="w-4 h-4" />
                   Все чаты
                 </Button>
-              </Stack>
+              </div>
             </CardContent>
           </Card>
-          </Grow>
 
-          <Grid container spacing={3}>
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
             {/* Projects Grid */}
-            <Grid item xs={12} md={8}>
-              <Card>
-                <CardHeader
-                  title="Проекты"
-                  action={
+            <div className="md:col-span-2">
+              <Card className="animate-fade-in">
+                <CardHeader style={{ padding: 'var(--space-6)' }}>
+                  <div className="flex items-center justify-between">
+                    <CardTitle style={{ fontFamily: 'var(--font-display)', fontWeight: 400 }}>
+                      Проекты
+                    </CardTitle>
                     <Button
-                      size="small"
-                      endIcon={<ArrowForwardIcon />}
+                      variant="ghost"
+                      size="sm"
                       onClick={() => navigate('/cases')}
+                      className="flex items-center gap-2"
                     >
                       Все проекты
+                      <ArrowRight className="w-4 h-4" />
                     </Button>
-                  }
-                />
-                <CardContent>
+                  </div>
+                </CardHeader>
+                <CardContent style={{ padding: 'var(--space-6)' }}>
                   {loading ? (
-                    <Grid container spacing={2}>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                       {[1, 2, 3, 4, 5, 6].map((i) => (
-                        <Grid item xs={12} sm={6} key={i}>
-                          <Skeleton variant="rectangular" height={120} />
-                        </Grid>
+                        <div 
+                          key={i}
+                          className="h-32 rounded-lg border animate-pulse"
+                          style={{
+                            backgroundColor: 'var(--color-bg-secondary)',
+                            borderColor: 'var(--color-border)'
+                          }}
+                        />
                       ))}
-                    </Grid>
+                    </div>
                   ) : cases.length === 0 ? (
-                    <Box sx={{ textAlign: 'center', py: 4 }}>
-                      <FolderOpenIcon sx={{ fontSize: 48, color: 'text.secondary', mb: 2 }} />
-                      <Typography variant="body1" color="text.secondary" gutterBottom>
-                        Нет проектов
-                      </Typography>
-                      <Button
-                        variant="contained"
-                        startIcon={<AddIcon />}
-                        onClick={() => navigate('/cases/new')}
-                        sx={{ mt: 2 }}
+                    <div 
+                      className="text-center py-8"
+                      style={{ padding: 'var(--space-8)' }}
+                    >
+                      <FolderOpen 
+                        className="w-12 h-12 mx-auto mb-4"
+                        style={{ color: 'var(--color-text-muted)' }}
+                      />
+                      <p 
+                        className="text-base mb-4"
+                        style={{ color: 'var(--color-text-secondary)' }}
                       >
+                        Нет проектов
+                      </p>
+                      <Button
+                        variant="default"
+                        onClick={() => navigate('/cases/new')}
+                        className="flex items-center gap-2 mx-auto"
+                      >
+                        <Plus className="w-4 h-4" />
                         Создать проект
                       </Button>
-                    </Box>
+                    </div>
                   ) : (
-                    <Grid container spacing={2}>
-                      {cases.map((caseItem, idx) => (
-                        <Grid item xs={12} sm={6} key={caseItem.id}>
-                          <Fade in timeout={300 + idx * 100}>
-                            <Card
-                            sx={{
-                              cursor: 'pointer',
-                              transition: 'all 0.2s',
-                              '&:hover': {
-                                boxShadow: 4,
-                                transform: 'translateY(-2px)',
-                              },
-                            }}
-                            onClick={() => navigate(`/cases/${caseItem.id}`)}
-                          >
-                            <CardContent>
-                              <Stack spacing={2}>
-                                <Stack direction="row" spacing={2} alignItems="center">
-                                  <Avatar sx={{ bgcolor: 'primary.main' }}>
-                                    {getInitials(caseItem.title)}
-                                  </Avatar>
-                                  <Box sx={{ flex: 1, minWidth: 0 }}>
-                                    <Typography variant="subtitle1" fontWeight={600} noWrap>
-                                      {caseItem.title || `Дело ${caseItem.id.slice(0, 8)}`}
-                                    </Typography>
-                                    {caseItem.description && (
-                                      <Typography
-                                        variant="body2"
-                                        color="text.secondary"
-                                        sx={{
-                                          overflow: 'hidden',
-                                          textOverflow: 'ellipsis',
-                                          display: '-webkit-box',
-                                          WebkitLineClamp: 2,
-                                          WebkitBoxOrient: 'vertical',
-                                        }}
-                                      >
-                                        {caseItem.description}
-                                      </Typography>
-                                    )}
-                                  </Box>
-                                  <IconButton size="small">
-                                    <MoreVertIcon />
-                                  </IconButton>
-                                </Stack>
-                                <Stack direction="row" spacing={1} alignItems="center">
-                                  <Chip
-                                    label={caseItem.status}
-                                    size="small"
-                                    color={getStatusColor(caseItem.status)}
-                                  />
-                                  <Typography variant="caption" color="text.secondary" sx={{ ml: 'auto' }}>
-                                    {formatDate(caseItem.created_at)}
-                                  </Typography>
-                                </Stack>
-                              </Stack>
-                            </CardContent>
-                          </Card>
-                          </Fade>
-                        </Grid>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                      {cases.map((caseItem) => (
+                        <Card
+                          key={caseItem.id}
+                          className="cursor-pointer transition-all duration-150 hover:bg-bg-hover"
+                          style={{
+                            borderColor: 'var(--color-border)',
+                          }}
+                          onClick={() => navigate(`/cases/${caseItem.id}`)}
+                        >
+                          <CardContent style={{ padding: 'var(--space-4)' }}>
+                            <div className="space-y-3">
+                              <div className="flex items-center gap-3">
+                                <div 
+                                  className="w-10 h-10 rounded-full flex items-center justify-center text-sm font-medium"
+                                  style={{
+                                    backgroundColor: 'var(--color-bg-active)',
+                                    color: 'var(--color-text-primary)'
+                                  }}
+                                >
+                                  {getInitials(caseItem.title)}
+                                </div>
+                                <div className="flex-1 min-w-0">
+                                  <h3 
+                                    className="text-base font-medium truncate"
+                                    style={{ color: 'var(--color-text-primary)' }}
+                                  >
+                                    {caseItem.title || `Дело ${caseItem.id.slice(0, 8)}`}
+                                  </h3>
+                                  {caseItem.description && (
+                                    <p 
+                                      className="text-sm line-clamp-2 mt-1"
+                                      style={{ color: 'var(--color-text-secondary)' }}
+                                    >
+                                      {caseItem.description}
+                                    </p>
+                                  )}
+                                </div>
+                                <button
+                                  className="p-1 rounded-md hover:bg-bg-hover transition-colors"
+                                  style={{ color: 'var(--color-text-secondary)' }}
+                                >
+                                  <MoreVertical className="w-4 h-4" />
+                                </button>
+                              </div>
+                              <div className="flex items-center justify-between">
+                                <span 
+                                  className="text-xs px-2 py-1 rounded-md"
+                                  style={{
+                                    backgroundColor: getStatusColor(caseItem.status) === 'success' 
+                                      ? 'var(--color-success-bg)' 
+                                      : getStatusColor(caseItem.status) === 'warning'
+                                      ? 'var(--color-warning-bg)'
+                                      : 'var(--color-bg-tertiary)',
+                                    color: getStatusColor(caseItem.status) === 'success'
+                                      ? 'var(--color-success)'
+                                      : getStatusColor(caseItem.status) === 'warning'
+                                      ? 'var(--color-warning)'
+                                      : 'var(--color-text-secondary)',
+                                  }}
+                                >
+                                  {caseItem.status}
+                                </span>
+                                <span 
+                                  className="text-xs"
+                                  style={{ color: 'var(--color-text-muted)' }}
+                                >
+                                  {formatDate(caseItem.created_at)}
+                                </span>
+                              </div>
+                            </div>
+                          </CardContent>
+                        </Card>
                       ))}
-                    </Grid>
+                    </div>
                   )}
                 </CardContent>
               </Card>
-            </Grid>
+            </div>
 
             {/* Recent Reviews Sidebar */}
-            <Grid item xs={12} md={4}>
-              <Card>
-                <CardHeader
-                  title="Недавние Tabular Reviews"
-                  action={
-                    <IconButton size="small">
-                      <MoreVertIcon />
-                    </IconButton>
-                  }
+            <div className="md:col-span-1">
+              <Card className="animate-fade-in">
+                <CardHeader style={{ padding: 'var(--space-6)' }}>
+                  <div className="flex items-center justify-between">
+                    <CardTitle style={{ fontFamily: 'var(--font-display)', fontWeight: 400 }}>
+                      Недавние Tabular Reviews
+                    </CardTitle>
+                    <button
+                      className="p-1 rounded-md hover:bg-bg-hover transition-colors"
+                      style={{ color: 'var(--color-text-secondary)' }}
+                    >
+                      <MoreVertical className="w-4 h-4" />
+                    </button>
+                  </div>
+                </CardHeader>
+                <div 
+                  className="border-t"
+                  style={{ borderTopColor: 'var(--color-border)' }}
                 />
-                <Divider />
-                <CardContent>
+                <CardContent style={{ padding: 'var(--space-6)' }}>
                   {reviewsLoading ? (
-                    <Stack spacing={2}>
+                    <div className="space-y-3">
                       {[1, 2, 3].map((i) => (
-                        <Skeleton key={i} variant="rectangular" height={60} />
+                        <div 
+                          key={i}
+                          className="h-16 rounded-lg border animate-pulse"
+                          style={{
+                            backgroundColor: 'var(--color-bg-secondary)',
+                            borderColor: 'var(--color-border)'
+                          }}
+                        />
                       ))}
-                    </Stack>
+                    </div>
                   ) : recentReviews.length === 0 ? (
-                    <Box sx={{ textAlign: 'center', py: 4 }}>
-                      <TableChartIcon sx={{ fontSize: 48, color: 'text.secondary', mb: 2 }} />
-                      <Typography variant="body2" color="text.secondary">
+                    <div 
+                      className="text-center py-8"
+                      style={{ padding: 'var(--space-8)' }}
+                    >
+                      <Table2 
+                        className="w-12 h-12 mx-auto mb-4"
+                        style={{ color: 'var(--color-text-muted)' }}
+                      />
+                      <p 
+                        className="text-sm"
+                        style={{ color: 'var(--color-text-secondary)' }}
+                      >
                         Нет недавних reviews
-                      </Typography>
-                    </Box>
+                      </p>
+                    </div>
                   ) : (
-                    <List>
+                    <div className="space-y-1">
                       {recentReviews.map((review, idx) => (
-                        <React.Fragment key={review.id}>
-                          <ListItem disablePadding>
-                            <ListItemButton
-                              onClick={() => navigate(`/cases/${review.case_id}/tabular-review/${review.id}`)}
-                              sx={{
-                                '&:hover': {
-                                  bgcolor: 'action.hover',
-                                },
+                        <div key={review.id}>
+                          <button
+                            className="w-full flex items-center gap-3 p-3 rounded-lg transition-all duration-150 hover:bg-bg-hover text-left"
+                            onClick={() => navigate(`/cases/${review.case_id}/tabular-review/${review.id}`)}
+                          >
+                            <div 
+                              className="w-10 h-10 rounded-full flex items-center justify-center flex-shrink-0"
+                              style={{
+                                backgroundColor: 'var(--color-bg-active)',
+                                color: 'var(--color-text-primary)'
                               }}
                             >
-                              <ListItemAvatar>
-                                <Avatar sx={{ bgcolor: 'primary.main' }}>
-                                  <TableChartIcon />
-                                </Avatar>
-                              </ListItemAvatar>
-                              <ListItemText
-                                primary={review.name}
-                                secondary={
-                                  <Stack direction="row" spacing={1} alignItems="center" sx={{ mt: 0.5 }}>
-                                    <Chip
-                                      label={review.status}
-                                      size="small"
-                                      color={getStatusColor(review.status)}
-                                    />
-                                    <Typography variant="caption" color="text.secondary">
-                                      {formatDate(review.updated_at || review.created_at)}
-                                    </Typography>
-                                  </Stack>
-                                }
-                              />
-                            </ListItemButton>
-                          </ListItem>
-                          {idx < recentReviews.length - 1 && <Divider variant="inset" component="li" />}
-                        </React.Fragment>
+                              <Table2 className="w-5 h-5" />
+                            </div>
+                            <div className="flex-1 min-w-0">
+                              <p 
+                                className="text-sm font-medium truncate"
+                                style={{ color: 'var(--color-text-primary)' }}
+                              >
+                                {review.name}
+                              </p>
+                              <div className="flex items-center gap-2 mt-1">
+                                <span 
+                                  className="text-xs px-2 py-0.5 rounded-md"
+                                  style={{
+                                    backgroundColor: getStatusColor(review.status) === 'success' 
+                                      ? 'var(--color-success-bg)' 
+                                      : getStatusColor(review.status) === 'warning'
+                                      ? 'var(--color-warning-bg)'
+                                      : 'var(--color-bg-tertiary)',
+                                    color: getStatusColor(review.status) === 'success'
+                                      ? 'var(--color-success)'
+                                      : getStatusColor(review.status) === 'warning'
+                                      ? 'var(--color-warning)'
+                                      : 'var(--color-text-secondary)',
+                                  }}
+                                >
+                                  {review.status}
+                                </span>
+                                <span 
+                                  className="text-xs"
+                                  style={{ color: 'var(--color-text-muted)' }}
+                                >
+                                  {formatDate(review.updated_at || review.created_at)}
+                                </span>
+                              </div>
+                            </div>
+                          </button>
+                          {idx < recentReviews.length - 1 && (
+                            <div 
+                              className="border-b my-1"
+                              style={{ borderBottomColor: 'var(--color-border)' }}
+                            />
+                          )}
+                        </div>
                       ))}
-                    </List>
+                    </div>
                   )}
                 </CardContent>
               </Card>
-            </Grid>
-          </Grid>
-        </Stack>
-      </Container>
+            </div>
+          </div>
+        </div>
+      </div>
     </MainLayout>
   )
 }

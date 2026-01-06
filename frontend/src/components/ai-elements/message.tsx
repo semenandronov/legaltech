@@ -5,8 +5,8 @@ import { Tool, ToolInput, ToolOutput } from "./tool"
 import MessageContent from "../Chat/MessageContent"
 import { SourceInfo } from "@/services/api"
 
-// Animation styles
-const fadeIn = "animate-in fade-in slide-in-from-bottom-2 duration-300"
+// Animation styles - subtle fade in (Harvey style)
+const fadeIn = "animate-fade-in"
 
 export interface MessageProps {
   children: React.ReactNode
@@ -18,7 +18,7 @@ export function Message({ children, role, className }: MessageProps) {
   return (
     <div
       className={cn(
-        "flex",
+        "flex mb-4",
         role === "user" ? "justify-end" : "justify-start",
         fadeIn,
         className
@@ -26,11 +26,20 @@ export function Message({ children, role, className }: MessageProps) {
     >
       <div
         className={cn(
-          "max-w-[75%] rounded-2xl px-4 py-3 transition-all",
+          "max-w-[75%] rounded-lg px-4 py-3 transition-all duration-150",
           role === "user"
-            ? "bg-blue-600 text-white"
-            : "bg-gray-100 text-gray-800"
+            ? "bg-bg-elevated text-text-primary border border-border"
+            : "bg-bg-secondary text-text-primary border border-border-subtle"
         )}
+        style={{
+          backgroundColor: role === "user" 
+            ? 'var(--color-bg-elevated)' 
+            : 'var(--color-bg-secondary)',
+          color: 'var(--color-text-primary)',
+          borderColor: role === "user"
+            ? 'var(--color-border)'
+            : 'var(--color-border-subtle)',
+        }}
       >
         {children}
       </div>

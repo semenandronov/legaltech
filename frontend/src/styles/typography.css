@@ -1,59 +1,78 @@
-/* Typography Styles */
+/* Typography Styles - Harvey/Legora style */
 
-/* Import Inter font */
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+/* Display font - Cormorant Garamond (Harvey style) */
+@import url('https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@300;400;500;600;700&display=swap');
 
-/* Import Fira Code for monospace */
-@import url('https://fonts.googleapis.com/css2?family=Fira+Code:wght@400;500;600&display=swap');
+/* Body font - Inter */
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
 
-/* Typography utility classes */
+/* Monospace - JetBrains Mono */
+@import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&display=swap');
+
+/* Typography utility classes using CSS variables */
 .text-h1 {
-  font-size: 32px;
-  line-height: 1.2;
-  font-weight: 600;
-  letter-spacing: -0.02em;
+  font-family: var(--font-display);
+  font-size: var(--text-5xl);
+  line-height: var(--leading-tight);
+  font-weight: 400;
+  letter-spacing: var(--tracking-tight);
+  color: var(--color-text-primary);
 }
 
 .text-h2 {
-  font-size: 24px;
-  line-height: 1.3;
-  font-weight: 600;
-  letter-spacing: -0.01em;
+  font-family: var(--font-display);
+  font-size: var(--text-4xl);
+  line-height: var(--leading-tight);
+  font-weight: 400;
+  letter-spacing: var(--tracking-tight);
+  color: var(--color-text-primary);
 }
 
 .text-h3 {
-  font-size: 20px;
-  line-height: 1.4;
-  font-weight: 600;
+  font-family: var(--font-display);
+  font-size: var(--text-3xl);
+  line-height: var(--leading-snug);
+  font-weight: 400;
+  letter-spacing: var(--tracking-tight);
+  color: var(--color-text-primary);
 }
 
 .text-body-large {
-  font-size: 16px;
-  line-height: 1.75;
+  font-family: var(--font-body);
+  font-size: var(--text-base);
+  line-height: var(--leading-relaxed);
   font-weight: 400;
+  color: var(--color-text-primary);
 }
 
 .text-body {
-  font-size: 14px;
-  line-height: 1.75;
+  font-family: var(--font-body);
+  font-size: var(--text-sm);
+  line-height: var(--leading-normal);
   font-weight: 400;
+  color: var(--color-text-primary);
 }
 
 .text-small {
-  font-size: 12px;
-  line-height: 1.5;
+  font-family: var(--font-body);
+  font-size: var(--text-xs);
+  line-height: var(--leading-normal);
   font-weight: 400;
+  color: var(--color-text-secondary);
 }
 
 .text-tiny {
+  font-family: var(--font-body);
   font-size: 11px;
-  line-height: 1.4;
+  line-height: var(--leading-normal);
   font-weight: 400;
+  color: var(--color-text-muted);
 }
 
 .text-mono {
-  font-family: 'Fira Code', 'Courier New', monospace;
-  font-size: 13px;
-  line-height: 1.5;
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+  line-height: var(--leading-normal);
   font-weight: 400;
+  color: var(--color-text-primary);
 }

@@ -24,31 +24,59 @@ const CaseCard = ({ caseItem }: CaseCardProps) => {
   
   return (
     <div 
-      className="card-hover cursor-pointer bg-white rounded-xl p-6 shadow-soft border border-[#E5E8EB]/50"
+      className="cursor-pointer rounded-xl p-6 border transition-all duration-150 hover:bg-bg-hover"
+      style={{
+        backgroundColor: 'var(--color-bg-elevated)',
+        borderColor: 'var(--color-border)',
+        padding: 'var(--space-6)',
+      }}
       onClick={() => navigate(`/cases/${caseItem.id}/chat`)}
     >
-      <div className="space-y-5">
+      <div className="space-y-5" style={{ gap: 'var(--space-5)' }}>
         {/* Название */}
-        <h3 className="text-xl font-display text-[#0F1419] leading-tight tracking-tight">
+        <h3 
+          className="text-xl font-display leading-tight tracking-tight"
+          style={{
+            fontFamily: 'var(--font-display)',
+            color: 'var(--color-text-primary)',
+            letterSpacing: 'var(--tracking-tight)',
+          }}
+        >
           {caseItem.title || 'Без названия'}
         </h3>
         
         {/* Статистика */}
-        <div className="flex items-center gap-6 text-sm text-[#666B78]">
+        <div 
+          className="flex items-center gap-6 text-sm"
+          style={{ 
+            gap: 'var(--space-6)',
+            color: 'var(--color-text-secondary)'
+          }}
+        >
           <div className="flex items-center gap-2">
-            <FileText className="w-4 h-4 text-[#9CA3AF]" />
+            <FileText className="w-4 h-4" style={{ color: 'var(--color-text-muted)' }} />
             <span className="font-medium">{caseItem.num_documents} документов</span>
           </div>
           <div className="flex items-center gap-2">
-            <Calendar className="w-4 h-4 text-[#9CA3AF]" />
+            <Calendar className="w-4 h-4" style={{ color: 'var(--color-text-muted)' }} />
             <span>{formatDate(caseItem.updated_at)}</span>
           </div>
         </div>
         
         {/* Кнопка открыть */}
-        <div className="pt-4 border-t border-[#E5E8EB]/50">
+        <div 
+          className="pt-4 border-t"
+          style={{ 
+            paddingTop: 'var(--space-4)',
+            borderTopColor: 'var(--color-border)'
+          }}
+        >
           <button
-            className="w-full px-4 py-2.5 bg-gradient-to-r from-[#00D4FF] to-[#7C3AED] text-white rounded-lg font-medium text-sm hover:shadow-lg hover:shadow-[#00D4FF]/25 transition-all duration-300 transform hover:scale-[1.02]"
+            className="w-full px-4 py-2.5 rounded-lg font-medium text-sm transition-all duration-150"
+            style={{
+              backgroundColor: 'var(--color-accent)',
+              color: 'var(--color-bg-primary)',
+            }}
             onClick={(e: React.MouseEvent<HTMLButtonElement>) => {
               e.stopPropagation()
               navigate(`/cases/${caseItem.id}/chat`)

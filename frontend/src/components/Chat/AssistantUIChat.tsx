@@ -201,18 +201,33 @@ const PromptInputWithDrop = ({ actualCaseId, onDocumentDrop, handlePromptSubmit,
     <div ref={containerRef} className="w-full">
       <PromptInput
         onSubmit={(message, event) => handlePromptSubmit(message, event)}
-        className="w-full [&_form_input-group]:border-2 [&_form_input-group]:border-gray-200 [&_form_input-group]:rounded-xl [&_form_input-group]:bg-white [&_form_input-group]:shadow-sm [&_form_input-group]:focus-within:border-blue-500 [&_form_input-group]:focus-within:shadow-md [&_form_input-group]:transition-all [&_form_input-group]:hover:border-gray-300"
+        className="w-full [&_form_input-group]:border [&_form_input-group]:border-border [&_form_input-group]:rounded-lg [&_form_input-group]:bg-bg-elevated [&_form_input-group]:focus-within:border-border-strong [&_form_input-group]:transition-all [&_form_input-group]:hover:border-border-strong"
+        style={{
+          '--input-border': 'var(--color-border)',
+          '--input-bg': 'var(--color-bg-elevated)',
+          '--input-focus-border': 'var(--color-border-strong)',
+        } as React.CSSProperties}
       >
         <PromptInputBody>
           <div className="relative w-full">
             <PromptInputTextarea 
               placeholder="Введите вопрос или используйте промпт..."
-              className="min-h-[120px] max-h-[300px] text-base pr-14 py-4 px-4 text-gray-900 placeholder:text-gray-400 resize-none focus:outline-none leading-relaxed"
+              className="min-h-[120px] max-h-[300px] text-base pr-14 py-4 px-4 resize-none focus:outline-none leading-relaxed"
+              style={{
+                color: 'var(--color-text-primary)',
+                backgroundColor: 'transparent',
+                padding: 'var(--space-4)',
+                paddingRight: '3.5rem',
+              }}
             />
             <div className="absolute bottom-3 right-3 z-20">
               <PromptInputSubmit 
                 variant="default"
-                className="bg-blue-600 hover:bg-blue-700 active:bg-blue-800 text-white rounded-lg h-10 w-10 p-0 flex items-center justify-center shrink-0 shadow-md hover:shadow-lg hover:scale-105 active:scale-95 transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:bg-blue-600 disabled:hover:scale-100"
+                className="rounded-md h-10 w-10 p-0 flex items-center justify-center shrink-0 transition-all duration-150 disabled:opacity-50 disabled:cursor-not-allowed"
+                style={{
+                  backgroundColor: 'var(--color-accent)',
+                  color: 'var(--color-bg-primary)',
+                }}
                 disabled={isLoading || !actualCaseId}
                 status={isLoading ? "submitted" : undefined}
                 aria-label="Отправить сообщение"
@@ -698,12 +713,27 @@ export const AssistantUIChat = forwardRef<{ clearMessages: () => void; loadHisto
 
   return (
     <PromptInputProvider initialInput={initialQuery || ''}>
-    <div className={`flex flex-col h-full bg-white ${className || ''}`}>
+    <div 
+      className={`flex flex-col h-full ${className || ''}`}
+      style={{ backgroundColor: 'var(--color-bg-primary)' }}
+    >
       {/* Messages area */}
       <div className="flex-1 min-h-0 flex flex-col">
         {messages.length > 0 && (
-          <div className="flex items-center justify-center px-6 py-4 flex-shrink-0">
-            <h1 className="text-2xl font-semibold text-gray-900">Чем могу помочь?</h1>
+          <div 
+            className="flex items-center justify-center px-6 py-4 flex-shrink-0"
+            style={{ padding: 'var(--space-6) var(--space-4)' }}
+          >
+            <h1 
+              className="text-2xl font-display text-text-primary"
+              style={{ 
+                fontFamily: 'var(--font-display)',
+                color: 'var(--color-text-primary)',
+                fontWeight: 400
+              }}
+            >
+              Чем могу помочь?
+            </h1>
           </div>
         )}
 
@@ -711,8 +741,13 @@ export const AssistantUIChat = forwardRef<{ clearMessages: () => void; loadHisto
           <ConversationContent className="flex-1 overflow-y-auto">
               {isLoadingHistory ? (
                 <div className="flex items-center justify-center py-8">
-                  <Loader size={24} className="text-gray-400" />
-                  <span className="ml-3 text-sm text-gray-500">Загрузка истории...</span>
+                  <Loader size={24} style={{ color: 'var(--color-text-muted)' }} />
+                  <span 
+                    className="ml-3 text-sm"
+                    style={{ color: 'var(--color-text-secondary)' }}
+                  >
+                    Загрузка истории...
+                  </span>
                 </div>
               ) : messages.length === 0 && !isLoadingHistory ? (
                 <div className="h-full flex items-start justify-center pt-8 pb-4 overflow-y-auto">
@@ -886,8 +921,14 @@ export const AssistantUIChat = forwardRef<{ clearMessages: () => void; loadHisto
 
             {isLoading && (
               <div className="flex justify-start">
-                <div className="bg-gray-100 rounded-2xl px-4 py-3">
-                  <Loader size={20} className="text-gray-600" />
+                <div 
+                  className="rounded-lg px-4 py-3 border border-border"
+                  style={{ 
+                    backgroundColor: 'var(--color-bg-secondary)',
+                    borderColor: 'var(--color-border)'
+                  }}
+                >
+                  <Loader size={20} style={{ color: 'var(--color-text-secondary)' }} />
                 </div>
               </div>
             )}
@@ -897,8 +938,17 @@ export const AssistantUIChat = forwardRef<{ clearMessages: () => void; loadHisto
 
       {/* Input area - когда нет сообщений, поле ввода внизу, Welcome Screen выше */}
       {messages.length === 0 ? (
-        <div className="flex-shrink-0 bg-white border-t border-gray-200">
-          <div className="w-full max-w-4xl mx-auto px-6 py-4 space-y-4">
+        <div 
+          className="flex-shrink-0 border-t"
+          style={{ 
+            backgroundColor: 'var(--color-bg-primary)',
+            borderTopColor: 'var(--color-border)'
+          }}
+        >
+          <div 
+            className="w-full max-w-4xl mx-auto space-y-4"
+            style={{ padding: 'var(--space-4) var(--space-6)' }}
+          >
             {/* PromptInput с готовыми компонентами из @ai */}
             <PromptInputProvider>
               <PromptInputWithDrop
@@ -922,8 +972,16 @@ export const AssistantUIChat = forwardRef<{ clearMessages: () => void; loadHisto
           </div>
         </div>
       ) : (
-        <div className="bg-white px-6 pt-8 pb-4">
-          <div className="w-full max-w-4xl mx-auto space-y-4">
+        <div 
+          style={{ 
+            backgroundColor: 'var(--color-bg-primary)',
+            padding: 'var(--space-8) var(--space-6) var(--space-4)'
+          }}
+        >
+          <div 
+            className="w-full max-w-4xl mx-auto space-y-4"
+            style={{ gap: 'var(--space-4)' }}
+          >
             <PromptInputProvider>
               <PromptInputWithDrop
                 actualCaseId={actualCaseId}

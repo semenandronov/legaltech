@@ -42,17 +42,30 @@ const CasesGrid = ({
   
   if (loading && cases.length === 0) {
     return (
-      <div className="flex-1 p-8">
+      <div className="flex-1 p-8" style={{ padding: 'var(--space-8)' }}>
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
           {[...Array(6)].map((_, i) => (
             <div 
               key={i} 
-              className="bg-white rounded-xl p-6 shadow-soft border border-[#E5E8EB]/50 h-[200px] animate-pulse"
-              style={{ animationDelay: `${i * 0.1}s` }}
+              className="rounded-xl p-6 border h-[200px] animate-pulse"
+              style={{ 
+                backgroundColor: 'var(--color-bg-elevated)',
+                borderColor: 'var(--color-border)',
+                padding: 'var(--space-6)'
+              }}
             >
-              <div className="h-6 bg-[#E5E8EB] rounded mb-4 w-3/4"></div>
-              <div className="h-4 bg-[#E5E8EB] rounded mb-2 w-1/2"></div>
-              <div className="h-4 bg-[#E5E8EB] rounded w-2/3"></div>
+              <div 
+                className="h-6 rounded mb-4 w-3/4"
+                style={{ backgroundColor: 'var(--color-bg-tertiary)' }}
+              />
+              <div 
+                className="h-4 rounded mb-2 w-1/2"
+                style={{ backgroundColor: 'var(--color-bg-tertiary)' }}
+              />
+              <div 
+                className="h-4 rounded w-2/3"
+                style={{ backgroundColor: 'var(--color-bg-tertiary)' }}
+              />
             </div>
           ))}
         </div>
@@ -63,16 +76,39 @@ const CasesGrid = ({
   if (cases.length === 0) {
     return (
       <div className="flex-1 flex flex-col">
-        <div className="p-8 border-b border-[#E5E8EB]/50 flex items-center justify-between bg-white/50 backdrop-blur-subtle">
+        <div 
+          className="p-8 border-b flex items-center justify-between"
+          style={{ 
+            padding: 'var(--space-8)',
+            borderBottomColor: 'var(--color-border)',
+            backgroundColor: 'var(--color-bg-primary)'
+          }}
+        >
           <div>
-            <h2 className="text-3xl font-display text-[#0F1419] mb-1 tracking-tight">
+            <h2 
+              className="text-3xl font-display mb-1 tracking-tight"
+              style={{ 
+                fontFamily: 'var(--font-display)',
+                color: 'var(--color-text-primary)',
+                letterSpacing: 'var(--tracking-tight)'
+              }}
+            >
               Дела
             </h2>
-            <p className="text-sm text-[#666B78] font-medium">Начните работу с первым делом</p>
+            <p 
+              className="text-sm font-medium"
+              style={{ color: 'var(--color-text-secondary)' }}
+            >
+              Начните работу с первым делом
+            </p>
           </div>
           <button
             onClick={() => setIsUploadDialogOpen(true)}
-            className="px-5 py-2.5 bg-gradient-to-r from-[#00D4FF] to-[#7C3AED] text-white rounded-lg font-medium text-sm hover:shadow-lg hover:shadow-[#00D4FF]/25 transition-all duration-300 flex items-center gap-2"
+            className="px-5 py-2.5 rounded-lg font-medium text-sm transition-all duration-150 flex items-center gap-2"
+            style={{
+              backgroundColor: 'var(--color-accent)',
+              color: 'var(--color-bg-primary)',
+            }}
           >
             <Plus className="w-4 h-4" />
             Создать дело
@@ -87,7 +123,11 @@ const CasesGrid = ({
             </p>
             <button
               onClick={() => setIsUploadDialogOpen(true)}
-              className="px-6 py-3 bg-gradient-to-r from-[#00D4FF] to-[#7C3AED] text-white rounded-lg font-medium text-base hover:shadow-lg hover:shadow-[#00D4FF]/25 transition-all duration-300 flex items-center gap-2 mx-auto hover-scale"
+              className="px-6 py-3 rounded-lg font-medium text-base transition-all duration-150 flex items-center gap-2 mx-auto"
+              style={{
+                backgroundColor: 'var(--color-accent)',
+                color: 'var(--color-bg-primary)',
+              }}
             >
               <Plus className="w-5 h-5" />
               Создать первое дело
@@ -112,51 +152,90 @@ const CasesGrid = ({
   return (
     <div className="flex-1 flex flex-col">
       {/* Header */}
-      <div className="p-8 border-b border-[#E5E8EB]/50 flex items-center justify-between bg-white/50 backdrop-blur-subtle">
+      <div 
+        className="p-8 border-b flex items-center justify-between"
+        style={{ 
+          padding: 'var(--space-8)',
+          borderBottomColor: 'var(--color-border)',
+          backgroundColor: 'var(--color-bg-primary)'
+        }}
+      >
         <div>
-          <h2 className="text-3xl font-display text-[#0F1419] mb-1 tracking-tight">
+          <h2 
+            className="text-3xl font-display mb-1 tracking-tight"
+            style={{ 
+              fontFamily: 'var(--font-display)',
+              color: 'var(--color-text-primary)',
+              letterSpacing: 'var(--tracking-tight)'
+            }}
+          >
             Дела
           </h2>
-          <p className="text-sm text-[#666B78] font-medium">
+          <p 
+            className="text-sm font-medium"
+            style={{ color: 'var(--color-text-secondary)' }}
+          >
             {total} {total === 1 ? 'результат' : total < 5 ? 'результата' : 'результатов'}
           </p>
         </div>
         <div className="flex items-center gap-3">
           <button
             onClick={() => setIsUploadDialogOpen(true)}
-            className="px-4 py-2 bg-gradient-to-r from-[#00D4FF] to-[#7C3AED] text-white rounded-lg font-medium text-sm hover:shadow-lg hover:shadow-[#00D4FF]/25 transition-all duration-300 flex items-center gap-2"
+            className="px-4 py-2 rounded-lg font-medium text-sm transition-all duration-150 flex items-center gap-2"
+            style={{
+              backgroundColor: 'var(--color-accent)',
+              color: 'var(--color-bg-primary)',
+            }}
           >
             <Plus className="w-4 h-4" />
             Создать дело
           </button>
-          <div className="flex items-center gap-1 bg-white/80 rounded-lg p-1 border border-[#E5E8EB]/50">
+          <div 
+            className="flex items-center gap-1 rounded-lg p-1 border"
+            style={{
+              backgroundColor: 'var(--color-bg-elevated)',
+              borderColor: 'var(--color-border)'
+            }}
+          >
             <button
               onClick={() => onViewModeChange('grid')}
-              className={`p-2 rounded-md transition-all duration-200 ${
+              className={`p-2 rounded-md transition-all duration-150 ${
                 viewMode === 'grid'
-                  ? 'bg-gradient-to-r from-[#00D4FF] to-[#7C3AED] text-white shadow-sm'
-                  : 'text-[#666B78] hover:bg-[#F8F9FA]'
+                  ? 'text-text-primary'
+                  : 'text-text-secondary hover:text-text-primary hover:bg-bg-hover'
               }`}
+              style={{
+                backgroundColor: viewMode === 'grid' ? 'var(--color-bg-active)' : 'transparent',
+                color: viewMode === 'grid' ? 'var(--color-text-primary)' : 'var(--color-text-secondary)',
+              }}
             >
               <LayoutGrid className="w-4 h-4" />
             </button>
             <button
               onClick={() => onViewModeChange('list')}
-              className={`p-2 rounded-md transition-all duration-200 ${
+              className={`p-2 rounded-md transition-all duration-150 ${
                 viewMode === 'list'
-                  ? 'bg-gradient-to-r from-[#00D4FF] to-[#7C3AED] text-white shadow-sm'
-                  : 'text-[#666B78] hover:bg-[#F8F9FA]'
+                  ? 'text-text-primary'
+                  : 'text-text-secondary hover:text-text-primary hover:bg-bg-hover'
               }`}
+              style={{
+                backgroundColor: viewMode === 'list' ? 'var(--color-bg-active)' : 'transparent',
+                color: viewMode === 'list' ? 'var(--color-text-primary)' : 'var(--color-text-secondary)',
+              }}
             >
               <List className="w-4 h-4" />
             </button>
             <button
               onClick={() => onViewModeChange('table')}
-              className={`p-2 rounded-md transition-all duration-200 ${
+              className={`p-2 rounded-md transition-all duration-150 ${
                 viewMode === 'table'
-                  ? 'bg-gradient-to-r from-[#00D4FF] to-[#7C3AED] text-white shadow-sm'
-                  : 'text-[#666B78] hover:bg-[#F8F9FA]'
+                  ? 'text-text-primary'
+                  : 'text-text-secondary hover:text-text-primary hover:bg-bg-hover'
               }`}
+              style={{
+                backgroundColor: viewMode === 'table' ? 'var(--color-bg-active)' : 'transparent',
+                color: viewMode === 'table' ? 'var(--color-text-primary)' : 'var(--color-text-secondary)',
+              }}
             >
               <Table2 className="w-4 h-4" />
             </button>
@@ -197,7 +276,13 @@ const CasesGrid = ({
       
       {/* Pagination */}
       {totalPages > 1 && viewMode !== 'table' && (
-        <div className="p-6 border-t border-border flex justify-center">
+        <div 
+          className="p-6 border-t flex justify-center"
+          style={{ 
+            padding: 'var(--space-6)',
+            borderTopColor: 'var(--color-border)'
+          }}
+        >
           <Pagination
             currentPage={currentPage}
             totalPages={totalPages}
