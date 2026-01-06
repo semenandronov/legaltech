@@ -412,11 +412,17 @@ def init_db():
     try:
         from sqlalchemy import text, inspect as sql_inspect
         inspector = sql_inspect(engine)
-        # ---- tabular_reviews: ensure table_mode / entity_config exist (for new table modes) ----
+        # ---- tabular_reviews: ensure table_mode / entity_config / review_rules exist ----
         if "tabular_reviews" in inspector.get_table_names():
             reviews_columns = [col["name"] for col in inspector.get_columns("tabular_reviews")]
-            if "table_mode" not in reviews_columns or "entity_config" not in reviews_columns:
-                logger.info("⚠️  Applying migration: adding table_mode and entity_config to tabular_reviews")
+            if (
+                "table_mode" not in reviews_columns
+                or "entity_config" not in reviews_columns
+                or "review_rules" not in reviews_columns
+            ):
+                logger.info(
+                    "⚠️  Applying migration: adding table_mode, entity_config and review_rules to tabular_reviews"
+                )
                 try:
                     with engine.begin() as conn:
                         # These statements are idempotent thanks to IF NOT EXISTS
@@ -436,6 +442,14 @@ def init_db():
                                 """
                             )
                         )
+                        conn.execute(
+                            text(
+                                """
+                                ALTER TABLE tabular_reviews 
+                                  ADD COLUMN IF NOT EXISTS review_rules JSONB;
+                                """
+                            )
+                        )
                         # Ensure existing rows have default value
                         conn.execute(
                             text(
@@ -446,15 +460,17 @@ def init_db():
                                 """
                             )
                         )
-                    logger.info("✅ Migration applied: table_mode and entity_config added to tabular_reviews")
+                    logger.info(
+                        "✅ Migration applied: table_mode, entity_config and review_rules added to tabular_reviews"
+                    )
                 except Exception as mig_error:
                     logger.error(
-                        f"❌ Failed to apply table_mode/entity_config migration: {mig_error}",
+                        f"❌ Failed to apply table_mode/entity_config/review_rules migration: {mig_error}",
                         exc_info=True,
                     )
                     # Don't re-raise here to avoid breaking startup; API will still work for old features
             else:
-                logger.info("✅ table_mode and entity_config already exist in tabular_reviews")
+                logger.info("✅ table_mode, entity_config and review_rules already exist in tabular_reviews")
 
         # ---- tabular_columns: ensure column_config / is_pinned exist ----
         if "tabular_columns" in inspector.get_table_names():
