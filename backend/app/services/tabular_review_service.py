@@ -369,8 +369,20 @@ class TabularReviewService:
         # #endregion
         
         # CRITICAL: Check for unwanted default columns and delete them immediately
+        # Also check for variations and case-insensitive matches
         unwanted_column_labels = ["Date", "Document type", "Summary", "Author", "Persons mentioned", "Language"]
-        unwanted_columns = [c for c in columns if c.column_label in unwanted_column_labels]
+        unwanted_column_labels_lower = [label.lower() for label in unwanted_column_labels]
+        unwanted_columns = []
+        for c in columns:
+            # Check exact match
+            if c.column_label in unwanted_column_labels:
+                unwanted_columns.append(c)
+            # Check case-insensitive match
+            elif c.column_label.lower() in unwanted_column_labels_lower:
+                unwanted_columns.append(c)
+            # Check for variations like "Per on mentioned" (typo for "Persons mentioned")
+            elif "per on" in c.column_label.lower() and "mentioned" in c.column_label.lower():
+                unwanted_columns.append(c)
         
         if unwanted_columns:
             logger.error(f"[get_table_data] CRITICAL: Found {len(unwanted_columns)} unwanted default columns! Deleting them immediately: {[c.column_label for c in unwanted_columns]}")
@@ -381,10 +393,16 @@ class TabularReviewService:
                 # Delete all cells for this column first
                 from app.models.tabular_review import TabularCell
                 self.db.query(TabularCell).filter(TabularCell.column_id == unwanted_col.id).delete()
+                # Delete all comments for this column
+                from app.models.tabular_review import CellComment
+                self.db.query(CellComment).filter(CellComment.column_id == unwanted_col.id).delete()
+                # Delete all history records for this column
+                from app.models.tabular_review import CellHistory
+                self.db.query(CellHistory).filter(CellHistory.column_id == unwanted_col.id).delete()
                 # Delete the column
                 self.db.delete(unwanted_col)
             self.db.commit()
-            logger.info(f"[get_table_data] Deleted {len(unwanted_columns)} unwanted columns")
+            logger.info(f"[get_table_data] Deleted {len(unwanted_columns)} unwanted columns and all related data")
             # Refresh columns after deletion
             columns = self.db.query(TabularColumn).filter(
                 TabularColumn.tabular_review_id == review_id
