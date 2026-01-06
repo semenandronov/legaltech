@@ -104,16 +104,23 @@ class AgentCoordinator:
             raise ValueError("case_id must be a non-empty string")
         
         # Проверка analysis_types
-        if not analysis_types or not isinstance(analysis_types, list):
-            raise ValueError("analysis_types must be a non-empty list")
+        # Если передан user_task, analysis_types может быть пустым (будет определен через PlanningAgent)
+        # Если user_task не передан, analysis_types должен быть непустым
+        if not isinstance(analysis_types, list):
+            raise ValueError("analysis_types must be a list")
         
-        # Проверка валидности типов анализов (используем единый источник правды)
-        from app.services.langchain_agents.planning_tools import validate_analysis_types
+        if not user_task and (not analysis_types or len(analysis_types) == 0):
+            raise ValueError("analysis_types must be a non-empty list when user_task is not provided")
         
-        is_valid, invalid_types = validate_analysis_types(analysis_types)
-        if not is_valid:
-            valid_types = list(AVAILABLE_ANALYSES.keys())
-            raise ValueError(f"Invalid analysis types: {invalid_types}. Valid types: {sorted(valid_types)}")
+        # Проверка валидности типов анализов (только если они указаны)
+        # Если analysis_types пустой, валидация будет выполнена после планирования
+        if analysis_types:
+            from app.services.langchain_agents.planning_tools import validate_analysis_types
+            
+            is_valid, invalid_types = validate_analysis_types(analysis_types)
+            if not is_valid:
+                valid_types = list(AVAILABLE_ANALYSES.keys())
+                raise ValueError(f"Invalid analysis types: {invalid_types}. Valid types: {sorted(valid_types)}")
         
         # Проверка user_task (если передан)
         if user_task is not None:
@@ -184,6 +191,12 @@ class AgentCoordinator:
                     
                     analysis_types = plan.get("analysis_types", analysis_types)
                     subtasks = plan.get("subtasks", [])
+                    
+                    # Если после планирования analysis_types все еще пустой, используем дефолтные типы
+                    if not analysis_types or len(analysis_types) == 0:
+                        logger.warning(f"PlanningAgent did not return analysis_types, using default: timeline, key_facts")
+                        analysis_types = ["timeline", "key_facts"]
+                    
                     logger.info(f"PlanningAgent created plan: {analysis_types}, {len(subtasks)} subtasks, reasoning: {plan.get('reasoning', '')[:100]}")
                     
                     # Record planning metrics

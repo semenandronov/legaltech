@@ -487,7 +487,7 @@ def create_analysis_graph(
             })
             return new_state
     
-    def merge_parallel_results_node(states: Sequence[AnalysisState]) -> AnalysisState:
+    def merge_parallel_results_node(states: List[AnalysisState]) -> AnalysisState:
         """
         Reducer node для слияния результатов параллельных агентов.
         
