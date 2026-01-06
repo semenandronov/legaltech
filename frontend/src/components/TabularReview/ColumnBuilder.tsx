@@ -204,13 +204,13 @@ export function ColumnBuilder({ isOpen, onClose, onSave }: ColumnBuilderProps) {
                 // #region agent log
                 fetch('http://127.0.0.1:7242/ingest/2db1e09b-2b5d-4ee0-85d8-a551f942254c',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'frontend/src/components/TabularReview/ColumnBuilder.tsx:192',message:'SelectContent onPointerDownOutside fired',data:{target:e.target},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'C'})}).catch(()=>{});
                 // #endregion
-                e.preventDefault()
+                // Don't prevent default - let Radix UI handle it
               }}
               onEscapeKeyDown={(e) => {
                 // #region agent log
                 fetch('http://127.0.0.1:7242/ingest/2db1e09b-2b5d-4ee0-85d8-a551f942254c',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'frontend/src/components/TabularReview/ColumnBuilder.tsx:198',message:'SelectContent onEscapeKeyDown fired',data:{},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'D'})}).catch(()=>{});
                 // #endregion
-                e.preventDefault()
+                // Don't prevent default - let Radix UI handle it
               }}
             >
               {COLUMN_TYPES.map((type) => (
