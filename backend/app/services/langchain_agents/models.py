@@ -43,3 +43,4 @@ class TableDecision(BaseModel):
                 raise ValueError("columns is required when needs_table=True")
         return values
 
+

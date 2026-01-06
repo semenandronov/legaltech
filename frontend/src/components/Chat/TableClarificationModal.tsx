@@ -1,7 +1,7 @@
 import React, { useState } from 'react'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/UI/dialog'
 import { Button } from '@/components/UI/Button'
-import { Checkbox } from '@/components/UI/checkbox'
+import { Checkbox } from '@/components/UI/Checkbox'
 import { Textarea } from '@/components/UI/Textarea'
 import { AlertCircle, AlertTriangle, CheckCircle2 } from 'lucide-react'
 import { logger } from '@/lib/logger'
@@ -14,7 +14,6 @@ interface TableClarificationModalProps {
     partial_columns?: any[]
   }
   availableDocTypes: string[]
-  threadId?: string
   onSubmit: (answer: { doc_types?: string[], columns_clarification?: string }) => Promise<void>
 }
 
@@ -42,7 +41,6 @@ export const TableClarificationModal: React.FC<TableClarificationModalProps> = (
   questions,
   context,
   availableDocTypes,
-  threadId,
   onSubmit,
 }) => {
   const [selectedDocTypes, setSelectedDocTypes] = useState<string[]>([])

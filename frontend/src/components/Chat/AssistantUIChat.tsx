@@ -498,7 +498,10 @@ export const AssistantUIChat = forwardRef<{ clearMessages: () => void; loadHisto
               }
               // Фаза 9.3: Обработка human feedback request events
               if (data.type === 'human_feedback_request' || data.type === 'humanFeedbackRequest' || data.event === 'humanFeedbackRequest') {
-                const feedbackData = {
+                const isTableClarification = (data.interruptType || data.interrupt_type) === 'table_clarification'
+                const payload = data.payload || {}
+                
+                const feedbackData: Message['feedbackRequest'] = {
                   requestId: data.request_id || data.requestId,
                   question: data.question || data.message,
                   options: data.options || [],
@@ -508,14 +511,12 @@ export const AssistantUIChat = forwardRef<{ clearMessages: () => void; loadHisto
                   inputSchema: data.input_schema || data.inputSchema,
                   interruptType: data.interruptType || data.interrupt_type,
                   threadId: data.threadId || data.thread_id,
-                  payload: data.payload || {}
-                }
-                
-                // Если это table_clarification, используем специальный компонент
-                if (feedbackData.interruptType === 'table_clarification') {
-                  feedbackData.isTableClarification = true
-                  feedbackData.availableDocTypes = feedbackData.payload?.available_doc_types || []
-                  feedbackData.questions = feedbackData.payload?.questions || []
+                  payload: payload,
+                  ...(isTableClarification && {
+                    isTableClarification: true,
+                    availableDocTypes: payload.available_doc_types || [],
+                    questions: payload.questions || []
+                  })
                 }
                 
                 // Сохраняем feedback request в сообщении
@@ -870,7 +871,6 @@ export const AssistantUIChat = forwardRef<{ clearMessages: () => void; loadHisto
                     questions={message.feedbackRequest.questions || []}
                     context={message.feedbackRequest.context || {}}
                     availableDocTypes={message.feedbackRequest.availableDocTypes || []}
-                    threadId={message.feedbackRequest.threadId}
                     onSubmit={async (answer: { doc_types?: string[], columns_clarification?: string }) => {
                       try {
                         const token = localStorage.getItem('access_token')
