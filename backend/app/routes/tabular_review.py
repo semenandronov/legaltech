@@ -1227,8 +1227,34 @@ async def apply_template(
         logger.error(f"[DEBUG HYPOTHESIS I] [API apply_template] About to add columns from template: review_id={review_id}, template_id={template_id}, template_name={template.name}, columns_count={len(template.columns)}, column_labels={[col.get('column_label') for col in template.columns]}")
         # #endregion
         logger.info(f"Template '{template.name}' has {len(template.columns)} columns. Adding them to review {review_id}")
-        for idx, col_def in enumerate(template.columns):
-            logger.info(f"  Adding column {idx + 1}/{len(template.columns)}: {col_def.get('column_label')} (type: {col_def.get('column_type')})")
+        
+        # Filter out unwanted columns from template before applying
+        unwanted_column_labels = ["Date", "Document type", "Summary", "Author", "Persons mentioned", "Language"]
+        unwanted_column_labels_lower = [label.lower() for label in unwanted_column_labels]
+        
+        filtered_columns = []
+        for col_def in template.columns:
+            col_label = col_def.get("column_label", "")
+            col_label_lower = col_label.lower()
+            
+            # Skip unwanted columns
+            if col_label in unwanted_column_labels:
+                logger.warning(f"  Skipping unwanted column from template: '{col_label}'")
+                continue
+            elif col_label_lower in unwanted_column_labels_lower:
+                logger.warning(f"  Skipping unwanted column from template: '{col_label}'")
+                continue
+            elif "per on" in col_label_lower and "mentioned" in col_label_lower:
+                logger.warning(f"  Skipping unwanted column from template: '{col_label}'")
+                continue
+            
+            filtered_columns.append(col_def)
+        
+        if len(filtered_columns) < len(template.columns):
+            logger.warning(f"Filtered out {len(template.columns) - len(filtered_columns)} unwanted columns from template '{template.name}'")
+        
+        for idx, col_def in enumerate(filtered_columns):
+            logger.info(f"  Adding column {idx + 1}/{len(filtered_columns)}: {col_def.get('column_label')} (type: {col_def.get('column_type')})")
             column = service.add_column(
                 review_id=review_id,
                 column_label=col_def.get("column_label", f"Column {idx + 1}"),
