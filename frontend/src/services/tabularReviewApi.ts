@@ -79,17 +79,47 @@ export interface SourceReference {
   page?: number | null
   section?: string | null
   text: string
+  bbox?: {
+    x0: number
+    y0: number
+    x1: number
+    y1: number
+  } | null
+  page_bbox?: {
+    width: number
+    height: number
+  } | null
+}
+
+export interface Candidate {
+  value: string
+  normalized_value?: string | null
+  confidence: number
+  source_page?: number | null
+  source_section?: string | null
+  verbatim?: string | null
+  reasoning?: string | null
+  extraction_method?: string
+  source_references?: SourceReference[]
 }
 
 export interface TabularCell {
   cell_value: string | null
+  normalized_value?: string | null
   verbatim_extract?: string | null
   reasoning?: string | null
   source_references?: SourceReference[]
   confidence_score?: number | null
   source_page?: number | null
   source_section?: string | null
-  status: 'pending' | 'processing' | 'completed' | 'reviewed'
+  status: 'pending' | 'processing' | 'completed' | 'reviewed' | 'conflict' | 'empty' | 'n_a'
+  candidates?: Candidate[]
+  conflict_resolution?: {
+    resolved_by?: string
+    resolution_method?: string
+    selected_candidate_id?: number
+    resolved_at?: string
+  }
 }
 
 export interface TabularRow {
@@ -115,6 +145,7 @@ export interface TableData {
 export interface CellDetails {
   id: string
   cell_value: string | null
+  normalized_value?: string | null
   verbatim_extract?: string | null
   reasoning?: string | null
   source_references?: SourceReference[]
@@ -125,6 +156,13 @@ export interface CellDetails {
   column_type?: string
   has_verbatim?: boolean
   highlight_mode?: 'verbatim' | 'page' | 'none'
+  candidates?: Candidate[]
+  conflict_resolution?: {
+    resolved_by?: string
+    resolution_method?: string
+    selected_candidate_id?: number
+    resolved_at?: string
+  }
 }
 
 // API functions
@@ -663,6 +701,33 @@ export const tabularReviewApi = {
     }
   },
 
+  // Resolve conflict
+  async resolveConflict(
+    reviewId: string,
+    fileId: string,
+    columnId: string,
+    selectedCandidateId: number,
+    resolutionMethod: 'select' | 'merge' | 'n_a' = 'select'
+  ): Promise<{
+    id: string
+    cell_value: string
+    status: string
+    updated_at: string
+  }> {
+    try {
+      const response = await apiClient.patch(
+        `/api/tabular-review/${reviewId}/cells/${fileId}/${columnId}/resolve-conflict`,
+        {
+          selected_candidate_id: selectedCandidateId,
+          resolution_method: resolutionMethod,
+        }
+      )
+      return response.data
+    } catch (error) {
+      throw new Error(extractErrorMessage(error))
+    }
+  },
+
   // Chat over table
   async chatOverTable(
     reviewId: string,
@@ -695,6 +760,124 @@ export const tabularReviewApi = {
         column_label: columnLabel,
         column_type: columnType,
       })
+      return response.data
+    } catch (error) {
+      throw new Error(extractErrorMessage(error))
+    }
+  },
+
+  // Review Queue
+  async getReviewQueue(
+    reviewId: string,
+    includeReviewed: boolean = false
+  ): Promise<{
+    items: Array<{
+      id: string
+      file_id: string
+      column_id: string
+      cell_id: string
+      priority: number
+      reason: string
+      is_reviewed: boolean
+      reviewed_by?: string | null
+      reviewed_at?: string | null
+      created_at: string
+    }>
+    stats: {
+      total_items: number
+      by_reason: Record<string, number>
+      by_priority: Record<number, number>
+      high_priority_count: number
+    }
+  }> {
+    try {
+      const response = await apiClient.get(`/api/tabular-review/${reviewId}/review-queue`, {
+        params: { include_reviewed: includeReviewed },
+      })
+      return response.data
+    } catch (error) {
+      throw new Error(extractErrorMessage(error))
+    }
+  },
+
+  async rebuildReviewQueue(reviewId: string): Promise<{
+    message: string
+    stats: {
+      total_items: number
+      by_reason: Record<string, number>
+      by_priority: Record<number, number>
+      high_priority_count: number
+    }
+  }> {
+    try {
+      const response = await apiClient.post(`/api/tabular-review/${reviewId}/review-queue/rebuild`)
+      return response.data
+    } catch (error) {
+      throw new Error(extractErrorMessage(error))
+    }
+  },
+
+  async markQueueItemReviewed(
+    reviewId: string,
+    itemId: string
+  ): Promise<{
+    id: string
+    is_reviewed: boolean
+    reviewed_at: string | null
+  }> {
+    try {
+      const response = await apiClient.patch(
+        `/api/tabular-review/${reviewId}/review-queue/${itemId}/mark-reviewed`
+      )
+      return response.data
+    } catch (error) {
+      throw new Error(extractErrorMessage(error))
+    }
+  },
+
+  // Smart column creation
+  async createColumnFromDescription(
+    reviewId: string,
+    description: string
+  ): Promise<{
+    id: string
+    column_label: string
+    column_type: string
+    prompt: string
+    column_config?: any
+    order_index: number
+  }> {
+    try {
+      const response = await apiClient.post(
+        `/api/tabular-review/${reviewId}/columns/smart-from-description`,
+        { description }
+      )
+      return response.data
+    } catch (error) {
+      throw new Error(extractErrorMessage(error))
+    }
+  },
+
+  async createColumnFromExamples(
+    reviewId: string,
+    examples: Array<{
+      document_text: string
+      expected_value: string
+      context?: string
+    }>
+  ): Promise<{
+    id: string
+    column_label: string
+    column_type: string
+    prompt: string
+    column_config?: any
+    order_index: number
+  }> {
+    try {
+      const response = await apiClient.post(
+        `/api/tabular-review/${reviewId}/columns/smart-from-examples`,
+        { examples }
+      )
       return response.data
     } catch (error) {
       throw new Error(extractErrorMessage(error))

@@ -160,7 +160,7 @@ const DocumentsPage = () => {
   
   if (loading) {
     return (
-      <div className="flex h-screen bg-gradient-to-br from-[#F8F9FA] via-white to-[#F0F4F8]">
+      <div className="flex h-screen bg-bg-primary">
         {caseId && (
           <UnifiedSidebar 
             navItems={[
@@ -185,17 +185,17 @@ const DocumentsPage = () => {
   ]
 
   return (
-    <div className="flex h-screen bg-gradient-to-br from-[#F8F9FA] via-white to-[#F0F4F8]">
+    <div className="flex h-screen bg-bg-primary">
       {caseId && <UnifiedSidebar navItems={navItems} title="Legal AI" />}
-      <div className="flex-1 overflow-auto content-background">
+      <div className="flex-1 overflow-auto bg-bg-primary">
         <div className="p-8 fade-in-up">
           <div className="flex items-center justify-between mb-6">
-            <h1 className="font-display text-h1 text-[#1F2937]">
+            <h1 className="font-display text-h1 text-text-primary">
               Документы ({filteredDocuments.length} / {documents.length})
             </h1>
             <button
               onClick={() => setShowFilters(!showFilters)}
-              className="flex items-center gap-2 px-4 py-2 rounded-lg bg-gradient-to-r from-[#00D4FF]/10 to-[#7C3AED]/10 text-[#00D4FF] border border-[#00D4FF]/20 hover:from-[#00D4FF]/20 hover:to-[#7C3AED]/20 transition-all"
+              className="flex items-center gap-2 px-4 py-2 rounded-lg bg-bg-secondary text-text-primary border border-border hover:bg-bg-hover transition-all"
             >
               <Filter className="w-4 h-4" />
               Фильтры
@@ -314,7 +314,7 @@ const DocumentsPage = () => {
               return (
               <div
                 key={doc.id}
-                className="bg-white rounded-lg border border-[#E5E7EB] p-6 cursor-pointer hoverable transition-all duration-300 shadow-sm hover:shadow-md"
+                className="bg-bg-elevated rounded-lg border border-border p-6 cursor-pointer hoverable transition-all duration-300 shadow-sm hover:shadow-md"
                 style={{ animationDelay: `${index * 0.05}s` }}
                 onClick={() => {
                   const idx = filteredDocuments.findIndex(d => d.id === doc.id)
@@ -324,10 +324,10 @@ const DocumentsPage = () => {
               >
                 <div className="space-y-4">
                   <div className="flex items-center gap-3">
-                    <div className="w-10 h-10 rounded-lg bg-gradient-to-br from-[#00D4FF]/20 to-[#7C3AED]/20 flex items-center justify-center flex-shrink-0">
-                      <DescriptionIcon className="w-5 h-5 text-[#00D4FF]" />
+                    <div className="w-10 h-10 rounded-lg bg-bg-secondary flex items-center justify-center flex-shrink-0">
+                      <DescriptionIcon className="w-5 h-5 text-text-primary" />
                     </div>
-                    <h3 className="font-display text-h3 text-[#1F2937] truncate flex-1">
+                    <h3 className="font-display text-h3 text-text-primary truncate flex-1">
                       {doc.filename}
                     </h3>
                   </div>
@@ -335,7 +335,7 @@ const DocumentsPage = () => {
                   {classification && (
                     <div className="space-y-2">
                       <div className="flex items-center gap-2 flex-wrap">
-                        <span className={`inline-block px-3 py-1 rounded-full text-xs font-medium bg-gradient-to-r ${getDocTypeColor(classification.doc_type)} border`}>
+                        <span className={`inline-block px-3 py-1 rounded-full text-xs font-medium bg-bg-secondary text-text-primary border border-border`}>
                           {docTypeLabels[classification.doc_type] || classification.doc_type}
                         </span>
                         {classification.needs_human_review && (
@@ -370,13 +370,13 @@ const DocumentsPage = () => {
                   )}
 
                   {!classification && doc.file_type && (
-                    <span className="inline-block px-3 py-1 rounded-full text-xs font-medium bg-gradient-to-r from-[#00D4FF]/10 to-[#7C3AED]/10 text-[#00D4FF] border border-[#00D4FF]/20">
+                    <span className="inline-block px-3 py-1 rounded-full text-xs font-medium bg-bg-secondary text-text-primary border border-border">
                       {doc.file_type}
                     </span>
                   )}
 
                   {doc.created_at && (
-                    <p className="text-xs text-[#6B7280]">
+                    <p className="text-xs text-text-secondary">
                       {new Date(doc.created_at).toLocaleDateString('ru-RU')}
                     </p>
                   )}

@@ -15,6 +15,7 @@ import {
   Edit as EditIcon,
   Refresh as RefreshIcon,
   Link as LinkIcon,
+  Warning as WarningIcon,
 } from "@mui/icons-material"
 import { CellDetails, SourceReference } from "@/services/tabularReviewApi"
 
@@ -26,6 +27,10 @@ interface CellDetailPanelProps {
   onEdit?: () => void
   onRefresh?: () => void
   onJumpToSource?: (reference: SourceReference) => void
+  onResolveConflict?: () => void
+  reviewId?: string
+  fileId?: string
+  columnId?: string
 }
 
 export const CellDetailPanel: React.FC<CellDetailPanelProps> = ({
@@ -36,6 +41,10 @@ export const CellDetailPanel: React.FC<CellDetailPanelProps> = ({
   onEdit,
   onRefresh,
   onJumpToSource,
+  onResolveConflict,
+  reviewId,
+  fileId,
+  columnId,
 }) => {
   if (!cellDetails) {
     return (
@@ -222,6 +231,92 @@ export const CellDetailPanel: React.FC<CellDetailPanelProps> = ({
                     <Typography variant="body2" color="text.secondary">
                       {ref.text}
                     </Typography>
+                  </Paper>
+                ))}
+              </Stack>
+            </Box>
+          )}
+
+          {/* Conflict Section */}
+          {cellDetails.status === 'conflict' && cellDetails.candidates && cellDetails.candidates.length > 1 && (
+            <Box>
+              <Stack direction="row" spacing={1} alignItems="center" sx={{ mb: 1 }}>
+                <WarningIcon color="warning" fontSize="small" />
+                <Typography variant="subtitle2" fontWeight={500} color="warning.main">
+                  Conflict Detected
+                </Typography>
+              </Stack>
+              <Paper
+                elevation={0}
+                sx={{
+                  bgcolor: "warning.light",
+                  p: 1.5,
+                  borderRadius: 1,
+                  mb: 1,
+                }}
+              >
+                <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>
+                  Multiple different values were found for this cell. Please review and select the correct one.
+                </Typography>
+                {onResolveConflict && (
+                  <Button
+                    variant="contained"
+                    color="warning"
+                    size="small"
+                    onClick={onResolveConflict}
+                    sx={{ textTransform: "none" }}
+                  >
+                    Resolve Conflict
+                  </Button>
+                )}
+              </Paper>
+              <Typography variant="caption" color="text.secondary" sx={{ mb: 1, display: "block" }}>
+                Found {cellDetails.candidates.length} candidate values:
+              </Typography>
+              <Stack spacing={1}>
+                {cellDetails.candidates.map((candidate, idx) => (
+                  <Paper
+                    key={idx}
+                    elevation={0}
+                    sx={{
+                      bgcolor: "action.hover",
+                      p: 1.5,
+                      borderRadius: 1,
+                      border: idx === 0 ? 2 : 1,
+                      borderColor: idx === 0 ? "primary.main" : "divider",
+                    }}
+                  >
+                    <Stack direction="row" spacing={1} alignItems="center" sx={{ mb: 0.5 }}>
+                      <Chip
+                        label={`Candidate ${idx + 1}`}
+                        size="small"
+                        color={idx === 0 ? "primary" : "default"}
+                      />
+                      <Chip
+                        label={`${Math.round(candidate.confidence * 100)}%`}
+                        size="small"
+                        color={
+                          candidate.confidence >= 0.9
+                            ? "success"
+                            : candidate.confidence >= 0.7
+                            ? "warning"
+                            : "error"
+                        }
+                      />
+                    </Stack>
+                    <Typography variant="body2" fontWeight={idx === 0 ? 600 : 400}>
+                      {candidate.value}
+                    </Typography>
+                    {candidate.verbatim && (
+                      <Typography variant="caption" color="text.secondary" sx={{ mt: 0.5, display: "block" }}>
+                        "{candidate.verbatim}"
+                      </Typography>
+                    )}
+                    {candidate.source_page && (
+                      <Typography variant="caption" color="text.secondary" sx={{ mt: 0.5, display: "block" }}>
+                        Page {candidate.source_page}
+                      </Typography>
+                    )}
                   </Paper>
                 ))}
               </Stack>

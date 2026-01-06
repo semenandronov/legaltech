@@ -1,5 +1,5 @@
 """Pydantic models for Tabular Review structured output"""
-from typing import Optional, Annotated
+from typing import Optional, Annotated, Dict
 from pydantic import BaseModel, Field, field_validator, model_validator
 from datetime import datetime
 import re
@@ -62,12 +62,15 @@ class SourceReference(BaseModel):
     page: Optional[int] = Field(None, description="Номер страницы")
     section: Optional[str] = Field(None, description="Раздел документа")
     text: str = Field(description="Цитата из документа")
+    bbox: Optional[Dict[str, float]] = Field(None, description="Bounding box coordinates: {x0, y0, x1, y1}")
+    page_bbox: Optional[Dict[str, float]] = Field(None, description="Page dimensions: {width, height}")
 
 
 class TabularCellExtractionModel(BaseModel):
     """Pydantic model for structured output of tabular cell extraction"""
     
     cell_value: str = Field(description="Извлеченное значение ячейки")
+    normalized_value: Optional[str] = Field(None, description="Нормализованное значение (отдельно от cell_value)")
     verbatim_extract: Optional[str] = Field(None, description="Точная цитата из документа (для verbatim типа)")
     source_page: Optional[int] = Field(None, description="Номер страницы в документе, где найдена информация")
     source_section: Optional[str] = Field(None, description="Раздел документа (например, 'Раздел 3.1', 'Статья 5')")
@@ -130,6 +133,14 @@ class TabularCellExtractionModel(BaseModel):
         
         # For text, verbatim, tags - no validation needed
         return v.strip()
+    
+    @model_validator(mode='after')
+    def set_normalized_value(self):
+        """Set normalized_value after validation"""
+        if not self.normalized_value:
+            _, normalized = self._normalize_value(self.cell_value, self.column_type)
+            self.normalized_value = normalized
+        return self
     
     @field_validator('confidence')
     @classmethod

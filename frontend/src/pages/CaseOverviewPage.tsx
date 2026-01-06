@@ -170,7 +170,7 @@ const CaseOverviewPage = () => {
   
   if (loading || !caseData) {
     return (
-      <div className="flex items-center justify-center h-screen bg-gradient-to-br from-[#F8F9FA] via-white to-[#F0F4F8]">
+      <div className="flex items-center justify-center h-screen bg-bg-primary">
         <Spinner size="lg" />
       </div>
     )
@@ -183,11 +183,11 @@ const CaseOverviewPage = () => {
   ]
   
   return (
-    <div className="flex h-screen bg-gradient-to-br from-[#F8F9FA] via-white to-[#F0F4F8]">
+    <div className="flex h-screen bg-bg-primary">
       <UnifiedSidebar navItems={navItems} title="Legal AI" />
       <div className="flex-1 flex flex-col overflow-hidden">
         <CaseHeader caseData={caseData} />
-        <div className="flex-1 overflow-y-auto content-background">
+        <div className="flex-1 overflow-y-auto bg-bg-primary">
           <div className="p-8 fade-in-up">
             <Tabs defaultTab="overview" className="space-y-6">
               <TabList>
@@ -201,23 +201,23 @@ const CaseOverviewPage = () => {
                 <Card className="hoverable">
                   <CardHeader>
                     <CardTitle className="font-display text-h2">Обзор дела</CardTitle>
-                    <CardDescription className="text-body text-[#6B7280]">
+                    <CardDescription className="text-body text-text-secondary">
                       Общая информация о деле и его статусе
                     </CardDescription>
                   </CardHeader>
                   <CardContent>
                     <div className="grid grid-cols-2 md:grid-cols-4 gap-6">
-                      <div className="p-4 rounded-lg bg-gradient-to-br from-[#00D4FF]/10 to-[#7C3AED]/10 border border-[#00D4FF]/20">
-                        <div className="text-3xl font-display font-bold text-[#00D4FF]">{caseData.num_documents}</div>
-                        <div className="text-sm text-[#6B7280] mt-1">Документов</div>
+                      <div className="p-4 rounded-lg bg-bg-secondary border border-border">
+                        <div className="text-3xl font-display font-bold text-text-primary">{caseData.num_documents}</div>
+                        <div className="text-sm text-text-secondary mt-1">Документов</div>
                       </div>
-                      <div className="p-4 rounded-lg bg-gradient-to-br from-[#EF4444]/10 to-[#DC2626]/10 border border-[#EF4444]/20">
-                        <div className="text-3xl font-display font-bold text-[#EF4444]">{risks.length}</div>
-                        <div className="text-sm text-[#6B7280] mt-1">Рисков</div>
+                      <div className="p-4 rounded-lg bg-error-bg border border-error/20">
+                        <div className="text-3xl font-display font-bold text-error">{risks.length}</div>
+                        <div className="text-sm text-text-secondary mt-1">Рисков</div>
                       </div>
-                      <div className="p-4 rounded-lg bg-gradient-to-br from-[#F59E0B]/10 to-[#D97706]/10 border border-[#F59E0B]/20">
-                        <div className="text-3xl font-display font-bold text-[#F59E0B]">{contradictions.length}</div>
-                        <div className="text-sm text-[#6B7280] mt-1">Противоречий</div>
+                      <div className="p-4 rounded-lg bg-warning-bg border border-warning/20">
+                        <div className="text-3xl font-display font-bold text-warning">{contradictions.length}</div>
+                        <div className="text-sm text-text-secondary mt-1">Противоречий</div>
                       </div>
                     </div>
                   </CardContent>
@@ -226,14 +226,14 @@ const CaseOverviewPage = () => {
               
               <TabPanel id="risks" className="space-y-6">
                 <div className="flex items-center justify-between">
-                  <h2 className="font-display text-h1 text-[#1F2937]">
+                  <h2 className="font-display text-h1 text-text-primary">
                     Ключевые риски ({risks.length} выявлено)
                   </h2>
                   {risks.length === 0 && !loadingRisks && (
                     <button
                       onClick={handleStartAnalysis}
                       disabled={startingAnalysis}
-                      className="px-6 py-3 bg-gradient-to-r from-[#00D4FF] to-[#7C3AED] text-white font-medium rounded-lg hover:shadow-lg hover:shadow-[#00D4FF]/30 transition-all duration-300 disabled:opacity-50 disabled:cursor-not-allowed"
+                      className="px-6 py-3 bg-accent text-bg-primary font-medium rounded-lg hover:bg-accent-hover transition-all duration-300 disabled:opacity-50 disabled:cursor-not-allowed"
                     >
                       {startingAnalysis ? 'Запуск анализа...' : 'Запустить анализ рисков'}
                     </button>
@@ -251,7 +251,7 @@ const CaseOverviewPage = () => {
                       <button
                         onClick={handleStartAnalysis}
                         disabled={startingAnalysis}
-                        className="mt-3 px-4 py-2 bg-gradient-to-r from-[#00D4FF] to-[#7C3AED] text-white text-sm font-medium rounded-lg hover:shadow-lg hover:shadow-[#00D4FF]/30 transition-all duration-300 disabled:opacity-50 disabled:cursor-not-allowed"
+                        className="mt-3 px-4 py-2 bg-accent text-bg-primary text-sm font-medium rounded-lg hover:bg-accent-hover transition-all duration-300 disabled:opacity-50 disabled:cursor-not-allowed"
                       >
                         {startingAnalysis ? 'Запуск...' : 'Запустить анализ'}
                       </button>
@@ -264,14 +264,14 @@ const CaseOverviewPage = () => {
               
               <TabPanel id="contradictions" className="space-y-6">
                 <div className="flex items-center justify-between">
-                  <h2 className="font-display text-h1 text-[#1F2937]">
+                  <h2 className="font-display text-h1 text-text-primary">
                     Противоречия ({contradictions.length} найдено)
                   </h2>
                   {contradictions.length === 0 && !loadingContradictions && (
                     <button
                       onClick={handleStartAnalysis}
                       disabled={startingAnalysis}
-                      className="px-6 py-3 bg-gradient-to-r from-[#00D4FF] to-[#7C3AED] text-white font-medium rounded-lg hover:shadow-lg hover:shadow-[#00D4FF]/30 transition-all duration-300 disabled:opacity-50 disabled:cursor-not-allowed"
+                      className="px-6 py-3 bg-accent text-bg-primary font-medium rounded-lg hover:bg-accent-hover transition-all duration-300 disabled:opacity-50 disabled:cursor-not-allowed"
                     >
                       {startingAnalysis ? 'Запуск анализа...' : 'Запустить анализ противоречий'}
                     </button>
@@ -289,7 +289,7 @@ const CaseOverviewPage = () => {
                       <button
                         onClick={handleStartAnalysis}
                         disabled={startingAnalysis}
-                        className="mt-3 px-4 py-2 bg-gradient-to-r from-[#00D4FF] to-[#7C3AED] text-white text-sm font-medium rounded-lg hover:shadow-lg hover:shadow-[#00D4FF]/30 transition-all duration-300 disabled:opacity-50 disabled:cursor-not-allowed"
+                        className="mt-3 px-4 py-2 bg-accent text-bg-primary text-sm font-medium rounded-lg hover:bg-accent-hover transition-all duration-300 disabled:opacity-50 disabled:cursor-not-allowed"
                       >
                         {startingAnalysis ? 'Запуск...' : 'Запустить анализ'}
                       </button>
@@ -302,12 +302,12 @@ const CaseOverviewPage = () => {
               
               <TabPanel id="timeline" className="space-y-6">
                 <div className="flex items-center justify-between">
-                  <h2 className="font-display text-h1 text-[#1F2937]">Временная линия</h2>
+                  <h2 className="font-display text-h1 text-text-primary">Временная линия</h2>
                   {timelineEvents.length === 0 && !loadingTimeline && (
                     <button
                       onClick={handleStartAnalysis}
                       disabled={startingAnalysis}
-                      className="px-6 py-3 bg-gradient-to-r from-[#00D4FF] to-[#7C3AED] text-white font-medium rounded-lg hover:shadow-lg hover:shadow-[#00D4FF]/30 transition-all duration-300 disabled:opacity-50 disabled:cursor-not-allowed"
+                      className="px-6 py-3 bg-accent text-bg-primary font-medium rounded-lg hover:bg-accent-hover transition-all duration-300 disabled:opacity-50 disabled:cursor-not-allowed"
                     >
                       {startingAnalysis ? 'Запуск анализа...' : 'Запустить анализ временной линии'}
                     </button>
@@ -325,7 +325,7 @@ const CaseOverviewPage = () => {
                       <button
                         onClick={handleStartAnalysis}
                         disabled={startingAnalysis}
-                        className="mt-3 px-4 py-2 bg-gradient-to-r from-[#00D4FF] to-[#7C3AED] text-white text-sm font-medium rounded-lg hover:shadow-lg hover:shadow-[#00D4FF]/30 transition-all duration-300 disabled:opacity-50 disabled:cursor-not-allowed"
+                        className="mt-3 px-4 py-2 bg-accent text-bg-primary text-sm font-medium rounded-lg hover:bg-accent-hover transition-all duration-300 disabled:opacity-50 disabled:cursor-not-allowed"
                       >
                         {startingAnalysis ? 'Запуск...' : 'Запустить анализ'}
                       </button>

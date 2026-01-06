@@ -198,3 +198,5 @@ def get_rule_router() -> RuleBasedRouter:
         _rule_router = RuleBasedRouter()
     return _rule_router
 
+
+

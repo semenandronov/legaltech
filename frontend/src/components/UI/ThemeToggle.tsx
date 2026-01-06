@@ -3,23 +3,9 @@ import { useTheme } from '../../hooks/useTheme'
 import { Button } from './Button'
 
 const ThemeToggle = () => {
-  const { theme, toggleTheme } = useTheme()
-  
-  return (
-    <Button
-      variant="secondary"
-      size="sm"
-      onClick={toggleTheme}
-      className="p-2"
-      aria-label={`Переключить на ${theme === 'dark' ? 'светлую' : 'тёмную'} тему`}
-    >
-      {theme === 'dark' ? (
-        <Sun className="w-4 h-4" />
-      ) : (
-        <Moon className="w-4 h-4" />
-      )}
-    </Button>
-  )
+  // Темная тема временно скрыта — не отображаем переключатель
+  useTheme() // сохраняем вызов, чтобы не потерять связь с контекстом при будущих изменениях
+  return null
 }
 
 export default ThemeToggle

@@ -15,6 +15,7 @@ from langchain_core.documents import Document
 from langchain_core.prompts import ChatPromptTemplate
 import logging
 import asyncio
+import re
 from datetime import datetime, timedelta
 
 logger = logging.getLogger(__name__)
@@ -785,6 +786,78 @@ class TabularReviewService:
         # Default - multi-query
         return 'multi_query'
     
+    def _detect_conflicts(
+        self,
+        candidates: List[TabularCellExtractionModel],
+        column_type: str
+    ) -> bool:
+        """
+        Detect conflicts between candidate values
+        
+        Args:
+            candidates: List of extraction results
+            column_type: Type of column (date, currency, number, text, etc.)
+        
+        Returns:
+            True if conflicts detected, False otherwise
+        """
+        if len(candidates) < 2:
+            return False
+        
+        # Get normalized values for comparison
+        normalized_values = []
+        for candidate in candidates:
+            # Use normalized_value if available, otherwise normalize cell_value
+            norm_val = candidate.normalized_value
+            if not norm_val and candidate.cell_value:
+                # Try to normalize on the fly
+                if column_type == 'date':
+                    try:
+                        from app.services.date_validator import parse_and_normalize_date
+                        norm_val = parse_and_normalize_date(candidate.cell_value)
+                    except:
+                        norm_val = candidate.cell_value.strip().lower()
+                elif column_type in ['currency', 'number']:
+                    try:
+                        norm_val = candidate.cell_value.replace(' ', '').replace(',', '.')
+                        float(norm_val)  # Validate it's a number
+                    except:
+                        norm_val = candidate.cell_value.strip().lower()
+                elif column_type == 'yes_no':
+                    norm_val = candidate.cell_value.strip().lower()
+                else:
+                    # For text, use lowercase for comparison
+                    norm_val = candidate.cell_value.strip().lower()
+            
+            if norm_val and norm_val not in ['n/a', 'none', '']:
+                normalized_values.append(norm_val)
+        
+        if len(normalized_values) < 2:
+            return False
+        
+        # Check for conflicts
+        if column_type in ['date', 'currency', 'number', 'yes_no']:
+            # For structured types, exact comparison
+            unique_values = set(normalized_values)
+            return len(unique_values) > 1
+        else:
+            # For text, use semantic similarity (simple approach: check if values are significantly different)
+            # For now, use simple string comparison - can be enhanced with embeddings later
+            unique_values = set(normalized_values)
+            if len(unique_values) == 1:
+                return False
+            
+            # Check if values are substantially different (not just whitespace/formatting)
+            first_val = normalized_values[0]
+            for val in normalized_values[1:]:
+                # Remove common punctuation and whitespace for comparison
+                first_clean = re.sub(r'[^\w]', '', first_val)
+                val_clean = re.sub(r'[^\w]', '', val)
+                if first_clean != val_clean and abs(len(first_clean) - len(val_clean)) > len(first_clean) * 0.3:
+                    return True
+            
+            return False
+    
     async def extract_cell_value_improved(
         self,
         file: File,
@@ -893,6 +966,7 @@ class TabularReviewService:
                 }
             
             # Try to use structured output
+            all_candidates = []  # Store all extraction results
             best_result = None
             best_confidence = 0.0
             
@@ -981,7 +1055,10 @@ class TabularReviewService:
                     if not result.source_section:
                         result.source_section = chunk.metadata.get('source_section')
                     
-                    # Validate result
+                    # Store all candidates (not just best)
+                    all_candidates.append(result)
+                    
+                    # Track best result
                     if result.confidence > best_confidence:
                         best_result = result
                         best_confidence = result.confidence
@@ -999,7 +1076,56 @@ class TabularReviewService:
                 logger.warning(f"All extraction attempts failed for file {file.id}, column {column.id}, using fallback")
                 return await self.extract_cell_value(file, column)
             
-            # Build source_references from result
+            # Detect conflicts
+            has_conflict = self._detect_conflicts(all_candidates, column.column_type)
+            
+            # Prepare candidates list for storage
+            candidates_list = []
+            for candidate in all_candidates:
+                candidate_dict = {
+                    "value": candidate.cell_value,
+                    "normalized_value": candidate.normalized_value,
+                    "confidence": float(candidate.confidence),
+                    "source_page": candidate.source_page,
+                    "source_section": candidate.source_section,
+                    "verbatim": candidate.verbatim_extract,
+                    "reasoning": candidate.reasoning,
+                    "extraction_method": candidate.extraction_method
+                }
+                # Add source_references if available
+                if candidate.source_references:
+                    candidate_dict["source_references"] = candidate.source_references
+                candidates_list.append(candidate_dict)
+            
+            # Run verifier if available
+            from app.services.tabular_review_verifier import TabularReviewVerifier
+            verifier = TabularReviewVerifier(self.db)
+            
+            # Create temporary cell object for verification
+            temp_cell = TabularCell(
+                cell_value=best_result.cell_value,
+                normalized_value=best_result.normalized_value,
+                verbatim_extract=best_result.verbatim_extract,
+                confidence_score=best_result.confidence,
+                status="completed"
+            )
+            
+            verification_result = verifier.verify_cell(temp_cell, column, file)
+            
+            # Determine status based on conflict detection and verification
+            if not best_result.cell_value or best_result.cell_value.strip() == "" or best_result.cell_value.strip().upper() == "N/A":
+                cell_status = "empty" if not best_result.cell_value or best_result.cell_value.strip() == "" else "n_a"
+            elif has_conflict:
+                cell_status = "conflict"
+            elif not verification_result.is_valid:
+                # If verification failed, use suggested status or mark as low confidence
+                cell_status = verification_result.suggested_status
+                if cell_status == "completed" and best_result.confidence < 0.7:
+                    cell_status = "pending"  # Low confidence needs review
+            else:
+                cell_status = "completed"
+            
+            # Build source_references from best result
             source_references = []
             if best_result.source_page or best_result.source_section:
                 source_ref = {
@@ -1017,13 +1143,16 @@ class TabularReviewService:
                 "file_id": file.id,
                 "column_id": column.id,
                 "cell_value": best_result.cell_value,
+                "normalized_value": best_result.normalized_value,
                 "verbatim_extract": best_result.verbatim_extract,
                 "source_page": best_result.source_page,
                 "source_section": best_result.source_section,
                 "source_references": source_references,
                 "reasoning": best_result.reasoning,
                 "confidence_score": float(best_result.confidence),
-                "extraction_method": best_result.extraction_method
+                "extraction_method": best_result.extraction_method,
+                "status": cell_status,
+                "candidates": candidates_list if len(candidates_list) > 1 else None  # Only store if multiple candidates
             }
             
         except Exception as e:
@@ -1114,10 +1243,13 @@ class TabularReviewService:
                 if existing_cell:
                     # Update existing cell with all new fields
                     existing_cell.cell_value = result.get("cell_value")
+                    existing_cell.normalized_value = result.get("normalized_value")
                     existing_cell.verbatim_extract = result.get("verbatim_extract")
                     existing_cell.reasoning = result.get("reasoning")
                     existing_cell.source_references = result.get("source_references")
                     existing_cell.confidence_score = result.get("confidence_score")
+                    existing_cell.candidates = result.get("candidates")
+                    existing_cell.status = result.get("status", "completed")
                     # Extract source_page from first source_reference if available
                     source_refs = result.get("source_references", [])
                     if source_refs and isinstance(source_refs, list) and len(source_refs) > 0:
@@ -1128,8 +1260,7 @@ class TabularReviewService:
                     else:
                         existing_cell.source_page = result.get("source_page")
                         existing_cell.source_section = result.get("source_section")
-                        existing_cell.status = "completed"
-                        existing_cell.updated_at = datetime.utcnow()
+                    existing_cell.updated_at = datetime.utcnow()
                 else:
                     # Extract source_page from first source_reference if available
                     source_refs = result.get("source_references", [])
@@ -1147,19 +1278,55 @@ class TabularReviewService:
                         file_id=result["file_id"],
                         column_id=result["column_id"],
                         cell_value=result.get("cell_value"),
+                        normalized_value=result.get("normalized_value"),
                         verbatim_extract=result.get("verbatim_extract"),
                         reasoning=result.get("reasoning"),
                         source_references=result.get("source_references"),
                         confidence_score=result.get("confidence_score"),
+                        candidates=result.get("candidates"),
                         source_page=source_page,
                         source_section=source_section,
-                        status="completed"
+                        status=result.get("status", "completed")
                     )
                     self.db.add(cell)
                 
                 saved_count += 1
             
             self.db.commit()
+            
+            # Automatically build review queue after extraction
+            try:
+                from app.services.review_queue_service import ReviewQueueService
+                from app.models.tabular_review import ReviewQueueItem
+                
+                queue_service = ReviewQueueService(self.db)
+                queue_items = queue_service.build_review_queue(review_id)
+                
+                # Delete existing unreviewed items
+                self.db.query(ReviewQueueItem).filter(
+                    and_(
+                        ReviewQueueItem.tabular_review_id == review_id,
+                        ReviewQueueItem.is_reviewed == False
+                    )
+                ).delete()
+                
+                # Save new queue items
+                for item in queue_items:
+                    queue_item = ReviewQueueItem(
+                        tabular_review_id=item.review_id,
+                        file_id=item.file_id,
+                        column_id=item.column_id,
+                        cell_id=item.cell_id,
+                        priority=item.priority,
+                        reason=item.reason
+                    )
+                    self.db.add(queue_item)
+                
+                self.db.commit()
+                logger.info(f"Review queue built: {len(queue_items)} items")
+            except Exception as e:
+                logger.warning(f"Failed to build review queue: {e}", exc_info=True)
+                # Don't fail extraction if queue building fails
             
             # Update review status
             review.status = "completed"

@@ -87,6 +87,20 @@ class ColumnPromptGenerateRequest(BaseModel):
     column_type: str  # text, bulleted_list, number, currency, yes_no, date, tag, multiple_tags, verbatim, manual_input
 
 
+class ColumnDescriptionRequest(BaseModel):
+    description: str
+
+
+class ColumnExampleRequest(BaseModel):
+    document_text: str
+    expected_value: str
+    context: Optional[str] = None
+
+
+class ColumnExamplesRequest(BaseModel):
+    examples: List[ColumnExampleRequest]
+
+
 @router.post("/")
 async def create_review(
     request: TabularReviewCreateRequest,
@@ -494,6 +508,7 @@ async def get_cell_details(
         return {
             "id": cell.id,
             "cell_value": cell.cell_value,
+            "normalized_value": cell.normalized_value,
             "verbatim_extract": cell.verbatim_extract,
             "reasoning": cell.reasoning,
             "source_references": cell.source_references or [],
@@ -504,6 +519,8 @@ async def get_cell_details(
             "column_type": column_type,
             "has_verbatim": has_verbatim,
             "highlight_mode": highlight_mode,
+            "candidates": cell.candidates if cell.candidates else None,
+            "conflict_resolution": cell.conflict_resolution if cell.conflict_resolution else None,
         }
     except HTTPException:
         raise
@@ -1069,6 +1086,307 @@ async def unresolve_comment(
         raise HTTPException(status_code=500, detail="Failed to unresolve comment")
 
 
+@router.get("/{review_id}/review-queue")
+async def get_review_queue(
+    review_id: str,
+    include_reviewed: bool = Query(False, description="Include reviewed items"),
+    priority: Optional[int] = Query(None, description="Filter by priority (1-5)"),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """Get review queue items for a tabular review"""
+    try:
+        from app.services.review_queue_service import ReviewQueueService
+        from app.models.tabular_review import ReviewQueueItem, TabularReview
+        
+        # Verify review belongs to user
+        review = db.query(TabularReview).filter(
+            and_(TabularReview.id == review_id, TabularReview.user_id == current_user.id)
+        ).first()
+        
+        if not review:
+            raise HTTPException(status_code=404, detail="Tabular review not found or access denied")
+        
+        # Get queue items from database
+        query = db.query(ReviewQueueItem).filter(
+            ReviewQueueItem.tabular_review_id == review_id
+        )
+        
+        if not include_reviewed:
+            query = query.filter(ReviewQueueItem.is_reviewed == False)
+        
+        if priority:
+            query = query.filter(ReviewQueueItem.priority == priority)
+        
+        queue_items = query.order_by(ReviewQueueItem.priority.asc(), ReviewQueueItem.created_at.asc()).all()
+        
+        # Get stats
+        queue_service = ReviewQueueService(db)
+        stats = queue_service.get_queue_stats(review_id)
+        
+        return {
+            "items": [
+                {
+                    "id": item.id,
+                    "file_id": item.file_id,
+                    "column_id": item.column_id,
+                    "cell_id": item.cell_id,
+                    "priority": item.priority,
+                    "reason": item.reason,
+                    "is_reviewed": item.is_reviewed,
+                    "reviewed_by": item.reviewed_by,
+                    "reviewed_at": item.reviewed_at.isoformat() if item.reviewed_at else None,
+                    "created_at": item.created_at.isoformat() if item.created_at else None,
+                }
+                for item in queue_items
+            ],
+            "stats": stats
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error getting review queue: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Failed to get review queue")
+
+
+@router.post("/{review_id}/review-queue/rebuild")
+async def rebuild_review_queue(
+    review_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """Rebuild review queue for a tabular review"""
+    try:
+        from app.services.review_queue_service import ReviewQueueService
+        from app.models.tabular_review import ReviewQueueItem, TabularReview
+        
+        # Verify review belongs to user
+        review = db.query(TabularReview).filter(
+            and_(TabularReview.id == review_id, TabularReview.user_id == current_user.id)
+        ).first()
+        
+        if not review:
+            raise HTTPException(status_code=404, detail="Tabular review not found or access denied")
+        
+        # Delete existing unreviewed items
+        db.query(ReviewQueueItem).filter(
+            and_(
+                ReviewQueueItem.tabular_review_id == review_id,
+                ReviewQueueItem.is_reviewed == False
+            )
+        ).delete()
+        
+        # Build new queue
+        queue_service = ReviewQueueService(db)
+        queue_items = queue_service.build_review_queue(review_id)
+        
+        # Save to database
+        for item in queue_items:
+            queue_item = ReviewQueueItem(
+                tabular_review_id=item.review_id,
+                file_id=item.file_id,
+                column_id=item.column_id,
+                cell_id=item.cell_id,
+                priority=item.priority,
+                reason=item.reason
+            )
+            db.add(queue_item)
+        
+        db.commit()
+        
+        stats = queue_service.get_queue_stats(review_id)
+        
+        return {
+            "message": f"Review queue rebuilt: {len(queue_items)} items",
+            "stats": stats
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error rebuilding review queue: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Failed to rebuild review queue")
+
+
+@router.patch("/{review_id}/review-queue/{item_id}/mark-reviewed")
+async def mark_queue_item_reviewed(
+    review_id: str,
+    item_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """Mark a review queue item as reviewed"""
+    try:
+        from app.models.tabular_review import ReviewQueueItem, TabularReview
+        from datetime import datetime
+        
+        # Verify review belongs to user
+        review = db.query(TabularReview).filter(
+            and_(TabularReview.id == review_id, TabularReview.user_id == current_user.id)
+        ).first()
+        
+        if not review:
+            raise HTTPException(status_code=404, detail="Tabular review not found or access denied")
+        
+        # Get queue item
+        queue_item = db.query(ReviewQueueItem).filter(
+            and_(
+                ReviewQueueItem.id == item_id,
+                ReviewQueueItem.tabular_review_id == review_id
+            )
+        ).first()
+        
+        if not queue_item:
+            raise HTTPException(status_code=404, detail="Queue item not found")
+        
+        # Mark as reviewed
+        queue_item.is_reviewed = True
+        queue_item.reviewed_by = current_user.id
+        queue_item.reviewed_at = datetime.utcnow()
+        
+        db.commit()
+        db.refresh(queue_item)
+        
+        # Broadcast update via WebSocket
+        from app.services.websocket_manager import websocket_manager
+        await websocket_manager.broadcast_to_review(
+            review_id,
+            {
+                "type": "review_queue_updated",
+                "item_id": item_id,
+                "is_reviewed": True,
+            }
+        )
+        
+        return {
+            "id": queue_item.id,
+            "is_reviewed": queue_item.is_reviewed,
+            "reviewed_at": queue_item.reviewed_at.isoformat() if queue_item.reviewed_at else None,
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error marking queue item as reviewed: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Failed to mark queue item as reviewed")
+
+
+class ConflictResolutionRequest(BaseModel):
+    selected_candidate_id: int
+    resolution_method: str  # 'select', 'merge', 'n_a'
+
+
+@router.patch("/{review_id}/cells/{file_id}/{column_id}/resolve-conflict")
+async def resolve_conflict(
+    review_id: str,
+    file_id: str,
+    column_id: str,
+    request: ConflictResolutionRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """Resolve a conflict by selecting a candidate or marking as N/A"""
+    try:
+        from app.models.tabular_review import TabularCell
+        from datetime import datetime
+        
+        # Get the cell
+        cell = db.query(TabularCell).filter(
+            and_(
+                TabularCell.tabular_review_id == review_id,
+                TabularCell.file_id == file_id,
+                TabularCell.column_id == column_id
+            )
+        ).first()
+        
+        if not cell:
+            raise HTTPException(status_code=404, detail="Cell not found")
+        
+        if cell.status != 'conflict':
+            raise HTTPException(status_code=400, detail="Cell is not in conflict status")
+        
+        if not cell.candidates or len(cell.candidates) == 0:
+            raise HTTPException(status_code=400, detail="No candidates found for this cell")
+        
+        # Handle resolution
+        if request.resolution_method == 'n_a':
+            # Mark as N/A
+            cell.cell_value = "N/A"
+            cell.normalized_value = None
+            cell.status = "n_a"
+            cell.conflict_resolution = {
+                "resolved_by": current_user.id,
+                "resolution_method": "n_a",
+                "resolved_at": datetime.utcnow().isoformat()
+            }
+        else:
+            # Select candidate
+            if request.selected_candidate_id < 0 or request.selected_candidate_id >= len(cell.candidates):
+                raise HTTPException(status_code=400, detail="Invalid candidate ID")
+            
+            selected_candidate = cell.candidates[request.selected_candidate_id]
+            
+            # Update cell with selected candidate
+            cell.cell_value = selected_candidate.get("value")
+            cell.normalized_value = selected_candidate.get("normalized_value")
+            cell.verbatim_extract = selected_candidate.get("verbatim")
+            cell.reasoning = selected_candidate.get("reasoning")
+            cell.confidence_score = selected_candidate.get("confidence")
+            cell.source_page = selected_candidate.get("source_page")
+            cell.source_section = selected_candidate.get("source_section")
+            cell.source_references = selected_candidate.get("source_references")
+            cell.status = "completed"
+            cell.conflict_resolution = {
+                "resolved_by": current_user.id,
+                "resolution_method": request.resolution_method,
+                "selected_candidate_id": request.selected_candidate_id,
+                "resolved_at": datetime.utcnow().isoformat()
+            }
+        
+        # Save history
+        from app.services.cell_history_service import CellHistoryService
+        history_service = CellHistoryService(db)
+        history_service.create_history_record(
+            tabular_review_id=review_id,
+            file_id=file_id,
+            column_id=column_id,
+            cell=cell,
+            changed_by=current_user.id,
+            change_type="updated",
+            change_reason=f"Conflict resolved: {request.resolution_method}"
+        )
+        
+        cell.updated_at = datetime.utcnow()
+        db.commit()
+        db.refresh(cell)
+        
+        # Broadcast update via WebSocket
+        from app.services.websocket_manager import websocket_manager
+        await websocket_manager.broadcast_to_review(
+            review_id,
+            {
+                "type": "cell_updated",
+                "file_id": file_id,
+                "column_id": column_id,
+                "cell": {
+                    "id": cell.id,
+                    "cell_value": cell.cell_value,
+                    "status": cell.status,
+                }
+            }
+        )
+        
+        return {
+            "id": cell.id,
+            "cell_value": cell.cell_value,
+            "status": cell.status,
+            "updated_at": cell.updated_at.isoformat() if cell.updated_at else None,
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error resolving conflict: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Failed to resolve conflict")
+
+
 @router.post("/{review_id}/export/csv")
 async def export_csv(
     review_id: str,
@@ -1485,4 +1803,93 @@ async def generate_column_prompt(
     except Exception as e:
         logger.error(f"Error generating column prompt: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail="Failed to generate prompt")
+
+
+@router.post("/{review_id}/columns/smart-from-description")
+async def create_column_from_description(
+    review_id: str,
+    request: ColumnDescriptionRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """Create a column from natural language description"""
+    try:
+        from app.services.smart_column_service import SmartColumnService
+        
+        # Verify review belongs to user
+        from app.models.tabular_review import TabularReview
+        review = db.query(TabularReview).filter(
+            and_(TabularReview.id == review_id, TabularReview.user_id == current_user.id)
+        ).first()
+        
+        if not review:
+            raise HTTPException(status_code=404, detail="Tabular review not found or access denied")
+        
+        service = SmartColumnService(db)
+        column = await service.create_column_from_description(review_id, request.description)
+        
+        return {
+            "id": column.id,
+            "column_label": column.column_label,
+            "column_type": column.column_type,
+            "prompt": column.prompt,
+            "column_config": column.column_config,
+            "order_index": column.order_index,
+        }
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.error(f"Error creating column from description: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Failed to create column from description")
+
+
+@router.post("/{review_id}/columns/smart-from-examples")
+async def create_column_from_examples(
+    review_id: str,
+    request: ColumnExamplesRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """Create a column from examples (few-shot learning)"""
+    try:
+        from app.services.smart_column_service import SmartColumnService, Example
+        
+        # Verify review belongs to user
+        from app.models.tabular_review import TabularReview
+        review = db.query(TabularReview).filter(
+            and_(TabularReview.id == review_id, TabularReview.user_id == current_user.id)
+        ).first()
+        
+        if not review:
+            raise HTTPException(status_code=404, detail="Tabular review not found or access denied")
+        
+        if len(request.examples) < 2:
+            raise HTTPException(status_code=400, detail="At least 2 examples are required")
+        
+        # Convert to Example objects
+        examples = [
+            Example(
+                document_text=ex.document_text,
+                expected_value=ex.expected_value,
+                context=ex.context
+            )
+            for ex in request.examples
+        ]
+        
+        service = SmartColumnService(db)
+        column = await service.create_column_from_examples(review_id, examples)
+        
+        return {
+            "id": column.id,
+            "column_label": column.column_label,
+            "column_type": column.column_type,
+            "prompt": column.prompt,
+            "column_config": column.column_config,
+            "order_index": column.order_index,
+        }
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.error(f"Error creating column from examples: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Failed to create column from examples")
 

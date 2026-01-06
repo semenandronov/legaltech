@@ -22,7 +22,7 @@ const RiskCards = ({ risks, onViewDocument }: RiskCardsProps) => {
   if (risks.length === 0) {
     return (
       <div className="text-center py-12">
-        <p className="text-body text-[#6B7280]">Риски не выявлены</p>
+        <p className="text-body text-text-secondary">Риски не выявлены</p>
       </div>
     )
   }
@@ -31,20 +31,20 @@ const RiskCards = ({ risks, onViewDocument }: RiskCardsProps) => {
     switch (level) {
       case 'high-risk':
         return {
-          border: 'border-l-4 border-[#EF4444]',
-          badge: 'bg-gradient-to-r from-[#EF4444]/20 to-[#DC2626]/20 text-[#EF4444] border border-[#EF4444]/30',
+          border: 'border-l-4 border-error',
+          badge: 'bg-error-bg text-error border border-error/30',
           icon: '🔴'
         }
       case 'medium-risk':
         return {
-          border: 'border-l-4 border-[#F59E0B]',
-          badge: 'bg-gradient-to-r from-[#F59E0B]/20 to-[#D97706]/20 text-[#F59E0B] border border-[#F59E0B]/30',
+          border: 'border-l-4 border-warning',
+          badge: 'bg-warning-bg text-warning border border-warning/30',
           icon: '🟡'
         }
       default:
         return {
-          border: 'border-l-4 border-[#10B981]',
-          badge: 'bg-gradient-to-r from-[#10B981]/20 to-[#059669]/20 text-[#10B981] border border-[#10B981]/30',
+          border: 'border-l-4 border-success',
+          badge: 'bg-success-bg text-success border border-success/30',
           icon: '🟢'
         }
     }
@@ -66,13 +66,13 @@ const RiskCards = ({ risks, onViewDocument }: RiskCardsProps) => {
                   <span className={`px-3 py-1 rounded-full text-xs font-medium ${styles.badge}`}>
                     {styles.icon} {risk.level === 'high-risk' ? 'High' : risk.level === 'medium-risk' ? 'Medium' : 'Low'}
                   </span>
-                  <h3 className="font-display text-h3 text-[#1F2937]">{risk.title}</h3>
+                  <h3 className="font-display text-h3 text-text-primary">{risk.title}</h3>
                 </div>
               </div>
               
-              <p className="text-body text-[#374151]">{risk.description}</p>
+              <p className="text-body text-text-primary">{risk.description}</p>
               
-              <div className="flex items-center gap-2 text-sm text-[#6B7280]">
+              <div className="flex items-center gap-2 text-sm text-text-secondary">
                 <FileText className="w-4 h-4" />
                 <span>
                   {risk.location}
@@ -81,15 +81,15 @@ const RiskCards = ({ risks, onViewDocument }: RiskCardsProps) => {
               </div>
               
               {risk.analysis && (
-                <div className="bg-gradient-to-r from-[#F3F4F6] to-[#E5E7EB] rounded-lg p-4 border border-[#E5E7EB]">
-                  <p className="text-sm text-[#6B7280] italic">"{risk.analysis}"</p>
+                <div className="bg-bg-secondary rounded-lg p-4 border border-border">
+                  <p className="text-sm text-text-secondary italic">"{risk.analysis}"</p>
                 </div>
               )}
               
-              <div className="flex items-center gap-2 pt-3 border-t border-[#E5E7EB]">
+              <div className="flex items-center gap-2 pt-3 border-t border-border">
                 <button
                   onClick={() => onViewDocument?.(risk.document, risk.page)}
-                  className="px-4 py-2 bg-gradient-to-r from-[#00D4FF] to-[#7C3AED] text-white text-sm font-medium rounded-lg hover:shadow-lg hover:shadow-[#00D4FF]/30 transition-all duration-300 flex items-center gap-2"
+                  className="px-4 py-2 bg-accent text-bg-primary text-sm font-medium rounded-lg hover:bg-accent-hover transition-all duration-300 flex items-center gap-2"
                 >
                   <ExternalLink className="w-4 h-4" />
                   Открыть в документе

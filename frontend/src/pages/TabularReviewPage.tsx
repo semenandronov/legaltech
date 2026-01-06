@@ -294,7 +294,7 @@ const TabularReviewPage: React.FC = () => {
 
   if (loading && !tableData) {
     return (
-      <div className="h-screen bg-gradient-to-br from-[#F8F9FA] via-white to-[#F0F4F8] flex">
+      <div className="h-screen bg-bg-primary flex">
         {caseId && <UnifiedSidebar navItems={navItems} title="Legal AI" />}
         <div className="flex-1 flex items-center justify-center">
           <Spinner size="lg" />
@@ -305,16 +305,16 @@ const TabularReviewPage: React.FC = () => {
 
   if (error && !tableData) {
     return (
-      <div className="h-screen bg-gradient-to-br from-[#F8F9FA] via-white to-[#F0F4F8] flex">
+      <div className="h-screen bg-bg-primary flex">
         {caseId && <UnifiedSidebar navItems={navItems} title="Legal AI" />}
-        <div className="flex-1 flex items-center justify-center p-6 content-background">
+        <div className="flex-1 flex items-center justify-center p-6 bg-bg-primary">
           <Card className="p-6 hoverable">
             <div className="text-center">
-              <h2 className="font-display text-h2 text-[#1F2937] mb-2">Ошибка</h2>
-              <p className="text-body text-[#6B7280] mb-4">{error}</p>
+              <h2 className="font-display text-h2 text-text-primary mb-2">Ошибка</h2>
+              <p className="text-body text-text-secondary mb-4">{error}</p>
               <button
                 onClick={() => navigate(`/cases/${caseId}/chat`)}
-                className="px-6 py-3 bg-gradient-to-r from-[#00D4FF] to-[#7C3AED] text-white font-medium rounded-lg hover:shadow-lg hover:shadow-[#00D4FF]/30 transition-all duration-300"
+                className="px-6 py-3 bg-accent text-bg-primary font-medium rounded-lg hover:bg-accent-hover transition-all duration-300"
               >
                 Вернуться к делу
               </button>
@@ -337,19 +337,19 @@ const TabularReviewPage: React.FC = () => {
     }
 
     return (
-      <div className="h-screen bg-gradient-to-br from-[#F8F9FA] via-white to-[#F0F4F8] flex">
+      <div className="h-screen bg-bg-primary flex">
         {caseId && <UnifiedSidebar navItems={navItems} title="Legal AI" />}
-        <div className="flex-1 flex flex-col content-background">
-          <div className="border-b border-[#E5E7EB] bg-white/80 backdrop-blur-sm p-6">
+        <div className="flex-1 flex flex-col bg-bg-primary">
+          <div className="border-b border-border bg-bg-elevated/80 backdrop-blur-sm p-6">
             <div className="flex items-center gap-4">
               <button
                 onClick={() => navigate(`/cases/${caseId}/chat`)}
-                className="p-2 rounded-lg hover:bg-[#F3F4F6] transition-colors duration-200 text-[#6B7280] hover:text-[#1F2937] flex items-center gap-2"
+                className="p-2 rounded-lg hover:bg-bg-hover transition-colors duration-200 text-text-secondary hover:text-text-primary flex items-center gap-2"
               >
                 <ArrowLeft className="w-4 h-4" />
                 Назад к делу
               </button>
-              <h1 className="font-display text-h1 text-[#1F2937]">Tabular Review</h1>
+              <h1 className="font-display text-h1 text-text-primary">Tabular Review</h1>
             </div>
           </div>
           <div className="flex-1 overflow-auto p-8 fade-in-up">
@@ -357,14 +357,14 @@ const TabularReviewPage: React.FC = () => {
               <div className="max-w-4xl mx-auto">
                 <div className="flex items-center justify-between mb-6">
                   <div>
-                    <h2 className="font-display text-h1 text-[#1F2937] mb-2">Выберите или создайте таблицу</h2>
-                    <p className="text-body text-[#6B7280]">
+                    <h2 className="font-display text-h1 text-text-primary mb-2">Выберите или создайте таблицу</h2>
+                    <p className="text-body text-text-secondary">
                       Выберите существующую таблицу или создайте новую для этого дела
                     </p>
                   </div>
                   <button
                     onClick={handleCreateNew}
-                    className="px-6 py-3 bg-gradient-to-r from-[#00D4FF] to-[#7C3AED] text-white font-medium rounded-lg hover:shadow-lg hover:shadow-[#00D4FF]/30 transition-all duration-300"
+                    className="px-6 py-3 bg-accent text-bg-primary font-medium rounded-lg hover:bg-accent-hover transition-all duration-300"
                   >
                     Создать новую таблицу
                   </button>
@@ -377,15 +377,15 @@ const TabularReviewPage: React.FC = () => {
                 ) : existingReviews.length === 0 ? (
                   <Card className="p-8 hoverable">
                     <div className="text-center">
-                      <h3 className="font-display text-h2 text-[#1F2937] mb-2">
+                      <h3 className="font-display text-h2 text-text-primary mb-2">
                         Нет созданных таблиц
                       </h3>
-                      <p className="text-body text-[#6B7280] mb-6">
+                      <p className="text-body text-text-secondary mb-6">
                         Создайте первую таблицу для этого дела
                       </p>
                       <button
                         onClick={handleCreateNew}
-                        className="px-6 py-3 bg-gradient-to-r from-[#00D4FF] to-[#7C3AED] text-white font-medium rounded-lg hover:shadow-lg hover:shadow-[#00D4FF]/30 transition-all duration-300"
+                        className="px-6 py-3 bg-accent text-bg-primary font-medium rounded-lg hover:bg-accent-hover transition-all duration-300"
                       >
                         Создать таблицу
                       </button>
@@ -401,22 +401,22 @@ const TabularReviewPage: React.FC = () => {
                         onClick={() => handleSelectReview(review.id)}
                       >
                         <div className="flex items-start justify-between mb-3">
-                          <h3 className="font-display text-h3 text-[#1F2937]">{review.name}</h3>
+                          <h3 className="font-display text-h3 text-text-primary">{review.name}</h3>
                           <span className={`text-xs px-3 py-1 rounded-full font-medium ${
-                            review.status === 'completed' ? 'bg-gradient-to-r from-[#10B981]/20 to-[#059669]/20 text-[#10B981] border border-[#10B981]/30' :
-                            review.status === 'processing' ? 'bg-gradient-to-r from-[#F59E0B]/20 to-[#D97706]/20 text-[#F59E0B] border border-[#F59E0B]/30' :
-                            'bg-gradient-to-r from-[#6B7280]/20 to-[#4B5563]/20 text-[#6B7280] border border-[#6B7280]/30'
+                            review.status === 'completed' ? 'bg-success-bg text-success border border-success/30' :
+                            review.status === 'processing' ? 'bg-warning-bg text-warning border border-warning/30' :
+                            'bg-bg-secondary text-text-secondary border border-border'
                           }`}>
                             {review.status}
                           </span>
                         </div>
                         {review.description && (
-                          <p className="text-sm text-[#6B7280] mb-3 line-clamp-2">
+                          <p className="text-sm text-text-secondary mb-3 line-clamp-2">
                             {review.description}
                           </p>
                         )}
                         {review.updated_at && (
-                          <p className="text-xs text-[#6B7280]">
+                          <p className="text-xs text-text-secondary">
                             Обновлено: {new Date(review.updated_at).toLocaleDateString('ru-RU')}
                           </p>
                         )}
@@ -429,22 +429,22 @@ const TabularReviewPage: React.FC = () => {
               <div className="max-w-md mx-auto">
                 <Card className="p-6 hoverable">
                   <div className="text-center">
-                    <h3 className="font-display text-h2 text-[#1F2937] mb-2">
+                    <h3 className="font-display text-h2 text-text-primary mb-2">
                       Выберите документы для таблицы
                     </h3>
-                    <p className="text-body text-[#6B7280] mb-6">
+                    <p className="text-body text-text-secondary mb-6">
                       Выберите документы из дела, которые будут включены в Tabular Review
                     </p>
                     <div className="flex gap-3 justify-center">
                       <button
                         onClick={() => setShowReviewSelector(true)}
-                        className="px-4 py-2 bg-white border border-[#E5E7EB] text-[#6B7280] font-medium rounded-lg hover:bg-[#F3F4F6] transition-all duration-300"
+                        className="px-4 py-2 bg-bg-elevated border border-border text-text-secondary font-medium rounded-lg hover:bg-bg-hover transition-all duration-300"
                       >
                         Назад
                       </button>
                       <button
                         onClick={() => setShowDocumentSelector(true)}
-                        className="px-4 py-2 bg-gradient-to-r from-[#00D4FF] to-[#7C3AED] text-white font-medium rounded-lg hover:shadow-lg hover:shadow-[#00D4FF]/30 transition-all duration-300"
+                        className="px-4 py-2 bg-accent text-bg-primary font-medium rounded-lg hover:bg-accent-hover transition-all duration-300"
                       >
                         Выбрать документы
                       </button>
@@ -477,7 +477,7 @@ const TabularReviewPage: React.FC = () => {
     // Show loading only if we're actually loading
     if (loading) {
       return (
-        <div className="h-screen bg-gradient-to-br from-[#F8F9FA] via-white to-[#F0F4F8] flex">
+        <div className="h-screen bg-bg-primary flex">
           {caseId && <UnifiedSidebar navItems={navItems} title="Legal AI" />}
           <div className="flex-1 flex items-center justify-center">
             <Spinner size="lg" />
@@ -488,23 +488,23 @@ const TabularReviewPage: React.FC = () => {
     // If not loading but no data, show error or empty state
     if (error) {
       return (
-        <div className="h-screen bg-gradient-to-br from-[#F8F9FA] via-white to-[#F0F4F8] flex">
+        <div className="h-screen bg-bg-primary flex">
           {caseId && <UnifiedSidebar navItems={navItems} title="Legal AI" />}
-          <div className="flex-1 flex items-center justify-center p-6 content-background">
+          <div className="flex-1 flex items-center justify-center p-6 bg-bg-primary">
             <Card className="p-6 hoverable">
               <div className="text-center">
-                <h2 className="font-display text-h2 text-[#1F2937] mb-2">Ошибка</h2>
-                <p className="text-body text-[#6B7280] mb-4">{error}</p>
+                <h2 className="font-display text-h2 text-text-primary mb-2">Ошибка</h2>
+                <p className="text-body text-text-secondary mb-4">{error}</p>
                 <div className="flex gap-3 justify-center">
                   <button
                     onClick={() => loadReviewData()}
-                    className="px-4 py-2 bg-gradient-to-r from-[#00D4FF] to-[#7C3AED] text-white font-medium rounded-lg hover:shadow-lg hover:shadow-[#00D4FF]/30 transition-all duration-300"
+                    className="px-4 py-2 bg-accent text-bg-primary font-medium rounded-lg hover:bg-accent-hover transition-all duration-300"
                   >
                     Попробовать снова
                   </button>
                   <button
                     onClick={() => navigate(`/cases/${caseId}/chat`)}
-                    className="px-4 py-2 bg-white border border-[#E5E7EB] text-[#6B7280] font-medium rounded-lg hover:bg-[#F3F4F6] transition-all duration-300"
+                    className="px-4 py-2 bg-bg-elevated border border-border text-text-secondary font-medium rounded-lg hover:bg-bg-hover transition-all duration-300"
                   >
                     Вернуться к делу
                   </button>
@@ -517,15 +517,15 @@ const TabularReviewPage: React.FC = () => {
     }
     // If no error but no data, show empty state
     return (
-      <div className="h-screen bg-gradient-to-br from-[#F8F9FA] via-white to-[#F0F4F8] flex">
+      <div className="h-screen bg-bg-primary flex">
         {caseId && <UnifiedSidebar navItems={navItems} title="Legal AI" />}
-        <div className="flex-1 flex items-center justify-center p-6 content-background">
+        <div className="flex-1 flex items-center justify-center p-6 bg-bg-primary">
           <Card className="p-6 hoverable">
             <div className="text-center">
-              <p className="text-body text-[#6B7280] mb-4">Нет данных для отображения</p>
+              <p className="text-body text-text-secondary mb-4">Нет данных для отображения</p>
               <button
                 onClick={() => navigate(`/cases/${caseId}/chat`)}
-                className="px-6 py-3 bg-gradient-to-r from-[#00D4FF] to-[#7C3AED] text-white font-medium rounded-lg hover:shadow-lg hover:shadow-[#00D4FF]/30 transition-all duration-300"
+                className="px-6 py-3 bg-accent text-bg-primary font-medium rounded-lg hover:bg-accent-hover transition-all duration-300"
               >
                 Вернуться к делу
               </button>
@@ -537,33 +537,33 @@ const TabularReviewPage: React.FC = () => {
   }
 
   return (
-    <div className="h-screen bg-gradient-to-br from-[#F8F9FA] via-white to-[#F0F4F8] flex">
+    <div className="h-screen bg-bg-primary flex">
       {caseId && <UnifiedSidebar navItems={navItems} title="Legal AI" />}
-      <div className="flex flex-col h-full flex-1 content-background">
+      <div className="flex flex-col h-full flex-1 bg-bg-primary">
         {/* Header */}
-        <div className="border-b border-[#E5E7EB] bg-white/80 backdrop-blur-sm p-6">
+        <div className="border-b border-border bg-bg-elevated/80 backdrop-blur-sm p-6">
           <div className="flex items-center justify-between mb-4">
             <div className="flex items-center gap-4">
               <button
                 onClick={() => navigate(`/cases/${caseId}/chat`)}
-                className="p-2 rounded-lg hover:bg-[#F3F4F6] transition-colors duration-200 text-[#6B7280] hover:text-[#1F2937] flex items-center gap-2"
+                className="p-2 rounded-lg hover:bg-bg-hover transition-colors duration-200 text-text-secondary hover:text-text-primary flex items-center gap-2"
               >
                 <ArrowLeft className="w-4 h-4" />
                 Назад к делу
               </button>
               <div>
                 <div className="flex items-center gap-2">
-                  <h1 className="font-display text-h1 text-[#1F2937]">{tableData.review.name}</h1>
+                  <h1 className="font-display text-h1 text-text-primary">{tableData.review.name}</h1>
                   <button 
                     onClick={() => toast.info("Редактирование названия будет реализовано позже")}
-                    className="p-2 rounded-lg hover:bg-[#F3F4F6] transition-colors duration-200 text-[#6B7280] hover:text-[#1F2937]"
+                    className="p-2 rounded-lg hover:bg-bg-hover transition-colors duration-200 text-text-secondary hover:text-text-primary"
                     title="Редактировать название"
                   >
                     <Edit2 className="w-4 h-4" />
                   </button>
                 </div>
                 {tableData.review.description && (
-                  <p className="text-sm text-[#6B7280] mt-1">
+                  <p className="text-sm text-text-secondary mt-1">
                     {tableData.review.description}
                   </p>
                 )}
@@ -599,7 +599,7 @@ const TabularReviewPage: React.FC = () => {
         <div className="flex-1 overflow-hidden flex">
           {/* Chat (Left Panel) */}
           {reviewId && tableData && (
-            <div className="w-80 border-r border-[#E5E7EB] shrink-0 bg-white flex flex-col">
+            <div className="w-80 border-r border-border shrink-0 bg-bg-elevated flex flex-col">
               <TabularReviewContextChat
                 reviewId={reviewId}
                 reviewName={tableData.review.name}
@@ -621,19 +621,19 @@ const TabularReviewPage: React.FC = () => {
           {/* Table, Cell Detail, and Document Split View */}
           <div className="flex-1 overflow-hidden flex">
             {/* Table */}
-            <div className={`overflow-auto p-6 transition-all bg-white ${selectedCell ? 'w-2/5' : selectedDocument ? 'w-1/2' : 'flex-1'}`}>
+            <div className={`overflow-auto p-6 transition-all bg-bg-primary ${selectedCell ? 'w-2/5' : selectedDocument ? 'w-1/2' : 'flex-1'}`}>
               {tableData.columns.length === 0 ? (
                 <Card className="p-6 hoverable">
                   <div className="text-center">
-                    <h3 className="font-display text-h2 text-[#1F2937] mb-2">
+                    <h3 className="font-display text-h2 text-text-primary mb-2">
                       Нет колонок
                     </h3>
-                    <p className="text-body text-[#6B7280] mb-6">
+                    <p className="text-body text-text-secondary mb-6">
                       Добавьте колонки для начала работы с Tabular Review
                     </p>
                     <button
                       onClick={() => setShowColumnBuilder(true)}
-                      className="px-6 py-3 bg-gradient-to-r from-[#00D4FF] to-[#7C3AED] text-white font-medium rounded-lg hover:shadow-lg hover:shadow-[#00D4FF]/30 transition-all duration-300"
+                      className="px-6 py-3 bg-accent text-bg-primary font-medium rounded-lg hover:bg-accent-hover transition-all duration-300"
                     >
                       Добавить колонку
                     </button>
@@ -779,12 +779,12 @@ const TabularReviewPage: React.FC = () => {
 
             {/* Document Viewer */}
             {selectedDocument && (
-              <div className={`border-l border-[#E5E7EB] bg-white flex flex-col shrink-0 ${selectedCell ? 'w-2/5' : 'w-1/3'}`}>
-                <div className="border-b border-[#E5E7EB] p-3 flex items-center justify-between bg-white/80 backdrop-blur-sm">
-                  <span className="text-sm font-medium text-[#1F2937]">Документ</span>
+              <div className={`border-l border-border bg-bg-elevated flex flex-col shrink-0 ${selectedCell ? 'w-2/5' : 'w-1/3'}`}>
+                <div className="border-b border-border p-3 flex items-center justify-between bg-bg-elevated/80 backdrop-blur-sm">
+                  <span className="text-sm font-medium text-text-primary">Документ</span>
                   <button
                     onClick={() => setSelectedDocument(null)}
-                    className="p-2 rounded-lg hover:bg-[#F3F4F6] transition-colors duration-200 text-[#6B7280] hover:text-[#1F2937]"
+                    className="p-2 rounded-lg hover:bg-bg-hover transition-colors duration-200 text-text-secondary hover:text-text-primary"
                   >
                     <X className="w-4 h-4" />
                   </button>
@@ -836,7 +836,7 @@ const TabularReviewPage: React.FC = () => {
         {/* Cell Editor Modal */}
         {editingCell && tableData && (
           <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50" onClick={() => setEditingCell(null)}>
-            <div className="bg-white rounded-lg p-6 max-w-2xl w-full mx-4" onClick={(e) => e.stopPropagation()}>
+            <div className="bg-bg-elevated rounded-lg p-6 max-w-2xl w-full mx-4" onClick={(e) => e.stopPropagation()}>
               <h3 className="text-lg font-semibold mb-4">Редактировать ячейку</h3>
               <InlineCellEditor
                 cell={editingCell.cell}

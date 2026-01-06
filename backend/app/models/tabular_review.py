@@ -17,6 +17,9 @@ class TabularReview(Base):
     description = Column(Text, nullable=True)
     status = Column(String(50), default="draft")  # draft, processing, completed
     selected_file_ids = Column(JSON, nullable=True)  # Список выбранных file_id для этой таблицы
+    table_mode = Column(String(50), default="document")  # document, entity, fact
+    entity_config = Column(JSON, nullable=True)  # Конфигурация для entity режима: {entity_type, extraction_prompt, grouping_key}
+    review_rules = Column(JSON, nullable=True)  # Правила для review queue: {low_confidence_threshold, critical_columns, always_review_types, conflict_priority, ocr_quality_threshold}
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     
@@ -55,13 +58,16 @@ class TabularCell(Base):
     file_id = Column(String, ForeignKey("files.id", ondelete="CASCADE"), nullable=False, index=True)
     column_id = Column(String, ForeignKey("tabular_columns.id", ondelete="CASCADE"), nullable=False, index=True)
     cell_value = Column(Text, nullable=True)  # извлеченное значение
+    normalized_value = Column(Text, nullable=True)  # нормализованное значение (отдельно от cell_value)
     verbatim_extract = Column(Text, nullable=True)  # точная цитата из документа
     reasoning = Column(Text, nullable=True)  # объяснение AI (обоснование ответа)
     source_references = Column(JSON, nullable=True)  # Ссылки на источники: [{page: int, section: str, text: str}]
     confidence_score = Column(DECIMAL(3, 2), nullable=True)  # 0.00 - 1.00
     source_page = Column(Integer, nullable=True)
     source_section = Column(String(255), nullable=True)
-    status = Column(String(50), default="pending")  # pending, processing, completed, reviewed
+    status = Column(String(50), default="pending")  # pending, processing, completed, reviewed, conflict, empty, n_a
+    candidates = Column(JSON, nullable=True)  # Массив кандидатов: [{value, confidence, source_page, verbatim, reasoning, normalized_value}]
+    conflict_resolution = Column(JSON, nullable=True)  # Метаданные разрешения конфликта: {resolved_by, resolution_method, selected_candidate_id, resolved_at}
     locked_by = Column(String, ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True)
     locked_at = Column(DateTime, nullable=True)
     lock_expires_at = Column(DateTime, nullable=True, index=True)
@@ -177,4 +183,28 @@ class CellComment(Base):
     column = relationship("TabularColumn", backref="cell_comments")
     author = relationship("User", foreign_keys=[created_by], backref="cell_comments_authored")
     resolver = relationship("User", foreign_keys=[resolved_by], backref="cell_comments_resolved")
+
+
+class ReviewQueueItem(Base):
+    """ReviewQueueItem model - stores items in review queue"""
+    __tablename__ = "review_queue_items"
+    
+    id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    tabular_review_id = Column(String, ForeignKey("tabular_reviews.id", ondelete="CASCADE"), nullable=False, index=True)
+    file_id = Column(String, ForeignKey("files.id", ondelete="CASCADE"), nullable=False, index=True)
+    column_id = Column(String, ForeignKey("tabular_columns.id", ondelete="CASCADE"), nullable=False, index=True)
+    cell_id = Column(String, ForeignKey("tabular_cells.id", ondelete="CASCADE"), nullable=False, index=True)
+    priority = Column(Integer, nullable=False, default=5)  # 1-5, where 1 is highest
+    reason = Column(String(255), nullable=False)  # Comma-separated reasons: "conflict,low_confidence"
+    is_reviewed = Column(Boolean, default=False, index=True)
+    reviewed_by = Column(String, ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True)
+    reviewed_at = Column(DateTime, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow, index=True)
+    
+    # Relationships
+    review = relationship("TabularReview", backref="review_queue_items")
+    file = relationship("File", backref="review_queue_items")
+    column = relationship("TabularColumn", backref="review_queue_items")
+    cell = relationship("TabularCell", backref="review_queue_items")
+    reviewer = relationship("User", backref="review_queue_items")
 

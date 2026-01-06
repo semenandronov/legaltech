@@ -14,36 +14,24 @@ interface ThemeContextType {
 const ThemeContext = createContext<ThemeContextType | undefined>(undefined)
 
 export const ThemeProvider = ({ children }: { children: ReactNode }) => {
-  const [theme, setThemeState] = useState<Theme>(() => {
-    // Check localStorage first, then default to dark (Harvey style)
-    const saved = localStorage.getItem('theme') as Theme | null
-    if (saved) return saved
-    
-    // Default to dark theme (Harvey style)
-    return 'dark'
-  })
+  // По умолчанию и всегда используем светлую тему (Legora-style)
+  const [theme, setThemeState] = useState<Theme>('light')
 
   // Create MUI theme based on current theme mode
   const muiTheme = useMemo(() => {
     return createHarveyTheme(theme as PaletteMode)
   }, [theme])
 
-  // Initialize theme on mount
+  // Initialize theme on mount - форсим светлую тему и игнорируем предыдущие сохранения
   useEffect(() => {
     const root = document.documentElement
-    const saved = localStorage.getItem('theme') as Theme | null
-    const initialTheme = saved || 'dark'
+    const initialTheme: Theme = 'light'
     root.setAttribute('data-theme', initialTheme)
-    if (!saved) {
-      localStorage.setItem('theme', initialTheme)
-    }
-    
+    localStorage.setItem('theme', initialTheme)
+    setThemeState(initialTheme)
+
     // Add/remove dark class for shadcn-ui (for backward compatibility)
-    if (initialTheme === 'dark') {
-      root.classList.add('dark')
-    } else {
-      root.classList.remove('dark')
-    }
+    root.classList.remove('dark')
   }, [])
 
   useEffect(() => {
@@ -52,19 +40,17 @@ export const ThemeProvider = ({ children }: { children: ReactNode }) => {
     localStorage.setItem('theme', theme)
     
     // Add/remove dark class for shadcn-ui (for backward compatibility)
-    if (theme === 'dark') {
-      root.classList.add('dark')
-    } else {
-      root.classList.remove('dark')
-    }
+    root.classList.remove('dark')
   }, [theme])
 
   const toggleTheme = () => {
-    setThemeState(prev => prev === 'dark' ? 'light' : 'dark')
+    // Темная тема временно скрыта — оставляем только светлую
+    setThemeState('light')
   }
 
   const setTheme = (newTheme: Theme) => {
-    setThemeState(newTheme)
+    // Гарантируем, что тема остаётся светлой
+    setThemeState('light')
   }
 
   return (
