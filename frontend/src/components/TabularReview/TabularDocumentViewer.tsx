@@ -67,25 +67,29 @@ export const TabularDocumentViewer: React.FC<TabularDocumentViewerProps> = ({
   const [aboutAnchorEl, setAboutAnchorEl] = useState<null | HTMLElement>(null)
   
   // Use documents array if provided, otherwise use single file
-  const documentTabs: DocumentTab[] = documents || (initialFileId ? [{
-    fileId: initialFileId,
-    fileName: initialFileName || "Document",
-    fileType: propFileType || "pdf"
-  }] : [])
+  const documentTabs: DocumentTab[] = React.useMemo(() => {
+    return documents || (initialFileId ? [{
+      fileId: initialFileId,
+      fileName: initialFileName || "Document",
+      fileType: propFileType || "pdf"
+    }] : [])
+  }, [documents, initialFileId, initialFileName, propFileType])
 
   // Load document when initialFileId or caseId changes
   useEffect(() => {
+    if (!initialFileId || !caseId) return
+    
     const activeDoc = documentTabs[activeTab]
-    if (activeDoc?.fileId && caseId) {
-      // Always load if fileId changed or if currentFileId is not set
-      if (activeDoc.fileId !== currentFileId) {
-        setCurrentFileId(activeDoc.fileId)
-        setCurrentFileName(activeDoc.fileName)
-        loadDocumentInfo(activeDoc.fileId, propFileType || activeDoc.fileType || "pdf")
-        onDocumentChange?.(activeDoc.fileId)
-      }
+    if (!activeDoc?.fileId) return
+    
+    // Load if fileId changed
+    if (activeDoc.fileId !== currentFileId) {
+      setCurrentFileId(activeDoc.fileId)
+      setCurrentFileName(activeDoc.fileName)
+      loadDocumentInfo(activeDoc.fileId, propFileType || activeDoc.fileType || "pdf")
+      onDocumentChange?.(activeDoc.fileId)
     }
-  }, [initialFileId, caseId, activeTab, documentTabs, propFileType, currentFileId, onDocumentChange])
+  }, [initialFileId, caseId, activeTab])
 
   // Update active tab when initialFileId changes
   useEffect(() => {
@@ -95,7 +99,7 @@ export const TabularDocumentViewer: React.FC<TabularDocumentViewerProps> = ({
         setActiveTab(tabIndex)
       }
     }
-  }, [initialFileId, documentTabs, activeTab])
+  }, [initialFileId])
 
   const loadDocumentInfo = async (fileIdToLoad: string, fileTypeToLoad: string) => {
     try {
