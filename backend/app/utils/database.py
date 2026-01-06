@@ -10,8 +10,17 @@ import logging
 
 logger = logging.getLogger(__name__)
 
-# Create engine
-engine = create_engine(config.DATABASE_URL, echo=False)
+# Create engine with connection pooling and SSL connection management
+# pool_pre_ping: Verify connections before using (prevents SSL connection closed errors)
+# pool_recycle: Recycle connections after 1 hour (prevents stale connections)
+engine = create_engine(
+    config.DATABASE_URL,
+    echo=False,
+    pool_pre_ping=True,  # Verify connections before using
+    pool_recycle=3600,  # Recycle connections after 1 hour
+    pool_size=5,  # Number of connections to maintain
+    max_overflow=10  # Maximum overflow connections
+)
 
 # Create session factory
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
