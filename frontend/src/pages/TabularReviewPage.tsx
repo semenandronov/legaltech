@@ -25,7 +25,7 @@ import {
   DialogTitle,
   DialogFooter,
 } from "../components/UI/dialog"
-import { Input } from "../components/UI/Input"
+import Input from "../components/UI/Input"
 import { Button } from "../components/UI/Button"
 
 const TabularReviewPage: React.FC = () => {
@@ -320,11 +320,6 @@ const TabularReviewPage: React.FC = () => {
     }
   }
 
-  const handleShare = () => {
-    if (!reviewId) return
-    // TODO: Implement share functionality
-    toast.info("Функция Share будет реализована позже")
-  }
 
   const handleAddDocuments = () => {
     if (!caseId) return
@@ -935,9 +930,9 @@ const TabularReviewPage: React.FC = () => {
               <Input
                 label="Название таблицы"
                 value={reviewName}
-                onChange={(e) => setReviewName(e.target.value)}
+                onChange={(e: React.ChangeEvent<HTMLInputElement>) => setReviewName(e.target.value)}
                 placeholder="Например: Анализ договоров"
-                onKeyDown={(e) => {
+                onKeyDown={(e: React.KeyboardEvent<HTMLInputElement>) => {
                   if (e.key === 'Enter' && reviewName.trim()) {
                     handleCreateReviewWithName()
                   }

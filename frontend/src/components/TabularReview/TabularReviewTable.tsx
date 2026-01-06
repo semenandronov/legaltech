@@ -337,7 +337,9 @@ export const TabularReviewTable = React.memo(({ reviewId, tableData, onTableData
             // Open document when clicking on file name
             if (onCellClick) {
               const fileId = row.original.file_id
-              onCellClick(fileId, {
+              // Use first column ID or empty string if no columns
+              const columnId = tableData.columns.length > 0 ? tableData.columns[0].id : ""
+              onCellClick(fileId, columnId, {
                 highlightMode: 'none',
               })
             }
