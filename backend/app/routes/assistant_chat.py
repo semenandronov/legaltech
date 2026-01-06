@@ -503,6 +503,21 @@ async def stream_chat_response(
                         num_documents=num_documents
                     )
                 
+                # Проверяем, нужны ли уточнения для таблицы
+                if plan.get("needs_clarification"):
+                    clarification_questions = plan.get("clarification_questions", [])
+                    table_info = plan.get("table_info", {})
+                    
+                    # Отправляем событие с уточняющими вопросами
+                    yield f"data: {json.dumps({
+                        'type': 'human_feedback_request',
+                        'isTableClarification': True,
+                        'questions': clarification_questions,
+                        'table_info': table_info,
+                        'request_id': str(uuid.uuid4())
+                    }, ensure_ascii=False)}\n\n"
+                    return  # Прерываем выполнение, ждем ответа пользователя
+                
                 analysis_types = plan.get("analysis_types", [])
                 reasoning = plan.get("reasoning", "План создан на основе задачи")
                 confidence = plan.get("confidence", 0.8)

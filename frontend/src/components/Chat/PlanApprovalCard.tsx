@@ -17,6 +17,15 @@ interface PlanApprovalCardProps {
     goals?: Array<{ description: string }>
     steps?: Array<{ description: string; agent_name?: string; estimated_time?: string }>
     strategy?: string
+    tables_to_create?: Array<{
+      table_name?: string
+      columns?: Array<{
+        label?: string
+        question?: string
+        type?: string
+      }>
+      doc_types?: string[] | null
+    }>
   }
   onApproved?: () => void
   onRejected?: () => void
@@ -195,6 +204,59 @@ export const PlanApprovalCard: React.FC<PlanApprovalCardProps> = ({
                 <li className="text-gray-500">... и еще {plan.steps.length - 5} шагов</li>
               )}
             </ol>
+          </div>
+        )}
+
+        {plan.tables_to_create && plan.tables_to_create.length > 0 && (
+          <div className="border-t pt-4 mt-4">
+            <h4 className="text-sm font-semibold text-gray-700 mb-3">Таблицы для создания:</h4>
+            <div className="space-y-4">
+              {plan.tables_to_create.map((table, tableIdx) => (
+                <div key={tableIdx} className="bg-white border border-gray-200 rounded-lg p-3">
+                  <div className="font-medium text-gray-800 mb-2">
+                    {table.table_name || `Таблица ${tableIdx + 1}`}
+                  </div>
+                  
+                  {table.doc_types && table.doc_types.length > 0 && table.doc_types[0] !== 'all' && (
+                    <div className="mb-2">
+                      <span className="text-xs text-gray-600">Типы документов: </span>
+                      <div className="flex flex-wrap gap-1 mt-1">
+                        {table.doc_types.map((docType, idx) => (
+                          <Badge key={idx} variant="outline" className="text-xs">
+                            {docType === 'contract' ? 'Договоры' :
+                             docType === 'statement_of_claim' ? 'Исковые заявления' :
+                             docType === 'court_decision' ? 'Решения суда' :
+                             docType === 'correspondence' ? 'Переписка' :
+                             docType === 'motion' ? 'Ходатайства' :
+                             docType === 'appeal' ? 'Апелляции' :
+                             docType}
+                          </Badge>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                  
+                  {table.columns && table.columns.length > 0 && (
+                    <div>
+                      <span className="text-xs text-gray-600">Колонки ({table.columns.length}):</span>
+                      <ul className="mt-1 space-y-1">
+                        {table.columns.map((column, colIdx) => (
+                          <li key={colIdx} className="text-xs text-gray-700 flex items-start">
+                            <span className="font-medium mr-2">•</span>
+                            <span>
+                              <span className="font-medium">{column.label || `Колонка ${colIdx + 1}`}</span>
+                              {column.type && (
+                                <span className="text-gray-500 ml-1">({column.type})</span>
+                              )}
+                            </span>
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
           </div>
         )}
 

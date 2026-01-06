@@ -505,9 +505,31 @@ class AdvancedPlanningAgent:
                                 
                                 logger.info(f"Received clarification answers: {user_answers}")
                         except ImportError:
-                            logger.warning("LangGraph interrupt not available, skipping clarification")
+                            # Если interrupt не доступен (нет LangGraph контекста), возвращаем информацию о необходимости уточнений
+                            logger.warning("LangGraph interrupt not available, returning clarification info")
+                            # В этом случае нужно вернуть информацию о том, что нужны уточнения
+                            # Это будет обработано в plan_with_subtasks
+                            return {
+                                "needs_table": True,
+                                "table_name": result.table_name or "Таблица",
+                                "columns": [col.dict() if hasattr(col, 'dict') else col for col in (result.columns or [])],
+                                "doc_types": result.doc_types,
+                                "needs_clarification": True,
+                                "clarification_questions": clarification_questions,
+                                "reasoning": result.reasoning or "Требуется уточнение информации для создания таблицы"
+                            }
                         except Exception as interrupt_error:
                             logger.error(f"Error during interrupt: {interrupt_error}", exc_info=True)
+                            # При ошибке interrupt также возвращаем информацию о необходимости уточнений
+                            return {
+                                "needs_table": True,
+                                "table_name": result.table_name or "Таблица",
+                                "columns": [col.dict() if hasattr(col, 'dict') else col for col in (result.columns or [])],
+                                "doc_types": result.doc_types,
+                                "needs_clarification": True,
+                                "clarification_questions": clarification_questions,
+                                "reasoning": result.reasoning or "Требуется уточнение информации для создания таблицы"
+                            }
                 
                 # Извлекаем типы документов
                 doc_types = result.doc_types
@@ -892,6 +914,14 @@ class AdvancedPlanningAgent:
                     if doc_types:
                         table_spec["doc_types"] = doc_types
                     result_plan["tables_to_create"] = [table_spec]
+                    
+                    # Улучшаем reasoning, добавляя информацию о таблице на естественном языке
+                    table_reasoning = self._format_table_info_for_plan(table_detection_result)
+                    if result_plan.get("reasoning"):
+                        result_plan["reasoning"] += f"\n\n{table_reasoning}"
+                    else:
+                        result_plan["reasoning"] = table_reasoning
+                    
                     logger.info(f"Table creation added to simple plan: {table_detection_result.get('table_name')}")
                 
                 return result_plan
@@ -921,6 +951,14 @@ class AdvancedPlanningAgent:
                 if doc_types:
                     table_spec["doc_types"] = doc_types
                 plan["tables_to_create"] = [table_spec]
+                
+                # Улучшаем reasoning, добавляя информацию о таблице на естественном языке
+                table_reasoning = self._format_table_info_for_plan(table_detection_result)
+                if plan.get("reasoning"):
+                    plan["reasoning"] += f"\n\n{table_reasoning}"
+                else:
+                    plan["reasoning"] = table_reasoning
+                
                 logger.info(f"Table creation added to plan: {table_detection_result.get('table_name')} with {len(table_detection_result.get('columns', []))} columns")
             
             total_time_minutes = 0
@@ -1436,4 +1474,52 @@ class AdvancedPlanningAgent:
                 return f"{hours} ч"
             else:
                 return f"{hours} ч {mins} мин"
+    
+    def _format_table_info_for_plan(self, table_detection_result: Dict[str, Any]) -> str:
+        """
+        Форматирует информацию о таблице на естественном языке для включения в reasoning плана
+        
+        Args:
+            table_detection_result: Результат определения таблицы
+            
+        Returns:
+            Текст на естественном языке с описанием таблицы
+        """
+        table_name = table_detection_result.get("table_name", "Таблица")
+        columns = table_detection_result.get("columns", [])
+        doc_types = table_detection_result.get("doc_types")
+        
+        text = f"**Создание таблицы:** {table_name}\n"
+        
+        if columns:
+            text += f"Таблица будет содержать {len(columns)} колонок:\n"
+            for idx, col in enumerate(columns, 1):
+                col_label = col.get("label", f"Колонка {idx}")
+                col_type = col.get("type", "text")
+                type_names = {
+                    "text": "текст",
+                    "date": "дата",
+                    "number": "число",
+                    "boolean": "да/нет"
+                }
+                type_name = type_names.get(col_type, col_type)
+                text += f"  {idx}. {col_label} ({type_name})\n"
+        
+        if doc_types:
+            if isinstance(doc_types, list) and len(doc_types) > 0:
+                if "all" not in doc_types:
+                    doc_type_names = {
+                        "contract": "договоры",
+                        "statement_of_claim": "исковые заявления",
+                        "court_decision": "решения суда",
+                        "correspondence": "переписка",
+                        "motion": "ходатайства",
+                        "appeal": "апелляции"
+                    }
+                    doc_names = [doc_type_names.get(dt, dt) for dt in doc_types]
+                    text += f"Данные будут извлечены из документов типа: {', '.join(doc_names)}.\n"
+                else:
+                    text += "Данные будут извлечены из всех документов дела.\n"
+        
+        return text
 
