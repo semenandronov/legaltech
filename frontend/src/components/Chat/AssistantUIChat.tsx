@@ -10,6 +10,7 @@ import { AgentStep } from './AgentStepsView'
 import { EnhancedAgentStepsView } from './EnhancedAgentStepsView'
 import { TableCard } from './TableCard'
 import { HumanFeedbackRequestCard } from './HumanFeedbackRequestCard'
+import { TableClarificationModal } from './TableClarificationModal'
 import { WelcomeScreen } from './WelcomeScreen'
 import { SettingsPanel } from './SettingsPanel'
 import {
@@ -87,6 +88,12 @@ interface Message {
     context?: any
     agentName?: string
     inputSchema?: any // JSON Schema for structured input
+    interruptType?: string // 'table_clarification' или другой тип
+    threadId?: string // Thread ID для resume
+    payload?: any // Дополнительные данные interrupt
+    isTableClarification?: boolean // Флаг для table_clarification
+    availableDocTypes?: string[] // Доступные типы документов
+    questions?: string[] // Список вопросов для table_clarification
   }
 }
 
@@ -498,7 +505,17 @@ export const AssistantUIChat = forwardRef<{ clearMessages: () => void; loadHisto
                   requiresApproval: data.requires_approval || data.requiresApproval || false,
                   context: data.context || {},
                   agentName: data.agent_name || data.agentName,
-                  inputSchema: data.input_schema || data.inputSchema
+                  inputSchema: data.input_schema || data.inputSchema,
+                  interruptType: data.interruptType || data.interrupt_type,
+                  threadId: data.threadId || data.thread_id,
+                  payload: data.payload || {}
+                }
+                
+                // Если это table_clarification, используем специальный компонент
+                if (feedbackData.interruptType === 'table_clarification') {
+                  feedbackData.isTableClarification = true
+                  feedbackData.availableDocTypes = feedbackData.payload?.available_doc_types || []
+                  feedbackData.questions = feedbackData.payload?.questions || []
                 }
                 
                 // Сохраняем feedback request в сообщении
@@ -848,55 +865,105 @@ export const AssistantUIChat = forwardRef<{ clearMessages: () => void; loadHisto
               ) : null}
               {/* Фаза 9.3: Human feedback request card */}
               {message.feedbackRequest && (
-                <HumanFeedbackRequestCard
-                  requestId={message.feedbackRequest.requestId}
-                  message={message.feedbackRequest.question}
-                  options={message.feedbackRequest.options?.map((opt: any) => 
-                    typeof opt === 'string' ? { id: opt, label: opt } : opt
-                  )}
-                  agentName={message.feedbackRequest.agentName}
-                  onResponse={async (response: string) => {
-                    try {
-                      const token = localStorage.getItem('access_token')
-                      const response_data = await fetch(getApiUrl('/api/assistant/chat/human-feedback'), {
-                        method: 'POST',
-                        headers: {
-                          'Content-Type': 'application/json',
-                          'Authorization': `Bearer ${token}`,
-                        },
-                        body: JSON.stringify({
-                          request_id: message.feedbackRequest?.requestId,
-                          response: response,
-                          case_id: actualCaseId,
-                        }),
-                      })
+                message.feedbackRequest.isTableClarification ? (
+                  <TableClarificationModal
+                    questions={message.feedbackRequest.questions || []}
+                    context={message.feedbackRequest.context || {}}
+                    availableDocTypes={message.feedbackRequest.availableDocTypes || []}
+                    threadId={message.feedbackRequest.threadId}
+                    onSubmit={async (answer: { doc_types?: string[], columns_clarification?: string }) => {
+                      try {
+                        const token = localStorage.getItem('access_token')
+                        const response_data = await fetch(getApiUrl('/api/assistant/chat/resume'), {
+                          method: 'POST',
+                          headers: {
+                            'Content-Type': 'application/json',
+                            'Authorization': `Bearer ${token}`,
+                          },
+                          body: JSON.stringify({
+                            thread_id: message.feedbackRequest?.threadId,
+                            case_id: actualCaseId,
+                            answer: answer,
+                          }),
+                        })
 
-                      if (!response_data.ok) {
-                        const errorData = await response_data.json().catch(() => ({}))
-                        throw new Error(errorData.detail || 'Ошибка при отправке ответа')
-                      }
+                        if (!response_data.ok) {
+                          const errorData = await response_data.json().catch(() => ({}))
+                          throw new Error(errorData.detail || 'Ошибка при возобновлении выполнения')
+                        }
 
-                      const result = await response_data.json()
-                      logger.info('Human feedback response submitted:', result)
+                        const result = await response_data.json()
+                        logger.info('Graph execution resumed:', result)
 
-                      // Clear feedback request from message
-                      setMessages((prev) =>
-                        prev.map((msg) =>
-                          msg.id === message.id
-                            ? {
-                                ...msg,
-                                feedbackRequest: undefined,
-                                content: msg.content + `\n\n**Ваш ответ:** ${response}\n\n`,
-                              }
-                            : msg
+                        // Clear feedback request from message
+                        setMessages((prev) =>
+                          prev.map((msg) =>
+                            msg.id === message.id
+                              ? {
+                                  ...msg,
+                                  feedbackRequest: undefined,
+                                  content: msg.content + `\n\n**Ваш ответ:** ${JSON.stringify(answer)}\n\nПродолжаю выполнение...\n\n`,
+                                }
+                              : msg
+                          )
                         )
-                      )
-                    } catch (error) {
-                      logger.error('Error submitting human feedback response:', error)
-                      throw error // Re-throw to let HumanFeedbackRequestCard handle it
-                    }
-                  }}
-                />
+                      } catch (error) {
+                        logger.error('Error resuming graph execution:', error)
+                        throw error
+                      }
+                    }}
+                  />
+                ) : (
+                  <HumanFeedbackRequestCard
+                    requestId={message.feedbackRequest.requestId}
+                    message={message.feedbackRequest.question}
+                    options={message.feedbackRequest.options?.map((opt: any) => 
+                      typeof opt === 'string' ? { id: opt, label: opt } : opt
+                    )}
+                    agentName={message.feedbackRequest.agentName}
+                    onResponse={async (response: string) => {
+                      try {
+                        const token = localStorage.getItem('access_token')
+                        const response_data = await fetch(getApiUrl('/api/assistant/chat/human-feedback'), {
+                          method: 'POST',
+                          headers: {
+                            'Content-Type': 'application/json',
+                            'Authorization': `Bearer ${token}`,
+                          },
+                          body: JSON.stringify({
+                            request_id: message.feedbackRequest?.requestId,
+                            response: response,
+                            case_id: actualCaseId,
+                          }),
+                        })
+
+                        if (!response_data.ok) {
+                          const errorData = await response_data.json().catch(() => ({}))
+                          throw new Error(errorData.detail || 'Ошибка при отправке ответа')
+                        }
+
+                        const result = await response_data.json()
+                        logger.info('Human feedback response submitted:', result)
+
+                        // Clear feedback request from message
+                        setMessages((prev) =>
+                          prev.map((msg) =>
+                            msg.id === message.id
+                              ? {
+                                  ...msg,
+                                  feedbackRequest: undefined,
+                                  content: msg.content + `\n\n**Ваш ответ:** ${response}\n\n`,
+                                }
+                              : msg
+                          )
+                        )
+                      } catch (error) {
+                        logger.error('Error submitting human feedback response:', error)
+                        throw error // Re-throw to let HumanFeedbackRequestCard handle it
+                      }
+                    }}
+                  />
+                )
               )}
             </AssistantMessage>
           )

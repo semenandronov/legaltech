@@ -369,33 +369,113 @@ class AgentCoordinator:
                     if isinstance(event, dict):
                         # Check if this is an interrupt event
                         # LangGraph interrupts may appear as events with "__interrupt__" key or similar
-                        if "__interrupt__" in event or any(key.startswith("__") for key in event.keys()):
+                        # Interrupt может быть dict с payload, переданным в interrupt()
+                        interrupt_payload = None
+                        interrupt_type = None
+                        
+                        # Проверяем различные форматы interrupt событий
+                        if "__interrupt__" in event:
+                            interrupt_payload = event.get("__interrupt__")
+                            if isinstance(interrupt_payload, dict):
+                                interrupt_type = interrupt_payload.get("type")
+                        elif any(key.startswith("__") for key in event.keys()):
+                            # Может быть другой формат
                             interrupt_type = event.get("__interrupt__") or event.get("interrupt")
-                            if interrupt_type == "human_feedback_needed":
-                                logger.info(f"[Interrupt] Human feedback needed for case {case_id}")
-                                
-                                # Фаза 8.1: Отправляем событие human feedback request через step_callback
-                                if step_callback:
-                                    try:
-                                        import asyncio
-                                        from app.services.langchain_agents.streaming_events import HumanFeedbackRequestEvent
-                                        feedback_event = HumanFeedbackRequestEvent(
-                                            request_id=str(uuid.uuid4()),
-                                            question=current_state.get("current_feedback_request", {}).get("question", "Требуется обратная связь"),
-                                            requires_approval=True
-                                        )
-                                        if asyncio.iscoroutinefunction(step_callback):
-                                            # Async callback
-                                            loop = asyncio.get_event_loop()
-                                            if loop.is_running():
-                                                asyncio.create_task(step_callback(feedback_event))
-                                            else:
-                                                loop.run_until_complete(step_callback(feedback_event))
+                            if isinstance(interrupt_type, dict):
+                                interrupt_payload = interrupt_type
+                                interrupt_type = interrupt_payload.get("type")
+                        elif "type" in event and event.get("type") in ["table_clarification", "human_feedback_needed"]:
+                            # Прямой формат с payload
+                            interrupt_type = event.get("type")
+                            interrupt_payload = event
+                        
+                        # Обработка table_clarification interrupt
+                        if interrupt_type == "table_clarification" or (interrupt_payload and interrupt_payload.get("type") == "table_clarification"):
+                            logger.info(f"[Interrupt] Table clarification needed for case {case_id}")
+                            
+                            # Извлекаем payload
+                            if interrupt_payload:
+                                payload = interrupt_payload
+                            elif isinstance(event, dict) and "type" in event:
+                                payload = event
+                            else:
+                                payload = {}
+                            
+                            questions = payload.get("questions", [])
+                            context = payload.get("context", {})
+                            available_doc_types = payload.get("available_doc_types", [])
+                            
+                            # Получаем thread_id из thread_config
+                            thread_id = thread_config.get("configurable", {}).get("thread_id", f"case_{case_id}")
+                            
+                            # Фаза 8.1: Отправляем событие human feedback request через step_callback
+                            if step_callback:
+                                try:
+                                    import asyncio
+                                    from app.services.langchain_agents.streaming_events import HumanFeedbackRequestEvent
+                                    
+                                    # Формируем вопрос из списка вопросов
+                                    question_text = "\n".join([f"{i+1}. {q}" for i, q in enumerate(questions)]) if questions else "Требуется уточнение"
+                                    
+                                    feedback_event = HumanFeedbackRequestEvent(
+                                        request_id=str(uuid.uuid4()),
+                                        question=question_text,
+                                        context=context,
+                                        requires_approval=False,
+                                        interrupt_type="table_clarification",
+                                        thread_id=thread_id,
+                                        payload={
+                                            "questions": questions,
+                                            "available_doc_types": available_doc_types,
+                                            "context": context
+                                        }
+                                    )
+                                    
+                                    if asyncio.iscoroutinefunction(step_callback):
+                                        # Async callback
+                                        loop = asyncio.get_event_loop()
+                                        if loop.is_running():
+                                            asyncio.create_task(step_callback(feedback_event))
                                         else:
-                                            # Sync callback
-                                            step_callback(feedback_event)
-                                    except Exception as callback_error:
-                                        logger.warning(f"Error sending feedback event: {callback_error}")
+                                            loop.run_until_complete(step_callback(feedback_event))
+                                    else:
+                                        # Sync callback
+                                        step_callback(feedback_event)
+                                    
+                                    logger.info(f"[Interrupt] Sent table_clarification event with {len(questions)} questions, thread_id: {thread_id}")
+                                except Exception as callback_error:
+                                    logger.warning(f"Error sending table clarification event: {callback_error}")
+                            
+                            # Сохраняем interrupt информацию для resume
+                            # Interrupt автоматически сохраняется в checkpointer, ждем resume через API
+                            continue  # Пропускаем дальнейшую обработку, ждем resume
+                        
+                        # Обработка human_feedback_needed (существующая логика)
+                        elif interrupt_type == "human_feedback_needed":
+                            logger.info(f"[Interrupt] Human feedback needed for case {case_id}")
+                            
+                            # Фаза 8.1: Отправляем событие human feedback request через step_callback
+                            if step_callback:
+                                try:
+                                    import asyncio
+                                    from app.services.langchain_agents.streaming_events import HumanFeedbackRequestEvent
+                                    feedback_event = HumanFeedbackRequestEvent(
+                                        request_id=str(uuid.uuid4()),
+                                        question=current_state.get("current_feedback_request", {}).get("question", "Требуется обратная связь"),
+                                        requires_approval=True
+                                    )
+                                    if asyncio.iscoroutinefunction(step_callback):
+                                        # Async callback
+                                        loop = asyncio.get_event_loop()
+                                        if loop.is_running():
+                                            asyncio.create_task(step_callback(feedback_event))
+                                        else:
+                                            loop.run_until_complete(step_callback(feedback_event))
+                                    else:
+                                        # Sync callback
+                                        step_callback(feedback_event)
+                                except Exception as callback_error:
+                                    logger.warning(f"Error sending feedback event: {callback_error}")
                                 
                                 # Get current state to extract feedback request
                                 current_state = self.graph.get_state(thread_config).values
@@ -488,6 +568,88 @@ class AgentCoordinator:
             # This ensures we get delivery_result and all other state data
             try:
                 graph_state = self.graph.get_state(thread_config)
+    
+    def resume_after_interrupt(
+        self,
+        thread_id: str,
+        case_id: str,
+        answer: Dict[str, Any],
+        step_callback: Optional[Any] = None
+    ) -> Dict[str, Any]:
+        """
+        Возобновить выполнение графа после interrupt
+        
+        Args:
+            thread_id: Thread ID для resume
+            case_id: Case identifier
+            answer: Ответ пользователя (например, {"doc_types": ["contract"], "columns_clarification": "..."})
+            step_callback: Optional callback для streaming событий
+            
+        Returns:
+            Результат выполнения графа
+        """
+        try:
+            import asyncio
+            from langgraph.types import Command
+            
+            # Создаем thread_config
+            thread_config = {
+                "configurable": {
+                    "thread_id": thread_id,
+                    "recursion_limit": 50
+                }
+            }
+            
+            logger.info(f"[Resume] Resuming graph execution for thread {thread_id}, case {case_id}")
+            
+            # Получаем текущий state для проверки
+            current_state = self.graph.get_state(thread_config)
+            if not current_state:
+                raise ValueError(f"No state found for thread_id: {thread_id}")
+            
+            # Продолжаем выполнение с Command(resume=answer)
+            # interrupt() вернет значение answer
+            result = None
+            
+            # Продолжаем stream с resume command
+            stream_iter = self.graph.stream(
+                None,  # Начальное state не нужно, берется из checkpointer
+                thread_config,
+                stream_mode="updates",
+                command=Command(resume=answer)
+            )
+            
+            # Обрабатываем события из stream
+            for event in stream_iter:
+                # Отправляем события через step_callback если доступен
+                if step_callback:
+                    try:
+                        if asyncio.iscoroutinefunction(step_callback):
+                            loop = asyncio.get_event_loop()
+                            if loop.is_running():
+                                asyncio.create_task(step_callback(event))
+                            else:
+                                loop.run_until_complete(step_callback(event))
+                        else:
+                            step_callback(event)
+                    except Exception as callback_error:
+                        logger.warning(f"Error in step_callback during resume: {callback_error}")
+                
+                # Собираем финальный результат
+                if isinstance(event, dict):
+                    result = event
+            
+            # Если result не получен, получаем финальный state
+            if not result:
+                final_state = self.graph.get_state(thread_config)
+                result = final_state.values if final_state else {}
+            
+            logger.info(f"[Resume] Graph execution resumed and completed for thread {thread_id}")
+            return result
+            
+        except Exception as e:
+            logger.error(f"[Resume] Error resuming graph execution: {e}", exc_info=True)
+            raise
                 final_state = graph_state.values if graph_state else None
                 logger.info(f"[Coordinator] Retrieved final state from graph, keys: {list(final_state.keys()) if final_state and isinstance(final_state, dict) else 'N/A'}")
             except Exception as e:

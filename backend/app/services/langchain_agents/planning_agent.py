@@ -518,6 +518,7 @@ class PlanningAgent:
             
             # Преобразуем в многоуровневую структуру, если еще не сделано
             plan["case_id"] = case_id  # Add case_id for tool selection
+            plan["user_task"] = user_task  # Сохраняем user_task для валидации reasoning
             plan = self._enhance_plan_with_levels(plan, user_task, document_analysis)
             
             # Валидируем и оптимизируем план
@@ -783,7 +784,7 @@ class PlanningAgent:
         # Уровень 3: Детальные шаги с параметрами
         # Extract case_id from plan if available, otherwise use "unknown"
         case_id = plan.get("case_id", "unknown")
-        steps = self._create_detailed_steps(analysis_types, goals, document_analysis, case_id)
+        steps = self._create_detailed_steps(analysis_types, goals, document_analysis, case_id, user_task=user_task)
         
         # Генерируем альтернативные планы для сложных задач
         alternative_plans = []
@@ -799,6 +800,14 @@ class PlanningAgent:
             "confidence": plan.get("confidence", 0.8),
             "alternative_plans": alternative_plans
         }
+        
+        # Сохраняем user_task и другие метаданные из исходного плана
+        if "user_task" in plan:
+            enhanced_plan["user_task"] = plan["user_task"]
+        if "case_id" in plan:
+            enhanced_plan["case_id"] = plan["case_id"]
+        if "main_task" in plan:
+            enhanced_plan["main_task"] = plan["main_task"]
         
         return enhanced_plan
     
@@ -873,11 +882,15 @@ class PlanningAgent:
         analysis_types: List[str],
         goals: List[Dict[str, Any]],
         document_analysis: Optional[Dict[str, Any]] = None,
-        case_id: str = "unknown"
+        case_id: str = "unknown",
+        user_task: Optional[str] = None
     ) -> List[Dict[str, Any]]:
-        """Создает детальные шаги с параметрами выполнения"""
+        """Создает детальные шаги с параметрами выполнения и подробным reasoning"""
         from app.services.langchain_agents.state import PlanStep
+        from app.services.langchain_agents.prompts import REASONING_GENERATION_PROMPT, REASONING_EXAMPLES
+        from langchain_core.messages import SystemMessage, HumanMessage
         import uuid
+        import json
         
         steps = []
         goal_map = {goal["goal_id"]: goal for goal in goals}
@@ -904,6 +917,95 @@ class PlanningAgent:
             "summary": {"length": "medium", "include_sources": True}
         }
         
+        # Определяем, какие шаги требуют глубокого reasoning
+        COMPLEX_ANALYSES = ["discrepancy", "risk", "relationship", "summary"]
+        
+        # Извлекаем релевантные фрагменты из document_analysis
+        def extract_relevant_snippets(doc_analysis: Optional[Dict[str, Any]], top_k: int = 5) -> str:
+            if not doc_analysis:
+                return "Автономный анализ документов не выполнен"
+            
+            snippets = []
+            if doc_analysis.get("suggested_analyses"):
+                snippets.append(f"Рекомендуемые анализы: {', '.join(doc_analysis['suggested_analyses'])}")
+            if doc_analysis.get("case_type"):
+                snippets.append(f"Тип дела: {doc_analysis['case_type']}")
+            if doc_analysis.get("document_structure"):
+                file_count = doc_analysis['document_structure'].get('file_count', 0)
+                snippets.append(f"Количество документов: {file_count}")
+            
+            return "; ".join(snippets[:top_k])
+        
+        # Генерируем reasoning для всех шагов одним LLM вызовом (если план небольшой)
+        reasoning_map = {}
+        if len(analysis_types) <= 5 and user_task:
+            try:
+                # Формируем контекст для всех шагов
+                steps_context = []
+                for idx, analysis_type in enumerate(analysis_types):
+                    step_id = f"{analysis_type}_{uuid.uuid4().hex[:8]}"
+                    goal_id = None
+                    for goal in goals:
+                        if analysis_type in goal.get("description", "").lower():
+                            goal_id = goal["goal_id"]
+                            break
+                    if not goal_id and goals:
+                        goal_id = goals[0]["goal_id"]
+                    
+                    from app.services.langchain_agents.planning_tools import AVAILABLE_ANALYSES
+                    dependencies = AVAILABLE_ANALYSES.get(analysis_type, {}).get("dependencies", [])
+                    
+                    steps_context.append({
+                        "step_id": step_id,
+                        "analysis_type": analysis_type,
+                        "goal_id": goal_id,
+                        "dependencies": dependencies
+                    })
+                
+                # Генерируем reasoning через LLM для всех шагов
+                # Используем первый шаг как пример для генерации reasoning
+                if steps_context:
+                    first_step = steps_context[0]
+                    goal_descriptions = [g.get("description", "") for g in goals if g.get("goal_id") == first_step["goal_id"]]
+                    goal_text = json.dumps(goal_descriptions, ensure_ascii=False) if goal_descriptions else "[]"
+                    
+                    prompt = REASONING_GENERATION_PROMPT.format(
+                        user_task=user_task,
+                        analysis_type=first_step["analysis_type"],
+                        goals=goal_text,
+                        dependencies=json.dumps(first_step["dependencies"], ensure_ascii=False),
+                        document_analysis=extract_relevant_snippets(document_analysis),
+                        step_id=first_step["step_id"]
+                    )
+                    
+                    messages = [
+                        SystemMessage(content=f"{REASONING_EXAMPLES}\n\nВы — опытный юрист-аналитик. Отвечайте строго на русском языке."),
+                        HumanMessage(content=prompt)
+                    ]
+                    
+                    response = self.llm.invoke(messages)
+                    response_text = response.content if hasattr(response, 'content') else str(response)
+                    
+                    # Парсим JSON ответ
+                    try:
+                        if "```json" in response_text:
+                            json_text = response_text.split("```json")[1].split("```")[0].strip()
+                        elif "{" in response_text:
+                            start = response_text.find("{")
+                            end = response_text.rfind("}") + 1
+                            json_text = response_text[start:end]
+                        else:
+                            json_text = response_text
+                        
+                        reasoning_result = json.loads(json_text)
+                        # Сохраняем reasoning для первого шага
+                        reasoning_map[first_step["step_id"]] = reasoning_result
+                    except Exception as e:
+                        logger.warning(f"Failed to parse reasoning JSON for batch generation: {e}")
+            except Exception as e:
+                logger.warning(f"Failed to generate reasoning via LLM for batch: {e}")
+        
+        # Создаем шаги
         for idx, analysis_type in enumerate(analysis_types):
             step_id = f"{analysis_type}_{uuid.uuid4().hex[:8]}"
             
@@ -920,12 +1022,67 @@ class PlanningAgent:
             from app.services.langchain_agents.planning_tools import AVAILABLE_ANALYSES
             dependencies = AVAILABLE_ANALYSES.get(analysis_type, {}).get("dependencies", [])
             
-            # Reasoning для шага
-            reasoning = f"Выполнение {analysis_type} для достижения цели"
-            if document_analysis:
-                suggested = document_analysis.get("suggested_analyses", [])
-                if analysis_type in suggested:
-                    reasoning += f". Рекомендован автономным анализом документов."
+            # Генерируем reasoning
+            planned_reasoning = None
+            planned_actions = []
+            step_title = f"Выполнить анализ {analysis_type}"
+            
+            if step_id in reasoning_map:
+                # Используем LLM-сгенерированный reasoning из batch
+                reasoning_data = reasoning_map[step_id]
+                planned_reasoning = reasoning_data.get("reasoning", None)
+                step_title = reasoning_data.get("step_title", step_title)
+                planned_actions = reasoning_data.get("planned_actions", [])
+            elif analysis_type in COMPLEX_ANALYSES and user_task:
+                # Для сложных анализов генерируем reasoning отдельно
+                try:
+                    goal_descriptions = [g.get("description", "") for g in goals if g.get("goal_id") == goal_id]
+                    goal_text = json.dumps(goal_descriptions, ensure_ascii=False) if goal_descriptions else "[]"
+                    
+                    prompt = REASONING_GENERATION_PROMPT.format(
+                        user_task=user_task,
+                        analysis_type=analysis_type,
+                        goals=goal_text,
+                        dependencies=json.dumps(dependencies, ensure_ascii=False),
+                        document_analysis=extract_relevant_snippets(document_analysis),
+                        step_id=step_id
+                    )
+                    
+                    messages = [
+                        SystemMessage(content=f"{REASONING_EXAMPLES}\n\nВы — опытный юрист-аналитик. Отвечайте строго на русском языке."),
+                        HumanMessage(content=prompt)
+                    ]
+                    
+                    response = self.llm.invoke(messages)
+                    response_text = response.content if hasattr(response, 'content') else str(response)
+                    
+                    # Парсим reasoning
+                    try:
+                        if "```json" in response_text:
+                            json_text = response_text.split("```json")[1].split("```")[0].strip()
+                        elif "{" in response_text:
+                            start = response_text.find("{")
+                            end = response_text.rfind("}") + 1
+                            json_text = response_text[start:end]
+                        else:
+                            json_text = response_text
+                        
+                        reasoning_data = json.loads(json_text)
+                        planned_reasoning = reasoning_data.get("reasoning", None)
+                        step_title = reasoning_data.get("step_title", step_title)
+                        planned_actions = reasoning_data.get("planned_actions", [])
+                    except Exception as e:
+                        logger.warning(f"Failed to parse reasoning for {analysis_type}: {e}")
+                        planned_reasoning = self._generate_fallback_reasoning(analysis_type, user_task, goals, document_analysis, goal_id)
+                except Exception as e:
+                    logger.warning(f"Failed to generate reasoning for {analysis_type}: {e}")
+                    planned_reasoning = self._generate_fallback_reasoning(analysis_type, user_task, goals, document_analysis, goal_id)
+            else:
+                # Для простых шагов используем шаблонный reasoning
+                planned_reasoning = self._generate_fallback_reasoning(analysis_type, user_task, goals, document_analysis, goal_id)
+            
+            # Используем planned_reasoning как reasoning для обратной совместимости
+            reasoning = planned_reasoning or f"Выполнение {analysis_type} для достижения цели"
             
             # Select tools for this agent
             selected_tools = self.tool_selector.select_tools(
@@ -948,21 +1105,48 @@ class PlanningAgent:
             step = {
                 "step_id": step_id,
                 "agent_name": analysis_type,
-                "description": f"Выполнить анализ {analysis_type}",
+                "description": step_title,
                 "status": "pending",
                 "dependencies": dependencies,
                 "result_key": f"{analysis_type}_result",
-                "reasoning": reasoning,
+                "reasoning": reasoning,  # Для обратной совместимости
+                "planned_reasoning": planned_reasoning,  # Детальное планируемое объяснение
+                "planned_actions": planned_actions,  # Список запланированных действий
+                "execution_record": None,  # Будет заполнено после выполнения
                 "parameters": default_parameters.get(analysis_type, {}),
                 "estimated_time": time_estimates.get(analysis_type, "5-10 мин"),
                 "goal_id": goal_id,
-                "tools": selected_tools,  # Add tools to step
-                "sources": selected_sources  # Add sources to step
+                "tools": selected_tools,
+                "sources": selected_sources
             }
             
             steps.append(step)
         
         return steps
+    
+    def _generate_fallback_reasoning(
+        self,
+        analysis_type: str,
+        user_task: Optional[str],
+        goals: List[Dict[str, Any]],
+        document_analysis: Optional[Dict[str, Any]],
+        goal_id: Optional[str] = None
+    ) -> str:
+        """Генерирует шаблонный reasoning если LLM недоступен"""
+        goal_descriptions = [g.get("description", "") for g in goals if not goal_id or g.get("goal_id") == goal_id]
+        goal_text = ", ".join(goal_descriptions) if goal_descriptions else "выполнение анализа"
+        
+        reasoning = f"Выполнение анализа {analysis_type} для достижения цели: {goal_text}"
+        
+        if user_task:
+            reasoning += f". Шаг необходим для задачи: {user_task[:100]}"
+        
+        if document_analysis:
+            suggested = document_analysis.get("suggested_analyses", [])
+            if analysis_type in suggested:
+                reasoning += ". Рекомендован автономным анализом документов."
+        
+        return reasoning
     
     def _generate_alternative_plans(
         self,

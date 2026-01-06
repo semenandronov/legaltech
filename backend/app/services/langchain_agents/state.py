@@ -41,7 +41,7 @@ class PlanStep:
     status: PlanStepStatus = PlanStepStatus.PENDING
     dependencies: List[str] = field(default_factory=list)
     result_key: Optional[str] = None
-    reasoning: Optional[str] = None
+    reasoning: Optional[str] = None  # Общее reasoning (для обратной совместимости)
     error: Optional[str] = None
     # New fields for multi-level planning
     parameters: Dict[str, Any] = field(default_factory=dict)  # Execution parameters (depth, focus, etc.)
@@ -49,6 +49,10 @@ class PlanStep:
     goal_id: Optional[str] = None  # Which goal this step contributes to
     tools: List[str] = field(default_factory=list)  # Tools to use for this step
     sources: List[str] = field(default_factory=list)  # Data sources to use
+    # New fields for detailed reasoning
+    planned_reasoning: Optional[str] = None  # Детальное планируемое объяснение
+    planned_actions: List[str] = field(default_factory=list)  # Список запланированных действий
+    execution_record: Optional[Dict[str, Any]] = None  # Запись о выполнении шага
     
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -58,7 +62,10 @@ class PlanStep:
             "status": self.status.value,
             "dependencies": self.dependencies,
             "result_key": self.result_key,
-            "reasoning": self.reasoning,
+            "reasoning": self.reasoning or self.planned_reasoning,  # Fallback для обратной совместимости
+            "planned_reasoning": self.planned_reasoning,
+            "planned_actions": self.planned_actions,
+            "execution_record": self.execution_record,
             "error": self.error,
             "parameters": self.parameters,
             "estimated_time": self.estimated_time,

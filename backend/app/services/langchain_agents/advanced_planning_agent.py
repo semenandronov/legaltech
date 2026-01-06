@@ -8,6 +8,10 @@ from app.services.rag_service import RAGService
 from app.services.document_processor import DocumentProcessor
 from langchain_core.messages import HumanMessage, SystemMessage
 from app.services.langchain_agents.prompts import TABLE_DETECTION_PROMPT
+from app.services.langchain_agents.models import TableDecision, TableColumnSpec
+from app.services.langchain_agents.state import AnalysisState
+from app.services.langchain_agents.planning_agent import extract_doc_types_from_query
+from sqlalchemy.orm import Session
 import logging
 import json
 
@@ -271,12 +275,22 @@ class AdvancedPlanningAgent:
         
         return subtasks
     
-    def _determine_table_columns_from_task(self, user_task: str) -> Dict[str, Any]:
+    def _determine_table_columns_from_task(
+        self, 
+        user_task: str,
+        case_id: str = None,
+        state: AnalysisState = None,
+        db: Session = None
+    ) -> Dict[str, Any]:
         """
         Определяет, требует ли задача создания таблицы, и если да - какие колонки нужны
+        Если что-то неясно - задает уточняющие вопросы через interrupt()
         
         Args:
             user_task: Задача пользователя на естественном языке
+            case_id: Case identifier (для получения доступных типов документов)
+            state: Analysis state (для interrupt)
+            db: Database session (для получения доступных типов документов)
             
         Returns:
             Dictionary с информацией о таблице:
@@ -284,6 +298,7 @@ class AdvancedPlanningAgent:
                 "needs_table": bool,
                 "table_name": str (если needs_table=True),
                 "columns": List[Dict] (если needs_table=True),
+                "doc_types": List[str] (если указаны),
                 "reasoning": str
             }
         """
@@ -307,7 +322,7 @@ class AdvancedPlanningAgent:
             response = self.llm.invoke(messages)
             response_text = response.content if hasattr(response, 'content') else str(response)
             
-            # Парсим JSON ответ
+            # Парсим JSON ответ и валидируем через Pydantic
             try:
                 if "```json" in response_text:
                     json_text = response_text.split("```json")[1].split("```")[0].strip()
@@ -320,34 +335,91 @@ class AdvancedPlanningAgent:
                 else:
                     json_text = response_text
                 
-                result = json.loads(json_text)
+                # Валидируем через Pydantic модель
+                try:
+                    result = TableDecision.parse_obj(json.loads(json_text))
+                except Exception as parse_error:
+                    logger.error(f"Failed to parse table detection result: {parse_error}")
+                    return {
+                        "needs_table": False,
+                        "reasoning": f"Ошибка парсинга ответа: {str(parse_error)}"
+                    }
                 
                 # Валидация результата
-                needs_table = result.get("needs_table", False)
+                needs_table = result.needs_table
+                needs_clarification = result.needs_clarification
+                clarification_questions = result.clarification_questions or []
+                
+                # Если нужны уточнения - задаем вопросы через interrupt()
+                if needs_table and needs_clarification and clarification_questions:
+                    if state and case_id and db:
+                        # Получаем список доступных типов документов в деле
+                        try:
+                            from app.models.analysis import DocumentClassification
+                            available_types = db.query(DocumentClassification.doc_type).filter(
+                                DocumentClassification.case_id == case_id
+                            ).distinct().all()
+                            available_types_list = [t[0] for t in available_types]
+                        except Exception as e:
+                            logger.warning(f"Failed to get available doc types: {e}")
+                            available_types_list = []
+                        
+                        # Импортируем interrupt
+                        try:
+                            from langgraph.graph import interrupt
+                            
+                            # Формируем payload для interrupt
+                            payload = {
+                                "type": "table_clarification",
+                                "questions": clarification_questions,
+                                "context": {
+                                    "task": user_task,
+                                    "table_name": result.table_name,
+                                    "partial_columns": [col.dict() for col in (result.columns or [])]
+                                },
+                                "available_doc_types": available_types_list
+                            }
+                            
+                            # Вызываем interrupt - выполнение приостановится, ждем ответа
+                            user_answers = interrupt(payload)
+                            
+                            # user_answers придет из Command(resume=...) когда пользователь ответит
+                            # Формат: {"doc_types": ["contract"], "columns_clarification": "..."}
+                            
+                            if user_answers:
+                                # Обновляем doc_types из ответа пользователя
+                                if "doc_types" in user_answers:
+                                    result.doc_types = user_answers["doc_types"]
+                                
+                                # Обновляем user_task с уточнениями если нужно
+                                if "columns_clarification" in user_answers:
+                                    user_task = f"{user_task}. Уточнение: {user_answers['columns_clarification']}"
+                                
+                                logger.info(f"Received clarification answers: {user_answers}")
+                        except ImportError:
+                            logger.warning("LangGraph interrupt not available, skipping clarification")
+                        except Exception as interrupt_error:
+                            logger.error(f"Error during interrupt: {interrupt_error}", exc_info=True)
+                
+                # Извлекаем типы документов
+                doc_types = result.doc_types
+                if doc_types == ["all"] or (not doc_types and needs_table):
+                    # Пытаемся извлечь из запроса
+                    extracted_types = extract_doc_types_from_query(user_task)
+                    doc_types = extracted_types if extracted_types else None
                 
                 if needs_table:
-                    # Проверяем наличие обязательных полей
-                    if not result.get("columns") or not isinstance(result.get("columns"), list):
-                        logger.warning("Table detection returned needs_table=True but no columns, setting to False")
-                        return {
-                            "needs_table": False,
-                            "reasoning": "Не удалось определить колонки для таблицы"
-                        }
-                    
-                    # Валидируем колонки
+                    # Валидация колонок (уже валидированы через Pydantic)
                     validated_columns = []
-                    for col in result.get("columns", []):
-                        if not isinstance(col, dict):
-                            continue
-                        
-                        if not col.get("label") or not col.get("question"):
+                    for col in (result.columns or []):
+                        if not col.label or not col.question:
                             logger.warning(f"Skipping invalid column: {col}")
                             continue
                         
                         validated_columns.append({
-                            "label": col.get("label"),
-                            "question": col.get("question"),
-                            "type": col.get("type", "text")  # default to text
+                            "label": col.label,
+                            "question": col.question,
+                            "type": col.type or "text"
                         })
                     
                     if not validated_columns:
@@ -359,14 +431,15 @@ class AdvancedPlanningAgent:
                     
                     return {
                         "needs_table": True,
-                        "table_name": result.get("table_name", "Данные из документов"),
+                        "table_name": result.table_name,
                         "columns": validated_columns,
-                        "reasoning": result.get("reasoning", "Задача требует систематического сбора данных")
+                        "doc_types": doc_types,  # ДОБАВЛЕНО
+                        "reasoning": result.reasoning or "Задача требует систематического сбора данных"
                     }
                 else:
                     return {
                         "needs_table": False,
-                        "reasoning": result.get("reasoning", "Задача не требует создания таблицы")
+                        "reasoning": result.reasoning or "Задача не требует создания таблицы"
                     }
                 
             except json.JSONDecodeError as e:
@@ -460,7 +533,9 @@ class AdvancedPlanningAgent:
         user_task: str,
         case_id: str,
         available_documents: Optional[List[str]] = None,
-        num_documents: Optional[int] = None
+        num_documents: Optional[int] = None,
+        state: Optional[AnalysisState] = None,
+        db: Optional[Session] = None
     ) -> Dict[str, Any]:
         """
         Создает план с разбивкой на подзадачи
@@ -470,6 +545,8 @@ class AdvancedPlanningAgent:
             case_id: Идентификатор дела
             available_documents: Список доступных документов
             num_documents: Количество документов в деле
+            state: Analysis state (для interrupt, опционально)
+            db: Database session (для получения доступных типов документов, опционально)
             
         Returns:
             Dictionary с планом, включающим подзадачи:
@@ -530,7 +607,13 @@ class AdvancedPlanningAgent:
             task_analysis = self._analyze_task_complexity(user_task, case_id, previous_plans_context)
             
             # 1.5. Определение необходимости таблицы
-            table_detection_result = self._determine_table_columns_from_task(user_task)
+            # Передаем state и db если доступны (для interrupt)
+            table_detection_result = self._determine_table_columns_from_task(
+                user_task=user_task,
+                case_id=case_id,
+                state=state,
+                db=db
+            )
             needs_table = table_detection_result.get("needs_table", False)
             
             # 2. Если задача простая - используем базовый планировщик
@@ -547,10 +630,15 @@ class AdvancedPlanningAgent:
                 
                 # Добавляем таблицы, если нужно
                 if needs_table:
-                    result_plan["tables_to_create"] = [{
+                    table_spec = {
                         "table_name": table_detection_result.get("table_name", "Данные из документов"),
                         "columns": table_detection_result.get("columns", [])
-                    }]
+                    }
+                    # Добавляем doc_types если указаны
+                    doc_types = table_detection_result.get("doc_types")
+                    if doc_types:
+                        table_spec["doc_types"] = doc_types
+                    result_plan["tables_to_create"] = [table_spec]
                     logger.info(f"Table creation added to simple plan: {table_detection_result.get('table_name')}")
                 
                 return result_plan
@@ -571,10 +659,15 @@ class AdvancedPlanningAgent:
             
             # Добавляем таблицы в план, если нужно
             if needs_table:
-                plan["tables_to_create"] = [{
+                table_spec = {
                     "table_name": table_detection_result.get("table_name", "Данные из документов"),
                     "columns": table_detection_result.get("columns", [])
-                }]
+                }
+                # Добавляем doc_types если указаны
+                doc_types = table_detection_result.get("doc_types")
+                if doc_types:
+                    table_spec["doc_types"] = doc_types
+                plan["tables_to_create"] = [table_spec]
                 logger.info(f"Table creation added to plan: {table_detection_result.get('table_name')} with {len(table_detection_result.get('columns', []))} columns")
             
             total_time_minutes = 0
@@ -675,7 +768,10 @@ class AdvancedPlanningAgent:
             logger.warning("Falling back to base planning agent")
             
             # Определяем таблицы даже в fallback
-            table_detection_result = self._determine_table_columns_from_task(user_task)
+            table_detection_result = self._determine_table_columns_from_task(
+                user_task=user_task,
+                case_id=case_id
+            )
             needs_table = table_detection_result.get("needs_table", False)
             
             base_plan = self.base_planning_agent.plan_analysis(
@@ -688,10 +784,15 @@ class AdvancedPlanningAgent:
             
             # Добавляем таблицы, если нужно
             if needs_table:
-                result_plan["tables_to_create"] = [{
+                table_spec = {
                     "table_name": table_detection_result.get("table_name", "Данные из документов"),
                     "columns": table_detection_result.get("columns", [])
-                }]
+                }
+                # Добавляем doc_types если указаны
+                doc_types = table_detection_result.get("doc_types")
+                if doc_types:
+                    table_spec["doc_types"] = doc_types
+                result_plan["tables_to_create"] = [table_spec]
                 logger.info(f"Table creation added to fallback plan: {table_detection_result.get('table_name')}")
             
             return result_plan
@@ -1019,17 +1120,28 @@ class AdvancedPlanningAgent:
             # Находим соответствующий step если есть
             step = next((s for s in steps if s.get("agent_name") == analysis_type), None)
             
+            # Используем planned_reasoning если доступен, иначе reasoning
+            step_reasoning = None
+            if step:
+                step_reasoning = step.get("planned_reasoning") or step.get("reasoning")
+            
             subtask = {
                 "subtask_id": f"subtask_{i}",
                 "description": step.get("description", f"Выполнить анализ {analysis_type}") if step else f"Выполнить {analysis_type}",
                 "agent_type": analysis_type,
                 "dependencies": step.get("dependencies", []) if step else [],
                 "estimated_time": step.get("estimated_time", "5-10 мин") if step else "5-10 мин",
-                "reasoning": step.get("reasoning", base_plan.get("reasoning", "")) if step else base_plan.get("reasoning", "")
+                "reasoning": step_reasoning or base_plan.get("reasoning", "") if step else base_plan.get("reasoning", "")
             }
             
             if step:
+                # Включаем все новые поля в plan_details
                 subtask["plan_details"] = step
+                # Также добавляем planned_reasoning и planned_actions отдельно для удобства
+                if step.get("planned_reasoning"):
+                    subtask["planned_reasoning"] = step.get("planned_reasoning")
+                if step.get("planned_actions"):
+                    subtask["planned_actions"] = step.get("planned_actions")
             
             subtasks.append(subtask)
         

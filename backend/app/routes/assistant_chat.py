@@ -1091,3 +1091,75 @@ async def submit_human_feedback(
             detail=f"Ошибка при отправке ответа: {str(e)}"
         )
 
+
+class ResumeGraphRequest(BaseModel):
+    """Request model for resuming graph execution after interrupt"""
+    thread_id: str = Field(..., description="Thread ID для resume")
+    case_id: str = Field(..., description="Идентификатор дела")
+    answer: dict = Field(..., description="Ответ пользователя (например, {'doc_types': ['contract'], 'columns_clarification': '...'})")
+
+
+@router.post("/api/assistant/chat/resume")
+async def resume_graph_execution(
+    request: ResumeGraphRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """
+    Возобновить выполнение графа после interrupt
+    
+    Этот endpoint получает ответ пользователя на уточняющий вопрос от агента
+    и возобновляет выполнение графа через Command(resume=...)
+    """
+    try:
+        from app.services.langchain_agents.coordinator import AgentCoordinator
+        from app.services.rag_service import RAGService
+        from app.services.document_processor import DocumentProcessor
+        
+        # Проверяем, что дело принадлежит пользователю
+        case = db.query(Case).filter(
+            Case.id == request.case_id,
+            Case.user_id == current_user.id
+        ).first()
+        
+        if not case:
+            raise HTTPException(
+                status_code=404,
+                detail="Дело не найдено"
+            )
+        
+        # Создаем coordinator для resume
+        rag_service = RAGService()
+        document_processor = DocumentProcessor()
+        coordinator = AgentCoordinator(db, rag_service, document_processor)
+        
+        # Создаем step_callback для streaming (если нужен)
+        # В данном случае просто логируем
+        def step_callback(event):
+            logger.debug(f"[Resume] Stream event: {type(event)}")
+        
+        # Вызываем resume
+        result = coordinator.resume_after_interrupt(
+            thread_id=request.thread_id,
+            case_id=request.case_id,
+            answer=request.answer,
+            step_callback=step_callback
+        )
+        
+        logger.info(f"Graph execution resumed successfully for thread {request.thread_id}")
+        
+        return {
+            "status": "resumed",
+            "thread_id": request.thread_id,
+            "result": result
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error resuming graph execution: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=500,
+            detail=f"Ошибка при возобновлении выполнения: {str(e)}"
+        )
+

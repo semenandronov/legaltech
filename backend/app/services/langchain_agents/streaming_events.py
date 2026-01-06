@@ -118,11 +118,28 @@ class HumanFeedbackRequestEvent(BaseModel):
     context: Optional[Dict[str, Any]] = Field(None, description="Контекст запроса")
     options: Optional[List[str]] = Field(None, description="Варианты ответов")
     requires_approval: bool = Field(False, description="Требуется ли одобрение")
+    interrupt_type: Optional[str] = Field(None, description="Тип interrupt (например, 'table_clarification')")
+    thread_id: Optional[str] = Field(None, description="Thread ID для resume")
+    payload: Optional[Dict[str, Any]] = Field(None, description="Дополнительные данные interrupt")
     
     def to_sse_format(self) -> str:
         """Преобразовать в формат SSE"""
         import json
-        return f"data: {json.dumps({'type': 'human_feedback_request', 'requestId': self.request_id, 'question': self.question, 'options': self.options}, ensure_ascii=False)}\n\n"
+        sse_data = {
+            'type': 'human_feedback_request',
+            'requestId': self.request_id,
+            'question': self.question,
+            'options': self.options,
+            'context': self.context
+        }
+        # Добавляем новые поля если они есть
+        if self.interrupt_type:
+            sse_data['interruptType'] = self.interrupt_type
+        if self.thread_id:
+            sse_data['threadId'] = self.thread_id
+        if self.payload:
+            sse_data['payload'] = self.payload
+        return f"data: {json.dumps(sse_data, ensure_ascii=False)}\n\n"
 
 
 class MetadataEvent(BaseModel):

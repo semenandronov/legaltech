@@ -113,6 +113,14 @@ class PlanningValidator:
         conflict_warnings = self._check_conflicts(analysis_types, steps)
         warnings.extend(conflict_warnings)
         
+        # Validate reasoning quality for each step
+        user_task = plan.get("user_task") or plan.get("main_task")
+        if steps:
+            for step in steps:
+                is_valid, reasoning_issues = self.validate_reasoning_quality(step, user_task)
+                if not is_valid:
+                    issues.extend([f"Step {step.get('step_id', 'unknown')}: {issue}" for issue in reasoning_issues])
+        
         # Estimate execution time
         estimated_time = self._estimate_execution_time(analysis_types, steps)
         
@@ -154,6 +162,55 @@ class PlanningValidator:
                         )
         
         return issues
+    
+    def validate_reasoning_quality(
+        self,
+        step: Dict[str, Any],
+        user_task: Optional[str] = None
+    ) -> Tuple[bool, List[str]]:
+        """
+        Валидирует качество reasoning для шага
+        
+        Args:
+            step: Словарь с данными шага
+            user_task: Задача пользователя (опционально)
+            
+        Returns:
+            Tuple[is_valid, issues] - (валиден ли reasoning, список проблем)
+        """
+        issues = []
+        reasoning = step.get("planned_reasoning") or step.get("reasoning", "")
+        
+        # Эвристические проверки
+        if len(reasoning) < 50:
+            issues.append("Reasoning слишком короткий (минимум 50 символов)")
+        
+        if user_task:
+            # Проверяем упоминание задачи
+            task_keywords = user_task.lower().split()[:5]  # Первые 5 слов
+            reasoning_lower = reasoning.lower()
+            mentions_task = any(keyword in reasoning_lower for keyword in task_keywords if len(keyword) > 3)
+            if not mentions_task:
+                issues.append("Reasoning не упоминает задачу пользователя")
+        
+        # Проверяем наличие структурированных элементов
+        has_why = any(word in reasoning.lower() for word in ["почему", "необходим", "нужен", "требуется"])
+        if not has_why:
+            issues.append("Reasoning не объясняет, почему шаг нужен")
+        
+        has_documents = any(word in reasoning.lower() for word in ["документ", "файл", "источник", "материал"])
+        if not has_documents:
+            issues.append("Reasoning не упоминает используемые документы")
+        
+        # Проверяем зависимости
+        dependencies = step.get("dependencies", [])
+        if dependencies:
+            has_deps = any(dep in reasoning.lower() for dep in dependencies)
+            if not has_deps:
+                issues.append("Reasoning не упоминает зависимости от других шагов")
+        
+        is_valid = len(issues) == 0
+        return is_valid, issues
     
     def _check_conflicts(self, analysis_types: List[str], steps: List[Dict]) -> List[str]:
         """Checks for potential conflicts in the plan"""

@@ -164,6 +164,7 @@ def deliver_node(
                     
                     table_name = table_spec.get("table_name", "Данные из документов")
                     columns_spec = table_spec.get("columns", [])
+                    doc_types = table_spec.get("doc_types")  # ДОБАВЛЕНО
                     
                     if not columns_spec:
                         logger.warning(f"[DELIVER] Table {table_name} has no columns, skipping")
@@ -184,13 +185,51 @@ def deliver_node(
                         logger.warning(f"[DELIVER] Table {table_name} has no valid columns, skipping")
                         continue
                     
-                    # Создаем TabularReview
+                    # ДОБАВИТЬ: Определяем документы для таблицы по DocumentClassification.doc_type
+                    selected_file_ids = None
+                    
+                    if doc_types and isinstance(doc_types, list) and len(doc_types) > 0 and "all" not in doc_types:
+                        # Фильтруем документы по типу через DocumentClassification
+                        try:
+                            from app.models.analysis import DocumentClassification
+                            from app.models.case import File
+                            
+                            # Сначала находим file_id по doc_type через DocumentClassification
+                            classified_files = db.query(DocumentClassification).filter(
+                                DocumentClassification.case_id == case_id,
+                                DocumentClassification.doc_type.in_(doc_types)
+                            ).all()
+                            
+                            file_ids = [cf.file_id for cf in classified_files if cf.file_id]
+                            
+                            # Затем получаем файлы
+                            if file_ids:
+                                files = db.query(File).filter(
+                                    File.case_id == case_id,
+                                    File.id.in_(file_ids)
+                                ).all()
+                                selected_file_ids = [f.id for f in files]
+                                
+                                logger.info(f"[DELIVER] Filtered {len(selected_file_ids)} files by doc_types: {doc_types}")
+                            else:
+                                # Если документы не классифицированы, логируем предупреждение
+                                logger.warning(f"[DELIVER] No files found with doc_types {doc_types} for case {case_id}. Documents may not be classified.")
+                                # Можно предложить использовать все документы или запустить классификацию
+                                # Пока используем все документы (selected_file_ids = None)
+                        except Exception as filter_error:
+                            logger.error(f"[DELIVER] Error filtering files by doc_types: {filter_error}", exc_info=True)
+                            # Fallback: используем все документы
+                    else:
+                        logger.info(f"[DELIVER] Using all files for table (doc_types: {doc_types})")
+                    
+                    # Создаем TabularReview с selected_file_ids
                     try:
                         review = tabular_service.create_tabular_review(
                             case_id=case_id,
                             user_id=user_id,
                             name=table_name,
-                            description=f"Автоматически созданная таблица из плана: {table_name}"
+                            description=f"Автоматически созданная таблица из плана: {table_name}",
+                            selected_file_ids=selected_file_ids  # ДОБАВЛЕНО
                         )
                         
                         # Добавляем колонки
