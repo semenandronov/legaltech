@@ -246,41 +246,20 @@ export const TabularReviewTable = React.memo(({ reviewId, tableData, onTableData
         status: row.status,
       }
       
-      // Add cells as columns - ONLY for columns that exist in tableData.columns
-      // This prevents automatic column creation from orphaned cells or extra keys
-      const validColumnIds = new Set(tableData.columns.map(col => col.id))
+      // CRITICAL: Only add cells for columns that exist in tableData.columns
+      // DO NOT add any other keys - TanStack Table will auto-create columns from any key in rowData
       tableData.columns.forEach((col) => {
-        // Only add cell if column exists in tableData.columns
-        if (validColumnIds.has(col.id)) {
-          rowData[col.id] = row.cells[col.id] || {
-            cell_value: null,
-            status: 'pending',
-          }
+        rowData[col.id] = row.cells[col.id] || {
+          cell_value: null,
+          status: 'pending',
         }
       })
       
-      // #region agent log
-      // Check if row.cells contains keys that are not in tableData.columns
-      if (row.cells) {
-        const cellKeys = Object.keys(row.cells)
-        const orphanedCellKeys = cellKeys.filter(key => !validColumnIds.has(key))
-        if (orphanedCellKeys.length > 0) {
-          fetch('http://127.0.0.1:7242/ingest/2db1e09b-2b5d-4ee0-85d8-a551f942254c',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'frontend/src/components/TabularReview/TabularReviewTable.tsx:256',message:'[FRONTEND] Found orphaned cell keys in row.cells',data:{fileId:row.file_id,orphanedCellKeys:orphanedCellKeys,validColumnIds:Array.from(validColumnIds),allCellKeys:cellKeys},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'FF'})}).catch(()=>{});
-        }
-      }
-      // #endregion
+      // DO NOT add any other keys from row.cells - they will cause auto-creation of columns
+      // If row.cells contains keys not in tableData.columns, they are orphaned and should be ignored
       
       return rowData
     })
-    
-    // #region agent log
-    if (transformedRows.length > 0) {
-      const firstRowKeys = Object.keys(transformedRows[0])
-      const allRowKeys = new Set<string>()
-      transformedRows.forEach(row => Object.keys(row).forEach(key => allRowKeys.add(key)))
-      fetch('http://127.0.0.1:7242/ingest/2db1e09b-2b5d-4ee0-85d8-a551f942254c',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'frontend/src/components/TabularReview/TabularReviewTable.tsx:259',message:'[FRONTEND] tableRows created',data:{rowsCount:transformedRows.length,firstRowKeys:firstRowKeys,allRowKeys:Array.from(allRowKeys),tableDataColumnsCount:tableData.columns.length,tableDataColumnIds:tableData.columns.map(c => c.id),rowCellsKeys:rows.length > 0 ? Object.keys(rows[0].cells || {}) : []},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'DD'})}).catch(()=>{});
-    }
-    // #endregion
     
     return transformedRows
   }, [tableData, advancedFilters, applyAdvancedFilters])
