@@ -49,7 +49,6 @@ import {
 } from '@mui/icons-material'
 import { TabularRow, TabularColumn, TabularCell, CellDetails } from "@/services/tabularReviewApi"
 import { tabularReviewApi } from "@/services/tabularReviewApi"
-import { CellExpansionModal } from "./CellExpansionModal"
 import { TagCell } from "./TagCell"
 import { BulkActionsToolbar } from "./BulkActionsToolbar"
 import { useBatchSelection } from "@/hooks/useBatchSelection"
@@ -91,14 +90,6 @@ export const TabularReviewTable = React.memo(({ reviewId, tableData, onTableData
   const [columnPinning, setColumnPinning] = React.useState<ColumnPinningState>({ left: ['file_name'], right: [] })
   const [globalFilter, setGlobalFilter] = React.useState("")
   const [globalFilterInput, setGlobalFilterInput] = React.useState("")
-  const [selectedCell, setSelectedCell] = React.useState<{
-    fileId: string
-    columnId: string
-    cell: TabularCell
-    fileName: string
-    columnLabel: string
-  } | null>(null)
-  const [cellDetails, setCellDetails] = React.useState<CellDetails | null>(null)
   const [loadingCell, setLoadingCell] = React.useState(false)
   const [historyPanelOpen, setHistoryPanelOpen] = React.useState(false)
   const [historyCellInfo, setHistoryCellInfo] = React.useState<{
@@ -478,14 +469,6 @@ export const TabularReviewTable = React.memo(({ reviewId, tableData, onTableData
               // Проверяем кеш
               if (cellDetailsCache.current.has(cacheKey)) {
                 const cachedDetails = cellDetailsCache.current.get(cacheKey)!
-                setSelectedCell({
-                  fileId: row.original.file_id,
-                  columnId: col.id,
-                  cell: cell || { cell_value: null, status: 'pending' },
-                  fileName: row.original.file_name,
-                  columnLabel: col.column_label,
-                })
-                setCellDetails(cachedDetails)
                 
                 // Определяем highlight mode из кеша
                 let highlightMode: 'verbatim' | 'page' | 'none' = 'none'
@@ -495,6 +478,7 @@ export const TabularReviewTable = React.memo(({ reviewId, tableData, onTableData
                   highlightMode = 'page'
                 }
                 
+                // Call onCellClick callback to open document immediately (no modal)
                 if (onCellClick) {
                   onCellClick(row.original.file_id, col.id, {
                     verbatimExtract: cachedDetails.verbatim_extract,
@@ -508,15 +492,7 @@ export const TabularReviewTable = React.memo(({ reviewId, tableData, onTableData
                 return
               }
               
-              setSelectedCell({
-                fileId: row.original.file_id,
-                columnId: col.id,
-                cell: cell || { cell_value: null, status: 'pending' },
-                fileName: row.original.file_name,
-                columnLabel: col.column_label,
-              })
-              
-              // Load cell details
+              // Load cell details and open document immediately
               setLoadingCell(true)
               try {
                 const details = await tabularReviewApi.getCellDetails(
@@ -527,7 +503,6 @@ export const TabularReviewTable = React.memo(({ reviewId, tableData, onTableData
                 
                 // Сохраняем в кеш
                 cellDetailsCache.current.set(cacheKey, details)
-                setCellDetails(details)
                 
                 // Determine highlight mode
                 let highlightMode: 'verbatim' | 'page' | 'none' = 'none'
@@ -537,7 +512,7 @@ export const TabularReviewTable = React.memo(({ reviewId, tableData, onTableData
                   highlightMode = 'page'
                 }
                 
-                // Call onCellClick callback to open document
+                // Call onCellClick callback to open document immediately (no modal)
                 if (onCellClick) {
                   onCellClick(row.original.file_id, col.id, {
                     verbatimExtract: details.verbatim_extract,
@@ -550,7 +525,6 @@ export const TabularReviewTable = React.memo(({ reviewId, tableData, onTableData
                 }
               } catch (error) {
                 console.error("Error loading cell details:", error)
-                setCellDetails(null)
               } finally {
                 setLoadingCell(false)
               }
@@ -670,7 +644,7 @@ export const TabularReviewTable = React.memo(({ reviewId, tableData, onTableData
   // Keyboard navigation
   useKeyboardNavigation({
     table,
-    enabled: !filtersPanelOpen && !historyPanelOpen && !selectedCell,
+    enabled: !filtersPanelOpen && !historyPanelOpen,
     onCellEdit: (rowId) => {
       const row = table.getRowModel().rows.find((r) => r.id === rowId)
       if (row) {
@@ -1102,29 +1076,6 @@ export const TabularReviewTable = React.memo(({ reviewId, tableData, onTableData
         </Stack>
       </Stack>
       
-      {/* Cell Expansion Modal */}
-      {selectedCell && (
-        <CellExpansionModal
-          isOpen={!!selectedCell}
-          onClose={() => {
-            setSelectedCell(null)
-            setCellDetails(null)
-          }}
-          cell={selectedCell.cell}
-          cellDetails={cellDetails}
-          fileName={selectedCell.fileName}
-          columnLabel={selectedCell.columnLabel}
-          loading={loadingCell}
-          onShowHistory={() => {
-            setHistoryCellInfo({
-              fileId: selectedCell.fileId,
-              columnId: selectedCell.columnId,
-              columnLabel: selectedCell.columnLabel,
-            })
-            setHistoryPanelOpen(true)
-          }}
-        />
-      )}
       
       {/* Cell History Panel */}
       <CellHistoryPanel

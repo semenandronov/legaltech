@@ -11,7 +11,6 @@ import { TabularDocumentViewer } from "../components/TabularReview/TabularDocume
 import { TabularReviewContextChat } from "../components/TabularReview/TabularReviewContextChat"
 import { TemplatesModal } from "../components/TabularReview/TemplatesModal"
 import { FeaturedTemplatesCarousel } from "../components/TabularReview/FeaturedTemplatesCarousel"
-import { CellDetailPanel } from "../components/TabularReview/CellDetailPanel"
 import { TableModeSelector } from "../components/TabularReview/TableModeSelector"
 import { tabularReviewApi, TableData } from "../services/tabularReviewApi"
 import { Card } from "../components/UI/Card"
@@ -52,13 +51,6 @@ const TabularReviewPage: React.FC = () => {
       sourceReferences?: Array<{ page?: number | null; section?: string | null; text: string }>
     }
   } | null>(null)
-  const [selectedCell, setSelectedCell] = useState<{
-    fileId: string
-    columnId: string
-    fileName: string
-    columnLabel: string
-  } | null>(null)
-  const [cellDetails, setCellDetails] = useState<any>(null)
   const [_loadingCellDetails, setLoadingCellDetails] = useState(false)
   const [editingCell, setEditingCell] = useState<{
     fileId: string
@@ -686,7 +678,7 @@ const TabularReviewPage: React.FC = () => {
           {/* Table, Cell Detail, and Document Split View */}
           <div className="flex-1 overflow-hidden flex">
             {/* Table */}
-            <div className={`overflow-auto p-6 transition-all bg-bg-primary ${selectedDocument ? 'w-1/4 min-w-[300px]' : selectedCell ? 'w-2/5' : 'flex-1'}`}>
+            <div className={`overflow-auto p-6 transition-all bg-bg-primary ${selectedDocument ? 'w-1/4 min-w-[300px]' : 'flex-1'}`}>
               {tableData.columns.length === 0 ? (
                 <Card className="p-6 hoverable">
                   <div className="text-center">
@@ -746,17 +738,7 @@ const TabularReviewPage: React.FC = () => {
                       }
                     }
                     
-                    // Set selected cell for detail panel (but we'll hide panel when document is open)
-                    if (clickedColumn) {
-                      setSelectedCell({
-                        fileId,
-                        columnId: clickedColumn.id,
-                        fileName: row?.file_name || "Document",
-                        columnLabel: clickedColumn.column_label,
-                      })
-                    }
-                    
-                    // Open document with full highlighting data
+                    // Open document with full highlighting data (no detail panel)
                     // Use details from API if available (more complete), otherwise use cellData from table
                     const finalCellData = details ? {
                       verbatimExtract: details.verbatim_extract,
@@ -812,54 +794,6 @@ const TabularReviewPage: React.FC = () => {
               )}
             </div>
 
-            {/* Cell Detail Panel - скрываем когда открыт документ, чтобы документ был во всю ширину */}
-            {selectedCell && !selectedDocument && (
-              <CellDetailPanel
-                fileName={selectedCell.fileName}
-                columnLabel={selectedCell.columnLabel}
-                cellDetails={cellDetails}
-                onClose={() => {
-                  setSelectedCell(null)
-                  setCellDetails(null)
-                }}
-                onEdit={() => {
-                  toast.info("Редактирование ячейки будет реализовано позже")
-                }}
-                onRefresh={async () => {
-                  if (reviewId && selectedCell) {
-                    setLoadingCellDetails(true)
-                    try {
-                      const details = await tabularReviewApi.getCellDetails(
-                        reviewId,
-                        selectedCell.fileId,
-                        selectedCell.columnId
-                      )
-                      setCellDetails(details)
-                      toast.success("Данные обновлены")
-                    } catch (err) {
-                      toast.error("Ошибка при обновлении данных")
-                    } finally {
-                      setLoadingCellDetails(false)
-                    }
-                  }
-                }}
-                onJumpToSource={(ref) => {
-                  // Update selected document with source reference
-                  const row = tableData.rows.find(r => r.file_id === selectedCell.fileId)
-                  setSelectedDocument({
-                    fileId: selectedCell.fileId,
-                    fileType: row?.file_type,
-                    fileName: selectedCell.fileName,
-                    cellData: {
-                      sourcePage: ref.page || undefined,
-                      sourceSection: ref.section || undefined,
-                      highlightMode: 'page' as const,
-                      sourceReferences: [ref],
-                    }
-                  })
-                }}
-              />
-            )}
 
             {/* Document Viewer - открывается во всю ширину при клике на ячейку */}
             {selectedDocument && (
