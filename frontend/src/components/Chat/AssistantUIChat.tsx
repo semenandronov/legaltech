@@ -221,20 +221,18 @@ const PromptInputWithDrop = ({ actualCaseId, onDocumentDrop, handlePromptSubmit,
                 }}
               />
             </div>
-            <div className="flex-shrink-0 pb-3">
-              <PromptInputSubmit 
-                variant="default"
-                className="rounded-md h-10 w-10 p-0 flex items-center justify-center shrink-0 transition-all duration-150 disabled:opacity-50 disabled:cursor-not-allowed"
-                style={{
-                  backgroundColor: 'var(--color-accent)',
-                  color: 'var(--color-bg-primary)',
-                }}
-                disabled={isLoading || !actualCaseId}
-                status={isLoading ? "submitted" : undefined}
-                aria-label="Отправить сообщение"
-              />
-            </div>
           </div>
+          <PromptInputSubmit 
+            variant="default"
+            className="rounded-md h-10 w-10 p-0 flex items-center justify-center shrink-0 transition-all duration-150 disabled:opacity-50 disabled:cursor-not-allowed"
+            style={{
+              backgroundColor: 'var(--color-accent)',
+              color: 'var(--color-bg-primary)',
+            }}
+            disabled={isLoading || !actualCaseId}
+            status={isLoading ? "submitted" : undefined}
+            aria-label="Отправить сообщение"
+          />
         </PromptInputBody>
         
         {/* Вложения под полем ввода - внутри формы, но не влияют на layout SettingsPanel */}
