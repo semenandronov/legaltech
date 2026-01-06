@@ -145,11 +145,15 @@ def deliver_node(
         # 1.5. Создаем кастомные таблицы из плана (tables_to_create)
         # Проверяем наличие tables_to_create в metadata или в сохраненном плане
         custom_tables_to_create = state.get("metadata", {}).get("tables_to_create")
+        logger.info(f"[DELIVER] Checking for tables_to_create in metadata: {custom_tables_to_create is not None}")
+        
         if not custom_tables_to_create:
             # Попытка получить из plan_data если он есть в metadata
             plan_data = state.get("metadata", {}).get("plan_data")
+            logger.info(f"[DELIVER] Checking plan_data for tables_to_create: {plan_data is not None}")
             if plan_data and isinstance(plan_data, dict):
                 custom_tables_to_create = plan_data.get("tables_to_create")
+                logger.info(f"[DELIVER] Found tables_to_create in plan_data: {custom_tables_to_create is not None}")
         
         if custom_tables_to_create and isinstance(custom_tables_to_create, list):
             logger.info(f"[DELIVER] Found {len(custom_tables_to_create)} custom tables to create from plan")

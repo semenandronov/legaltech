@@ -14,6 +14,7 @@ from app.services.langchain_agents.planning_agent import extract_doc_types_from_
 from sqlalchemy.orm import Session
 import logging
 import json
+import re
 
 logger = logging.getLogger(__name__)
 
@@ -305,45 +306,152 @@ class AdvancedPlanningAgent:
         try:
             logger.info(f"Determining table requirement for task: {user_task[:100]}...")
             
-            # Используем LLM для определения таблицы
-            prompt = f"""Задача пользователя: {user_task}
+            # Используем LLM для определения таблицы с structured output
+            from app.services.langchain_agents.models import TableDecision
+            
+            # Улучшенный промпт с явным указанием на JSON формат
+            enhanced_prompt = f"""{TABLE_DETECTION_PROMPT}
 
-Проанализируй задачу и определи, требует ли она создания таблицы для систематического сбора данных из всех документов.
+КРИТИЧЕСКИ ВАЖНО:
+- Ты ДОЛЖЕН вернуть ТОЛЬКО валидный JSON без дополнительного текста
+- JSON должен начинаться с {{ и заканчиваться }}
+- Все строки должны быть в двойных кавычках
+- Не используй одинарные кавычки
+- Не добавляй комментарии вне JSON
+- Если needs_table: true, ОБЯЗАТЕЛЬНО укажи table_name и columns
 
-{TABLE_DETECTION_PROMPT}
+Задача пользователя: {user_task}
 
-Верни JSON ответ в формате, указанном выше."""
+Верни ТОЛЬКО JSON объект в следующем формате (без markdown, без code blocks, только чистый JSON):
+{{
+    "needs_table": true или false,
+    "table_name": "Название таблицы" (если needs_table: true, иначе null),
+    "columns": [{{"label": "...", "question": "...", "type": "..."}}] (если needs_table: true, иначе null),
+    "doc_types": ["contract"] или null,
+    "needs_clarification": true или false,
+    "clarification_questions": ["..."] или null,
+    "reasoning": "..."
+}}"""
             
             messages = [
-                SystemMessage(content=TABLE_DETECTION_PROMPT),
-                HumanMessage(content=f"Задача пользователя: {user_task}")
+                SystemMessage(content=enhanced_prompt),
+                HumanMessage(content=f"Задача пользователя: {user_task}\n\nВерни ТОЛЬКО валидный JSON объект без дополнительного текста.")
             ]
             
-            response = self.llm.invoke(messages)
-            response_text = response.content if hasattr(response, 'content') else str(response)
+            # Пытаемся использовать structured output если доступен
+            try:
+                # Используем PydanticOutputParser для гарантированно валидного JSON
+                from langchain_core.output_parsers import PydanticOutputParser
+                parser = PydanticOutputParser(pydantic_object=TableDecision)
+                
+                # Добавляем инструкции парсера в промпт
+                format_instructions = parser.get_format_instructions()
+                messages[0] = SystemMessage(content=enhanced_prompt + f"\n\n{format_instructions}")
+                
+                response = self.llm.invoke(messages)
+                response_text = response.content if hasattr(response, 'content') else str(response)
+                
+                # Пытаемся распарсить через PydanticOutputParser
+                try:
+                    result = parser.parse(response_text)
+                    logger.info(f"Successfully parsed table detection using PydanticOutputParser")
+                    # Преобразуем в dict для дальнейшей обработки
+                    result_dict = result.dict() if hasattr(result, 'dict') else result.model_dump()
+                    result = TableDecision(**result_dict)
+                except Exception as parse_error:
+                    logger.warning(f"PydanticOutputParser failed: {parse_error}, trying manual parsing")
+                    # Продолжаем с ручным парсингом
+                    pass
+            except Exception as structured_error:
+                logger.warning(f"Structured output not available: {structured_error}, using manual parsing")
+                response = self.llm.invoke(messages)
+                response_text = response.content if hasattr(response, 'content') else str(response)
             
             # Парсим JSON ответ и валидируем через Pydantic
             try:
+                # Улучшенный парсинг JSON
+                json_text = None
+                
+                # Пытаемся извлечь JSON из разных форматов
                 if "```json" in response_text:
                     json_text = response_text.split("```json")[1].split("```")[0].strip()
                 elif "```" in response_text:
-                    json_text = response_text.split("```")[1].split("```")[0].strip()
+                    # Проверяем, есть ли JSON внутри code block
+                    parts = response_text.split("```")
+                    for i in range(1, len(parts), 2):
+                        candidate = parts[i].strip()
+                        if candidate.startswith("{") and candidate.endswith("}"):
+                            json_text = candidate
+                            break
                 elif "{" in response_text:
                     start = response_text.find("{")
                     end = response_text.rfind("}") + 1
-                    json_text = response_text[start:end]
-                else:
-                    json_text = response_text
+                    if end > start:
+                        json_text = response_text[start:end]
                 
-                # Валидируем через Pydantic модель
+                # Если не нашли JSON - пытаемся извлечь из всего ответа
+                if not json_text:
+                    logger.warning(f"No JSON found in response, trying to extract from full text: {response_text[:200]}")
+                    # Пытаемся найти JSON в любом месте ответа
+                    import re
+                    json_match = re.search(r'\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\}', response_text, re.DOTALL)
+                    if json_match:
+                        json_text = json_match.group(0)
+                    else:
+                        # Если совсем не нашли - возвращаем ошибку
+                        logger.error(f"Could not extract JSON from response: {response_text[:500]}")
+                        raise ValueError(f"Не удалось извлечь JSON из ответа LLM. Ответ: {response_text[:200]}")
+                
+                # Валидируем через Pydantic модель с улучшенной обработкой ошибок
                 try:
-                    result = TableDecision.parse_obj(json.loads(json_text))
+                    # Пытаемся исправить распространенные ошибки JSON
+                    json_text_cleaned = json_text.strip()
+                    
+                    # Убираем лишние запятые в конце объектов/массивов
+                    json_text_cleaned = re.sub(r',\s*}', '}', json_text_cleaned)
+                    json_text_cleaned = re.sub(r',\s*]', ']', json_text_cleaned)
+                    
+                    # Исправляем одинарные кавычки на двойные (только если нет двойных)
+                    if "'" in json_text_cleaned:
+                        # Заменяем одинарные кавычки внутри строк на двойные, но аккуратно
+                        # Сначала заменяем ключи и простые строковые значения
+                        json_text_cleaned = re.sub(r"'(\w+)'", r'"\1"', json_text_cleaned)
+                    
+                    # Убираем комментарии (если есть)
+                    json_text_cleaned = re.sub(r'//.*?$', '', json_text_cleaned, flags=re.MULTILINE)
+                    json_text_cleaned = re.sub(r'/\*.*?\*/', '', json_text_cleaned, flags=re.DOTALL)
+                    
+                    # Парсим JSON
+                    parsed_json = json.loads(json_text_cleaned)
+                    
+                    # Валидируем через Pydantic
+                    result = TableDecision(**parsed_json)
+                    logger.info(f"Successfully parsed and validated table detection result: needs_table={result.needs_table}")
+                    
+                except json.JSONDecodeError as json_error:
+                    logger.error(f"Failed to parse table detection JSON: {json_error}")
+                    logger.error(f"JSON text (first 500 chars): {json_text[:500]}")
+                    logger.error(f"Full response (first 500 chars): {response_text[:500]}")
+                    # Повторная попытка с более агрессивной очисткой
+                    try:
+                        # Убираем все не-JSON символы до первой { и после последней }
+                        start_idx = json_text.find('{')
+                        end_idx = json_text.rfind('}') + 1
+                        if start_idx >= 0 and end_idx > start_idx:
+                            json_text_cleaned = json_text[start_idx:end_idx]
+                            parsed_json = json.loads(json_text_cleaned)
+                            result = TableDecision(**parsed_json)
+                            logger.info(f"Successfully parsed after aggressive cleaning")
+                        else:
+                            raise ValueError(f"Не удалось найти JSON объект в ответе")
+                    except Exception as retry_error:
+                        logger.error(f"Retry parsing also failed: {retry_error}")
+                        # Если все попытки не удались - пробуем еще раз с LLM с более строгим промптом
+                        raise ValueError(f"Критическая ошибка парсинга JSON: {str(json_error)}. Ответ LLM: {response_text[:300]}")
+                        
                 except Exception as parse_error:
-                    logger.error(f"Failed to parse table detection result: {parse_error}")
-                    return {
-                        "needs_table": False,
-                        "reasoning": f"Ошибка парсинга ответа: {str(parse_error)}"
-                    }
+                    logger.error(f"Failed to validate table detection result: {parse_error}, parsed_json keys: {list(parsed_json.keys()) if 'parsed_json' in locals() else 'N/A'}")
+                    raise ValueError(f"Ошибка валидации результата: {str(parse_error)}")
                 
                 # Валидация результата
                 needs_table = result.needs_table
@@ -442,13 +550,58 @@ class AdvancedPlanningAgent:
                         "reasoning": result.reasoning or "Задача не требует создания таблицы"
                     }
                 
-            except json.JSONDecodeError as e:
-                logger.debug(f"Failed to parse table detection JSON: {e}, using fallback")
-                return self._fallback_table_detection(user_task)
+            except (json.JSONDecodeError, ValueError) as e:
+                logger.error(f"Failed to parse table detection JSON: {e}, response: {response_text[:500] if 'response_text' in locals() else 'N/A'}")
+                # Повторная попытка с более строгим промптом
+                logger.info("Retrying with stricter prompt...")
+                try:
+                    strict_prompt = f"""Ты ДОЛЖЕН вернуть ТОЛЬКО валидный JSON без дополнительного текста.
+
+Задача: {user_task}
+
+Если задача просит создать таблицу (например "сделай таблицу", "таблица с", "создай таблицу с хронологией"), верни:
+{{
+    "needs_table": true,
+    "table_name": "Хронология событий",
+    "columns": [
+        {{"label": "Дата события", "question": "Какая дата события упоминается в документе?", "type": "date"}},
+        {{"label": "Событие", "question": "Какое событие произошло в указанную дату?", "type": "text"}},
+        {{"label": "Документ", "question": "В каком документе упоминается это событие?", "type": "text"}}
+    ],
+    "doc_types": null,
+    "needs_clarification": false,
+    "clarification_questions": null,
+    "reasoning": "Пользователь явно просит создать таблицу"
+}}
+
+Верни ТОЛЬКО JSON, без markdown, без комментариев."""
+                    
+                    retry_messages = [
+                        SystemMessage(content=strict_prompt),
+                        HumanMessage(content=f"Задача: {user_task}\n\nВерни ТОЛЬКО JSON.")
+                    ]
+                    
+                    retry_response = self.llm.invoke(retry_messages)
+                    retry_text = retry_response.content if hasattr(retry_response, 'content') else str(retry_response)
+                    
+                    # Извлекаем JSON
+                    start = retry_text.find('{')
+                    end = retry_text.rfind('}') + 1
+                    if start >= 0 and end > start:
+                        retry_json = retry_text[start:end]
+                        parsed = json.loads(retry_json)
+                        result = TableDecision(**parsed)
+                        logger.info(f"Successfully parsed on retry")
+                    else:
+                        raise ValueError("Не удалось извлечь JSON при повторной попытке")
+                except Exception as retry_error:
+                    logger.error(f"Retry also failed: {retry_error}")
+                    raise ValueError(f"Не удалось получить валидный ответ от LLM после двух попыток: {str(retry_error)}")
         
         except Exception as e:
             logger.error(f"Error in table detection: {e}", exc_info=True)
-            return self._fallback_table_detection(user_task)
+            # Не используем fallback - выбрасываем ошибку, чтобы система знала о проблеме
+            raise ValueError(f"Критическая ошибка при определении необходимости таблицы: {str(e)}")
     
     def _fallback_table_detection(self, user_task: str) -> Dict[str, Any]:
         """
@@ -462,31 +615,62 @@ class AdvancedPlanningAgent:
         """
         task_lower = user_task.lower()
         
+        # КРИТИЧНО: Если пользователь явно просит таблицу - это всегда таблица
+        explicit_table_keywords = [
+            "создай таблицу", "сделай таблицу", "таблица с", "в виде таблицы",
+            "таблицу с", "таблицу из"
+        ]
+        
+        is_explicit_table_request = any(keyword in task_lower for keyword in explicit_table_keywords)
+        
         # Простые эвристики для определения таблиц
         table_keywords = [
-            "извлеки все", "извлеки все", "найди все", "собери все",
+            "извлеки все", "найди все", "собери все",
             "для каждого", "для всех", "из каждого", "из всех",
-            "создай таблицу", "в виде таблицы", "таблица с",
             "покажи все", "представь в виде"
         ]
         
         # Проверяем наличие ключевых слов для таблиц
         has_table_keywords = any(keyword in task_lower for keyword in table_keywords)
         
+        # Если явный запрос на таблицу - игнорируем проверку на агентные задачи
+        if is_explicit_table_request:
+            has_table_keywords = True
+        
         # Проверяем, не является ли это задачей для стандартных агентов
+        # НО: если явно просится таблица - это приоритет
         agent_keywords = [
             "найди противоречия", "проанализируй риски", "извлеки ключевые факты",
-            "создай резюме", "хронология", "события", "даты и события"
+            "создай резюме"
         ]
         
-        is_agent_task = any(keyword in task_lower for keyword in agent_keywords)
+        is_agent_task = any(keyword in task_lower for keyword in agent_keywords) and not is_explicit_table_request
         
         if has_table_keywords and not is_agent_task:
             # Пытаемся определить колонки из задачи (простая эвристика)
             columns = []
+            table_name = "Данные из документов"
             
+            # Специальная обработка для хронологии событий
+            if "хронология" in task_lower or ("события" in task_lower and "таблица" in task_lower):
+                table_name = "Хронология событий"
+                columns.append({
+                    "label": "Дата события",
+                    "question": "Какая дата события упоминается в документе?",
+                    "type": "date"
+                })
+                columns.append({
+                    "label": "Событие",
+                    "question": "Какое событие произошло в указанную дату?",
+                    "type": "text"
+                })
+                columns.append({
+                    "label": "Документ",
+                    "question": "В каком документе упоминается это событие?",
+                    "type": "text"
+                })
             # Извлекаем упоминания данных
-            if "дата" in task_lower or "даты" in task_lower:
+            elif "дата" in task_lower or "даты" in task_lower:
                 if "подписания" in task_lower:
                     columns.append({
                         "label": "Дата подписания",
@@ -514,12 +698,43 @@ class AdvancedPlanningAgent:
                     "type": "text"
                 })
             
+            # Если колонки не определены, но явно просится таблица - создаем базовые колонки
+            if not columns and is_explicit_table_request:
+                # Для явного запроса создаем базовые колонки
+                if "хронология" in task_lower or "события" in task_lower:
+                    table_name = "Хронология событий"
+                    columns = [
+                        {
+                            "label": "Дата события",
+                            "question": "Какая дата события упоминается в документе?",
+                            "type": "date"
+                        },
+                        {
+                            "label": "Событие",
+                            "question": "Какое событие произошло в указанную дату?",
+                            "type": "text"
+                        },
+                        {
+                            "label": "Документ",
+                            "question": "В каком документе упоминается это событие?",
+                            "type": "text"
+                        }
+                    ]
+                else:
+                    columns = [
+                        {
+                            "label": "Данные",
+                            "question": "Какие данные нужно извлечь из документа?",
+                            "type": "text"
+                        }
+                    ]
+            
             if columns:
                 return {
                     "needs_table": True,
-                    "table_name": "Данные из документов",
+                    "table_name": table_name,
                     "columns": columns,
-                    "reasoning": "Задача содержит ключевые слова для таблицы"
+                    "reasoning": "Задача содержит ключевые слова для таблицы" + (" (явный запрос)" if is_explicit_table_request else "")
                 }
         
         # По умолчанию - таблица не нужна
@@ -608,13 +823,51 @@ class AdvancedPlanningAgent:
             
             # 1.5. Определение необходимости таблицы
             # Передаем state и db если доступны (для interrupt)
-            table_detection_result = self._determine_table_columns_from_task(
-                user_task=user_task,
-                case_id=case_id,
-                state=state,
-                db=db
-            )
-            needs_table = table_detection_result.get("needs_table", False)
+            try:
+                table_detection_result = self._determine_table_columns_from_task(
+                    user_task=user_task,
+                    case_id=case_id,
+                    state=state,
+                    db=db
+                )
+                needs_table = table_detection_result.get("needs_table", False)
+                logger.info(f"Table detection result: needs_table={needs_table}, table_name={table_detection_result.get('table_name')}, columns_count={len(table_detection_result.get('columns', []))}")
+            except Exception as table_detection_error:
+                logger.error(f"Error in table detection, but continuing: {table_detection_error}", exc_info=True)
+                # Если ошибка при определении таблицы - проверяем явные ключевые слова
+                task_lower = user_task.lower()
+                explicit_table_keywords = ["создай таблицу", "сделай таблицу", "таблица с"]
+                is_explicit = any(kw in task_lower for kw in explicit_table_keywords)
+                
+                if is_explicit:
+                    # Если явный запрос на таблицу - создаем базовую таблицу
+                    logger.warning(f"Table detection failed but explicit table request detected, creating default table")
+                    if "хронология" in task_lower or "события" in task_lower:
+                        table_detection_result = {
+                            "needs_table": True,
+                            "table_name": "Хронология событий",
+                            "columns": [
+                                {"label": "Дата события", "question": "Какая дата события упоминается в документе?", "type": "date"},
+                                {"label": "Событие", "question": "Какое событие произошло в указанную дату?", "type": "text"},
+                                {"label": "Документ", "question": "В каком документе упоминается это событие?", "type": "text"}
+                            ],
+                            "doc_types": None,
+                            "reasoning": "Явный запрос на таблицу с хронологией (fallback из-за ошибки парсинга)"
+                        }
+                    else:
+                        table_detection_result = {
+                            "needs_table": True,
+                            "table_name": "Данные из документов",
+                            "columns": [
+                                {"label": "Данные", "question": "Какие данные нужно извлечь из документа?", "type": "text"}
+                            ],
+                            "doc_types": None,
+                            "reasoning": "Явный запрос на таблицу (fallback из-за ошибки парсинга)"
+                        }
+                    needs_table = True
+                else:
+                    table_detection_result = {"needs_table": False, "reasoning": f"Ошибка определения таблицы: {str(table_detection_error)}"}
+                    needs_table = False
             
             # 2. Если задача простая - используем базовый планировщик
             if task_analysis.get("complexity") == "simple":

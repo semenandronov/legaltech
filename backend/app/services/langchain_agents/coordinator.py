@@ -356,10 +356,33 @@ class AgentCoordinator:
             
             # Фаза 8.1: Поддержка streaming промежуточных результатов через callback
             # step_callback будет вызываться для каждого шага выполнения
+            max_retries = 3
+            retry_count = 0
+            stream_iter = None
+            
+            while retry_count < max_retries:
+                try:
+                    stream_iter = self.graph.stream(initial_state, thread_config)
+                    logger.debug(f"Graph stream iterator created: {type(stream_iter)}")
+                    break  # Success, exit retry loop
+                except Exception as stream_init_error:
+                    error_msg = str(stream_init_error).lower()
+                    # Проверяем, является ли это SSL/connection ошибкой
+                    if "ssl" in error_msg or "connection" in error_msg or "consuming input failed" in error_msg:
+                        retry_count += 1
+                        if retry_count < max_retries:
+                            logger.warning(f"SSL/Connection error during stream init (attempt {retry_count}/{max_retries}), retrying...")
+                            import time
+                            time.sleep(2)  # Задержка перед повтором
+                            continue
+                        else:
+                            logger.error(f"SSL/Connection error after {max_retries} retries during stream init")
+                            raise
+                    else:
+                        # Не SSL ошибка - не повторяем
+                        raise
+            
             try:
-                stream_iter = self.graph.stream(initial_state, thread_config)
-                logger.debug(f"Graph stream iterator created: {type(stream_iter)}")
-                
                 # Отслеживаем прогресс выполнения
                 total_steps = len(analysis_types) if analysis_types else 1
                 completed_steps = 0

@@ -551,6 +551,17 @@ async def stream_chat_response(
                     logger.error(f"Error saving plan to DB: {save_error}", exc_info=True)
                     # Продолжаем без сохранения в БД
                 
+                # Проверяем, есть ли таблицы для создания
+                tables_to_create = plan.get("tables_to_create", [])
+                tables_info = ""
+                if tables_to_create:
+                    tables_list = []
+                    for table in tables_to_create:
+                        table_name = table.get("table_name", "Таблица")
+                        columns_count = len(table.get("columns", []))
+                        tables_list.append(f"- {table_name} ({columns_count} колонок)")
+                    tables_info = f"\n\n**Таблицы для создания:**\n" + "\n".join(tables_list)
+                
                 # Формируем ответ с планом (без сырого JSON)
                 plan_text = f"""Я составил план анализа для вашей задачи:
 
@@ -558,7 +569,7 @@ async def stream_chat_response(
 {reasoning}
 
 **Типы анализов:** {', '.join(analysis_types)}
-**Уверенность:** {confidence:.0%}
+**Уверенность:** {confidence:.0%}{tables_info}
 
 Пожалуйста, проверьте план и подтвердите выполнение."""
                 
