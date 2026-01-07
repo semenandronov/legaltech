@@ -144,11 +144,8 @@ async def upload_files(
     
     # Список путей к сохранённым файлам для отката при ошибке
     saved_file_paths = []
-    
-    # Начинаем транзакцию для атомарности загрузки
-    try:
-        db.begin_nested()  # Savepoint для отката
-    
+
+    # Обрабатываем каждый загруженный файл
     for file in files:
         if not file.filename:
             raise HTTPException(status_code=400, detail="Пустое имя файла недопустимо")
