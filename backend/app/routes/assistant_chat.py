@@ -640,6 +640,31 @@ async def stream_chat_response(
             # asyncio уже импортирован глобально, не нужно импортировать локально
             loop = asyncio.get_event_loop()
             
+            # Загружаем историю сообщений для контекста (особенно важно для deep_think)
+            chat_history = []
+            try:
+                history_messages = db.query(ChatMessage).filter(
+                    ChatMessage.case_id == case_id,
+                    ChatMessage.content.isnot(None),
+                    ChatMessage.content != ""
+                ).order_by(ChatMessage.created_at.desc()).limit(10).all()
+                
+                # Формируем историю в формате для промпта (от старых к новым)
+                chat_history = []
+                for msg in reversed(history_messages):
+                    if msg.role == "user" and msg.content:
+                        chat_history.append(f"Пользователь: {msg.content}")
+                    elif msg.role == "assistant" and msg.content:
+                        chat_history.append(f"Ассистент: {msg.content[:500]}...")  # Ограничиваем длину
+                
+                if chat_history:
+                    logger.info(f"Loaded {len(chat_history)} previous messages for context")
+                else:
+                    logger.info("No previous messages found for context")
+            except Exception as history_error:
+                logger.warning(f"Failed to load chat history: {history_error}, continuing without history")
+                # Continue without history - не критичная ошибка
+            
             # Web search integration - выполняем ПЕРВЫМ, если включен
             web_search_context = ""
             web_search_successful = False
@@ -746,11 +771,10 @@ async def stream_chat_response(
                     logger.warning(f"Legal research failed: {legal_research_error}, continuing without legal research", exc_info=True)
                     # Continue without legal research - не критичная ошибка
             
-            # Get relevant documents using RAG - только если веб-поиск и юридическое исследование не дали результатов
-            # или если они не включены
+            # Get relevant documents using RAG - ВСЕГДА выполняем RAG для получения контекста из документов дела
+            # Веб-поиск и юридическое исследование дополняют, но не заменяют RAG
             context = ""
-            if not web_search_successful and not legal_research_successful:
-                # Выполняем RAG только если веб-поиск не дал результатов
+            try:
                 # Используем аргумент по умолчанию для захвата rag_service в lambda
                 documents = await loop.run_in_executor(
                     None,
@@ -787,6 +811,13 @@ async def stream_chat_response(
                     context_parts.append(f"[Документ {i}: {source}]\n{content}")
                 
                 context = "\n\n".join(context_parts)
+                if context:
+                    logger.info(f"RAG retrieved {len(documents)} documents for context")
+                else:
+                    logger.warning(f"RAG retrieved {len(documents)} documents but context is empty")
+            except Exception as rag_error:
+                logger.warning(f"RAG retrieval failed: {rag_error}, continuing without RAG context", exc_info=True)
+                # Continue without RAG context - не критичная ошибка, но важно для deep_think
             
             # Добавляем источники из веб-поиска
             if web_search_successful and 'research_result' in locals() and research_result.sources:
@@ -820,10 +851,20 @@ async def stream_chat_response(
 - Если пользователь просит конкретную статью кодекса, приведи полный текст статьи из результатов юридического исследования
 """
 
+            # Формируем историю для промпта
+            history_context = ""
+            if chat_history:
+                history_context = f"""
+Контекст предыдущих сообщений в этом чате:
+{chr(10).join(chat_history)}
+
+ВАЖНО: Учитывай контекст предыдущих сообщений при ответе. Если пользователь задает уточняющий вопрос (например, "подробнее"), используй информацию из предыдущих сообщений для более полного ответа.
+"""
+            
             prompt = f"""Ты - юридический AI-ассистент. Ты помогаешь анализировать документы дела.
 
 Контекст из документов дела:
-{context}{web_search_context}{legal_research_context}
+{context if context else "Контекст из документов дела не найден. Используй общие знания и информацию из других источников."}{web_search_context}{legal_research_context}{history_context}
 
 Вопрос пользователя: {question}{web_search_instructions}{legal_research_instructions}
 
@@ -866,9 +907,10 @@ async def stream_chat_response(
             # При deep_think=True используем GigaChat-Pro, иначе модель по умолчанию (GigaChat)
             if deep_think:
                 llm = create_llm(temperature=0.7, model="GigaChat-Pro")
-                logger.info("Using GigaChat-Pro for deep thinking mode")
+                logger.info(f"Using GigaChat-Pro for deep thinking mode. Context length: {len(context)} chars, History messages: {len(chat_history)}, Web search: {web_search_successful}, Legal research: {legal_research_successful}")
             else:
                 llm = create_llm(temperature=0.7)  # Использует config.GIGACHAT_MODEL (обычно "GigaChat")
+                logger.info(f"Using standard GigaChat. Context length: {len(context)} chars, History messages: {len(chat_history)}")
             
             # Stream response
             # Преобразуем строку prompt в список сообщений для GigaChat
