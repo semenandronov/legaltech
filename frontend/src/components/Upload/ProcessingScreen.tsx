@@ -4,11 +4,12 @@ import './Upload.css'
 interface ProcessingScreenProps {
   caseId?: string  // Optional, not currently used
   onComplete: () => void
+  uploadProgress?: number  // Real upload progress (0-100)
 }
 
-const ProcessingScreen = ({ onComplete }: ProcessingScreenProps) => {
+const ProcessingScreen = ({ onComplete, uploadProgress }: ProcessingScreenProps) => {
   const [currentStep, setCurrentStep] = useState(0)
-  const [progress, setProgress] = useState(0)
+  const [progress, setProgress] = useState(uploadProgress || 0)
 
   const steps = [
     { name: 'Парсинг документов', completed: false },
@@ -21,7 +22,18 @@ const ProcessingScreen = ({ onComplete }: ProcessingScreenProps) => {
   ]
 
   useEffect(() => {
-    // Simulate processing steps
+    // Update progress from upload progress if provided
+    if (uploadProgress !== undefined) {
+      setProgress(uploadProgress)
+    }
+  }, [uploadProgress])
+
+  useEffect(() => {
+    // Simulate processing steps only after upload is complete
+    if (uploadProgress !== undefined && uploadProgress < 100) {
+      return  // Wait for upload to complete
+    }
+
     const interval = setInterval(() => {
       setCurrentStep((prev) => {
         if (prev < steps.length - 1) {
@@ -45,7 +57,7 @@ const ProcessingScreen = ({ onComplete }: ProcessingScreenProps) => {
     }
 
     return () => clearInterval(interval)
-  }, [progress, steps.length, onComplete])
+  }, [progress, steps.length, onComplete, uploadProgress])
 
   return (
     <div className="processing-screen">

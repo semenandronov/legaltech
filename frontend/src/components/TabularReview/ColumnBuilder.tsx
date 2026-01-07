@@ -141,9 +141,6 @@ export function ColumnBuilder({ isOpen, onClose, onSave }: ColumnBuilderProps) {
 
   // Сброс тегов при смене типа колонки
   const handleColumnTypeChange = (newType: string) => {
-    // #region agent log
-    fetch('http://127.0.0.1:7242/ingest/2db1e09b-2b5d-4ee0-85d8-a551f942254c',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'frontend/src/components/TabularReview/ColumnBuilder.tsx:143',message:'handleColumnTypeChange called',data:{newType:newType,oldType:columnType},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'I'})}).catch(()=>{});
-    // #endregion
     setColumnType(newType)
     if (newType !== "tag" && newType !== "multiple_tags") {
       setTagOptions([])
@@ -177,39 +174,24 @@ export function ColumnBuilder({ isOpen, onClose, onSave }: ColumnBuilderProps) {
           <Select 
             value={columnType} 
             onValueChange={(value) => {
-              // #region agent log
-              fetch('http://127.0.0.1:7242/ingest/2db1e09b-2b5d-4ee0-85d8-a551f942254c',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'frontend/src/components/TabularReview/ColumnBuilder.tsx:177',message:'Select onValueChange fired',data:{value:value,oldValue:columnType},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'J'})}).catch(()=>{});
-              // #endregion
               handleColumnTypeChange(value)
             }}
           >
             <SelectTrigger 
               onClick={(e) => {
-                // #region agent log
-                fetch('http://127.0.0.1:7242/ingest/2db1e09b-2b5d-4ee0-85d8-a551f942254c',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'frontend/src/components/TabularReview/ColumnBuilder.tsx:178',message:'SelectTrigger onClick fired',data:{columnType:columnType},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A'})}).catch(()=>{});
-                // #endregion
                 e.stopPropagation()
               }}
               onPointerDown={(e) => {
-                // #region agent log
-                fetch('http://127.0.0.1:7242/ingest/2db1e09b-2b5d-4ee0-85d8-a551f942254c',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'frontend/src/components/TabularReview/ColumnBuilder.tsx:183',message:'SelectTrigger onPointerDown fired',data:{},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'B'})}).catch(()=>{});
-                // #endregion
                 e.stopPropagation()
               }}
             >
               <SelectValue placeholder="Выберите тип колонки" />
             </SelectTrigger>
             <SelectContent 
-              onPointerDownOutside={(e) => {
-                // #region agent log
-                fetch('http://127.0.0.1:7242/ingest/2db1e09b-2b5d-4ee0-85d8-a551f942254c',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'frontend/src/components/TabularReview/ColumnBuilder.tsx:192',message:'SelectContent onPointerDownOutside fired',data:{target:e.target},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'C'})}).catch(()=>{});
-                // #endregion
+              onPointerDownOutside={() => {
                 // Don't prevent default - let Radix UI handle it
               }}
-              onEscapeKeyDown={(_e) => {
-                // #region agent log
-                fetch('http://127.0.0.1:7242/ingest/2db1e09b-2b5d-4ee0-85d8-a551f942254c',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'frontend/src/components/TabularReview/ColumnBuilder.tsx:198',message:'SelectContent onEscapeKeyDown fired',data:{},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'D'})}).catch(()=>{});
-                // #endregion
+              onEscapeKeyDown={() => {
                 // Don't prevent default - let Radix UI handle it
               }}
             >
@@ -217,16 +199,6 @@ export function ColumnBuilder({ isOpen, onClose, onSave }: ColumnBuilderProps) {
                 <SelectItem 
                   key={type.value} 
                   value={type.value}
-                  onPointerDown={() => {
-                    // #region agent log
-                    fetch('http://127.0.0.1:7242/ingest/2db1e09b-2b5d-4ee0-85d8-a551f942254c',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'frontend/src/components/TabularReview/ColumnBuilder.tsx:212',message:'SelectItem onPointerDown fired',data:{value:type.value},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'F'})}).catch(()=>{});
-                    // #endregion
-                  }}
-                  onClick={() => {
-                    // #region agent log
-                    fetch('http://127.0.0.1:7242/ingest/2db1e09b-2b5d-4ee0-85d8-a551f942254c',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'frontend/src/components/TabularReview/ColumnBuilder.tsx:218',message:'SelectItem onClick fired',data:{value:type.value},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'G'})}).catch(()=>{});
-                    // #endregion
-                  }}
                 >
                   <span className="flex items-center gap-2">
                     <span>{type.icon}</span>

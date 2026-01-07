@@ -1587,14 +1587,23 @@ class TabularReviewService:
         if not review:
             raise ValueError(f"Tabular review {review_id} not found or access denied")
         
-        # Get or create the cell (using unique constraint on file_id + column_id)
+        # Get or create the cell with atomic locking (SELECT FOR UPDATE)
+        # Это предотвращает race conditions при одновременном редактировании
+        try:
         cell = self.db.query(TabularCell).filter(
             and_(
                 TabularCell.tabular_review_id == review_id,
                 TabularCell.file_id == file_id,
                 TabularCell.column_id == column_id
             )
-        ).first()
+            ).with_for_update(nowait=True).first()  # nowait=True - сразу ошибка если заблокировано
+        except Exception as lock_error:
+            # Если не удалось получить блокировку (другой пользователь редактирует)
+            from sqlalchemy.exc import OperationalError
+            if isinstance(lock_error, OperationalError) and "could not obtain lock" in str(lock_error).lower():
+                raise ValueError("Ячейка заблокирована другим пользователем. Попробуйте через несколько секунд.")
+            # Для других ошибок - пробрасываем дальше
+            raise
         
         # Save previous value for history
         previous_cell_value = cell.cell_value if cell else None
@@ -1612,13 +1621,13 @@ class TabularReviewService:
             self.db.add(cell)
             self.db.flush()  # Flush to get the cell ID
         else:
-            # Check if cell is locked by another user
+            # Check if cell is locked by another user (атомарная проверка благодаря FOR UPDATE)
             if cell.locked_by and cell.locked_by != user_id:
                 # Check if lock has expired
                 if cell.lock_expires_at and cell.lock_expires_at > datetime.utcnow():
                     locked_user = self.db.query(User).filter(User.id == cell.locked_by).first()
-                    locked_user_name = locked_user.full_name if locked_user else "Unknown"
-                    raise ValueError(f"Cell is locked by {locked_user_name}")
+                    locked_user_name = locked_user.name if locked_user else "Unknown"
+                    raise ValueError(f"Ячейка заблокирована пользователем {locked_user_name}")
                 # Lock has expired, allow update and unlock
                 cell.locked_by = None
                 cell.locked_at = None

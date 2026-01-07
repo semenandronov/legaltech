@@ -169,6 +169,18 @@ export interface CellDetails {
   }
 }
 
+export interface CreateFromDescriptionPayload {
+  description: string
+  existing_review_id?: string | null
+}
+
+export interface CreateFromDescriptionResponse {
+  status: string
+  message: string
+  review_id?: string
+  clarificationQuestions?: string[]
+}
+
 // API functions
 export const tabularReviewApi = {
   // List tabular reviews
@@ -910,6 +922,24 @@ export const tabularReviewApi = {
       const response = await apiClient.post(
         `/api/tabular-review/${reviewId}/columns/smart-from-examples`,
         { examples }
+      )
+      return response.data
+    } catch (error) {
+      throw new Error(extractErrorMessage(error))
+    }
+  },
+
+  async createFromDescription(
+    caseId: string,
+    payload: CreateFromDescriptionPayload,
+  ): Promise<CreateFromDescriptionResponse> {
+    try {
+      const response = await apiClient.post(
+        '/api/tabular-review/create-from-description',
+        {
+          case_id: caseId,
+          ...payload,
+        },
       )
       return response.data
     } catch (error) {

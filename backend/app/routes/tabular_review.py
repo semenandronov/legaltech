@@ -1810,6 +1810,132 @@ async def chat_over_table(
         raise HTTPException(status_code=500, detail="Failed to analyze table")
 
 
+class CreateFromDescriptionRequest(BaseModel):
+    case_id: str
+    description: str
+    existing_review_id: str | None = None
+
+
+class CreateFromDescriptionResponse(BaseModel):
+    status: str
+    message: str
+    review_id: str | None = None
+    clarificationQuestions: List[str] | None = None
+
+
+@router.post("/create-from-description", response_model=CreateFromDescriptionResponse)
+async def create_from_description(
+    request: CreateFromDescriptionRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """
+    Создать Tabular Review по текстовому описанию задачи с помощью агентов.
+    """
+    description = (request.description or "").strip()
+    if not description:
+        raise HTTPException(status_code=400, detail="Описание задачи не может быть пустым")
+
+    case_id = request.case_id
+
+    # Проверяем, что дело принадлежит пользователю
+    from app.models.case import Case
+
+    case = db.query(Case).filter(
+        Case.id == case_id,
+        Case.user_id == current_user.id,
+    ).first()
+    if not case:
+        raise HTTPException(status_code=404, detail="Дело не найдено или нет доступа")
+
+    try:
+        # Импортируем сервисы здесь, чтобы избежать циклических импортов
+        from app.services.rag_service import RAGService
+        from app.services.document_processor import DocumentProcessor
+        from app.services.langchain_agents.advanced_planning_agent import AdvancedPlanningAgent
+        from app.services.langchain_agents.deliver_node import deliver_node
+        from app.models.tabular_review import TabularReview
+
+        rag_service = RAGService()
+        document_processor = DocumentProcessor()
+        planning_agent = AdvancedPlanningAgent(
+            rag_service=rag_service,
+            document_processor=document_processor,
+        )
+
+        # 1. Получаем план анализа с возможными tables_to_create
+        plan = planning_agent.plan_with_subtasks(case_id=case_id, user_task=description)
+        tables_to_create = plan.get("tables_to_create") or []
+
+        # Если агент считает, что нужны уточнения
+        if plan.get("needs_clarification") and plan.get("clarification_questions"):
+            return CreateFromDescriptionResponse(
+                status="needs_clarification",
+                message="Нужны уточнения перед созданием таблицы",
+                review_id=None,
+                clarificationQuestions=plan["clarification_questions"],
+            )
+
+        if not tables_to_create:
+            return CreateFromDescriptionResponse(
+                status="no_table",
+                message="Агент решил, что таблица не требуется. Уточните задачу.",
+                review_id=None,
+            )
+
+        # 2. Используем deliver_node для фактического создания таблицы
+        initial_state = {
+            "case_id": case_id,
+            "metadata": {
+                "tables_to_create": tables_to_create,
+                "user_id": current_user.id,
+            },
+        }
+        state_after = deliver_node(
+            state=initial_state,
+            db=db,
+            rag_service=rag_service,
+            document_processor=document_processor,
+        )
+
+        delivery_result = state_after.get("delivery_result") or {}
+        tables = delivery_result.get("tables") or {}
+        created_ids = [
+            tbl["table_id"]
+            for tbl in tables.values()
+            if tbl.get("status") == "created" and tbl.get("table_id")
+        ]
+
+        if not created_ids:
+            return CreateFromDescriptionResponse(
+                status="error",
+                message="Таблица не была создана. Проверьте логи агента.",
+                review_id=None,
+            )
+
+        review_id = created_ids[0]
+        review = db.query(TabularReview).filter(TabularReview.id == review_id).first()
+        if not review:
+            return CreateFromDescriptionResponse(
+                status="error",
+                message="Таблица создана, но не найдена в базе данных.",
+                review_id=review_id,
+            )
+
+        return CreateFromDescriptionResponse(
+            status="ok",
+            message="Таблица успешно создана",
+            review_id=review_id,
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error creating table from description: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=500,
+            detail=f"Ошибка при создании таблицы через агента: {e}",
+        )
+
 @router.post("/columns/generate-prompt")
 async def generate_column_prompt(
     request: ColumnPromptGenerateRequest,

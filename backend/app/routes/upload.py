@@ -42,6 +42,32 @@ def sanitize_text(text: str) -> str:
     
     return sanitized
 
+
+def _cleanup_uploaded_files(file_paths: List[str]) -> None:
+    """
+    Удаляет сохранённые файлы с диска при откате транзакции
+    
+    Args:
+        file_paths: Список путей к файлам для удаления
+    """
+    for file_path in file_paths:
+        try:
+            if os.path.exists(file_path):
+                os.remove(file_path)
+                logger.info(f"Cleaned up file: {file_path}")
+        except Exception as e:
+            logger.warning(f"Failed to cleanup file {file_path}: {e}", exc_info=True)
+    
+    # Также удаляем пустые директории case_id если они остались
+    if file_paths:
+        try:
+            case_upload_dir = os.path.dirname(file_paths[0])
+            if os.path.exists(case_upload_dir) and not os.listdir(case_upload_dir):
+                os.rmdir(case_upload_dir)
+                logger.info(f"Removed empty case directory: {case_upload_dir}")
+        except Exception as e:
+            logger.warning(f"Failed to remove case directory: {e}", exc_info=True)
+
 router = APIRouter()
 
 
@@ -116,6 +142,13 @@ async def upload_files(
     # Генерируем case_id один раз, чтобы использовать его и для Case, и для File
     case_id = str(uuid.uuid4())
     
+    # Список путей к сохранённым файлам для отката при ошибке
+    saved_file_paths = []
+    
+    # Начинаем транзакцию для атомарности загрузки
+    try:
+        db.begin_nested()  # Savepoint для отката
+    
     for file in files:
         if not file.filename:
             raise HTTPException(status_code=400, detail="Пустое имя файла недопустимо")
@@ -170,28 +203,6 @@ async def upload_files(
             # Классификация документа
             file_classification = None
             try:
-                # #region debug log
-                debug_log_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), ".cursor", "debug.log")
-                try:
-                    os.makedirs(os.path.dirname(debug_log_path), exist_ok=True)
-                    with open(debug_log_path, "a", encoding="utf-8") as f:
-                        f.write(json.dumps({
-                            "sessionId": "debug-session",
-                            "runId": "run1",
-                            "hypothesisId": "A",
-                            "location": "upload.py:173",
-                            "message": "Starting classification",
-                            "data": {
-                                "filename": filename,
-                                "text_length": len(text),
-                                "text_preview": text[:200] if text else "empty"
-                            },
-                            "timestamp": int(__import__("time").time() * 1000)
-                        }, ensure_ascii=False) + "\n")
-                except Exception:
-                    pass  # Ignore debug log errors
-                # #endregion
-                
                 logger.info(f"Classifying document: {filename}")
                 classifier_service = DocumentClassifierService()
                 classification_result = classifier_service.classify_document(
@@ -199,29 +210,6 @@ async def upload_files(
                     filename=filename,
                     case_context=None
                 )
-                
-                # #region debug log
-                try:
-                    with open(debug_log_path, "a", encoding="utf-8") as f:
-                        f.write(json.dumps({
-                            "sessionId": "debug-session",
-                            "runId": "run1",
-                            "hypothesisId": "A",
-                            "location": "upload.py:195",
-                            "message": "Classification result received",
-                            "data": {
-                                "filename": filename,
-                                "doc_type": classification_result.get("doc_type"),
-                                "confidence": classification_result.get("confidence"),
-                                "needs_human_review": classification_result.get("needs_human_review"),
-                                "classifier": classification_result.get("classifier"),
-                                "reasoning": classification_result.get("reasoning", "")[:200]
-                            },
-                            "timestamp": int(__import__("time").time() * 1000)
-                        }, ensure_ascii=False) + "\n")
-                except Exception:
-                    pass
-                # #endregion
                 
                 logger.info(
                     f"Classified {filename}: type={classification_result['doc_type']}, "
@@ -231,26 +219,6 @@ async def upload_files(
                 
                 file_classification = classification_result
             except Exception as e:
-                # #region debug log
-                try:
-                    with open(debug_log_path, "a", encoding="utf-8") as f:
-                        f.write(json.dumps({
-                            "sessionId": "debug-session",
-                            "runId": "run1",
-                            "hypothesisId": "B",
-                            "location": "upload.py:220",
-                            "message": "Classification error",
-                            "data": {
-                                "filename": filename,
-                                "error": str(e),
-                                "error_type": type(e).__name__
-                            },
-                            "timestamp": int(__import__("time").time() * 1000)
-                        }, ensure_ascii=False) + "\n")
-                except Exception:
-                    pass
-                # #endregion
-                
                 logger.warning(f"Error classifying document {filename}: {e}", exc_info=True)
                 # Не прерываем загрузку при ошибке классификации
                 file_classification = {
@@ -312,9 +280,15 @@ async def upload_files(
             )
         except ValueError as e:
             logger.warning("Ошибка парсинга файла %s: %s", filename, e)
+            # Откатываем транзакцию и удаляем сохранённые файлы
+            db.rollback()
+            _cleanup_uploaded_files(saved_file_paths)
             raise HTTPException(status_code=400, detail=str(e))
         except Exception as e:
             logger.exception("Неизвестная ошибка при обработке файла %s", filename)
+            # Откатываем транзакцию и удаляем сохранённые файлы
+            db.rollback()
+            _cleanup_uploaded_files(saved_file_paths)
             raise HTTPException(
                 status_code=500,
                 detail=f"Ошибка при обработке файла '{filename}'. Попробуйте загрузить файл снова."
@@ -322,6 +296,8 @@ async def upload_files(
     
     # Check if we have any valid text content
     if not text_parts or not any(text.strip() for text in text_parts):
+        db.rollback()
+        _cleanup_uploaded_files(saved_file_paths)
         raise HTTPException(
             status_code=400,
             detail="Все загруженные файлы пусты или не содержат текста. Пожалуйста, загрузите файлы с текстовым содержимым."
@@ -334,6 +310,8 @@ async def upload_files(
     
     # Final check: ensure full_text is not empty
     if not full_text.strip():
+        db.rollback()
+        _cleanup_uploaded_files(saved_file_paths)
         raise HTTPException(
             status_code=400,
             detail="Не удалось извлечь текст из загруженных файлов"
@@ -369,6 +347,8 @@ async def upload_files(
     # Убеждаемся, что full_text не пустой и не содержит NULL байты
     sanitized_full_text = sanitize_text(full_text)
     if not sanitized_full_text or not sanitized_full_text.strip():
+        db.rollback()
+        _cleanup_uploaded_files(saved_file_paths)
         raise HTTPException(
             status_code=400,
             detail="Не удалось извлечь текст из загруженных файлов"
@@ -386,6 +366,8 @@ async def upload_files(
     
     # Валидация: убеждаемся, что у нас есть хотя бы один файл
     if not file_names:
+        db.rollback()
+        _cleanup_uploaded_files(saved_file_paths)
         raise HTTPException(
             status_code=400,
             detail="Не удалось обработать ни одного файла"
@@ -456,54 +438,9 @@ async def upload_files(
                 db.flush()  # Flush to get file_model.id
                 
                 # Сохраняем классификацию документа
-                # #region debug log
-                debug_log_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), ".cursor", "debug.log")
-                try:
-                    os.makedirs(os.path.dirname(debug_log_path), exist_ok=True)
-                    with open(debug_log_path, "a", encoding="utf-8") as f:
-                        f.write(json.dumps({
-                            "sessionId": "debug-session",
-                            "runId": "run1",
-                            "hypothesisId": "C",
-                            "location": "upload.py:394",
-                            "message": "Checking file_classification before save",
-                            "data": {
-                                "filename": filename,
-                                "file_id": file_model.id,
-                                "has_classification": bool(file_info.get("file_classification")),
-                                "classification_keys": list(file_info.get("file_classification", {}).keys()) if file_info.get("file_classification") else []
-                            },
-                            "timestamp": int(__import__("time").time() * 1000)
-                        }, ensure_ascii=False) + "\n")
-                except Exception:
-                    pass
-                # #endregion
-                
                 if file_info.get("file_classification"):
                     from app.models.analysis import DocumentClassification
                     classification = file_info["file_classification"]
-                    
-                    # #region debug log
-                    try:
-                        with open(debug_log_path, "a", encoding="utf-8") as f:
-                            f.write(json.dumps({
-                                "sessionId": "debug-session",
-                                "runId": "run1",
-                                "hypothesisId": "C",
-                                "location": "upload.py:410",
-                                "message": "Saving classification to DB",
-                                "data": {
-                                    "filename": filename,
-                                    "file_id": file_model.id,
-                                    "doc_type": classification.get("doc_type"),
-                                    "confidence": classification.get("confidence"),
-                                    "needs_human_review": classification.get("needs_human_review")
-                                },
-                                "timestamp": int(__import__("time").time() * 1000)
-                            }, ensure_ascii=False) + "\n")
-                    except Exception:
-                        pass
-                    # #endregion
                     
                     doc_classification = DocumentClassification(
                         case_id=case_id,
@@ -520,45 +457,6 @@ async def upload_files(
                     )
                     db.add(doc_classification)
                     logger.info(f"Saved classification for file {file_model.id}: {classification.get('doc_type', 'unknown')}")
-                    
-                    # #region debug log
-                    try:
-                        with open(debug_log_path, "a", encoding="utf-8") as f:
-                            f.write(json.dumps({
-                                "sessionId": "debug-session",
-                                "runId": "run1",
-                                "hypothesisId": "C",
-                                "location": "upload.py:432",
-                                "message": "Classification saved to DB",
-                                "data": {
-                                    "filename": filename,
-                                    "file_id": file_model.id,
-                                    "doc_type": classification.get("doc_type")
-                                },
-                                "timestamp": int(__import__("time").time() * 1000)
-                            }, ensure_ascii=False) + "\n")
-                    except Exception:
-                        pass
-                    # #endregion
-                else:
-                    # #region debug log
-                    try:
-                        with open(debug_log_path, "a", encoding="utf-8") as f:
-                            f.write(json.dumps({
-                                "sessionId": "debug-session",
-                                "runId": "run1",
-                                "hypothesisId": "C",
-                                "location": "upload.py:440",
-                                "message": "No classification to save",
-                                "data": {
-                                    "filename": filename,
-                                    "file_id": file_model.id
-                                },
-                                "timestamp": int(__import__("time").time() * 1000)
-                            }, ensure_ascii=False) + "\n")
-                    except Exception:
-                        pass
-                    # #endregion
             except Exception as file_error:
                 logger.warning(
                     f"Error creating File model for {filename}: {file_error}",
@@ -576,7 +474,9 @@ async def upload_files(
                 f"(case {case_id}, file_id {file_model.id})"
             )
         
+        # Коммитим транзакцию - все файлы и Case успешно созданы
         db.commit()
+        logger.info(f"Successfully committed case {case_id} with {len(file_names)} files")
         
         # Store documents in PGVector
         logger.info(
@@ -650,6 +550,9 @@ async def upload_files(
         }
     except Exception as e:
         db.rollback()
+        # Очищаем сохранённые файлы при ошибке
+        _cleanup_uploaded_files(saved_file_paths)
+        
         error_detail = str(e)
         
         # Проверяем, является ли это ошибкой SQLAlchemy

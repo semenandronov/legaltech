@@ -915,6 +915,11 @@ class AdvancedPlanningAgent:
                         table_spec["doc_types"] = doc_types
                     result_plan["tables_to_create"] = [table_spec]
                     
+                    # Передаем needs_clarification и clarification_questions в план, если они есть
+                    if table_detection_result.get("needs_clarification"):
+                        result_plan["needs_clarification"] = True
+                        result_plan["clarification_questions"] = table_detection_result.get("clarification_questions", [])
+                    
                     # Улучшаем reasoning, добавляя информацию о таблице на естественном языке
                     table_reasoning = self._format_table_info_for_plan(table_detection_result)
                     if result_plan.get("reasoning"):
@@ -951,6 +956,11 @@ class AdvancedPlanningAgent:
                 if doc_types:
                     table_spec["doc_types"] = doc_types
                 plan["tables_to_create"] = [table_spec]
+                
+                # Передаем needs_clarification и clarification_questions в план, если они есть
+                if table_detection_result.get("needs_clarification"):
+                    plan["needs_clarification"] = True
+                    plan["clarification_questions"] = table_detection_result.get("clarification_questions", [])
                 
                 # Улучшаем reasoning, добавляя информацию о таблице на естественном языке
                 table_reasoning = self._format_table_info_for_plan(table_detection_result)

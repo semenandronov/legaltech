@@ -7,12 +7,19 @@ import Checkbox from "@/components/UI/Checkbox"
 import { Search, FileText } from "lucide-react"
 import { tabularReviewApi } from "@/services/tabularReviewApi"
 import Spinner from "@/components/UI/Spinner"
+import {
+  DOCUMENT_CATEGORIES,
+  type DocumentCategoryKey,
+  groupDocumentsByCategory,
+  type CategorizableDocument,
+} from "@/utils/documentCategories"
 
-interface Document {
+interface Document extends CategorizableDocument {
   id: string
   filename: string
   file_type?: string
   created_at?: string
+  doc_type?: string | null
 }
 
 interface DocumentSelectorProps {
@@ -37,6 +44,7 @@ export const DocumentSelector: React.FC<DocumentSelectorProps> = ({
   const [searchQuery, setSearchQuery] = useState("")
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [activeCategory, setActiveCategory] = useState<DocumentCategoryKey>("written_evidence")
 
   useEffect(() => {
     if (isOpen) {
@@ -62,7 +70,8 @@ export const DocumentSelector: React.FC<DocumentSelectorProps> = ({
           id: doc.id,
           filename: doc.filename,
           file_type: doc.file_type,
-          created_at: doc.created_at
+          created_at: doc.created_at,
+          doc_type: doc.doc_type ?? null
         })))
       } else {
         setError("Не указан caseId или reviewId")
@@ -86,12 +95,18 @@ export const DocumentSelector: React.FC<DocumentSelectorProps> = ({
     })
   }
 
-  const handleSelectAll = () => {
-    if (selectedIds.size === filteredDocuments.length) {
-      setSelectedIds(new Set())
-    } else {
-      setSelectedIds(new Set(filteredDocuments.map((d) => d.id)))
-    }
+  const handleSelectAll = (docsInCategory: Document[]) => {
+    const idsInCategory = docsInCategory.map(d => d.id)
+    const allSelected = idsInCategory.every(id => selectedIds.has(id))
+    setSelectedIds(prev => {
+      const next = new Set(prev)
+      if (allSelected) {
+        idsInCategory.forEach(id => next.delete(id))
+      } else {
+        idsInCategory.forEach(id => next.add(id))
+      }
+      return next
+    })
   }
 
   const handleConfirm = () => {
@@ -99,9 +114,13 @@ export const DocumentSelector: React.FC<DocumentSelectorProps> = ({
     onClose()
   }
 
-  const filteredDocuments = documents.filter((doc) =>
-    doc.filename.toLowerCase().includes(searchQuery.toLowerCase())
+  const searchLower = searchQuery.toLowerCase()
+  const searchedDocuments = documents.filter(doc =>
+    doc.filename.toLowerCase().includes(searchLower),
   )
+  const grouped = groupDocumentsByCategory(searchedDocuments)
+  const docsInActiveCategory = grouped[activeCategory]
+  const selectedInCategory = docsInActiveCategory.filter(d => selectedIds.has(d.id)).length
 
   return (
     <Modal isOpen={isOpen} onClose={onClose} title="Выбор документов" size="lg">
@@ -117,21 +136,47 @@ export const DocumentSelector: React.FC<DocumentSelectorProps> = ({
           />
         </div>
 
+        {/* Category Tabs */}
+        <div className="border-b flex flex-wrap gap-2">
+          {(Object.keys(DOCUMENT_CATEGORIES) as DocumentCategoryKey[]).map(key => {
+            const cfg = DOCUMENT_CATEGORIES[key]
+            const count = grouped[key].length
+            if (count === 0) return null
+            const isActive = key === activeCategory
+            return (
+              <button
+                key={key}
+                onClick={() => setActiveCategory(key)}
+                className={`px-3 py-1 text-sm rounded-t-md border-b-2 transition-colors ${
+                  isActive 
+                    ? "border-accent text-text-primary font-medium" 
+                    : "border-transparent text-text-secondary hover:text-text-primary"
+                }`}
+              >
+                {cfg.label} ({count})
+              </button>
+            )
+          })}
+        </div>
+
         {/* Info */}
         <div className="flex items-center justify-between text-sm">
           <span className="text-muted-foreground">
-            Найдено: {filteredDocuments.length} документов
+            Найдено: {searchedDocuments.length} документов
           </span>
           <div className="flex items-center gap-2">
             <Badge variant="secondary">
-              Выбрано: {selectedIds.size}
+              В категории выбрано: {selectedInCategory}
             </Badge>
             <Button
               variant="ghost"
               size="sm"
-              onClick={handleSelectAll}
+              onClick={() => handleSelectAll(docsInActiveCategory)}
+              disabled={docsInActiveCategory.length === 0}
             >
-              {selectedIds.size === filteredDocuments.length ? "Снять все" : "Выбрать все"}
+              {selectedInCategory === docsInActiveCategory.length
+                ? "Снять все в категории"
+                : "Выбрать все в категории"}
             </Button>
           </div>
         </div>
@@ -151,13 +196,13 @@ export const DocumentSelector: React.FC<DocumentSelectorProps> = ({
         ) : (
           /* Documents List */
           <div className="border rounded-md max-h-[400px] overflow-y-auto">
-            {filteredDocuments.length === 0 ? (
+            {docsInActiveCategory.length === 0 ? (
               <div className="p-8 text-center text-muted-foreground">
-                {searchQuery ? "Документы не найдены" : "Нет доступных документов"}
+                {searchQuery ? "Документы не найдены" : "Нет документов в этой категории"}
               </div>
             ) : (
               <div className="divide-y">
-                {filteredDocuments.map((doc) => (
+                {docsInActiveCategory.map((doc) => (
                   <div
                     key={doc.id}
                     className="flex items-center gap-3 p-3 hover:bg-muted/50 cursor-pointer"

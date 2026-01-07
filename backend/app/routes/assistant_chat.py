@@ -370,6 +370,7 @@ async def stream_chat_response(
         import uuid
         from datetime import datetime
         user_message_id = str(uuid.uuid4())
+        assistant_message_id = None
         try:
             user_message = ChatMessage(
                 id=user_message_id,
@@ -379,11 +380,24 @@ async def stream_chat_response(
                 session_id=None
             )
             db.add(user_message)
+            
+            # Создаём placeholder для сообщения ассистента ДО streaming
+            # Это гарантирует, что сообщение будет сохранено даже при ошибке после streaming
+            assistant_message_id = str(uuid.uuid4())
+            assistant_message_placeholder = ChatMessage(
+                id=assistant_message_id,
+                case_id=case_id,
+                role="assistant",
+                content="",  # Пустой контент, будет обновлён после streaming
+                source_references=None,
+                session_id=None
+            )
+            db.add(assistant_message_placeholder)
             db.commit()
-            logger.info(f"User message saved to DB with id: {user_message_id}")
+            logger.info(f"User message saved to DB with id: {user_message_id}, assistant placeholder: {assistant_message_id}")
         except Exception as save_error:
             db.rollback()
-            logger.error(f"Error saving user message to DB: {save_error}", exc_info=True)
+            logger.error(f"Error saving messages to DB: {save_error}", exc_info=True)
             # Продолжаем без сохранения - не критичная ошибка
         
         # Классифицируем запрос - задача или вопрос?
@@ -912,8 +926,20 @@ async def stream_chat_response(
                 
                 yield f"data: {json.dumps({'textDelta': ''})}\n\n"
             
-            # Сохраняем ответ ассистента в БД после завершения streaming
+            # Обновляем существующее сообщение ассистента после завершения streaming
+            if assistant_message_id:
             try:
+                    assistant_message = db.query(ChatMessage).filter(
+                        ChatMessage.id == assistant_message_id
+                    ).first()
+                    if assistant_message:
+                        assistant_message.content = full_response_text
+                        assistant_message.source_references = sources_list if sources_list else None
+                        db.commit()
+                        logger.info(f"Assistant message updated in DB for case {case_id}, id: {assistant_message_id}")
+                    else:
+                        logger.warning(f"Assistant message placeholder {assistant_message_id} not found, creating new one")
+                        # Fallback: создаём новое сообщение если placeholder не найден
                 assistant_message = ChatMessage(
                     case_id=case_id,
                     role="assistant",
@@ -923,10 +949,24 @@ async def stream_chat_response(
                 )
                 db.add(assistant_message)
                 db.commit()
-                logger.info(f"Assistant message saved to DB for case {case_id}")
-            except Exception as save_error:
+                except Exception as update_error:
                 db.rollback()
-                logger.error(f"Error saving assistant message to DB: {save_error}", exc_info=True)
+                    logger.error(f"Error updating assistant message in DB: {update_error}", exc_info=True)
+                    # Пытаемся создать новое сообщение как fallback
+                    try:
+                        assistant_message = ChatMessage(
+                            case_id=case_id,
+                            role="assistant",
+                            content=full_response_text,
+                            source_references=sources_list if sources_list else None,
+                            session_id=None
+                        )
+                        db.add(assistant_message)
+                        db.commit()
+                        logger.info(f"Assistant message created as fallback for case {case_id}")
+                    except Exception as fallback_error:
+                        db.rollback()
+                        logger.error(f"Error creating fallback assistant message: {fallback_error}", exc_info=True)
     
     except Exception as e:
         logger.error(f"Error in stream_chat_response: {e}", exc_info=True)

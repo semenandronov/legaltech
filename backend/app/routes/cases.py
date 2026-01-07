@@ -353,6 +353,7 @@ async def get_case_files(
                 "filename": file.filename,
                 "file_type": file.file_type,
                 "created_at": file.created_at.isoformat() if file.created_at else None,
+                "doc_type": classification.doc_type if (classification := classification_map.get(file.id)) else None,
                 "classification": {
                     "doc_type": classification.doc_type,
                     "relevance_score": classification.relevance_score,

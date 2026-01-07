@@ -174,7 +174,8 @@ export interface CaseInfo {
 export const uploadFiles = async (
   files: File[],
   caseInfo?: CaseInfo | null,
-  analysisOptions?: AnalysisConfig
+  analysisOptions?: AnalysisConfig,
+  onProgress?: (percent: number) => void
 ): Promise<UploadResponse> => {
   const formData = new FormData()
   files.forEach((file) => {
@@ -193,6 +194,12 @@ export const uploadFiles = async (
   const response = await apiClient.post(getApiUrl('/api/upload'), formData, {
     headers: {
       'Content-Type': 'multipart/form-data',
+    },
+    onUploadProgress: (progressEvent) => {
+      if (onProgress && progressEvent.total) {
+        const percent = Math.round((progressEvent.loaded * 100) / progressEvent.total)
+        onProgress(percent)
+      }
     },
   })
 

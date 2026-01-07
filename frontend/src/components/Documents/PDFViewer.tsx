@@ -104,27 +104,11 @@ const PDFViewer: React.FC<PDFViewerProps> = ({
         throw new Error(`Failed to load document: ${response.statusText}`)
       }
 
-      // #region agent log
-      const contentType = response.headers.get('content-type') || 'unknown'
-      const contentLength = response.headers.get('content-length') || 'unknown'
-      fetch('http://127.0.0.1:7242/ingest/2db1e09b-2b5d-4ee0-85d8-a551f942254c',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'PDFViewer.tsx:107',message:'PDF response headers',data:{contentType,contentLength,fileId,caseId},timestamp:Date.now(),sessionId:'debug-session',runId:'pdf-debug',hypothesisId:'A'})}).catch(()=>{})
-      // #endregion
-
       const blob = await response.blob()
-      
-      // #region agent log
-      const blobSize = blob.size
-      const blobType = blob.type
-      const blobFirstBytes = await blob.slice(0, 10).arrayBuffer().then(buf => Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2, '0')).join(' '))
-      fetch('http://127.0.0.1:7242/ingest/2db1e09b-2b5d-4ee0-85d8-a551f942254c',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'PDFViewer.tsx:115',message:'Blob created',data:{blobSize,blobType,blobFirstBytes},timestamp:Date.now(),sessionId:'debug-session',runId:'pdf-debug',hypothesisId:'B'})}).catch(()=>{})
-      // #endregion
 
       const url = URL.createObjectURL(blob)
       setPdfUrl(url)
     } catch (err: any) {
-      // #region agent log
-      fetch('http://127.0.0.1:7242/ingest/2db1e09b-2b5d-4ee0-85d8-a551f942254c',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'PDFViewer.tsx:122',message:'PDF load error',data:{error:err.message,stack:err.stack},timestamp:Date.now(),sessionId:'debug-session',runId:'pdf-debug',hypothesisId:'C'})}).catch(()=>{})
-      // #endregion
       console.error('Error loading PDF:', err)
       setError(err.message || 'Ошибка при загрузке документа')
       if (onError) {
@@ -146,9 +130,6 @@ const PDFViewer: React.FC<PDFViewerProps> = ({
   }
 
   const onDocumentLoadError = (error: Error) => {
-    // #region agent log
-    fetch('http://127.0.0.1:7242/ingest/2db1e09b-2b5d-4ee0-85d8-a551f942254c',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'PDFViewer.tsx:131',message:'PDF.js load error',data:{error:error.message,stack:error.stack,pdfUrl},timestamp:Date.now(),sessionId:'debug-session',runId:'pdf-debug',hypothesisId:'D'})}).catch(()=>{})
-    // #endregion
     console.error('PDF load error:', error)
     setError('Ошибка при загрузке PDF документа')
     if (onError) {

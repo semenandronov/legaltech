@@ -22,6 +22,7 @@ const UploadArea = ({ onUpload }: UploadAreaProps) => {
   const [caseId, setCaseId] = useState<string | null>(null)
   const [dragActive, setDragActive] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [uploadProgress, setUploadProgress] = useState(0)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const navigate = useNavigate()
 
@@ -85,6 +86,7 @@ const UploadArea = ({ onUpload }: UploadAreaProps) => {
 
     setStep('processing')
     setError(null)
+    setUploadProgress(0)
 
     // Upload files with metadata
     try {
@@ -95,7 +97,7 @@ const UploadArea = ({ onUpload }: UploadAreaProps) => {
         enable_classification: options.discrepancies,
         enable_privilege_check: options.risk_analysis,
       }
-      const result = await uploadFiles(files, caseInfo, analysisConfig)
+      const result = await uploadFiles(files, caseInfo, analysisConfig, setUploadProgress)
       setCaseId(result.caseId)
       // onUpload will be called after processing completes
     } catch (err: any) {

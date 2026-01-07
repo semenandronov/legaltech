@@ -9,6 +9,7 @@ import { InlineCellEditor } from "../components/TabularReview/InlineCellEditor"
 import { DocumentSelector } from "../components/TabularReview/DocumentSelector"
 import { TabularDocumentViewer } from "../components/TabularReview/TabularDocumentViewer"
 import { TabularReviewContextChat } from "../components/TabularReview/TabularReviewContextChat"
+import { TabularReviewAgentChat } from "../components/TabularReview/TabularReviewAgentChat"
 import { TemplatesModal } from "../components/TabularReview/TemplatesModal"
 import { FeaturedTemplatesCarousel } from "../components/TabularReview/FeaturedTemplatesCarousel"
 import { TableModeSelector } from "../components/TabularReview/TableModeSelector"
@@ -60,6 +61,8 @@ const TabularReviewPage: React.FC = () => {
   const [error, setError] = useState<string | null>(null)
   const loadingRef = useRef(false)
   const [tableMode, setTableMode] = useState<"document" | "entity" | "fact">("document")
+  const [workMode, setWorkMode] = useState<"manual" | "agent">("manual")
+  const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false)
   
   // State for review selector (when no reviewId)
   const [existingReviews, setExistingReviews] = useState<Array<{
@@ -93,6 +96,18 @@ const TabularReviewPage: React.FC = () => {
     }
     loadReviews()
   }, [caseId, reviewId])
+
+  // Предупреждение при закрытии с несохранёнными изменениями
+  useEffect(() => {
+    const handleBeforeUnload = (e: BeforeUnloadEvent) => {
+      if (hasUnsavedChanges) {
+        e.preventDefault()
+        e.returnValue = 'У вас есть несохранённые изменения. Вы уверены, что хотите покинуть страницу?'
+      }
+    }
+    window.addEventListener('beforeunload', handleBeforeUnload)
+    return () => window.removeEventListener('beforeunload', handleBeforeUnload)
+  }, [hasUnsavedChanges])
 
   useEffect(() => {
     if (reviewId && !loadingRef.current) {
@@ -188,13 +203,7 @@ const TabularReviewPage: React.FC = () => {
       loadingRef.current = true
       setLoading(true)
       setError(null)
-      // #region agent log
-      fetch('http://127.0.0.1:7242/ingest/2db1e09b-2b5d-4ee0-85d8-a551f942254c',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'frontend/src/pages/TabularReviewPage.tsx:155',message:'[FRONTEND] loadReviewData called',data:{reviewId},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'X'})}).catch(()=>{});
-      // #endregion
       const data = await tabularReviewApi.getTableData(reviewId)
-      // #region agent log
-      fetch('http://127.0.0.1:7242/ingest/2db1e09b-2b5d-4ee0-85d8-a551f942254c',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'frontend/src/pages/TabularReviewPage.tsx:161',message:'[FRONTEND] getTableData returned',data:{reviewId,columnsCount:data.columns.length,columnLabels:data.columns.map(c => c.column_label)},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'Y'})}).catch(()=>{});
-      // #endregion
       console.log("Loaded table data:", { 
         reviewId, 
         columnsCount: data.columns.length, 
@@ -224,6 +233,7 @@ const TabularReviewPage: React.FC = () => {
       await tabularReviewApi.updateCell(reviewId, fileId, columnId, value)
       toast.success("Ячейка обновлена")
       setEditingCell(null)
+      setHasUnsavedChanges(false)  // Изменения сохранены
       await loadReviewData()
     } catch (err: any) {
       toast.error("Не удалось обновить ячейку: " + (err.message || ""))
@@ -243,9 +253,6 @@ const TabularReviewPage: React.FC = () => {
     if (!reviewId) return
     
     try {
-      // #region agent log
-      fetch('http://127.0.0.1:7242/ingest/2db1e09b-2b5d-4ee0-85d8-a551f942254c',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'frontend/src/pages/TabularReviewPage.tsx:203',message:'[FRONTEND] handleAddColumn called',data:{reviewId,columnLabel:column.column_label,columnType:column.column_type},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'Z'})}).catch(()=>{});
-      // #endregion
       await tabularReviewApi.addColumn(
         reviewId,
         column.column_label,
@@ -253,9 +260,6 @@ const TabularReviewPage: React.FC = () => {
         column.prompt,
         column.column_config
       )
-      // #region agent log
-      fetch('http://127.0.0.1:7242/ingest/2db1e09b-2b5d-4ee0-85d8-a551f942254c',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'frontend/src/pages/TabularReviewPage.tsx:211',message:'[FRONTEND] addColumn API call completed',data:{reviewId},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'AA'})}).catch(()=>{});
-      // #endregion
       toast.success("Колонка добавлена")
       await loadReviewData()
     } catch (err: any) {
@@ -373,15 +377,44 @@ const TabularReviewPage: React.FC = () => {
         {caseId && <UnifiedSidebar navItems={navItems} title="Legal AI" />}
         <div className="flex-1 flex flex-col bg-bg-primary">
           <div className="border-b border-border bg-bg-elevated/80 backdrop-blur-sm p-6">
-            <div className="flex items-center gap-4">
-              <button
-                onClick={() => navigate(`/cases/${caseId}/chat`)}
-                className="p-2 rounded-lg hover:bg-bg-hover transition-colors duration-200 text-text-secondary hover:text-text-primary flex items-center gap-2"
-              >
-                <ArrowLeft className="w-4 h-4" />
-                Назад к делу
-              </button>
-              <h1 className="font-display text-h1 text-text-primary">Tabular Review</h1>
+            <div className="flex items-center justify-between gap-4">
+              <div className="flex items-center gap-4">
+                <button
+                  onClick={() => navigate(`/cases/${caseId}/chat`)}
+                  className="p-2 rounded-lg hover:bg-bg-hover transition-colors duration-200 text-text-secondary hover:text-text-primary flex items-center gap-2"
+                >
+                  <ArrowLeft className="w-4 h-4" />
+                  Назад к делу
+                </button>
+                <h1 className="font-display text-h1 text-text-primary">Tabular Review</h1>
+              </div>
+              {reviewId && (
+                <div className="flex items-center gap-2 text-sm">
+                  <span className="text-text-secondary">Режим работы:</span>
+                  <div className="flex border border-border rounded-md overflow-hidden">
+                    <button
+                      onClick={() => setWorkMode("manual")}
+                      className={`px-4 py-2 transition-colors ${
+                        workMode === "manual"
+                          ? "bg-accent text-bg-primary font-medium"
+                          : "bg-bg-elevated text-text-secondary hover:bg-bg-hover"
+                      }`}
+                    >
+                      Ручной
+                    </button>
+                    <button
+                      onClick={() => setWorkMode("agent")}
+                      className={`px-4 py-2 transition-colors border-l border-border ${
+                        workMode === "agent"
+                          ? "bg-accent text-bg-primary font-medium"
+                          : "bg-bg-elevated text-text-secondary hover:bg-bg-hover"
+                      }`}
+                    >
+                      Через агента
+                    </button>
+                  </div>
+                </div>
+              )}
             </div>
           </div>
           <div className="flex-1 overflow-auto p-8 fade-in-up">
@@ -654,15 +687,14 @@ const TabularReviewPage: React.FC = () => {
 
         {/* Main Content Area */}
         <div className="flex-1 overflow-hidden flex">
-          {/* Chat (Left Panel) */}
-          {reviewId && tableData && (
+          {/* Chat / Agent panel (Left) */}
+          {reviewId && tableData && workMode === "manual" && (
             <div className="w-80 border-r border-border shrink-0 bg-bg-elevated flex flex-col">
               <TabularReviewContextChat
                 reviewId={reviewId}
                 reviewName={tableData.review.name}
                 tableData={tableData}
                 onExtractKeyPoints={async () => {
-                  // Extract key points logic
                   toast.info("Извлечение ключевых моментов...")
                 }}
                 onRefineColumns={() => {
@@ -670,6 +702,19 @@ const TabularReviewPage: React.FC = () => {
                 }}
                 onAddDocuments={() => {
                   setShowDocumentSelector(true)
+                }}
+              />
+            </div>
+          )}
+
+          {/* Agent Chat - показываем когда режим "agent" и есть caseId */}
+          {workMode === "agent" && caseId && (
+            <div className="w-80 border-r border-border shrink-0 bg-bg-elevated flex flex-col">
+              <TabularReviewAgentChat
+                caseId={caseId}
+                onTableCreated={(newReviewId) => {
+                  // при создании новой таблицы переходим на нее
+                  navigate(`/cases/${caseId}/tabular-review/${newReviewId}`, { replace: true })
                 }}
               />
             </div>
@@ -707,6 +752,7 @@ const TabularReviewPage: React.FC = () => {
                   }}
                   onCellEdit={(fileId: string, columnId: string, cell: any) => {
                     setEditingCell({ fileId, columnId, cell })
+                    setHasUnsavedChanges(true)  // Начали редактирование
                   }}
                   onCellClick={async (fileId, columnId, cellData) => {
                     // Find file type and name from table data

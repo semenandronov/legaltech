@@ -629,18 +629,6 @@ export const TabularReviewTable = React.memo(({ reviewId, tableData, onTableData
     },
   })
   
-  // #region agent log
-  React.useEffect(() => {
-    const allColumns = table.getAllColumns()
-    const columnIds = allColumns.map(c => c.id)
-    const accessorKeys = allColumns.map(c => {
-      const def = c.columnDef as any
-      return def.accessorKey || null
-    })
-    fetch('http://127.0.0.1:7242/ingest/2db1e09b-2b5d-4ee0-85d8-a551f942254c',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'frontend/src/components/TabularReview/TabularReviewTable.tsx:635',message:'[FRONTEND] Table columns after useReactTable',data:{allColumnsCount:allColumns.length,columnIds:columnIds,accessorKeys:accessorKeys,tableDataColumnsCount:tableData.columns.length,tableDataColumnIds:tableData.columns.map(c => c.id),tableDataColumnLabels:tableData.columns.map(c => c.column_label),firstRowKeys:tableRows.length > 0 ? Object.keys(tableRows[0]) : []},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'CC'})}).catch(()=>{});
-  }, [table, tableData.columns, tableRows])
-  // #endregion
-  
   // Keyboard navigation
   useKeyboardNavigation({
     table,
@@ -827,13 +815,6 @@ export const TabularReviewTable = React.memo(({ reviewId, tableData, onTableData
               // Check if this column exists in tableData.columns
               const existsInTableData = tableData.columns.some(col => col.id === column.id)
               
-              // #region agent log
-              if (!existsInTableData) {
-                const def = column.columnDef as any
-                const accessorKey = def.accessorKey || null
-                fetch('http://127.0.0.1:7242/ingest/2db1e09b-2b5d-4ee0-85d8-a551f942254c',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'frontend/src/components/TabularReview/TabularReviewTable.tsx:840',message:'[FRONTEND] Filtering out column not in tableData.columns',data:{columnId:column.id,accessorKey:accessorKey,tableDataColumnIds:tableData.columns.map(c => c.id)},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'EE'})}).catch(()=>{});
-              }
-              // #endregion
               
               return existsInTableData && column.getCanHide()
             })
