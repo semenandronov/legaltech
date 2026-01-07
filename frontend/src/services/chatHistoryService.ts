@@ -13,6 +13,7 @@ export interface HistoryMessage {
     similarity_score?: number
   }>
   created_at?: string
+  session_id?: string
 }
 
 const HISTORY_STORAGE_KEY = 'chat_history_'
@@ -20,10 +21,13 @@ const HISTORY_STORAGE_KEY = 'chat_history_'
 /**
  * Загружает историю чата из API
  */
-export async function loadChatHistory(caseId: string): Promise<HistoryMessage[]> {
+export async function loadChatHistory(caseId: string, sessionId?: string): Promise<HistoryMessage[]> {
   try {
     const token = localStorage.getItem('access_token')
-    const response = await fetch(getApiUrl(`/api/assistant/chat/${caseId}/history`), {
+    const url = sessionId 
+      ? getApiUrl(`/api/assistant/chat/${caseId}/history?session_id=${sessionId}`)
+      : getApiUrl(`/api/assistant/chat/${caseId}/history`)
+    const response = await fetch(url, {
       method: 'GET',
       headers: {
         'Authorization': `Bearer ${token}`,

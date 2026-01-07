@@ -229,9 +229,24 @@ export const sendMessage = async (
   }
 }
 
-export const fetchHistory = async (caseId: string): Promise<HistoryMessage[]> => {
-  const response = await apiClient.get(getApiUrl(`/api/chat/${caseId}/history`))
+export const fetchHistory = async (caseId: string, sessionId?: string): Promise<HistoryMessage[]> => {
+  const url = sessionId 
+    ? getApiUrl(`/api/assistant/chat/${caseId}/history?session_id=${sessionId}`)
+    : getApiUrl(`/api/assistant/chat/${caseId}/history`)
+  const response = await apiClient.get(url)
   return response.data.messages || []
+}
+
+export const getChatSessionsForCase = async (caseId: string): Promise<Array<{
+  session_id: string
+  first_message: string
+  last_message: string
+  first_message_at: string | null
+  last_message_at: string | null
+  message_count: number
+}>> => {
+  const response = await apiClient.get(getApiUrl(`/api/assistant/chat/${caseId}/sessions`))
+  return response.data.sessions || []
 }
 
 export const getChatSessions = async (): Promise<Array<{

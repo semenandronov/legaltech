@@ -25,7 +25,7 @@ import {
   Chat as ChatIcon,
   MoreVert as MoreVertIcon,
 } from '@mui/icons-material'
-import { fetchHistory } from '@/services/api'
+import { fetchHistory, getChatSessionsForCase, getChatSessions } from '@/services/api'
 import { toast } from 'sonner'
 
 interface HistoryItem {
@@ -33,14 +33,15 @@ interface HistoryItem {
   content: string
   created_at: string
   case_id?: string
+  session_id?: string
 }
 
 interface ChatHistoryPanelProps {
   isOpen: boolean
   onClose: () => void
   currentCaseId?: string
-  onSelectQuery?: (query: string) => void
-  onLoadHistory?: () => Promise<void>
+  onSelectQuery?: (query: string, sessionId?: string) => void
+  onLoadHistory?: (sessionId?: string) => Promise<void>
 }
 
 export const ChatHistoryPanel: React.FC<ChatHistoryPanelProps> = ({
@@ -59,8 +60,12 @@ export const ChatHistoryPanel: React.FC<ChatHistoryPanelProps> = ({
   const [selectedItem, setSelectedItem] = useState<HistoryItem | null>(null)
 
   useEffect(() => {
-    if (isOpen && currentCaseId) {
-      loadHistory()
+    if (isOpen) {
+      if (showAllProjects) {
+        loadAllProjectsHistory()
+      } else if (currentCaseId) {
+        loadHistory()
+      }
     }
   }, [isOpen, currentCaseId, showAllProjects])
 
@@ -80,19 +85,37 @@ export const ChatHistoryPanel: React.FC<ChatHistoryPanelProps> = ({
     if (!currentCaseId) return
     setIsLoading(true)
     try {
-      const messages = await fetchHistory(currentCaseId)
-      // Фильтруем только сообщения пользователя
-      const userMessages = messages
-        .filter((msg: any) => msg.role === 'user')
-        .map((msg: any, index: number) => ({
-          id: `msg-${index}-${msg.created_at}`,
-          content: msg.content,
-          created_at: msg.created_at,
-          case_id: currentCaseId,
-        }))
-        .reverse() // Новые сверху
-      setHistoryItems(userMessages)
-      setFilteredItems(userMessages)
+      // Загружаем сессии для текущего дела
+      const sessions = await getChatSessionsForCase(currentCaseId)
+      
+      // Преобразуем сессии в элементы истории (берем первое сообщение каждой сессии)
+      const historyItemsList: HistoryItem[] = []
+      
+      for (const session of sessions) {
+        // Загружаем первое сообщение сессии для превью
+        const sessionMessages = await fetchHistory(currentCaseId, session.session_id)
+        const firstUserMessage = sessionMessages.find((msg: any) => msg.role === 'user')
+        
+        if (firstUserMessage) {
+          historyItemsList.push({
+            id: `session-${session.session_id}`,
+            content: firstUserMessage.content,
+            created_at: session.first_message_at || session.last_message_at || '',
+            case_id: currentCaseId,
+            session_id: session.session_id,
+          })
+        }
+      }
+      
+      // Сортируем по дате (новые сверху)
+      historyItemsList.sort((a, b) => {
+        const dateA = new Date(a.created_at).getTime()
+        const dateB = new Date(b.created_at).getTime()
+        return dateB - dateA
+      })
+      
+      setHistoryItems(historyItemsList)
+      setFilteredItems(historyItemsList)
     } catch (error: any) {
       console.error('Error loading chat history:', error)
     } finally {
@@ -100,13 +123,58 @@ export const ChatHistoryPanel: React.FC<ChatHistoryPanelProps> = ({
     }
   }
 
+  const loadAllProjectsHistory = async () => {
+    setIsLoading(true)
+    try {
+      // Загружаем все сессии всех дел пользователя
+      const allSessions = await getChatSessions()
+      
+      // Преобразуем в элементы истории
+      const historyItemsList: HistoryItem[] = []
+      
+      for (const session of allSessions) {
+        // Загружаем сессии для этого дела
+        const caseSessions = await getChatSessionsForCase(session.case_id)
+        
+        for (const caseSession of caseSessions) {
+          const sessionMessages = await fetchHistory(session.case_id, caseSession.session_id)
+          const firstUserMessage = sessionMessages.find((msg: any) => msg.role === 'user')
+          
+          if (firstUserMessage) {
+            historyItemsList.push({
+              id: `session-${caseSession.session_id}`,
+              content: firstUserMessage.content,
+              created_at: caseSession.first_message_at || caseSession.last_message_at || '',
+              case_id: session.case_id,
+              session_id: caseSession.session_id,
+            })
+          }
+        }
+      }
+      
+      // Сортируем по дате (новые сверху)
+      historyItemsList.sort((a, b) => {
+        const dateA = new Date(a.created_at).getTime()
+        const dateB = new Date(b.created_at).getTime()
+        return dateB - dateA
+      })
+      
+      setHistoryItems(historyItemsList)
+      setFilteredItems(historyItemsList)
+    } catch (error: any) {
+      console.error('Error loading all projects history:', error)
+    } finally {
+      setIsLoading(false)
+    }
+  }
+
   const handleSelectQuery = async (item: HistoryItem) => {
-    // Загружаем полную историю чата при выборе
-    if (onLoadHistory) {
-      await onLoadHistory()
+    // Загружаем только сессию этого сообщения, а не всю историю
+    if (onLoadHistory && item.session_id) {
+      await onLoadHistory(item.session_id)
     }
     if (onSelectQuery) {
-      onSelectQuery(item.content)
+      onSelectQuery(item.content, item.session_id)
     }
     onClose()
   }

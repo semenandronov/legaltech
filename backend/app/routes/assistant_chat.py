@@ -368,16 +368,47 @@ async def stream_chat_response(
         
         # Сохраняем пользовательское сообщение в БД
         import uuid
-        from datetime import datetime
+        from datetime import datetime, timedelta
         user_message_id = str(uuid.uuid4())
         assistant_message_id = None
+        
+        # Определяем session_id: если есть недавние сообщения (в течение 30 минут), используем их session_id
+        # Иначе создаём новую сессию
+        session_id = None
+        try:
+            # Проверяем последнее сообщение для этого дела
+            last_message = db.query(ChatMessage).filter(
+                ChatMessage.case_id == case_id,
+                ChatMessage.content.isnot(None),
+                ChatMessage.content != ""
+            ).order_by(ChatMessage.created_at.desc()).first()
+            
+            if last_message and last_message.created_at:
+                # Проверяем, прошло ли менее 30 минут с последнего сообщения
+                time_diff = datetime.utcnow() - last_message.created_at
+                if time_diff < timedelta(minutes=30) and last_message.session_id:
+                    # Продолжаем текущую сессию
+                    session_id = last_message.session_id
+                    logger.info(f"Continuing existing session {session_id} for case {case_id}")
+                else:
+                    # Создаём новую сессию
+                    session_id = str(uuid.uuid4())
+                    logger.info(f"Creating new session {session_id} for case {case_id}")
+            else:
+                # Первое сообщение в деле - создаём новую сессию
+                session_id = str(uuid.uuid4())
+                logger.info(f"Creating first session {session_id} for case {case_id}")
+        except Exception as session_error:
+            logger.warning(f"Error determining session_id: {session_error}, creating new session")
+            session_id = str(uuid.uuid4())
+        
         try:
             user_message = ChatMessage(
                 id=user_message_id,
                 case_id=case_id,
                 role="user",
                 content=question,
-                session_id=None
+                session_id=session_id
             )
             db.add(user_message)
             
@@ -390,11 +421,11 @@ async def stream_chat_response(
                 role="assistant",
                 content="",  # Пустой контент, будет обновлён после streaming
                 source_references=None,
-                session_id=None
+                session_id=session_id
             )
             db.add(assistant_message_placeholder)
             db.commit()
-            logger.info(f"User message saved to DB with id: {user_message_id}, assistant placeholder: {assistant_message_id}")
+            logger.info(f"User message saved to DB with id: {user_message_id}, assistant placeholder: {assistant_message_id}, session: {session_id}")
         except Exception as save_error:
             db.rollback()
             logger.error(f"Error saving messages to DB: {save_error}", exc_info=True)
@@ -621,7 +652,7 @@ async def stream_chat_response(
                         role="assistant",
                         content=full_response_text,
                         source_references=sources_list,
-                        session_id=None
+                        session_id=session_id
                     )
                     db.add(assistant_message)
                     db.commit()
@@ -989,7 +1020,7 @@ async def stream_chat_response(
                             role="assistant",
                             content=full_response_text,
                             source_references=sources_list if sources_list else None,
-                            session_id=None
+                            session_id=session_id
                         )
                         db.add(assistant_message)
                         db.commit()
@@ -1003,7 +1034,7 @@ async def stream_chat_response(
                             role="assistant",
                             content=full_response_text,
                             source_references=sources_list if sources_list else None,
-                            session_id=None
+                            session_id=session_id
                         )
                         db.add(assistant_message)
                         db.commit()
@@ -1095,16 +1126,16 @@ async def assistant_chat(
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.get("/api/assistant/chat/{case_id}/history")
-async def get_assistant_chat_history(
+@router.get("/api/assistant/chat/{case_id}/sessions")
+async def get_chat_sessions_for_case(
     case_id: str,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
     """
-    Get chat history for assistant chat
+    Get list of chat sessions for a specific case
     
-    Returns: list of messages with role, content, sources, created_at
+    Returns: list of sessions with session_id, first_message, last_message, last_message_at, message_count
     """
     # Check if case exists and verify ownership
     case = db.query(Case).filter(
@@ -1114,10 +1145,103 @@ async def get_assistant_chat_history(
     if not case:
         raise HTTPException(status_code=404, detail="Дело не найдено")
     
-    # Get messages
-    messages = db.query(ChatMessage).filter(
-        ChatMessage.case_id == case_id
-    ).order_by(ChatMessage.created_at.asc()).all()
+    try:
+        from sqlalchemy import func, desc
+        
+        # Get all unique session_ids for this case
+        sessions_query = db.query(
+            ChatMessage.session_id,
+            func.min(ChatMessage.created_at).label('first_message_at'),
+            func.max(ChatMessage.created_at).label('last_message_at'),
+            func.count(ChatMessage.id).label('message_count')
+        ).filter(
+            ChatMessage.case_id == case_id,
+            ChatMessage.content.isnot(None),
+            ChatMessage.content != "",
+            ChatMessage.session_id.isnot(None)
+        ).group_by(ChatMessage.session_id).order_by(desc('last_message_at')).all()
+        
+        sessions = []
+        for session_row in sessions_query:
+            session_id = session_row.session_id
+            
+            # Get first and last messages for preview
+            first_message = db.query(ChatMessage).filter(
+                ChatMessage.case_id == case_id,
+                ChatMessage.session_id == session_id,
+                ChatMessage.content.isnot(None),
+                ChatMessage.content != ""
+            ).order_by(ChatMessage.created_at.asc()).first()
+            
+            last_message = db.query(ChatMessage).filter(
+                ChatMessage.case_id == case_id,
+                ChatMessage.session_id == session_id,
+                ChatMessage.content.isnot(None),
+                ChatMessage.content != ""
+            ).order_by(ChatMessage.created_at.desc()).first()
+            
+            first_message_preview = ""
+            if first_message and first_message.content:
+                first_message_preview = first_message.content[:100]
+                if len(first_message.content) > 100:
+                    first_message_preview += "..."
+            
+            last_message_preview = ""
+            if last_message and last_message.content:
+                last_message_preview = last_message.content[:100]
+                if len(last_message.content) > 100:
+                    last_message_preview += "..."
+            
+            sessions.append({
+                "session_id": session_id,
+                "first_message": first_message_preview,
+                "last_message": last_message_preview,
+                "first_message_at": first_message.created_at.isoformat() if first_message and first_message.created_at else None,
+                "last_message_at": last_message.created_at.isoformat() if last_message and last_message.created_at else None,
+                "message_count": session_row.message_count
+            })
+        
+        return {"sessions": sessions}
+    except Exception as e:
+        logger.error(f"Error getting chat sessions for case {case_id}: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Failed to get chat sessions")
+
+
+@router.get("/api/assistant/chat/{case_id}/history")
+async def get_assistant_chat_history(
+    case_id: str,
+    session_id: Optional[str] = None,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """
+    Get chat history for assistant chat
+    
+    Args:
+        case_id: Case identifier
+        session_id: Optional session ID to filter messages by session. If not provided, returns all messages for the case.
+    
+    Returns: list of messages with role, content, sources, created_at, session_id
+    """
+    # Check if case exists and verify ownership
+    case = db.query(Case).filter(
+        Case.id == case_id,
+        Case.user_id == current_user.id
+    ).first()
+    if not case:
+        raise HTTPException(status_code=404, detail="Дело не найдено")
+    
+    # Get messages - фильтруем пустые сообщения и по session_id если указан
+    query = db.query(ChatMessage).filter(
+        ChatMessage.case_id == case_id,
+        ChatMessage.content.isnot(None),
+        ChatMessage.content != ""
+    )
+    
+    if session_id:
+        query = query.filter(ChatMessage.session_id == session_id)
+    
+    messages = query.order_by(ChatMessage.created_at.asc()).all()
     
     return {
         "messages": [
@@ -1125,7 +1249,8 @@ async def get_assistant_chat_history(
                 "role": msg.role,
                 "content": msg.content or "",
                 "sources": msg.source_references if msg.source_references is not None else [],
-                "created_at": msg.created_at.isoformat() if msg.created_at else datetime.utcnow().isoformat()
+                "created_at": msg.created_at.isoformat() if msg.created_at else datetime.utcnow().isoformat(),
+                "session_id": msg.session_id
             }
             for msg in messages
         ]

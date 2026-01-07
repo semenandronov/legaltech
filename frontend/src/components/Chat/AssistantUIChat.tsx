@@ -255,7 +255,7 @@ const PromptInputWithDrop = ({ actualCaseId, onDocumentDrop, handlePromptSubmit,
   )
 }
 
-export const AssistantUIChat = forwardRef<{ clearMessages: () => void; loadHistory: () => Promise<void> }, AssistantUIChatProps>(({ 
+export const AssistantUIChat = forwardRef<{ clearMessages: () => void; loadHistory: (sessionId?: string) => Promise<void> }, AssistantUIChatProps>(({ 
   caseId, 
   className, 
   initialQuery, 
@@ -290,9 +290,11 @@ export const AssistantUIChat = forwardRef<{ clearMessages: () => void; loadHisto
       setIsLoadingHistory(true)
       try {
         const historyMessages = await loadChatHistory(actualCaseId)
+        // Фильтруем пустые сообщения
+        const validMessages = historyMessages.filter((msg) => msg.content && msg.content.trim() !== '')
         
         // Convert HistoryMessage to Message format
-        const convertedMessages: Message[] = historyMessages.map((msg, index) => {
+        const convertedMessages: Message[] = validMessages.map((msg, index) => {
           // Обрабатываем источники - они могут быть в разных форматах
           let sources: Array<{ title?: string; url?: string; page?: number; file?: string }> = []
           
@@ -701,12 +703,14 @@ export const AssistantUIChat = forwardRef<{ clearMessages: () => void; loadHisto
     clearMessages: () => {
       setMessages([])
     },
-    loadHistory: async () => {
+    loadHistory: async (sessionId?: string) => {
       if (!actualCaseId) return
       setIsLoadingHistory(true)
       try {
-        const historyMessages = await loadChatHistory(actualCaseId)
-        const convertedMessages: Message[] = historyMessages.map((msg, index) => {
+        const historyMessages = await loadChatHistory(actualCaseId, sessionId)
+        // Фильтруем пустые сообщения
+        const validMessages = historyMessages.filter((msg) => msg.content && msg.content.trim() !== '')
+        const convertedMessages: Message[] = validMessages.map((msg, index) => {
           let sources: Array<{ title?: string; url?: string; page?: number; file?: string }> = []
           if (msg.sources && Array.isArray(msg.sources)) {
             sources = msg.sources.map((source: any) => {

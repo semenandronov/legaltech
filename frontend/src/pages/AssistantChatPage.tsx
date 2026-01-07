@@ -16,7 +16,7 @@ const AssistantChatPage = () => {
   const [selectedQuery, setSelectedQuery] = useState<string>('')
   const [caseInfo, setCaseInfo] = useState<{ title?: string; documentCount?: number } | null>(null)
   const [isLoadingCaseInfo, setIsLoadingCaseInfo] = useState(true)
-  const chatRef = useRef<{ clearMessages: () => void; loadHistory: () => Promise<void> } | null>(null)
+  const chatRef = useRef<{ clearMessages: () => void; loadHistory: (sessionId?: string) => Promise<void> } | null>(null)
 
   // Load case info
   useEffect(() => {
@@ -62,7 +62,7 @@ const AssistantChatPage = () => {
     )
   }
 
-  const handleSelectQuery = (query: string) => {
+  const handleSelectQuery = (query: string, _sessionId?: string) => {
     setSelectedQuery(query)
     setHistoryPanelOpen(false)
   }
@@ -191,9 +191,9 @@ const AssistantChatPage = () => {
         onClose={() => setHistoryPanelOpen(false)}
         currentCaseId={caseId}
         onSelectQuery={handleSelectQuery}
-        onLoadHistory={async () => {
+        onLoadHistory={async (sessionId?: string) => {
           if (chatRef.current) {
-            await chatRef.current.loadHistory()
+            await chatRef.current.loadHistory(sessionId)
           }
         }}
       />
