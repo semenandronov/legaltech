@@ -143,6 +143,7 @@ const UploadArea = ({ onUpload }: UploadAreaProps) => {
       <ProcessingScreen
         caseId={caseId || ''}
         onComplete={handleProcessingComplete}
+        uploadProgress={uploadProgress}
       />
     )
   }

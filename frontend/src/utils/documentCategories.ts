@@ -84,12 +84,12 @@ export interface CategorizableDocument {
 
 export function getCategoryForDocType(docType?: string | null): DocumentCategoryKey {
   if (!docType) return "other"
-  
-  const entry = (Object.entries(DOCUMENT_CATEGORIES) as [
-    DocumentCategoryKey,
-    (typeof DOCUMENT_CATEGORIES)[DocumentCategoryKey],
-  ][]).find(([, cfg]) => cfg.docTypes.includes(docType))
-  
+
+  // Ищем первую категорию, в которой docType входит в список docTypes
+  const entry = Object.entries(DOCUMENT_CATEGORIES).find(([, cfg]) =>
+    (cfg.docTypes as readonly string[]).includes(docType),
+  ) as [DocumentCategoryKey, (typeof DOCUMENT_CATEGORIES)[DocumentCategoryKey]] | undefined
+
   return entry ? entry[0] : "other"
 }
 
