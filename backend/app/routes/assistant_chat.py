@@ -419,7 +419,7 @@ async def stream_chat_response(
                 try:
                     logger.info(f"Legal research enabled for TASK query: {question[:100]}...")
                     # Инициализируем source_router с официальными источниками
-                    from app.routes.assistant_chat import rag_service
+                    # rag_service уже определена глобально в начале файла
                     source_router = initialize_source_router(rag_service=rag_service, register_official_sources=True)
                     
                     # Определяем источники для поиска
