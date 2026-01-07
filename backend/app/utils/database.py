@@ -75,20 +75,32 @@ def ensure_schema():
             except Exception as e:
                 logger.warning(f"Could not alter sessionId column to NULLABLE: {e}")
                 
-        # Update any existing NULL sessionId values (separate transaction)
-        # Only update if sessionId doesn't have foreign key constraint or if sessions exist
+        # Remove foreign key constraint on sessionId if it exists (we don't use chat_sessions table)
+        # Then update any existing NULL sessionId values
         if session_id_col_info:
             try:
                 with engine.begin() as conn:
-                    # Check if sessionId has foreign key constraint
+                    # Check if sessionId has foreign key constraint to chat_sessions
                     fk_constraints = inspector.get_foreign_keys("chat_messages")
-                    has_session_fk = any(fk.get("referred_table") == "chat_sessions" for fk in fk_constraints)
+                    session_fk = next((fk for fk in fk_constraints if fk.get("referred_table") == "chat_sessions"), None)
                     
-                    if has_session_fk:
-                        # If foreign key exists, only update if corresponding session exists
-                        # For now, skip update to avoid ForeignKeyViolation
-                        logger.info("⚠️  sessionId has foreign key to chat_sessions, skipping auto-update")
-                    else:
+                    if session_fk:
+                        # Remove the foreign key constraint
+                        fk_name = session_fk.get("name") or "chat_messages_sessionId_fkey"
+                        logger.info(f"⚠️  Removing foreign key constraint {fk_name} from chat_messages.sessionId...")
+                        try:
+                            conn.execute(text(f'ALTER TABLE chat_messages DROP CONSTRAINT IF EXISTS "{fk_name}"'))
+                            logger.info(f"✅ Removed foreign key constraint {fk_name} from chat_messages.sessionId")
+                            # Refresh inspector after dropping constraint
+                            inspector = inspect(engine)
+                        except Exception as drop_error:
+                            logger.warning(f"Could not drop foreign key constraint: {drop_error}")
+                    
+                    # Update any existing NULL sessionId values (only if no FK constraint)
+                    fk_constraints_after = inspector.get_foreign_keys("chat_messages")
+                    has_session_fk_after = any(fk.get("referred_table") == "chat_sessions" for fk in fk_constraints_after)
+                    
+                    if not has_session_fk_after:
                         # No foreign key, safe to update
                         conn.execute(
                             text(
@@ -99,7 +111,7 @@ def ensure_schema():
                         )
                         logger.info("✅ Updated NULL sessionId values to case_id")
             except Exception as e:
-                logger.warning(f"Could not update NULL sessionId values: {e}")
+                logger.warning(f"Could not process sessionId column: {e}")
         
         # Create index (separate transaction)
         try:
