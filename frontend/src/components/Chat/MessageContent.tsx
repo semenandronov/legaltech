@@ -1,5 +1,7 @@
 import React from 'react'
 import ReactMarkdown from 'react-markdown'
+import type { Components } from 'react-markdown'
+import remarkGfm from 'remark-gfm'
 import { SourceInfo } from '../../services/api'
 import { InlineCitationAdapter } from './InlineCitationAdapter'
 
@@ -8,6 +10,297 @@ interface MessageContentProps {
   sources: SourceInfo[]
   onCitationClick?: (source: SourceInfo) => void
   isStreaming?: boolean
+}
+
+// Общие компоненты для улучшенной типографики и таблиц
+const markdownComponents: Components = {
+  // Параграфы с улучшенными отступами
+  p: ({ children }) => (
+    <p style={{ 
+      margin: '0 0 20px 0', 
+      lineHeight: 1.8, 
+      display: 'block',
+      color: 'inherit'
+    }}>
+      {children}
+    </p>
+  ),
+  
+  // Заголовки с четкой иерархией и большими отступами
+  h1: ({ children }) => (
+    <h1 style={{ 
+      fontSize: '28px', 
+      fontWeight: 700, 
+      color: 'inherit', 
+      margin: '40px 0 24px 0', 
+      display: 'block', 
+      lineHeight: 1.2,
+      letterSpacing: '-0.02em',
+      paddingTop: '8px'
+    }}>
+      {children}
+    </h1>
+  ),
+  h2: ({ children }) => (
+    <h2 style={{ 
+      fontSize: '22px', 
+      fontWeight: 600, 
+      color: 'inherit', 
+      margin: '36px 0 20px 0', 
+      display: 'block', 
+      lineHeight: 1.3,
+      letterSpacing: '-0.01em',
+      paddingTop: '8px'
+    }}>
+      {children}
+    </h2>
+  ),
+  h3: ({ children }) => (
+    <h3 style={{ 
+      fontSize: '18px', 
+      fontWeight: 600, 
+      color: 'inherit', 
+      margin: '32px 0 16px 0', 
+      display: 'block', 
+      lineHeight: 1.4,
+      paddingTop: '6px'
+    }}>
+      {children}
+    </h3>
+  ),
+  h4: ({ children }) => (
+    <h4 style={{ 
+      fontSize: '16px', 
+      fontWeight: 600, 
+      color: 'inherit', 
+      margin: '28px 0 14px 0', 
+      display: 'block', 
+      lineHeight: 1.4,
+      paddingTop: '4px'
+    }}>
+      {children}
+    </h4>
+  ),
+  
+  // Списки с улучшенным форматированием
+  ul: ({ children }) => (
+    <ul style={{ 
+      margin: '20px 0', 
+      paddingLeft: '32px', 
+      display: 'block', 
+      lineHeight: 1.8,
+      listStyleType: 'disc'
+    }}>
+      {children}
+    </ul>
+  ),
+  ol: ({ children }) => (
+    <ol style={{ 
+      margin: '20px 0', 
+      paddingLeft: '32px', 
+      display: 'block', 
+      lineHeight: 1.8,
+      listStyleType: 'decimal'
+    }}>
+      {children}
+    </ol>
+  ),
+  li: ({ children }) => (
+    <li style={{ 
+      margin: '10px 0', 
+      display: 'list-item', 
+      lineHeight: 1.8,
+      paddingLeft: '6px'
+    }}>
+      {children}
+    </li>
+  ),
+  
+  // Код с улучшенным форматированием
+  code: ({ children, className }) => {
+    const isInline = !className
+    return isInline ? (
+      <code style={{ 
+        backgroundColor: 'rgba(0, 0, 0, 0.08)', 
+        padding: '3px 6px', 
+        borderRadius: '4px', 
+        fontSize: '0.9em', 
+        fontFamily: "'Fira Code', 'Courier New', monospace", 
+        color: 'inherit', 
+        display: 'inline',
+        fontWeight: 500
+      }}>
+        {children}
+      </code>
+    ) : (
+      <code style={{ 
+        backgroundColor: 'rgba(0, 0, 0, 0.06)', 
+        padding: '14px 16px', 
+        borderRadius: '8px', 
+        fontSize: '0.9em', 
+        fontFamily: "'Fira Code', 'Courier New', monospace", 
+        color: 'inherit', 
+        display: 'block', 
+        overflowX: 'auto', 
+        margin: '16px 0',
+        lineHeight: 1.6
+      }}>
+        {children}
+      </code>
+    )
+  },
+  pre: ({ children }) => (
+    <pre style={{ 
+      backgroundColor: 'rgba(0, 0, 0, 0.04)', 
+      padding: '16px', 
+      borderRadius: '8px', 
+      fontSize: '0.9em', 
+      fontFamily: "'Fira Code', 'Courier New', monospace", 
+      overflowX: 'auto', 
+      margin: '16px 0', 
+      display: 'block',
+      lineHeight: 1.6
+    }}>
+      {children}
+    </pre>
+  ),
+  
+  // Выделение текста
+  strong: ({ children }) => (
+    <strong style={{ 
+      fontWeight: 600, 
+      display: 'inline',
+      color: 'inherit'
+    }}>
+      {children}
+    </strong>
+  ),
+  em: ({ children }) => (
+    <em style={{ 
+      fontStyle: 'italic', 
+      display: 'inline',
+      color: 'inherit'
+    }}>
+      {children}
+    </em>
+  ),
+  
+  // Ссылки
+  a: ({ children, href }) => (
+    <a 
+      href={href} 
+      target="_blank" 
+      rel="noopener noreferrer" 
+      style={{ 
+        color: 'inherit', 
+        textDecoration: 'underline', 
+        textDecorationColor: 'rgba(0, 0, 0, 0.3)', 
+        display: 'inline',
+        textUnderlineOffset: '2px'
+      }}
+    >
+      {children}
+    </a>
+  ),
+  
+  // Цитаты
+  blockquote: ({ children }) => (
+    <blockquote style={{ 
+      borderLeft: '4px solid rgba(0, 0, 0, 0.2)', 
+      paddingLeft: '24px', 
+      margin: '24px 0', 
+      color: 'inherit', 
+      fontStyle: 'normal', 
+      display: 'block', 
+      opacity: 0.85,
+      paddingTop: '8px',
+      paddingBottom: '8px',
+      paddingRight: '16px',
+      backgroundColor: 'rgba(0, 0, 0, 0.02)',
+      borderRadius: '0 4px 4px 0'
+    }}>
+      {children}
+    </blockquote>
+  ),
+  
+  // Улучшенные таблицы с правильным рендерингом и стилями
+  table: ({ children }) => (
+    <div style={{
+      margin: '24px 0',
+      overflowX: 'auto',
+      borderRadius: '8px',
+      border: '1px solid rgba(0, 0, 0, 0.12)',
+      display: 'block',
+      boxShadow: '0 1px 3px rgba(0, 0, 0, 0.05)'
+    }}>
+      <table style={{ 
+        borderCollapse: 'collapse', 
+        width: '100%', 
+        display: 'table',
+        minWidth: '100%',
+        backgroundColor: 'transparent'
+      }}>
+        {children}
+      </table>
+    </div>
+  ),
+  thead: ({ children }) => (
+    <thead style={{ 
+      display: 'table-header-group',
+      backgroundColor: 'rgba(0, 0, 0, 0.04)'
+    }}>
+      {children}
+    </thead>
+  ),
+  tbody: ({ children }) => (
+    <tbody style={{ 
+      display: 'table-row-group'
+    }}>
+      {children}
+    </tbody>
+  ),
+  tr: ({ children }) => (
+    <tr style={{ 
+      display: 'table-row',
+      borderBottom: '1px solid rgba(0, 0, 0, 0.08)'
+    }}>
+      {children}
+    </tr>
+  ),
+  th: ({ children }) => (
+    <th style={{ 
+      border: '1px solid rgba(0, 0, 0, 0.12)', 
+      padding: '14px 18px', 
+      textAlign: 'left', 
+      fontWeight: 600, 
+      backgroundColor: 'rgba(0, 0, 0, 0.05)',
+      display: 'table-cell',
+      verticalAlign: 'middle',
+      fontSize: '0.95em',
+      color: 'inherit'
+    }}>
+      {children}
+    </th>
+  ),
+  td: ({ children }) => (
+    <td style={{ 
+      border: '1px solid rgba(0, 0, 0, 0.1)', 
+      padding: '14px 18px',
+      display: 'table-cell',
+      verticalAlign: 'top',
+      lineHeight: 1.7
+    }}>
+      {children}
+    </td>
+  ),
+  hr: () => (
+    <hr style={{
+      border: 'none',
+      borderTop: '2px solid rgba(0, 0, 0, 0.1)',
+      margin: '32px 0',
+      display: 'block'
+    }} />
+  ),
 }
 
 const MessageContent: React.FC<MessageContentProps> = ({
@@ -23,9 +316,14 @@ const MessageContent: React.FC<MessageContentProps> = ({
     const hasCitations = citationRegex.test(text)
     
     if (!hasCitations || sources.length === 0) {
-      // No citations, render normally
+      // No citations, render with improved markdown components and GFM support for tables
       return (
-        <ReactMarkdown>{text}</ReactMarkdown>
+        <ReactMarkdown 
+          components={markdownComponents}
+          remarkPlugins={[remarkGfm]}
+        >
+          {text}
+        </ReactMarkdown>
       )
     }
     
@@ -73,33 +371,13 @@ const MessageContent: React.FC<MessageContentProps> = ({
           if (React.isValidElement(part)) {
             return part
           }
-          // Render markdown for text parts - inline to preserve citations
+          // Render markdown for text parts with improved components and GFM support for tables
           return (
-            <ReactMarkdown key={`text-${idx}`} components={{
-              p: ({ children }) => <p style={{ margin: '0 0 12px 0', lineHeight: 1.7, display: 'block' }}>{children}</p>,
-              h1: ({ children }) => <h1 style={{ fontSize: '24px', fontWeight: 700, color: 'inherit', margin: '24px 0 16px 0', display: 'block', lineHeight: 1.3 }}>{children}</h1>,
-              h2: ({ children }) => <h2 style={{ fontSize: '20px', fontWeight: 600, color: 'inherit', margin: '20px 0 12px 0', display: 'block', lineHeight: 1.4 }}>{children}</h2>,
-              h3: ({ children }) => <h3 style={{ fontSize: '18px', fontWeight: 600, color: 'inherit', margin: '16px 0 10px 0', display: 'block', lineHeight: 1.4 }}>{children}</h3>,
-              ul: ({ children }) => <ul style={{ margin: '12px 0', paddingLeft: '24px', display: 'block', lineHeight: 1.7 }}>{children}</ul>,
-              ol: ({ children }) => <ol style={{ margin: '12px 0', paddingLeft: '24px', display: 'block', lineHeight: 1.7 }}>{children}</ol>,
-              li: ({ children }) => <li style={{ margin: '6px 0', display: 'list-item', lineHeight: 1.7 }}>{children}</li>,
-              code: ({ children, className }) => {
-                const isInline = !className
-                return isInline ? (
-                  <code style={{ backgroundColor: 'rgba(0, 0, 0, 0.06)', padding: '2px 6px', borderRadius: '4px', fontSize: '0.9em', fontFamily: "'Fira Code', 'Courier New', monospace", color: 'inherit', display: 'inline' }}>{children}</code>
-                ) : (
-                  <code style={{ backgroundColor: 'rgba(0, 0, 0, 0.06)', padding: '12px', borderRadius: '6px', fontSize: '0.9em', fontFamily: "'Fira Code', 'Courier New', monospace", color: 'inherit', display: 'block', overflowX: 'auto', margin: '12px 0' }}>{children}</code>
-                )
-              },
-              pre: ({ children }) => <pre style={{ backgroundColor: 'rgba(0, 0, 0, 0.04)', padding: '12px', borderRadius: '6px', fontSize: '0.9em', fontFamily: "'Fira Code', 'Courier New', monospace", overflowX: 'auto', margin: '12px 0', display: 'block' }}>{children}</pre>,
-              strong: ({ children }) => <strong style={{ fontWeight: 600, display: 'inline' }}>{children}</strong>,
-              em: ({ children }) => <em style={{ fontStyle: 'italic', display: 'inline' }}>{children}</em>,
-              a: ({ children, href }) => <a href={href} target="_blank" rel="noopener noreferrer" style={{ color: 'inherit', textDecoration: 'underline', textDecorationColor: 'rgba(0, 0, 0, 0.3)', display: 'inline' }}>{children}</a>,
-              blockquote: ({ children }) => <blockquote style={{ borderLeft: '3px solid rgba(0, 0, 0, 0.2)', paddingLeft: '16px', margin: '12px 0', color: 'inherit', fontStyle: 'normal', display: 'block', opacity: 0.8 }}>{children}</blockquote>,
-              table: ({ children }) => <table style={{ borderCollapse: 'collapse', width: '100%', margin: '12px 0', display: 'block', overflowX: 'auto' }}>{children}</table>,
-              th: ({ children }) => <th style={{ border: '1px solid rgba(0, 0, 0, 0.1)', padding: '8px 12px', textAlign: 'left', fontWeight: 600, backgroundColor: 'rgba(0, 0, 0, 0.04)' }}>{children}</th>,
-              td: ({ children }) => <td style={{ border: '1px solid rgba(0, 0, 0, 0.1)', padding: '8px 12px' }}>{children}</td>,
-            }}>
+            <ReactMarkdown 
+              key={`text-${idx}`} 
+              components={markdownComponents}
+              remarkPlugins={[remarkGfm]}
+            >
               {part as string}
             </ReactMarkdown>
           )
@@ -109,10 +387,14 @@ const MessageContent: React.FC<MessageContentProps> = ({
   }
 
   return (
-    <>
+    <div style={{
+      maxWidth: '100%',
+      wordWrap: 'break-word',
+      overflowWrap: 'break-word'
+    }}>
       {processContent(content)}
       {isStreaming && <span className="streaming-cursor" aria-hidden="true" />}
-    </>
+    </div>
   )
 }
 
