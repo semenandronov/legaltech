@@ -751,9 +751,10 @@ async def stream_chat_response(
             context = ""
             if not web_search_successful and not legal_research_successful:
                 # Выполняем RAG только если веб-поиск не дал результатов
+                # Используем аргумент по умолчанию для захвата rag_service в lambda
                 documents = await loop.run_in_executor(
                     None,
-                    lambda: rag_service.retrieve_context(
+                    lambda rs=rag_service: rs.retrieve_context(
                         case_id=case_id,
                         query=question,
                         k=10,
