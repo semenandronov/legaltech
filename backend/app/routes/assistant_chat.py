@@ -523,13 +523,14 @@ async def stream_chat_response(
                     table_info = plan.get("table_info", {})
                     
                     # Отправляем событие с уточняющими вопросами
-                    yield f"data: {json.dumps({
+                    feedback_data = {
                         'type': 'human_feedback_request',
                         'isTableClarification': True,
                         'questions': clarification_questions,
                         'table_info': table_info,
                         'request_id': str(uuid.uuid4())
-                    }, ensure_ascii=False)}\n\n"
+                    }
+                    yield f"data: {json.dumps(feedback_data, ensure_ascii=False)}\n\n"
                     return  # Прерываем выполнение, ждем ответа пользователя
                 
                 analysis_types = plan.get("analysis_types", [])
@@ -928,7 +929,7 @@ async def stream_chat_response(
             
             # Обновляем существующее сообщение ассистента после завершения streaming
             if assistant_message_id:
-            try:
+                try:
                     assistant_message = db.query(ChatMessage).filter(
                         ChatMessage.id == assistant_message_id
                     ).first()
@@ -940,17 +941,17 @@ async def stream_chat_response(
                     else:
                         logger.warning(f"Assistant message placeholder {assistant_message_id} not found, creating new one")
                         # Fallback: создаём новое сообщение если placeholder не найден
-                assistant_message = ChatMessage(
-                    case_id=case_id,
-                    role="assistant",
-                    content=full_response_text,
-                    source_references=sources_list if sources_list else None,
-                    session_id=None
-                )
-                db.add(assistant_message)
-                db.commit()
+                        assistant_message = ChatMessage(
+                            case_id=case_id,
+                            role="assistant",
+                            content=full_response_text,
+                            source_references=sources_list if sources_list else None,
+                            session_id=None
+                        )
+                        db.add(assistant_message)
+                        db.commit()
                 except Exception as update_error:
-                db.rollback()
+                    db.rollback()
                     logger.error(f"Error updating assistant message in DB: {update_error}", exc_info=True)
                     # Пытаемся создать новое сообщение как fallback
                     try:
