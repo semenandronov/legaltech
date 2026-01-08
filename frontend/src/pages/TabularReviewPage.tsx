@@ -155,13 +155,16 @@ const TabularReviewPage: React.FC = () => {
   const handleDocumentSelectorConfirm = async (fileIds: string[]) => {
     if (!caseId) return
     
+    console.log('handleDocumentSelectorConfirm called with fileIds:', fileIds)
     setShowDocumentSelector(false)
     setPendingFileIds(fileIds)
     setReviewName("")
     setShowNameDialog(true)
+    console.log('showNameDialog set to true')
   }
 
   const handleCreateReviewWithName = async () => {
+    console.log('handleCreateReviewWithName called', { caseId, reviewName, pendingFileIds })
     if (!caseId || !reviewName.trim()) {
       toast.error("Введите название таблицы")
       return
@@ -170,16 +173,19 @@ const TabularReviewPage: React.FC = () => {
     try {
       setShowNameDialog(false)
       setLoading(true)
+      console.log('Calling tabularReviewApi.createReview...')
       const review = await tabularReviewApi.createReview(
         caseId,
         reviewName.trim(),
         undefined,
         pendingFileIds
       )
+      console.log('Review created:', review)
       setSelectedFileIds(pendingFileIds)
       setPendingFileIds([])
       navigate(`/cases/${caseId}/tabular-review/${review.id}`, { replace: true })
     } catch (err: any) {
+      console.error('Error creating review:', err)
       setError(err.message || "Ошибка при создании review")
       toast.error("Не удалось создать Tabular Review")
     } finally {
@@ -951,47 +957,6 @@ const TabularReviewPage: React.FC = () => {
             onTemplateApplied={loadReviewData}
           />
         )}
-
-        {/* Name Dialog for creating new review */}
-        <Dialog open={showNameDialog} onOpenChange={setShowNameDialog}>
-          <DialogContent>
-            <DialogHeader>
-              <DialogTitle>Введите название таблицы</DialogTitle>
-            </DialogHeader>
-            <div className="py-4">
-              <Input
-                label="Название таблицы"
-                value={reviewName}
-                onChange={(e: React.ChangeEvent<HTMLInputElement>) => setReviewName(e.target.value)}
-                placeholder="Например: Анализ договоров"
-                onKeyDown={(e: React.KeyboardEvent<HTMLInputElement>) => {
-                  if (e.key === 'Enter' && reviewName.trim()) {
-                    handleCreateReviewWithName()
-                  }
-                }}
-                autoFocus
-              />
-            </div>
-            <DialogFooter>
-              <Button
-                variant="outline"
-                onClick={() => {
-                  setShowNameDialog(false)
-                  setPendingFileIds([])
-                  setReviewName("")
-                }}
-              >
-                Отмена
-              </Button>
-              <Button
-                onClick={handleCreateReviewWithName}
-                disabled={!reviewName.trim()}
-              >
-                Создать
-              </Button>
-            </DialogFooter>
-          </DialogContent>
-        </Dialog>
 
         {/* Cell Editor Modal */}
         {editingCell && tableData && (
