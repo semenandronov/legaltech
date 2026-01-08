@@ -1590,12 +1590,12 @@ class TabularReviewService:
         # Get or create the cell with atomic locking (SELECT FOR UPDATE)
         # Это предотвращает race conditions при одновременном редактировании
         try:
-        cell = self.db.query(TabularCell).filter(
-            and_(
-                TabularCell.tabular_review_id == review_id,
-                TabularCell.file_id == file_id,
-                TabularCell.column_id == column_id
-            )
+            cell = self.db.query(TabularCell).filter(
+                and_(
+                    TabularCell.tabular_review_id == review_id,
+                    TabularCell.file_id == file_id,
+                    TabularCell.column_id == column_id
+                )
             ).with_for_update(nowait=True).first()  # nowait=True - сразу ошибка если заблокировано
         except Exception as lock_error:
             # Если не удалось получить блокировку (другой пользователь редактирует)
