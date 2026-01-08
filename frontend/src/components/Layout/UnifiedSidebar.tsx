@@ -1,5 +1,5 @@
 import { useNavigate, useLocation } from 'react-router-dom'
-import { LucideIcon } from 'lucide-react'
+import { LucideIcon, FolderOpen } from 'lucide-react'
 
 interface NavItem {
   id: string
@@ -11,15 +11,19 @@ interface NavItem {
 interface UnifiedSidebarProps {
   navItems: NavItem[]
   title?: string
+  showBackButton?: boolean
 }
 
-const UnifiedSidebar = ({ navItems, title = 'Legal AI' }: UnifiedSidebarProps) => {
+const UnifiedSidebar = ({ navItems, title = 'Legal AI', showBackButton = true }: UnifiedSidebarProps) => {
   const navigate = useNavigate()
   const location = useLocation()
   
   const isActive = (path: string) => {
     return location.pathname === path || location.pathname.startsWith(path + '/')
   }
+  
+  // Определяем, нужно ли показывать кнопку "Дела" (если мы на странице с делом)
+  const shouldShowBackButton = showBackButton && location.pathname.includes('/cases/') && location.pathname !== '/cases'
   
   return (
     <div 
@@ -52,6 +56,32 @@ const UnifiedSidebar = ({ navItems, title = 'Legal AI' }: UnifiedSidebarProps) =
         
         {/* Navigation */}
         <nav className="flex-1 p-4 space-y-1 overflow-y-auto" style={{ padding: 'var(--space-4)' }}>
+          {/* Back button - показать если мы на странице с делом */}
+          {shouldShowBackButton && (
+            <button
+              onClick={() => navigate('/cases')}
+              className={`
+                w-full flex items-center gap-3 px-4 py-3 
+                text-sm font-medium rounded-md
+                transition-all duration-150
+                mb-2
+                text-text-secondary hover:text-text-primary hover:bg-bg-hover
+              `}
+              style={{
+                backgroundColor: 'transparent',
+                color: 'var(--color-text-secondary)',
+              }}
+            >
+              <FolderOpen 
+                className="w-5 h-5"
+                style={{ 
+                  color: 'var(--color-text-secondary)'
+                }}
+              />
+              <span className="flex-1 text-left">Дела</span>
+            </button>
+          )}
+          
           {navItems.map((item) => {
             const Icon = item.icon
             const active = isActive(item.path)

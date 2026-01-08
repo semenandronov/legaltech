@@ -891,7 +891,7 @@ async def stream_chat_response(
 
 ВАЖНО: Учитывай контекст предыдущих сообщений при ответе. Если пользователь задает уточняющий вопрос (например, "подробнее"), используй информацию из предыдущих сообщений для более полного ответа.
 """
-            
+
             prompt = f"""Ты - юридический AI-ассистент. Ты помогаешь анализировать документы дела.
 
 Контекст из документов дела:
@@ -1003,7 +1003,7 @@ async def stream_chat_response(
             
             # Обновляем существующее сообщение ассистента после завершения streaming
             if assistant_message_id:
-                try:
+            try:
                     assistant_message = db.query(ChatMessage).filter(
                         ChatMessage.id == assistant_message_id
                     ).first()
@@ -1015,17 +1015,17 @@ async def stream_chat_response(
                     else:
                         logger.warning(f"Assistant message placeholder {assistant_message_id} not found, creating new one")
                         # Fallback: создаём новое сообщение если placeholder не найден
-                        assistant_message = ChatMessage(
-                            case_id=case_id,
-                            role="assistant",
-                            content=full_response_text,
-                            source_references=sources_list if sources_list else None,
+                assistant_message = ChatMessage(
+                    case_id=case_id,
+                    role="assistant",
+                    content=full_response_text,
+                    source_references=sources_list if sources_list else None,
                             session_id=session_id
-                        )
-                        db.add(assistant_message)
-                        db.commit()
+                )
+                db.add(assistant_message)
+                db.commit()
                 except Exception as update_error:
-                    db.rollback()
+                db.rollback()
                     logger.error(f"Error updating assistant message in DB: {update_error}", exc_info=True)
                     # Пытаемся создать новое сообщение как fallback
                     try:

@@ -1590,7 +1590,7 @@ class TabularReviewService:
         # Get or create the cell with atomic locking (SELECT FOR UPDATE)
         # Это предотвращает race conditions при одновременном редактировании
         try:
-            cell = self.db.query(TabularCell).filter(
+        cell = self.db.query(TabularCell).filter(
             and_(
                 TabularCell.tabular_review_id == review_id,
                 TabularCell.file_id == file_id,
