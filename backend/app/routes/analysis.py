@@ -1252,6 +1252,7 @@ async def get_related_documents(
     
     # Find related documents by shared entities
     related_files = []
+    file_scores: Dict[str, float] = {}  # Initialize before use in topic matching
     if source_entities:
         # Get entity types and values from source file
         source_entity_types = set(e.entity_type for e in source_entities)
@@ -1271,7 +1272,7 @@ async def get_related_documents(
             entities_by_file[entity.file_id].append(entity)
         
         # Calculate similarity scores
-        file_scores: Dict[str, float] = {}
+        # file_scores already initialized above
         for file_id, entities in entities_by_file.items():
             score = 0.0
             shared_entities = 0
