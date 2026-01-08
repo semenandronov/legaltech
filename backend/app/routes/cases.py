@@ -468,7 +468,17 @@ async def get_file_content(
     elif file.file_type == "xlsx":
         content_type = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     
-    # Если есть оригинальный файл, возвращаем его
+    # Приоритет 1: Читаем файл из БД (новый способ хранения)
+    if file.file_content:
+        return Response(
+            content=file.file_content,
+            media_type=content_type,
+            headers={
+                "Content-Disposition": f'inline; filename="{file.filename}"'
+            }
+        )
+    
+    # Приоритет 2: Fallback на файловую систему (для старых файлов, обратная совместимость)
     if file.file_path:
         import os
         from app.config import config

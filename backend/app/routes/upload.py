@@ -271,7 +271,8 @@ async def upload_files(
                     "filename": filename,
                     "file_type": ext.lower(),
                     "original_text": sanitize_text(text),
-                    "file_path": relative_file_path,  # Сохраняем путь к оригинальному файлу
+                    "file_path": relative_file_path,  # Сохраняем путь к оригинальному файлу (для обратной совместимости)
+                    "file_content": content,  # Сохраняем бинарное содержимое файла в БД
                     "file_classification": file_classification,  # Добавляем классификацию
                 }
             )

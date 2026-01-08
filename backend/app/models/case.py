@@ -1,5 +1,5 @@
 """SQLAlchemy models for Legal AI Vault"""
-from sqlalchemy import Column, String, Text, Integer, DateTime, ForeignKey, JSON
+from sqlalchemy import Column, String, Text, Integer, DateTime, ForeignKey, JSON, LargeBinary
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import relationship
 from datetime import datetime
@@ -68,7 +68,8 @@ class File(Base):
     filename = Column(String(255), nullable=False)
     file_type = Column(String(50), nullable=False)
     original_text = Column(Text, nullable=False)
-    file_path = Column(String(512), nullable=True)  # Путь к оригинальному файлу на диске
+    file_path = Column(String(512), nullable=True)  # Путь к оригинальному файлу на диске (deprecated, kept for backward compatibility)
+    file_content = Column(LargeBinary, nullable=True)  # Binary content of the original file stored in DB
     # metadata удалено - не существует в БД, используем другие поля для хранения метаданных
     created_at = Column(DateTime, default=datetime.utcnow)
 
