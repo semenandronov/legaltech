@@ -26,6 +26,10 @@ interface CellData {
   columnType?: string
   highlightMode?: 'verbatim' | 'page' | 'none'
   sourceReferences?: SourceReference[]
+  // Phase 4: Deep link fields
+  docId?: string | null
+  charStart?: number | null
+  charEnd?: number | null
 }
 
 interface DocumentTab {

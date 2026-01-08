@@ -46,6 +46,13 @@ class Config:
     RAG_REQUIRE_SOURCES: bool = os.getenv("RAG_REQUIRE_SOURCES", "true").lower() == "true"  # Require source citations in answers
     RAG_ALLOW_UNCERTAINTY: bool = os.getenv("RAG_ALLOW_UNCERTAINTY", "true").lower() == "true"  # Allow model to express uncertainty when information is insufficient
     
+    # Citation System Settings (Phase 2, 3, 5)
+    CITATION_FIRST_ENABLED: bool = os.getenv("CITATION_FIRST_ENABLED", "false").lower() == "true"  # Enable citation-first generation
+    CITATION_VERIFICATION_ENABLED: bool = os.getenv("CITATION_VERIFICATION_ENABLED", "true").lower() == "true"  # Enable extended citation verification
+    CITATION_LLM_JUDGE_ENABLED: bool = os.getenv("CITATION_LLM_JUDGE_ENABLED", "false").lower() == "true"  # Use LLM-as-judge for verification
+    CITATION_MIN_INDEPENDENT_SOURCES: int = int(os.getenv("CITATION_MIN_INDEPENDENT_SOURCES", "1"))  # Minimum independent sources for verified claim
+    CITATION_CHAR_OFFSETS_ENABLED: bool = os.getenv("CITATION_CHAR_OFFSETS_ENABLED", "true").lower() == "true"  # Save char offsets for new documents
+    
     # Multi-Agent System Settings
     AGENT_ENABLED: bool = os.getenv("AGENT_ENABLED", "true").lower() == "true"
     AGENT_MAX_PARALLEL: int = int(os.getenv("AGENT_MAX_PARALLEL", "5"))  # Max parallel agents (increased from 3)

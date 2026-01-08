@@ -57,39 +57,47 @@ class DocumentProcessor:
         self,
         text: str,
         filename: str,
-        metadata: Dict[str, Any] = None
+        metadata: Dict[str, Any] = None,
+        file_id: Optional[str] = None
     ) -> List[Document]:
         """
-        Split document text into chunks
+        Split document text into chunks with provenance metadata
+        
+        Phase 1: Updated to use split_documents_with_metadata for char_start/char_end tracking
         
         Args:
             text: Document text
             filename: Source filename
             metadata: Additional metadata
+            file_id: File ID for generating doc_id (optional)
             
         Returns:
-            List of Document objects with metadata
+            List of Document objects with metadata including char_start, char_end, doc_id
         """
+        import uuid
+        
         # Create base metadata
         doc_metadata = {
             "source_file": filename,
             **(metadata or {})
         }
         
-        # Split text
-        chunks = self.text_splitter.split_text(text)
+        # Generate doc_id for this document (Phase 1.4)
+        # Use file_id if available, otherwise generate UUID
+        doc_id = file_id if file_id else str(uuid.uuid4())
+        doc_metadata["doc_id"] = doc_id
         
-        # Create Document objects with metadata
-        documents = []
-        for i, chunk_text in enumerate(chunks):
-            chunk_metadata = {
-                **doc_metadata,
-                "chunk_index": i,
-                "source_start_line": None,  # Will be calculated if possible
-                "source_end_line": None,
-                "source_page": None
-            }
-            documents.append(Document(page_content=chunk_text, metadata=chunk_metadata))
+        # Use split_documents_with_metadata to get char_start and char_end
+        documents = self.text_splitter.split_documents_with_metadata(
+            text=text,
+            filename=filename,
+            metadata=doc_metadata
+        )
+        
+        # Ensure all documents have doc_id in metadata
+        for doc in documents:
+            doc.metadata["doc_id"] = doc_id
+            # char_start and char_end are already added by split_documents_with_metadata
         
         return documents
     

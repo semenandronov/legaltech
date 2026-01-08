@@ -74,6 +74,12 @@ class TabularCell(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     
+    # Phase 4: Citation system fields for deep links
+    primary_source_doc_id = Column(String, nullable=True, index=True)  # doc_id основного источника
+    primary_source_char_start = Column(Integer, nullable=True)  # Начальная позиция символа в источнике
+    primary_source_char_end = Column(Integer, nullable=True)  # Конечная позиция символа в источнике
+    verified_flag = Column(Boolean, nullable=True)  # Флаг верификации цитаты
+    
     # Unique constraint: одна ячейка на документ+колонку
     __table_args__ = (
         UniqueConstraint('file_id', 'column_id', name='uq_tabular_cell_file_column'),

@@ -76,6 +76,10 @@ interface TabularReviewTableProps {
     columnType?: string
     highlightMode?: 'verbatim' | 'page' | 'none'
     sourceReferences?: Array<{ page?: number | null; section?: string | null; text: string }>
+    // Phase 4: Deep link fields
+    docId?: string | null
+    charStart?: number | null
+    charEnd?: number | null
   }) => void
   onCellEdit?: (fileId: string, columnId: string, cell: TabularCell) => void
   onRemoveDocument?: (fileId: string) => void
@@ -487,6 +491,10 @@ export const TabularReviewTable = React.memo(({ reviewId, tableData, onTableData
                     columnType: cachedDetails.column_type,
                     highlightMode,
                     sourceReferences: cachedDetails.source_references,
+                    // Phase 4: Deep link fields
+                    docId: cachedDetails.primary_source_doc_id || row.original.file_id,
+                    charStart: cachedDetails.primary_source_char_start || undefined,
+                    charEnd: cachedDetails.primary_source_char_end || undefined,
                   })
                 }
                 return
@@ -521,6 +529,10 @@ export const TabularReviewTable = React.memo(({ reviewId, tableData, onTableData
                     columnType: details.column_type,
                     highlightMode,
                     sourceReferences: details.source_references,
+                    // Phase 4: Deep link fields
+                    docId: details.primary_source_doc_id || row.original.file_id,
+                    charStart: details.primary_source_char_start || undefined,
+                    charEnd: details.primary_source_char_end || undefined,
                   })
                 }
               } catch (error) {

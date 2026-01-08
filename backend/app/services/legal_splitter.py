@@ -74,7 +74,7 @@ class LegalTextSplitter(RecursiveCharacterTextSplitter):
             paragraph_num: Paragraph number (if available)
             
         Returns:
-            List of Document objects with legal citation metadata
+            List of Document objects with legal citation metadata including char_start/char_end
         """
         # Split text into chunks
         chunks = self.split_text(text)
@@ -91,21 +91,36 @@ class LegalTextSplitter(RecursiveCharacterTextSplitter):
         if paragraph_num is not None:
             base_metadata["source_paragraph"] = paragraph_num
         
+        # Calculate char_start and char_end for each chunk
+        previous_end = 0
         for i, chunk_text in enumerate(chunks):
+            # Find the start position of this chunk in the original text
+            # Start searching from previous_end to handle overlaps correctly
+            char_start = text.find(chunk_text, previous_end)
+            
+            # If not found, try searching from the beginning (shouldn't happen normally)
+            if char_start == -1:
+                char_start = text.find(chunk_text)
+                if char_start == -1:
+                    # Fallback: estimate position (shouldn't happen with proper splitting)
+                    char_start = previous_end
+                    logger.warning(f"Could not find chunk {i} in text, using estimated position")
+            
+            char_end = char_start + len(chunk_text)
+            previous_end = max(previous_end, char_start)  # Update for next iteration
+            
             chunk_metadata = {
                 **base_metadata,
                 "chunk_index": i,
-                "chunk_start_line": None,  # Will be calculated if possible
+                "chunk_start_line": None,  # Line numbers not calculated here
                 "chunk_end_line": None,
+                "char_start": char_start,  # Character start position for citation
+                "char_end": char_end,  # Character end position for citation
             }
-            
-            # Try to extract start index from chunk if available
-            # (requires add_start_index=True in RecursiveCharacterTextSplitter)
-            # Note: This may require custom implementation or additional processing
             
             documents.append(Document(page_content=chunk_text, metadata=chunk_metadata))
         
-        logger.debug(f"Split {len(text)} chars into {len(documents)} chunks for {filename}")
+        logger.debug(f"Split {len(text)} chars into {len(documents)} chunks for {filename} with char offsets")
         return documents
 
 

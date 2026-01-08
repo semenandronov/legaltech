@@ -434,6 +434,9 @@ async def upload_files(
                 db.add(file_model)
                 db.flush()  # Flush to get file_model.id
                 
+                # Phase 1: Сохраняем file_id в file_info для использования в split_documents
+                file_info["file_id"] = file_model.id
+                
                 # Сохраняем классификацию документа
                 if file_info.get("file_classification"):
                     from app.models.analysis import DocumentClassification
@@ -504,10 +507,13 @@ async def upload_files(
                 metadata["relevance_score"] = classification.get("relevance_score", 0)
             
             # Split text into chunks with metadata
+            # Phase 1: Pass file_id for doc_id generation
+            file_id = file_info.get("file_id")  # Получаем file_id, сохранённый при создании File
             file_documents = document_processor.split_documents(
                 text=text,
                 filename=filename,
-                metadata=metadata
+                metadata=metadata,
+                file_id=file_id
             )
             all_documents.extend(file_documents)
         

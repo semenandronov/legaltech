@@ -371,6 +371,68 @@ async def get_case_files(
     }
 
 
+@router.get("/{case_id}/documents/{doc_id}/view")
+async def view_document_fragment(
+    case_id: str,
+    doc_id: str,
+    start: Optional[int] = Query(None, description="Start character position"),
+    end: Optional[int] = Query(None, description="End character position"),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """
+    Phase 4: Deep link endpoint for viewing document fragments
+    
+    Returns document fragment and metadata for citation deep links
+    """
+    # Verify case ownership
+    case = db.query(Case).filter(
+        Case.id == case_id,
+        Case.user_id == current_user.id
+    ).first()
+    
+    if not case:
+        raise HTTPException(status_code=404, detail="Дело не найдено")
+    
+    # Find file by doc_id (doc_id is file_id for new documents)
+    file = db.query(FileModel).filter(
+        FileModel.id == doc_id,
+        FileModel.case_id == case_id
+    ).first()
+    
+    if not file:
+        raise HTTPException(status_code=404, detail="Документ не найден")
+    
+    # Get document text
+    if not file.original_text:
+        raise HTTPException(status_code=404, detail="Содержимое документа недоступно")
+    
+    text = file.original_text
+    
+    # Extract fragment if start/end provided
+    fragment_text = None
+    if start is not None and end is not None:
+        try:
+            start_pos = max(0, int(start))
+            end_pos = min(len(text), int(end))
+            if start_pos < end_pos:
+                fragment_text = text[start_pos:end_pos]
+        except (ValueError, TypeError):
+            pass
+    
+    return {
+        "doc_id": doc_id,
+        "file_id": file.id,
+        "filename": file.filename,
+        "fragment": fragment_text if fragment_text else text[:1000],  # Return first 1000 chars if no fragment
+        "char_start": start,
+        "char_end": end,
+        "full_text_length": len(text),
+        "file_type": file.file_type,
+        "created_at": file.created_at.isoformat() if file.created_at else None
+    }
+
+
 @router.get("/{case_id}/files/{file_id}/content")
 async def get_file_content(
     case_id: str,

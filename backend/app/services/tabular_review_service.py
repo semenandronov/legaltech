@@ -1289,11 +1289,27 @@ class TabularReviewService:
                     source_refs = result.get("source_references", [])
                     source_page = result.get("source_page")
                     source_section = result.get("source_section")
+                    
+                    # Phase 4: Extract doc_id and char offsets from source_references
+                    primary_source_doc_id = result["file_id"]  # Use file_id as doc_id (doc_id = file_id for new documents)
+                    primary_source_char_start = None
+                    primary_source_char_end = None
+                    verified_flag = None
+                    
                     if source_refs and isinstance(source_refs, list) and len(source_refs) > 0:
                         first_ref = source_refs[0]
                         if isinstance(first_ref, dict):
                             source_page = first_ref.get("page") or source_page
                             source_section = first_ref.get("section") or source_section
+                            # Phase 4: Extract char offsets if available in source_reference
+                            primary_source_char_start = first_ref.get("char_start") or first_ref.get("start_char")
+                            primary_source_char_end = first_ref.get("char_end") or first_ref.get("end_char")
+                            # Phase 4: Extract doc_id if available (for future use)
+                            if first_ref.get("doc_id"):
+                                primary_source_doc_id = first_ref.get("doc_id")
+                            # Phase 4: Extract verified flag if available
+                            if "verified" in first_ref:
+                                verified_flag = first_ref.get("verified")
                     
                     # Create new cell with all fields
                     cell = TabularCell(
@@ -1309,7 +1325,12 @@ class TabularReviewService:
                         candidates=result.get("candidates"),
                         source_page=source_page,
                         source_section=source_section,
-                        status=result.get("status", "completed")
+                        status=result.get("status", "completed"),
+                        # Phase 4: Citation system fields
+                        primary_source_doc_id=primary_source_doc_id,
+                        primary_source_char_start=primary_source_char_start,
+                        primary_source_char_end=primary_source_char_end,
+                        verified_flag=verified_flag
                     )
                     self.db.add(cell)
                 
@@ -1442,14 +1463,34 @@ class TabularReviewService:
                 existing_cell.confidence_score = result.get("confidence_score")
                 # Extract source_page from first source_reference if available
                 source_refs = result.get("source_references", [])
+                
+                # Phase 4: Extract doc_id and char offsets from source_references
+                primary_source_doc_id = result["file_id"]  # Use file_id as doc_id
+                primary_source_char_start = None
+                primary_source_char_end = None
+                verified_flag = None
+                
                 if source_refs and isinstance(source_refs, list) and len(source_refs) > 0:
                     first_ref = source_refs[0]
                     if isinstance(first_ref, dict):
                         existing_cell.source_page = first_ref.get("page")
                         existing_cell.source_section = first_ref.get("section")
+                        # Phase 4: Extract char offsets if available
+                        primary_source_char_start = first_ref.get("char_start") or first_ref.get("start_char")
+                        primary_source_char_end = first_ref.get("char_end") or first_ref.get("end_char")
+                        if first_ref.get("doc_id"):
+                            primary_source_doc_id = first_ref.get("doc_id")
+                        if "verified" in first_ref:
+                            verified_flag = first_ref.get("verified")
                 else:
                     existing_cell.source_page = result.get("source_page")
                     existing_cell.source_section = result.get("source_section")
+                
+                # Phase 4: Update citation system fields
+                existing_cell.primary_source_doc_id = primary_source_doc_id
+                existing_cell.primary_source_char_start = primary_source_char_start
+                existing_cell.primary_source_char_end = primary_source_char_end
+                existing_cell.verified_flag = verified_flag
                 existing_cell.status = "completed"
                 existing_cell.updated_at = datetime.utcnow()
             else:
@@ -1463,6 +1504,22 @@ class TabularReviewService:
                         source_page = first_ref.get("page") or source_page
                         source_section = first_ref.get("section") or source_section
                 
+                # Phase 4: Extract doc_id and char offsets from source_references
+                primary_source_doc_id = result["file_id"]  # Use file_id as doc_id
+                primary_source_char_start = None
+                primary_source_char_end = None
+                verified_flag = None
+                
+                if source_refs and isinstance(source_refs, list) and len(source_refs) > 0:
+                    first_ref = source_refs[0]
+                    if isinstance(first_ref, dict):
+                        primary_source_char_start = first_ref.get("char_start") or first_ref.get("start_char")
+                        primary_source_char_end = first_ref.get("char_end") or first_ref.get("end_char")
+                        if first_ref.get("doc_id"):
+                            primary_source_doc_id = first_ref.get("doc_id")
+                        if "verified" in first_ref:
+                            verified_flag = first_ref.get("verified")
+                
                 # Create new cell with all fields
                 cell = TabularCell(
                     tabular_review_id=review_id,
@@ -1475,7 +1532,12 @@ class TabularReviewService:
                     confidence_score=result.get("confidence_score"),
                     source_page=source_page,
                     source_section=source_section,
-                    status="completed"
+                    status="completed",
+                    # Phase 4: Citation system fields
+                    primary_source_doc_id=primary_source_doc_id,
+                    primary_source_char_start=primary_source_char_start,
+                    primary_source_char_end=primary_source_char_end,
+                    verified_flag=verified_flag
                 )
                 self.db.add(cell)
             

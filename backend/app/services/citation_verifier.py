@@ -420,4 +420,130 @@ class CitationVerifier:
             "verification_rate": verified_count / total_facts if total_facts > 0 else 0.0,
             "verification_results": verification_results
         }
+    
+    def verify_with_secondary_retrieval(
+        self,
+        citation_text: str,
+        source_documents: List[Document],
+        rag_service: Optional[Any] = None,
+        case_id: Optional[str] = None,
+        db: Optional[Any] = None
+    ) -> Dict[str, Any]:
+        """
+        Phase 3: Verify citation with secondary retrieval from other sources
+        
+        Args:
+            citation_text: Citation text to verify
+            source_documents: Primary source documents
+            rag_service: Optional RAG service for secondary retrieval
+            case_id: Optional case ID for secondary retrieval
+            db: Optional database session
+            
+        Returns:
+            Dictionary with verification result including secondary sources
+        """
+        # First, verify with primary sources
+        primary_result = self.verify_citation(citation_text, source_documents)
+        
+        # If verified with primary sources, return result
+        if primary_result.get("verified", False):
+            return {
+                **primary_result,
+                "secondary_verified": True,
+                "verification_method": "primary_only"
+            }
+        
+        # Try secondary retrieval if RAG service is available
+        if rag_service and case_id:
+            try:
+                # Retrieve additional documents using RAG
+                secondary_docs = rag_service.retrieve_context(
+                    case_id=case_id,
+                    query=citation_text,
+                    k=10,
+                    db=db
+                )
+                
+                # Verify with secondary documents
+                secondary_result = self.verify_citation(citation_text, secondary_docs)
+                
+                # Combine results
+                if secondary_result.get("verified", False):
+                    return {
+                        **secondary_result,
+                        "secondary_verified": True,
+                        "verification_method": "secondary_retrieval",
+                        "primary_verified": False
+                    }
+                else:
+                    return {
+                        **primary_result,
+                        "secondary_verified": False,
+                        "verification_method": "primary_and_secondary",
+                        "secondary_matches": secondary_result.get("matches", [])
+                    }
+            except Exception as e:
+                logger.warning(f"Error in secondary retrieval verification: {e}")
+        
+        return {
+            **primary_result,
+            "secondary_verified": False,
+            "verification_method": "primary_only"
+        }
+    
+    def verify_claim_with_sources(
+        self,
+        claim_text: str,
+        sources: List[Dict[str, Any]],
+        source_documents: List[Document],
+        min_independent_sources: int = 1
+    ) -> Dict[str, Any]:
+        """
+        Phase 3: Verify claim with multiple sources (rule: ≥1 independent source)
+        
+        Args:
+            claim_text: Claim text to verify
+            sources: List of source citations (from citation-first response)
+            source_documents: List of source documents
+            min_independent_sources: Minimum number of independent sources required (default: 1)
+            
+        Returns:
+            Dictionary with verification result
+        """
+        if not sources:
+            return {
+                "verified": False,
+                "confidence": 0.0,
+                "reason": "No sources provided",
+                "independent_sources_count": 0
+            }
+        
+        # Group sources by doc_id to identify independent sources
+        sources_by_doc = {}
+        for source in sources:
+            doc_id = source.get("doc_id")
+            if doc_id:
+                if doc_id not in sources_by_doc:
+                    sources_by_doc[doc_id] = []
+                sources_by_doc[doc_id].append(source)
+        
+        # Count independent sources (different doc_id)
+        independent_sources_count = len(sources_by_doc)
+        
+        # Verify claim against all source documents
+        verification_result = self.verify_citation(claim_text, source_documents, tolerance=100)
+        
+        # Check if we have enough independent sources
+        has_enough_sources = independent_sources_count >= min_independent_sources
+        is_verified = verification_result.get("verified", False) and has_enough_sources
+        
+        return {
+            "verified": is_verified,
+            "confidence": verification_result.get("confidence", 0.0),
+            "independent_sources_count": independent_sources_count,
+            "min_required": min_independent_sources,
+            "has_enough_sources": has_enough_sources,
+            "verification_details": verification_result,
+            "sources_by_doc": sources_by_doc
+        }
 

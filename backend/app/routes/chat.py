@@ -662,13 +662,17 @@ async def chat(
         )
         
         # Use RAG service to generate answer with sources
-        # Now uses Yandex Assistant API internally
+        # Phase 2: Support citation-first generation via config
+        from app.config import config
+        use_citation_first = config.CITATION_FIRST_ENABLED
+        
         answer, sources = rag_service.generate_with_sources(
             case_id=request.case_id,
             query=request.question,
             k=5,  # Retrieve top 5 relevant chunks
             db=db,  # Pass database session for Assistant API
-            history=chat_history  # Pass chat history for Assistant API
+            history=chat_history,  # Pass chat history for Assistant API
+            use_citation_first=use_citation_first  # Phase 2: Citation-first generation
         )
         
         # Save context to memory (optional - don't fail if memory is not available)

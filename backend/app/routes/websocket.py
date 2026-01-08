@@ -265,12 +265,17 @@ async def stream_chat(
                     }) + '\n')
                 # #endregion
                 
+                # Phase 2: Support citation-first generation via config
+                from app.config import config
+                use_citation_first = config.CITATION_FIRST_ENABLED
+                
                 answer, sources = rag_service.generate_with_sources(
                     case_id=case_id,
                     query=query,
                     k=k,
                     db=db,
-                    history=history
+                    history=history,
+                    use_citation_first=use_citation_first  # Phase 2: Citation-first generation
                 )
                 
                 # #region agent log

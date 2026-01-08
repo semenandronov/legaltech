@@ -50,6 +50,10 @@ const TabularReviewPage: React.FC = () => {
       columnType?: string
       highlightMode?: 'verbatim' | 'page' | 'none'
       sourceReferences?: Array<{ page?: number | null; section?: string | null; text: string }>
+      // Phase 4: Deep link fields
+      docId?: string | null
+      charStart?: number | null
+      charEnd?: number | null
     }
   } | null>(null)
   const [_loadingCellDetails, setLoadingCellDetails] = useState(false)
@@ -792,11 +796,19 @@ const TabularReviewPage: React.FC = () => {
                       columnType: details.column_type,
                       highlightMode: details.highlight_mode || cellData.highlightMode || (details.verbatim_extract ? 'verbatim' : (details.source_page ? 'page' : 'none')),
                       sourceReferences: details.source_references || cellData.sourceReferences || [],
+                      // Phase 4: Deep link fields
+                      docId: details.primary_source_doc_id || fileId,  // Use doc_id if available, fallback to fileId
+                      charStart: details.primary_source_char_start || undefined,
+                      charEnd: details.primary_source_char_end || undefined,
                     } : {
                       ...cellData,
                       // Ensure highlightMode is set correctly
                       highlightMode: cellData.highlightMode || (cellData.verbatimExtract ? 'verbatim' : (cellData.sourcePage ? 'page' : 'none')),
                       sourceReferences: cellData.sourceReferences || [],
+                      // Phase 4: Deep link fields from cellData
+                      docId: cellData.docId || fileId,
+                      charStart: cellData.charStart,
+                      charEnd: cellData.charEnd,
                     }
                     
                     setSelectedDocument({ 

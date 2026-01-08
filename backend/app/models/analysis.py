@@ -1,5 +1,5 @@
 """Analysis models for Legal AI Vault"""
-from sqlalchemy import Column, String, Text, DateTime, ForeignKey, JSON, Integer, Date
+from sqlalchemy import Column, String, Text, DateTime, ForeignKey, JSON, Integer, Date, Float
 from sqlalchemy.orm import relationship
 from datetime import datetime
 import uuid
@@ -78,6 +78,13 @@ class DocumentChunk(Base):
     embedding = Column(JSON, nullable=True)  # Векторное представление (опционально, если храним в БД)
     chunk_metadata = Column(JSON, nullable=True)  # Дополнительные метаданные (переименовано из metadata)
     created_at = Column(DateTime, default=datetime.utcnow)
+    
+    # Provenance fields for citation system (Phase 1)
+    char_start = Column(Integer, nullable=True)  # Начальная позиция символа в исходном документе
+    char_end = Column(Integer, nullable=True)  # Конечная позиция символа
+    doc_id = Column(String, nullable=True, index=True)  # Уникальный ID документа для deep links
+    source_url = Column(String, nullable=True)  # URL для внешних источников
+    trust_score = Column(Float, nullable=True)  # Доверенность источника (0.0-1.0)
     
     # Relationships
     case = relationship("Case", back_populates="document_chunks")

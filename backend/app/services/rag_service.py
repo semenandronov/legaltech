@@ -2,7 +2,7 @@
 
 Phase 1.3: Added multi-stage RAG pipeline with reranking and query condensation.
 """
-from typing import List, Dict, Any, Tuple, Optional
+from typing import List, Dict, Any, Tuple, Optional, Type
 from sqlalchemy.orm import Session
 from langchain_core.documents import Document
 from app.config import config
@@ -466,6 +466,8 @@ class RAGService:
         """
         Format source documents with precise references
         
+        Phase 1: Added doc_id, char_start, char_end support
+        
         Args:
             documents: List of Document objects
             
@@ -482,7 +484,11 @@ class RAGService:
                 "start_line": metadata.get("source_start_line"),
                 "end_line": metadata.get("source_end_line"),
                 "text_preview": doc.page_content[:200] + "..." if len(doc.page_content) > 200 else doc.page_content,
-                "similarity_score": metadata.get("similarity_score")
+                "similarity_score": metadata.get("similarity_score"),
+                # Phase 1: Citation system fields
+                "doc_id": metadata.get("doc_id"),
+                "char_start": metadata.get("char_start"),
+                "char_end": metadata.get("char_end"),
             }
             sources.append(source)
         return sources
@@ -562,7 +568,8 @@ class RAGService:
         context: str = None,
         k: int = 5,
         db: Optional[Session] = None,
-        history: Optional[List[Dict[str, str]]] = None
+        history: Optional[List[Dict[str, str]]] = None,
+        use_citation_first: bool = False
     ) -> Tuple[str, List[Dict[str, Any]]]:
         """
         Generate answer with source references
@@ -597,7 +604,11 @@ class RAGService:
         
         # Use direct RAG with pgvector + GigaChat
         # Use iterative search for better results
-        return self._generate_with_direct_rag(case_id, query, k, db, history, use_iterative=True)
+        return self._generate_with_direct_rag(
+            case_id, query, k, db, history, 
+            use_iterative=True,
+            use_citation_first=use_citation_first
+        )
     
     def _generate_with_direct_rag(
         self,
@@ -607,7 +618,8 @@ class RAGService:
         db: Optional[Session],
         history: Optional[List[Dict[str, str]]],
         use_iterative: bool = True,
-        use_multi_stage: bool = True
+        use_multi_stage: bool = True,
+        use_citation_first: bool = False
     ) -> Tuple[str, List[Dict[str, Any]]]:
         """Generate using direct RAG with pgvector + GigaChat
         
@@ -713,6 +725,16 @@ class RAGService:
                 elif msg.get("role") == "assistant":
                     messages.append(AIMessage(content=msg.get("content", "")))
         
+        # Phase 2: Citation-first generation
+        if use_citation_first:
+            return self._generate_citation_first(
+                case_id=case_id,
+                query=query,
+                documents=documents,
+                messages=messages,
+                llm=create_llm()
+            )
+        
         # Add current query with context
         user_message = f"""Используй следующие документы для ответа:
 
@@ -743,6 +765,320 @@ class RAGService:
         )
         
         return answer, sources
+    
+    def _generate_citation_first(
+        self,
+        case_id: str,
+        query: str,
+        documents: List[Document],
+        messages: List,
+        llm: Any
+    ) -> Tuple[str, List[Dict[str, Any]]]:
+        """
+        Phase 2: Generate citation-first response with structured JSON output
+        
+        Args:
+            case_id: Case identifier
+            query: User query
+            documents: List of source documents
+            messages: List of messages (system + history)
+            llm: LLM instance
+            
+        Returns:
+            Tuple of (answer, sources)
+        """
+        from app.services.langchain_agents.schemas.citation_schema import CitationFirstResponse
+        
+        # Build citation-first prompt
+        context = self.format_sources_for_prompt(documents)
+        
+        citation_first_prompt = f"""Используй следующие документы для ответа:
+
+{context}
+
+Вопрос: {query}
+
+Верни ответ в формате JSON со следующей структурой:
+{{
+  "answer": "Основной текст ответа",
+  "claims": [
+    {{
+      "text": "Текст утверждения",
+      "sources": [
+        {{
+          "doc_id": "ID документа",
+          "char_start": начальная_позиция_символа,
+          "char_end": конечная_позиция_символа,
+          "score": оценка_релевантности,
+          "verified": true/false,
+          "page": номер_страницы,
+          "snippet": "фрагмент текста"
+        }}
+      ]
+    }}
+  ],
+  "reasoning": "Опциональное объяснение"
+}}
+
+ВАЖНО:
+- Каждое утверждение (claim) должно иметь хотя бы один источник (source)
+- doc_id должен соответствовать doc_id из метаданных документов
+- char_start и char_end - позиции символов в исходном документе
+- score - оценка релевантности (0.0-1.0)
+- Используй точные doc_id из метаданных документов"""
+        
+        messages.append(HumanMessage(content=citation_first_prompt))
+        
+        try:
+            # Try structured output first
+            try:
+                structured_llm = llm.with_structured_output(CitationFirstResponse)
+                response = structured_llm.invoke(messages)
+                citation_response = response
+            except Exception as structured_error:
+                logger.warning(f"Structured output failed, falling back to JSON parsing: {structured_error}")
+                # Fallback to JSON parsing
+                response = llm.invoke(messages)
+                response_text = response.content if hasattr(response, 'content') else str(response)
+                citation_response = self._validate_citation_response(response_text)
+                if citation_response is None:
+                    # Final fallback: return regular answer
+                    logger.warning("Citation-first validation failed, falling back to regular answer")
+                    answer_text = response_text
+                    sources = self.format_sources(documents)
+                    return answer_text, sources
+            
+            # Phase 3: Extended verification if enabled
+            if config.CITATION_VERIFICATION_ENABLED:
+                citation_response = self._verify_citation_first_response(
+                    citation_response, documents, case_id, db
+                )
+            
+            # Convert citation-first response to answer text and sources
+            answer_text = citation_response.answer
+            if citation_response.reasoning:
+                answer_text += f"\n\nОбоснование: {citation_response.reasoning}"
+            
+            # Format sources from claims
+            sources = self._format_sources_from_claims(citation_response.claims, documents)
+            
+            logger.info(
+                f"Citation-first generation completed for case {case_id}, "
+                f"claims count: {len(citation_response.claims)}, "
+                f"sources count: {len(sources)}"
+            )
+            
+            return answer_text, sources
+            
+        except Exception as e:
+            logger.error(f"Error in citation-first generation: {e}", exc_info=True)
+            # Fallback to regular generation
+            logger.warning("Falling back to regular RAG generation")
+            response = llm.invoke(messages)
+            answer = response.content if hasattr(response, 'content') else str(response)
+            sources = self.format_sources(documents)
+            return answer, sources
+    
+    def _verify_citation_first_response(
+        self,
+        citation_response: Any,
+        documents: List[Document],
+        case_id: str,
+        db: Optional[Session]
+    ) -> Any:
+        """
+        Phase 3: Verify citation-first response with extended verification
+        
+        Args:
+            citation_response: CitationFirstResponse object
+            documents: List of source documents
+            case_id: Case identifier
+            db: Optional database session
+            
+        Returns:
+            Updated CitationFirstResponse with verified flags
+        """
+        from app.services.citation_verifier import CitationVerifier
+        from app.services.citation_llm_judge import CitationLLMJudge
+        from app.services.langchain_agents.schemas.citation_schema import CitationSource
+        
+        citation_verifier = CitationVerifier(similarity_threshold=0.7)
+        llm_judge = None
+        
+        if config.CITATION_LLM_JUDGE_ENABLED:
+            try:
+                llm_judge = CitationLLMJudge()
+            except Exception as e:
+                logger.warning(f"Failed to initialize LLM judge: {e}, using standard verification")
+        
+        min_independent_sources = config.CITATION_MIN_INDEPENDENT_SOURCES
+        
+        # Verify each claim
+        verified_claims = []
+        for claim in citation_response.claims:
+            claim_text = claim.text
+            claim_sources = claim.sources
+            
+            # Convert CitationSource objects to dicts for verification
+            sources_dicts = []
+            for source in claim_sources:
+                sources_dicts.append({
+                    "doc_id": source.doc_id,
+                    "char_start": source.char_start,
+                    "char_end": source.char_end,
+                    "score": source.score,
+                    "verified": source.verified,
+                    "page": source.page,
+                    "snippet": source.snippet
+                })
+            
+            # Verify claim with sources (rule: ≥1 independent source)
+            verification_result = citation_verifier.verify_claim_with_sources(
+                claim_text=claim_text,
+                sources=sources_dicts,
+                source_documents=documents,
+                min_independent_sources=min_independent_sources
+            )
+            
+            # Update verified flags in sources
+            updated_sources = []
+            for source in claim_sources:
+                # Check if this source supports the claim
+                source_dict = {
+                    "doc_id": source.doc_id,
+                    "char_start": source.char_start,
+                    "char_end": source.char_end
+                }
+                
+                # If LLM judge enabled, use it for additional verification
+                if llm_judge:
+                    try:
+                        # Find corresponding Document for this source
+                        source_doc = None
+                        for doc in documents:
+                            if doc.metadata.get("doc_id") == source.doc_id:
+                                source_doc = doc
+                                break
+                        
+                        if source_doc:
+                            # Use verify_with_llm_judge method with candidate sources
+                            judge_result = llm_judge.verify_with_llm_judge(claim_text, [source_doc])
+                            source_verified = judge_result.get("verified", False) and verification_result.get("verified", False)
+                        else:
+                            source_verified = verification_result.get("verified", False)
+                    except Exception as e:
+                        logger.warning(f"LLM judge failed for source: {e}")
+                        source_verified = verification_result.get("verified", False)
+                else:
+                    source_verified = verification_result.get("verified", False)
+                
+                # Create updated source with verified flag
+                updated_source = CitationSource(
+                    doc_id=source.doc_id,
+                    char_start=source.char_start,
+                    char_end=source.char_end,
+                    score=source.score,
+                    verified=source_verified,
+                    page=source.page,
+                    snippet=source.snippet
+                )
+                updated_sources.append(updated_source)
+            
+            # Create updated claim
+            from app.services.langchain_agents.schemas.citation_schema import Claim
+            updated_claim = Claim(
+                text=claim_text,
+                sources=updated_sources
+            )
+            verified_claims.append(updated_claim)
+            
+            # Log verification result
+            logger.info(
+                f"Claim verification: verified={verification_result.get('verified', False)}, "
+                f"independent_sources={verification_result.get('independent_sources_count', 0)}, "
+                f"confidence={verification_result.get('confidence', 0.0):.2f}"
+            )
+        
+        # Create updated response
+        from app.services.langchain_agents.schemas.citation_schema import CitationFirstResponse
+        updated_response = CitationFirstResponse(
+            answer=citation_response.answer,
+            claims=verified_claims,
+            reasoning=citation_response.reasoning
+        )
+        
+        return updated_response
+    
+    def _validate_citation_response(self, response_text: str) -> Optional[Any]:
+        """
+        Phase 2: Validate and parse citation-first JSON response
+        
+        Args:
+            response_text: LLM response text
+            
+        Returns:
+            Parsed CitationFirstResponse or None if validation fails
+        """
+        from app.services.langchain_agents.schemas.citation_schema import CitationFirstResponse
+        import json
+        import re
+        
+        try:
+            # Extract JSON from response
+            json_match = re.search(r'\{.*\}', response_text, re.DOTALL)
+            if json_match:
+                json_text = json_match.group(0)
+            else:
+                json_text = response_text
+            
+            # Parse JSON
+            data = json.loads(json_text)
+            
+            # Validate with Pydantic
+            citation_response = CitationFirstResponse(**data)
+            return citation_response
+            
+        except Exception as e:
+            logger.warning(f"Failed to validate citation-first response: {e}")
+            return None
+    
+    def _format_sources_from_claims(
+        self,
+        claims: List[Any],
+        documents: List[Document]
+    ) -> List[Dict[str, Any]]:
+        """
+        Phase 2: Format sources from citation-first claims
+        
+        Args:
+            claims: List of Claim objects
+            documents: List of source documents
+            
+        Returns:
+            List of formatted source dictionaries
+        """
+        sources = []
+        doc_id_map = {doc.metadata.get("doc_id"): doc for doc in documents if doc.metadata.get("doc_id")}
+        
+        for claim in claims:
+            for source in claim.sources:
+                doc = doc_id_map.get(source.doc_id)
+                if doc:
+                    metadata = doc.metadata
+                    source_dict = {
+                        "file": metadata.get("source_file", "unknown"),
+                        "page": source.page or metadata.get("source_page"),
+                        "doc_id": source.doc_id,
+                        "char_start": source.char_start,
+                        "char_end": source.char_end,
+                        "score": source.score,
+                        "verified": source.verified,
+                        "snippet": source.snippet or doc.page_content[:200],
+                        "similarity_score": source.score
+                    }
+                    sources.append(source_dict)
+        
+        return sources
     
     def _validate_answer_grounding(
         self,
