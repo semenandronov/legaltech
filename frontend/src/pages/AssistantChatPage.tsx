@@ -160,7 +160,7 @@ const AssistantChatPage = () => {
             caseTitle={caseInfo?.title}
             documentCount={caseInfo?.documentCount}
             isLoadingCaseInfo={isLoadingCaseInfo}
-            onDocumentDrop={(documentFilename) => {
+            onDocumentDrop={() => {
               // Документ уже добавлен через attachments API, визуальная индикация через PromptInputAttachments
               // Уведомление не нужно, так как файл виден под полем ввода
             }}
