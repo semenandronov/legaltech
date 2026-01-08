@@ -479,30 +479,12 @@ async def get_file_content(
         else:
             file_full_path = os.path.join(config.UPLOAD_DIR, file.file_path)
         
-        # #region agent log
-        try:
-            upload_dir_exists = os.path.exists(config.UPLOAD_DIR) if config.UPLOAD_DIR else False
-            file_exists = os.path.exists(file_full_path) if file.file_path else False
-            upload_dir_list = os.listdir(config.UPLOAD_DIR) if upload_dir_exists and os.path.isdir(config.UPLOAD_DIR) else []
-            with open('/Users/semyon_andronov04/Desktop/C ДВ/.cursor/debug.log', 'a') as f:
-                f.write(json.dumps({"location": "cases.py:413", "message": "Checking file path", "data": {"file_path": file.file_path, "file_full_path": file_full_path, "upload_dir": config.UPLOAD_DIR, "upload_dir_exists": upload_dir_exists, "file_exists": file_exists, "file_type": file.file_type, "content_type": content_type, "upload_dir_files_count": len(upload_dir_list)}, "timestamp": int(time.time() * 1000), "sessionId": "debug-session", "runId": "pdf-debug", "hypothesisId": "A"}) + "\n")
-        except Exception as log_err:
-            logger.warning(f"Error in debug logging: {log_err}")
-        # #endregion
         
         if os.path.exists(file_full_path):
             try:
                 with open(file_full_path, 'rb') as f:
                     file_content = f.read()
                 
-                # #region agent log
-                try:
-                    with open('/Users/semyon_andronov04/Desktop/C ДВ/.cursor/debug.log', 'a') as f_log:
-                        file_size = len(file_content)
-                        first_bytes = file_content[:10].hex() if len(file_content) >= 10 else file_content.hex()
-                        f_log.write(json.dumps({"location": "cases.py:416", "message": "File read successfully", "data": {"file_size": file_size, "first_bytes_hex": first_bytes, "content_type": content_type, "is_pdf": first_bytes.startswith("255044462d") if len(file_content) >= 4 else False}, "timestamp": int(time.time() * 1000), "sessionId": "debug-session", "runId": "pdf-debug", "hypothesisId": "B"}) + "\n")
-                except: pass
-                # #endregion
                 
                 return Response(
                     content=file_content,
@@ -513,12 +495,6 @@ async def get_file_content(
                 )
             except Exception as e:
                 logger.error(f"Error reading original file {file_full_path}: {e}")
-                # #region agent log
-                try:
-                    with open('/Users/semyon_andronov04/Desktop/C ДВ/.cursor/debug.log', 'a') as f_log:
-                        f_log.write(json.dumps({"location": "cases.py:426", "message": "File read error", "data": {"error": str(e), "file_path": file_full_path}, "timestamp": int(time.time() * 1000), "sessionId": "debug-session", "runId": "pdf-debug", "hypothesisId": "C"}) + "\n")
-                except: pass
-                # #endregion
                 # Для PDF файлов не возвращаем текст при ошибке чтения
                 if file.file_type == "pdf":
                     logger.error(f"Failed to read PDF file {file_full_path}: {e}")
@@ -529,14 +505,6 @@ async def get_file_content(
                 # Fallback to text if file read fails (для не-PDF файлов)
     
     # Fallback: return text content if original file not available
-    # #region agent log
-    try:
-        with open('/Users/semyon_andronov04/Desktop/C ДВ/.cursor/debug.log', 'a') as f_log:
-            has_original_text = bool(file.original_text)
-            text_length = len(file.original_text) if file.original_text else 0
-            f_log.write(json.dumps({"location": "cases.py:453", "message": "Fallback to text content", "data": {"has_file_path": bool(file.file_path), "has_original_text": has_original_text, "text_length": text_length, "file_type": file.file_type}, "timestamp": int(time.time() * 1000), "sessionId": "debug-session", "runId": "pdf-debug", "hypothesisId": "D"}) + "\n")
-    except: pass
-    # #endregion
     
     # Для PDF файлов не возвращаем текст - это вызовет ошибку "Invalid PDF structure"
     # Вместо этого возвращаем ошибку 404 или пустой ответ
