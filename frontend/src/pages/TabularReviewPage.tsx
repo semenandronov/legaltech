@@ -543,6 +543,47 @@ const TabularReviewPage: React.FC = () => {
               caseId={caseId}
             />
           )}
+
+          {/* Name Dialog for creating new review */}
+          <Dialog open={showNameDialog} onOpenChange={setShowNameDialog}>
+            <DialogContent>
+              <DialogHeader>
+                <DialogTitle>Введите название таблицы</DialogTitle>
+              </DialogHeader>
+              <div className="py-4">
+                <Input
+                  label="Название таблицы"
+                  value={reviewName}
+                  onChange={(e: React.ChangeEvent<HTMLInputElement>) => setReviewName(e.target.value)}
+                  placeholder="Например: Анализ договоров"
+                  onKeyDown={(e: React.KeyboardEvent<HTMLInputElement>) => {
+                    if (e.key === 'Enter' && reviewName.trim()) {
+                      handleCreateReviewWithName()
+                    }
+                  }}
+                  autoFocus
+                />
+              </div>
+              <DialogFooter>
+                <Button
+                  variant="outline"
+                  onClick={() => {
+                    setShowNameDialog(false)
+                    setPendingFileIds([])
+                    setReviewName("")
+                  }}
+                >
+                  Отмена
+                </Button>
+                <Button
+                  onClick={handleCreateReviewWithName}
+                  disabled={!reviewName.trim()}
+                >
+                  Создать
+                </Button>
+              </DialogFooter>
+            </DialogContent>
+          </Dialog>
         </div>
       </div>
     )
