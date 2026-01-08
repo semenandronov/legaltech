@@ -817,33 +817,29 @@ async def stream_chat_response(
                     )
                 )
                 
-                # Build context from documents and collect sources
+                # Build context from documents and collect sources using RAGService.format_sources
                 context_parts = []
-                for i, doc in enumerate(documents[:5], 1):
-                    if hasattr(doc, 'page_content'):
-                        content = doc.page_content[:500] if doc.page_content else ""
-                        source = doc.metadata.get("source_file", "unknown") if hasattr(doc, 'metadata') and doc.metadata else "unknown"
-                        page = doc.metadata.get("page", None) if hasattr(doc, 'metadata') and doc.metadata else None
-                    elif isinstance(doc, dict):
-                        content = doc.get("content", "")[:500]
-                        source = doc.get("file", "unknown")
-                        page = doc.get("page", None)
-                    else:
-                        continue
+                if documents:
+                    # Use RAGService.format_sources for consistent source formatting
+                    formatted_sources = rag_service.format_sources(documents[:5])
+                    sources_list.extend(formatted_sources)
                     
-                    # Добавляем источник в список
-                    source_info = {"file": source}
-                    if page is not None:
-                        source_info["page"] = page
-                    if content:
-                        source_info["text_preview"] = content[:200]
-                    sources_list.append(source_info)
+                    # Build context from documents
+                    for i, doc in enumerate(documents[:5], 1):
+                        if hasattr(doc, 'page_content'):
+                            content = doc.page_content[:500] if doc.page_content else ""
+                            source = doc.metadata.get("source_file", "unknown") if hasattr(doc, 'metadata') and doc.metadata else "unknown"
+                        elif isinstance(doc, dict):
+                            content = doc.get("content", "")[:500]
+                            source = doc.get("file", "unknown")
+                        else:
+                            continue
                         
-                    context_parts.append(f"[Документ {i}: {source}]\n{content}")
+                        context_parts.append(f"[Документ {i}: {source}]\n{content}")
                 
                 context = "\n\n".join(context_parts)
                 if context:
-                    logger.info(f"RAG retrieved {len(documents)} documents for context")
+                    logger.info(f"RAG retrieved {len(documents)} documents for context, {len(sources_list)} sources formatted")
                 else:
                     logger.warning(f"RAG retrieved {len(documents)} documents but context is empty")
             except Exception as rag_error:
@@ -963,7 +959,10 @@ async def stream_chat_response(
                     
                     # Отправляем источники через SSE
                     if sources_list:
+                        logger.info(f"Sending {len(sources_list)} sources via SSE (fallback) for case {case_id}")
                         yield f"data: {json.dumps({'type': 'sources', 'sources': sources_list}, ensure_ascii=False)}\n\n"
+                    else:
+                        logger.warning(f"No sources to send (fallback) for case {case_id}, query: {question[:100]}")
                     
                     yield f"data: {json.dumps({'textDelta': ''})}\n\n"
                 else:
@@ -980,7 +979,10 @@ async def stream_chat_response(
                     
                     # Отправляем источники через SSE
                     if sources_list:
+                        logger.info(f"Sending {len(sources_list)} sources via SSE (fallback) for case {case_id}")
                         yield f"data: {json.dumps({'type': 'sources', 'sources': sources_list}, ensure_ascii=False)}\n\n"
+                    else:
+                        logger.warning(f"No sources to send (fallback) for case {case_id}, query: {question[:100]}")
                     
                     yield f"data: {json.dumps({'textDelta': ''})}\n\n"
             except Exception as stream_error:
