@@ -161,11 +161,8 @@ const AssistantChatPage = () => {
             documentCount={caseInfo?.documentCount}
             isLoadingCaseInfo={isLoadingCaseInfo}
             onDocumentDrop={(documentFilename) => {
-              // Добавляем имя документа в поле ввода
-              if (chatRef.current) {
-                // Можно добавить логику для добавления документа в сообщение
-                toast.info(`Документ "${documentFilename}" добавлен`)
-              }
+              // Документ уже добавлен через attachments API, визуальная индикация через PromptInputAttachments
+              // Уведомление не нужно, так как файл виден под полем ввода
             }}
             ref={chatRef}
           />

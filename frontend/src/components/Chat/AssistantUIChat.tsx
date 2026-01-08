@@ -26,6 +26,7 @@ import { Loader } from '../ai-elements/loader'
 import DocumentPreviewSheet from './DocumentPreviewSheet'
 import { SourceInfo } from '@/services/api'
 import { useOptionalProviderAttachments } from '../ai-elements/prompt-input'
+import { Plus } from 'lucide-react'
 
 interface Message {
   id: string
@@ -119,6 +120,8 @@ interface PromptInputWithDropProps {
 const PromptInputWithDrop = ({ actualCaseId, onDocumentDrop, handlePromptSubmit, isLoading }: PromptInputWithDropProps) => {
   const attachments = useOptionalProviderAttachments()
   const containerRef = useRef<HTMLDivElement | null>(null)
+  const [isDraggingOver, setIsDraggingOver] = useState(false)
+  const dragCounterRef = useRef(0)
   
   useEffect(() => {
     const container = containerRef.current
@@ -126,6 +129,30 @@ const PromptInputWithDrop = ({ actualCaseId, onDocumentDrop, handlePromptSubmit,
     
     const form = container.querySelector('form')
     if (!form) return
+    
+    const handleDragEnter = (e: DragEvent) => {
+      e.preventDefault()
+      e.stopPropagation()
+      dragCounterRef.current++
+      
+      // Проверяем, что это drag документа (не обычного файла)
+      const hasFiles = e.dataTransfer?.types?.includes('Files')
+      const hasText = e.dataTransfer?.types?.includes('text/plain')
+      
+      if (hasText || (hasFiles && !e.dataTransfer?.files || e.dataTransfer?.files.length === 0)) {
+        setIsDraggingOver(true)
+      }
+    }
+    
+    const handleDragLeave = (e: DragEvent) => {
+      e.preventDefault()
+      e.stopPropagation()
+      dragCounterRef.current--
+      
+      if (dragCounterRef.current === 0) {
+        setIsDraggingOver(false)
+      }
+    }
     
     const handleDragOver = (e: DragEvent) => {
       e.preventDefault()
@@ -135,6 +162,8 @@ const PromptInputWithDrop = ({ actualCaseId, onDocumentDrop, handlePromptSubmit,
     const handleDrop = async (e: DragEvent) => {
       e.preventDefault()
       e.stopPropagation()
+      setIsDraggingOver(false)
+      dragCounterRef.current = 0
       
       // Проверяем, есть ли файлы в dataTransfer
       if (e.dataTransfer?.files && e.dataTransfer.files.length > 0) {
@@ -173,39 +202,32 @@ const PromptInputWithDrop = ({ actualCaseId, onDocumentDrop, handlePromptSubmit,
               attachments.add([file])
               logger.info(`Файл "${file.name}" добавлен в attachments`)
               
-              if (onDocumentDrop) {
-                onDocumentDrop(documentFilename)
-              }
+              // Не вызываем onDocumentDrop, так как файл уже виден в attachments
             } else {
               logger.warn(`Документ "${documentFilename}" не найден в списке документов`)
-              if (onDocumentDrop) {
-                onDocumentDrop(documentFilename)
-              }
             }
           } catch (error) {
             logger.error('Ошибка при загрузке документа:', error)
-            if (onDocumentDrop) {
-              onDocumentDrop(documentFilename)
-            }
           }
-        } else if (documentFilename && onDocumentDrop) {
-          logger.warn(`Не удалось добавить документ: attachments=${!!attachments}, caseId=${actualCaseId}`)
-          onDocumentDrop(documentFilename)
         }
       }
     }
     
+    form.addEventListener('dragenter', handleDragEnter)
+    form.addEventListener('dragleave', handleDragLeave)
     form.addEventListener('dragover', handleDragOver)
     form.addEventListener('drop', handleDrop)
     
     return () => {
+      form.removeEventListener('dragenter', handleDragEnter)
+      form.removeEventListener('dragleave', handleDragLeave)
       form.removeEventListener('dragover', handleDragOver)
       form.removeEventListener('drop', handleDrop)
     }
   }, [attachments, actualCaseId, onDocumentDrop])
   
   return (
-    <div ref={containerRef} className="w-full">
+    <div ref={containerRef} className="w-full relative">
       <PromptInput
         onSubmit={(message, event) => handlePromptSubmit(message, event)}
         className="w-full [&_form_input-group]:border [&_form_input-group]:border-border [&_form_input-group]:rounded-lg [&_form_input-group]:bg-bg-elevated [&_form_input-group]:focus-within:border-border-strong [&_form_input-group]:transition-all [&_form_input-group]:hover:border-border-strong"
@@ -251,6 +273,28 @@ const PromptInputWithDrop = ({ actualCaseId, onDocumentDrop, handlePromptSubmit,
           </PromptInputAttachments>
         </div>
       </PromptInput>
+      
+      {/* Индикатор drag-and-drop */}
+      {isDraggingOver && (
+        <div
+          className="absolute inset-0 flex items-center justify-center pointer-events-none z-50 rounded-lg"
+          style={{
+            backgroundColor: 'rgba(34, 197, 94, 0.1)',
+            border: '2px dashed rgba(34, 197, 94, 0.5)',
+          }}
+        >
+          <div className="flex flex-col items-center justify-center gap-3">
+            <div
+              className="flex items-center justify-center w-16 h-16 rounded-full"
+              style={{
+                backgroundColor: 'rgba(34, 197, 94, 0.2)',
+              }}
+            >
+              <Plus className="w-8 h-8" style={{ color: 'rgb(34, 197, 94)' }} strokeWidth={3} />
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
