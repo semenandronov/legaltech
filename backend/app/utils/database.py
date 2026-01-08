@@ -328,28 +328,30 @@ def ensure_schema():
                                 "ON files(file_path) WHERE file_path IS NOT NULL"
                             )
                         )
-                
-                # Check and add file_content column if missing (Migration 014)
-                if "file_content" not in columns:
-                    logger.info("⚠️  Applying migration 014: adding file_content column to files table")
-                    try:
-                        with engine.begin() as conn:
-                            conn.execute(
-                                text(
-                                    "ALTER TABLE files "
-                                    "ADD COLUMN IF NOT EXISTS file_content BYTEA"
-                                )
-                            )
-                        logger.info("✅ Added file_content column to files table")
-                    except Exception as e:
-                        logger.error(f"❌ Failed to add file_content column: {e}", exc_info=True)
-                        raise
                         logger.info("✅ Created index on files.file_path")
                 except Exception as e:
                     logger.error(f"❌ Could not add file_path column to files table: {e}", exc_info=True)
                     raise
             else:
                 logger.debug("✅ file_path column already exists in files table")
+            
+            # Check and add file_content column if missing (Migration 014)
+            if "file_content" not in columns:
+                logger.info("⚠️  Applying migration 014: adding file_content column to files table")
+                try:
+                    with engine.begin() as conn:
+                        conn.execute(
+                            text(
+                                "ALTER TABLE files "
+                                "ADD COLUMN IF NOT EXISTS file_content BYTEA"
+                            )
+                        )
+                    logger.info("✅ Added file_content column to files table")
+                except Exception as e:
+                    logger.error(f"❌ Failed to add file_content column: {e}", exc_info=True)
+                    raise
+            else:
+                logger.debug("✅ file_content column already exists in files table")
     except Exception as e:
         logger.error(f"Error checking/adding file_path column: {e}", exc_info=True)
     
