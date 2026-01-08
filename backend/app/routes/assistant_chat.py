@@ -1017,29 +1017,6 @@ async def stream_chat_response(
                 
                     yield f"data: {json.dumps({'textDelta': ''})}\n\n"
             
-            # #region agent log
-            import json as json_lib
-            import re
-            with open('/Users/semyon_andronov04/Desktop/C ДВ/.cursor/debug.log', 'a') as f:
-                citation_pattern = r'\[(\d+)\]|\[Document\s+\d+\]|\[Документ\s+\d+\]'
-                citations_found = re.findall(citation_pattern, full_response_text)
-                f.write(json_lib.dumps({
-                    "sessionId": "debug-session",
-                    "runId": "run1",
-                    "hypothesisId": "A",
-                    "location": "assistant_chat.py:1015",
-                    "message": "Full response text analysis",
-                    "data": {
-                        "response_length": len(full_response_text),
-                        "response_preview": full_response_text[:500],
-                        "citations_found": citations_found,
-                        "has_bracket_numbers": bool(re.search(r'\[\d+\]', full_response_text)),
-                        "has_document_format": bool(re.search(r'\[Document\s+\d+\]|\[Документ\s+\d+\]', full_response_text))
-                    },
-                    "timestamp": int(__import__('time').time() * 1000)
-                }) + '\n')
-            # #endregion
-            
             # Обновляем существующее сообщение ассистента после завершения streaming
             if assistant_message_id:
                 try:
