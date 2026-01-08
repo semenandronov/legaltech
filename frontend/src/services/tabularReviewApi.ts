@@ -172,6 +172,11 @@ export interface CellDetails {
     selected_candidate_id?: number
     resolved_at?: string
   }
+  // Phase 4: Citation system fields for deep links
+  primary_source_doc_id?: string | null
+  primary_source_char_start?: number | null
+  primary_source_char_end?: number | null
+  verified_flag?: boolean | null
 }
 
 export interface CreateFromDescriptionPayload {
