@@ -67,30 +67,36 @@ async def log_requests(request: Request, call_next):
     """Log all HTTP requests"""
     start_time = datetime.utcnow()
     
-    # Log request
-    logger.info(
-        f"Request: {request.method} {request.url.path}",
-        extra={
-            "method": request.method,
-            "path": request.url.path,
-            "client": request.client.host if request.client else None,
-        }
-    )
+    # Skip logging HEAD requests (usually health checks)
+    is_head_request = request.method == "HEAD"
+    
+    if not is_head_request:
+        # Log request
+        logger.info(
+            f"Request: {request.method} {request.url.path}",
+            extra={
+                "method": request.method,
+                "path": request.url.path,
+                "client": request.client.host if request.client else None,
+            }
+        )
     
     try:
         response = await call_next(request)
         process_time = (datetime.utcnow() - start_time).total_seconds()
         
-        # Log response
-        logger.info(
-            f"Response: {request.method} {request.url.path} - {response.status_code} ({process_time:.3f}s)",
-            extra={
-                "method": request.method,
-                "path": request.url.path,
-                "status_code": response.status_code,
-                "process_time": process_time,
-            }
-        )
+        # Skip logging HEAD requests with 405 (Method Not Allowed is expected for HEAD)
+        if not (is_head_request and response.status_code == 405):
+            # Log response
+            logger.info(
+                f"Response: {request.method} {request.url.path} - {response.status_code} ({process_time:.3f}s)",
+                extra={
+                    "method": request.method,
+                    "path": request.url.path,
+                    "status_code": response.status_code,
+                    "process_time": process_time,
+                }
+            )
         
         return response
     except Exception as e:
