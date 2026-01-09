@@ -719,6 +719,25 @@ def evaluation_node(
         if current_step_id not in completed:
             completed.append(current_step_id)
         new_state["completed_steps"] = completed
+        
+        # Check for context overflow and summarize if needed (long-horizon tasks)
+        try:
+            from app.services.langchain_agents.context_summarizer import ContextSummarizer
+            
+            summarizer = ContextSummarizer()
+            if summarizer.check_overflow(new_state):
+                logger.info(
+                    f"[Evaluation] Context overflow detected for case {case_id}, "
+                    f"summarizing completed phases"
+                )
+                new_state = summarizer.summarize_completed_phases(
+                    state=new_state,
+                    case_id=case_id,
+                    rag_service=rag_service,
+                    db=db
+                )
+        except Exception as summarize_error:
+            logger.debug(f"[Evaluation] Context summarization error (non-critical): {summarize_error}")
     
     return new_state
 

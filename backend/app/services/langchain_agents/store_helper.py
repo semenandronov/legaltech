@@ -254,8 +254,114 @@ def load_large_result_from_store(
             logger.warning(f"Result not found in store: {namespace}/{key}")
             return None
     except Exception as e:
-        logger.error(f"Error loading {result_key} from store: {e}", exc_info=True)
+            logger.error(f"Error loading {result_key} from store: {e}", exc_info=True)
         return None
+
+
+def save_phase_summary(
+    state: AnalysisState,
+    case_id: str,
+    summary_data: Dict[str, Any],
+    completed_agents: list[str]
+) -> Dict[str, Any]:
+    """
+    Сохранить phase summary в Store.
+    
+    Args:
+        state: Current graph state
+        case_id: Case identifier
+        summary_data: Summary data to save
+        completed_agents: List of agent names that were summarized
+    
+    Returns:
+        Dictionary with reference to saved summary
+    """
+    try:
+        store = get_store_instance()
+        if not store:
+            logger.warning("Store not available, cannot save phase summary")
+            return {"stored": False, "error": "Store not available"}
+        
+        # Create key for phase summary
+        from datetime import datetime
+        timestamp = datetime.utcnow().isoformat()
+        summary_key = f"phase_summary_{case_id}_{int(datetime.utcnow().timestamp())}"
+        
+        # Save to store
+        save_to_store(
+            store=store,
+            namespace=f"case_{case_id}",
+            key=summary_key,
+            value={
+                "summary": summary_data,
+                "completed_agents": completed_agents,
+                "timestamp": timestamp,
+                "case_id": case_id
+            }
+        )
+        
+        return {
+            "stored": True,
+            "key": summary_key,
+            "namespace": f"case_{case_id}",
+            "timestamp": timestamp
+        }
+        
+    except Exception as e:
+        logger.error(f"Error saving phase summary to Store: {e}", exc_info=True)
+        return {"stored": False, "error": str(e)}
+
+
+def retrieve_phase_summaries(
+    state: AnalysisState,
+    case_id: str
+) -> list[Dict[str, Any]]:
+    """
+    Получить все phase summaries для кейса.
+    
+    Args:
+        state: Current graph state
+        case_id: Case identifier
+    
+    Returns:
+        List of summary dictionaries
+    """
+    try:
+        store = get_store_instance()
+        if not store:
+            logger.warning("Store not available, cannot retrieve phase summaries")
+            return []
+        
+        # Get summaries from store
+        # Note: Store API might need to be extended to list keys
+        # For now, try to load known summary keys from metadata
+        summaries = []
+        
+        # Check metadata for summary references
+        metadata = state.get("metadata", {})
+        phase_summaries_refs = metadata.get("phase_summaries", [])
+        
+        for ref in phase_summaries_refs:
+            if isinstance(ref, dict) and "summary_ref" in ref:
+                summary_ref = ref["summary_ref"]
+                key = summary_ref.get("key")
+                namespace = summary_ref.get("namespace", f"case_{case_id}")
+                
+                if key:
+                    summary_data = load_from_store(
+                        store=store,
+                        namespace=namespace,
+                        key=key
+                    )
+                    if summary_data:
+                        summaries.append(summary_data)
+        
+        return summaries
+        
+    except Exception as e:
+        logger.warning(f"Error retrieving phase summaries: {e}")
+        return []
+
 
 
 

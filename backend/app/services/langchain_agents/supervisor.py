@@ -1,5 +1,6 @@
 """Supervisor agent for LangGraph multi-agent system"""
-from typing import Dict, Any
+from typing import Dict, Any, Union, Literal
+from datetime import datetime
 from app.services.llm_factory import create_llm, create_llm_for_agent
 from app.services.langchain_agents.agent_factory import create_legal_agent
 from langchain_core.tools import Tool
@@ -12,6 +13,18 @@ from app.services.langchain_agents.graph_optimizer import (
     get_next_agent_with_priorities
 )
 import logging
+
+# Try to import Command (available in LangGraph 1.0+)
+try:
+    from langgraph.types import Command
+    COMMAND_AVAILABLE = True
+except ImportError:
+    COMMAND_AVAILABLE = False
+    # Fallback: create a simple Command-like class
+    class Command:
+        def __init__(self, goto: str, update: Dict[str, Any] = None):
+            self.goto = goto
+            self.update = update or {}
 
 logger = logging.getLogger(__name__)
 
@@ -57,7 +70,7 @@ def create_supervisor_agent() -> Any:
     return supervisor
 
 
-def route_to_agent(state: AnalysisState) -> str:
+def route_to_agent(state: AnalysisState, use_command: bool = True) -> Union[str, Command]:
     """
     Route function that determines which agent should handle the next task
     
@@ -92,6 +105,21 @@ def route_to_agent(state: AnalysisState) -> str:
     cached_route = route_cache.get(state)
     if cached_route:
         logger.debug(f"[Супервизор] {case_id}: Cache hit → {cached_route}")
+        if use_command and COMMAND_AVAILABLE:
+            return Command(
+                goto=cached_route,
+                update={
+                    "metadata": {
+                        **state.get("metadata", {}),
+                        "routing_decision": {
+                            "from": "supervisor",
+                            "to": cached_route,
+                            "reason": "cache_hit",
+                            "timestamp": datetime.now().isoformat()
+                        }
+                    }
+                }
+            )
         return cached_route
     
     # Попробовать Rule-based Router
@@ -102,6 +130,21 @@ def route_to_agent(state: AnalysisState) -> str:
         # Сохранить в кэш
         route_cache.set(state, rule_route)
         logger.info(f"[Супервизор] {case_id}: Rule-based → {rule_route}")
+        if use_command and COMMAND_AVAILABLE:
+            return Command(
+                goto=rule_route,
+                update={
+                    "metadata": {
+                        **state.get("metadata", {}),
+                        "routing_decision": {
+                            "from": "supervisor",
+                            "to": rule_route,
+                            "reason": "rule_based",
+                            "timestamp": datetime.now().isoformat()
+                        }
+                    }
+                }
+            )
         return rule_route
     
     # Fallback к LLM supervisor для сложных случаев
@@ -124,6 +167,22 @@ def route_to_agent(state: AnalysisState) -> str:
             
             if step_status == PlanStepStatus.PENDING.value and step_id not in completed_steps:
                 logger.info(f"[Супервизор] Using adapted plan: next step is {agent_name} (step_id: {step_id})")
+                if use_command and COMMAND_AVAILABLE:
+                    return Command(
+                        goto=agent_name,
+                        update={
+                            "metadata": {
+                                **state.get("metadata", {}),
+                                "routing_decision": {
+                                    "from": "supervisor",
+                                    "to": agent_name,
+                                    "reason": "adapted_plan",
+                                    "step_id": step_id,
+                                    "timestamp": datetime.now().isoformat()
+                                }
+                            }
+                        }
+                    )
                 return agent_name
         
         # All steps in plan completed, reset needs_replanning
@@ -139,6 +198,22 @@ def route_to_agent(state: AnalysisState) -> str:
         if not subagent_results:
             # Need to spawn subagents
             logger.info(f"[Супервизор] Routing to spawn_subagents for {len(subtasks)} subtasks")
+            if use_command and COMMAND_AVAILABLE:
+                return Command(
+                    goto="spawn_subagents",
+                    update={
+                        "metadata": {
+                            **state.get("metadata", {}),
+                            "routing_decision": {
+                                "from": "supervisor",
+                                "to": "spawn_subagents",
+                                "reason": "subtasks_pending",
+                                "subtasks_count": len(subtasks),
+                                "timestamp": datetime.now().isoformat()
+                            }
+                        }
+                    }
+                )
             return "spawn_subagents"
         else:
             # Subagents already executed, check if all completed
@@ -164,6 +239,23 @@ def route_to_agent(state: AnalysisState) -> str:
     
     if needs_deep_analysis:
         logger.info(f"[Супервизор] Routing to deep_analysis for complex task (complexity={complexity}, type={task_type})")
+        if use_command and COMMAND_AVAILABLE:
+            return Command(
+                goto="deep_analysis",
+                update={
+                    "metadata": {
+                        **state.get("metadata", {}),
+                        "routing_decision": {
+                            "from": "supervisor",
+                            "to": "deep_analysis",
+                            "reason": "complex_task",
+                            "complexity": complexity,
+                            "task_type": task_type,
+                            "timestamp": datetime.now().isoformat()
+                        }
+                    }
+                }
+            )
         return "deep_analysis"
     
     # Fall back to original analysis_types для LLM supervisor
@@ -178,6 +270,21 @@ def route_to_agent(state: AnalysisState) -> str:
             logger.info(f"[Супервизор] Retrying agent {agent_name} based on evaluation")
             # Сохранить в кэш
             route_cache.set(state, agent_name)
+            if use_command and COMMAND_AVAILABLE:
+                return Command(
+                    goto=agent_name,
+                    update={
+                        "metadata": {
+                            **state.get("metadata", {}),
+                            "routing_decision": {
+                                "from": "supervisor",
+                                "to": agent_name,
+                                "reason": "retry_after_evaluation",
+                                "timestamp": datetime.now().isoformat()
+                            }
+                        }
+                    }
+                )
             return agent_name
     
     # LLM Supervisor для сложных случаев (используем GigaChat Lite для простых случаев)
@@ -361,18 +468,40 @@ def route_to_agent(state: AnalysisState) -> str:
         route_cache.set(state, next_agent)
     
     # Сохраняем reasoning в метаданные для аудита
-    if "metadata" not in state:
-        state["metadata"] = {}
-    if "supervisor_reasoning" not in state["metadata"]:
-        state["metadata"]["supervisor_reasoning"] = []
-    state["metadata"]["supervisor_reasoning"].append({
-        "step": len(state["metadata"]["supervisor_reasoning"]) + 1,
+    routing_metadata = {
+        "step": len(state.get("metadata", {}).get("supervisor_reasoning", [])) + 1,
         "reasoning": " | ".join(reasoning_parts) if reasoning_parts else "LLM supervisor decision",
         "next_agent": next_agent,
         "completed": list(completed),
         "requested": list(requested_types),
         "model_used": supervisor_model,
-        "routing_method": "llm_supervisor"
-    })
+        "routing_method": "llm_supervisor",
+        "timestamp": datetime.now().isoformat()
+    }
     
-    return next_agent if next_agent else "supervisor"
+    if "metadata" not in state:
+        state["metadata"] = {}
+    if "supervisor_reasoning" not in state["metadata"]:
+        state["metadata"]["supervisor_reasoning"] = []
+    state["metadata"]["supervisor_reasoning"].append(routing_metadata)
+    
+    # Return Command or string based on use_command flag
+    final_agent = next_agent if next_agent else "supervisor"
+    
+    if use_command and COMMAND_AVAILABLE:
+        return Command(
+            goto=final_agent,
+            update={
+                "metadata": {
+                    **state.get("metadata", {}),
+                    "routing_decision": {
+                        "from": "supervisor",
+                        "to": final_agent,
+                        "reason": routing_metadata.get("reasoning", "llm_supervisor"),
+                        "timestamp": datetime.now().isoformat()
+                    }
+                }
+            }
+        )
+    
+    return final_agent

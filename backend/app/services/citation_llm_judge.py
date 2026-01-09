@@ -22,8 +22,8 @@ class CitationLLMJudge:
         """
         self.llm = llm
         if not self.llm:
-            from app.services.llm_factory import create_llm
-            self.llm = create_llm(temperature=0.1)
+            from app.services.llm_factory import create_judge_llm
+            self.llm = create_judge_llm()  # temperature=0.0 автоматически
     
     def judge_citation(
         self,

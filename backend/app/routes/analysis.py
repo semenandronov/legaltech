@@ -1359,3 +1359,37 @@ async def get_related_documents(
         "total_related": len(related_files)
     }
 
+
+@router.get("/{case_id}/cost-stats")
+async def get_cost_statistics(
+    case_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """
+    Возвращает статистику расходов по кейсу.
+    
+    Показывает стоимость использования LLM для каждого агента
+    и общую стоимость анализа.
+    """
+    # Verify case ownership
+    case = db.query(Case).filter(
+        Case.id == case_id,
+        Case.user_id == current_user.id
+    ).first()
+    
+    if not case:
+        raise HTTPException(status_code=404, detail="Дело не найдено")
+    
+    try:
+        from app.services.langchain_agents.metrics_collector import MetricsCollector
+        
+        metrics_collector = MetricsCollector(db)
+        cost_stats = metrics_collector.get_cost_statistics(case_id)
+        
+        return cost_stats
+        
+    except Exception as e:
+        logger.error(f"Error getting cost statistics for case {case_id}: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Ошибка при получении статистики расходов")
+

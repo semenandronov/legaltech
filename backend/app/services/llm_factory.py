@@ -198,6 +198,79 @@ def create_llm_for_agent(
     return llm
 
 
+def create_legal_llm(
+    model: Optional[str] = None,
+    use_rate_limiting: bool = True,
+    **kwargs
+) -> Any:
+    """
+    Create LLM for legal content generation (temperature=0.0 ALWAYS).
+    
+    Use this for ALL legal RAG responses and agent outputs.
+    Ensures deterministic, factual outputs without hallucinations.
+    
+    Args:
+        model: Model name (optional, uses default from config)
+        use_rate_limiting: Whether to wrap with rate limiter (default: True)
+        **kwargs: Additional arguments passed to create_llm
+    
+    Returns:
+        LLM instance (ChatGigaChat) with temperature=0.0
+    """
+    return create_llm(
+        model=model,
+        temperature=config.LLM_TEMPERATURE_LEGAL,  # 0.0
+        use_rate_limiting=use_rate_limiting,
+        **kwargs
+    )
+
+
+def create_verifier_llm(
+    use_rate_limiting: bool = True,
+    **kwargs
+) -> Any:
+    """
+    Create LLM for citation verification (temperature=0.0).
+    
+    Use this for verifying that citations match source documents.
+    
+    Args:
+        use_rate_limiting: Whether to wrap with rate limiter (default: True)
+        **kwargs: Additional arguments passed to create_llm
+    
+    Returns:
+        LLM instance (ChatGigaChat) with temperature=0.0
+    """
+    return create_llm(
+        temperature=config.LLM_TEMPERATURE_VERIFIER,  # 0.0
+        use_rate_limiting=use_rate_limiting,
+        **kwargs
+    )
+
+
+def create_judge_llm(
+    use_rate_limiting: bool = True,
+    **kwargs
+) -> Any:
+    """
+    Create LLM for LLM-as-Judge evaluation (temperature=0.0).
+    
+    Use this for evaluating whether claims are supported by sources.
+    
+    Args:
+        use_rate_limiting: Whether to wrap with rate limiter (default: True)
+        **kwargs: Additional arguments passed to create_llm
+    
+    Returns:
+        LLM instance (ChatGigaChat) with temperature=0.0
+    """
+    return create_llm(
+        temperature=config.LLM_TEMPERATURE_JUDGE,  # 0.0
+        use_rate_limiting=use_rate_limiting,
+        **kwargs
+    )
+
+
 def clear_llm_cache():
     """Clear the LLM instance cache (useful for testing or memory management)"""
     global _llm_cache

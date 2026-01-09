@@ -1,10 +1,18 @@
 """Graph optimizer utilities for LangGraph - оптимизация conditional edges и роутинга"""
-from typing import Dict, Any, List, Optional, Callable
+from typing import Dict, Any, List, Optional, Callable, Union
 from functools import lru_cache
 from app.services.langchain_agents.state import AnalysisState
 import logging
 import hashlib
 import json
+
+# Try to import Command
+try:
+    from langgraph.types import Command
+    COMMAND_AVAILABLE = True
+except ImportError:
+    COMMAND_AVAILABLE = False
+    Command = None
 
 logger = logging.getLogger(__name__)
 
@@ -121,37 +129,50 @@ class AgentPriorities:
 
 
 def optimize_route_function(
-    base_route_func: Callable[[AnalysisState], str],
+    base_route_func: Callable[[AnalysisState], Union[str, Any]],  # Can return str or Command
     enable_cache: bool = True,
     enable_priorities: bool = True
-) -> Callable[[AnalysisState], str]:
+) -> Callable[[AnalysisState], Union[str, Any]]:
     """
     Обернуть функцию роутинга с оптимизациями (кэширование, приоритеты)
     
+    Поддерживает как строки, так и Command для обратной совместимости.
+    
     Args:
-        base_route_func: Базовая функция роутинга
+        base_route_func: Базовая функция роутинга (может возвращать str или Command)
         enable_cache: Включить кэширование решений
         enable_priorities: Использовать приоритеты агентов
         
     Returns:
-        Оптимизированная функция роутинга
+        Оптимизированная функция роутинга (возвращает str или Command)
     """
     route_cache = RouteCache(max_size=100) if enable_cache else None
     
-    def optimized_route(state: AnalysisState) -> str:
-        # Проверяем кэш
+    def optimized_route(state: AnalysisState) -> Union[str, Any]:
+        # Проверяем кэш (кэш работает со строками)
         if route_cache:
             cached_route = route_cache.get(state)
             if cached_route is not None:
                 logger.debug(f"[OptimizedRoute] Using cached route: {cached_route}")
+                # Если base_route_func использует Command, нужно вернуть Command
+                # Но кэш хранит только строку, поэтому создаем Command если нужно
+                # Проверим, использует ли base_route_func Command, вызвав его с use_command=False для проверки
+                # Но это сложно, поэтому просто вернем строку - graph.py обработает и строку, и Command
                 return cached_route
         
         # Вызываем базовую функцию роутинга
-        route = base_route_func(state)
+        # Check if function accepts use_command parameter
+        import inspect
+        sig = inspect.signature(base_route_func)
+        if "use_command" in sig.parameters:
+            route = base_route_func(state, use_command=COMMAND_AVAILABLE)
+        else:
+            route = base_route_func(state)
         
-        # Сохраняем в кэш
+        # Сохраняем в кэш (извлекаем строку если это Command)
         if route_cache:
-            route_cache.set(state, route)
+            route_str = route.goto if COMMAND_AVAILABLE and isinstance(route, Command) else route
+            route_cache.set(state, route_str)
         
         logger.debug(f"[OptimizedRoute] Computed route: {route}")
         return route

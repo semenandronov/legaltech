@@ -12,7 +12,7 @@ from app.models.user import User
 from app.services.rag_service import RAGService
 from app.services.document_processor import DocumentProcessor
 from app.services.langchain_memory import MemoryService
-from app.services.llm_factory import create_llm
+from app.services.llm_factory import create_llm, create_legal_llm
 from app.services.langchain_agents import PlanningAgent
 from app.services.langchain_agents.advanced_planning_agent import AdvancedPlanningAgent
 from app.services.analysis_service import AnalysisService
@@ -944,14 +944,14 @@ async def stream_chat_response(
 {f"При цитировании информации из веб-поиска указывай источник в формате: [Название источника](URL) или просто название источника, если URL недоступен." if web_search_context else ""}{f" При цитировании статей кодексов или норм права указывай источник: [Название статьи](URL) или просто название источника." if legal_research_context else ""}"""
 
             # Initialize LLM
-            # Используем GigaChat SDK через create_llm()
+            # Используем create_legal_llm() для детерминистических юридических ответов (temperature=0.0)
             # При deep_think=True используем GigaChat-Pro, иначе модель по умолчанию (GigaChat)
             if deep_think:
-                llm = create_llm(temperature=0.7, model="GigaChat-Pro")
-                logger.info(f"Using GigaChat-Pro for deep thinking mode. Context length: {len(context)} chars, History messages: {len(chat_history)}, Web search: {web_search_successful}, Legal research: {legal_research_successful}")
+                llm = create_legal_llm(model="GigaChat-Pro")  # temperature=0.0 автоматически
+                logger.info(f"Using GigaChat-Pro for deep thinking mode (temperature=0.0). Context length: {len(context)} chars, History messages: {len(chat_history)}, Web search: {web_search_successful}, Legal research: {legal_research_successful}")
             else:
-                llm = create_llm(temperature=0.7)  # Использует config.GIGACHAT_MODEL (обычно "GigaChat")
-                logger.info(f"Using standard GigaChat. Context length: {len(context)} chars, History messages: {len(chat_history)}")
+                llm = create_legal_llm()  # temperature=0.0 автоматически, использует config.GIGACHAT_MODEL (обычно "GigaChat")
+                logger.info(f"Using standard GigaChat (temperature=0.0). Context length: {len(context)} chars, History messages: {len(chat_history)}")
             
             # Stream response
             # Преобразуем строку prompt в список сообщений для GigaChat

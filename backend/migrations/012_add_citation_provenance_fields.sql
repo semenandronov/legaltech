@@ -32,3 +32,6 @@ COMMENT ON COLUMN document_chunks.source_url IS 'URL для внешних ис�
 COMMENT ON COLUMN document_chunks.trust_score IS 'Доверенность источника (0.0-1.0)';
 
 
+
+
+

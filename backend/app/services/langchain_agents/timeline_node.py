@@ -1,7 +1,7 @@
 """Timeline agent node for LangGraph"""
 from typing import Dict, Any, List
 from datetime import datetime
-from app.services.llm_factory import create_llm
+from app.services.llm_factory import create_llm, create_legal_llm
 from app.services.langchain_agents.agent_factory import create_legal_agent, safe_agent_invoke
 from app.config import config
 from app.services.langchain_agents.state import AnalysisState
@@ -142,8 +142,8 @@ def timeline_agent_node(
         tools = get_tools_with_runtime(state, db, rag_service, critical_only=False)
         logger.debug(f"Timeline agent: got {len(tools)} tools with runtime injection")
         
-        # Initialize LLM через factory (GigaChat)
-        llm = create_llm(temperature=0.1)
+        # Initialize LLM через factory (GigaChat) - temperature=0.0 для детерминизма
+        llm = create_legal_llm()
         
         # Initialize Memory Manager for context between requests
         from app.services.langchain_agents.memory_manager import AgentMemoryManager

@@ -766,6 +766,203 @@ class RAGService:
         
         return answer, sources
     
+    def generate_with_sources_structured(
+        self,
+        case_id: str,
+        query: str,
+        k: int = 5,
+        db: Optional[Session] = None,
+        history: Optional[List[Dict[str, str]]] = None,
+    ) -> Tuple[Any, List[Dict[str, Any]]]:
+        """
+        Generate RAG response with STRUCTURED output (mandatory citations).
+        
+        Uses Pydantic schemas to enforce mandatory citations for all claims.
+        
+        Args:
+            case_id: Case identifier
+            query: User query
+            k: Number of chunks to retrieve
+            db: Optional database session
+            history: Optional chat history
+            
+        Returns:
+            Tuple of (LegalRAGResponse, sources_list)
+        """
+        from app.services.langchain_agents.schemas.rag_response_schema import (
+            LegalRAGResponse, RAGClaim, RAGCitation, Confidence
+        )
+        from app.services.llm_factory import create_legal_llm
+        from langchain_core.output_parsers import PydanticOutputParser
+        from langchain_core.messages import HumanMessage, SystemMessage, AIMessage
+        
+        # Check conversational questions first
+        query_lower = query.lower().strip()
+        conversational_questions = {
+            "как дела": "Спасибо, всё хорошо! Готов помочь вам с анализом документов дела. Задайте вопрос о документах, и я найду нужную информацию.",
+            "как поживаешь": "Спасибо, отлично! Чем могу помочь с вашим делом?",
+            "привет": "Привет! Готов помочь с анализом документов. Что вас интересует?",
+            "здравствуй": "Здравствуйте! Чем могу помочь с вашим делом?",
+        }
+        
+        for key, response in conversational_questions.items():
+            if query_lower == key or query_lower.startswith(key + " "):
+                # Return structured response for conversational
+                return LegalRAGResponse(
+                    answer=response,
+                    claims=[RAGClaim(
+                        text=response,
+                        citations=[RAGCitation(
+                            doc_id="system",
+                            quote=response[:50],
+                            doc_name="System"
+                        )],
+                        confidence=Confidence.HIGH
+                    )],
+                    confidence_overall=Confidence.HIGH
+                ), []
+        
+        # Retrieve documents
+        try:
+            documents = self.retrieve_context(case_id, query, k=k, db=db)
+        except Exception as e:
+            logger.error(f"Error retrieving documents for structured RAG: {e}", exc_info=True)
+            documents = []
+        
+        if not documents:
+            # Return empty structured response
+            return LegalRAGResponse(
+                answer="Не найдено релевантных документов для ответа на вопрос.",
+                claims=[RAGClaim(
+                    text="Не найдено релевантных документов",
+                    citations=[RAGCitation(
+                        doc_id="none",
+                        quote="Не найдено документов",
+                        doc_name="None"
+                    )],
+                    confidence=Confidence.LOW
+                )],
+                confidence_overall=Confidence.LOW
+            ), []
+        
+        # Format context from documents
+        context = self.format_sources_for_prompt(documents)
+        
+        # Create document index map for citations
+        doc_index_map = {}
+        for i, doc in enumerate(documents, 1):
+            doc_id = doc.metadata.get("doc_id") or doc.metadata.get("source_file", f"doc_{i}")
+            doc_index_map[str(i)] = {
+                "doc": doc,
+                "doc_id": doc_id,
+                "doc_name": doc.metadata.get("source_file", "unknown")
+            }
+        
+        # Build prompt with format instructions
+        parser = PydanticOutputParser(pydantic_object=LegalRAGResponse)
+        format_instructions = parser.get_format_instructions()
+        
+        system_prompt = f"""Ты - эксперт по юридическому анализу документов.
+
+Контекст из документов дела:
+{context}
+
+КРИТИЧЕСКИ ВАЖНО:
+1. Каждый claim ДОЛЖЕН иметь минимум 1 citation с точной цитатой (quote)
+2. Цитаты (quote) ДОЛЖНЫ точно соответствовать тексту в контексте
+3. Используй doc_id из метаданных документов (или порядковый номер как doc_id: "1", "2", и т.д.)
+4. Не выдумывай цитаты - только реальные фрагменты из контекста
+5. Минимальная длина цитаты - 10 символов
+
+{format_instructions}
+
+Сформулируй ответ и разбей его на claims с обязательными citations."""
+        
+        # Create LLM with structured output
+        llm = create_legal_llm()  # temperature=0.0
+        
+        # Prepare messages
+        messages = [SystemMessage(content=system_prompt)]
+        
+        # Add history
+        if history:
+            for msg in history:
+                if msg.get("role") == "user":
+                    messages.append(HumanMessage(content=msg.get("content", "")))
+                elif msg.get("role") == "assistant":
+                    messages.append(AIMessage(content=msg.get("content", "")))
+        
+        # Add current query
+        user_message = f"Вопрос: {query}\n\nОтветь, разбив ответ на claims с обязательными citations."
+        messages.append(HumanMessage(content=user_message))
+        
+        try:
+            # Try structured output if supported
+            if hasattr(llm, 'with_structured_output'):
+                structured_llm = llm.with_structured_output(LegalRAGResponse)
+                structured_response = structured_llm.invoke(messages)
+            else:
+                # Fallback: parse JSON from response
+                response = llm.invoke(messages)
+                response_text = response.content if hasattr(response, 'content') else str(response)
+                structured_response = parser.parse(response_text)
+            
+            # Verify citations with LLM-as-Judge if enabled
+            if config.RAG_CITATION_VERIFICATION_IN_PIPELINE:
+                from app.services.citation_llm_judge import CitationLLMJudge
+                judge = CitationLLMJudge()
+                
+                for claim in structured_response.claims:
+                    for citation in claim.citations:
+                        # Find source document
+                        source_doc = None
+                        for doc in documents:
+                            doc_id = doc.metadata.get("doc_id") or doc.metadata.get("source_file", "")
+                            if doc_id == citation.doc_id or citation.doc_id in doc_id:
+                                source_doc = doc
+                                break
+                        
+                        if source_doc:
+                            # Verify citation
+                            judgment = judge.judge_citation(
+                                claim_text=claim.text,
+                                source_text=source_doc.page_content,
+                                source_metadata=source_doc.metadata
+                            )
+                            if not judgment.get('verified', False):
+                                logger.warning(
+                                    f"Citation not verified for claim: {claim.text[:50]}... "
+                                    f"confidence: {judgment.get('confidence', 0.0)}"
+                                )
+                                # Mark claim as low confidence if citation not verified
+                                claim.confidence = Confidence.LOW
+                        else:
+                            logger.warning(f"Source document not found for citation doc_id: {citation.doc_id}")
+                            claim.confidence = Confidence.LOW
+            
+            # Format sources for return
+            sources = self.format_sources(documents)
+            
+            return structured_response, sources
+            
+        except Exception as e:
+            logger.error(f"Structured RAG generation failed: {e}", exc_info=True)
+            # Fallback to regular generation
+            answer, sources = self.generate_with_sources(
+                case_id, query, k=k, db=db, history=history, use_citation_first=False
+            )
+            # Convert to structured format (with warning)
+            return LegalRAGResponse(
+                answer=answer,
+                claims=[RAGClaim(
+                    text=answer[:200] + "..." if len(answer) > 200 else answer,
+                    citations=[],  # Empty - fallback mode
+                    confidence=Confidence.LOW
+                )],
+                confidence_overall=Confidence.LOW,
+                reasoning="Fallback mode: structured generation failed"
+            ), sources
+    
     def _generate_citation_first(
         self,
         case_id: str,

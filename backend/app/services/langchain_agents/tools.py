@@ -417,6 +417,71 @@ def retrieve_documents_iterative_tool(query: str, case_id: str, k: int = 20, doc
         return f"Error retrieving documents with iterative search: {str(e)}"
 
 
+def batch_retrieve_documents(
+    queries: List[str],
+    case_id: str,
+    k: int = 20,
+    db=None,
+    **kwargs
+) -> List[List[Document]]:
+    """
+    Batch retrieve documents for multiple queries in parallel.
+    
+    This function uses BatchRAGService to execute multiple search queries
+    in parallel, significantly improving performance when multiple queries
+    need to be executed.
+    
+    Args:
+        queries: List of search queries
+        case_id: Case identifier
+        k: Number of documents per query
+        db: Optional database session
+        **kwargs: Additional parameters
+    
+    Returns:
+        List of document lists (one per query)
+    """
+    try:
+        from app.services.langchain_agents.batch_rag_service import BatchRAGService
+        
+        # Get RAG service from runtime or global
+        runtime: Optional[ToolRuntime] = kwargs.get("runtime")
+        rag_service = None
+        
+        if runtime and runtime.store and runtime.store.rag_service:
+            rag_service = runtime.store.rag_service
+        elif _rag_service:
+            rag_service = _rag_service
+        else:
+            raise ValueError("RAG service not available")
+        
+        # Create batch service and execute
+        batch_service = BatchRAGService(rag_service, enable_cache=True)
+        
+        # Run async batch search
+        import asyncio
+        try:
+            loop = asyncio.get_event_loop()
+            if loop.is_running():
+                # If loop is already running, create task
+                task = asyncio.create_task(batch_service.batch_search(queries, case_id, k, db))
+                # Wait for completion (this might block, but it's better than failing)
+                results = loop.run_until_complete(task)
+            else:
+                results = loop.run_until_complete(batch_service.batch_search(queries, case_id, k, db))
+        except RuntimeError:
+            # No event loop, create new one
+            results = asyncio.run(batch_service.batch_search(queries, case_id, k, db))
+        
+        logger.info(f"Batch retrieved documents for {len(queries)} queries, got {len(results)} result sets")
+        return results
+        
+    except Exception as e:
+        logger.error(f"Error in batch_retrieve_documents: {e}", exc_info=True)
+        # Fallback: return empty results
+        return [[] for _ in queries]
+
+
 def get_all_tools() -> List:
     """Get all available tools including official legal sources"""
     from app.services.langchain_agents.legal_research_tool import get_legal_research_tools

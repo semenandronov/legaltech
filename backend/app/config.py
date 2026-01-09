@@ -46,6 +46,12 @@ class Config:
     RAG_REQUIRE_SOURCES: bool = os.getenv("RAG_REQUIRE_SOURCES", "true").lower() == "true"  # Require source citations in answers
     RAG_ALLOW_UNCERTAINTY: bool = os.getenv("RAG_ALLOW_UNCERTAINTY", "true").lower() == "true"  # Allow model to express uncertainty when information is insufficient
     
+    # Structured RAG Output Settings
+    RAG_USE_STRUCTURED_OUTPUT: bool = os.getenv("RAG_USE_STRUCTURED_OUTPUT", "true").lower() == "true"  # Use structured JSON output with mandatory citations
+    RAG_MANDATORY_CITATIONS: bool = os.getenv("RAG_MANDATORY_CITATIONS", "true").lower() == "true"  # Require citations for all claims (enforced by schema)
+    RAG_MIN_CITATION_LENGTH: int = int(os.getenv("RAG_MIN_CITATION_LENGTH", "10"))  # Minimum quote length in characters
+    RAG_CITATION_VERIFICATION_IN_PIPELINE: bool = os.getenv("RAG_CITATION_VERIFICATION_IN_PIPELINE", "false").lower() == "true"  # Verify citations with LLM-as-Judge in pipeline
+    
     # Citation System Settings (Phase 2, 3, 5)
     CITATION_FIRST_ENABLED: bool = os.getenv("CITATION_FIRST_ENABLED", "false").lower() == "true"  # Enable citation-first generation
     CITATION_VERIFICATION_ENABLED: bool = os.getenv("CITATION_VERIFICATION_ENABLED", "true").lower() == "true"  # Enable extended citation verification
@@ -56,7 +62,7 @@ class Config:
     # Multi-Agent System Settings
     AGENT_ENABLED: bool = os.getenv("AGENT_ENABLED", "true").lower() == "true"
     AGENT_MAX_PARALLEL: int = int(os.getenv("AGENT_MAX_PARALLEL", "5"))  # Max parallel agents (increased from 3)
-    AGENT_TIMEOUT: int = int(os.getenv("AGENT_TIMEOUT", "120"))  # Default timeout per agent in seconds (reduced from 300)
+    AGENT_TIMEOUT: int = int(os.getenv("AGENT_TIMEOUT", "60"))  # Default timeout per agent in seconds (optimized for faster responses)
     AGENT_RETRY_COUNT: int = int(os.getenv("AGENT_RETRY_COUNT", "2"))  # Retry count on failure
     
     # Rate Limiting Settings (Phase 4.1)
@@ -76,6 +82,12 @@ class Config:
     HUMAN_FEEDBACK_TIMEOUT: int = int(os.getenv("HUMAN_FEEDBACK_TIMEOUT", "300"))  # Timeout for human feedback in seconds (default: 5 minutes)
     HUMAN_FEEDBACK_MAX_ATTEMPTS: int = int(os.getenv("HUMAN_FEEDBACK_MAX_ATTEMPTS", "3"))  # Maximum attempts before skipping
     HUMAN_FEEDBACK_FALLBACK_STRATEGY: str = os.getenv("HUMAN_FEEDBACK_FALLBACK_STRATEGY", "skip")  # Fallback strategy: "skip", "retry", "abort"
+    
+    # LLM Temperature Settings (CRITICAL for legal determinism)
+    LLM_TEMPERATURE_LEGAL: float = float(os.getenv("LLM_TEMPERATURE_LEGAL", "0.0"))  # ZERO for legal answers (deterministic)
+    LLM_TEMPERATURE_VERIFIER: float = float(os.getenv("LLM_TEMPERATURE_VERIFIER", "0.0"))  # ZERO for citation verification
+    LLM_TEMPERATURE_JUDGE: float = float(os.getenv("LLM_TEMPERATURE_JUDGE", "0.0"))  # ZERO for LLM-as-judge
+    LLM_TEMPERATURE_CREATIVE: float = float(os.getenv("LLM_TEMPERATURE_CREATIVE", "0.3"))  # Higher temperature for creative tasks
     
     # Yandex Cloud AI Studio (GPT + Embeddings + Vector Store)
     YANDEX_API_KEY: str = os.getenv("YANDEX_API_KEY", "")

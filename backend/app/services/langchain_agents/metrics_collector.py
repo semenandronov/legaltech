@@ -88,7 +88,8 @@ class MetricsCollector:
         agent_type: str,
         metrics: Dict[str, Any],
         model_info: Optional[Dict[str, Any]] = None,
-        cache_stats: Optional[Dict[str, Any]] = None
+        cache_stats: Optional[Dict[str, Any]] = None,
+        **kwargs
     ) -> Optional[int]:
         """
         Record metrics for an agent execution
@@ -126,15 +127,40 @@ class MetricsCollector:
                     "rule_based_router_used": cache_stats.get("rule_based_router_used", False)
                 }
             
-            # Вычислить стоимость (приблизительно)
-            if model_info and "tokens_used" in metrics:
-                tokens_used = metrics.get("tokens_used", 0)
+            # Extract cost tracking from kwargs if available
+            # This comes from CostTrackingMiddleware
+            cost_tracking = kwargs.get("cost_tracking_data")
+            
+            # Extract token usage from cost tracking or metrics
+            input_tokens = 0
+            output_tokens = 0
+            total_tokens = metrics.get("tokens_used", 0)
+            estimated_cost = None
+            
+            if cost_tracking:
+                # Use precise data from CostTrackingMiddleware
+                input_tokens = cost_tracking.get("total_input_tokens", 0)
+                output_tokens = cost_tracking.get("total_output_tokens", 0)
+                estimated_cost = cost_tracking.get("total_cost", 0.0)
+                total_tokens = cost_tracking.get("total_tokens", input_tokens + output_tokens)
+            elif model_info and total_tokens > 0:
+                # Fallback: approximate calculation
                 model_type = model_info.get("type", "pro")
                 # Приблизительные цены (нужно обновить на реальные)
                 cost_per_1k_tokens = 0.01 if model_type == "lite" else 0.05
-                estimated_cost = (tokens_used / 1000) * cost_per_1k_tokens
+                estimated_cost = (total_tokens / 1000) * cost_per_1k_tokens
+                # Estimate input/output split (typically 70/30 for most tasks)
+                input_tokens = int(total_tokens * 0.7)
+                output_tokens = total_tokens - input_tokens
+            
+            # Add token breakdown and cost to metrics
+            extended_metrics["input_tokens"] = input_tokens
+            extended_metrics["output_tokens"] = output_tokens
+            extended_metrics["total_tokens"] = total_tokens
+            if estimated_cost is not None:
                 extended_metrics["estimated_cost"] = estimated_cost
-                extended_metrics["cost_per_1k_tokens"] = cost_per_1k_tokens
+                if cost_tracking:
+                    extended_metrics["cost_per_1k_tokens"] = cost_tracking.get("cost_per_1k_tokens")
             
             # Insert metrics
             result = self.db.execute(
@@ -263,11 +289,22 @@ class MetricsCollector:
                 # Aggregate totals
                 total_llm_calls += metrics.get("llm_calls", 0)
                 total_tool_calls += metrics.get("tool_calls", 0)
-                total_tokens += metrics.get("tokens_used", 0)
+                total_tokens += metrics.get("tokens_used", 0) or metrics.get("total_tokens", 0)
                 total_errors += metrics.get("error_count", 0)
                 exec_time = metrics.get("execution_time")
                 if exec_time:
                     total_execution_time += exec_time
+            
+            # Calculate total cost from metrics
+            total_cost = 0.0
+            total_input_tokens = 0
+            total_output_tokens = 0
+            
+            for agent_type, data in aggregated.items():
+                agent_metrics = data["latest"]
+                total_cost += agent_metrics.get("estimated_cost", 0.0)
+                total_input_tokens += agent_metrics.get("input_tokens", 0)
+                total_output_tokens += agent_metrics.get("output_tokens", 0)
             
             return {
                 "case_id": case_id,
@@ -276,6 +313,9 @@ class MetricsCollector:
                     "llm_calls": total_llm_calls,
                     "tool_calls": total_tool_calls,
                     "tokens_used": total_tokens,
+                    "input_tokens": total_input_tokens,
+                    "output_tokens": total_output_tokens,
+                    "estimated_cost": total_cost,
                     "error_count": total_errors,
                     "total_execution_time": total_execution_time,
                     "agent_count": len(aggregated)
@@ -367,5 +407,51 @@ class MetricsCollector:
                 "agent_type": agent_type,
                 "count": 0,
                 "averages": {}
+            }
+    
+    def get_cost_statistics(self, case_id: str) -> Dict[str, Any]:
+        """
+        Get cost statistics for a case.
+        
+        Args:
+            case_id: Case identifier
+        
+        Returns:
+            Dictionary with cost statistics per agent and total
+        """
+        try:
+            case_metrics = self.get_case_metrics(case_id)
+            
+            cost_by_agent = {}
+            for agent_type, data in case_metrics.get("agents", {}).items():
+                metrics = data.get("latest", {})
+                cost_by_agent[agent_type] = {
+                    "cost": metrics.get("estimated_cost", 0.0),
+                    "input_tokens": metrics.get("input_tokens", 0),
+                    "output_tokens": metrics.get("output_tokens", 0),
+                    "total_tokens": metrics.get("total_tokens", 0) or metrics.get("tokens_used", 0),
+                    "model": metrics.get("model", {}).get("name", "unknown") if isinstance(metrics.get("model"), dict) else "unknown"
+                }
+            
+            totals = case_metrics.get("totals", {})
+            
+            return {
+                "case_id": case_id,
+                "cost_by_agent": cost_by_agent,
+                "total_cost": totals.get("estimated_cost", 0.0),
+                "total_input_tokens": totals.get("input_tokens", 0),
+                "total_output_tokens": totals.get("output_tokens", 0),
+                "total_tokens": totals.get("tokens_used", 0),
+                "agent_count": len(cost_by_agent)
+            }
+            
+        except Exception as e:
+            logger.error(f"Error getting cost statistics for case {case_id}: {e}")
+            return {
+                "case_id": case_id,
+                "cost_by_agent": {},
+                "total_cost": 0.0,
+                "total_tokens": 0,
+                "agent_count": 0
             }
 

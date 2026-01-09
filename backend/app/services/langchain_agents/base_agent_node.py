@@ -1,9 +1,11 @@
 """Base agent node class to eliminate code duplication across agent nodes
 
 Phase 1.2: Added PostgresStore-based caching support.
+Phase 1.3: Added Pydantic structured output support.
 """
-from typing import Dict, Any, Optional, List
+from typing import Dict, Any, Optional, List, Type
 from abc import ABC, abstractmethod
+from pydantic import BaseModel
 from app.services.langchain_agents.state import AnalysisState
 from app.services.rag_service import RAGService
 from app.services.document_processor import DocumentProcessor
@@ -44,7 +46,8 @@ class BaseAgentNode(ABC):
         agent_name: str,
         db: Optional[Session] = None,
         rag_service: Optional[RAGService] = None,
-        document_processor: Optional[DocumentProcessor] = None
+        document_processor: Optional[DocumentProcessor] = None,
+        output_schema: Optional[Type[BaseModel]] = None
     ):
         """
         Initialize base agent node
@@ -54,6 +57,7 @@ class BaseAgentNode(ABC):
             db: Database session
             rag_service: RAG service instance
             document_processor: Document processor instance
+            output_schema: Optional Pydantic model class for structured output validation
         """
         self.agent_name = agent_name
         self.db = db
@@ -61,6 +65,88 @@ class BaseAgentNode(ABC):
         self.document_processor = document_processor
         self._cache_service = None
         self._use_cache = CACHE_ENABLED
+        # Auto-detect schema from agent_results if not provided
+        if output_schema is None:
+            try:
+                from app.services.langchain_agents.schemas.agent_results import get_agent_schema
+                output_schema = get_agent_schema(agent_name)
+            except Exception as e:
+                logger.debug(f"Could not auto-detect schema for {agent_name}: {e}")
+        
+        self.output_schema = output_schema
+        self._structured_output_handler = None
+    
+    def _get_structured_output_handler(self, llm: Optional[Any] = None):
+        """
+        Get or create StructuredOutputHandler for this agent.
+        
+        Args:
+            llm: Optional LLM instance for error fixing
+        
+        Returns:
+            StructuredOutputHandler instance or None if no schema defined
+        """
+        if not self.output_schema:
+            return None
+        
+        if self._structured_output_handler is None:
+            from app.services.langchain_agents.structured_output_handler import StructuredOutputHandler
+            self._structured_output_handler = StructuredOutputHandler(
+                model_class=self.output_schema,
+                max_retries=3,
+                llm=llm
+            )
+        
+        return self._structured_output_handler
+    
+    def _format_result_with_schema(
+        self,
+        result: Dict[str, Any],
+        state: AnalysisState,
+        llm: Optional[Any] = None
+    ) -> Dict[str, Any]:
+        """
+        Format result using structured output handler if schema is defined.
+        
+        This is an optional helper method that can be called from _format_result
+        in subclasses to get validated output.
+        
+        Args:
+            result: Raw agent result
+            state: Current state
+            llm: Optional LLM instance for error fixing
+        
+        Returns:
+            Formatted result dictionary (validated if schema is defined)
+        """
+        handler = self._get_structured_output_handler(llm)
+        
+        if handler and isinstance(result, dict):
+            # Try to extract response text from result
+            response_text = None
+            if "messages" in result:
+                messages = result.get("messages", [])
+                if messages:
+                    last_message = messages[-1]
+                    response_text = last_message.content if hasattr(last_message, 'content') else str(last_message)
+            
+            if response_text:
+                try:
+                    # Try to parse with structured output handler
+                    validated_model = handler.parse_with_retry(response_text, llm)
+                    # Convert to dict for compatibility
+                    if hasattr(validated_model, 'dict'):
+                        return validated_model.dict()
+                    elif hasattr(validated_model, 'model_dump'):
+                        return validated_model.model_dump()
+                    else:
+                        return result
+                except Exception as e:
+                    logger.warning(f"{self.agent_name} structured output validation failed: {e}, using raw result")
+                    return result
+        
+        # No schema or parsing failed, return as-is
+        return result
     
     def _get_cache_service(self, db: Session):
         """Get or create the cache service instance."""
