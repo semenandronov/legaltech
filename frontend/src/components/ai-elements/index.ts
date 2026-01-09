@@ -1,5 +1,4 @@
 // AI Elements components for visualizing agent reasoning, tool calls, and responses
-// Based on Vercel AI Elements patterns, adapted for this project
 
 export {
   Reasoning,
