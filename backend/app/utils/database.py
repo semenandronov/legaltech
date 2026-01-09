@@ -540,6 +540,14 @@ def init_db():
                 missing_columns.append("candidates")
             if "conflict_resolution" not in cells_columns:
                 missing_columns.append("conflict_resolution")
+            if "primary_source_doc_id" not in cells_columns:
+                missing_columns.append("primary_source_doc_id")
+            if "primary_source_char_start" not in cells_columns:
+                missing_columns.append("primary_source_char_start")
+            if "primary_source_char_end" not in cells_columns:
+                missing_columns.append("primary_source_char_end")
+            if "verified_flag" not in cells_columns:
+                missing_columns.append("verified_flag")
             
             if missing_columns:
                 logger.info(f"⚠️  Applying migration: adding {', '.join(missing_columns)} to tabular_cells")
@@ -553,12 +561,21 @@ def init_db():
                             conn.execute(text("ALTER TABLE tabular_cells ADD COLUMN IF NOT EXISTS candidates JSONB"))
                         if "conflict_resolution" in missing_columns:
                             conn.execute(text("ALTER TABLE tabular_cells ADD COLUMN IF NOT EXISTS conflict_resolution JSONB"))
+                        if "primary_source_doc_id" in missing_columns:
+                            conn.execute(text("ALTER TABLE tabular_cells ADD COLUMN IF NOT EXISTS primary_source_doc_id VARCHAR"))
+                            conn.execute(text("CREATE INDEX IF NOT EXISTS idx_tabular_cells_primary_source_doc_id ON tabular_cells(primary_source_doc_id)"))
+                        if "primary_source_char_start" in missing_columns:
+                            conn.execute(text("ALTER TABLE tabular_cells ADD COLUMN IF NOT EXISTS primary_source_char_start INTEGER"))
+                        if "primary_source_char_end" in missing_columns:
+                            conn.execute(text("ALTER TABLE tabular_cells ADD COLUMN IF NOT EXISTS primary_source_char_end INTEGER"))
+                        if "verified_flag" in missing_columns:
+                            conn.execute(text("ALTER TABLE tabular_cells ADD COLUMN IF NOT EXISTS verified_flag BOOLEAN"))
                     logger.info(f"✅ Migration applied: {', '.join(missing_columns)} added to tabular_cells")
                 except Exception as mig_error:
                     logger.error(f"❌ Failed to apply tabular_cells migration: {mig_error}", exc_info=True)
                     raise
             else:
-                logger.info("✅ source_references, normalized_value, candidates, and conflict_resolution already exist in tabular_cells")
+                logger.info("✅ source_references, normalized_value, candidates, conflict_resolution, primary_source_doc_id, primary_source_char_start, primary_source_char_end, and verified_flag already exist in tabular_cells")
     except Exception as e:
         logger.warning(f"Could not apply tabular_columns migration: {e}", exc_info=True)
     
