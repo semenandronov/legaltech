@@ -72,7 +72,7 @@ class TabularReviewService:
         )
         
         # #region agent log
-        logger.error(f"[DEBUG HYPOTHESIS Q] [create_tabular_review] Before commit: review_id will be {review.id if hasattr(review, 'id') else 'NEW'}, case_id={case_id}, user_id={user_id}")
+        logger.debug(f"[DEBUG HYPOTHESIS Q] [create_tabular_review] Before commit: review_id will be {review.id if hasattr(review, 'id') else 'NEW'}, case_id={case_id}, user_id={user_id}")
         # #endregion
         
         self.db.add(review)
@@ -80,7 +80,7 @@ class TabularReviewService:
         self.db.refresh(review)
         
         # #region agent log
-        logger.error(f"[DEBUG HYPOTHESIS R] [create_tabular_review] After commit: review_id={review.id}, checking for columns")
+        logger.debug(f"[DEBUG HYPOTHESIS R] [create_tabular_review] After commit: review_id={review.id}, checking for columns")
         # #endregion
         
         # Check if any columns were automatically created
@@ -89,7 +89,7 @@ class TabularReviewService:
         ).all()
         
         # #region agent log
-        logger.error(f"[DEBUG HYPOTHESIS S] [create_tabular_review] Found columns after commit: review_id={review.id}, columns_count={len(columns)}, column_labels={[c.column_label for c in columns]}")
+        logger.debug(f"[DEBUG HYPOTHESIS S] [create_tabular_review] Found columns after commit: review_id={review.id}, columns_count={len(columns)}, column_labels={[c.column_label for c in columns]}")
         # #endregion
         
         # CRITICAL: Check for unwanted default columns and delete them immediately
@@ -99,7 +99,7 @@ class TabularReviewService:
         if unwanted_columns:
             logger.error(f"[create_tabular_review] CRITICAL: Found {len(unwanted_columns)} unwanted default columns! Deleting them immediately: {[c.column_label for c in unwanted_columns]}")
             # #region agent log
-            logger.error(f"[DEBUG HYPOTHESIS T] [create_tabular_review] Found unwanted columns: review_id={review.id}, unwanted_count={len(unwanted_columns)}, unwanted_labels={[c.column_label for c in unwanted_columns]}")
+            logger.debug(f"[DEBUG HYPOTHESIS T] [create_tabular_review] Found unwanted columns: review_id={review.id}, unwanted_count={len(unwanted_columns)}, unwanted_labels={[c.column_label for c in unwanted_columns]}")
             # #endregion
             for unwanted_col in unwanted_columns:
                 # Delete all cells for this column first
@@ -172,7 +172,7 @@ class TabularReviewService:
             TabularColumn.tabular_review_id == review_id
         ).all()
         # #region agent log
-        logger.error(f"[DEBUG HYPOTHESIS A] [add_column] Before adding column: review_id={review_id}, columns_before_count={len(columns_before)}, columns_before_labels={[c.column_label for c in columns_before]}, new_column_label={column_label}, new_column_type={column_type}")
+        logger.debug(f"[DEBUG HYPOTHESIS A] [add_column] Before adding column: review_id={review_id}, columns_before_count={len(columns_before)}, columns_before_labels={[c.column_label for c in columns_before]}, new_column_label={column_label}, new_column_type={column_type}")
         # #endregion
         logger.info(f"[add_column] Before adding: {len(columns_before)} columns in review {review_id}: {[c.column_label for c in columns_before]}")
         
@@ -189,7 +189,7 @@ class TabularReviewService:
         
         self.db.add(column)
         # #region agent log
-        logger.error(f"[DEBUG HYPOTHESIS B] [add_column] About to commit new column: review_id={review_id}, column_id={column.id}, column_label={column_label}")
+        logger.debug(f"[DEBUG HYPOTHESIS B] [add_column] About to commit new column: review_id={review_id}, column_id={column.id}, column_label={column_label}")
         # #endregion
         self.db.commit()
         self.db.refresh(column)
@@ -200,7 +200,7 @@ class TabularReviewService:
         ).all()
         
         # #region agent log
-        logger.error(f"[DEBUG HYPOTHESIS C] [add_column] After commit, checking columns: review_id={review_id}, columns_after_count={len(columns_after)}, columns_after_labels={[c.column_label for c in columns_after]}, expected_count={len(columns_before)+1}")
+        logger.debug(f"[DEBUG HYPOTHESIS C] [add_column] After commit, checking columns: review_id={review_id}, columns_after_count={len(columns_after)}, columns_after_labels={[c.column_label for c in columns_after]}, expected_count={len(columns_before)+1}")
         # #endregion
         logger.info(f"[add_column] After adding: {len(columns_after)} columns in review {review_id}: {[c.column_label for c in columns_after]}")
         
@@ -210,7 +210,7 @@ class TabularReviewService:
         
         # #region agent log
         if unwanted_columns:
-            logger.error(f"[DEBUG HYPOTHESIS D] [add_column] Found unwanted columns after commit: review_id={review_id}, unwanted_count={len(unwanted_columns)}, unwanted_labels={[c.column_label for c in unwanted_columns]}, unwanted_ids={[c.id for c in unwanted_columns]}")
+            logger.debug(f"[DEBUG HYPOTHESIS D] [add_column] Found unwanted columns after commit: review_id={review_id}, unwanted_count={len(unwanted_columns)}, unwanted_labels={[c.column_label for c in unwanted_columns]}, unwanted_ids={[c.id for c in unwanted_columns]}")
         # #endregion
         
         if unwanted_columns:
@@ -364,7 +364,7 @@ class TabularReviewService:
     def get_table_data(self, review_id: str, user_id: str) -> Dict[str, Any]:
         """Get table data for tabular review"""
         # #region agent log
-        logger.error(f"[DEBUG HYPOTHESIS J] [get_table_data] Called: review_id={review_id}, user_id={user_id}")
+        logger.debug(f"[DEBUG HYPOTHESIS J] [get_table_data] Called: review_id={review_id}, user_id={user_id}")
         # #endregion
         
         # Verify review belongs to user
@@ -387,7 +387,7 @@ class TabularReviewService:
         ).order_by(TabularColumn.order_index).all()
         
         # #region agent log
-        logger.error(f"[DEBUG HYPOTHESIS K] [get_table_data] Before cleanup: review_id={review_id}, columns_count={len(columns)}, column_labels={[c.column_label for c in columns]}")
+        logger.debug(f"[DEBUG HYPOTHESIS K] [get_table_data] Before cleanup: review_id={review_id}, columns_count={len(columns)}, column_labels={[c.column_label for c in columns]}")
         # #endregion
         
         # CRITICAL: Check for unwanted default columns and delete them immediately
@@ -409,7 +409,7 @@ class TabularReviewService:
         if unwanted_columns:
             logger.error(f"[get_table_data] CRITICAL: Found {len(unwanted_columns)} unwanted default columns! Deleting them immediately: {[c.column_label for c in unwanted_columns]}")
             # #region agent log
-            logger.error(f"[DEBUG HYPOTHESIS L] [get_table_data] Found unwanted columns: review_id={review_id}, unwanted_count={len(unwanted_columns)}, unwanted_labels={[c.column_label for c in unwanted_columns]}")
+            logger.debug(f"[DEBUG HYPOTHESIS L] [get_table_data] Found unwanted columns: review_id={review_id}, unwanted_count={len(unwanted_columns)}, unwanted_labels={[c.column_label for c in unwanted_columns]}")
             # #endregion
             for unwanted_col in unwanted_columns:
                 # Delete all cells for this column first
@@ -431,7 +431,7 @@ class TabularReviewService:
             ).order_by(TabularColumn.order_index).all()
         
         # #region agent log
-        logger.error(f"[DEBUG HYPOTHESIS M] [get_table_data] After cleanup: review_id={review_id}, columns_count={len(columns)}, column_labels={[c.column_label for c in columns]}")
+        logger.debug(f"[DEBUG HYPOTHESIS M] [get_table_data] After cleanup: review_id={review_id}, columns_count={len(columns)}, column_labels={[c.column_label for c in columns]}")
         # #endregion
         
         # Log all columns found
@@ -447,7 +447,7 @@ class TabularReviewService:
         if orphaned_cells:
             logger.error(f"[get_table_data] CRITICAL: Found {len(orphaned_cells)} orphaned cells (cells with column_id that doesn't exist)! Orphaned column_ids: {set(cell.column_id for cell in orphaned_cells)}")
             # #region agent log
-            logger.error(f"[DEBUG HYPOTHESIS N] [get_table_data] Found orphaned cells: review_id={review_id}, orphaned_count={len(orphaned_cells)}, orphaned_column_ids={list(set(cell.column_id for cell in orphaned_cells))}")
+            logger.debug(f"[DEBUG HYPOTHESIS N] [get_table_data] Found orphaned cells: review_id={review_id}, orphaned_count={len(orphaned_cells)}, orphaned_column_ids={list(set(cell.column_id for cell in orphaned_cells))}")
             # #endregion
             # Delete orphaned cells
             for orphaned_cell in orphaned_cells:

@@ -310,18 +310,9 @@ class PipelineService:
             )
             yield progress_event.to_sse_format()
             
-            # Создаём callback для streaming событий из coordinator
-            async def step_callback(event):
-                """Callback для получения событий из coordinator"""
-                if hasattr(event, 'to_sse_format'):
-                    yield event.to_sse_format()
-                else:
-                    # Если это dict или другой формат, преобразуем
-                    yield f"data: {json.dumps(event, ensure_ascii=False, default=str)}\n\n"
-            
-            # Используем coordinator для выполнения анализа с streaming
+            # Используем coordinator для выполнения анализа
             # TODO: Интегрировать полноценный streaming из coordinator.stream_analysis()
-            # Пока используем run_analysis с step_callback
+            # Пока используем run_analysis без step_callback (streaming будет реализован через coordinator.stream_analysis)
             
             # Выполняем анализ через coordinator
             result = self.coordinator.run_analysis(
@@ -329,7 +320,7 @@ class PipelineService:
                 analysis_types=[],  # Пустой список - будет использовано планирование
                 user_task=query,
                 config=None,
-                step_callback=step_callback  # Передаём callback для streaming
+                step_callback=None  # Streaming будет реализован через coordinator.stream_analysis()
             )
             
             # Отправляем событие завершения

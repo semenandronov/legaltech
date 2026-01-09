@@ -114,7 +114,7 @@ async def create_review(
     """Create a new tabular review"""
     try:
         # #region agent log
-        logger.error(f"[DEBUG HYPOTHESIS U] [API create_review] Called: case_id={request.case_id}, user_id={current_user.id}, name={request.name}, selected_file_ids={request.selected_file_ids}")
+        logger.debug(f"[DEBUG HYPOTHESIS U] [API create_review] Called: case_id={request.case_id}, user_id={current_user.id}, name={request.name}, selected_file_ids={request.selected_file_ids}")
         # #endregion
         
         service = TabularReviewService(db)
@@ -127,12 +127,12 @@ async def create_review(
         )
         
         # #region agent log
-        logger.error(f"[DEBUG HYPOTHESIS V] [API create_review] Review created: review_id={review.id}, checking columns")
+        logger.debug(f"[DEBUG HYPOTHESIS V] [API create_review] Review created: review_id={review.id}, checking columns")
         from app.models.tabular_review import TabularColumn
         columns_after_create = db.query(TabularColumn).filter(
             TabularColumn.tabular_review_id == review.id
         ).all()
-        logger.error(f"[DEBUG HYPOTHESIS W] [API create_review] Columns after create: review_id={review.id}, columns_count={len(columns_after_create)}, column_labels={[c.column_label for c in columns_after_create]}")
+        logger.debug(f"[DEBUG HYPOTHESIS W] [API create_review] Columns after create: review_id={review.id}, columns_count={len(columns_after_create)}, column_labels={[c.column_label for c in columns_after_create]}")
         # #endregion
         
         return {
@@ -286,7 +286,7 @@ async def add_column(
         logger.info(f"Adding column to review {review_id}. Columns before: {columns_before}, new column: {request.column_label} (type: {request.column_type})")
         
         # #region agent log
-        logger.error(f"[DEBUG HYPOTHESIS E] [API add_column] About to call service.add_column: review_id={review_id}, columns_before={columns_before}, new_column_label={request.column_label}, new_column_type={request.column_type}, user_id={current_user.id}")
+        logger.debug(f"[DEBUG HYPOTHESIS E] [API add_column] About to call service.add_column: review_id={review_id}, columns_before={columns_before}, new_column_label={request.column_label}, new_column_type={request.column_type}, user_id={current_user.id}")
         # #endregion
         
         service = TabularReviewService(db)
@@ -300,7 +300,7 @@ async def add_column(
         )
         
         # #region agent log
-        logger.error(f"[DEBUG HYPOTHESIS F] [API add_column] service.add_column returned: review_id={review_id}, column_id={column.id}, column_label={column.column_label}")
+        logger.debug(f"[DEBUG HYPOTHESIS F] [API add_column] service.add_column returned: review_id={review_id}, column_id={column.id}, column_label={column.column_label}")
         # #endregion
         
         # Check columns count after adding
@@ -308,7 +308,7 @@ async def add_column(
             TabularColumn.tabular_review_id == review_id
         ).count()
         # #region agent log
-        logger.error(f"[DEBUG HYPOTHESIS G] [API add_column] Columns count after service call: review_id={review_id}, columns_before={columns_before}, columns_after={columns_after}, expected={columns_before+1}")
+        logger.debug(f"[DEBUG HYPOTHESIS G] [API add_column] Columns count after service call: review_id={review_id}, columns_before={columns_before}, columns_after={columns_after}, expected={columns_before+1}")
         # #endregion
         logger.info(f"Column added. Columns after: {columns_after}")
         if columns_after > columns_before + 1:
@@ -465,7 +465,7 @@ async def get_table_data(
     """Get table data for tabular review"""
     try:
         # #region agent log
-        logger.error(f"[DEBUG HYPOTHESIS N] [API get_table_data] Called: review_id={review_id}, user_id={current_user.id}")
+        logger.debug(f"[DEBUG HYPOTHESIS N] [API get_table_data] Called: review_id={review_id}, user_id={current_user.id}")
         # #endregion
         
         # Log columns before getting data
@@ -474,7 +474,7 @@ async def get_table_data(
             TabularColumn.tabular_review_id == review_id
         ).all()
         # #region agent log
-        logger.error(f"[DEBUG HYPOTHESIS O] [API get_table_data] Before service call: review_id={review_id}, columns_count={len(columns_before)}, column_labels={[c.column_label for c in columns_before]}")
+        logger.debug(f"[DEBUG HYPOTHESIS O] [API get_table_data] Before service call: review_id={review_id}, columns_count={len(columns_before)}, column_labels={[c.column_label for c in columns_before]}")
         # #endregion
         logger.info(f"[get_table_data] Review {review_id} has {len(columns_before)} columns: {[c.column_label for c in columns_before]}")
         
@@ -482,7 +482,7 @@ async def get_table_data(
         data = service.get_table_data(review_id, current_user.id)
         
         # #region agent log
-        logger.error(f"[DEBUG HYPOTHESIS P] [API get_table_data] After service call: review_id={review_id}, columns_count={len(data['columns'])}, column_labels={[c['column_label'] for c in data['columns']]}")
+        logger.debug(f"[DEBUG HYPOTHESIS P] [API get_table_data] After service call: review_id={review_id}, columns_count={len(data['columns'])}, column_labels={[c['column_label'] for c in data['columns']]}")
         # #endregion
         
         # Log columns after getting data
@@ -1559,7 +1559,7 @@ async def apply_template(
     """Apply a template to a tabular review - adds all columns from template"""
     try:
         # #region agent log
-        logger.error(f"[DEBUG HYPOTHESIS H] [API apply_template] Template application called: review_id={review_id}, template_id={template_id}, user_id={current_user.id}")
+        logger.debug(f"[DEBUG HYPOTHESIS H] [API apply_template] Template application called: review_id={review_id}, template_id={template_id}, user_id={current_user.id}")
         # #endregion
         logger.info(f"Applying template {template_id} to review {review_id} by user {current_user.id}")
         from app.models.tabular_review import TabularColumnTemplate
@@ -1605,7 +1605,7 @@ async def apply_template(
         # Add all columns from template
         added_columns = []
         # #region agent log
-        logger.error(f"[DEBUG HYPOTHESIS I] [API apply_template] About to add columns from template: review_id={review_id}, template_id={template_id}, template_name={template.name}, columns_count={len(template.columns)}, column_labels={[col.get('column_label') for col in template.columns]}")
+        logger.debug(f"[DEBUG HYPOTHESIS I] [API apply_template] About to add columns from template: review_id={review_id}, template_id={template_id}, template_name={template.name}, columns_count={len(template.columns)}, column_labels={[col.get('column_label') for col in template.columns]}")
         # #endregion
         logger.info(f"Template '{template.name}' has {len(template.columns)} columns. Adding them to review {review_id}")
         
