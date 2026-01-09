@@ -425,12 +425,14 @@ async def upload_files(
             
             try:
                 file_path = file_info.get("file_path")  # Путь к оригинальному файлу
+                file_content = file_info.get("file_content")  # Бинарное содержимое файла
                 file_model = FileModel(
                     case_id=case_id,
                     filename=filename,
                     file_type=file_type,
                     original_text=sanitized_original_text,
                     file_path=file_path,  # Сохраняем путь к оригинальному файлу
+                    file_content=file_content,  # Сохраняем бинарное содержимое файла в БД
                 )
                 db.add(file_model)
                 db.flush()  # Flush to get file_model.id
