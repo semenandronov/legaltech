@@ -1,10 +1,14 @@
 """Pipeline Service - унифицированный API для обработки запросов (RAG и Agent)"""
-from typing import AsyncGenerator, Dict, Any, Optional
+from typing import AsyncGenerator, Dict, Any, Optional, Union
 from sqlalchemy.orm import Session
 from app.models.user import User
 from app.services.rag_service import RAGService
 from app.services.document_processor import DocumentProcessor
-from app.services.langchain_agents.complexity_classifier import ComplexityClassifier, ClassificationResult
+from app.services.langchain_agents.complexity_classifier import ComplexityClassifier, ClassificationResult as OldClassificationResult
+from app.services.langchain_agents.advanced_complexity_classifier import (
+    AdvancedComplexityClassifier,
+    EnhancedClassificationResult
+)
 from app.services.langchain_agents.pipeline_router import PipelineRouterMiddleware
 from app.services.langchain_agents.coordinator import AgentCoordinator
 from app.services.langchain_agents.audit_logger import AuditLogger, get_audit_logger
@@ -31,6 +35,7 @@ class PipelineService:
     Унифицированный сервис для обработки запросов:
     - simple (RAG) → быстрый ответ на основе документов
     - complex (Agent) → многошаговая агентная оркестрация
+    - hybrid (RAG + Agent) → комбинированный путь
     """
     
     def __init__(
@@ -38,9 +43,10 @@ class PipelineService:
         db: Session,
         rag_service: RAGService,
         document_processor: DocumentProcessor,
-        classifier: Optional[ComplexityClassifier] = None,
+        classifier: Optional[Union[AdvancedComplexityClassifier, ComplexityClassifier]] = None,
         audit_logger: Optional[AuditLogger] = None,
-        pii_redactor: Optional[PIIRedactionMiddleware] = None
+        pii_redactor: Optional[PIIRedactionMiddleware] = None,
+        use_advanced_classifier: bool = True
     ):
         """
         Инициализация PipelineService
@@ -49,9 +55,10 @@ class PipelineService:
             db: Сессия базы данных
             rag_service: RAG service для поиска документов
             document_processor: Document processor
-            classifier: Опциональный ComplexityClassifier (создаётся автоматически если не передан)
+            classifier: Опциональный классификатор (AdvancedComplexityClassifier или ComplexityClassifier)
             audit_logger: Опциональный AuditLogger (создаётся автоматически если не передан)
             pii_redactor: Опциональный PIIRedactionMiddleware (создаётся автоматически если не передан)
+            use_advanced_classifier: Использовать AdvancedComplexityClassifier по умолчанию (True) или старый ComplexityClassifier (False)
         """
         self.db = db
         self.rag_service = rag_service
@@ -59,12 +66,17 @@ class PipelineService:
         
         # Создаём classifier если не передан
         if classifier is None:
-            llm = create_llm(temperature=0.0, top_p=1.0, max_tokens=100)
+            llm = create_llm(temperature=0.0, top_p=1.0, max_tokens=500)  # Увеличили для enhanced классификации
             from app.routes.assistant_chat import get_classification_cache
             cache = get_classification_cache()
-            classifier = ComplexityClassifier(llm=llm, cache=cache)
+            
+            if use_advanced_classifier:
+                classifier = AdvancedComplexityClassifier(llm=llm, cache=cache, confidence_threshold=0.7)
+            else:
+                classifier = ComplexityClassifier(llm=llm, cache=cache)
         
         self.classifier = classifier
+        self.use_advanced_classifier = isinstance(classifier, AdvancedComplexityClassifier)
         
         # Создаём router middleware
         self.router = PipelineRouterMiddleware(classifier=classifier)
@@ -89,9 +101,9 @@ class PipelineService:
         web_search: bool = False,
         legal_research: bool = False,
         deep_think: bool = False
-    ) -> ClassificationResult:
+    ) -> Union[EnhancedClassificationResult, OldClassificationResult]:
         """
-        Обработать запрос и определить путь (RAG или Agent)
+        Обработать запрос и определить путь (RAG, Agent или Hybrid)
         
         Args:
             case_id: Идентификатор дела
@@ -102,7 +114,7 @@ class PipelineService:
             deep_think: Включить глубокое размышление
             
         Returns:
-            ClassificationResult с определённым путём
+            EnhancedClassificationResult или ClassificationResult с определённым путём
         """
         start_time = time.time()
         
@@ -121,14 +133,25 @@ class PipelineService:
         latency_ms = (time.time() - start_time) * 1000
         
         # Логируем классификацию
+        classification_dict = {
+            "label": classification.label,
+            "confidence": classification.confidence,
+            "rationale": getattr(classification, 'rationale', None) or classification.rationale if hasattr(classification, 'rationale') else "N/A",
+            "recommended_path": classification.recommended_path
+        }
+        
+        # Добавляем дополнительные поля для EnhancedClassificationResult
+        if isinstance(classification, EnhancedClassificationResult):
+            classification_dict.update({
+                "requires_clarification": classification.requires_clarification,
+                "suggested_agents": classification.suggested_agents,
+                "rag_queries": classification.rag_queries,
+                "estimated_complexity": classification.estimated_complexity
+            })
+        
         self.audit_logger.log_classification(
             query=redacted_query,
-            classification_result={
-                "label": classification.label,
-                "confidence": classification.confidence,
-                "rationale": classification.rationale,
-                "recommended_path": classification.recommended_path
-            },
+            classification_result=classification_dict,
             case_id=case_id,
             user_id=str(current_user.id)
         )
@@ -157,7 +180,7 @@ class PipelineService:
         case_id: str,
         query: str,
         current_user: User,
-        classification: Optional[ClassificationResult] = None,
+        classification: Optional[Union[EnhancedClassificationResult, OldClassificationResult]] = None,
         web_search: bool = False,
         legal_research: bool = False,
         deep_think: bool = False
@@ -188,6 +211,18 @@ class PipelineService:
                 deep_think=deep_think
             )
         
+        # Проверяем, требуется ли уточнение
+        if isinstance(classification, EnhancedClassificationResult) and classification.requires_clarification:
+            logger.info(f"[PipelineService] Classification requires clarification (confidence: {classification.confidence:.2f})")
+            # Отправляем событие с просьбой об уточнении
+            clarification_event = {
+                "type": "clarification_needed",
+                "message": f"Запрос неоднозначен (уверенность: {classification.confidence:.2f}). {classification.rationale}",
+                "classification": classification.dict()
+            }
+            yield f"data: {json.dumps(clarification_event, ensure_ascii=False)}\n\n"
+            return
+        
         # Маршрутизируем на основе классификации
         if classification.recommended_path == "rag":
             # RAG путь - простой вопрос
@@ -195,6 +230,19 @@ class PipelineService:
                 case_id=case_id,
                 query=query,
                 current_user=current_user,
+                classification=classification,
+                web_search=web_search,
+                legal_research=legal_research,
+                deep_think=deep_think
+            ):
+                yield chunk
+        elif classification.recommended_path == "hybrid":
+            # Hybrid путь - комбинированный (RAG + Agent)
+            async for chunk in self._stream_hybrid_response(
+                case_id=case_id,
+                query=query,
+                current_user=current_user,
+                classification=classification,
                 web_search=web_search,
                 legal_research=legal_research,
                 deep_think=deep_think
@@ -218,6 +266,7 @@ class PipelineService:
         case_id: str,
         query: str,
         current_user: User,
+        classification: Optional[Union[EnhancedClassificationResult, OldClassificationResult]] = None,
         web_search: bool = False,
         legal_research: bool = False,
         deep_think: bool = False
@@ -277,7 +326,7 @@ class PipelineService:
         case_id: str,
         query: str,
         current_user: User,
-        classification: ClassificationResult,
+        classification: Union[EnhancedClassificationResult, OldClassificationResult],
         web_search: bool = False,
         legal_research: bool = False,
         deep_think: bool = False
@@ -352,14 +401,16 @@ class PipelineService:
                     interrupt_data = event.get("data", {})
                     thread_id = event.get("thread_id")
                     
-                    feedback_event = HumanFeedbackRequestEvent(
-                        request_id=interrupt_data.get("request_id", ""),
-                        question=interrupt_data.get("question", "Требуется обратная связь"),
-                        interrupt_type=interrupt_data.get("type"),
-                        thread_id=thread_id,
-                        payload=interrupt_data
-                    )
-                    yield feedback_event.to_sse_format()
+                    # Используем JSON напрямую для interrupt событий
+                    interrupt_event = {
+                        "type": "interrupt",
+                        "request_id": interrupt_data.get("request_id", ""),
+                        "question": interrupt_data.get("question", "Требуется обратная связь"),
+                        "interrupt_type": interrupt_data.get("type"),
+                        "thread_id": thread_id,
+                        "payload": interrupt_data
+                    }
+                    yield f"data: {json.dumps(interrupt_event, ensure_ascii=False)}\n\n"
                 
                 elif event_type == "error":
                     # Ошибка
@@ -379,6 +430,140 @@ class PipelineService:
             self.audit_logger.log_error(
                 error=e,
                 context={"case_id": case_id, "query": self.pii_redactor.redact_text(query)},
+                case_id=case_id,
+                user_id=str(current_user.id)
+            )
+    
+    async def _stream_hybrid_response(
+        self,
+        case_id: str,
+        query: str,
+        current_user: User,
+        classification: EnhancedClassificationResult,
+        web_search: bool = False,
+        legal_research: bool = False,
+        deep_think: bool = False
+    ) -> AsyncGenerator[str, None]:
+        """
+        Потоковый ответ через Hybrid путь (RAG + Agent)
+        
+        Сначала выполняет RAG запросы, затем запускает агентов
+        
+        Args:
+            case_id: Идентификатор дела
+            query: Запрос пользователя
+            current_user: Текущий пользователь
+            classification: Результат классификации (EnhancedClassificationResult)
+            web_search: Включить веб-поиск
+            legal_research: Включить юридическое исследование
+            deep_think: Включить глубокое размышление
+            
+        Yields:
+            JSON строки в формате assistant-ui SSE
+        """
+        try:
+            logger.info(f"[PipelineService:Hybrid] Processing hybrid request for case {case_id}")
+            
+            # Фаза 1: RAG запросы (если есть)
+            rag_queries = classification.rag_queries if classification.rag_queries else [query]
+            
+            if rag_queries:
+                progress_event = AgentProgressEvent(
+                    agent_name="rag",
+                    step="Фаза 1: Поиск информации",
+                    progress=0.0,
+                    message=f"Выполняю поиск по {len(rag_queries)} запросу(ам)..."
+                )
+                yield progress_event.to_sse_format()
+                
+                # Обрабатываем каждый RAG запрос
+                for i, rag_query in enumerate(rag_queries):
+                    logger.info(f"[PipelineService:Hybrid] Processing RAG query {i+1}/{len(rag_queries)}: {rag_query[:50]}...")
+                    
+                    async for chunk in self._stream_rag_response(
+                        case_id=case_id,
+                        query=rag_query,
+                        current_user=current_user,
+                        classification=None,  # Не классифицируем повторно
+                        web_search=web_search,
+                        legal_research=legal_research,
+                        deep_think=deep_think
+                    ):
+                        yield chunk
+                    
+                    # Разделитель между RAG ответами (если несколько)
+                    if i < len(rag_queries) - 1:
+                        separator = {
+                            "type": "textDelta",
+                            "textDelta": "\n\n---\n\n"
+                        }
+                        yield f"data: {json.dumps(separator, ensure_ascii=False)}\n\n"
+            
+            # Фаза 2: Agent обработка
+            progress_event = AgentProgressEvent(
+                agent_name="agents",
+                step="Фаза 2: Анализ через агентов",
+                progress=0.5,
+                message=f"Запускаю анализ через агентов: {', '.join(classification.suggested_agents) if classification.suggested_agents else 'автоматический выбор'}"
+            )
+            yield progress_event.to_sse_format()
+            
+            # Создаём модифицированный запрос для агентов
+            # Если были RAG запросы, добавляем контекст
+            agent_query = query
+            if rag_queries and len(rag_queries) > 0:
+                agent_query = f"{query} (на основе предыдущего поиска: {', '.join(rag_queries[:2])})"
+            
+            # Конвертируем EnhancedClassificationResult в формат для агентов
+            # Используем suggested_agents для определения analysis_types
+            analysis_types = classification.suggested_agents if classification.suggested_agents else []
+            
+            # Если analysis_types пустой, используем стандартный путь через coordinator
+            if not analysis_types:
+                # Используем стандартный agent путь
+                async for chunk in self._stream_agent_response(
+                    case_id=case_id,
+                    query=agent_query,
+                    current_user=current_user,
+                    classification=classification,
+                    web_search=web_search,
+                    legal_research=legal_research,
+                    deep_think=deep_think
+                ):
+                    yield chunk
+            else:
+                # TODO: Реализовать запуск конкретных агентов через coordinator
+                # Пока используем стандартный путь
+                logger.info(f"[PipelineService:Hybrid] Suggested agents: {analysis_types}, using standard agent path")
+                async for chunk in self._stream_agent_response(
+                    case_id=case_id,
+                    query=agent_query,
+                    current_user=current_user,
+                    classification=classification,
+                    web_search=web_search,
+                    legal_research=legal_research,
+                    deep_think=deep_think
+                ):
+                    yield chunk
+            
+            # Финальное событие завершения
+            complete_event = AgentProgressEvent(
+                agent_name="hybrid",
+                step="Завершено",
+                progress=1.0,
+                message="Гибридная обработка завершена"
+            )
+            yield complete_event.to_sse_format()
+            
+        except Exception as e:
+            logger.error(f"[PipelineService:Hybrid] Error in Hybrid response: {e}", exc_info=True)
+            error_event = ErrorEvent(error=f"Ошибка выполнения гибридной обработки: {str(e)}")
+            yield error_event.to_sse_format()
+            
+            # Логируем ошибку
+            self.audit_logger.log_error(
+                error=e,
+                context={"case_id": case_id, "query": self.pii_redactor.redact_text(query), "type": "hybrid"},
                 case_id=case_id,
                 user_id=str(current_user.id)
             )
