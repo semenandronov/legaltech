@@ -1,6 +1,5 @@
 import React from 'react'
 import { ResizablePanelGroup, ResizablePanel, ResizableHandle } from '@/components/UI/resizable'
-import { SourceInfo } from '@/services/api'
 
 interface SplitViewLayoutProps {
   leftPanel: React.ReactNode
@@ -8,7 +7,6 @@ interface SplitViewLayoutProps {
   defaultSizes?: [number, number] // [left, right] percentages
   minSizes?: [number, number]
   maxSizes?: [number, number]
-  onDocumentClick?: (source: SourceInfo) => void
   className?: string
 }
 
@@ -26,12 +24,10 @@ export const SplitViewLayout: React.FC<SplitViewLayoutProps> = ({
   defaultSizes = [50, 50],
   minSizes = [30, 30],
   maxSizes = [70, 70],
-  onDocumentClick,
   className = ''
 }) => {
   return (
     <ResizablePanelGroup 
-      direction="horizontal" 
       className={`split-view-layout h-full ${className}`}
     >
       {/* Левая панель (чат) */}
