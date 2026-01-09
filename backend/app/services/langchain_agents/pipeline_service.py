@@ -310,36 +310,64 @@ class PipelineService:
             )
             yield progress_event.to_sse_format()
             
-            # Используем coordinator для выполнения анализа
-            # TODO: Интегрировать полноценный streaming из coordinator.stream_analysis()
-            # Пока используем run_analysis без step_callback (streaming будет реализован через coordinator.stream_analysis)
-            
-            # Выполняем анализ через coordinator
-            result = self.coordinator.run_analysis(
+            # Используем новый stream_analysis_events для нативного streaming через astream_events
+            async for event in self.coordinator.stream_analysis_events(
                 case_id=case_id,
-                analysis_types=[],  # Пустой список - будет использовано планирование
                 user_task=query,
-                config=None,
-                step_callback=None  # Streaming будет реализован через coordinator.stream_analysis()
-            )
+                config=None
+            ):
+                event_type = event.get("type")
+                
+                if event_type == "token":
+                    # LLM токены - отправляем как textDelta
+                    content = event.get("content", "")
+                    if content:
+                        rag_event = RAGResponseEvent(text_delta=content)
+                        yield rag_event.to_sse_format()
+                
+                elif event_type == "reasoning":
+                    # Reasoning события - отправляем как кастомное событие
+                    reasoning_data = event.get("data", {})
+                    yield f"data: {json.dumps({
+                        'type': 'reasoning',
+                        'phase': reasoning_data.get('phase', ''),
+                        'step': reasoning_data.get('step', 0),
+                        'totalSteps': reasoning_data.get('total_steps', 0),
+                        'content': reasoning_data.get('content', '')
+                    }, ensure_ascii=False)}\n\n"
+                
+                elif event_type == "node_complete":
+                    # Завершение node - отправляем progress event
+                    node_name = event.get("node", "")
+                    progress_event = AgentProgressEvent(
+                        agent_name=node_name,
+                        step=f"Завершён этап: {node_name}",
+                        progress=1.0,
+                        message=f"Этап {node_name} завершён"
+                    )
+                    yield progress_event.to_sse_format()
+                
+                elif event_type == "interrupt":
+                    # Interrupt событие - отправляем human feedback request
+                    interrupt_data = event.get("data", {})
+                    thread_id = event.get("thread_id")
+                    
+                    feedback_event = HumanFeedbackRequestEvent(
+                        request_id=interrupt_data.get("request_id", ""),
+                        question=interrupt_data.get("question", "Требуется обратная связь"),
+                        interrupt_type=interrupt_data.get("type"),
+                        thread_id=thread_id,
+                        payload=interrupt_data
+                    )
+                    yield feedback_event.to_sse_format()
+                
+                elif event_type == "error":
+                    # Ошибка
+                    error_msg = event.get("error", "Неизвестная ошибка")
+                    error_event = ErrorEvent(error=error_msg)
+                    yield error_event.to_sse_format()
             
-            # Отправляем событие завершения
-            complete_event = AgentCompleteEvent(
-                agent_name="analysis",
-                result=result,
-                success=True,
-                metadata={"case_id": case_id}
-            )
-            yield complete_event.to_sse_format()
-            
-            # Форматируем финальный результат для отображения
-            response_text = f"Анализ выполнен успешно. Получено результатов: {len(result)}"
-            rag_event = RAGResponseEvent(
-                text_delta=response_text,
-                metadata={"result_count": len(result)}
-            )
-            yield rag_event.to_sse_format()
-            
+            # Отправляем финальное событие завершения
             yield f"data: {json.dumps({'textDelta': ''})}\n\n"
             
         except Exception as e:

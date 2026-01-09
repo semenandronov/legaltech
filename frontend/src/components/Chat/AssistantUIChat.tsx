@@ -36,6 +36,12 @@ interface Message {
   plan?: any
   agentSteps?: AgentStep[]
   reasoning?: string  // для прямых рассуждений
+  reasoningSteps?: Array<{  // для структурированных reasoning steps
+    phase: string
+    step: number
+    totalSteps: number
+    content: string
+  }>
   toolCalls?: Array<{  // для прямых tool calls
     name: string
     input?: any
@@ -540,6 +546,32 @@ export const AssistantUIChat = forwardRef<{ clearMessages: () => void; loadHisto
                         }
                       : msg
                   )
+                )
+              }
+              // Обработка reasoning events
+              if (data.type === 'reasoning' && data.phase && data.content) {
+                setMessages((prev) =>
+                  prev.map((msg) => {
+                    if (msg.id === assistantMsgId) {
+                      const currentSteps = msg.reasoningSteps || []
+                      const newStep = {
+                        phase: data.phase,
+                        step: data.step || data.stepNumber || currentSteps.length + 1,
+                        totalSteps: data.totalSteps || data.totalStepsNumber || 4,
+                        content: data.content
+                      }
+                      // Проверяем, нет ли уже такого шага (по phase и step)
+                      const stepIndex = currentSteps.findIndex(
+                        (s) => s.phase === newStep.phase && s.step === newStep.step
+                      )
+                      const updatedSteps =
+                        stepIndex >= 0
+                          ? currentSteps.map((s, idx) => (idx === stepIndex ? newStep : s))
+                          : [...currentSteps, newStep]
+                      return { ...msg, reasoningSteps: updatedSteps }
+                    }
+                    return msg
+                  })
                 )
               }
               // Фаза 9.3: Обработка human feedback request events

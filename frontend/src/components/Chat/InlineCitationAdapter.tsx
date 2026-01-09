@@ -49,6 +49,9 @@ export const InlineCitationAdapter: React.FC<InlineCitationAdapterProps> = ({
     }
   }
 
+  // Use quote if available, otherwise fallback to text_preview
+  const quoteText = source.quote || source.text_preview || ''
+
   return (
     <InlineCitation>
       <InlineCitationText>[{index}]</InlineCitationText>
@@ -66,10 +69,10 @@ export const InlineCitationAdapter: React.FC<InlineCitationAdapterProps> = ({
                   title={source.file}
                   url={sourceUrl}
                   description={
-                    source.text_preview 
-                      ? (source.text_preview.length > 200 
-                          ? source.text_preview.substring(0, 200) + '...' 
-                          : source.text_preview)
+                    quoteText 
+                      ? (quoteText.length > 200 
+                          ? quoteText.substring(0, 200) + '...' 
+                          : quoteText)
                       : undefined
                   }
                 >
@@ -83,12 +86,17 @@ export const InlineCitationAdapter: React.FC<InlineCitationAdapterProps> = ({
                       Релевантность: {Math.round(source.similarity_score * 100)}%
                     </div>
                   )}
-                  {source.text_preview && (
+                  {quoteText && (
                     <InlineCitationQuote className="mt-2">
-                      {source.text_preview.length > 200
-                        ? source.text_preview.substring(0, 200) + '...'
-                        : source.text_preview}
+                      {quoteText.length > 200
+                        ? quoteText.substring(0, 200) + '...'
+                        : quoteText}
                     </InlineCitationQuote>
+                  )}
+                  {(source.char_start !== undefined && source.char_end !== undefined) && (
+                    <div className="text-xs text-muted-foreground mt-1">
+                      Позиция: {source.char_start}–{source.char_end}
+                    </div>
                   )}
                 </InlineCitationSource>
               </InlineCitationCarouselItem>

@@ -5,6 +5,7 @@ from app.services.langchain_agents.planning_agent import PlanningAgent
 from sqlalchemy.orm import Session
 from app.services.rag_service import RAGService
 from app.services.document_processor import DocumentProcessor
+from app.services.langchain_agents.streaming_events import ReasoningStreamEvent
 import logging
 
 logger = logging.getLogger(__name__)
@@ -68,14 +69,42 @@ def plan_node(
     try:
         logger.info(f"[PLAN] Creating analysis plan for case {case_id}")
         
+        # Инициализируем reasoning steps list в state если отсутствует
+        if "reasoning_steps" not in state:
+            state["reasoning_steps"] = []
+        
+        # Добавляем reasoning step: начало планирования
+        state["reasoning_steps"].append(ReasoningStreamEvent(
+            phase="planning",
+            step=1,
+            total_steps=4,
+            content=f"Начинаю создание плана анализа для задачи: {understanding_result.get('original_task', '')[:100]}..."
+        ).dict())
+        
         # Извлекаем информацию из understanding_result
         user_task = understanding_result.get("original_task", "")
         document_analysis = understanding_result.get("document_analysis")
         goals = understanding_result.get("goals", [])
         complexity = understanding_result.get("complexity", "medium")
         
+        # Добавляем reasoning step: анализ требований
+        state["reasoning_steps"].append(ReasoningStreamEvent(
+            phase="planning",
+            step=2,
+            total_steps=4,
+            content=f"Анализирую требования:\n- Сложность: {complexity}\n- Цели: {', '.join(goals[:3]) if goals else 'не определены'}"
+        ).dict())
+        
         # Инициализируем PlanningAgent
         planning_agent = PlanningAgent(rag_service=rag_service, document_processor=document_processor)
+        
+        # Добавляем reasoning step: генерация плана
+        state["reasoning_steps"].append(ReasoningStreamEvent(
+            phase="planning",
+            step=3,
+            total_steps=4,
+            content="Генерирую детальный план анализа с шагами и зависимостями..."
+        ).dict())
         
         # Создаем план через PlanningAgent
         # PlanningAgent уже имеет логику для работы с document_analysis
@@ -92,6 +121,16 @@ def plan_node(
         # Добавляем информацию о сложности
         plan["complexity"] = complexity
         plan["task_type"] = understanding_result.get("task_type", "general")
+        
+        # Добавляем reasoning step: план готов
+        analysis_types_count = len(plan.get("analysis_types", []))
+        steps_count = len(plan.get("steps", []))
+        state["reasoning_steps"].append(ReasoningStreamEvent(
+            phase="planning",
+            step=4,
+            total_steps=4,
+            content=f"План создан:\n- Типов анализа: {analysis_types_count}\n- Шагов: {steps_count}\n- Уверенность: {plan.get('confidence', 0.8):.2%}"
+        ).dict())
         
         # Сохраняем план в state
         state["current_plan"] = plan

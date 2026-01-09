@@ -271,6 +271,73 @@ async def update_case(
     )
 
 
+@router.get("/{case_id}/suggestions")
+async def get_suggestions(
+    case_id: str,
+    context: Optional[str] = Query(None, description="Текущий контекст для персонализации подсказок"),
+    limit: int = Query(5, ge=1, le=20, description="Максимальное количество подсказок"),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """Получить умные подсказки для дела"""
+    # Проверяем доступ к делу
+    case = db.query(Case).filter(
+        Case.id == case_id,
+        Case.user_id == current_user.id
+    ).first()
+    
+    if not case:
+        raise HTTPException(status_code=404, detail="Дело не найдено")
+    
+    try:
+        from app.services.suggestions_service import SuggestionsService
+        from app.services.rag_service import RAGService
+        
+        # Инициализируем сервисы
+        rag_service = RAGService()
+        suggestions_service = SuggestionsService(rag_service=rag_service)
+        
+        # Получаем подсказки
+        suggestions = suggestions_service.get_suggestions(
+            case_id=case_id,
+            context=context,
+            limit=limit,
+            db=db
+        )
+        
+        # Возвращаем список подсказок
+        return [s.dict() for s in suggestions]
+    except Exception as e:
+        logger.error(f"Error getting suggestions for case {case_id}: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Ошибка при получении подсказок: {str(e)}")
+
+
+@router.get("/{case_id}/workflow-templates")
+async def get_workflow_templates(
+    case_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """Получить список доступных workflow templates для дела"""
+    # Проверяем доступ к делу
+    case = db.query(Case).filter(
+        Case.id == case_id,
+        Case.user_id == current_user.id
+    ).first()
+    
+    if not case:
+        raise HTTPException(status_code=404, detail="Дело не найдено")
+    
+    try:
+        from app.services.langchain_agents.workflow_templates import list_workflow_templates
+        
+        templates = list_workflow_templates()
+        return [template.dict() for template in templates]
+    except Exception as e:
+        logger.error(f"Error getting workflow templates for case {case_id}: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Ошибка при получении шаблонов: {str(e)}")
+
+
 @router.delete("/{case_id}", status_code=204)
 async def delete_case(
     case_id: str,

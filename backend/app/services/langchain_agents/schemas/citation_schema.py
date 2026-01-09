@@ -27,3 +27,22 @@ class CitationFirstResponse(BaseModel):
     reasoning: Optional[str] = Field(None, description="Optional reasoning for the answer")
 
 
+class EnhancedCitation(BaseModel):
+    """Цитата с точными координатами для подсветки в документе"""
+    source_id: str = Field(..., description="ID документа")
+    file_name: str = Field(..., description="Имя файла")
+    page: int = Field(1, description="Номер страницы")
+    quote: str = Field(..., description="Точная цитата из документа")
+    char_start: int = Field(..., description="Начальная позиция в документе (символ)")
+    char_end: int = Field(..., description="Конечная позиция в документе (символ)")
+    context_before: str = Field("", description="Контекст до цитаты (50 символов)")
+    context_after: str = Field("", description="Контекст после цитаты (50 символов)")
+
+
+class AnswerWithCitations(BaseModel):
+    """Ответ со структурированными цитатами для inline citations"""
+    answer: str = Field(..., description="Ответ с маркерами [1], [2], etc.")
+    citations: List[EnhancedCitation] = Field(default_factory=list, description="Список цитат с координатами")
+    confidence: float = Field(0.0, ge=0.0, le=1.0, description="Уверенность в ответе")
+
+

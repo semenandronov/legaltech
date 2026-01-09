@@ -153,6 +153,26 @@ class MetadataEvent(BaseModel):
         return f"data: {json.dumps({'type': 'metadata', 'metadata': self.metadata}, ensure_ascii=False)}\n\n"
 
 
+class ReasoningStreamEvent(BaseModel):
+    """Событие стриминга reasoning (размышления ИИ)"""
+    type: Literal["reasoning"] = "reasoning"
+    phase: str = Field(..., description="Фаза: understanding, planning, executing, delivering")
+    step: int = Field(..., description="Текущий шаг")
+    total_steps: int = Field(..., description="Всего шагов")
+    content: str = Field(..., description="Текст reasoning")
+    
+    def to_sse_format(self) -> str:
+        """Преобразовать в формат SSE"""
+        import json
+        return f"data: {json.dumps({
+            'type': 'reasoning',
+            'phase': self.phase,
+            'step': self.step,
+            'totalSteps': self.total_steps,
+            'content': self.content
+        }, ensure_ascii=False)}\n\n"
+
+
 # Union type для всех событий
 StreamEventUnion = (
     RAGResponseEvent |
@@ -162,6 +182,7 @@ StreamEventUnion = (
     SourcesEvent |
     PlanReadyEvent |
     HumanFeedbackRequestEvent |
-    MetadataEvent
+    MetadataEvent |
+    ReasoningStreamEvent
 )
 

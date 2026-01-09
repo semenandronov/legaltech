@@ -65,16 +65,40 @@ def understand_node(
         # Инициализируем PlanningAgent для анализа документов
         planning_agent = PlanningAgent(rag_service=rag_service, document_processor=document_processor)
         
-        # ШАГ 1: Автономный анализ документов для понимания контекста
+        # Формируем reasoning steps для streaming
+        reasoning_steps = []
+        
+        # ШАГ 1: Начало понимания
+        reasoning_steps.append({
+            "phase": "understanding",
+            "step": 1,
+            "total_steps": 4,
+            "content": f"Анализирую запрос: {user_task[:100]}..."
+        })
+        
+        # ШАГ 2: Автономный анализ документов для понимания контекста
         document_analysis = None
         if rag_service and document_processor:
             try:
+                reasoning_steps.append({
+                    "phase": "document_analysis",
+                    "step": 2,
+                    "total_steps": 4,
+                    "content": "Изучаю структуру документов дела..."
+                })
                 document_analysis = planning_agent.analyze_documents_for_planning(case_id, user_task)
+                file_count = document_analysis.get("document_structure", {}).get("file_count", 0)
+                reasoning_steps.append({
+                    "phase": "document_analysis",
+                    "step": 2,
+                    "total_steps": 4,
+                    "content": f"Изучаю структуру документов дела...\nНайдено документов: {file_count}"
+                })
                 logger.info(f"[UNDERSTAND] Document analysis: case_type={document_analysis.get('case_type')}")
             except Exception as e:
                 logger.warning(f"[UNDERSTAND] Document analysis failed: {e}")
         
-        # ШАГ 2: Анализ задачи пользователя
+        # ШАГ 3: Анализ задачи пользователя
         # Определяем сложность задачи
         complexity = _determine_task_complexity(user_task, document_analysis)
         
@@ -84,8 +108,23 @@ def understand_node(
         # Извлекаем ключевые цели из задачи
         goals = _extract_goals(user_task)
         
+        reasoning_steps.append({
+            "phase": "complexity",
+            "step": 3,
+            "total_steps": 4,
+            "content": f"Определяю сложность задачи...\nСложность: {complexity}\nТип: {task_type}\nЦели: {', '.join(goals)}"
+        })
+        
         # Определяем, нужен ли план (для простых задач можно пропустить)
         needs_planning = complexity in ["medium", "high"] or len(goals) > 1
+        
+        # ШАГ 4: Формирование результата
+        reasoning_steps.append({
+            "phase": "planning",
+            "step": 4,
+            "total_steps": 4,
+            "content": f"Формирую результат понимания задачи...\nНужно планирование: {'да' if needs_planning else 'нет'}"
+        })
         
         # Формируем результат понимания
         understanding_result = {
@@ -98,7 +137,8 @@ def understand_node(
             "document_analysis": document_analysis,
             "key_indicators": document_analysis.get("key_indicators", []) if document_analysis else [],
             "suggested_analyses": document_analysis.get("suggested_analyses", []) if document_analysis else [],
-            "reasoning": _generate_understanding_reasoning(user_task, complexity, task_type, goals, document_analysis)
+            "reasoning": _generate_understanding_reasoning(user_task, complexity, task_type, goals, document_analysis),
+            "reasoning_steps": reasoning_steps  # Добавляем reasoning steps для streaming
         }
         
         state["understanding_result"] = understanding_result

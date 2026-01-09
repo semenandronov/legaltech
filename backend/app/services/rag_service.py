@@ -1315,4 +1315,108 @@ class RAGService:
         
         return answer
     
+    def generate_with_structured_citations(
+        self,
+        query: str,
+        documents: List[Document],
+        history: Optional[List[Dict]] = None
+    ) -> "AnswerWithCitations":
+        """
+        Генерирует ответ со структурированными цитатами через with_structured_output.
+        
+        Использует LangChain's with_structured_output для автоматического парсинга
+        ответа с цитатами, включая точные координаты для подсветки в документе.
+        
+        Args:
+            query: Запрос пользователя
+            documents: Список Document объектов с метаданными
+            history: Опциональная история чата
+            
+        Returns:
+            AnswerWithCitations объект с ответом и списком EnhancedCitation
+        """
+        from app.services.langchain_agents.schemas.citation_schema import AnswerWithCitations, EnhancedCitation
+        from app.services.llm_factory import create_llm
+        from langchain_core.messages import HumanMessage, SystemMessage
+        
+        # Подготовка контекста с позициями
+        context_with_positions = self._prepare_context_with_positions(documents)
+        
+        # Формируем промпт
+        prompt = f"""Ответь на вопрос, используя ТОЛЬКО информацию из документов.
+Для каждого факта укажи источник в формате [N] в тексте ответа.
+
+В citations укажи точные координаты цитат для подсветки в документе:
+- source_id: ID документа из metadata
+- file_name: имя файла
+- page: номер страницы
+- quote: точная цитата из документа
+- char_start: начальная позиция символа в документе
+- char_end: конечная позиция символа в документе
+- context_before: контекст до цитаты (до 50 символов)
+- context_after: контекст после цитаты (до 50 символов)
+
+Документы:
+{context_with_positions}
+
+Вопрос: {query}
+"""
+        
+        # Создаём сообщения
+        messages = [SystemMessage(content="Ты помощник-юрист. Отвечай точно, используя только информацию из предоставленных документов.")]
+        
+        # Добавляем историю если есть
+        if history:
+            from langchain_core.messages import AIMessage
+            for msg in history:
+                role = msg.get("role", "")
+                content = msg.get("content", "")
+                if role == "user":
+                    messages.append(HumanMessage(content=content))
+                elif role == "assistant":
+                    messages.append(AIMessage(content=content))
+        
+        messages.append(HumanMessage(content=prompt))
+        
+        # Используем with_structured_output для автоматического парсинга
+        llm = create_llm()
+        try:
+            structured_llm = llm.with_structured_output(AnswerWithCitations)
+            result = structured_llm.invoke(messages)
+            return result
+        except Exception as e:
+            logger.error(f"Error in generate_with_structured_citations: {e}", exc_info=True)
+            # Fallback: возвращаем базовый ответ
+            return AnswerWithCitations(
+                answer=f"Ошибка генерации структурированного ответа: {str(e)}",
+                citations=[],
+                confidence=0.0
+            )
+    
+    def _prepare_context_with_positions(self, documents: List[Document]) -> str:
+        """Подготавливает контекст с позициями для точного цитирования"""
+        context_parts = []
+        for i, doc in enumerate(documents):
+            content = doc.page_content
+            metadata = doc.metadata
+            
+            # Извлекаем информацию о позиции
+            source_file = metadata.get("source_file", "unknown")
+            source_page = metadata.get("source_page", 1)
+            char_start = metadata.get("char_start", 0)
+            char_end = metadata.get("char_end", len(content))
+            
+            # Добавляем информацию о позиции
+            context_parts.append(f"""
+[Документ {i+1}]
+Файл: {source_file}
+Страница: {source_page}
+Начальная позиция: {char_start}
+Конечная позиция: {char_end}
+Содержимое:
+{content}
+---
+""")
+        return "\n".join(context_parts)
+    
 

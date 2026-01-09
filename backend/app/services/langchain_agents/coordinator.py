@@ -1,11 +1,13 @@
 """Agent coordinator for managing multi-agent analysis"""
-from typing import Dict, Any, List, Optional, Callable
+from typing import Dict, Any, List, Optional, Callable, AsyncGenerator
 from sqlalchemy.orm import Session
 from app.services.langchain_agents.graph import create_analysis_graph
 from app.services.langchain_agents.state import AnalysisState, create_initial_state
 from app.services.langchain_agents.component_factory import ComponentFactory
 from app.services.rag_service import RAGService
 from app.services.document_processor import DocumentProcessor
+from langchain_core.runnables import RunnableConfig
+from langchain_core.messages import HumanMessage
 import logging
 import time
 
@@ -811,4 +813,144 @@ class AgentCoordinator:
             
         except Exception as e:
             logger.error(f"[Resume] Error resuming graph execution: {e}", exc_info=True)
+            raise
+    
+    async def stream_analysis_events(
+        self,
+        case_id: str,
+        user_task: str,
+        config: Optional[RunnableConfig] = None
+    ) -> AsyncGenerator[Dict[str, Any], None]:
+        """
+        Stream analysis events from LangGraph using astream_events.
+        
+        This method uses LangGraph's native astream_events API to stream events
+        including tokens, custom events (reasoning), and node completions.
+        
+        Args:
+            case_id: Case identifier
+            user_task: Natural language task description
+            config: Optional RunnableConfig for graph execution
+            
+        Yields:
+            Dictionary with event data:
+            - {"type": "token", "content": "..."} - LLM tokens
+            - {"type": "reasoning", "data": {...}} - Custom reasoning events
+            - {"type": "node_complete", "node": "...", "output": {...}} - Node completion
+        """
+        try:
+            # Validate inputs (similar to run_analysis)
+            from app.models.case import Case
+            case = self.db.query(Case).filter(Case.id == case_id).first()
+            if not case:
+                raise ValueError(f"Case {case_id} not found in database")
+            
+            # Create CaseContext
+            from app.services.langchain_agents.context_schema import CaseContext
+            try:
+                case_context = CaseContext.from_case_model(case)
+            except Exception as e:
+                logger.warning(f"Failed to create CaseContext: {e}, using minimal")
+                case_context = CaseContext.from_minimal(case_id=case_id, user_id=case.user_id or "")
+            
+            # Create initial state (simplified version for streaming)
+            initial_state = create_initial_state(
+                case_id=case_id,
+                analysis_types=[],  # Will be determined by planning
+                metadata={"user_task": user_task},
+                context=case_context
+            )
+            initial_state["user_task"] = user_task
+            
+            # Create thread config
+            thread_config = config or {"configurable": {"thread_id": f"case_{case_id}"}}
+            if "configurable" not in thread_config:
+                thread_config["configurable"] = {}
+            thread_config["configurable"]["recursion_limit"] = 50
+            
+            logger.info(f"[StreamAnalysisEvents] Starting event stream for case {case_id}")
+            
+            # Use astream_events for native LangGraph streaming
+            try:
+                async for event in self.graph.astream_events(
+                    initial_state,
+                    config=thread_config,
+                    version="v2"
+                ):
+                    event_type = event.get("event", "")
+                    
+                    # Handle LLM token streaming
+                    if event_type == "on_chat_model_stream":
+                        chunk = event.get("data", {}).get("chunk")
+                        if chunk and hasattr(chunk, "content") and chunk.content:
+                            yield {
+                                "type": "token",
+                                "content": chunk.content,
+                                "metadata": {
+                                    "name": event.get("name", ""),
+                                    "run_id": event.get("run_id", "")
+                                }
+                            }
+                    
+                    # Handle custom events (reasoning, progress, etc.)
+                    elif event_type == "on_custom_event":
+                        event_name = event.get("name", "")
+                        event_data = event.get("data", {})
+                        yield {
+                            "type": event_name,
+                            "data": event_data,
+                            "metadata": {
+                                "run_id": event.get("run_id", "")
+                            }
+                        }
+                    
+                    # Handle chain/node completion
+                    elif event_type == "on_chain_end":
+                        node_name = event.get("name", "")
+                        output = event.get("data", {}).get("output")
+                        
+                        # Only yield completion for major nodes
+                        if node_name in ["understand", "plan", "deliver", "deep_analysis"]:
+                            yield {
+                                "type": "node_complete",
+                                "node": node_name,
+                                "output": output,
+                                "metadata": {
+                                    "run_id": event.get("run_id", "")
+                                }
+                            }
+                    
+                    # Handle interrupts
+                    elif event_type == "__interrupt__":
+                        interrupt_data = event.get("data", {})
+                        yield {
+                            "type": "interrupt",
+                            "data": interrupt_data,
+                            "thread_id": thread_config["configurable"].get("thread_id")
+                        }
+                        
+            except AttributeError:
+                # Fallback if astream_events is not available
+                logger.warning("astream_events not available, using fallback streaming")
+                # Use regular astream as fallback
+                async for state_update in self.graph.astream(initial_state, config=thread_config):
+                    # Extract node names from state update
+                    for node_name, node_state in state_update.items():
+                        if node_name in ["understand", "plan", "deliver", "deep_analysis"]:
+                            yield {
+                                "type": "node_complete",
+                                "node": node_name,
+                                "output": node_state,
+                                "metadata": {}
+                            }
+            
+            logger.info(f"[StreamAnalysisEvents] Event stream completed for case {case_id}")
+            
+        except Exception as e:
+            logger.error(f"[StreamAnalysisEvents] Error in event stream: {e}", exc_info=True)
+            yield {
+                "type": "error",
+                "error": str(e),
+                "metadata": {}
+            }
             raise

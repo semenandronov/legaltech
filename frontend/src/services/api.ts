@@ -136,6 +136,13 @@ export interface SourceInfo {
   end_line?: number
   text_preview?: string
   similarity_score?: number
+  // Enhanced citation fields for document highlighting
+  char_start?: number  // Start character position in document
+  char_end?: number    // End character position in document
+  context_before?: string  // Context before quote (50 chars)
+  context_after?: string   // Context after quote (50 chars)
+  quote?: string       // Exact quote from document
+  source_id?: string   // Document ID for reference
 }
 
 export interface ChatResponse {
