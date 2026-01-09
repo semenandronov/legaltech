@@ -929,9 +929,9 @@ class AgentCoordinator:
                             "thread_id": thread_config["configurable"].get("thread_id")
                         }
                         
-            except AttributeError:
-                # Fallback if astream_events is not available
-                logger.warning("astream_events not available, using fallback streaming")
+            except (AttributeError, NotImplementedError) as e:
+                # Fallback if astream_events is not available or checkpointer doesn't support async operations
+                logger.warning(f"astream_events not available ({type(e).__name__}: {e}), using fallback streaming with astream")
                 # Use regular astream as fallback
                 async for state_update in self.graph.astream(initial_state, config=thread_config):
                     # Extract node names from state update
