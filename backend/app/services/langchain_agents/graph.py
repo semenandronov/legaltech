@@ -812,6 +812,10 @@ def create_analysis_graph(
         logger.debug(f"Store initialization skipped: {e}")
         store = None
     
+    # Wrap PostgresSaver with async wrapper for astream_events support
+    from app.utils.async_checkpointer_wrapper import wrap_postgres_saver_if_needed
+    checkpointer = wrap_postgres_saver_if_needed(checkpointer)
+    
     # Compile graph with checkpointer and optional store
     if store:
         compiled_graph = graph.compile(checkpointer=checkpointer, store=store)

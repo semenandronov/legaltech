@@ -871,78 +871,62 @@ class AgentCoordinator:
             logger.info(f"[StreamAnalysisEvents] Starting event stream for case {case_id}")
             
             # Use astream_events for native LangGraph streaming
-            try:
-                async for event in self.graph.astream_events(
-                    initial_state,
-                    config=thread_config,
-                    version="v2"
-                ):
-                    event_type = event.get("event", "")
-                    
-                    # Handle LLM token streaming
-                    if event_type == "on_chat_model_stream":
-                        chunk = event.get("data", {}).get("chunk")
-                        if chunk and hasattr(chunk, "content") and chunk.content:
-                            yield {
-                                "type": "token",
-                                "content": chunk.content,
-                                "metadata": {
-                                    "name": event.get("name", ""),
-                                    "run_id": event.get("run_id", "")
-                                }
-                            }
-                    
-                    # Handle custom events (reasoning, progress, etc.)
-                    elif event_type == "on_custom_event":
-                        event_name = event.get("name", "")
-                        event_data = event.get("data", {})
+            async for event in self.graph.astream_events(
+                initial_state,
+                config=thread_config,
+                version="v2"
+            ):
+                event_type = event.get("event", "")
+                
+                # Handle LLM token streaming
+                if event_type == "on_chat_model_stream":
+                    chunk = event.get("data", {}).get("chunk")
+                    if chunk and hasattr(chunk, "content") and chunk.content:
                         yield {
-                            "type": event_name,
-                            "data": event_data,
+                            "type": "token",
+                            "content": chunk.content,
+                            "metadata": {
+                                "name": event.get("name", ""),
+                                "run_id": event.get("run_id", "")
+                            }
+                        }
+                
+                # Handle custom events (reasoning, progress, etc.)
+                elif event_type == "on_custom_event":
+                    event_name = event.get("name", "")
+                    event_data = event.get("data", {})
+                    yield {
+                        "type": event_name,
+                        "data": event_data,
+                        "metadata": {
+                            "run_id": event.get("run_id", "")
+                        }
+                    }
+                
+                # Handle chain/node completion
+                elif event_type == "on_chain_end":
+                    node_name = event.get("name", "")
+                    output = event.get("data", {}).get("output")
+                    
+                    # Only yield completion for major nodes
+                    if node_name in ["understand", "plan", "deliver", "deep_analysis"]:
+                        yield {
+                            "type": "node_complete",
+                            "node": node_name,
+                            "output": output,
                             "metadata": {
                                 "run_id": event.get("run_id", "")
                             }
                         }
-                    
-                    # Handle chain/node completion
-                    elif event_type == "on_chain_end":
-                        node_name = event.get("name", "")
-                        output = event.get("data", {}).get("output")
-                        
-                        # Only yield completion for major nodes
-                        if node_name in ["understand", "plan", "deliver", "deep_analysis"]:
-                            yield {
-                                "type": "node_complete",
-                                "node": node_name,
-                                "output": output,
-                                "metadata": {
-                                    "run_id": event.get("run_id", "")
-                                }
-                            }
-                    
-                    # Handle interrupts
-                    elif event_type == "__interrupt__":
-                        interrupt_data = event.get("data", {})
-                        yield {
-                            "type": "interrupt",
-                            "data": interrupt_data,
-                            "thread_id": thread_config["configurable"].get("thread_id")
-                        }
-                        
-            except (AttributeError, NotImplementedError) as e:
-                # Fallback if astream_events is not available or checkpointer doesn't support async operations
-                logger.warning(f"astream_events not available ({type(e).__name__}: {e}), using fallback streaming with astream")
-                # Use regular astream as fallback
-                async for state_update in self.graph.astream(initial_state, config=thread_config):
-                    # Extract node names from state update
-                    for node_name, node_state in state_update.items():
-                        if node_name in ["understand", "plan", "deliver", "deep_analysis"]:
-                            yield {
-                                "type": "node_complete",
-                                "node": node_name,
-                                "output": node_state,
-                                "metadata": {}
-                            }
+                
+                # Handle interrupts
+                elif event_type == "__interrupt__":
+                    interrupt_data = event.get("data", {})
+                    yield {
+                        "type": "interrupt",
+                        "data": interrupt_data,
+                        "thread_id": thread_config["configurable"].get("thread_id")
+                    }
             
             logger.info(f"[StreamAnalysisEvents] Event stream completed for case {case_id}")
             
