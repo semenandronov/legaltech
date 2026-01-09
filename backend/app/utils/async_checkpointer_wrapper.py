@@ -2,7 +2,7 @@
 Async wrapper for PostgresSaver to enable astream_events support
 
 PostgresSaver doesn't implement async methods required by astream_events,
-so we create an async wrapper that uses asyncio to run sync methods.
+so we use monkey-patching to add async methods directly to the instance.
 """
 import asyncio
 from typing import Optional, Any, Dict, Tuple
@@ -12,33 +12,16 @@ import logging
 logger = logging.getLogger(__name__)
 
 
-class AsyncPostgresSaverWrapper:
+def _add_aget_tuple_to_instance(postgres_saver: PostgresSaver):
     """
-    Async wrapper for PostgresSaver to support astream_events
+    Add aget_tuple method directly to PostgresSaver instance using monkey-patching
     
-    Wraps PostgresSaver and implements async methods (aget_tuple) 
-    by running sync methods in executor.
-    
-    This wrapper allows astream_events to work with PostgresSaver
-    by providing async versions of checkpoint methods.
+    Args:
+        postgres_saver: PostgresSaver instance to add the method to
     """
-    
-    def __init__(self, postgres_saver: PostgresSaver):
-        """
-        Initialize wrapper with PostgresSaver instance
-        
-        Args:
-            postgres_saver: PostgresSaver instance to wrap
-        """
-        # Store the wrapped saver
-        self._wrapped_saver = postgres_saver
-        # Copy all attributes to make wrapper transparent
-        # This ensures isinstance checks and attribute access work correctly
-        for key, value in postgres_saver.__dict__.items():
-            if not key.startswith('_') or key == '_conn':
-                setattr(self, key, value)
-    
-    async def aget_tuple(self, config: Dict[str, Any]) -> Optional[Tuple[Any, ...]]:
+    # Create async method that will be bound to the instance
+    # Use closure to capture the postgres_saver instance
+    async def aget_tuple_method(config: Dict[str, Any]) -> Optional[Tuple[Any, ...]]:
         """
         Async version of get_tuple
         
@@ -50,8 +33,8 @@ class AsyncPostgresSaverWrapper:
         Returns:
             Tuple from checkpoint or None
         """
-        # Get sync method from wrapped saver
-        sync_get_tuple = getattr(self._wrapped_saver, 'get_tuple', None)
+        # Get sync method from the captured instance
+        sync_get_tuple = getattr(postgres_saver, 'get_tuple', None)
         if sync_get_tuple is None:
             # If method doesn't exist, raise NotImplementedError to match base behavior
             raise NotImplementedError("get_tuple not available in PostgresSaver")
@@ -70,13 +53,9 @@ class AsyncPostgresSaverWrapper:
             logger.error(f"Error in aget_tuple wrapper: {e}", exc_info=True)
             raise
     
-    def __getattr__(self, name: str) -> Any:
-        """
-        Delegate all other attributes and methods to wrapped PostgresSaver
-        
-        This allows the wrapper to act as a drop-in replacement
-        """
-        return getattr(self._wrapped_saver, name)
+    # Bind the async method to the instance
+    import types
+    postgres_saver.aget_tuple = types.MethodType(aget_tuple_method, postgres_saver)
 
 
 def wrap_postgres_saver_if_needed(checkpointer: Any) -> Any:
@@ -94,8 +73,13 @@ def wrap_postgres_saver_if_needed(checkpointer: Any) -> Any:
     
     # Only wrap PostgresSaver (MemorySaver already supports async)
     if isinstance(checkpointer, PostgresSaver):
-        logger.info("Wrapping PostgresSaver with AsyncPostgresSaverWrapper for astream_events support")
-        return AsyncPostgresSaverWrapper(checkpointer)
+        # Check if aget_tuple already exists (might have been added before)
+        if not hasattr(checkpointer, 'aget_tuple') or not callable(getattr(checkpointer, 'aget_tuple', None)):
+            logger.info("Adding aget_tuple method to PostgresSaver for astream_events support")
+            # Use monkey-patching to add aget_tuple directly to the instance
+            _add_aget_tuple_to_instance(checkpointer)
+        else:
+            logger.debug("PostgresSaver already has aget_tuple method")
     
     # Return as-is for MemorySaver and other checkpointers
     return checkpointer
