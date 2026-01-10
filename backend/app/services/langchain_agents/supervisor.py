@@ -126,7 +126,7 @@ def route_to_agent(state: AnalysisState, use_command: bool = True) -> Union[str,
     rule_router = get_rule_router()
     rule_route = rule_router.route(state)
     
-        if rule_route:
+    if rule_route:
         # Сохранить в кэш
         route_cache.set(state, rule_route)
         logger.info(f"[Супервизор] {case_id}: Rule-based → {rule_route}")
