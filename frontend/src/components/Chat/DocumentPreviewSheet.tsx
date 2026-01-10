@@ -21,6 +21,7 @@ import {
   OpenInNew as MaximizeIcon,
 } from '@mui/icons-material'
 import { SourceInfo } from '@/services/api'
+import PDFViewer from '@/components/Documents/PDFViewer'
 
 interface DocumentPreviewSheetProps {
   isOpen: boolean
@@ -42,6 +43,7 @@ const DocumentPreviewSheet = ({
   const [copied, setCopied] = useState(false)
   const [documentContent, setDocumentContent] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
+  const [fileInfo, setFileInfo] = useState<{ id: string; file_type: string; filename: string } | null>(null)
 
   const currentIndex = source ? allSources.findIndex(s => s.file === source.file) : -1
   const hasPrev = currentIndex > 0
@@ -49,11 +51,11 @@ const DocumentPreviewSheet = ({
 
   useEffect(() => {
     if (source && isOpen) {
-      loadDocumentContent()
+      loadDocumentInfo()
     }
   }, [source, isOpen])
 
-  const loadDocumentContent = async () => {
+  const loadDocumentInfo = async () => {
     if (!source) return
     
     setLoading(true)
@@ -70,19 +72,31 @@ const DocumentPreviewSheet = ({
         const file = filesData.documents?.find((f: any) => f.filename === source.file || f.id === source.file)
         
         if (file) {
-          // Try to get document content from API using file_id
-          const contentResponse = await fetch(`/api/cases/${caseId}/files/${file.id}/content`, {
-            headers: {
-              'Authorization': `Bearer ${localStorage.getItem('access_token')}`
-            }
+          setFileInfo({
+            id: file.id,
+            file_type: file.file_type || 'txt',
+            filename: file.filename
           })
-          
-          if (contentResponse.ok) {
-            const text = await contentResponse.text()
-            setDocumentContent(text || source.text_preview || '')
+
+          // For non-PDF files, load text content using /files/{file_id}/content endpoint
+          // (same as DocumentViewer uses)
+          if (file.file_type !== 'pdf') {
+            const contentResponse = await fetch(`/api/cases/${caseId}/files/${file.id}/content`, {
+              headers: {
+                'Authorization': `Bearer ${localStorage.getItem('access_token')}`
+              }
+            })
+            
+            if (contentResponse.ok) {
+              const text = await contentResponse.text()
+              setDocumentContent(text || source.text_preview || '')
+            } else {
+              // Fallback to text_preview
+              setDocumentContent(source.text_preview || 'Содержимое документа недоступно для предпросмотра')
+            }
           } else {
-            // Fallback to text_preview
-            setDocumentContent(source.text_preview || 'Содержимое документа недоступно для предпросмотра')
+            // For PDF files, we don't need to load text content - PDFViewer will handle it
+            setDocumentContent(null)
           }
         } else {
           // File not found, use text_preview
@@ -227,7 +241,7 @@ const DocumentPreviewSheet = ({
                 <IconButton
                   size="small"
                   component="a"
-                  href={`/api/cases/${caseId}/files/${encodeURIComponent(source.file)}/download`}
+                  href={fileInfo ? `/api/cases/${caseId}/files/${fileInfo.id}/download` : `#`}
                   download
                 >
                   <DownloadIcon fontSize="small" />
@@ -252,18 +266,39 @@ const DocumentPreviewSheet = ({
         <Box
           sx={{
             flex: 1,
-            overflow: 'auto',
-            p: 2,
+            overflow: 'hidden',
+            display: 'flex',
+            flexDirection: 'column',
           }}
         >
           {loading ? (
-            <Stack spacing={1}>
-              <Skeleton variant="text" width="100%" />
-              <Skeleton variant="text" width="75%" />
-              <Skeleton variant="text" width="50%" />
-            </Stack>
+            <Box sx={{ p: 2 }}>
+              <Stack spacing={1}>
+                <Skeleton variant="text" width="100%" />
+                <Skeleton variant="text" width="75%" />
+                <Skeleton variant="text" width="50%" />
+              </Stack>
+            </Box>
+          ) : fileInfo && fileInfo.file_type === 'pdf' ? (
+            // PDF viewer - like on Documents page
+            <Box sx={{ flex: 1, overflow: 'hidden' }}>
+              <PDFViewer
+                fileId={fileInfo.id}
+                caseId={caseId}
+                filename={fileInfo.filename}
+                showTabs={false}
+                showAbout={false}
+              />
+            </Box>
           ) : (
-            <>
+            // Text content for non-PDF files
+            <Box
+              sx={{
+                flex: 1,
+                overflow: 'auto',
+                p: 2,
+              }}
+            >
               {source.text_preview && (
                 <Paper
                   elevation={0}
@@ -315,7 +350,7 @@ const DocumentPreviewSheet = ({
                   </Typography>
                 </>
               )}
-            </>
+            </Box>
           )}
         </Box>
       </Box>
