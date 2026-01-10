@@ -17,7 +17,6 @@ type UploadStep = 'files' | 'info' | 'processing' | 'complete'
 const UploadArea = ({ onUpload }: UploadAreaProps) => {
   const [step, setStep] = useState<UploadStep>('files')
   const [files, setFiles] = useState<File[]>([])
-  const [caseInfo, setCaseInfo] = useState<CaseInfo | null>(null)
   const [caseId, setCaseId] = useState<string | null>(null)
   const [dragActive, setDragActive] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -72,8 +71,6 @@ const UploadArea = ({ onUpload }: UploadAreaProps) => {
   }
 
   const handleCaseInfoSubmit = async (info: CaseInfo) => {
-    setCaseInfo(info)
-    
     // Убираем шаг выбора типа анализа, сразу начинаем загрузку с дефолтными настройками
     if (files.length === 0) {
       setError('Пожалуйста, выберите файлы для загрузки')
