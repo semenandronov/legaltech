@@ -137,17 +137,17 @@ def _add_aput_writes_to_instance(postgres_saver: PostgresSaver):
     
     # Create async method that will be bound to the instance
     # Use closure to capture the postgres_saver instance
-    async def aput_writes_method(config: Dict[str, Any], writes: Any) -> None:
+    async def aput_writes_method(task_id: str, writes: Any) -> None:
         """
         Async version of put_writes for batch checkpoint writes
         
         Runs sync put_writes in executor to avoid blocking event loop
         
         Args:
-            config: Configuration dict with thread_id and other params
+            task_id: Task ID for the writes
             writes: Write records or write data (structure depends on LangGraph version)
         """
-        logger.debug(f"aput_writes called with config: {config}, writes type: {type(writes)}")
+        logger.debug(f"aput_writes called with task_id: {task_id}, writes type: {type(writes)}")
         
         # Get sync put_writes method
         sync_put_writes = getattr(postgres_saver, 'put_writes', None)
@@ -163,7 +163,7 @@ def _add_aput_writes_to_instance(postgres_saver: PostgresSaver):
             await loop.run_in_executor(
                 None,  # Use default executor
                 sync_put_writes,
-                config,
+                task_id,
                 writes
             )
             logger.debug(f"aput_writes completed successfully")
