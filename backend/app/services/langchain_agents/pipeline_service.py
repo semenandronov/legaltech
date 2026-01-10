@@ -360,12 +360,26 @@ class PipelineService:
             yield progress_event.to_sse_format()
             
             # Используем новый stream_analysis_events для нативного streaming через astream_events
+            # #region debug log
+            import json as json_module
+            log_file = "/Users/semyon_andronov04/Desktop/C ДВ/.cursor/debug.log"
+            try:
+                with open(log_file, "a") as f:
+                    f.write(json_module.dumps({"timestamp": time.time(), "sessionId": "debug-session", "runId": "pipeline-start", "hypothesisId": "E", "location": "pipeline_service.py:363", "message": "Starting stream_analysis_events", "data": {"case_id": case_id}}) + "\n")
+            except: pass
+            # #endregion
             async for event in self.coordinator.stream_analysis_events(
                 case_id=case_id,
                 user_task=query,
                 config=None
             ):
                 event_type = event.get("type")
+                # #region debug log
+                try:
+                    with open(log_file, "a") as f:
+                        f.write(json_module.dumps({"timestamp": time.time(), "sessionId": "debug-session", "runId": "pipeline-event", "hypothesisId": "E", "location": "pipeline_service.py:369", "message": "Received event", "data": {"case_id": case_id, "event_type": event_type}}) + "\n")
+                except: pass
+                # #endregion
                 
                 if event_type == "token":
                     # LLM токены - отправляем как textDelta
@@ -415,6 +429,12 @@ class PipelineService:
                 
                 elif event_type == "completion":
                     # Финальное событие о завершении анализа
+                    # #region debug log
+                    try:
+                        with open(log_file, "a") as f:
+                            f.write(json_module.dumps({"timestamp": time.time(), "sessionId": "debug-session", "runId": "pipeline-completion", "hypothesisId": "A,E", "location": "pipeline_service.py:417", "message": "Processing completion event", "data": {"case_id": case_id}}) + "\n")
+                    except: pass
+                    # #endregion
                     completion_event = AgentProgressEvent(
                         agent_name="system",
                         step="Анализ завершён",
@@ -422,6 +442,12 @@ class PipelineService:
                         message="Все этапы анализа успешно выполнены"
                     )
                     yield completion_event.to_sse_format()
+                    # #region debug log
+                    try:
+                        with open(log_file, "a") as f:
+                            f.write(json_module.dumps({"timestamp": time.time(), "sessionId": "debug-session", "runId": "pipeline-completion-sent", "hypothesisId": "A,E", "location": "pipeline_service.py:425", "message": "Completion event sent to client", "data": {"case_id": case_id}}) + "\n")
+                    except: pass
+                    # #endregion
                 
                 elif event_type == "error":
                     # Ошибка

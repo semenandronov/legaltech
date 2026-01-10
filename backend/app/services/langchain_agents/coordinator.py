@@ -957,12 +957,28 @@ class AgentCoordinator:
             max_delay = 5.0
             
             for attempt in range(max_retries + 1):
+                # #region debug log
+                log_file = "/Users/semyon_andronov04/Desktop/C ДВ/.cursor/debug.log"
                 try:
+                    with open(log_file, "a") as f:
+                        f.write(json.dumps({"timestamp": time.time(), "sessionId": "debug-session", "runId": f"attempt-{attempt}", "hypothesisId": "B,C,D", "location": "coordinator.py:961", "message": "Starting async for loop", "data": {"case_id": case_id, "attempt": attempt}}) + "\n")
+                except: pass
+                # #endregion
+                try:
+                    event_count = 0
                     async for event in self.graph.astream_events(
                         initial_state,
                         config=thread_config,
                         version="v2"
                     ):
+                        event_count += 1
+                        # #region debug log
+                        if event_count % 10 == 0:  # Log every 10th event to avoid spam
+                            try:
+                                with open(log_file, "a") as f:
+                                    f.write(json.dumps({"timestamp": time.time(), "sessionId": "debug-session", "runId": f"event-{event_count}", "hypothesisId": "B,C", "location": "coordinator.py:966", "message": "Processing event", "data": {"case_id": case_id, "event_count": event_count, "event_type": event.get("event", "")}}) + "\n")
+                            except: pass
+                        # #endregion
                         event_type = event.get("event", "")
                         
                         # Handle LLM token streaming
@@ -1017,8 +1033,15 @@ class AgentCoordinator:
                     
                     # Stream completed successfully
                     logger.info(f"[StreamAnalysisEvents] Event stream completed for case {case_id}")
+                    # #region debug log
+                    log_file = "/Users/semyon_andronov04/Desktop/C ДВ/.cursor/debug.log"
+                    try:
+                        with open(log_file, "a") as f:
+                            f.write(json.dumps({"timestamp": time.time(), "sessionId": "debug-session", "runId": "pre-completion", "hypothesisId": "A", "location": "coordinator.py:1019", "message": "About to yield completion event", "data": {"case_id": case_id}}) + "\n")
+                    except: pass
+                    # #endregion
                     # Yield final completion event before returning
-                    yield {
+                    completion_event = {
                         "type": "completion",
                         "case_id": case_id,
                         "status": "completed",
@@ -1026,9 +1049,22 @@ class AgentCoordinator:
                             "run_id": thread_config.get("configurable", {}).get("thread_id", f"case_{case_id}")
                         }
                     }
+                    yield completion_event
+                    # #region debug log
+                    try:
+                        with open(log_file, "a") as f:
+                            f.write(json.dumps({"timestamp": time.time(), "sessionId": "debug-session", "runId": "post-completion", "hypothesisId": "A", "location": "coordinator.py:1030", "message": "Completion event yielded", "data": {"case_id": case_id}}) + "\n")
+                    except: pass
+                    # #endregion
                     return  # Exit retry loop on success
                     
                 except Exception as stream_error:
+                    # #region debug log
+                    try:
+                        with open(log_file, "a") as f:
+                            f.write(json.dumps({"timestamp": time.time(), "sessionId": "debug-session", "runId": f"error-{attempt}", "hypothesisId": "B,D", "location": "coordinator.py:1031", "message": "Exception in async for loop", "data": {"case_id": case_id, "error_type": type(stream_error).__name__, "error_msg": str(stream_error), "attempt": attempt}}) + "\n")
+                    except: pass
+                    # #endregion
                     # Check if this is a connection error
                     if _is_connection_error(stream_error):
                         if attempt < max_retries:
@@ -1040,6 +1076,12 @@ class AgentCoordinator:
                             await asyncio.sleep(delay)
                             continue  # Retry the loop
                         else:
+                            # #region debug log
+                            try:
+                                with open(log_file, "a") as f:
+                                    f.write(json.dumps({"timestamp": time.time(), "sessionId": "debug-session", "runId": "error-max-retries", "hypothesisId": "D", "location": "coordinator.py:1043", "message": "Max retries exceeded for connection error", "data": {"case_id": case_id, "error_type": type(stream_error).__name__}}) + "\n")
+                            except: pass
+                            # #endregion
                             logger.error(
                                 f"[StreamAnalysisEvents] Connection error after {max_retries + 1} attempts: "
                                 f"{type(stream_error).__name__}: {stream_error}"
@@ -1047,6 +1089,12 @@ class AgentCoordinator:
                             raise
                     else:
                         # Non-connection error, don't retry
+                        # #region debug log
+                        try:
+                            with open(log_file, "a") as f:
+                                f.write(json.dumps({"timestamp": time.time(), "sessionId": "debug-session", "runId": "error-non-connection", "hypothesisId": "B", "location": "coordinator.py:1050", "message": "Non-connection error, not retrying", "data": {"case_id": case_id, "error_type": type(stream_error).__name__, "error_msg": str(stream_error)}}) + "\n")
+                        except: pass
+                        # #endregion
                         logger.error(f"[StreamAnalysisEvents] Non-connection error in stream: {type(stream_error).__name__}: {stream_error}")
                         raise
             
