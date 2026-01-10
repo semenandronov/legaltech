@@ -352,23 +352,36 @@ class AdvancedPlanningAgent:
                 response_text = response.content if hasattr(response, 'content') else str(response)
                 
                 # Пытаемся распарсить через PydanticOutputParser
+                result = None
                 try:
-                    result = parser.parse(response_text)
+                    parsed_result = parser.parse(response_text)
                     logger.info(f"Successfully parsed table detection using PydanticOutputParser")
                     # Преобразуем в dict для дальнейшей обработки
-                    result_dict = result.dict() if hasattr(result, 'dict') else result.model_dump()
+                    result_dict = parsed_result.dict() if hasattr(parsed_result, 'dict') else parsed_result.model_dump()
+                    # Нормализуем doc_types ДО создания TableDecision
+                    if "doc_types" in result_dict:
+                        doc_types_val = result_dict["doc_types"]
+                        if isinstance(doc_types_val, str):
+                            if doc_types_val.lower() == "all":
+                                result_dict["doc_types"] = None
+                            else:
+                                result_dict["doc_types"] = [doc_types_val]
+                        elif doc_types_val is None:
+                            result_dict["doc_types"] = None
                     result = TableDecision(**result_dict)
                 except Exception as parse_error:
                     logger.warning(f"PydanticOutputParser failed: {parse_error}, trying manual parsing")
                     # Продолжаем с ручным парсингом
-                    pass
+                    result = None
             except Exception as structured_error:
                 logger.warning(f"Structured output not available: {structured_error}, using manual parsing")
                 response = self.llm.invoke(messages)
                 response_text = response.content if hasattr(response, 'content') else str(response)
             
             # Парсим JSON ответ и валидируем через Pydantic
-            try:
+            # Если PydanticOutputParser успешно распарсил - используем результат
+            if result is None:
+                # Ручной парсинг JSON
                 # Улучшенный парсинг JSON
                 json_text = None
                 
@@ -393,7 +406,6 @@ class AdvancedPlanningAgent:
                 if not json_text:
                     logger.warning(f"No JSON found in response, trying to extract from full text: {response_text[:200]}")
                     # Пытаемся найти JSON в любом месте ответа
-                    import re
                     json_match = re.search(r'\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\}', response_text, re.DOTALL)
                     if json_match:
                         json_text = json_match.group(0)
@@ -474,15 +486,27 @@ class AdvancedPlanningAgent:
                         raise ValueError(f"Критическая ошибка парсинга JSON: {str(json_error)}. Ответ LLM: {response_text[:300]}")
                         
                 except Exception as parse_error:
-                    logger.error(f"Failed to validate table detection result: {parse_error}, parsed_json keys: {list(parsed_json.keys()) if 'parsed_json' in locals() else 'N/A'}")
-                    raise ValueError(f"Ошибка валидации результата: {str(parse_error)}")
-                
-                # Валидация результата
-                needs_table = result.needs_table
-                needs_clarification = result.needs_clarification
-                clarification_questions = result.clarification_questions or []
-                
-                # Если нужны уточнения - задаем вопросы через interrupt()
+                    parsed_json_str = 'N/A'
+                    try:
+                        if 'parsed_json' in locals():
+                            parsed_json_str = str(list(parsed_json.keys()))
+                    except:
+                        pass
+                    logger.error(f"Failed to validate table detection result: {parse_error}, parsed_json keys: {parsed_json_str}")
+                    # Продолжаем с повторной попыткой через LLM - result остается None
+                    result = None
+            
+            # Если result все еще None - пробуем повторную попытку через LLM
+            if result is None:
+                # Это обработается в блоке except ниже
+                raise ValueError("Не удалось распарсить результат через PydanticOutputParser и ручной парсинг")
+            
+            # Валидация результата
+            needs_table = result.needs_table
+            needs_clarification = result.needs_clarification
+            clarification_questions = result.clarification_questions or []
+            
+            # Если нужны уточнения - задаем вопросы через interrupt()
                 if needs_table and needs_clarification and clarification_questions:
                     if state and case_id and db:
                         # Получаем список доступных типов документов в деле
@@ -881,6 +905,7 @@ class AdvancedPlanningAgent:
             
             # 1.5. Определение необходимости таблицы
             # Передаем state и db если доступны (для interrupt)
+            table_detection_result = None
             try:
                 table_detection_result = self._determine_table_columns_from_task(
                     user_task=user_task,
@@ -888,8 +913,12 @@ class AdvancedPlanningAgent:
                     state=state,
                     db=db
                 )
-                needs_table = table_detection_result.get("needs_table", False)
-                logger.info(f"Table detection result: needs_table={needs_table}, table_name={table_detection_result.get('table_name')}, columns_count={len(table_detection_result.get('columns', []))}")
+                if table_detection_result:
+                    needs_table = table_detection_result.get("needs_table", False)
+                    logger.info(f"Table detection result: needs_table={needs_table}, table_name={table_detection_result.get('table_name')}, columns_count={len(table_detection_result.get('columns', []))}")
+                else:
+                    needs_table = False
+                    logger.warning("Table detection returned None")
             except Exception as table_detection_error:
                 logger.error(f"Error in table detection, but continuing: {table_detection_error}", exc_info=True)
                 # Если ошибка при определении таблицы - проверяем явные ключевые слова
@@ -913,12 +942,30 @@ class AdvancedPlanningAgent:
                             "reasoning": "Явный запрос на таблицу с хронологией (fallback из-за ошибки парсинга)"
                         }
                     else:
+                        # Пытаемся извлечь колонки из задачи пользователя
+                        columns = []
+                        task_lower_for_cols = task_lower
+                        
+                        # Определяем колонки на основе ключевых слов
+                        if "судья" in task_lower_for_cols or "судьи" in task_lower_for_cols:
+                            columns.append({"label": "Фамилия судьи", "question": "Какая фамилия судьи указана в документе?", "type": "text"})
+                        if "дата" in task_lower_for_cols or "дату" in task_lower_for_cols:
+                            columns.append({"label": "Дата", "question": "Какая дата указана в документе?", "type": "date"})
+                        if "суд" in task_lower_for_cols or "суда" in task_lower_for_cols:
+                            columns.append({"label": "Название суда", "question": "Какое название суда указано в документе?", "type": "text"})
+                        if "тип документа" in task_lower_for_cols or "тип" in task_lower_for_cols:
+                            columns.append({"label": "Тип документа", "question": "Каков тип документа?", "type": "text"})
+                        if "описание" in task_lower_for_cols:
+                            columns.append({"label": "Описание", "question": "Каково описание документа?", "type": "text"})
+                        
+                        # Если не нашли колонок - используем дефолтную
+                        if not columns:
+                            columns = [{"label": "Данные", "question": "Какие данные нужно извлечь из документа?", "type": "text"}]
+                        
                         table_detection_result = {
                             "needs_table": True,
                             "table_name": "Данные из документов",
-                            "columns": [
-                                {"label": "Данные", "question": "Какие данные нужно извлечь из документа?", "type": "text"}
-                            ],
+                            "columns": columns,
                             "doc_types": None,
                             "reasoning": "Явный запрос на таблицу (fallback из-за ошибки парсинга)"
                         }
@@ -940,7 +987,7 @@ class AdvancedPlanningAgent:
                 result_plan = self._convert_to_subtasks_format(base_plan, user_task)
                 
                 # Добавляем таблицы, если нужно
-                if needs_table:
+                if needs_table and table_detection_result:
                     table_spec = {
                         "table_name": table_detection_result.get("table_name", "Данные из документов"),
                         "columns": table_detection_result.get("columns", [])
