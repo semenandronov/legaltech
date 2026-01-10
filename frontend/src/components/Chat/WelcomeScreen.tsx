@@ -114,7 +114,7 @@ export const WelcomeScreen: React.FC<WelcomeScreenProps> = ({
               Чем могу помочь?
             </Typography>
             <Typography variant="body1" color="text.secondary" textAlign="center">
-              Задайте вопрос о ваших документах или выберите одно из быстрых действий
+              Задайте вопрос о ваших документах
             </Typography>
             
             {/* Case Info */}
@@ -140,52 +140,6 @@ export const WelcomeScreen: React.FC<WelcomeScreenProps> = ({
                 )}
               </Stack>
             )}
-          </Stack>
-
-          {/* Quick Actions */}
-          <Stack spacing={2} sx={{ width: '100%' }}>
-            {QUICK_ACTIONS.map((action, idx) => (
-              <Grow in timeout={600 + idx * 100} key={action.title}>
-                <Card
-                  sx={{
-                    cursor: 'pointer',
-                    transition: 'all 0.2s',
-                    '&:hover': {
-                      boxShadow: 4,
-                      transform: 'translateY(-2px)',
-                    },
-                  }}
-                  onClick={() => onQuickAction?.(action.prompt)}
-                >
-                  <CardContent>
-                    <Stack direction="row" spacing={2} alignItems="center">
-                      <Box
-                        sx={{
-                          width: 48,
-                          height: 48,
-                          borderRadius: 2,
-                          bgcolor: 'primary.light',
-                          display: 'flex',
-                          alignItems: 'center',
-                          justifyContent: 'center',
-                          color: 'primary.main',
-                        }}
-                      >
-                        {action.icon}
-                      </Box>
-                      <Stack spacing={0.5} sx={{ flex: 1 }}>
-                        <Typography variant="subtitle1" fontWeight={600}>
-                          {action.title}
-                        </Typography>
-                        <Typography variant="body2" color="text.secondary">
-                          {action.description}
-                        </Typography>
-                      </Stack>
-                    </Stack>
-                  </CardContent>
-                </Card>
-              </Grow>
-            ))}
           </Stack>
 
           {/* Example Questions */}
