@@ -137,16 +137,26 @@ def _add_aput_writes_to_instance(postgres_saver: PostgresSaver):
     
     # Create async method that will be bound to the instance
     # Use closure to capture the postgres_saver instance
-    async def aput_writes_method(task_id: str, writes: Any) -> None:
+    # NOTE: Method may be called with self as first arg if bound, or directly with task_id, writes
+    async def aput_writes_method(*args: Any, **kwargs: Any) -> None:
         """
         Async version of put_writes for batch checkpoint writes
         
         Runs sync put_writes in executor to avoid blocking event loop
         
-        Args:
-            task_id: Task ID for the writes
-            writes: Write records or write data (structure depends on LangGraph version)
+        Accepts either:
+        - (task_id, writes) when called directly
+        - (self, task_id, writes) when called as bound method
         """
+        # Handle both calling patterns: direct call (task_id, writes) or bound method (self, task_id, writes)
+        if len(args) == 2:
+            task_id, writes = args
+        elif len(args) == 3:
+            # Bound method call: (self, task_id, writes) - ignore self
+            _, task_id, writes = args
+        else:
+            raise TypeError(f"aput_writes expected 2 or 3 arguments, got {len(args)}")
+        
         logger.debug(f"aput_writes called with task_id: {task_id}, writes type: {type(writes)}")
         
         # Get sync put_writes method
