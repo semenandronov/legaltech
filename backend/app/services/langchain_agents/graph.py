@@ -615,17 +615,16 @@ def create_analysis_graph(
         supervisor_routes["deep_analysis"] = "deep_analysis"
     
     # Optimize route_to_agent function with caching and priorities
-    # Note: route_to_agent now supports Command-based routing (LangGraph 1.0+)
-    # If route_to_agent returns Command, LangGraph uses Command.goto for routing
-    # and Command.update for state updates automatically
+    # IMPORTANT: Conditional edges must return strings only, NOT Command objects
+    # Command is only for interrupts/resume (see coordinator.py resume_after_interrupt)
+    # See docs/COMMAND_USAGE.md for details
     optimized_route_to_agent = optimize_route_function(
         route_to_agent,
         enable_cache=True,
         enable_priorities=True
     )
     
-    # add_conditional_edges supports both str and Command return types
-    # If function returns Command, Command.goto must be a key in supervisor_routes
+    # add_conditional_edges requires string return type (Command is NOT supported here)
     graph.add_conditional_edges(
         "supervisor",
         optimized_route_to_agent,
