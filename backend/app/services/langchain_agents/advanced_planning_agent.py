@@ -507,7 +507,7 @@ class AdvancedPlanningAgent:
             clarification_questions = result.clarification_questions or []
             
             # Если нужны уточнения - задаем вопросы через interrupt()
-                if needs_table and needs_clarification and clarification_questions:
+            if needs_table and needs_clarification and clarification_questions:
                     if state and case_id and db:
                         # Получаем список доступных типов документов в деле
                         try:
