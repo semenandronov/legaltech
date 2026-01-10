@@ -424,6 +424,18 @@ class AdvancedPlanningAgent:
                     # Парсим JSON
                     parsed_json = json.loads(json_text_cleaned)
                     
+                    # Нормализуем doc_types: если это строка "all", преобразуем в None (будет означать все документы)
+                    if "doc_types" in parsed_json:
+                        doc_types_val = parsed_json["doc_types"]
+                        if isinstance(doc_types_val, str):
+                            if doc_types_val.lower() == "all":
+                                parsed_json["doc_types"] = None  # None означает все документы
+                            else:
+                                parsed_json["doc_types"] = [doc_types_val]  # Одиночную строку преобразуем в список
+                        elif doc_types_val is None:
+                            parsed_json["doc_types"] = None
+                        # Если уже список - оставляем как есть
+                    
                     # Валидируем через Pydantic
                     result = TableDecision(**parsed_json)
                     logger.info(f"Successfully parsed and validated table detection result: needs_table={result.needs_table}")
@@ -440,6 +452,18 @@ class AdvancedPlanningAgent:
                         if start_idx >= 0 and end_idx > start_idx:
                             json_text_cleaned = json_text[start_idx:end_idx]
                             parsed_json = json.loads(json_text_cleaned)
+                            
+                            # Нормализуем doc_types: если это строка "all", преобразуем в None
+                            if "doc_types" in parsed_json:
+                                doc_types_val = parsed_json["doc_types"]
+                                if isinstance(doc_types_val, str):
+                                    if doc_types_val.lower() == "all":
+                                        parsed_json["doc_types"] = None
+                                    else:
+                                        parsed_json["doc_types"] = [doc_types_val]
+                                elif doc_types_val is None:
+                                    parsed_json["doc_types"] = None
+                            
                             result = TableDecision(**parsed_json)
                             logger.info(f"Successfully parsed after aggressive cleaning")
                         else:
@@ -612,6 +636,18 @@ class AdvancedPlanningAgent:
                     if start >= 0 and end > start:
                         retry_json = retry_text[start:end]
                         parsed = json.loads(retry_json)
+                        
+                        # Нормализуем doc_types: если это строка "all", преобразуем в None
+                        if "doc_types" in parsed:
+                            doc_types_val = parsed["doc_types"]
+                            if isinstance(doc_types_val, str):
+                                if doc_types_val.lower() == "all":
+                                    parsed["doc_types"] = None
+                                else:
+                                    parsed["doc_types"] = [doc_types_val]
+                            elif doc_types_val is None:
+                                parsed["doc_types"] = None
+                        
                         result = TableDecision(**parsed)
                         logger.info(f"Successfully parsed on retry")
                     else:
