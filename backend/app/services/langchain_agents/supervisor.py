@@ -146,50 +146,11 @@ def route_to_agent(state: AnalysisState, use_command: bool = True) -> Union[str,
                 }
             )
             # #region debug log
-            import json
-            import time
-            log_data = {
-                "location": "supervisor.py:route_to_agent",
-                "message": "Returning Command from rule-based router",
-                "data": {
-                    "cmd_type": str(type(cmd)),
-                    "cmd_goto": cmd.goto,
-                    "cmd_update_keys": list(cmd.update.keys()) if cmd.update else [],
-                    "use_command": use_command,
-                    "COMMAND_AVAILABLE": COMMAND_AVAILABLE
-                },
-                "timestamp": int(time.time() * 1000),
-                "sessionId": "debug-session",
-                "runId": "pre-fix",
-                "hypothesisId": "A"
-            }
-            try:
-                with open('/Users/semyon_andronov04/Desktop/C ДВ/.cursor/debug.log', 'a') as f:
-                    f.write(json.dumps(log_data) + '\n')
-            except: pass
+            logger.info(f"[DEBUG] Returning Command: goto={cmd.goto}, update_type={type(cmd.update)}, update_keys={list(cmd.update.keys()) if cmd.update else []}, cmd_type={type(cmd)}")
             # #endregion
             return cmd
         # #region debug log
-        import json
-        import time
-        log_data = {
-            "location": "supervisor.py:route_to_agent",
-            "message": "Returning string from rule-based router",
-            "data": {
-                "route_type": str(type(rule_route)),
-                "route_value": rule_route,
-                "use_command": use_command,
-                "COMMAND_AVAILABLE": COMMAND_AVAILABLE
-            },
-            "timestamp": int(time.time() * 1000),
-            "sessionId": "debug-session",
-            "runId": "pre-fix",
-            "hypothesisId": "C"
-        }
-        try:
-            with open('/Users/semyon_andronov04/Desktop/C ДВ/.cursor/debug.log', 'a') as f:
-                f.write(json.dumps(log_data) + '\n')
-        except: pass
+        logger.info(f"[DEBUG] Returning string: route={rule_route}, type={type(rule_route)}, use_command={use_command}, COMMAND_AVAILABLE={COMMAND_AVAILABLE}")
         # #endregion
         return rule_route
     

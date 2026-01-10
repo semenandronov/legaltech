@@ -176,27 +176,10 @@ def optimize_route_function(
             route_cache.set(state, route_str)
         
         # #region debug log
-        import json
-        import time
-        log_data = {
-            "location": "graph_optimizer.py:optimized_route",
-            "message": "Returning route from optimize_route_function",
-            "data": {
-                "route_type": str(type(route)),
-                "is_command": COMMAND_AVAILABLE and isinstance(route, Command) if COMMAND_AVAILABLE else False,
-                "route_goto": getattr(route, 'goto', None) if COMMAND_AVAILABLE and isinstance(route, Command) else None,
-                "route_str": str(route) if not (COMMAND_AVAILABLE and isinstance(route, Command)) else None,
-                "route_repr": repr(route)[:200]
-            },
-            "timestamp": int(time.time() * 1000),
-            "sessionId": "debug-session",
-            "runId": "pre-fix",
-            "hypothesisId": "B"
-        }
-        try:
-            with open('/Users/semyon_andronov04/Desktop/C ДВ/.cursor/debug.log', 'a') as f:
-                f.write(json.dumps(log_data) + '\n')
-        except: pass
+        if COMMAND_AVAILABLE and isinstance(route, Command):
+            logger.info(f"[DEBUG] optimize_route returning Command: goto={route.goto}, update_type={type(route.update)}")
+        else:
+            logger.info(f"[DEBUG] optimize_route returning: {route}, type={type(route)}")
         # #endregion
         
         logger.debug(f"[OptimizedRoute] Computed route: {route}")
