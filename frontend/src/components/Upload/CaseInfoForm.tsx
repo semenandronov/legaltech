@@ -4,7 +4,6 @@ import './Upload.css'
 export interface CaseInfo {
   title: string
   description: string
-  case_type: string
 }
 
 interface CaseInfoFormProps {
@@ -15,7 +14,6 @@ interface CaseInfoFormProps {
 const CaseInfoForm = ({ onSubmit, onCancel }: CaseInfoFormProps) => {
   const [title, setTitle] = useState('')
   const [description, setDescription] = useState('')
-  const [caseType, setCaseType] = useState('litigation')
 
   const [error, setError] = useState<string | null>(null)
 
@@ -29,7 +27,6 @@ const CaseInfoForm = ({ onSubmit, onCancel }: CaseInfoFormProps) => {
     onSubmit({
       title: title.trim(),
       description: description.trim(),
-      case_type: caseType,
     })
   }
 
@@ -65,25 +62,6 @@ const CaseInfoForm = ({ onSubmit, onCancel }: CaseInfoFormProps) => {
             placeholder="Спор о невыполнении обязательств по контракту"
             rows={4}
           />
-        </div>
-
-        <div className="upload-field">
-          <label htmlFor="case_type" className="upload-label">
-            Тип дела *
-          </label>
-          <select
-            id="case_type"
-            value={caseType}
-            onChange={(e) => setCaseType(e.target.value)}
-            className="upload-select"
-            required
-          >
-            <option value="litigation">Судебное дело</option>
-            <option value="contracts">Анализ контрактов</option>
-            <option value="dd">Due Diligence (M&A)</option>
-            <option value="compliance">Compliance проверка</option>
-            <option value="other">Другое</option>
-          </select>
         </div>
 
         <div className="upload-form-actions">
