@@ -2,7 +2,6 @@ import { useState, useRef } from 'react'
 import './UploadArea.css'
 import { uploadFiles, AnalysisConfig } from '../services/api'
 import CaseInfoForm, { CaseInfo } from './Upload/CaseInfoForm'
-import AnalysisOptions, { AnalysisOptions as AnalysisOptionsType } from './Upload/AnalysisOptions'
 import ProcessingScreen from './Upload/ProcessingScreen'
 import { useNavigate } from 'react-router-dom'
 
@@ -13,7 +12,7 @@ interface UploadAreaProps {
   onUpload: (caseId: string, fileNames: string[]) => void
 }
 
-type UploadStep = 'files' | 'info' | 'analysis' | 'processing' | 'complete'
+type UploadStep = 'files' | 'info' | 'processing' | 'complete'
 
 const UploadArea = ({ onUpload }: UploadAreaProps) => {
   const [step, setStep] = useState<UploadStep>('files')
@@ -72,12 +71,10 @@ const UploadArea = ({ onUpload }: UploadAreaProps) => {
     setStep('info')
   }
 
-  const handleCaseInfoSubmit = (info: CaseInfo) => {
+  const handleCaseInfoSubmit = async (info: CaseInfo) => {
     setCaseInfo(info)
-    setStep('analysis')
-  }
-
-  const handleAnalysisSubmit = async (options: AnalysisOptionsType) => {
+    
+    // Убираем шаг выбора типа анализа, сразу начинаем загрузку с дефолтными настройками
     if (files.length === 0) {
       setError('Пожалуйста, выберите файлы для загрузки')
       setStep('files')
@@ -88,16 +85,16 @@ const UploadArea = ({ onUpload }: UploadAreaProps) => {
     setError(null)
     setUploadProgress(0)
 
-    // Upload files with metadata
+    // Используем дефолтные значения анализа (те же, что были в AnalysisOptions)
+    const defaultAnalysisConfig: AnalysisConfig = {
+      enable_timeline: true,
+      enable_entities: true,  // key_facts
+      enable_classification: true,  // discrepancies
+      enable_privilege_check: false,  // risk_analysis
+    }
+
     try {
-      // Convert AnalysisOptions to AnalysisConfig
-      const analysisConfig: AnalysisConfig = {
-        enable_timeline: options.timeline,
-        enable_entities: options.key_facts,
-        enable_classification: options.discrepancies,
-        enable_privilege_check: options.risk_analysis,
-      }
-      const result = await uploadFiles(files, caseInfo, analysisConfig, setUploadProgress)
+      const result = await uploadFiles(files, info, defaultAnalysisConfig, setUploadProgress)
       setCaseId(result.caseId)
       // onUpload will be called after processing completes
     } catch (err: any) {
@@ -125,15 +122,6 @@ const UploadArea = ({ onUpload }: UploadAreaProps) => {
           setStep('files')
           setFiles([])
         }}
-      />
-    )
-  }
-
-  if (step === 'analysis') {
-    return (
-      <AnalysisOptions
-        onSubmit={handleAnalysisSubmit}
-        onBack={() => setStep('info')}
       />
     )
   }
