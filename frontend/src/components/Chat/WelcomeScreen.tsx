@@ -3,20 +3,12 @@ import {
   Box,
   Typography,
   Stack,
-  Card,
-  CardContent,
   Grow,
   CircularProgress,
   Chip,
 } from '@mui/material'
 import {
   AutoAwesome as SparklesIcon,
-  Chat as ChatIcon,
-  Timeline as TimelineIcon,
-  Search as SearchIcon,
-  FactCheck as FactCheckIcon,
-  Warning as WarningIcon,
-  TableChart as TableChartIcon,
   Description as DescriptionIcon,
 } from '@mui/icons-material'
 
@@ -26,45 +18,6 @@ interface WelcomeScreenProps {
   documentCount?: number
   isLoading?: boolean
 }
-
-const QUICK_ACTIONS = [
-  {
-    icon: <ChatIcon />,
-    title: 'Краткое изложение',
-    description: 'Сформулируй краткий обзор этого дела',
-    prompt: 'Сформулируй краткий обзор этого дела',
-  },
-  {
-    icon: <TimelineIcon />,
-    title: 'Хронология событий',
-    description: 'Создай хронологию событий из документов',
-    prompt: 'Создай хронологию событий из документов',
-  },
-  {
-    icon: <SearchIcon />,
-    title: 'Найти противоречия',
-    description: 'Найди противоречия между документами',
-    prompt: 'Найди противоречия между документами',
-  },
-  {
-    icon: <FactCheckIcon />,
-    title: 'Извлечь ключевые факты',
-    description: 'Извлеки ключевые факты из документов дела',
-    prompt: 'Извлеки ключевые факты из документов дела',
-  },
-  {
-    icon: <WarningIcon />,
-    title: 'Проанализировать риски',
-    description: 'Проанализируй риски в этом деле',
-    prompt: 'Проанализируй риски в этом деле',
-  },
-  {
-    icon: <TableChartIcon />,
-    title: 'Создать таблицу',
-    description: 'Создай таблицу с данными из документов',
-    prompt: 'Создай таблицу с данными из документов',
-  },
-]
 
 const EXAMPLE_QUESTIONS = [
   'Какие ключевые сроки важны в этом деле?',
