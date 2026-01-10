@@ -68,6 +68,64 @@ def _add_aget_tuple_to_instance(postgres_saver: PostgresSaver):
     logger.info(f"✅ aget_tuple method added to PostgresSaver. Has method: {has_method}, callable: {method_callable}, type: {type(getattr(postgres_saver, 'aget_tuple', None))}")
 
 
+def _add_aput_to_instance(postgres_saver: PostgresSaver):
+    """
+    Add aput method directly to PostgresSaver instance using monkey-patching
+    
+    Args:
+        postgres_saver: PostgresSaver instance to add the method to
+    """
+    logger.info(f"Adding aput to PostgresSaver instance: {type(postgres_saver)}, id: {id(postgres_saver)}")
+    
+    # Create async method that will be bound to the instance
+    # Use closure to capture the postgres_saver instance
+    async def aput_method(config: Dict[str, Any], checkpoint: Any, metadata: Dict[str, Any], new_versions: Dict[str, Any]) -> None:
+        """
+        Async version of put
+        
+        Runs sync put in executor to avoid blocking event loop
+        
+        Args:
+            config: Configuration dict with thread_id and other params
+            checkpoint: Checkpoint data to save
+            metadata: Metadata dict
+            new_versions: New versions dict
+        """
+        logger.debug(f"aput called with config: {config}")
+        # Get sync method from the captured instance
+        sync_put = getattr(postgres_saver, 'put', None)
+        if sync_put is None:
+            # If method doesn't exist, raise NotImplementedError to match base behavior
+            raise NotImplementedError("put not available in PostgresSaver")
+        
+        # Run sync method in executor to avoid blocking event loop
+        try:
+            loop = asyncio.get_event_loop()
+            # Use None for executor to use default ThreadPoolExecutor
+            await loop.run_in_executor(
+                None,  # Use default executor
+                sync_put,
+                config,
+                checkpoint,
+                metadata,
+                new_versions
+            )
+            logger.debug(f"aput completed successfully")
+        except Exception as e:
+            logger.error(f"Error in aput wrapper: {e}", exc_info=True)
+            raise
+    
+    # Bind the async method to the instance
+    # For async methods, we need to assign directly (not using MethodType which doesn't work well with async)
+    # Direct assignment creates a bound method automatically
+    postgres_saver.aput = aput_method
+    
+    # Verify it was added correctly
+    has_method = hasattr(postgres_saver, 'aput')
+    method_callable = callable(getattr(postgres_saver, 'aput', None))
+    logger.info(f"✅ aput method added to PostgresSaver. Has method: {has_method}, callable: {method_callable}, type: {type(getattr(postgres_saver, 'aput', None))}")
+
+
 def wrap_postgres_saver_if_needed(checkpointer: Any) -> Any:
     """
     Wrap PostgresSaver with async wrapper if it's PostgresSaver
@@ -83,10 +141,11 @@ def wrap_postgres_saver_if_needed(checkpointer: Any) -> Any:
     
     # Only wrap PostgresSaver (MemorySaver already supports async)
     if isinstance(checkpointer, PostgresSaver):
-        # ALWAYS patch aget_tuple for PostgresSaver, even if it exists in base class
-        # Base class has aget_tuple that raises NotImplementedError, so we must override it
-        logger.info("Patching aget_tuple for PostgresSaver to enable astream_events support")
+        # ALWAYS patch aget_tuple and aput for PostgresSaver, even if they exist in base class
+        # Base class has aget_tuple and aput that raise NotImplementedError, so we must override them
+        logger.info("Patching aget_tuple and aput for PostgresSaver to enable astream_events support")
         _add_aget_tuple_to_instance(checkpointer)
+        _add_aput_to_instance(checkpointer)
     
     # Return as-is for MemorySaver and other checkpointers
     return checkpointer

@@ -254,7 +254,7 @@ def load_large_result_from_store(
             logger.warning(f"Result not found in store: {namespace}/{key}")
             return None
     except Exception as e:
-            logger.error(f"Error loading {result_key} from store: {e}", exc_info=True)
+        logger.error(f"Error loading {result_key} from store: {e}", exc_info=True)
         return None
 
 
