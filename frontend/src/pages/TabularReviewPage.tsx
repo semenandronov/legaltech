@@ -11,6 +11,8 @@ import { TabularDocumentViewer } from "../components/TabularReview/TabularDocume
 import { TabularReviewContextChat } from "../components/TabularReview/TabularReviewContextChat"
 import { TabularReviewAgentChat } from "../components/TabularReview/TabularReviewAgentChat"
 import { TemplatesModal } from "../components/TabularReview/TemplatesModal"
+import { CreateTableModeDialog } from "../components/TabularReview/CreateTableModeDialog"
+import { AutomaticTableCreationDialog } from "../components/TabularReview/AutomaticTableCreationDialog"
 import { FeaturedTemplatesCarousel } from "../components/TabularReview/FeaturedTemplatesCarousel"
 import { TableModeSelector } from "../components/TabularReview/TableModeSelector"
 import { tabularReviewApi, TableData } from "../services/tabularReviewApi"
@@ -82,6 +84,8 @@ const TabularReviewPage: React.FC = () => {
   const [showNameDialog, setShowNameDialog] = useState(false)
   const [reviewName, setReviewName] = useState("")
   const [pendingFileIds, setPendingFileIds] = useState<string[]>([])
+  const [showCreateModeDialog, setShowCreateModeDialog] = useState(false)
+  const [showAutomaticCreationDialog, setShowAutomaticCreationDialog] = useState(false)
 
   // Load existing reviews when caseId is available but no reviewId
   useEffect(() => {
@@ -130,8 +134,9 @@ const TabularReviewPage: React.FC = () => {
   const createNewReview = async () => {
     if (!caseId) return
     
-    // Show document selector first
-    setShowDocumentSelector(true)
+    // Show mode selection dialog instead of directly opening document selector
+    // This is called from useEffect when no reviewId, but we want to show selector first
+    // So we do nothing here - handleCreateNew will be called from button click
   }
 
   const handleDeleteReview = async (reviewIdToDelete: string, event: React.MouseEvent) => {
@@ -378,8 +383,20 @@ const TabularReviewPage: React.FC = () => {
     }
 
     const handleCreateNew = () => {
+      setShowCreateModeDialog(true)
+    }
+
+    const handleSelectManualMode = () => {
       setShowReviewSelector(false)
       setShowDocumentSelector(true)
+    }
+
+    const handleSelectAutomaticMode = () => {
+      setShowAutomaticCreationDialog(true)
+    }
+
+    const handleAutomaticTableCreated = (newReviewId: string) => {
+      navigate(`/cases/${caseId}/tabular-review/${newReviewId}`, { replace: true })
     }
 
     return (
@@ -547,6 +564,26 @@ const TabularReviewPage: React.FC = () => {
               reviewId=""
               initialSelectedIds={[]}
               caseId={caseId}
+            />
+          )}
+
+          {/* Create Mode Selection Dialog */}
+          {caseId && (
+            <CreateTableModeDialog
+              isOpen={showCreateModeDialog}
+              onClose={() => setShowCreateModeDialog(false)}
+              onSelectManual={handleSelectManualMode}
+              onSelectAutomatic={handleSelectAutomaticMode}
+            />
+          )}
+
+          {/* Automatic Table Creation Dialog */}
+          {caseId && (
+            <AutomaticTableCreationDialog
+              isOpen={showAutomaticCreationDialog}
+              onClose={() => setShowAutomaticCreationDialog(false)}
+              caseId={caseId}
+              onTableCreated={handleAutomaticTableCreated}
             />
           )}
 
