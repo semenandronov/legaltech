@@ -13,6 +13,121 @@ import logging
 logger = logging.getLogger(__name__)
 
 
+def _is_connection_error(error: Exception) -> bool:
+    """
+    Determine if an exception is a connection/SSL error that can be retried
+    
+    Args:
+        error: Exception to check
+        
+    Returns:
+        True if this is a retryable connection error, False otherwise
+    """
+    error_msg = str(error).lower()
+    error_type = type(error).__name__.lower()
+    
+    # Check error message for connection-related keywords
+    connection_keywords = [
+        "ssl connection has been closed",
+        "connection has been closed",
+        "consuming input failed",
+        "connection reset",
+        "connection refused",
+        "connection timeout",
+        "server closed the connection",
+        "broken pipe",
+        "network",
+        "ssl"
+    ]
+    
+    # Check error type
+    connection_error_types = [
+        "operationalerror",
+        "interfaceerror",
+        "connectionerror",
+        "connectionexception"
+    ]
+    
+    # Check if it's a connection error by message
+    if any(keyword in error_msg for keyword in connection_keywords):
+        return True
+    
+    # Check if it's a connection error by type
+    if any(error_type in err_type for err_type in connection_error_types):
+        return True
+    
+    # Try to import psycopg/asyncpg exceptions and check
+    try:
+        import psycopg
+        if isinstance(error, (psycopg.OperationalError, psycopg.InterfaceError)):
+            return True
+    except ImportError:
+        pass
+    
+    try:
+        import asyncpg
+        if isinstance(error, (asyncpg.exceptions.PostgresConnectionError, asyncpg.exceptions.InterfaceError)):
+            return True
+    except ImportError:
+        pass
+    
+    return False
+
+
+async def _retry_on_connection_error(
+    func,
+    max_retries: int = 3,
+    initial_delay: float = 0.5,
+    max_delay: float = 5.0,
+    backoff_factor: float = 2.0
+):
+    """
+    Retry a function on connection errors with exponential backoff
+    
+    Args:
+        func: Async function to execute
+        max_retries: Maximum number of retries
+        initial_delay: Initial delay in seconds
+        max_delay: Maximum delay in seconds
+        backoff_factor: Multiplier for exponential backoff
+        
+    Returns:
+        Result of func()
+        
+    Raises:
+        Last exception if all retries are exhausted
+    """
+    last_exception = None
+    
+    for attempt in range(max_retries + 1):
+        try:
+            return await func()
+        except Exception as e:
+            last_exception = e
+            
+            # Only retry connection errors
+            if not _is_connection_error(e):
+                logger.debug(f"Non-connection error, not retrying: {type(e).__name__}: {e}")
+                raise
+            
+            # If this was the last attempt, raise
+            if attempt >= max_retries:
+                logger.error(f"Connection error after {max_retries + 1} attempts: {type(e).__name__}: {e}")
+                raise
+            
+            # Calculate delay with exponential backoff
+            delay = min(initial_delay * (backoff_factor ** attempt), max_delay)
+            logger.warning(
+                f"Connection error (attempt {attempt + 1}/{max_retries + 1}), "
+                f"retrying after {delay:.2f}s: {type(e).__name__}: {e}"
+            )
+            await asyncio.sleep(delay)
+    
+    # Should never reach here, but just in case
+    if last_exception:
+        raise last_exception
+
+
 def _add_aget_tuple_to_instance(postgres_saver: PostgresSaver):
     """
     Add aget_tuple method directly to PostgresSaver instance using monkey-patching
@@ -44,18 +159,22 @@ def _add_aget_tuple_to_instance(postgres_saver: PostgresSaver):
             raise NotImplementedError("get_tuple not available in PostgresSaver")
         
         # Run sync method in executor to avoid blocking event loop
-        try:
+        # Use retry logic for connection errors
+        async def _execute():
             loop = asyncio.get_event_loop()
             # Use None for executor to use default ThreadPoolExecutor
-            result = await loop.run_in_executor(
+            return await loop.run_in_executor(
                 None,  # Use default executor
                 sync_get_tuple,
                 config
             )
+        
+        try:
+            result = await _retry_on_connection_error(_execute, max_retries=3)
             logger.debug(f"aget_tuple completed successfully")
             return result
         except Exception as e:
-            logger.error(f"Error in aget_tuple wrapper: {e}", exc_info=True)
+            logger.error(f"Error in aget_tuple wrapper after retries: {e}", exc_info=True)
             raise
     
     # Bind the async method to the instance
@@ -100,7 +219,8 @@ def _add_aput_to_instance(postgres_saver: PostgresSaver):
             raise NotImplementedError("put not available in PostgresSaver")
         
         # Run sync method in executor to avoid blocking event loop
-        try:
+        # Use retry logic for connection errors
+        async def _execute():
             loop = asyncio.get_event_loop()
             # Use None for executor to use default ThreadPoolExecutor
             await loop.run_in_executor(
@@ -111,9 +231,12 @@ def _add_aput_to_instance(postgres_saver: PostgresSaver):
                 metadata,
                 new_versions
             )
+        
+        try:
+            await _retry_on_connection_error(_execute, max_retries=3)
             logger.debug(f"aput completed successfully")
         except Exception as e:
-            logger.error(f"Error in aput wrapper: {e}", exc_info=True)
+            logger.error(f"Error in aput wrapper after retries: {e}", exc_info=True)
             raise
     
     # Bind the async method to the instance
@@ -168,15 +291,19 @@ def _add_aput_writes_to_instance(postgres_saver: PostgresSaver):
         
         # Run sync put_writes in executor to avoid blocking event loop
         # Use functools.partial to properly bind arguments for the executor
-        try:
+        # Use retry logic for connection errors
+        async def _execute():
             loop = asyncio.get_event_loop()
             # Use partial to bind arguments to the sync method
             # sync_put_writes is a bound method, so partial will bind (config, writes, task_id) to it
             bound_put_writes = partial(sync_put_writes, config, writes, task_id)
             await loop.run_in_executor(None, bound_put_writes)
+        
+        try:
+            await _retry_on_connection_error(_execute, max_retries=3)
             logger.debug(f"aput_writes completed successfully")
         except Exception as e:
-            logger.error(f"Error in aput_writes wrapper: {e}", exc_info=True)
+            logger.error(f"Error in aput_writes wrapper after retries: {e}", exc_info=True)
             raise
     
     # Bind the async method to the instance

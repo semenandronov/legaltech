@@ -14,6 +14,70 @@ import time
 logger = logging.getLogger(__name__)
 
 
+def _is_connection_error(error: Exception) -> bool:
+    """
+    Determine if an exception is a connection/SSL error that indicates a database connection issue
+    
+    Args:
+        error: Exception to check
+        
+    Returns:
+        True if this is a connection error, False otherwise
+    """
+    error_msg = str(error).lower()
+    error_type = type(error).__name__.lower()
+    
+    # Check error message for connection-related keywords
+    connection_keywords = [
+        "ssl connection has been closed",
+        "connection has been closed",
+        "consuming input failed",
+        "connection reset",
+        "connection refused",
+        "connection timeout",
+        "server closed the connection",
+        "broken pipe",
+        "network"
+    ]
+    
+    # Check error type
+    connection_error_types = [
+        "operationalerror",
+        "interfaceerror",
+        "connectionerror",
+        "connectionexception"
+    ]
+    
+    # Check if it's a connection error by message
+    if any(keyword in error_msg for keyword in connection_keywords):
+        return True
+    
+    # Check if it's a connection error by type
+    if any(error_type in err_type for err_type in connection_error_types):
+        return True
+    
+    # Try to import psycopg/asyncpg exceptions and check
+    try:
+        import psycopg
+        if isinstance(error, (psycopg.OperationalError, psycopg.InterfaceError)):
+            return True
+    except ImportError:
+        pass
+    
+    try:
+        import asyncpg
+        if isinstance(error, (asyncpg.exceptions.PostgresConnectionError, asyncpg.exceptions.InterfaceError)):
+            return True
+    except ImportError:
+        pass
+    
+    # Check for ConnectionError base class
+    if isinstance(error, ConnectionError):
+        return True
+    
+    return False
+
+
 class AgentCoordinator:
     """Coordinator for managing multi-agent analysis workflow"""
     
@@ -586,7 +650,22 @@ class AgentCoordinator:
                             except Exception as callback_error:
                                 logger.warning(f"Error in step callback: {callback_error}")
             except Exception as stream_error:
-                logger.error(f"Error during graph stream execution: {stream_error}", exc_info=True)
+                # Check if this is a connection error
+                is_conn_error = _is_connection_error(stream_error)
+                
+                if is_conn_error:
+                    logger.error(
+                        f"Database connection error during graph stream execution for case {case_id}: "
+                        f"{type(stream_error).__name__}: {stream_error}. "
+                        f"This error is handled by async wrapper retry logic for checkpoint operations. "
+                        f"If this error persists, check database connectivity and SSL configuration.",
+                        exc_info=True
+                    )
+                else:
+                    logger.error(
+                        f"Error during graph stream execution for case {case_id}: {stream_error}",
+                        exc_info=True
+                    )
                 raise
             
             # Get final state from graph (always get complete state, not just last node)
