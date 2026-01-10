@@ -137,31 +137,29 @@ def _add_aput_writes_to_instance(postgres_saver: PostgresSaver):
     
     # Create async method that will be bound to the instance
     # Use closure to capture the postgres_saver instance
-    # NOTE: Method may be called with self as first arg if bound, or directly with task_id, writes
     async def aput_writes_method(*args: Any, **kwargs: Any) -> None:
         """
         Async version of put_writes for batch checkpoint writes
         
         Runs sync put_writes in executor to avoid blocking event loop
         
-        Accepts either:
-        - (task_id, writes) when called directly
-        - (self, task_id, writes) when called as bound method
+        LangGraph calls this with (config, writes, task_id) as positional arguments.
+        The sync put_writes signature is: put_writes(config, writes, task_id)
         """
         # #region debug log
         logger.info(f"[DEBUG] aput_writes_method called with args count: {len(args)}, args types: {[type(a) for a in args]}, kwargs: {kwargs}")
         # #endregion
         
-        # Handle both calling patterns: direct call (task_id, writes) or bound method (self, task_id, writes)
-        if len(args) == 2:
-            task_id, writes = args
-        elif len(args) == 3:
-            # Bound method call: (self, task_id, writes) - ignore self
-            _, task_id, writes = args
-        else:
-            raise TypeError(f"aput_writes expected 2 or 3 arguments, got {len(args)}")
+        # LangGraph passes (config, writes, task_id) to aput_writes
+        # The sync put_writes signature is: put_writes(config, writes, task_id)
+        if len(args) != 3:
+            raise TypeError(f"aput_writes expected 3 arguments (config, writes, task_id), got {len(args)}")
         
-        logger.debug(f"aput_writes called with task_id: {task_id}, writes type: {type(writes)}")
+        config = args[0]
+        writes = args[1]
+        task_id = args[2]
+        
+        logger.debug(f"aput_writes called with config type: {type(config)}, writes type: {type(writes)}, task_id: {task_id}")
         
         # Get sync put_writes method
         sync_put_writes = getattr(postgres_saver, 'put_writes', None)
@@ -184,16 +182,18 @@ def _add_aput_writes_to_instance(postgres_saver: PostgresSaver):
         # #endregion
         
         # Run sync put_writes in executor to avoid blocking event loop
+        # sync_put_writes is a bound method, so we pass (config, writes, task_id)
         try:
             loop = asyncio.get_event_loop()
             # #region debug log
-            logger.info(f"[DEBUG] Calling run_in_executor with task_id={task_id}, writes type={type(writes)}")
+            logger.info(f"[DEBUG] Calling run_in_executor with config type={type(config)}, writes type={type(writes)}, task_id={task_id}")
             # #endregion
             await loop.run_in_executor(
                 None,  # Use default executor
                 sync_put_writes,
-                task_id,
-                writes
+                config,
+                writes,
+                task_id
             )
             logger.debug(f"aput_writes completed successfully")
         except Exception as e:
