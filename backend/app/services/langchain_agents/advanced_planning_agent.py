@@ -508,7 +508,7 @@ class AdvancedPlanningAgent:
             
             # Если нужны уточнения - задаем вопросы через interrupt()
             if needs_table and needs_clarification and clarification_questions:
-                    if state and case_id and db:
+                if state and case_id and db:
                         # Получаем список доступных типов документов в деле
                         try:
                             from app.models.analysis import DocumentClassification
@@ -578,107 +578,47 @@ class AdvancedPlanningAgent:
                                 "clarification_questions": clarification_questions,
                                 "reasoning": result.reasoning or "Требуется уточнение информации для создания таблицы"
                             }
-                
-                # Извлекаем типы документов
-                doc_types = result.doc_types
-                if doc_types == ["all"] or (not doc_types and needs_table):
-                    # Пытаемся извлечь из запроса
-                    extracted_types = extract_doc_types_from_query(user_task)
-                    doc_types = extracted_types if extracted_types else None
-                
-                if needs_table:
-                    # Валидация колонок (уже валидированы через Pydantic)
-                    validated_columns = []
-                    for col in (result.columns or []):
-                        if not col.label or not col.question:
-                            logger.warning(f"Skipping invalid column: {col}")
-                            continue
-                        
-                        validated_columns.append({
-                            "label": col.label,
-                            "question": col.question,
-                            "type": col.type or "text"
-                        })
+            
+            # Извлекаем типы документов
+            doc_types = result.doc_types
+            if doc_types == ["all"] or (not doc_types and needs_table):
+                # Пытаемся извлечь из запроса
+                extracted_types = extract_doc_types_from_query(user_task)
+                doc_types = extracted_types if extracted_types else None
+            
+            if needs_table:
+                # Валидация колонок (уже валидированы через Pydantic)
+                validated_columns = []
+                for col in (result.columns or []):
+                    if not col.label or not col.question:
+                        logger.warning(f"Skipping invalid column: {col}")
+                        continue
                     
-                    if not validated_columns:
-                        logger.warning("No valid columns found, setting needs_table=False")
-                        return {
-                            "needs_table": False,
-                            "reasoning": "Не удалось определить валидные колонки"
-                        }
-                    
-                    return {
-                        "needs_table": True,
-                        "table_name": result.table_name,
-                        "columns": validated_columns,
-                        "doc_types": doc_types,  # ДОБАВЛЕНО
-                        "reasoning": result.reasoning or "Задача требует систематического сбора данных"
-                    }
-                else:
+                    validated_columns.append({
+                        "label": col.label,
+                        "question": col.question,
+                        "type": col.type or "text"
+                    })
+                
+                if not validated_columns:
+                    logger.warning("No valid columns found, setting needs_table=False")
                     return {
                         "needs_table": False,
-                        "reasoning": result.reasoning or "Задача не требует создания таблицы"
+                        "reasoning": "Не удалось определить валидные колонки"
                     }
                 
-            except (json.JSONDecodeError, ValueError) as e:
-                logger.error(f"Failed to parse table detection JSON: {e}, response: {response_text[:500] if 'response_text' in locals() else 'N/A'}")
-                # Повторная попытка с более строгим промптом
-                logger.info("Retrying with stricter prompt...")
-                try:
-                    strict_prompt = f"""Ты ДОЛЖЕН вернуть ТОЛЬКО валидный JSON без дополнительного текста.
-
-Задача: {user_task}
-
-Если задача просит создать таблицу (например "сделай таблицу", "таблица с", "создай таблицу с хронологией"), верни:
-{{
-    "needs_table": true,
-    "table_name": "Хронология событий",
-    "columns": [
-        {{"label": "Дата события", "question": "Какая дата события упоминается в документе?", "type": "date"}},
-        {{"label": "Событие", "question": "Какое событие произошло в указанную дату?", "type": "text"}},
-        {{"label": "Документ", "question": "В каком документе упоминается это событие?", "type": "text"}}
-    ],
-    "doc_types": null,
-    "needs_clarification": false,
-    "clarification_questions": null,
-    "reasoning": "Пользователь явно просит создать таблицу"
-}}
-
-Верни ТОЛЬКО JSON, без markdown, без комментариев."""
-                    
-                    retry_messages = [
-                        SystemMessage(content=strict_prompt),
-                        HumanMessage(content=f"Задача: {user_task}\n\nВерни ТОЛЬКО JSON.")
-                    ]
-                    
-                    retry_response = self.llm.invoke(retry_messages)
-                    retry_text = retry_response.content if hasattr(retry_response, 'content') else str(retry_response)
-                    
-                    # Извлекаем JSON
-                    start = retry_text.find('{')
-                    end = retry_text.rfind('}') + 1
-                    if start >= 0 and end > start:
-                        retry_json = retry_text[start:end]
-                        parsed = json.loads(retry_json)
-                        
-                        # Нормализуем doc_types: если это строка "all", преобразуем в None
-                        if "doc_types" in parsed:
-                            doc_types_val = parsed["doc_types"]
-                            if isinstance(doc_types_val, str):
-                                if doc_types_val.lower() == "all":
-                                    parsed["doc_types"] = None
-                                else:
-                                    parsed["doc_types"] = [doc_types_val]
-                            elif doc_types_val is None:
-                                parsed["doc_types"] = None
-                        
-                        result = TableDecision(**parsed)
-                        logger.info(f"Successfully parsed on retry")
-                    else:
-                        raise ValueError("Не удалось извлечь JSON при повторной попытке")
-                except Exception as retry_error:
-                    logger.error(f"Retry also failed: {retry_error}")
-                    raise ValueError(f"Не удалось получить валидный ответ от LLM после двух попыток: {str(retry_error)}")
+                return {
+                    "needs_table": True,
+                    "table_name": result.table_name,
+                    "columns": validated_columns,
+                    "doc_types": doc_types,  # ДОБАВЛЕНО
+                    "reasoning": result.reasoning or "Задача требует систематического сбора данных"
+                }
+            else:
+                return {
+                    "needs_table": False,
+                    "reasoning": result.reasoning or "Задача не требует создания таблицы"
+                }
         
         except Exception as e:
             logger.error(f"Error in table detection: {e}", exc_info=True)
