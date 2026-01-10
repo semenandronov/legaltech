@@ -163,10 +163,12 @@ def optimize_route_function(
         
         # Вызываем базовую функцию роутинга
         # Check if function accepts use_command parameter
+        # TEMPORARY FIX: Disable Command usage to avoid TypeError: unhashable type: 'dict'
+        # LangGraph seems to have issues with Command objects in conditional edges
         import inspect
         sig = inspect.signature(base_route_func)
         if "use_command" in sig.parameters:
-            route = base_route_func(state, use_command=COMMAND_AVAILABLE)
+            route = base_route_func(state, use_command=False)  # Force False to disable Command
         else:
             route = base_route_func(state)
         
