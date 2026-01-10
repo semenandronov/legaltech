@@ -1017,6 +1017,15 @@ class AgentCoordinator:
                     
                     # Stream completed successfully
                     logger.info(f"[StreamAnalysisEvents] Event stream completed for case {case_id}")
+                    # Yield final completion event before returning
+                    yield {
+                        "type": "completion",
+                        "case_id": case_id,
+                        "status": "completed",
+                        "metadata": {
+                            "run_id": thread_config.get("configurable", {}).get("thread_id", f"case_{case_id}")
+                        }
+                    }
                     return  # Exit retry loop on success
                     
                 except Exception as stream_error:
