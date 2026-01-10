@@ -173,7 +173,7 @@ def document_classifier_agent_node(
                             from app.services.langchain_parsers import DocumentClassificationModel
                             classification = DocumentClassificationModel(
                                 doc_type="unknown",
-                                relevance_score=0.5,
+                                relevance_score=0,
                                 is_privileged=False,
                                 confidence=0.0
                             )
