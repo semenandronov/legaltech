@@ -9,7 +9,6 @@ import {
   Skeleton,
   Stack,
   Tooltip,
-  Paper,
 } from '@mui/material'
 import {
   Description as DescriptionIcon,
