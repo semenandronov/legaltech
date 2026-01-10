@@ -322,7 +322,7 @@ export const AssistantUIChat = forwardRef<{ clearMessages: () => void; loadHisto
   const [isLoading, setIsLoading] = useState(false)
   const [isLoadingHistory, setIsLoadingHistory] = useState(true)
   const [webSearch, setWebSearch] = useState(false)
-  const [legalResearch, setLegalResearch] = useState(true)
+  const [legalResearch, setLegalResearch] = useState(false)
   const [deepThink, setDeepThink] = useState(false)
   const abortControllerRef = useRef<AbortController | null>(null)
   const [previewOpen, setPreviewOpen] = useState(false)
