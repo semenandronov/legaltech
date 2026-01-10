@@ -11,13 +11,14 @@ from app.models.user import User
 from app.services.rag_service import RAGService
 from app.services.document_processor import DocumentProcessor
 from app.services.langchain_memory import MemoryService
-from app.services.langchain_agents import PlanningAgent
-from app.services.langchain_agents.advanced_planning_agent import AdvancedPlanningAgent
-from app.services.analysis_service import AnalysisService
+from app.services.llm_factory import create_legal_llm
+from app.services.external_sources.web_research_service import get_web_research_service
+from app.services.external_sources.source_router import initialize_source_router
 from app.config import config
 from datetime import datetime
 import re
 import logging
+import asyncio
 
 logger = logging.getLogger(__name__)
 
@@ -33,6 +34,9 @@ class ChatRequest(BaseModel):
     """Request model for chat"""
     case_id: str = Field(..., min_length=1, description="Case identifier")
     question: str = Field(..., min_length=1, max_length=5000, description="User question")
+    web_search: bool = Field(False, description="Enable web search")
+    legal_research: bool = Field(False, description="Enable legal research")
+    deep_think: bool = Field(False, description="Enable deep thinking mode")
     
     @field_validator('question')
     @classmethod
@@ -188,88 +192,6 @@ def format_source_reference(source: Dict[str, Any]) -> str:
     return ref
 
 
-async def classify_request(question: str, llm) -> bool:
-    """
-    Использует LLM для определения, является ли запрос задачей для выполнения анализов
-    или обычным вопросом для RAG чата.
-    
-    Args:
-        question: Текст запроса пользователя
-        llm: LLM для классификации
-    
-    Returns:
-        True если это задача, False если вопрос
-    """
-    from langchain_core.prompts import ChatPromptTemplate
-    from langchain_core.messages import SystemMessage, HumanMessage
-    
-    # Получаем список доступных агентов для промпта
-    from app.services.langchain_agents.planning_tools import AVAILABLE_ANALYSES
-    
-    agents_list = []
-    for agent_name, agent_info in AVAILABLE_ANALYSES.items():
-        description = agent_info["description"]
-        keywords = ", ".join(agent_info["keywords"][:3])  # Первые 3 ключевых слова
-        agents_list.append(f"- {agent_name}: {description} (ключевые слова: {keywords})")
-    
-    agents_text = "\n".join(agents_list)
-    
-    classification_prompt = ChatPromptTemplate.from_messages([
-        SystemMessage(content=f"""Ты классификатор запросов пользователя в системе анализа юридических документов.
-
-В системе доступны следующие агенты для выполнения задач:
-
-{agents_text}
-
-Дополнительные агенты:
-- document_classifier: Классификация документов (договор/письмо/привилегированный)
-- entity_extraction: Извлечение сущностей (имена, организации, суммы, даты)
-- privilege_check: Проверка привилегий документов
-
-Определи тип запроса:
-
-ЗАДАЧА (task) - если запрос требует выполнения одного из доступных агентов:
-- Запрос относится к функциям агентов (извлечение дат, поиск противоречий, анализ рисков и т.д.)
-- Требует запуска фонового анализа через агентов
-- Примеры: "Извлеки все даты из документов", "Найди противоречия", "Проанализируй риски", "Создай резюме дела"
-
-ВОПРОС (question) - если это обычный вопрос для RAG чата:
-- Вопросы с "какие", "что", "где", "когда", "кто", "почему"
-- Разговорные фразы: "как дела", "привет"
-- Требует немедленного ответа на основе уже загруженных документов
-- Примеры: "Какие ключевые сроки важны в этом деле?", "Что говорится в договоре о сроках?"
-
-Отвечай ТОЛЬКО: task или question"""),
-        HumanMessage(content=f"Запрос: {question}")
-    ])
-    
-    try:
-        formatted_messages = classification_prompt.format_messages()
-        response = llm.invoke(formatted_messages)
-        result = response.content.lower().strip()
-        
-        # Извлекаем результат - ищем "task" или "question"
-        # Убираем лишние символы и пробелы
-        result_clean = result.replace(".", "").replace(",", "").strip()
-        
-        # Проверяем наличие "task" (не должно быть "question" рядом)
-        if "task" in result_clean:
-            # Если есть и "task" и "question", проверяем что идет первым
-            task_pos = result_clean.find("task")
-            question_pos = result_clean.find("question")
-            
-            if question_pos == -1 or (task_pos != -1 and task_pos < question_pos):
-                logger.info(f"LLM classified '{question[:50]}...' as TASK (result: {result_clean})")
-                return True
-        
-        # По умолчанию - это вопрос
-        logger.info(f"LLM classified '{question[:50]}...' as QUESTION (result: {result_clean})")
-        return False
-    except Exception as e:
-        logger.error(f"Error in LLM classification: {e}")
-        # Если классификация не работает, по умолчанию считаем это вопросом
-        logger.warning("LLM classification failed, defaulting to QUESTION")
-        return False
 
 
 @router.post("/", response_model=ChatResponse, include_in_schema=True)
@@ -281,7 +203,7 @@ async def chat(
     current_user: User = Depends(get_current_user)
 ):
     """
-    Send question to ChatGPT based on case documents OR execute task in natural language
+    Send question to ChatGPT based on case documents with optional web search, legal research, and deep thinking
     
     Returns: answer, sources, status
     """
@@ -301,24 +223,13 @@ async def chat(
             detail="В деле нет загруженных документов. Пожалуйста, сначала загрузите документы."
         )
     
-    # Используем LLM для определения типа запроса (задача или вопрос)
-    from app.services.llm_factory import create_llm
+    # AGENTS DISABLED - Always use RAG path
+    # Agent code is preserved below but disabled (wrapped in if False:)
+    # Process question with RAG and optional enhancements (web search, legal research, deep thinking)
     
-    try:
-        classification_llm = create_llm(
-            temperature=0.0,  # Нулевая температура для консистентности
-        )
-    except Exception as e:
-        logger.error(f"Failed to initialize GigaChat for classification: {e}")
-        raise HTTPException(
-            status_code=500,
-            detail=f"Ошибка инициализации GigaChat: {str(e)}. Убедитесь, что GIGACHAT_CREDENTIALS установлен."
-        )
-    
-    # Классифицируем запрос через LLM
-    is_task = await classify_request(request.question, classification_llm)
-    
-    if is_task:
+    # === AGENT CODE DISABLED (preserved for future use) ===
+    # To re-enable agents, change "if False:" to "if True:" below
+    if False:  # AGENTS DISABLED - change to True to re-enable
         # This is a task - use Planning Agent
         try:
             logger.info(f"Detected task request for case {request.case_id}: {request.question[:100]}...")
@@ -623,6 +534,7 @@ async def chat(
             # Fallback to regular RAG if planning fails
             logger.info("Falling back to RAG for task request")
             # Continue to RAG processing below
+    # === END OF DISABLED AGENT CODE ===
     
     # Get chat history
     history_messages = db.query(ChatMessage).filter(
