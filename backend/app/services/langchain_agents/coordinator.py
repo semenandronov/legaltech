@@ -10,6 +10,7 @@ from langchain_core.runnables import RunnableConfig
 from langchain_core.messages import HumanMessage
 import logging
 import time
+import asyncio
 
 logger = logging.getLogger(__name__)
 
@@ -949,63 +950,96 @@ class AgentCoordinator:
             
             logger.info(f"[StreamAnalysisEvents] Starting event stream for case {case_id}")
             
-            # Use astream_events for native LangGraph streaming
-            async for event in self.graph.astream_events(
-                initial_state,
-                config=thread_config,
-                version="v2"
-            ):
-                event_type = event.get("event", "")
-                
-                # Handle LLM token streaming
-                if event_type == "on_chat_model_stream":
-                    chunk = event.get("data", {}).get("chunk")
-                    if chunk and hasattr(chunk, "content") and chunk.content:
-                        yield {
-                            "type": "token",
-                            "content": chunk.content,
-                            "metadata": {
-                                "name": event.get("name", ""),
-                                "run_id": event.get("run_id", "")
+            # Use astream_events for native LangGraph streaming with retry logic for connection errors
+            max_retries = 3
+            initial_delay = 0.5
+            backoff_factor = 2.0
+            max_delay = 5.0
+            
+            for attempt in range(max_retries + 1):
+                try:
+                    async for event in self.graph.astream_events(
+                        initial_state,
+                        config=thread_config,
+                        version="v2"
+                    ):
+                        event_type = event.get("event", "")
+                        
+                        # Handle LLM token streaming
+                        if event_type == "on_chat_model_stream":
+                            chunk = event.get("data", {}).get("chunk")
+                            if chunk and hasattr(chunk, "content") and chunk.content:
+                                yield {
+                                    "type": "token",
+                                    "content": chunk.content,
+                                    "metadata": {
+                                        "name": event.get("name", ""),
+                                        "run_id": event.get("run_id", "")
+                                    }
+                                }
+                        
+                        # Handle custom events (reasoning, progress, etc.)
+                        elif event_type == "on_custom_event":
+                            event_name = event.get("name", "")
+                            event_data = event.get("data", {})
+                            yield {
+                                "type": event_name,
+                                "data": event_data,
+                                "metadata": {
+                                    "run_id": event.get("run_id", "")
+                                }
                             }
-                        }
-                
-                # Handle custom events (reasoning, progress, etc.)
-                elif event_type == "on_custom_event":
-                    event_name = event.get("name", "")
-                    event_data = event.get("data", {})
-                    yield {
-                        "type": event_name,
-                        "data": event_data,
-                        "metadata": {
-                            "run_id": event.get("run_id", "")
-                        }
-                    }
-                
-                # Handle chain/node completion
-                elif event_type == "on_chain_end":
-                    node_name = event.get("name", "")
-                    output = event.get("data", {}).get("output")
+                        
+                        # Handle chain/node completion
+                        elif event_type == "on_chain_end":
+                            node_name = event.get("name", "")
+                            output = event.get("data", {}).get("output")
+                            
+                            # Only yield completion for major nodes
+                            if node_name in ["understand", "plan", "deliver", "deep_analysis"]:
+                                yield {
+                                    "type": "node_complete",
+                                    "node": node_name,
+                                    "output": output,
+                                    "metadata": {
+                                        "run_id": event.get("run_id", "")
+                                    }
+                                }
+                        
+                        # Handle interrupts
+                        elif event_type == "__interrupt__":
+                            interrupt_data = event.get("data", {})
+                            yield {
+                                "type": "interrupt",
+                                "data": interrupt_data,
+                                "thread_id": thread_config["configurable"].get("thread_id")
+                            }
                     
-                    # Only yield completion for major nodes
-                    if node_name in ["understand", "plan", "deliver", "deep_analysis"]:
-                        yield {
-                            "type": "node_complete",
-                            "node": node_name,
-                            "output": output,
-                            "metadata": {
-                                "run_id": event.get("run_id", "")
-                            }
-                        }
-                
-                # Handle interrupts
-                elif event_type == "__interrupt__":
-                    interrupt_data = event.get("data", {})
-                    yield {
-                        "type": "interrupt",
-                        "data": interrupt_data,
-                        "thread_id": thread_config["configurable"].get("thread_id")
-                    }
+                    # Stream completed successfully
+                    logger.info(f"[StreamAnalysisEvents] Event stream completed for case {case_id}")
+                    return  # Exit retry loop on success
+                    
+                except Exception as stream_error:
+                    # Check if this is a connection error
+                    if _is_connection_error(stream_error):
+                        if attempt < max_retries:
+                            delay = min(initial_delay * (backoff_factor ** attempt), max_delay)
+                            logger.warning(
+                                f"[StreamAnalysisEvents] Connection error during stream (attempt {attempt + 1}/{max_retries + 1}). "
+                                f"Retrying in {delay:.2f}s. Error: {type(stream_error).__name__}: {stream_error}"
+                            )
+                            await asyncio.sleep(delay)
+                            continue  # Retry the loop
+                        else:
+                            logger.error(
+                                f"[StreamAnalysisEvents] Connection error after {max_retries + 1} attempts: "
+                                f"{type(stream_error).__name__}: {stream_error}"
+                            )
+                            raise
+                    else:
+                        # Non-connection error, don't retry
+                        logger.error(f"[StreamAnalysisEvents] Non-connection error in stream: {type(stream_error).__name__}: {stream_error}")
+                        raise
             
             logger.info(f"[StreamAnalysisEvents] Event stream completed for case {case_id}")
             
