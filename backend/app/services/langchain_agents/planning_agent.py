@@ -988,20 +988,38 @@ class PlanningAgent:
                     
                     # Парсим JSON ответ
                     try:
+                        json_text = None
                         if "```json" in response_text:
                             json_text = response_text.split("```json")[1].split("```")[0].strip()
+                        elif "```" in response_text:
+                            # Try to extract JSON from code block
+                            parts = response_text.split("```")
+                            for i, part in enumerate(parts):
+                                if part.strip().startswith("{"):
+                                    json_text = part.strip()
+                                    break
                         elif "{" in response_text:
                             start = response_text.find("{")
                             end = response_text.rfind("}") + 1
-                            json_text = response_text[start:end]
+                            if end > start:
+                                json_text = response_text[start:end]
                         else:
-                            json_text = response_text
+                            json_text = response_text.strip()
                         
-                        reasoning_result = json.loads(json_text)
-                        # Сохраняем reasoning для первого шага
-                        reasoning_map[first_step["step_id"]] = reasoning_result
-                    except Exception as e:
-                        logger.warning(f"Failed to parse reasoning JSON for batch generation: {e}")
+                        if json_text:
+                            # Try to fix common JSON issues before parsing
+                            json_text = json_text.strip()
+                            # Remove trailing commas before closing braces/brackets
+                            json_text = re.sub(r',\s*}', '}', json_text)
+                            json_text = re.sub(r',\s*]', ']', json_text)
+                            
+                            reasoning_result = json.loads(json_text)
+                            # Сохраняем reasoning для первого шага
+                            reasoning_map[first_step["step_id"]] = reasoning_result
+                        else:
+                            logger.warning("No JSON found in batch reasoning response")
+                    except (json.JSONDecodeError, ValueError, AttributeError) as e:
+                        logger.warning(f"Failed to parse reasoning JSON for batch generation: {e}, response preview: {response_text[:200] if response_text else 'empty'}")
             except Exception as e:
                 logger.warning(f"Failed to generate reasoning via LLM for batch: {e}")
         
@@ -1058,21 +1076,39 @@ class PlanningAgent:
                     
                     # Парсим reasoning
                     try:
+                        json_text = None
                         if "```json" in response_text:
                             json_text = response_text.split("```json")[1].split("```")[0].strip()
+                        elif "```" in response_text:
+                            # Try to extract JSON from code block
+                            parts = response_text.split("```")
+                            for i, part in enumerate(parts):
+                                if part.strip().startswith("{"):
+                                    json_text = part.strip()
+                                    break
                         elif "{" in response_text:
                             start = response_text.find("{")
                             end = response_text.rfind("}") + 1
-                            json_text = response_text[start:end]
+                            if end > start:
+                                json_text = response_text[start:end]
                         else:
-                            json_text = response_text
+                            json_text = response_text.strip()
                         
-                        reasoning_data = json.loads(json_text)
-                        planned_reasoning = reasoning_data.get("reasoning", None)
-                        step_title = reasoning_data.get("step_title", step_title)
-                        planned_actions = reasoning_data.get("planned_actions", [])
-                    except Exception as e:
-                        logger.warning(f"Failed to parse reasoning for {analysis_type}: {e}")
+                        if json_text:
+                            # Try to fix common JSON issues before parsing
+                            json_text = json_text.strip()
+                            # Remove trailing commas before closing braces/brackets
+                            json_text = re.sub(r',\s*}', '}', json_text)
+                            json_text = re.sub(r',\s*]', ']', json_text)
+                            
+                            reasoning_data = json.loads(json_text)
+                            planned_reasoning = reasoning_data.get("reasoning", None)
+                            step_title = reasoning_data.get("step_title", step_title)
+                            planned_actions = reasoning_data.get("planned_actions", [])
+                        else:
+                            raise ValueError("No JSON found in response")
+                    except (json.JSONDecodeError, ValueError, AttributeError) as e:
+                        logger.warning(f"Failed to parse reasoning for {analysis_type}: {e}, response preview: {response_text[:200] if response_text else 'empty'}")
                         planned_reasoning = self._generate_fallback_reasoning(analysis_type, user_task, goals, document_analysis, goal_id)
                 except Exception as e:
                     logger.warning(f"Failed to generate reasoning for {analysis_type}: {e}")

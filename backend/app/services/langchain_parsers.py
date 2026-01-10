@@ -406,6 +406,18 @@ class ParserService:
             elif not isinstance(data["key_topics"], list):
                 data["key_topics"] = [str(data["key_topics"])] if data["key_topics"] else []
             
+            # Convert relevance_score from float to int if needed
+            if "relevance_score" in data:
+                relevance_score = data["relevance_score"]
+                if isinstance(relevance_score, float):
+                    # Round float to nearest integer and clamp to [0, 100]
+                    data["relevance_score"] = max(0, min(100, int(round(relevance_score))))
+                elif isinstance(relevance_score, (int, str)):
+                    try:
+                        data["relevance_score"] = max(0, min(100, int(relevance_score)))
+                    except (ValueError, TypeError):
+                        data["relevance_score"] = 0
+            
             classification = DocumentClassificationModel(**data)
             return classification
         except Exception as e:
@@ -528,15 +540,55 @@ class ParserService:
             facts = []
             for item in data:
                 try:
-                    # Normalize field names - fix common LLM mistakes (кириллица -> латиница)
-                    # LLM sometimes returns 'reasonинг' instead of 'reasoning'
+                    # Normalize field names - fix common LLM mistakes (кириллица -> латиница, capitalized -> lowercase)
                     if isinstance(item, dict):
-                        # Fix reasoning field name
+                        # Fix reasoning field name (кириллица -> латиница)
                         if 'reasonинг' in item and 'reasoning' not in item:
                             item['reasoning'] = item.pop('reasonинг')
                         # Ensure reasoning field exists (required by KeyFactModel)
                         if 'reasoning' not in item:
                             item['reasoning'] = item.get('reasonинг', '')
+                        
+                        # Normalize capitalized field names to lowercase
+                        # Common patterns: Fact_Type -> fact_type, Source_Document -> source_document, etc.
+                        field_mappings = {
+                            'Fact_Type': 'fact_type',
+                            'fact_type': 'fact_type',  # Keep if already correct
+                            'Value': 'value',
+                            'value': 'value',
+                            'Description': 'description',
+                            'description': 'description',
+                            'Source_Document': 'source_document',
+                            'source_document': 'source_document',
+                            'Source_Page': 'source_page',
+                            'source_page': 'source_page',
+                            'SourcePage': 'source_page',
+                            'Confidence': 'confidence',
+                            'confidence': 'confidence',
+                            'Reasoning': 'reasoning',
+                            'reasoning': 'reasoning'
+                        }
+                        
+                        # Create normalized dict
+                        normalized_item = {}
+                        for key, value in item.items():
+                            normalized_key = field_mappings.get(key, key.lower() if key and key[0].isupper() else key)
+                            normalized_item[normalized_key] = value
+                        
+                        item = normalized_item
+                        
+                        # Ensure all required fields exist with defaults
+                        if 'fact_type' not in item:
+                            item['fact_type'] = 'unknown'
+                        if 'value' not in item:
+                            item['value'] = ''
+                        if 'source_document' not in item:
+                            item['source_document'] = 'unknown'
+                        if 'confidence' not in item:
+                            item['confidence'] = 0.5
+                        if 'reasoning' not in item:
+                            item['reasoning'] = ''
+                    
                     fact = KeyFactModel(**item)
                     facts.append(fact)
                 except Exception as e:

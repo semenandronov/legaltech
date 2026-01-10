@@ -5,6 +5,7 @@ PostgresSaver doesn't implement async methods required by astream_events,
 so we use monkey-patching to add async methods directly to the instance.
 """
 import asyncio
+from functools import partial
 from typing import Optional, Any, Dict, Tuple
 from langgraph.checkpoint.postgres import PostgresSaver
 import logging
@@ -146,10 +147,6 @@ def _add_aput_writes_to_instance(postgres_saver: PostgresSaver):
         LangGraph calls this with (config, writes, task_id) as positional arguments.
         The sync put_writes signature is: put_writes(config, writes, task_id)
         """
-        # #region debug log
-        logger.info(f"[DEBUG] aput_writes_method called with args count: {len(args)}, args types: {[type(a) for a in args]}, kwargs: {kwargs}")
-        # #endregion
-        
         # LangGraph passes (config, writes, task_id) to aput_writes
         # The sync put_writes signature is: put_writes(config, writes, task_id)
         if len(args) != 3:
@@ -169,32 +166,14 @@ def _add_aput_writes_to_instance(postgres_saver: PostgresSaver):
             # Raise NotImplementedError to match base class behavior
             raise NotImplementedError("put_writes not available in this version of PostgresSaver")
         
-        # #region debug log
-        import inspect
-        try:
-            sig = inspect.signature(sync_put_writes)
-            logger.info(f"[DEBUG] sync_put_writes signature: {sig}, is_method: {inspect.ismethod(sync_put_writes)}, is_function: {inspect.isfunction(sync_put_writes)}")
-            logger.info(f"[DEBUG] sync_put_writes type: {type(sync_put_writes)}, bound: {hasattr(sync_put_writes, '__self__')}")
-            if hasattr(sync_put_writes, '__self__'):
-                logger.info(f"[DEBUG] sync_put_writes.__self__: {type(sync_put_writes.__self__)}")
-        except Exception as sig_err:
-            logger.warning(f"[DEBUG] Could not inspect signature: {sig_err}")
-        # #endregion
-        
         # Run sync put_writes in executor to avoid blocking event loop
-        # sync_put_writes is a bound method, so we pass (config, writes, task_id)
+        # Use functools.partial to properly bind arguments for the executor
         try:
             loop = asyncio.get_event_loop()
-            # #region debug log
-            logger.info(f"[DEBUG] Calling run_in_executor with config type={type(config)}, writes type={type(writes)}, task_id={task_id}")
-            # #endregion
-            await loop.run_in_executor(
-                None,  # Use default executor
-                sync_put_writes,
-                config,
-                writes,
-                task_id
-            )
+            # Use partial to bind arguments to the sync method
+            # sync_put_writes is a bound method, so partial will bind (config, writes, task_id) to it
+            bound_put_writes = partial(sync_put_writes, config, writes, task_id)
+            await loop.run_in_executor(None, bound_put_writes)
             logger.debug(f"aput_writes completed successfully")
         except Exception as e:
             logger.error(f"Error in aput_writes wrapper: {e}", exc_info=True)
