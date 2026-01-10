@@ -14,7 +14,6 @@ import { TemplatesModal } from "../components/TabularReview/TemplatesModal"
 import { CreateTableModeDialog } from "../components/TabularReview/CreateTableModeDialog"
 import { AutomaticTableCreationDialog } from "../components/TabularReview/AutomaticTableCreationDialog"
 import { FeaturedTemplatesCarousel } from "../components/TabularReview/FeaturedTemplatesCarousel"
-import { TableModeSelector } from "../components/TabularReview/TableModeSelector"
 import { tabularReviewApi, TableData } from "../services/tabularReviewApi"
 import { Card } from "../components/UI/Card"
 import Spinner from "../components/UI/Spinner"
@@ -299,38 +298,6 @@ const TabularReviewPage: React.FC = () => {
       setProcessing(false)
     }
   }
-
-  const handleDownload = async (format: "csv" | "excel") => {
-    if (!reviewId) return
-    
-    try {
-      let blob: Blob
-      let filename: string
-      
-      if (format === "csv") {
-        blob = await tabularReviewApi.exportToCSV(reviewId)
-        filename = `tabular_review_${reviewId}.csv`
-      } else {
-        blob = await tabularReviewApi.exportToExcel(reviewId)
-        filename = `tabular_review_${reviewId}.xlsx`
-      }
-      
-      // Create download link
-      const url = window.URL.createObjectURL(blob)
-      const a = document.createElement("a")
-      a.href = url
-      a.download = filename
-      document.body.appendChild(a)
-      a.click()
-      window.URL.revokeObjectURL(url)
-      document.body.removeChild(a)
-      
-      toast.success(`Экспорт в ${format.toUpperCase()} завершен`)
-    } catch (err: any) {
-      toast.error("Ошибка при экспорте: " + (err.message || ""))
-    }
-  }
-
 
   const handleAddDocuments = () => {
     if (!caseId) return
@@ -737,30 +704,9 @@ const TabularReviewPage: React.FC = () => {
           onAddDocuments={handleAddDocuments}
           onUpdateDocuments={reviewId ? () => setShowDocumentSelector(true) : undefined}
           onAddColumns={() => setShowColumnBuilder(true)}
-          onTemplates={reviewId ? () => setShowTemplatesModal(true) : undefined}
           onRunAll={handleRunAll}
-          onDownload={handleDownload}
           processing={processing}
         />
-
-        {/* Table mode selector */}
-        {reviewId && (
-          <div className="px-6 pt-2">
-            <TableModeSelector
-              mode={tableMode}
-              onChange={async (mode) => {
-                if (!reviewId) return
-                try {
-                  setTableMode(mode)
-                  await tabularReviewApi.updateTableMode(reviewId, mode)
-                  // В будущем здесь можно триггерить entity/fact extraction
-                } catch (err: any) {
-                  toast.error("Не удалось изменить режим таблицы: " + (err.message || ""))
-                }
-              }}
-            />
-          </div>
-        )}
 
         {/* Featured Templates Carousel */}
         {reviewId && tableData.columns.length === 0 && (
