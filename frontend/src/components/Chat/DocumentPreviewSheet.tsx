@@ -59,56 +59,64 @@ const DocumentPreviewSheet = ({
     if (!source) return
     
     setLoading(true)
+    setFileInfo(null)
+    setDocumentContent(null)
+    
     try {
-      // First, get list of files to find file_id by filename
+      // Get list of files to find file by filename or id
       const filesResponse = await fetch(`/api/cases/${caseId}/files`, {
         headers: {
           'Authorization': `Bearer ${localStorage.getItem('access_token')}`
         }
       })
       
-      if (filesResponse.ok) {
-        const filesData = await filesResponse.json()
-        const file = filesData.documents?.find((f: any) => f.filename === source.file || f.id === source.file)
+      if (!filesResponse.ok) {
+        setDocumentContent('Ошибка загрузки списка документов')
+        return
+      }
+      
+      const filesData = await filesResponse.json()
+      
+      // Try to find file: first by source_id (if available), then by filename, then by id
+      let file = null
+      if ((source as any).source_id) {
+        file = filesData.documents?.find((f: any) => f.id === (source as any).source_id)
+      }
+      if (!file && source.file) {
+        file = filesData.documents?.find((f: any) => f.filename === source.file || f.id === source.file)
+      }
+      
+      if (file) {
+        // Found file - open it completely, just like on Documents page
+        setFileInfo({
+          id: file.id,
+          file_type: file.file_type || 'txt',
+          filename: file.filename
+        })
         
-        if (file) {
-          setFileInfo({
-            id: file.id,
-            file_type: file.file_type || 'txt',
-            filename: file.filename
-          })
-
-          // For non-PDF files, load text content using /files/{file_id}/content endpoint
-          // (same as DocumentViewer uses)
-          if (file.file_type !== 'pdf') {
-            const contentResponse = await fetch(`/api/cases/${caseId}/files/${file.id}/content`, {
-              headers: {
-                'Authorization': `Bearer ${localStorage.getItem('access_token')}`
-              }
-            })
-            
-            if (contentResponse.ok) {
-              const text = await contentResponse.text()
-              setDocumentContent(text || source.text_preview || '')
-            } else {
-              // Fallback to text_preview
-              setDocumentContent(source.text_preview || 'Содержимое документа недоступно для предпросмотра')
+        // For non-PDF files, load text content
+        if (file.file_type !== 'pdf') {
+          const contentResponse = await fetch(`/api/cases/${caseId}/files/${file.id}/content`, {
+            headers: {
+              'Authorization': `Bearer ${localStorage.getItem('access_token')}`
             }
+          })
+          
+          if (contentResponse.ok) {
+            const text = await contentResponse.text()
+            setDocumentContent(text)
           } else {
-            // For PDF files, we don't need to load text content - PDFViewer will handle it
-            setDocumentContent(null)
+            setDocumentContent('Не удалось загрузить содержимое документа')
           }
-        } else {
-          // File not found, use text_preview
-          setDocumentContent(source.text_preview || 'Содержимое документа недоступно для предпросмотра')
         }
+        // For PDF files, PDFViewer will handle it
       } else {
-        // Fallback to text_preview
-        setDocumentContent(source.text_preview || 'Содержимое документа недоступно для предпросмотра')
+        // File not found - show preview text if available
+        setDocumentContent(source.text_preview || 'Документ не найден')
       }
     } catch (error) {
-      console.error('Error loading document content:', error)
-      setDocumentContent(source.text_preview || 'Ошибка загрузки содержимого')
+      console.error('Error loading document:', error)
+      setDocumentContent('Ошибка загрузки документа')
     } finally {
       setLoading(false)
     }
@@ -299,56 +307,21 @@ const DocumentPreviewSheet = ({
                 p: 2,
               }}
             >
-              {source.text_preview && (
-                <Paper
-                  elevation={0}
+              {documentContent ? (
+                <Typography
+                  variant="body2"
                   sx={{
-                    p: 2,
-                    mb: 2,
-                    bgcolor: 'primary.main',
-                    opacity: 0.05,
-                    border: '1px solid',
-                    borderColor: 'primary.main',
-                    borderRadius: 2,
+                    whiteSpace: 'pre-wrap',
+                    lineHeight: 1.75,
+                    color: 'text.primary',
                   }}
                 >
-                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 1 }}>
-                    <Box
-                      sx={{
-                        width: 8,
-                        height: 8,
-                        borderRadius: '50%',
-                        bgcolor: 'primary.main',
-                        animation: 'pulse 2s infinite',
-                      }}
-                    />
-                    <Typography variant="caption" fontWeight={500} color="primary.main">
-                      Цитируемый фрагмент
-                    </Typography>
-                  </Box>
-                  <Typography variant="body2" sx={{ lineHeight: 1.75 }}>
-                    {source.text_preview}
-                  </Typography>
-                </Paper>
-              )}
-
-              {documentContent && documentContent !== source.text_preview && (
-                <>
-                  <Divider sx={{ my: 2 }} />
-                  <Typography variant="caption" fontWeight={500} color="text.secondary" sx={{ mb: 1, display: 'block' }}>
-                    Полный текст документа:
-                  </Typography>
-                  <Typography
-                    variant="body2"
-                    sx={{
-                      whiteSpace: 'pre-wrap',
-                      lineHeight: 1.75,
-                      color: 'text.secondary',
-                    }}
-                  >
-                    {documentContent}
-                  </Typography>
-                </>
+                  {documentContent}
+                </Typography>
+              ) : (
+                <Typography variant="body2" color="text.secondary">
+                  Загрузка содержимого документа...
+                </Typography>
               )}
             </Box>
           )}
