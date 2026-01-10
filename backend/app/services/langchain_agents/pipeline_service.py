@@ -377,13 +377,14 @@ class PipelineService:
                 elif event_type == "reasoning":
                     # Reasoning события - отправляем как кастомное событие
                     reasoning_data = event.get("data", {})
-                    yield f"data: {json.dumps({
+                    reasoning_event = {
                         'type': 'reasoning',
                         'phase': reasoning_data.get('phase', ''),
                         'step': reasoning_data.get('step', 0),
                         'totalSteps': reasoning_data.get('total_steps', 0),
                         'content': reasoning_data.get('content', '')
-                    }, ensure_ascii=False)}\n\n"
+                    }
+                    yield f"data: {json.dumps(reasoning_event, ensure_ascii=False)}\n\n"
                 
                 elif event_type == "node_complete":
                     # Завершение node - отправляем progress event
@@ -411,6 +412,16 @@ class PipelineService:
                         "payload": interrupt_data
                     }
                     yield f"data: {json.dumps(interrupt_event, ensure_ascii=False)}\n\n"
+                
+                elif event_type == "completion":
+                    # Финальное событие о завершении анализа
+                    completion_event = AgentProgressEvent(
+                        agent_name="system",
+                        step="Анализ завершён",
+                        progress=1.0,
+                        message="Все этапы анализа успешно выполнены"
+                    )
+                    yield completion_event.to_sse_format()
                 
                 elif event_type == "error":
                     # Ошибка
