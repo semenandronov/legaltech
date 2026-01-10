@@ -148,6 +148,10 @@ def _add_aput_writes_to_instance(postgres_saver: PostgresSaver):
         - (task_id, writes) when called directly
         - (self, task_id, writes) when called as bound method
         """
+        # #region debug log
+        logger.info(f"[DEBUG] aput_writes_method called with args count: {len(args)}, args types: {[type(a) for a in args]}, kwargs: {kwargs}")
+        # #endregion
+        
         # Handle both calling patterns: direct call (task_id, writes) or bound method (self, task_id, writes)
         if len(args) == 2:
             task_id, writes = args
@@ -167,9 +171,24 @@ def _add_aput_writes_to_instance(postgres_saver: PostgresSaver):
             # Raise NotImplementedError to match base class behavior
             raise NotImplementedError("put_writes not available in this version of PostgresSaver")
         
+        # #region debug log
+        import inspect
+        try:
+            sig = inspect.signature(sync_put_writes)
+            logger.info(f"[DEBUG] sync_put_writes signature: {sig}, is_method: {inspect.ismethod(sync_put_writes)}, is_function: {inspect.isfunction(sync_put_writes)}")
+            logger.info(f"[DEBUG] sync_put_writes type: {type(sync_put_writes)}, bound: {hasattr(sync_put_writes, '__self__')}")
+            if hasattr(sync_put_writes, '__self__'):
+                logger.info(f"[DEBUG] sync_put_writes.__self__: {type(sync_put_writes.__self__)}")
+        except Exception as sig_err:
+            logger.warning(f"[DEBUG] Could not inspect signature: {sig_err}")
+        # #endregion
+        
         # Run sync put_writes in executor to avoid blocking event loop
         try:
             loop = asyncio.get_event_loop()
+            # #region debug log
+            logger.info(f"[DEBUG] Calling run_in_executor with task_id={task_id}, writes type={type(writes)}")
+            # #endregion
             await loop.run_in_executor(
                 None,  # Use default executor
                 sync_put_writes,
