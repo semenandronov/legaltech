@@ -370,18 +370,19 @@ def create_analysis_graph(
                 )
                 return new_state
     
-    def parallel_independent_agents_node(state: AnalysisState) -> List[Send]:
+    def parallel_independent_agents_node(state: AnalysisState) -> AnalysisState:
         """
-        Execute independent agents in parallel using LangGraph Send/Command.
+        Execute independent agents sequentially (temporary fix for LangGraph 1.0.5 compatibility).
         
-        Это заменяет ThreadPoolExecutor на нативный механизм LangGraph для параллельного выполнения.
+        NOTE: LangGraph 1.0.5 StateGraph nodes must return dict, not List[Send].
+        Parallel execution via Send needs to be implemented differently.
+        For now, we execute agents sequentially to fix the InvalidUpdateError.
+        
         Independent agents: timeline, key_facts, discrepancy, entity_extraction, document_classifier
         
         Returns:
-            List[Send] для параллельного выполнения агентов
+            Updated state with agent results
         """
-        from app.services.langchain_agents.parallel_execution_v2 import create_parallel_sends_v2
-        
         case_id = state.get("case_id", "unknown")
         analysis_types = state.get("analysis_types", [])
         
@@ -405,19 +406,40 @@ def create_analysis_graph(
                     agents_to_run.append(agent_name)
         
         if not agents_to_run:
-            logger.info(f"[Parallel] No independent agents to run in parallel for case {case_id}")
-            return []
+            logger.info(f"[Parallel] No independent agents to run for case {case_id}")
+            return state
         
-        logger.info(f"[Parallel] Creating {len(agents_to_run)} parallel Sends for case {case_id}: {agents_to_run}")
+        logger.warning(
+            f"[Parallel] Executing {len(agents_to_run)} agents SEQUENTIALLY (parallel execution disabled) "
+            f"for case {case_id}: {agents_to_run}"
+        )
         
-        # Create Send objects for parallel execution
-        sends = create_parallel_sends_v2(state, agents_to_run, independent_agents)
+        # Execute agents sequentially (temporary fix)
+        current_state = dict(state)
+        for agent_name in agents_to_run:
+            try:
+                agent_func = independent_agents.get(agent_name)
+                if agent_func:
+                    logger.info(f"[Parallel] Executing {agent_name} agent for case {case_id}")
+                    current_state = agent_func(current_state)
+                else:
+                    logger.warning(f"[Parallel] Agent function not found: {agent_name}")
+            except Exception as e:
+                logger.error(f"[Parallel] Error executing {agent_name} agent: {e}", exc_info=True)
+                current_state.setdefault("errors", []).append({
+                    "agent": agent_name,
+                    "error": str(e)
+                })
         
-        return sends
+        logger.info(f"[Parallel] Completed {len(agents_to_run)} agents for case {case_id}")
+        return current_state
     
     def execute_single_agent(state: AnalysisState) -> AnalysisState:
         """
-        Execute a single agent (target for Send from parallel_independent_agents_node).
+        Execute a single agent (kept for future parallel execution implementation).
+        
+        NOTE: Currently not used - parallel_independent executes agents sequentially.
+        This node is kept for future implementation of proper parallel execution.
         
         Args:
             state: State with current_agent set
@@ -646,19 +668,15 @@ def create_analysis_graph(
     if use_legora_workflow:
         graph.add_edge("deep_analysis", "evaluation")
     
-    # Parallel execution flow using LangGraph Send/Command:
-    # parallel_independent returns List[Send] → automatically fans out to execute_single_agent
-    # execute_single_agent results are automatically collected and passed to merge_parallel_results
-    # Note: In LangGraph, when a node returns List[Send], the graph automatically:
-    # 1. Executes all Sends in parallel
-    # 2. Collects results
-    # 3. Passes them to the next node as Sequence[AnalysisState]
-    # So merge_parallel_results will receive Sequence[AnalysisState] from execute_single_agent
+    # Parallel execution flow (TEMPORARY: sequential execution due to LangGraph 1.0.5 compatibility)
+    # NOTE: LangGraph 1.0.5 StateGraph nodes must return dict, not List[Send]
+    # parallel_independent now executes agents sequentially and returns updated state
+    graph.add_edge("parallel_independent", "evaluation")
+    
+    # TODO: Implement proper parallel execution in LangGraph 1.0.5
+    # execute_single_agent and merge_parallel_results nodes are kept for future parallel implementation
     graph.add_edge("execute_single_agent", "merge_parallel_results")
     graph.add_edge("merge_parallel_results", "evaluation")
-    
-    # Note: parallel_independent doesn't need explicit edge - it returns List[Send]
-    # which automatically creates fan-out to execute_single_agent
     
     # Spawn subagents node goes to evaluation
     graph.add_edge("spawn_subagents", "evaluation")
