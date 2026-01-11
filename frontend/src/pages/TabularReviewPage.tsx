@@ -65,7 +65,6 @@ const TabularReviewPage: React.FC = () => {
   } | null>(null)
   const [error, setError] = useState<string | null>(null)
   const loadingRef = useRef(false)
-  const [tableMode, setTableMode] = useState<"document" | "entity" | "fact">("document")
   const [workMode, setWorkMode] = useState<"manual" | "agent">("manual")
   const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false)
   
@@ -224,7 +223,6 @@ const TabularReviewPage: React.FC = () => {
         columnLabels: data.columns.map(c => c.column_label) 
       })
       setTableData(data)
-      setTableMode((data.review.table_mode as any) || "document")
       // Load selected file IDs from review
       if (data.review.selected_file_ids) {
         setSelectedFileIds(data.review.selected_file_ids)
