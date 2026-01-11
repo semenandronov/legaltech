@@ -50,19 +50,19 @@ const DocumentViewer: React.FC<DocumentViewerProps> = ({
         // #endregion
         
         // Создаем временную ссылку и кликаем по ней
-        const link = document.createElement('a')
+        const link = window.document.createElement('a')
         link.href = blobUrl
         link.target = '_blank'
         link.rel = 'noopener noreferrer'
         link.style.display = 'none'
-        document.body.appendChild(link)
+        window.document.body.appendChild(link)
         
         // #region agent log
         fetch('http://127.0.0.1:7242/ingest/2db1e09b-2b5d-4ee0-85d8-a551f942254c',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'DocumentViewer.tsx:handleOpenOriginal',message:'Clicking link',data:{},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'E'})}).catch(()=>{});
         // #endregion
         
         link.click()
-        document.body.removeChild(link)
+        window.document.body.removeChild(link)
         
         // Отложенная очистка blob URL
         setTimeout(() => {
