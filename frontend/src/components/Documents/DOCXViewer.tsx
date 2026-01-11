@@ -69,7 +69,7 @@ const DOCXViewer: React.FC<DOCXViewerProps> = ({
       setError(null)
 
       // #region agent log
-      fetch('http://127.0.0.1:7242/ingest/2db1e09b-2b5d-4ee0-85d8-a551f942254c',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'DOCXViewer.tsx:66',message:'loadDOCX started',data:{fileId,caseId,filename:_filename},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A'})}).catch(()=>{});
+      console.log('[DOCXViewer] loadDOCX started', {fileId, caseId, filename: _filename})
       // #endregion
 
       // Clear previous content
@@ -83,7 +83,7 @@ const DOCXViewer: React.FC<DOCXViewerProps> = ({
         : `/api/cases/${caseId}/files/${fileId}/content`
 
       // #region agent log
-      fetch('http://127.0.0.1:7242/ingest/2db1e09b-2b5d-4ee0-85d8-a551f942254c',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'DOCXViewer.tsx:81',message:'Before fetch',data:{url,hasContainer:!!containerRef.current},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A'})}).catch(()=>{});
+      console.log('[DOCXViewer] Before fetch', {url, hasContainer: !!containerRef.current})
       // #endregion
 
       const response = await fetch(url, {
@@ -93,7 +93,7 @@ const DOCXViewer: React.FC<DOCXViewerProps> = ({
       })
 
       // #region agent log
-      fetch('http://127.0.0.1:7242/ingest/2db1e09b-2b5d-4ee0-85d8-a551f942254c',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'DOCXViewer.tsx:87',message:'After fetch',data:{status:response.status,statusText:response.statusText,ok:response.ok,contentType:response.headers.get('content-type')},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A'})}).catch(()=>{});
+      console.log('[DOCXViewer] After fetch', {status: response.status, statusText: response.statusText, ok: response.ok, contentType: response.headers.get('content-type')})
       // #endregion
 
       if (!response.ok) {
@@ -103,7 +103,7 @@ const DOCXViewer: React.FC<DOCXViewerProps> = ({
       const blob = await response.blob()
 
       // #region agent log
-      fetch('http://127.0.0.1:7242/ingest/2db1e09b-2b5d-4ee0-85d8-a551f942254c',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'DOCXViewer.tsx:94',message:'Blob created',data:{blobSize:blob.size,blobType:blob.type,hasContainer:!!containerRef.current},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'B'})}).catch(()=>{});
+      console.log('[DOCXViewer] Blob created', {blobSize: blob.size, blobType: blob.type, hasContainer: !!containerRef.current})
       // #endregion
 
       const urlObj = URL.createObjectURL(blob)
@@ -112,7 +112,7 @@ const DOCXViewer: React.FC<DOCXViewerProps> = ({
       // Render DOCX document
       if (containerRef.current) {
         // #region agent log
-        fetch('http://127.0.0.1:7242/ingest/2db1e09b-2b5d-4ee0-85d8-a551f942254c',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'DOCXViewer.tsx:99',message:'Before renderAsync',data:{containerExists:!!containerRef.current,containerInnerHTML:containerRef.current?.innerHTML?.substring(0,50)},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'C'})}).catch(()=>{});
+        console.log('[DOCXViewer] Before renderAsync', {containerExists: !!containerRef.current, containerInnerHTML: containerRef.current?.innerHTML?.substring(0, 50)})
         // #endregion
 
         await renderAsync(blob, containerRef.current, undefined, {
@@ -128,18 +128,18 @@ const DOCXViewer: React.FC<DOCXViewerProps> = ({
         })
 
         // #region agent log
-        fetch('http://127.0.0.1:7242/ingest/2db1e09b-2b5d-4ee0-85d8-a551f942254c',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'DOCXViewer.tsx:111',message:'After renderAsync success',data:{containerInnerHTML:containerRef.current?.innerHTML?.substring(0,100),containerChildren:containerRef.current?.children?.length},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'D'})}).catch(()=>{});
+        console.log('[DOCXViewer] After renderAsync success', {containerInnerHTML: containerRef.current?.innerHTML?.substring(0, 100), containerChildren: containerRef.current?.children?.length})
         // #endregion
       } else {
         // #region agent log
-        fetch('http://127.0.0.1:7242/ingest/2db1e09b-2b5d-4ee0-85d8-a551f942254c',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'DOCXViewer.tsx:115',message:'Container ref is null',data:{},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'C'})}).catch(()=>{});
+        console.error('[DOCXViewer] Container ref is null')
         // #endregion
       }
     } catch (err: any) {
       console.error('Error loading DOCX:', err)
       
       // #region agent log
-      fetch('http://127.0.0.1:7242/ingest/2db1e09b-2b5d-4ee0-85d8-a551f942254c',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'DOCXViewer.tsx:120',message:'Error caught',data:{errorMessage:err?.message,errorName:err?.name,errorStack:err?.stack?.substring(0,200)},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'E'})}).catch(()=>{});
+      console.error('[DOCXViewer] Error caught', {errorMessage: err?.message, errorName: err?.name, errorStack: err?.stack?.substring(0, 200)})
       // #endregion
 
       setError(err.message || 'Ошибка при загрузке документа')
@@ -150,7 +150,7 @@ const DOCXViewer: React.FC<DOCXViewerProps> = ({
       setLoading(false)
 
       // #region agent log
-      fetch('http://127.0.0.1:7242/ingest/2db1e09b-2b5d-4ee0-85d8-a551f942254c',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'DOCXViewer.tsx:129',message:'loadDOCX finished',data:{loading:false},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'F'})}).catch(()=>{});
+      console.log('[DOCXViewer] loadDOCX finished', {loading: false})
       // #endregion
     }
   }
