@@ -1,6 +1,8 @@
 import React, { useState, useEffect } from 'react'
 import { DocumentWithMetadata } from './DocumentsList'
 import PDFViewer from './PDFViewer'
+import { OpenInNew as OpenInNewIcon } from '@mui/icons-material'
+import { IconButton, Box, Typography, Button } from '@mui/material'
 import './Documents.css'
 
 interface DocumentViewerProps {
@@ -52,8 +54,49 @@ const DocumentViewer: React.FC<DocumentViewerProps> = ({
     )
   }
 
+  const handleOpenOriginal = async () => {
+    if (!document?.id || !caseId) return
+    try {
+      const baseUrl = import.meta.env.VITE_API_URL || ''
+      const url = baseUrl 
+        ? `${baseUrl}/api/cases/${caseId}/files/${document.id}/download`
+        : `/api/cases/${caseId}/files/${document.id}/download`
+      const response = await fetch(url, {
+        headers: {
+          'Authorization': `Bearer ${localStorage.getItem('access_token')}`
+        }
+      })
+      if (response.ok) {
+        const blob = await response.blob()
+        const blobUrl = window.URL.createObjectURL(blob)
+        window.open(blobUrl, '_blank')
+        // Clean up the blob URL after a delay
+        setTimeout(() => window.URL.revokeObjectURL(blobUrl), 100)
+      }
+    } catch (error) {
+      console.error('Ошибка при открытии документа:', error)
+    }
+  }
+
   return (
     <div className="document-viewer" style={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
+      {/* Header with open button for non-PDF files */}
+      {document.file_type !== 'pdf' && (
+        <Box sx={{ p: 2, borderBottom: '1px solid #E5E7EB', display: 'flex', justifyContent: 'space-between', alignItems: 'center', bgcolor: 'white' }}>
+          <Typography variant="h6" sx={{ fontSize: '1rem', fontWeight: 500 }}>
+            {document.filename}
+          </Typography>
+          <Button
+            variant="outlined"
+            size="small"
+            startIcon={<OpenInNewIcon />}
+            onClick={handleOpenOriginal}
+            sx={{ textTransform: 'none' }}
+          >
+            Открыть в оригинале
+          </Button>
+        </Box>
+      )}
       <div className="document-viewer-content" style={{ flex: 1, overflow: 'auto' }}>
         {document.file_type === 'pdf' ? (
           <PDFViewer
@@ -70,9 +113,21 @@ const DocumentViewer: React.FC<DocumentViewerProps> = ({
         ) : (
           <div className="document-viewer-text" style={{ padding: '20px' }}>
             {documentText ? (
-              <pre style={{ whiteSpace: 'pre-wrap', fontFamily: 'inherit', margin: 0 }}>
-                {documentText}
-              </pre>
+              <>
+                <pre style={{ whiteSpace: 'pre-wrap', fontFamily: 'inherit', margin: 0 }}>
+                  {documentText}
+                </pre>
+                <Box sx={{ mt: 3, textAlign: 'center' }}>
+                  <Button
+                    variant="contained"
+                    startIcon={<OpenInNewIcon />}
+                    onClick={handleOpenOriginal}
+                    sx={{ textTransform: 'none' }}
+                  >
+                    Открыть оригинальный файл
+                  </Button>
+                </Box>
+              </>
             ) : (
               <div className="document-viewer-placeholder">
                 <p>Загрузка содержимого документа...</p>

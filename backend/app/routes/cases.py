@@ -526,14 +526,35 @@ async def get_file_content(
     if not file:
         raise HTTPException(status_code=404, detail="Файл не найден")
     
-    # Определяем content type
-    content_type = "text/plain"
-    if file.file_type == "pdf":
-        content_type = "application/pdf"
-    elif file.file_type == "docx":
-        content_type = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-    elif file.file_type == "xlsx":
-        content_type = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    # Определяем content type по расширению файла
+    import mimetypes
+    content_type, _ = mimetypes.guess_type(file.filename)
+    if not content_type:
+        # Fallback для известных типов
+        file_ext = file.file_type or (file.filename.split('.')[-1].lower() if '.' in file.filename else '')
+        content_type_map = {
+            "pdf": "application/pdf",
+            "docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            "doc": "application/msword",
+            "xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            "xls": "application/vnd.ms-excel",
+            "pptx": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+            "ppt": "application/vnd.ms-powerpoint",
+            "txt": "text/plain",
+            "rtf": "application/rtf",
+            "odt": "application/vnd.oasis.opendocument.text",
+            "ods": "application/vnd.oasis.opendocument.spreadsheet",
+            "jpg": "image/jpeg",
+            "jpeg": "image/jpeg",
+            "png": "image/png",
+            "gif": "image/gif",
+            "bmp": "image/bmp",
+            "webp": "image/webp",
+            "zip": "application/zip",
+            "rar": "application/x-rar-compressed",
+            "7z": "application/x-7z-compressed",
+        }
+        content_type = content_type_map.get(file_ext, "application/octet-stream")
     
     # Приоритет 1: Читаем файл из БД (новый способ хранения)
     if file.file_content:
@@ -604,6 +625,118 @@ async def get_file_content(
         media_type="text/plain",  # Always return as text/plain for text fallback
         headers={
             "Content-Disposition": f'inline; filename="{file.filename}"'
+        }
+    )
+
+
+@router.get("/{case_id}/files/{file_id}/download")
+async def download_file(
+    case_id: str,
+    file_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """Download file in original format"""
+    # Verify case ownership
+    case = db.query(Case).filter(
+        Case.id == case_id,
+        Case.user_id == current_user.id
+    ).first()
+    
+    if not case:
+        raise HTTPException(status_code=404, detail="Дело не найдено")
+    
+    # Get file
+    file = db.query(FileModel).filter(
+        FileModel.id == file_id,
+        FileModel.case_id == case_id
+    ).first()
+    
+    if not file:
+        raise HTTPException(status_code=404, detail="Файл не найден")
+    
+    # Определяем content type по расширению файла
+    import mimetypes
+    content_type, _ = mimetypes.guess_type(file.filename)
+    if not content_type:
+        # Fallback для известных типов
+        file_ext = file.file_type or (file.filename.split('.')[-1].lower() if '.' in file.filename else '')
+        content_type_map = {
+            "pdf": "application/pdf",
+            "docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            "doc": "application/msword",
+            "xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            "xls": "application/vnd.ms-excel",
+            "pptx": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+            "ppt": "application/vnd.ms-powerpoint",
+            "txt": "text/plain",
+            "rtf": "application/rtf",
+            "odt": "application/vnd.oasis.opendocument.text",
+            "ods": "application/vnd.oasis.opendocument.spreadsheet",
+            "jpg": "image/jpeg",
+            "jpeg": "image/jpeg",
+            "png": "image/png",
+            "gif": "image/gif",
+            "bmp": "image/bmp",
+            "webp": "image/webp",
+            "zip": "application/zip",
+            "rar": "application/x-rar-compressed",
+            "7z": "application/x-7z-compressed",
+        }
+        content_type = content_type_map.get(file_ext, "application/octet-stream")
+    
+    # Приоритет 1: Читаем файл из БД (новый способ хранения)
+    if file.file_content:
+        return Response(
+            content=file.file_content,
+            media_type=content_type,
+            headers={
+                "Content-Disposition": f'attachment; filename="{file.filename}"'
+            }
+        )
+    
+    # Приоритет 2: Fallback на файловую систему (для старых файлов, обратная совместимость)
+    if file.file_path:
+        import os
+        from app.config import config
+        
+        # Проверяем, является ли file_path абсолютным путем
+        if os.path.isabs(file.file_path):
+            file_full_path = file.file_path
+        else:
+            file_full_path = os.path.join(config.UPLOAD_DIR, file.file_path)
+        
+        if os.path.exists(file_full_path):
+            try:
+                with open(file_full_path, 'rb') as f:
+                    file_content = f.read()
+                
+                return Response(
+                    content=file_content,
+                    media_type=content_type,
+                    headers={
+                        "Content-Disposition": f'attachment; filename="{file.filename}"'
+                    }
+                )
+            except Exception as e:
+                logger.error(f"Error reading file {file_full_path}: {e}")
+                raise HTTPException(
+                    status_code=500,
+                    detail=f"Ошибка при чтении файла: {str(e)}"
+                )
+    
+    # Fallback: return text content if original file not available
+    if not file.original_text:
+        raise HTTPException(
+            status_code=404,
+            detail="Содержимое файла недоступно"
+        )
+    
+    return Response(
+        content=file.original_text.encode('utf-8'),
+        media_type=content_type,
+        headers={
+            "Content-Disposition": f'attachment; filename="{file.filename}"'
         }
     )
 
