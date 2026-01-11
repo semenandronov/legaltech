@@ -11,7 +11,6 @@ import {
   PromptInputSubmit,
   PromptInputFooter,
 } from "@/components/ai-elements/prompt-input"
-import { Button } from "@/components/UI/Button"
 import { tabularReviewApi, TableData } from "@/services/tabularReviewApi"
 import { toast } from "sonner"
 import { Loader } from "@/components/ai-elements/loader"
