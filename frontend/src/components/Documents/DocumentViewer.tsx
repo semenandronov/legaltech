@@ -2,7 +2,7 @@ import React, { useEffect } from 'react'
 import { DocumentWithMetadata } from './DocumentsList'
 import PDFViewer from './PDFViewer'
 import { OpenInNew as OpenInNewIcon } from '@mui/icons-material'
-import { IconButton, Box, Typography, Button } from '@mui/material'
+import { Typography, Button } from '@mui/material'
 import './Documents.css'
 
 interface DocumentViewerProps {
