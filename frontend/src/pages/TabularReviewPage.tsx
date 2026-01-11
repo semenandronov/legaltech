@@ -699,7 +699,6 @@ const TabularReviewPage: React.FC = () => {
 
         {/* Toolbar */}
         <TabularReviewToolbar
-          onAddDocuments={handleAddDocuments}
           onUpdateDocuments={reviewId ? () => setShowDocumentSelector(true) : undefined}
           onAddColumns={() => setShowColumnBuilder(true)}
           onRunAll={handleRunAll}
@@ -726,15 +725,6 @@ const TabularReviewPage: React.FC = () => {
                 reviewId={reviewId}
                 reviewName={tableData.review.name}
                 tableData={tableData}
-                onExtractKeyPoints={async () => {
-                  toast.info("Извлечение ключевых моментов...")
-                }}
-                onRefineColumns={() => {
-                  setShowColumnBuilder(true)
-                }}
-                onAddDocuments={() => {
-                  setShowDocumentSelector(true)
-                }}
               />
             </div>
           )}

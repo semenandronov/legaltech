@@ -16,10 +16,6 @@ import { tabularReviewApi, TableData } from "@/services/tabularReviewApi"
 import { toast } from "sonner"
 import { Loader } from "@/components/ai-elements/loader"
 import { 
-  Sparkles, 
-  Columns3, 
-  FilePlus, 
-  Brain,
   MessageSquare
 } from "lucide-react"
 
@@ -27,9 +23,6 @@ interface TabularReviewContextChatProps {
   reviewId: string
   reviewName: string
   tableData: TableData | null
-  onExtractKeyPoints?: () => void
-  onRefineColumns?: () => void
-  onAddDocuments?: () => void
 }
 
 interface Message {
@@ -42,13 +35,9 @@ interface Message {
 export const TabularReviewContextChat: React.FC<TabularReviewContextChatProps> = ({
   reviewId,
   reviewName,
-  onExtractKeyPoints,
-  onRefineColumns,
-  onAddDocuments,
 }) => {
   const [messages, setMessages] = useState<Message[]>([])
   const [isLoading, setIsLoading] = useState(false)
-  const [deepThinkMode, setDeepThinkMode] = useState(false)
 
   const handleSend = useCallback(async (text: string) => {
     if (!text.trim() || isLoading) return
@@ -89,33 +78,9 @@ export const TabularReviewContextChat: React.FC<TabularReviewContextChatProps> =
   }, [reviewId, isLoading])
 
   const handleSubmit = useCallback(async ({ text }: { text: string; files: any[] }) => {
-    if (deepThinkMode) {
-      // Deep think mode - более глубокий анализ
-      await handleSend(`[Deep Think] ${text}`)
-    } else {
-      await handleSend(text)
-    }
-  }, [handleSend, deepThinkMode])
+    await handleSend(text)
+  }, [handleSend])
 
-  const handleExtractKeyPoints = useCallback(async () => {
-    if (onExtractKeyPoints) {
-      onExtractKeyPoints()
-    } else {
-      await handleSend("Извлеки ключевые моменты из всех документов в таблице")
-    }
-  }, [handleSend, onExtractKeyPoints])
-
-  const handleRefineColumns = useCallback(() => {
-    if (onRefineColumns) {
-      onRefineColumns()
-    }
-  }, [onRefineColumns])
-
-  const handleAddDocuments = useCallback(() => {
-    if (onAddDocuments) {
-      onAddDocuments()
-    }
-  }, [onAddDocuments])
 
   return (
     <div className="flex flex-col h-full bg-white">
@@ -128,39 +93,6 @@ export const TabularReviewContextChat: React.FC<TabularReviewContextChatProps> =
         <p className="text-xs text-[#6B7280] mt-1">{reviewName}</p>
       </div>
 
-      {/* Action Buttons */}
-      <div className="px-4 py-2 border-b border-[#E5E7EB] bg-white flex flex-wrap gap-2">
-        <Button
-          variant="outline"
-          size="sm"
-          onClick={handleExtractKeyPoints}
-          disabled={isLoading}
-          className="h-8 text-xs border-[#E5E7EB] text-[#6B7280] hover:text-[#1F2937] hover:bg-[#F3F4F6]"
-        >
-          <Sparkles className="w-3 h-3 mr-1.5" />
-          Извлечь ключевые моменты
-        </Button>
-        <Button
-          variant="outline"
-          size="sm"
-          onClick={handleRefineColumns}
-          disabled={isLoading}
-          className="h-8 text-xs border-[#E5E7EB] text-[#6B7280] hover:text-[#1F2937] hover:bg-[#F3F4F6]"
-        >
-          <Columns3 className="w-3 h-3 mr-1.5" />
-          Уточнить таблицу новыми колонками
-        </Button>
-        <Button
-          variant="outline"
-          size="sm"
-          onClick={handleAddDocuments}
-          disabled={isLoading}
-          className="h-8 text-xs border-[#E5E7EB] text-[#6B7280] hover:text-[#1F2937] hover:bg-[#F3F4F6]"
-        >
-          <FilePlus className="w-3 h-3 mr-1.5" />
-          Добавить прикрепленные документы в таблицу
-        </Button>
-      </div>
 
       {/* Messages Area */}
       <div className="flex-1 overflow-hidden">
@@ -224,21 +156,7 @@ export const TabularReviewContextChat: React.FC<TabularReviewContextChatProps> =
               />
             </PromptInputBody>
             <PromptInputFooter>
-              <div className="flex items-center justify-between w-full">
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  onClick={() => setDeepThinkMode(!deepThinkMode)}
-                  className={`h-8 text-xs ${
-                    deepThinkMode
-                      ? "bg-[#2563EB] text-white border-[#2563EB] hover:bg-[#1D4ED8]"
-                      : "border-[#E5E7EB] text-[#6B7280] hover:text-[#1F2937] hover:bg-[#F3F4F6]"
-                  }`}
-                >
-                  <Brain className="w-3 h-3 mr-1.5" />
-                  Deep think
-                </Button>
+              <div className="flex items-center justify-end w-full">
                 <PromptInputSubmit
                   status={isLoading ? "submitted" : undefined}
                   className="h-8 w-8 bg-[#2563EB] hover:bg-[#1D4ED8] text-white border-0"
