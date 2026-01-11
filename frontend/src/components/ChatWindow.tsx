@@ -251,9 +251,7 @@ const ChatWindow = ({ caseId, onDocumentClick }: ChatWindowProps) => {
     }
 
     setMessages((prev) => [...prev, userMessage])
-    if (!customMessage) {
-      setInputValue('')
-    }
+    setInputValue('')
     setError(null)
 
     setTimeout(() => {
@@ -358,22 +356,11 @@ const ChatWindow = ({ caseId, onDocumentClick }: ChatWindowProps) => {
     const files = Array.from(e.dataTransfer.files)
     if (files.length === 0) return
 
-    const allowedTypes = ['.pdf', '.docx', '.txt', '.xlsx']
-    const validFiles = files.filter(file => {
-      const ext = '.' + file.name.split('.').pop()?.toLowerCase()
-      return allowedTypes.includes(ext)
-    })
-
-    if (validFiles.length === 0) {
-      setError('Поддерживаются только файлы: PDF, DOCX, TXT, XLSX')
-      return
-    }
-
-    setDroppedFiles(validFiles)
+    setDroppedFiles(files)
     
     try {
       setIsLoading(true)
-      const fileNames = validFiles.map(f => f.name).join(', ')
+      const fileNames = files.map(f => f.name).join(', ')
       const message = `Проанализируй эти файлы: ${fileNames}`
       await handleSend(message)
       setDroppedFiles([])
@@ -388,22 +375,11 @@ const ChatWindow = ({ caseId, onDocumentClick }: ChatWindowProps) => {
     const files = Array.from(e.target.files || [])
     if (files.length === 0) return
 
-    const allowedTypes = ['.pdf', '.docx', '.txt', '.xlsx']
-    const validFiles = files.filter(file => {
-      const ext = '.' + file.name.split('.').pop()?.toLowerCase()
-      return allowedTypes.includes(ext)
-    })
-
-    if (validFiles.length === 0) {
-      setError('Поддерживаются только файлы: PDF, DOCX, TXT, XLSX')
-      return
-    }
-
-    setDroppedFiles(validFiles)
+    setDroppedFiles(files)
     
     try {
       setIsLoading(true)
-      const fileNames = validFiles.map(f => f.name).join(', ')
+      const fileNames = files.map(f => f.name).join(', ')
       const message = `Проанализируй эти файлы: ${fileNames}`
       await handleSend(message)
       setDroppedFiles([])
@@ -1120,7 +1096,6 @@ const ChatWindow = ({ caseId, onDocumentClick }: ChatWindowProps) => {
                     type="file"
                     id="chat-file-input"
                     multiple
-                    accept=".pdf,.docx,.txt,.xlsx"
                     onChange={handleFileInput}
                     style={{ display: 'none' }}
                   />

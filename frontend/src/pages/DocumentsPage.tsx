@@ -7,7 +7,7 @@ import {
   IconButton,
   Drawer,
 } from '@mui/material'
-import { Description as DescriptionIcon, Close as CloseIcon } from '@mui/icons-material'
+import { Description as DescriptionIcon, Close as CloseIcon, OpenInNew as OpenInNewIcon } from '@mui/icons-material'
 import { MessageSquare, FileText, Table, Filter } from 'lucide-react'
 import UnifiedSidebar from '../components/Layout/UnifiedSidebar'
 import DocumentViewer from '../components/Documents/DocumentViewer'
@@ -395,19 +395,54 @@ const DocumentsPage = () => {
               <Typography variant="h6" sx={{ fontWeight: 600, fontFamily: 'Playfair Display', color: '#1F2937' }}>
                 {selectedDocument.filename}
               </Typography>
-              <IconButton
-                onClick={() => {
-                  setSelectedDocument(null)
-                  setSelectedDocumentIndex(null)
-                }}
-                sx={{
-                  '&:hover': {
-                    bgcolor: '#F3F4F6',
-                  },
-                }}
-              >
-                <CloseIcon />
-              </IconButton>
+              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                <IconButton
+                  onClick={async () => {
+                    if (!caseId || !selectedDocument?.id) return
+                    try {
+                      const baseUrl = import.meta.env.VITE_API_URL || ''
+                      const url = baseUrl 
+                        ? `${baseUrl}/api/cases/${caseId}/files/${selectedDocument.id}/download`
+                        : `/api/cases/${caseId}/files/${selectedDocument.id}/download`
+                      const response = await fetch(url, {
+                        headers: {
+                          'Authorization': `Bearer ${localStorage.getItem('access_token')}`
+                        }
+                      })
+                      if (response.ok) {
+                        const blob = await response.blob()
+                        const blobUrl = window.URL.createObjectURL(blob)
+                        window.open(blobUrl, '_blank')
+                        // Clean up the blob URL after a delay
+                        setTimeout(() => window.URL.revokeObjectURL(blobUrl), 100)
+                      }
+                    } catch (error) {
+                      console.error('Ошибка при открытии документа:', error)
+                    }
+                  }}
+                  sx={{
+                    '&:hover': {
+                      bgcolor: '#F3F4F6',
+                    },
+                  }}
+                  title="Открыть в оригинальном формате"
+                >
+                  <OpenInNewIcon />
+                </IconButton>
+                <IconButton
+                  onClick={() => {
+                    setSelectedDocument(null)
+                    setSelectedDocumentIndex(null)
+                  }}
+                  sx={{
+                    '&:hover': {
+                      bgcolor: '#F3F4F6',
+                    },
+                  }}
+                >
+                  <CloseIcon />
+                </IconButton>
+              </Box>
             </Box>
 
             {/* Document Viewer */}

@@ -146,7 +146,6 @@ const UploadArea = ({ onUpload }: UploadAreaProps) => {
         ref={fileInputRef}
         type="file"
         multiple
-        accept=".pdf,.docx,.txt,.xlsx"
         onChange={handleFileInput}
         style={{ display: 'none' }}
       />
@@ -154,7 +153,6 @@ const UploadArea = ({ onUpload }: UploadAreaProps) => {
       <div className="upload-icon">📄 📄 📄</div>
       <p className="upload-text">Перетащите документы сюда</p>
       <p className="upload-subtext">или нажмите для выбора файлов</p>
-      <p className="supported">Поддерживаемые форматы: PDF, DOCX, TXT, XLSX</p>
 
       {error && <div className="error-message">{error}</div>}
     </div>
