@@ -89,24 +89,25 @@ class DocumentLoaderService:
                 tmp_path = tmp_file.name
             
             try:
-                # Validate that file is actually a ZIP (DOCX files are ZIP archives)
-                import zipfile
-                try:
-                    zip_test = zipfile.ZipFile(io.BytesIO(content))
-                    zip_test.close()
-                except zipfile.BadZipFile:
-                    raise ValueError(f"Файл {filename} не является корректным DOCX файлом (не является ZIP архивом)")
-                
                 # Try UnstructuredWordDocumentLoader first (better structure preservation)
                 try:
                     loader = UnstructuredWordDocumentLoader(tmp_path, mode="elements")
                     documents = loader.load()
-                except Exception:
-                    # Fallback to simple text extraction
-                    from docx import Document as DocxDocument
-                    doc = DocxDocument(io.BytesIO(content))
-                    text = "\n".join([para.text for para in doc.paragraphs])
-                    documents = [Document(page_content=text, metadata={"source_file": filename})]
+                except Exception as e:
+                    # Fallback to simple text extraction using python-docx
+                    try:
+                        from docx import Document as DocxDocument
+                        doc = DocxDocument(io.BytesIO(content))
+                        text = "\n".join([para.text for para in doc.paragraphs])
+                        documents = [Document(page_content=text, metadata={"source_file": filename})]
+                    except Exception as docx_error:
+                        # If both methods fail, provide a helpful error message
+                        logger.error(f"Failed to load DOCX {filename}: UnstructuredWordDocumentLoader error: {e}, python-docx error: {docx_error}")
+                        raise ValueError(
+                            f"Не удалось загрузить файл {filename}. "
+                            f"Убедитесь, что файл является корректным DOCX файлом. "
+                            f"Ошибка: {str(docx_error)}"
+                        )
                 
                 # Add filename to metadata
                 for doc in documents:

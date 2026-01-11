@@ -33,14 +33,7 @@ def parse_docx(file_content: bytes, filename: str) -> str:
         import io
         import zipfile
         
-        # Validate that file is actually a ZIP (DOCX files are ZIP archives)
-        try:
-            zip_test = zipfile.ZipFile(io.BytesIO(file_content))
-            zip_test.close()
-        except zipfile.BadZipFile:
-            raise ValueError(f"Файл {filename} не является корректным DOCX файлом (не является ZIP архивом)")
-        
-        # Parse DOCX
+        # Parse DOCX (python-docx library will validate the file format)
         docx_file = io.BytesIO(file_content)
         doc = Document(docx_file)
         text_parts = []
