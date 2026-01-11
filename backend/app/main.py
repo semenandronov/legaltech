@@ -106,7 +106,8 @@ async def log_requests(request: Request, call_next):
                 "style-src 'self' 'unsafe-inline' https: http: data:; "
                 "img-src 'self' data: blob: https: http:; "
                 "font-src 'self' data: blob: https: http:; "
-                "connect-src 'self' https: http:; "
+                "connect-src 'self' blob: https: http:; "
+                "worker-src 'self' blob:; "
                 "frame-src 'self' https: http:;"
             )
             response.headers["Content-Security-Policy"] = csp_policy
@@ -151,7 +152,8 @@ async def add_csp_header(request: Request, call_next):
         "style-src 'self' 'unsafe-inline' https: http: data:; "
         "img-src 'self' data: blob: https: http:; "
         "font-src 'self' data: blob: https: http:; "
-        "connect-src 'self' https: http:; "
+        "connect-src 'self' blob: https: http:; "
+        "worker-src 'self' blob:; "
         "frame-src 'self' https: http:;"
     )
     response.headers["Content-Security-Policy"] = csp_policy
@@ -241,7 +243,8 @@ if frontend_dist.exists():
                 "style-src 'self' 'unsafe-inline' https: http: data:; "
                 "img-src 'self' data: blob: https: http:; "
                 "font-src 'self' data: blob: https: http:; "
-                "connect-src 'self' https: http:; "
+                "connect-src 'self' blob: https: http:; "
+                "worker-src 'self' blob:; "
                 "frame-src 'self' https: http:;"
             )
             response.headers["Content-Security-Policy"] = csp_policy
