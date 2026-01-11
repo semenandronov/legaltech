@@ -126,6 +126,15 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# CSP middleware to allow unsafe-eval for docx-preview
+@app.middleware("http")
+async def add_csp_header(request: Request, call_next):
+    """Add Content-Security-Policy header to allow unsafe-eval for docx-preview library"""
+    response = await call_next(request)
+    # Allow unsafe-eval for docx-preview library to work
+    response.headers["Content-Security-Policy"] = "default-src 'self'; script-src 'self' 'unsafe-eval' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:;"
+    return response
+
 # API routes - MUST be registered BEFORE any catch-all routes
 app.include_router(auth.router, prefix="/api/auth", tags=["auth"])
 app.include_router(dashboard.router, prefix="/api/dashboard", tags=["dashboard"])
