@@ -104,7 +104,6 @@ const DOCXViewer: React.FC<DOCXViewerProps> = ({
           experimental: false,
           trimXmlDeclaration: true,
           useBase64URL: false,
-          useMathMLPolyfill: true,
         })
       }
     } catch (err: any) {
