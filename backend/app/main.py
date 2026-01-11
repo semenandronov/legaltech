@@ -233,7 +233,19 @@ if frontend_dist.exists():
         # For SPA: serve index.html for all non-API routes
         index_path = frontend_dist / "index.html"
         if index_path.exists():
-            return FileResponse(str(index_path))
+            response = FileResponse(str(index_path))
+            # Ensure CSP header is set for HTML files
+            csp_policy = (
+                "default-src 'self'; "
+                "script-src 'self' 'unsafe-eval' 'unsafe-inline' https: http:; "
+                "style-src 'self' 'unsafe-inline' https: http: data:; "
+                "img-src 'self' data: blob: https: http:; "
+                "font-src 'self' data: blob: https: http:; "
+                "connect-src 'self' https: http:; "
+                "frame-src 'self' https: http:;"
+            )
+            response.headers["Content-Security-Policy"] = csp_policy
+            return response
         
         return JSONResponse(
             {"error": "Frontend not built. Please run: cd frontend && npm install && npm run build"},
