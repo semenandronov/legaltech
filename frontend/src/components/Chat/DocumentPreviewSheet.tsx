@@ -19,6 +19,7 @@ import {
   ChevronRight as ChevronRightIcon,
   OpenInNew as MaximizeIcon,
 } from '@mui/icons-material'
+import { Button } from '@mui/material'
 import { SourceInfo } from '@/services/api'
 import PDFViewer from '@/components/Documents/PDFViewer'
 
@@ -53,6 +54,29 @@ const DocumentPreviewSheet = ({
       loadDocumentInfo()
     }
   }, [source, isOpen])
+
+  const handleOpenOriginal = async (fileId: string) => {
+    if (!fileId || !caseId) return
+    try {
+      const baseUrl = import.meta.env.VITE_API_URL || ''
+      const url = baseUrl 
+        ? `${baseUrl}/api/cases/${caseId}/files/${fileId}/download`
+        : `/api/cases/${caseId}/files/${fileId}/download`
+      const response = await fetch(url, {
+        headers: {
+          'Authorization': `Bearer ${localStorage.getItem('access_token')}`
+        }
+      })
+      if (response.ok) {
+        const blob = await response.blob()
+        const blobUrl = window.URL.createObjectURL(blob)
+        window.open(blobUrl, '_blank')
+        setTimeout(() => window.URL.revokeObjectURL(blobUrl), 100)
+      }
+    } catch (error) {
+      console.error('Ошибка при открытии документа:', error)
+    }
+  }
 
   const loadDocumentInfo = async () => {
     if (!source) return
@@ -93,22 +117,8 @@ const DocumentPreviewSheet = ({
           filename: file.filename
         })
         
-        // For non-PDF files, load text content
-        if (file.file_type !== 'pdf') {
-          const contentResponse = await fetch(`/api/cases/${caseId}/files/${file.id}/content`, {
-            headers: {
-              'Authorization': `Bearer ${localStorage.getItem('access_token')}`
-            }
-          })
-          
-          if (contentResponse.ok) {
-            const text = await contentResponse.text()
-            setDocumentContent(text)
-          } else {
-            setDocumentContent('Не удалось загрузить содержимое документа')
-          }
-        }
-        // For PDF files, PDFViewer will handle it
+        // For non-PDF files, we'll open them directly in original format
+        // No need to load text content
       } else {
         // File not found - show preview text if available
         setDocumentContent(source.text_preview || 'Документ не найден')
@@ -120,6 +130,13 @@ const DocumentPreviewSheet = ({
       setLoading(false)
     }
   }
+
+  useEffect(() => {
+    if (isOpen && fileInfo && fileInfo.file_type !== 'pdf' && fileInfo.id) {
+      // Для не-PDF файлов сразу открываем в оригинале
+      handleOpenOriginal(fileInfo.id)
+    }
+  }, [isOpen, fileInfo?.id, fileInfo?.file_type, caseId])
 
   const handleCopy = async () => {
     if (documentContent) {
@@ -297,31 +314,36 @@ const DocumentPreviewSheet = ({
                 showAbout={false}
               />
             </Box>
-          ) : (
-            // Text content for non-PDF files
+          ) : fileInfo ? (
+            // For non-PDF files, show message and open automatically
             <Box
               sx={{
                 flex: 1,
                 overflow: 'auto',
                 p: 2,
+                display: 'flex',
+                flexDirection: 'column',
+                alignItems: 'center',
+                justifyContent: 'center',
               }}
             >
-              {documentContent ? (
-                <Typography
-                  variant="body2"
-                  sx={{
-                    whiteSpace: 'pre-wrap',
-                    lineHeight: 1.75,
-                    color: 'text.primary',
-                  }}
-                >
-                  {documentContent}
-                </Typography>
-              ) : (
-                <Typography variant="body2" color="text.secondary">
-                  Загрузка содержимого документа...
-                </Typography>
-              )}
+              <Typography variant="body1" sx={{ mb: 2 }}>
+                Документ открывается в оригинальном формате...
+              </Typography>
+              <Button
+                variant="contained"
+                startIcon={<MaximizeIcon />}
+                onClick={() => handleOpenOriginal(fileInfo.id)}
+                sx={{ textTransform: 'none' }}
+              >
+                Открыть оригинальный файл
+              </Button>
+            </Box>
+          ) : (
+            <Box sx={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+              <Typography variant="body2" color="text.secondary">
+                Загрузка информации о документе...
+              </Typography>
             </Box>
           )}
         </Box>

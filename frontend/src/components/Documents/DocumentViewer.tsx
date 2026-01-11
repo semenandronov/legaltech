@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react'
+import React, { useEffect } from 'react'
 import { DocumentWithMetadata } from './DocumentsList'
 import PDFViewer from './PDFViewer'
 import { OpenInNew as OpenInNewIcon } from '@mui/icons-material'
@@ -16,44 +16,6 @@ const DocumentViewer: React.FC<DocumentViewerProps> = ({
   document,
   caseId,
 }) => {
-  const [documentText, setDocumentText] = useState<string>('')
-
-  useEffect(() => {
-    if (document?.id && document.file_type !== 'pdf') {
-      loadDocumentText()
-    }
-  }, [document?.id, caseId])
-
-  const loadDocumentText = async () => {
-    if (!document?.id || !caseId) return
-    try {
-      const response = await fetch(`/api/cases/${caseId}/files/${document.id}/content`, {
-        headers: {
-          'Authorization': `Bearer ${localStorage.getItem('access_token')}`
-        }
-      })
-      if (response.ok) {
-        const text = await response.text()
-        setDocumentText(text)
-      }
-    } catch (err) {
-      console.error('Ошибка при загрузке текста документа:', err)
-      setDocumentText('Ошибка при загрузке содержимого документа')
-    }
-  }
-
-  if (!document) {
-    return (
-      <div className="document-viewer-empty">
-        <div className="document-viewer-empty-content">
-          <div className="document-viewer-empty-icon">📄</div>
-          <h3>Выберите документ для просмотра</h3>
-          <p>Кликните на документ в левой панели, чтобы открыть его здесь</p>
-        </div>
-      </div>
-    )
-  }
-
   const handleOpenOriginal = async () => {
     if (!document?.id || !caseId) return
     try {
@@ -70,7 +32,6 @@ const DocumentViewer: React.FC<DocumentViewerProps> = ({
         const blob = await response.blob()
         const blobUrl = window.URL.createObjectURL(blob)
         window.open(blobUrl, '_blank')
-        // Clean up the blob URL after a delay
         setTimeout(() => window.URL.revokeObjectURL(blobUrl), 100)
       }
     } catch (error) {
@@ -78,25 +39,27 @@ const DocumentViewer: React.FC<DocumentViewerProps> = ({
     }
   }
 
+  useEffect(() => {
+    // Для не-PDF файлов сразу открываем в оригинале
+    if (document?.id && document.file_type !== 'pdf' && caseId) {
+      handleOpenOriginal()
+    }
+  }, [document?.id, caseId, document?.file_type])
+
+  if (!document) {
+    return (
+      <div className="document-viewer-empty">
+        <div className="document-viewer-empty-content">
+          <div className="document-viewer-empty-icon">📄</div>
+          <h3>Выберите документ для просмотра</h3>
+          <p>Кликните на документ в левой панели, чтобы открыть его здесь</p>
+        </div>
+      </div>
+    )
+  }
+
   return (
     <div className="document-viewer" style={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
-      {/* Header with open button for non-PDF files */}
-      {document.file_type !== 'pdf' && (
-        <Box sx={{ p: 2, borderBottom: '1px solid #E5E7EB', display: 'flex', justifyContent: 'space-between', alignItems: 'center', bgcolor: 'white' }}>
-          <Typography variant="h6" sx={{ fontSize: '1rem', fontWeight: 500 }}>
-            {document.filename}
-          </Typography>
-          <Button
-            variant="outlined"
-            size="small"
-            startIcon={<OpenInNewIcon />}
-            onClick={handleOpenOriginal}
-            sx={{ textTransform: 'none' }}
-          >
-            Открыть в оригинале
-          </Button>
-        </Box>
-      )}
       <div className="document-viewer-content" style={{ flex: 1, overflow: 'auto' }}>
         {document.file_type === 'pdf' ? (
           <PDFViewer
@@ -105,34 +68,23 @@ const DocumentViewer: React.FC<DocumentViewerProps> = ({
             filename={document.filename}
             onError={(error) => {
               console.error('PDF viewer error:', error)
-              loadDocumentText()
             }}
             showTabs={false}
             showAbout={false}
           />
         ) : (
-          <div className="document-viewer-text" style={{ padding: '20px' }}>
-            {documentText ? (
-              <>
-                <pre style={{ whiteSpace: 'pre-wrap', fontFamily: 'inherit', margin: 0 }}>
-                  {documentText}
-                </pre>
-                <Box sx={{ mt: 3, textAlign: 'center' }}>
-                  <Button
-                    variant="contained"
-                    startIcon={<OpenInNewIcon />}
-                    onClick={handleOpenOriginal}
-                    sx={{ textTransform: 'none' }}
-                  >
-                    Открыть оригинальный файл
-                  </Button>
-                </Box>
-              </>
-            ) : (
-              <div className="document-viewer-placeholder">
-                <p>Загрузка содержимого документа...</p>
-              </div>
-            )}
+          <div className="document-viewer-text" style={{ padding: '20px', textAlign: 'center', display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'center', height: '100%' }}>
+            <Typography variant="body1" sx={{ mb: 2 }}>
+              Документ открывается в оригинальном формате...
+            </Typography>
+            <Button
+              variant="contained"
+              startIcon={<OpenInNewIcon />}
+              onClick={handleOpenOriginal}
+              sx={{ textTransform: 'none' }}
+            >
+              Открыть оригинальный файл
+            </Button>
           </div>
         )}
       </div>
@@ -141,3 +93,4 @@ const DocumentViewer: React.FC<DocumentViewerProps> = ({
 }
 
 export default DocumentViewer
+
