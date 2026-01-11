@@ -68,6 +68,10 @@ const DOCXViewer: React.FC<DOCXViewerProps> = ({
       setLoading(true)
       setError(null)
 
+      // #region agent log
+      fetch('http://127.0.0.1:7242/ingest/2db1e09b-2b5d-4ee0-85d8-a551f942254c',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'DOCXViewer.tsx:66',message:'loadDOCX started',data:{fileId,caseId,filename:_filename},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A'})}).catch(()=>{});
+      // #endregion
+
       // Clear previous content
       if (containerRef.current) {
         containerRef.current.innerHTML = ''
@@ -78,22 +82,39 @@ const DOCXViewer: React.FC<DOCXViewerProps> = ({
         ? `${baseUrl}/api/cases/${caseId}/files/${fileId}/content`
         : `/api/cases/${caseId}/files/${fileId}/content`
 
+      // #region agent log
+      fetch('http://127.0.0.1:7242/ingest/2db1e09b-2b5d-4ee0-85d8-a551f942254c',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'DOCXViewer.tsx:81',message:'Before fetch',data:{url,hasContainer:!!containerRef.current},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A'})}).catch(()=>{});
+      // #endregion
+
       const response = await fetch(url, {
         headers: {
           'Authorization': `Bearer ${localStorage.getItem('access_token')}`
         }
       })
 
+      // #region agent log
+      fetch('http://127.0.0.1:7242/ingest/2db1e09b-2b5d-4ee0-85d8-a551f942254c',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'DOCXViewer.tsx:87',message:'After fetch',data:{status:response.status,statusText:response.statusText,ok:response.ok,contentType:response.headers.get('content-type')},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A'})}).catch(()=>{});
+      // #endregion
+
       if (!response.ok) {
         throw new Error(`Failed to load document: ${response.statusText}`)
       }
 
       const blob = await response.blob()
+
+      // #region agent log
+      fetch('http://127.0.0.1:7242/ingest/2db1e09b-2b5d-4ee0-85d8-a551f942254c',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'DOCXViewer.tsx:94',message:'Blob created',data:{blobSize:blob.size,blobType:blob.type,hasContainer:!!containerRef.current},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'B'})}).catch(()=>{});
+      // #endregion
+
       const urlObj = URL.createObjectURL(blob)
       setDocxUrl(urlObj)
 
       // Render DOCX document
       if (containerRef.current) {
+        // #region agent log
+        fetch('http://127.0.0.1:7242/ingest/2db1e09b-2b5d-4ee0-85d8-a551f942254c',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'DOCXViewer.tsx:99',message:'Before renderAsync',data:{containerExists:!!containerRef.current,containerInnerHTML:containerRef.current?.innerHTML?.substring(0,50)},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'C'})}).catch(()=>{});
+        // #endregion
+
         await renderAsync(blob, containerRef.current, undefined, {
           className: 'docx-wrapper',
           inWrapper: true,
@@ -105,15 +126,32 @@ const DOCXViewer: React.FC<DOCXViewerProps> = ({
           trimXmlDeclaration: true,
           useBase64URL: false,
         })
+
+        // #region agent log
+        fetch('http://127.0.0.1:7242/ingest/2db1e09b-2b5d-4ee0-85d8-a551f942254c',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'DOCXViewer.tsx:111',message:'After renderAsync success',data:{containerInnerHTML:containerRef.current?.innerHTML?.substring(0,100),containerChildren:containerRef.current?.children?.length},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'D'})}).catch(()=>{});
+        // #endregion
+      } else {
+        // #region agent log
+        fetch('http://127.0.0.1:7242/ingest/2db1e09b-2b5d-4ee0-85d8-a551f942254c',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'DOCXViewer.tsx:115',message:'Container ref is null',data:{},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'C'})}).catch(()=>{});
+        // #endregion
       }
     } catch (err: any) {
       console.error('Error loading DOCX:', err)
+      
+      // #region agent log
+      fetch('http://127.0.0.1:7242/ingest/2db1e09b-2b5d-4ee0-85d8-a551f942254c',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'DOCXViewer.tsx:120',message:'Error caught',data:{errorMessage:err?.message,errorName:err?.name,errorStack:err?.stack?.substring(0,200)},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'E'})}).catch(()=>{});
+      // #endregion
+
       setError(err.message || 'Ошибка при загрузке документа')
       if (onError) {
         onError(err)
       }
     } finally {
       setLoading(false)
+
+      // #region agent log
+      fetch('http://127.0.0.1:7242/ingest/2db1e09b-2b5d-4ee0-85d8-a551f942254c',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'DOCXViewer.tsx:129',message:'loadDOCX finished',data:{loading:false},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'F'})}).catch(()=>{});
+      // #endregion
     }
   }
 
