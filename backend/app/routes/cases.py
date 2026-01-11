@@ -558,11 +558,16 @@ async def get_file_content(
     
     # Приоритет 1: Читаем файл из БД (новый способ хранения)
     if file.file_content:
+        from urllib.parse import quote
+        # Кодируем имя файла для поддержки кириллицы (RFC 5987)
+        encoded_filename = quote(file.filename, safe='')
+        content_disposition = f"inline; filename*=UTF-8''{encoded_filename}"
+        
         return Response(
             content=file.file_content,
             media_type=content_type,
             headers={
-                "Content-Disposition": f'inline; filename="{file.filename}"'
+                "Content-Disposition": content_disposition
             }
         )
     
@@ -583,12 +588,16 @@ async def get_file_content(
                 with open(file_full_path, 'rb') as f:
                     file_content = f.read()
                 
+                from urllib.parse import quote
+                # Кодируем имя файла для поддержки кириллицы (RFC 5987)
+                encoded_filename = quote(file.filename, safe='')
+                content_disposition = f"inline; filename*=UTF-8''{encoded_filename}"
                 
                 return Response(
                     content=file_content,
                     media_type=content_type,
                     headers={
-                        "Content-Disposition": f'inline; filename="{file.filename}"'
+                        "Content-Disposition": content_disposition
                     }
                 )
             except Exception as e:
@@ -620,11 +629,16 @@ async def get_file_content(
             detail="Содержимое файла недоступно"
         )
     
+    from urllib.parse import quote
+    # Кодируем имя файла для поддержки кириллицы (RFC 5987)
+    encoded_filename = quote(file.filename, safe='')
+    content_disposition = f"inline; filename*=UTF-8''{encoded_filename}"
+    
     return Response(
         content=file.original_text.encode('utf-8'),
         media_type="text/plain",  # Always return as text/plain for text fallback
         headers={
-            "Content-Disposition": f'inline; filename="{file.filename}"'
+            "Content-Disposition": content_disposition
         }
     )
 
@@ -687,11 +701,16 @@ async def download_file(
     
     # Приоритет 1: Читаем файл из БД (новый способ хранения)
     if file.file_content:
+        from urllib.parse import quote
+        # Кодируем имя файла для поддержки кириллицы (RFC 5987)
+        encoded_filename = quote(file.filename, safe='')
+        content_disposition = f"attachment; filename*=UTF-8''{encoded_filename}"
+        
         return Response(
             content=file.file_content,
             media_type=content_type,
             headers={
-                "Content-Disposition": f'attachment; filename="{file.filename}"'
+                "Content-Disposition": content_disposition
             }
         )
     
@@ -711,11 +730,16 @@ async def download_file(
                 with open(file_full_path, 'rb') as f:
                     file_content = f.read()
                 
+                from urllib.parse import quote
+                # Кодируем имя файла для поддержки кириллицы (RFC 5987)
+                encoded_filename = quote(file.filename, safe='')
+                content_disposition = f"attachment; filename*=UTF-8''{encoded_filename}"
+                
                 return Response(
                     content=file_content,
                     media_type=content_type,
                     headers={
-                        "Content-Disposition": f'attachment; filename="{file.filename}"'
+                        "Content-Disposition": content_disposition
                     }
                 )
             except Exception as e:
@@ -732,11 +756,16 @@ async def download_file(
             detail="Содержимое файла недоступно"
         )
     
+    from urllib.parse import quote
+    # Кодируем имя файла для поддержки кириллицы (RFC 5987)
+    encoded_filename = quote(file.filename, safe='')
+    content_disposition = f"attachment; filename*=UTF-8''{encoded_filename}"
+    
     return Response(
         content=file.original_text.encode('utf-8'),
         media_type=content_type,
         headers={
-            "Content-Disposition": f'attachment; filename="{file.filename}"'
+            "Content-Disposition": content_disposition
         }
     )
 
