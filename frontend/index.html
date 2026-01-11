@@ -4,6 +4,8 @@
     <meta charset="UTF-8" />
     <link rel="icon" type="image/svg+xml" href="/vite.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <!-- CSP meta tag as fallback to allow unsafe-eval for docx-preview -->
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-eval' 'unsafe-inline' https: http:; style-src 'self' 'unsafe-inline' https: http: data:; img-src 'self' data: blob: https: http:; font-src 'self' data: blob: https: http:; connect-src 'self' https: http:; frame-src 'self' https: http:;">
     <title>Legal AI Vault</title>
   </head>
   <body>
