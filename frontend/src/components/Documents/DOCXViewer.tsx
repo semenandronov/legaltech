@@ -1,5 +1,5 @@
-import React, { useState, useEffect, useRef } from 'react'
-import { renderAsync } from 'docx-preview'
+import React, { useState, useEffect } from 'react'
+import mammoth from 'mammoth'
 import {
   Box,
   IconButton,
@@ -45,7 +45,7 @@ const DOCXViewer: React.FC<DOCXViewerProps> = ({
   showAbout = false,
   metadata,
 }) => {
-  const containerRef = useRef<HTMLDivElement>(null)
+  const [htmlContent, setHtmlContent] = useState<string>('')
   const [docxUrl, setDocxUrl] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -68,23 +68,10 @@ const DOCXViewer: React.FC<DOCXViewerProps> = ({
       setLoading(true)
       setError(null)
 
-      // #region agent log
-      console.log('[DOCXViewer] loadDOCX started', {fileId, caseId, filename: _filename})
-      // #endregion
-
-      // Clear previous content
-      if (containerRef.current) {
-        containerRef.current.innerHTML = ''
-      }
-
       const baseUrl = import.meta.env.VITE_API_URL || ''
       const url = baseUrl 
         ? `${baseUrl}/api/cases/${caseId}/files/${fileId}/content`
         : `/api/cases/${caseId}/files/${fileId}/content`
-
-      // #region agent log
-      console.log('[DOCXViewer] Before fetch', {url, hasContainer: !!containerRef.current})
-      // #endregion
 
       const response = await fetch(url, {
         headers: {
@@ -92,66 +79,32 @@ const DOCXViewer: React.FC<DOCXViewerProps> = ({
         }
       })
 
-      // #region agent log
-      console.log('[DOCXViewer] After fetch', {status: response.status, statusText: response.statusText, ok: response.ok, contentType: response.headers.get('content-type')})
-      // #endregion
-
       if (!response.ok) {
         throw new Error(`Failed to load document: ${response.statusText}`)
       }
 
       const blob = await response.blob()
-
-      // #region agent log
-      console.log('[DOCXViewer] Blob created', {blobSize: blob.size, blobType: blob.type, hasContainer: !!containerRef.current})
-      // #endregion
-
       const urlObj = URL.createObjectURL(blob)
       setDocxUrl(urlObj)
 
-      // Render DOCX document
-      if (containerRef.current) {
-        // #region agent log
-        console.log('[DOCXViewer] Before renderAsync', {containerExists: !!containerRef.current, containerInnerHTML: containerRef.current?.innerHTML?.substring(0, 50)})
-        // #endregion
-
-        await renderAsync(blob, containerRef.current, undefined, {
-          className: 'docx-wrapper',
-          inWrapper: true,
-          ignoreWidth: false,
-          ignoreHeight: false,
-          ignoreFonts: false,
-          breakPages: true,
-          experimental: false,
-          trimXmlDeclaration: true,
-          useBase64URL: false,
-        })
-
-        // #region agent log
-        console.log('[DOCXViewer] After renderAsync success', {containerInnerHTML: containerRef.current?.innerHTML?.substring(0, 100), containerChildren: containerRef.current?.children?.length})
-        // #endregion
-      } else {
-        // #region agent log
-        console.error('[DOCXViewer] Container ref is null')
-        // #endregion
+      // Convert DOCX to HTML using mammoth
+      const arrayBuffer = await blob.arrayBuffer()
+      const result = await mammoth.convertToHtml({ arrayBuffer })
+      
+      setHtmlContent(result.value)
+      
+      // Log warnings if any
+      if (result.messages.length > 0) {
+        console.warn('Mammoth conversion warnings:', result.messages)
       }
     } catch (err: any) {
       console.error('Error loading DOCX:', err)
-      
-      // #region agent log
-      console.error('[DOCXViewer] Error caught', {errorMessage: err?.message, errorName: err?.name, errorStack: err?.stack?.substring(0, 200)})
-      // #endregion
-
       setError(err.message || 'Ошибка при загрузке документа')
       if (onError) {
         onError(err)
       }
     } finally {
       setLoading(false)
-
-      // #region agent log
-      console.log('[DOCXViewer] loadDOCX finished', {loading: false})
-      // #endregion
     }
   }
 
@@ -165,52 +118,12 @@ const DOCXViewer: React.FC<DOCXViewerProps> = ({
 
   const handleSearch = (query: string) => {
     setSearchQuery(query)
-    if (!query.trim()) {
-      return
-    }
-    
-    // Simple text search in the rendered document
-    if (containerRef.current) {
-      const content = containerRef.current.textContent || ''
-      const regex = new RegExp(query, 'gi')
-      const matches = content.match(regex)
-      
-      if (matches && matches.length > 0) {
-        // Highlight matches (simple implementation)
-        // Note: docx-preview doesn't have built-in search, so this is a basic text search
-        const walker = document.createTreeWalker(
-          containerRef.current,
-          NodeFilter.SHOW_TEXT,
-          null
-        )
-        
-        const textNodes: Text[] = []
-        let node
-        while (node = walker.nextNode()) {
-          textNodes.push(node as Text)
-        }
-        
-        textNodes.forEach(textNode => {
-          if (textNode.textContent && regex.test(textNode.textContent)) {
-            const parent = textNode.parentElement
-            if (parent && !parent.classList.contains('highlighted')) {
-              const highlighted = document.createElement('mark')
-              highlighted.style.backgroundColor = 'yellow'
-              highlighted.textContent = textNode.textContent
-              textNode.parentNode?.replaceChild(highlighted, textNode)
-            }
-          }
-        })
-      }
-    }
+    // Note: Search functionality can be enhanced in the future
+    // For now, we just store the query
   }
 
   const handleClearSearch = () => {
     setSearchQuery('')
-    // Reload document to clear highlights
-    if (containerRef.current) {
-      loadDOCX()
-    }
   }
 
   const handleDownload = () => {
@@ -251,7 +164,7 @@ const DOCXViewer: React.FC<DOCXViewerProps> = ({
     )
   }
 
-  if (!docxUrl) {
+  if (!htmlContent) {
     return (
       <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100%', p: 3 }}>
         <Typography variant="h6" sx={{ mb: 1 }}>Документ не найден</Typography>
@@ -352,7 +265,8 @@ const DOCXViewer: React.FC<DOCXViewerProps> = ({
           }}
         >
           <div 
-            ref={containerRef}
+            className="docx-wrapper"
+            dangerouslySetInnerHTML={{ __html: htmlContent }}
             style={{
               backgroundColor: 'white',
               padding: '40px',
@@ -425,4 +339,3 @@ const DOCXViewer: React.FC<DOCXViewerProps> = ({
 }
 
 export default DOCXViewer
-
