@@ -1,8 +1,6 @@
-import React, { useEffect } from 'react'
+import React, { useState, useEffect } from 'react'
 import { DocumentWithMetadata } from './DocumentsList'
 import PDFViewer from './PDFViewer'
-import { OpenInNew as OpenInNewIcon } from '@mui/icons-material'
-import { Typography, Button } from '@mui/material'
 import './Documents.css'
 
 interface DocumentViewerProps {
@@ -16,74 +14,53 @@ const DocumentViewer: React.FC<DocumentViewerProps> = ({
   document,
   caseId,
 }) => {
-  // #region agent log
-  const handleOpenOriginal = async () => {
-    if (!document?.id || !caseId) return
-    fetch('http://127.0.0.1:7242/ingest/2db1e09b-2b5d-4ee0-85d8-a551f942254c',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'DocumentViewer.tsx:handleOpenOriginal',message:'handleOpenOriginal called',data:{fileId:document.id,fileType:document.file_type},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A'})}).catch(()=>{});
-    // #endregion
-    try {
-      const baseUrl = import.meta.env.VITE_API_URL || ''
-      const url = baseUrl 
-        ? `${baseUrl}/api/cases/${caseId}/files/${document.id}/download`
-        : `/api/cases/${caseId}/files/${document.id}/download`
-      
-      // #region agent log
-      fetch('http://127.0.0.1:7242/ingest/2db1e09b-2b5d-4ee0-85d8-a551f942254c',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'DocumentViewer.tsx:handleOpenOriginal',message:'Fetching file',data:{url},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'B'})}).catch(()=>{});
-      // #endregion
-      
-      const response = await fetch(url, {
-        headers: {
-          'Authorization': `Bearer ${localStorage.getItem('access_token')}`
-        }
-      })
-      
-      // #region agent log
-      fetch('http://127.0.0.1:7242/ingest/2db1e09b-2b5d-4ee0-85d8-a551f942254c',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'DocumentViewer.tsx:handleOpenOriginal',message:'Response received',data:{ok:response.ok,status:response.status},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'C'})}).catch(()=>{});
-      // #endregion
-      
-      if (response.ok) {
-        const blob = await response.blob()
-        const blobUrl = window.URL.createObjectURL(blob)
-        
-        // #region agent log
-        fetch('http://127.0.0.1:7242/ingest/2db1e09b-2b5d-4ee0-85d8-a551f942254c',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'DocumentViewer.tsx:handleOpenOriginal',message:'Blob created, creating link',data:{blobSize:blob.size,blobType:blob.type},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'D'})}).catch(()=>{});
-        // #endregion
-        
-        // Создаем временную ссылку и кликаем по ней
-        const link = window.document.createElement('a')
-        link.href = blobUrl
-        link.target = '_blank'
-        link.rel = 'noopener noreferrer'
-        link.style.display = 'none'
-        window.document.body.appendChild(link)
-        
-        // #region agent log
-        fetch('http://127.0.0.1:7242/ingest/2db1e09b-2b5d-4ee0-85d8-a551f942254c',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'DocumentViewer.tsx:handleOpenOriginal',message:'Clicking link',data:{},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'E'})}).catch(()=>{});
-        // #endregion
-        
-        link.click()
-        window.document.body.removeChild(link)
-        
-        // Отложенная очистка blob URL
-        setTimeout(() => {
-          window.URL.revokeObjectURL(blobUrl)
-        }, 1000)
-      }
-    } catch (error) {
-      // #region agent log
-      fetch('http://127.0.0.1:7242/ingest/2db1e09b-2b5d-4ee0-85d8-a551f942254c',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'DocumentViewer.tsx:handleOpenOriginal',message:'Error occurred',data:{error:String(error)},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'F'})}).catch(()=>{});
-      // #endregion
-      console.error('Ошибка при открытии документа:', error)
-    }
-  }
+  const [fileUrl, setFileUrl] = useState<string | null>(null)
 
   useEffect(() => {
-    // #region agent log
-    fetch('http://127.0.0.1:7242/ingest/2db1e09b-2b5d-4ee0-85d8-a551f942254c',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'DocumentViewer.tsx:useEffect',message:'useEffect triggered',data:{hasDocument:!!document,fileType:document?.file_type,fileId:document?.id,caseId},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'G'})}).catch(()=>{});
-    // #endregion
-    // Для не-PDF файлов сразу открываем в оригинале
+    // Загружаем файл и создаем blob URL для не-PDF файлов
     if (document?.id && document.file_type !== 'pdf' && caseId) {
-      handleOpenOriginal()
+      const loadFile = async () => {
+        try {
+          const baseUrl = import.meta.env.VITE_API_URL || ''
+          const url = baseUrl 
+            ? `${baseUrl}/api/cases/${caseId}/files/${document.id}/download`
+            : `/api/cases/${caseId}/files/${document.id}/download`
+          
+          const response = await fetch(url, {
+            headers: {
+              'Authorization': `Bearer ${localStorage.getItem('access_token')}`
+            }
+          })
+          
+          if (response.ok) {
+            const blob = await response.blob()
+            const blobUrl = window.URL.createObjectURL(blob)
+            setFileUrl(blobUrl)
+          }
+        } catch (error) {
+          console.error('Ошибка при загрузке файла:', error)
+        }
+      }
+      
+      loadFile()
+      
+      // Cleanup: revoke blob URL при размонтировании или смене документа
+      return () => {
+        setFileUrl(prevUrl => {
+          if (prevUrl) {
+            window.URL.revokeObjectURL(prevUrl)
+          }
+          return null
+        })
+      }
+    } else {
+      // Очищаем blob URL при смене на PDF или отсутствии документа
+      setFileUrl(prevUrl => {
+        if (prevUrl) {
+          window.URL.revokeObjectURL(prevUrl)
+        }
+        return null
+      })
     }
   }, [document?.id, caseId, document?.file_type])
 
@@ -113,19 +90,20 @@ const DocumentViewer: React.FC<DocumentViewerProps> = ({
             showTabs={false}
             showAbout={false}
           />
+        ) : fileUrl ? (
+          <iframe
+            src={fileUrl}
+            style={{
+              width: '100%',
+              height: '100%',
+              border: 'none',
+              flex: 1
+            }}
+            title={document.filename}
+          />
         ) : (
-          <div className="document-viewer-text" style={{ padding: '20px', textAlign: 'center', display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'center', height: '100%' }}>
-            <Typography variant="body1" sx={{ mb: 2 }}>
-              Документ открывается в оригинальном формате...
-            </Typography>
-            <Button
-              variant="contained"
-              startIcon={<OpenInNewIcon />}
-              onClick={handleOpenOriginal}
-              sx={{ textTransform: 'none' }}
-            >
-              Открыть оригинальный файл
-            </Button>
+          <div style={{ padding: '20px', textAlign: 'center' }}>
+            Загрузка документа...
           </div>
         )}
       </div>

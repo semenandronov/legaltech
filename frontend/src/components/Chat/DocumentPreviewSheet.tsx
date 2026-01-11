@@ -19,7 +19,6 @@ import {
   ChevronRight as ChevronRightIcon,
   OpenInNew as MaximizeIcon,
 } from '@mui/icons-material'
-import { Button } from '@mui/material'
 import { SourceInfo } from '@/services/api'
 import PDFViewer from '@/components/Documents/PDFViewer'
 
@@ -44,6 +43,7 @@ const DocumentPreviewSheet = ({
   const [documentContent, setDocumentContent] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
   const [fileInfo, setFileInfo] = useState<{ id: string; file_type: string; filename: string } | null>(null)
+  const [fileUrl, setFileUrl] = useState<string | null>(null)
 
   const currentIndex = source ? allSources.findIndex(s => s.file === source.file) : -1
   const hasPrev = currentIndex > 0
@@ -55,28 +55,6 @@ const DocumentPreviewSheet = ({
     }
   }, [source, isOpen])
 
-  const handleOpenOriginal = async (fileId: string) => {
-    if (!fileId || !caseId) return
-    try {
-      const baseUrl = import.meta.env.VITE_API_URL || ''
-      const url = baseUrl 
-        ? `${baseUrl}/api/cases/${caseId}/files/${fileId}/download`
-        : `/api/cases/${caseId}/files/${fileId}/download`
-      const response = await fetch(url, {
-        headers: {
-          'Authorization': `Bearer ${localStorage.getItem('access_token')}`
-        }
-      })
-      if (response.ok) {
-        const blob = await response.blob()
-        const blobUrl = window.URL.createObjectURL(blob)
-        window.open(blobUrl, '_blank')
-        setTimeout(() => window.URL.revokeObjectURL(blobUrl), 100)
-      }
-    } catch (error) {
-      console.error('Ошибка при открытии документа:', error)
-    }
-  }
 
   const loadDocumentInfo = async () => {
     if (!source) return
@@ -116,9 +94,6 @@ const DocumentPreviewSheet = ({
           file_type: file.file_type || 'txt',
           filename: file.filename
         })
-        
-        // For non-PDF files, we'll open them directly in original format
-        // No need to load text content
       } else {
         // File not found - show preview text if available
         setDocumentContent(source.text_preview || 'Документ не найден')
@@ -132,9 +107,50 @@ const DocumentPreviewSheet = ({
   }
 
   useEffect(() => {
-    if (isOpen && fileInfo && fileInfo.file_type !== 'pdf' && fileInfo.id) {
-      // Для не-PDF файлов сразу открываем в оригинале
-      handleOpenOriginal(fileInfo.id)
+    // Загружаем файл и создаем blob URL для не-PDF файлов
+    if (isOpen && fileInfo && fileInfo.file_type !== 'pdf' && fileInfo.id && caseId) {
+      const loadFile = async () => {
+        try {
+          const baseUrl = import.meta.env.VITE_API_URL || ''
+          const url = baseUrl 
+            ? `${baseUrl}/api/cases/${caseId}/files/${fileInfo.id}/download`
+            : `/api/cases/${caseId}/files/${fileInfo.id}/download`
+          
+          const response = await fetch(url, {
+            headers: {
+              'Authorization': `Bearer ${localStorage.getItem('access_token')}`
+            }
+          })
+          
+          if (response.ok) {
+            const blob = await response.blob()
+            const blobUrl = window.URL.createObjectURL(blob)
+            setFileUrl(blobUrl)
+          }
+        } catch (error) {
+          console.error('Ошибка при загрузке файла:', error)
+        }
+      }
+      
+      loadFile()
+      
+      // Cleanup: revoke blob URL при размонтировании или смене файла
+      return () => {
+        setFileUrl(prevUrl => {
+          if (prevUrl) {
+            window.URL.revokeObjectURL(prevUrl)
+          }
+          return null
+        })
+      }
+    } else {
+      // Очищаем blob URL при смене на PDF или отсутствии файла
+      setFileUrl(prevUrl => {
+        if (prevUrl) {
+          window.URL.revokeObjectURL(prevUrl)
+        }
+        return null
+      })
     }
   }, [isOpen, fileInfo?.id, fileInfo?.file_type, caseId])
 
@@ -314,30 +330,26 @@ const DocumentPreviewSheet = ({
                 showAbout={false}
               />
             </Box>
+          ) : fileInfo && fileUrl ? (
+            // For non-PDF files, display in iframe
+            <Box sx={{ flex: 1, overflow: 'hidden' }}>
+              <iframe
+                src={fileUrl}
+                style={{
+                  width: '100%',
+                  height: '100%',
+                  border: 'none',
+                  flex: 1
+                }}
+                title={fileInfo.filename}
+              />
+            </Box>
           ) : fileInfo ? (
-            // For non-PDF files, show message and open automatically
-            <Box
-              sx={{
-                flex: 1,
-                overflow: 'auto',
-                p: 2,
-                display: 'flex',
-                flexDirection: 'column',
-                alignItems: 'center',
-                justifyContent: 'center',
-              }}
-            >
-              <Typography variant="body1" sx={{ mb: 2 }}>
-                Документ открывается в оригинальном формате...
+            // Loading file
+            <Box sx={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+              <Typography variant="body2" color="text.secondary">
+                Загрузка документа...
               </Typography>
-              <Button
-                variant="contained"
-                startIcon={<MaximizeIcon />}
-                onClick={() => handleOpenOriginal(fileInfo.id)}
-                sx={{ textTransform: 'none' }}
-              >
-                Открыть оригинальный файл
-              </Button>
             </Box>
           ) : (
             <Box sx={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
