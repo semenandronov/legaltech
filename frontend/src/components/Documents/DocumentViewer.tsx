@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react'
 import { DocumentWithMetadata } from './DocumentsList'
 import PDFViewer from './PDFViewer'
+import DOCXViewer from './DOCXViewer'
 import './Documents.css'
 
 interface DocumentViewerProps {
@@ -17,14 +18,18 @@ const DocumentViewer: React.FC<DocumentViewerProps> = ({
   const [fileUrl, setFileUrl] = useState<string | null>(null)
 
   useEffect(() => {
-    // Загружаем файл и создаем blob URL для не-PDF файлов
-    if (document?.id && document.file_type !== 'pdf' && caseId) {
+    // Загружаем файл и создаем blob URL только для файлов, которые не PDF и не DOCX
+    // (DOCX загружается в DOCXViewer, PDF загружается в PDFViewer)
+    const isDocx = document?.file_type === 'docx' || document?.filename.toLowerCase().endsWith('.docx')
+    
+    if (document?.id && document.file_type !== 'pdf' && !isDocx && caseId) {
       const loadFile = async () => {
         try {
           const baseUrl = import.meta.env.VITE_API_URL || ''
+          // Используем /content endpoint для просмотра (inline), а не /download (attachment)
           const url = baseUrl 
-            ? `${baseUrl}/api/cases/${caseId}/files/${document.id}/download`
-            : `/api/cases/${caseId}/files/${document.id}/download`
+            ? `${baseUrl}/api/cases/${caseId}/files/${document.id}/content`
+            : `/api/cases/${caseId}/files/${document.id}/content`
           
           const response = await fetch(url, {
             headers: {
@@ -54,7 +59,7 @@ const DocumentViewer: React.FC<DocumentViewerProps> = ({
         })
       }
     } else {
-      // Очищаем blob URL при смене на PDF или отсутствии документа
+      // Очищаем blob URL при смене на PDF/DOCX или отсутствии документа
       setFileUrl(prevUrl => {
         if (prevUrl) {
           window.URL.revokeObjectURL(prevUrl)
@@ -62,7 +67,7 @@ const DocumentViewer: React.FC<DocumentViewerProps> = ({
         return null
       })
     }
-  }, [document?.id, caseId, document?.file_type])
+  }, [document?.id, caseId, document?.file_type, document?.filename])
 
   if (!document) {
     return (
@@ -76,6 +81,9 @@ const DocumentViewer: React.FC<DocumentViewerProps> = ({
     )
   }
 
+  // Определяем, является ли файл DOCX
+  const isDocx = document.file_type === 'docx' || document.filename.toLowerCase().endsWith('.docx')
+
   return (
     <div className="document-viewer" style={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
       <div className="document-viewer-content" style={{ flex: 1, overflow: 'auto' }}>
@@ -88,6 +96,16 @@ const DocumentViewer: React.FC<DocumentViewerProps> = ({
               console.error('PDF viewer error:', error)
             }}
             showTabs={false}
+            showAbout={false}
+          />
+        ) : isDocx ? (
+          <DOCXViewer
+            fileId={document.id}
+            caseId={caseId}
+            filename={document.filename}
+            onError={(error) => {
+              console.error('DOCX viewer error:', error)
+            }}
             showAbout={false}
           />
         ) : fileUrl ? (

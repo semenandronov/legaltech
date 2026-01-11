@@ -1234,3 +1234,49 @@
   color: #9ca3af;
   margin-top: 8px;
 }
+
+/* DOCX Viewer Styles */
+.docx-wrapper {
+  font-family: 'Times New Roman', serif;
+  font-size: 12pt;
+  line-height: 1.5;
+  color: #000000;
+  background: #ffffff;
+}
+
+.docx-wrapper p {
+  margin: 0 0 6pt 0;
+}
+
+.docx-wrapper h1,
+.docx-wrapper h2,
+.docx-wrapper h3,
+.docx-wrapper h4,
+.docx-wrapper h5,
+.docx-wrapper h6 {
+  margin: 12pt 0 6pt 0;
+  font-weight: bold;
+}
+
+.docx-wrapper table {
+  border-collapse: collapse;
+  width: 100%;
+  margin: 12pt 0;
+}
+
+.docx-wrapper table td,
+.docx-wrapper table th {
+  border: 1px solid #000000;
+  padding: 4pt;
+}
+
+.docx-wrapper ul,
+.docx-wrapper ol {
+  margin: 6pt 0;
+  padding-left: 30pt;
+}
+
+.docx-wrapper img {
+  max-width: 100%;
+  height: auto;
+}
