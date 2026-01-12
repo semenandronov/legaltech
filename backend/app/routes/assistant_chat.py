@@ -433,190 +433,190 @@ async def stream_chat_response(
         sources_list = []
         
         # Используем только RAG - агенты убраны, все запросы обрабатываются через RAG
-            # Это задача - используем Planning Agent и агентов
-            logger.info(f"Detected task request for case {case_id}: {question[:100]}...")
-            
-            # Legal research для TASK запросов (если включено)
-            legal_research_context_for_task = ""
-            if legal_research:
-                try:
-                    logger.info(f"Legal research enabled for TASK query: {question[:100]}...")
-                    # Инициализируем source_router с официальными источниками
-                    # rag_service уже определена глобально в начале файла
-                    source_router = initialize_source_router(rag_service=rag_service, register_official_sources=True)
-                    
-                    # Определяем источники для поиска
-                    sources_to_search = ["pravo_gov", "vsrf", "web"]
-                    
-                    # Выполняем поиск через source router
-                    search_results = await source_router.search(
-                        query=question,
-                        source_names=sources_to_search,
-                        max_results_per_source=5,
-                        parallel=True
-                    )
-                    
-                    # Агрегируем результаты
-                    aggregated = source_router.aggregate_results(
-                        search_results,
-                        max_total=10,
-                        dedup_threshold=0.9
-                    )
-                    
-                    if aggregated:
-                        legal_research_parts = []
-                        legal_research_parts.append(f"\n\n=== Результаты юридического исследования для планирования ===")
-                        legal_research_parts.append(f"Найдено источников: {len(aggregated)}")
-                        
-                        for i, result in enumerate(aggregated[:5], 1):
-                            title = result.title or "Без названия"
-                            url = result.url or ""
-                            content = result.content[:500] if result.content else ""
-                            source_name = result.source_name or "unknown"
-                            
-                            if content:
-                                legal_research_parts.append(f"\n[Источник {i}: {title}]")
-                                legal_research_parts.append(f"Источник: {source_name}")
-                                if url:
-                                    legal_research_parts.append(f"URL: {url}")
-                                legal_research_parts.append(f"Содержание: {content}...")
-                        
-                        legal_research_context_for_task = "\n".join(legal_research_parts)
-                        
-                        # Добавляем источники в sources_list
-                        for result in aggregated[:5]:
-                            source_info = {
-                                "title": result.title or "Юридический источник",
-                                "url": result.url or "",
-                                "source": result.source_name or "legal"
-                            }
-                            if result.content:
-                                source_info["text_preview"] = result.content[:200]
-                            sources_list.append(source_info)
-                        
-                        logger.info(f"Legal research completed for TASK: {len(aggregated)} sources found")
-                    else:
-                        logger.warning("Legal research returned no results for TASK")
-                except Exception as legal_research_error:
-                    logger.warning(f"Legal research failed for TASK: {legal_research_error}, continuing without legal research", exc_info=True)
-            
+        # Это задача - используем Planning Agent и агентов
+        logger.info(f"Detected task request for case {case_id}: {question[:100]}...")
+        
+        # Legal research для TASK запросов (если включено)
+        legal_research_context_for_task = ""
+        if legal_research:
             try:
-                # Get case info
-                case = db.query(Case).filter(Case.id == case_id).first()
-                num_documents = case.num_documents if case else 0
-                file_names = case.file_names if case and case.file_names else []
+                logger.info(f"Legal research enabled for TASK query: {question[:100]}...")
+                # Инициализируем source_router с официальными источниками
+                # rag_service уже определена глобально в начале файла
+                source_router = initialize_source_router(rag_service=rag_service, register_official_sources=True)
                 
-                # Добавляем контекст юридического исследования к задаче пользователя для Planning Agent
-                user_task_with_context = question
-                if legal_research_context_for_task:
-                    user_task_with_context = f"{question}\n\n{legal_research_context_for_task}"
+                # Определяем источники для поиска
+                sources_to_search = ["pravo_gov", "vsrf", "web"]
                 
-                # Use Advanced Planning Agent
-                try:
-                    planning_agent = AdvancedPlanningAgent(
-                        rag_service=rag_service,
-                        document_processor=document_processor
-                    )
-                    logger.info("Using Advanced Planning Agent with subtask support")
-                    use_subtasks = True
-                except Exception as e:
-                    logger.warning(f"Failed to initialize Advanced Planning Agent: {e}, using base PlanningAgent")
-                    planning_agent = PlanningAgent(rag_service=rag_service, document_processor=document_processor)
-                    use_subtasks = False
+                # Выполняем поиск через source router
+                search_results = await source_router.search(
+                    query=question,
+                    source_names=sources_to_search,
+                    max_results_per_source=5,
+                    parallel=True
+                )
                 
-                # Create analysis plan
-                if use_subtasks:
-                    plan = planning_agent.plan_with_subtasks(
-                        user_task=user_task_with_context,
-                        case_id=case_id,
-                        available_documents=file_names[:10] if file_names else None,
-                        num_documents=num_documents
-                    )
-                else:
-                    plan = planning_agent.plan_analysis(
-                        user_task=user_task_with_context,
-                        case_id=case_id,
-                        available_documents=file_names[:10] if file_names else None,
-                        num_documents=num_documents
-                    )
+                # Агрегируем результаты
+                aggregated = source_router.aggregate_results(
+                    search_results,
+                    max_total=10,
+                    dedup_threshold=0.9
+                )
                 
-                # Проверяем, нужны ли уточнения для таблицы
-                if plan.get("needs_clarification"):
-                    clarification_questions = plan.get("clarification_questions", [])
-                    table_info = plan.get("table_info", {})
+                if aggregated:
+                    legal_research_parts = []
+                    legal_research_parts.append(f"\n\n=== Результаты юридического исследования для планирования ===")
+                    legal_research_parts.append(f"Найдено источников: {len(aggregated)}")
                     
-                    # Отправляем событие с уточняющими вопросами
-                    feedback_data = {
-                        'type': 'human_feedback_request',
-                        'isTableClarification': True,
-                        'questions': clarification_questions,
-                        'table_info': table_info,
-                        'request_id': str(uuid.uuid4())
-                    }
-                    yield f"data: {json.dumps(feedback_data, ensure_ascii=False)}\n\n"
-                    return  # Прерываем выполнение, ждем ответа пользователя
+                    for i, result in enumerate(aggregated[:5], 1):
+                        title = result.title or "Без названия"
+                        url = result.url or ""
+                        content = result.content[:500] if result.content else ""
+                        source_name = result.source_name or "unknown"
+                        
+                        if content:
+                            legal_research_parts.append(f"\n[Источник {i}: {title}]")
+                            legal_research_parts.append(f"Источник: {source_name}")
+                            if url:
+                                legal_research_parts.append(f"URL: {url}")
+                            legal_research_parts.append(f"Содержание: {content}...")
+                    
+                    legal_research_context_for_task = "\n".join(legal_research_parts)
+                    
+                    # Добавляем источники в sources_list
+                    for result in aggregated[:5]:
+                        source_info = {
+                            "title": result.title or "Юридический источник",
+                            "url": result.url or "",
+                            "source": result.source_name or "legal"
+                        }
+                        if result.content:
+                            source_info["text_preview"] = result.content[:200]
+                        sources_list.append(source_info)
+                    
+                    logger.info(f"Legal research completed for TASK: {len(aggregated)} sources found")
+                else:
+                    logger.warning("Legal research returned no results for TASK")
+            except Exception as legal_research_error:
+                logger.warning(f"Legal research failed for TASK: {legal_research_error}, continuing without legal research", exc_info=True)
+        
+        try:
+            # Get case info
+            case = db.query(Case).filter(Case.id == case_id).first()
+            num_documents = case.num_documents if case else 0
+            file_names = case.file_names if case and case.file_names else []
+            
+            # Добавляем контекст юридического исследования к задаче пользователя для Planning Agent
+            user_task_with_context = question
+            if legal_research_context_for_task:
+                user_task_with_context = f"{question}\n\n{legal_research_context_for_task}"
+            
+            # Use Advanced Planning Agent
+            try:
+                planning_agent = AdvancedPlanningAgent(
+                    rag_service=rag_service,
+                    document_processor=document_processor
+                )
+                logger.info("Using Advanced Planning Agent with subtask support")
+                use_subtasks = True
+            except Exception as e:
+                logger.warning(f"Failed to initialize Advanced Planning Agent: {e}, using base PlanningAgent")
+                planning_agent = PlanningAgent(rag_service=rag_service, document_processor=document_processor)
+                use_subtasks = False
+            
+            # Create analysis plan
+            if use_subtasks:
+                plan = planning_agent.plan_with_subtasks(
+                    user_task=user_task_with_context,
+                    case_id=case_id,
+                    available_documents=file_names[:10] if file_names else None,
+                    num_documents=num_documents
+                )
+            else:
+                plan = planning_agent.plan_analysis(
+                    user_task=user_task_with_context,
+                    case_id=case_id,
+                    available_documents=file_names[:10] if file_names else None,
+                    num_documents=num_documents
+                )
+            
+            # Проверяем, нужны ли уточнения для таблицы
+            if plan.get("needs_clarification"):
+                clarification_questions = plan.get("clarification_questions", [])
+                table_info = plan.get("table_info", {})
                 
-                analysis_types = plan.get("analysis_types", [])
-                reasoning = plan.get("reasoning", "План создан на основе задачи")
-                confidence = plan.get("confidence", 0.8)
-                
-                # Очищаем reasoning от JSON, если он там есть
-                import re
-                if "План извлечен из текстового ответа:" in reasoning:
-                    # Убираем префикс и извлекаем нормальный текст
-                    reasoning = reasoning.replace("План извлечен из текстового ответа:", "").strip()
-                    # Убираем JSON объекты из reasoning
-                    reasoning = re.sub(r'\{[^}]*\}', '', reasoning)
-                    reasoning = re.sub(r'\[[^\]]*\]', '', reasoning)
-                    reasoning = reasoning.strip()
-                    if not reasoning:
-                        reasoning = f"Выполнить анализ: {', '.join(analysis_types)}"
-                
-                logger.info(f"Planning completed: {len(analysis_types)} steps, confidence: {confidence:.2f}")
-                
-                # Сохраняем план в БД для одобрения
-                from app.models.analysis import AnalysisPlan
-                from datetime import datetime
-                import uuid
-                
-                plan_id = str(uuid.uuid4())
-                try:
-                    analysis_plan = AnalysisPlan(
-                        id=plan_id,
-                        case_id=case_id,
-                        user_id=current_user.id,
-                        user_task=question,
-                        plan_data=plan,
-                        status="pending_approval",
-                        confidence=confidence,
-                        validation_result={
-                            "is_valid": True,
-                            "issues": [],
-                            "warnings": []
-                        },
-                        tables_to_create=plan.get("tables_to_create", [])
-                    )
-                    db.add(analysis_plan)
-                    db.commit()
-                    logger.info(f"Plan saved to DB with id: {plan_id}")
-                except Exception as save_error:
-                    db.rollback()
-                    logger.error(f"Error saving plan to DB: {save_error}", exc_info=True)
-                    # Продолжаем без сохранения в БД
-                
-                # Проверяем, есть ли таблицы для создания
-                tables_to_create = plan.get("tables_to_create", [])
-                tables_info = ""
-                if tables_to_create:
-                    tables_list = []
-                    for table in tables_to_create:
-                        table_name = table.get("table_name", "Таблица")
-                        columns_count = len(table.get("columns", []))
-                        tables_list.append(f"- {table_name} ({columns_count} колонок)")
-                    tables_info = f"\n\n**Таблицы для создания:**\n" + "\n".join(tables_list)
-                
-                # Формируем ответ с планом (без сырого JSON)
-                plan_text = f"""Я составил план анализа для вашей задачи:
+                # Отправляем событие с уточняющими вопросами
+                feedback_data = {
+                    'type': 'human_feedback_request',
+                    'isTableClarification': True,
+                    'questions': clarification_questions,
+                    'table_info': table_info,
+                    'request_id': str(uuid.uuid4())
+                }
+                yield f"data: {json.dumps(feedback_data, ensure_ascii=False)}\n\n"
+                return  # Прерываем выполнение, ждем ответа пользователя
+            
+            analysis_types = plan.get("analysis_types", [])
+            reasoning = plan.get("reasoning", "План создан на основе задачи")
+            confidence = plan.get("confidence", 0.8)
+            
+            # Очищаем reasoning от JSON, если он там есть
+            import re
+            if "План извлечен из текстового ответа:" in reasoning:
+                # Убираем префикс и извлекаем нормальный текст
+                reasoning = reasoning.replace("План извлечен из текстового ответа:", "").strip()
+                # Убираем JSON объекты из reasoning
+                reasoning = re.sub(r'\{[^}]*\}', '', reasoning)
+                reasoning = re.sub(r'\[[^\]]*\]', '', reasoning)
+                reasoning = reasoning.strip()
+                if not reasoning:
+                    reasoning = f"Выполнить анализ: {', '.join(analysis_types)}"
+            
+            logger.info(f"Planning completed: {len(analysis_types)} steps, confidence: {confidence:.2f}")
+            
+            # Сохраняем план в БД для одобрения
+            from app.models.analysis import AnalysisPlan
+            from datetime import datetime
+            import uuid
+            
+            plan_id = str(uuid.uuid4())
+            try:
+                analysis_plan = AnalysisPlan(
+                    id=plan_id,
+                    case_id=case_id,
+                    user_id=current_user.id,
+                    user_task=question,
+                    plan_data=plan,
+                    status="pending_approval",
+                    confidence=confidence,
+                    validation_result={
+                        "is_valid": True,
+                        "issues": [],
+                        "warnings": []
+                    },
+                    tables_to_create=plan.get("tables_to_create", [])
+                )
+                db.add(analysis_plan)
+                db.commit()
+                logger.info(f"Plan saved to DB with id: {plan_id}")
+            except Exception as save_error:
+                db.rollback()
+                logger.error(f"Error saving plan to DB: {save_error}", exc_info=True)
+                # Продолжаем без сохранения в БД
+            
+            # Проверяем, есть ли таблицы для создания
+            tables_to_create = plan.get("tables_to_create", [])
+            tables_info = ""
+            if tables_to_create:
+                tables_list = []
+                for table in tables_to_create:
+                    table_name = table.get("table_name", "Таблица")
+                    columns_count = len(table.get("columns", []))
+                    tables_list.append(f"- {table_name} ({columns_count} колонок)")
+                tables_info = f"\n\n**Таблицы для создания:**\n" + "\n".join(tables_list)
+            
+            # Формируем ответ с планом (без сырого JSON)
+            plan_text = f"""Я составил план анализа для вашей задачи:
 
 **План:**
 {reasoning}
@@ -625,207 +625,207 @@ async def stream_chat_response(
 **Уверенность:** {confidence:.0%}{tables_info}
 
 Пожалуйста, проверьте план и подтвердите выполнение."""
-                
-                full_response_text = plan_text
-                
-                # Stream plan response
-                for chunk in plan_text:
-                    yield f"data: {json.dumps({'textDelta': chunk}, ensure_ascii=False)}\n\n"
-                    await asyncio.sleep(0.01)  # Small delay for streaming effect
-                
-                # Отправляем план для одобрения через SSE
-                yield f"data: {json.dumps({'type': 'plan_ready', 'planId': plan_id, 'plan': plan}, ensure_ascii=False)}\n\n"
-                yield f"data: {json.dumps({'textDelta': ''})}\n\n"
-                
-                # Сохраняем ответ ассистента в БД
-                try:
-                    assistant_message = ChatMessage(
-                        case_id=case_id,
-                        role="assistant",
-                        content=full_response_text,
-                        source_references=sources_list,
-                        session_id=session_id
-                    )
-                    db.add(assistant_message)
-                    db.commit()
-                    logger.info(f"Assistant message (plan) saved to DB for case {case_id}")
-                except Exception as save_error:
-                    db.rollback()
-                    logger.error(f"Error saving assistant message to DB: {save_error}", exc_info=True)
-                
-            except Exception as e:
-                logger.error(f"Error in task planning: {e}", exc_info=True)
-                error_msg = f"Ошибка при планировании задачи: {str(e)}"
-                yield f"data: {json.dumps({'textDelta': error_msg}, ensure_ascii=False)}\n\n"
-                yield f"data: {json.dumps({'textDelta': ''})}\n\n"
-        else:
-            # Это вопрос - используем RAG + LLM или веб-поиск
-            # asyncio уже импортирован глобально, не нужно импортировать локально
-            loop = asyncio.get_event_loop()
             
-            # Загружаем историю сообщений для контекста (особенно важно для deep_think)
+            full_response_text = plan_text
+            
+            # Stream plan response
+            for chunk in plan_text:
+                yield f"data: {json.dumps({'textDelta': chunk}, ensure_ascii=False)}\n\n"
+                await asyncio.sleep(0.01)  # Small delay for streaming effect
+            
+            # Отправляем план для одобрения через SSE
+            yield f"data: {json.dumps({'type': 'plan_ready', 'planId': plan_id, 'plan': plan}, ensure_ascii=False)}\n\n"
+            yield f"data: {json.dumps({'textDelta': ''})}\n\n"
+            
+            # Сохраняем ответ ассистента в БД
+            try:
+                assistant_message = ChatMessage(
+                    case_id=case_id,
+                    role="assistant",
+                    content=full_response_text,
+                    source_references=sources_list,
+                    session_id=session_id
+                )
+                db.add(assistant_message)
+                db.commit()
+                logger.info(f"Assistant message (plan) saved to DB for case {case_id}")
+            except Exception as save_error:
+                db.rollback()
+                logger.error(f"Error saving assistant message to DB: {save_error}", exc_info=True)
+        
+        except Exception as e:
+            logger.error(f"Error in task planning: {e}", exc_info=True)
+            error_msg = f"Ошибка при планировании задачи: {str(e)}"
+            yield f"data: {json.dumps({'textDelta': error_msg}, ensure_ascii=False)}\n\n"
+            yield f"data: {json.dumps({'textDelta': ''})}\n\n"
+        
+        # Это вопрос - используем RAG + LLM или веб-поиск
+        # asyncio уже импортирован глобально, не нужно импортировать локально
+        loop = asyncio.get_event_loop()
+        
+        # Загружаем историю сообщений для контекста (особенно важно для deep_think)
+        chat_history = []
+        try:
+            history_messages = db.query(ChatMessage).filter(
+                ChatMessage.case_id == case_id,
+                ChatMessage.content.isnot(None),
+                ChatMessage.content != ""
+            ).order_by(ChatMessage.created_at.desc()).limit(10).all()
+            
+            # Формируем историю в формате для промпта (от старых к новым)
             chat_history = []
+            for msg in reversed(history_messages):
+                if msg.role == "user" and msg.content:
+                    chat_history.append(f"Пользователь: {msg.content}")
+                elif msg.role == "assistant" and msg.content:
+                    chat_history.append(f"Ассистент: {msg.content[:500]}...")  # Ограничиваем длину
+            
+            if chat_history:
+                logger.info(f"Loaded {len(chat_history)} previous messages for context")
+            else:
+                logger.info("No previous messages found for context")
+        except Exception as history_error:
+            logger.warning(f"Failed to load chat history: {history_error}, continuing without history")
+            # Continue without history - не критичная ошибка
+        
+        # Web search integration - выполняем ПЕРВЫМ, если включен
+        web_search_context = ""
+        web_search_successful = False
+        
+        if web_search:
             try:
-                history_messages = db.query(ChatMessage).filter(
-                    ChatMessage.case_id == case_id,
-                    ChatMessage.content.isnot(None),
-                    ChatMessage.content != ""
-                ).order_by(ChatMessage.created_at.desc()).limit(10).all()
-                
-                # Формируем историю в формате для промпта (от старых к новым)
-                chat_history = []
-                for msg in reversed(history_messages):
-                    if msg.role == "user" and msg.content:
-                        chat_history.append(f"Пользователь: {msg.content}")
-                    elif msg.role == "assistant" and msg.content:
-                        chat_history.append(f"Ассистент: {msg.content[:500]}...")  # Ограничиваем длину
-                
-                if chat_history:
-                    logger.info(f"Loaded {len(chat_history)} previous messages for context")
-                else:
-                    logger.info("No previous messages found for context")
-            except Exception as history_error:
-                logger.warning(f"Failed to load chat history: {history_error}, continuing without history")
-                # Continue without history - не критичная ошибка
-            
-            # Web search integration - выполняем ПЕРВЫМ, если включен
-            web_search_context = ""
-            web_search_successful = False
-            
-            if web_search:
-                try:
-                    logger.info(f"Web search enabled for query: {question[:100]}...")
-                    web_research_service = get_web_research_service()
-                    research_result = await web_research_service.research(
-                        query=question,
-                        max_results=5,
-                        use_cache=True,
-                        validate_sources=True
-                    )
-                    
-                    if research_result.sources:
-                        web_search_parts = []
-                        web_search_parts.append(f"\n\n=== Результаты веб-поиска ===")
-                        web_search_parts.append(f"Найдено источников: {len(research_result.sources)}")
-                        
-                        for i, source in enumerate(research_result.sources[:5], 1):
-                            title = source.get("title", "Без названия")
-                            url = source.get("url", "")
-                            content = source.get("content", "")
-                            if content:
-                                web_search_parts.append(f"\n[Источник {i}: {title}]")
-                                if url:
-                                    web_search_parts.append(f"URL: {url}")
-                                web_search_parts.append(f"Содержание: {content[:300]}...")
-                        
-                        web_search_context = "\n".join(web_search_parts)
-                        web_search_successful = True
-                        logger.info(f"Web search completed: {len(research_result.sources)} sources found")
-                    else:
-                        logger.warning("Web search returned no results")
-                except Exception as web_search_error:
-                    logger.warning(f"Web search failed: {web_search_error}, continuing without web search")
-                    # Continue without web search - не критичная ошибка
-            
-            # Legal research integration - поиск в юридических источниках
-            legal_research_context = ""
-            legal_research_successful = False
-            
-            if legal_research:
-                try:
-                    logger.info(f"Legal research enabled for query: {question[:100]}...")
-                    # Инициализируем source_router с официальными источниками
-                    source_router = initialize_source_router(rag_service=rag_service, register_official_sources=True)
-                    
-                    # Определяем источники для поиска (приоритет pravo_gov для статей кодексов)
-                    sources_to_search = ["pravo_gov", "vsrf", "web"]  # pravo_gov для законодательства, vsrf для позиций ВС
-                    
-                    # Выполняем поиск через source router
-                    search_results = await source_router.search(
-                        query=question,
-                        source_names=sources_to_search,
-                        max_results_per_source=5,
-                        parallel=True
-                    )
-                    
-                    # Агрегируем результаты
-                    aggregated = source_router.aggregate_results(
-                        search_results,
-                        max_total=10,
-                        dedup_threshold=0.9
-                    )
-                    
-                    if aggregated:
-                        legal_research_parts = []
-                        legal_research_parts.append(f"\n\n=== Результаты юридического исследования ===")
-                        legal_research_parts.append(f"Найдено источников: {len(aggregated)}")
-                        
-                        for i, result in enumerate(aggregated[:5], 1):
-                            title = result.title or "Без названия"
-                            url = result.url or ""
-                            content = result.content[:500] if result.content else ""
-                            source_name = result.source_name or "unknown"
-                            
-                            if content:
-                                legal_research_parts.append(f"\n[Источник {i}: {title}]")
-                                legal_research_parts.append(f"Источник: {source_name}")
-                                if url:
-                                    legal_research_parts.append(f"URL: {url}")
-                                legal_research_parts.append(f"Содержание: {content}...")
-                        
-                        legal_research_context = "\n".join(legal_research_parts)
-                        legal_research_successful = True
-                        
-                        # Добавляем источники в sources_list
-                        for result in aggregated[:5]:
-                            source_info = {
-                                "title": result.title or "Юридический источник",
-                                "url": result.url or "",
-                                "source": result.source_name or "legal"
-                            }
-                            if result.content:
-                                source_info["text_preview"] = result.content[:200]
-                            sources_list.append(source_info)
-                        
-                        logger.info(f"Legal research completed: {len(aggregated)} sources found from {len(search_results)} sources")
-                    else:
-                        logger.warning("Legal research returned no results")
-                except Exception as legal_research_error:
-                    logger.warning(f"Legal research failed: {legal_research_error}, continuing without legal research", exc_info=True)
-                    # Continue without legal research - не критичная ошибка
-            
-            # Get relevant documents using RAG - ВСЕГДА выполняем RAG для получения контекста из документов дела
-            # Веб-поиск и юридическое исследование дополняют, но не заменяют RAG
-            context = ""
-            try:
-                # Используем аргумент по умолчанию для захвата rag_service в lambda
-                documents = await loop.run_in_executor(
-                    None,
-                    lambda rs=rag_service: rs.retrieve_context(
-                        case_id=case_id,
-                        query=question,
-                        k=10,
-                        db=db
-                    )
+                logger.info(f"Web search enabled for query: {question[:100]}...")
+                web_research_service = get_web_research_service()
+                research_result = await web_research_service.research(
+                    query=question,
+                    max_results=5,
+                    use_cache=True,
+                    validate_sources=True
                 )
                 
-                # Build context from documents and collect sources using RAGService.format_sources
-                context_parts = []
-                if documents:
-                    # Use RAGService.format_sources for consistent source formatting
-                    formatted_sources = rag_service.format_sources(documents[:5])
-                    sources_list.extend(formatted_sources)
+                if research_result.sources:
+                    web_search_parts = []
+                    web_search_parts.append(f"\n\n=== Результаты веб-поиска ===")
+                    web_search_parts.append(f"Найдено источников: {len(research_result.sources)}")
                     
-                    # Build context from documents
-                    for i, doc in enumerate(documents[:5], 1):
-                        if hasattr(doc, 'page_content'):
-                            content = doc.page_content[:500] if doc.page_content else ""
-                            source = doc.metadata.get("source_file", "unknown") if hasattr(doc, 'metadata') and doc.metadata else "unknown"
-                        elif isinstance(doc, dict):
-                            content = doc.get("content", "")[:500]
-                            source = doc.get("file", "unknown")
-                        else:
-                            continue
+                    for i, source in enumerate(research_result.sources[:5], 1):
+                        title = source.get("title", "Без названия")
+                        url = source.get("url", "")
+                        content = source.get("content", "")
+                        if content:
+                            web_search_parts.append(f"\n[Источник {i}: {title}]")
+                            if url:
+                                web_search_parts.append(f"URL: {url}")
+                            web_search_parts.append(f"Содержание: {content[:300]}...")
+                    
+                    web_search_context = "\n".join(web_search_parts)
+                    web_search_successful = True
+                    logger.info(f"Web search completed: {len(research_result.sources)} sources found")
+                else:
+                    logger.warning("Web search returned no results")
+            except Exception as web_search_error:
+                logger.warning(f"Web search failed: {web_search_error}, continuing without web search")
+                # Continue without web search - не критичная ошибка
+        
+        # Legal research integration - поиск в юридических источниках
+        legal_research_context = ""
+        legal_research_successful = False
+        
+        if legal_research:
+            try:
+                logger.info(f"Legal research enabled for query: {question[:100]}...")
+                # Инициализируем source_router с официальными источниками
+                source_router = initialize_source_router(rag_service=rag_service, register_official_sources=True)
+                
+                # Определяем источники для поиска (приоритет pravo_gov для статей кодексов)
+                sources_to_search = ["pravo_gov", "vsrf", "web"]  # pravo_gov для законодательства, vsrf для позиций ВС
+                
+                # Выполняем поиск через source router
+                search_results = await source_router.search(
+                    query=question,
+                    source_names=sources_to_search,
+                    max_results_per_source=5,
+                    parallel=True
+                )
+                
+                # Агрегируем результаты
+                aggregated = source_router.aggregate_results(
+                    search_results,
+                    max_total=10,
+                    dedup_threshold=0.9
+                )
+                
+                if aggregated:
+                    legal_research_parts = []
+                    legal_research_parts.append(f"\n\n=== Результаты юридического исследования ===")
+                    legal_research_parts.append(f"Найдено источников: {len(aggregated)}")
+                    
+                    for i, result in enumerate(aggregated[:5], 1):
+                        title = result.title or "Без названия"
+                        url = result.url or ""
+                        content = result.content[:500] if result.content else ""
+                        source_name = result.source_name or "unknown"
+                        
+                        if content:
+                            legal_research_parts.append(f"\n[Источник {i}: {title}]")
+                            legal_research_parts.append(f"Источник: {source_name}")
+                            if url:
+                                legal_research_parts.append(f"URL: {url}")
+                            legal_research_parts.append(f"Содержание: {content}...")
+                    
+                    legal_research_context = "\n".join(legal_research_parts)
+                    legal_research_successful = True
+                    
+                    # Добавляем источники в sources_list
+                    for result in aggregated[:5]:
+                        source_info = {
+                            "title": result.title or "Юридический источник",
+                            "url": result.url or "",
+                            "source": result.source_name or "legal"
+                        }
+                        if result.content:
+                            source_info["text_preview"] = result.content[:200]
+                        sources_list.append(source_info)
+                    
+                    logger.info(f"Legal research completed: {len(aggregated)} sources found from {len(search_results)} sources")
+                else:
+                    logger.warning("Legal research returned no results")
+            except Exception as legal_research_error:
+                logger.warning(f"Legal research failed: {legal_research_error}, continuing without legal research", exc_info=True)
+                # Continue without legal research - не критичная ошибка
+        
+        # Get relevant documents using RAG - ВСЕГДА выполняем RAG для получения контекста из документов дела
+        # Веб-поиск и юридическое исследование дополняют, но не заменяют RAG
+        context = ""
+        try:
+            # Используем аргумент по умолчанию для захвата rag_service в lambda
+            documents = await loop.run_in_executor(
+                None,
+                lambda rs=rag_service: rs.retrieve_context(
+                    case_id=case_id,
+                    query=question,
+                    k=10,
+                    db=db
+                )
+            )
+            
+            # Build context from documents and collect sources using RAGService.format_sources
+            context_parts = []
+            if documents:
+                # Use RAGService.format_sources for consistent source formatting
+                formatted_sources = rag_service.format_sources(documents[:5])
+                sources_list.extend(formatted_sources)
+                
+                # Build context from documents
+                for i, doc in enumerate(documents[:5], 1):
+                    if hasattr(doc, 'page_content'):
+                        content = doc.page_content[:500] if doc.page_content else ""
+                        source = doc.metadata.get("source_file", "unknown") if hasattr(doc, 'metadata') and doc.metadata else "unknown"
+                    elif isinstance(doc, dict):
+                        content = doc.get("content", "")[:500]
+                        source = doc.get("file", "unknown")
+                    else:
+                        continue
                         
                         context_parts.append(f"[Документ {i}: {source}]\n{content}")
                 
