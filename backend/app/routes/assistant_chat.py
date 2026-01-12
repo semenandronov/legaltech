@@ -826,33 +826,33 @@ async def stream_chat_response(
                         source = doc.get("file", "unknown")
                     else:
                         continue
-                        
-                        context_parts.append(f"[Документ {i}: {source}]\n{content}")
+                    
+                    context_parts.append(f"[Документ {i}: {source}]\n{content}")
                 
                 context = "\n\n".join(context_parts)
                 if context:
                     logger.info(f"RAG retrieved {len(documents)} documents for context, {len(sources_list)} sources formatted")
                 else:
                     logger.warning(f"RAG retrieved {len(documents)} documents but context is empty")
-            except Exception as rag_error:
-                logger.warning(f"RAG retrieval failed: {rag_error}, continuing without RAG context", exc_info=True)
-                # Continue without RAG context - не критичная ошибка, но важно для deep_think
-            
-            # Добавляем источники из веб-поиска
-            if web_search_successful and 'research_result' in locals() and research_result.sources:
-                for source in research_result.sources[:5]:
-                    source_info = {
-                        "title": source.get("title", "Веб-источник"),
-                        "url": source.get("url", ""),
-                    }
-                    if source.get("content"):
-                        source_info["text_preview"] = source.get("content", "")[:200]
-                    sources_list.append(source_info)
-            
-            # Create prompt
-            web_search_instructions = ""
-            if web_search_context:
-                web_search_instructions = """
+        except Exception as rag_error:
+            logger.warning(f"RAG retrieval failed: {rag_error}, continuing without RAG context", exc_info=True)
+            # Continue without RAG context - не критичная ошибка, но важно для deep_think
+        
+        # Добавляем источники из веб-поиска
+        if web_search_successful and 'research_result' in locals() and research_result.sources:
+            for source in research_result.sources[:5]:
+                source_info = {
+                    "title": source.get("title", "Веб-источник"),
+                    "url": source.get("url", ""),
+                }
+                if source.get("content"):
+                    source_info["text_preview"] = source.get("content", "")[:200]
+                sources_list.append(source_info)
+        
+        # Create prompt
+        web_search_instructions = ""
+        if web_search_context:
+            web_search_instructions = """
 ИНСТРУКЦИИ ПО ИСПОЛЬЗОВАНИЮ РЕЗУЛЬТАТОВ ВЕБ-ПОИСКА:
 - Используй информацию из веб-поиска для дополнения ответа, когда информации из документов дела недостаточно
 - При цитировании информации из веб-поиска указывай источник (название и URL если доступен)
@@ -860,9 +860,9 @@ async def stream_chat_response(
 - Если информация из веб-поиска противоречит документам дела, укажи это и приоритизируй документы дела
 """
 
-            legal_research_instructions = ""
-            if legal_research_context:
-                legal_research_instructions = """
+        legal_research_instructions = ""
+        if legal_research_context:
+            legal_research_instructions = """
 ИНСТРУКЦИИ ПО ИСПОЛЬЗОВАНИЮ РЕЗУЛЬТАТОВ ЮРИДИЧЕСКОГО ИССЛЕДОВАНИЯ:
 - Используй информацию из юридических источников (pravo.gov.ru, vsrf.ru и др.) для ответа на вопросы о нормах права
 - При цитировании статей кодексов или позиций ВС указывай источник (название и URL если доступен)
@@ -870,17 +870,17 @@ async def stream_chat_response(
 - Если пользователь просит конкретную статью кодекса, приведи полный текст статьи из результатов юридического исследования
 """
 
-            # Формируем историю для промпта
-            history_context = ""
-            if chat_history:
-                history_context = f"""
+        # Формируем историю для промпта
+        history_context = ""
+        if chat_history:
+            history_context = f"""
 Контекст предыдущих сообщений в этом чате:
 {chr(10).join(chat_history)}
 
 ВАЖНО: Учитывай контекст предыдущих сообщений при ответе. Если пользователь задает уточняющий вопрос (например, "подробнее"), используй информацию из предыдущих сообщений для более полного ответа.
 """
 
-            prompt = f"""Ты - юридический AI-ассистент. Ты помогаешь анализировать документы дела.
+        prompt = f"""Ты - юридический AI-ассистент. Ты помогаешь анализировать документы дела.
 
 Контекст из документов дела:
 {context if context else "Контекст из документов дела не найден. Используй общие знания и информацию из других источников."}{web_search_context}{legal_research_context}{history_context}
@@ -935,64 +935,44 @@ async def stream_chat_response(
 Будь точным и профессиональным. ВСЕГДА используй Markdown форматирование.
 {f"При цитировании информации из веб-поиска указывай источник в формате: [Название источника](URL) или просто название источника, если URL недоступен." if web_search_context else ""}{f" При цитировании статей кодексов или норм права указывай источник: [Название статьи](URL) или просто название источника." if legal_research_context else ""}"""
 
-            # Initialize LLM
-            # Используем create_legal_llm() для детерминистических юридических ответов (temperature=0.0)
-            # При deep_think=True используем GigaChat-Pro, иначе модель по умолчанию (GigaChat)
-            if deep_think:
-                llm = create_legal_llm(model="GigaChat-Pro")  # temperature=0.0 автоматически
-                logger.info(f"Using GigaChat-Pro for deep thinking mode (temperature=0.0). Context length: {len(context)} chars, History messages: {len(chat_history)}, Web search: {web_search_successful}, Legal research: {legal_research_successful}")
-            else:
-                llm = create_legal_llm()  # temperature=0.0 автоматически, использует config.GIGACHAT_MODEL (обычно "GigaChat")
-                logger.info(f"Using standard GigaChat (temperature=0.0). Context length: {len(context)} chars, History messages: {len(chat_history)}")
-            
-            # Stream response
-            # Преобразуем строку prompt в список сообщений для GigaChat
-            from langchain_core.messages import HumanMessage
-            messages = [HumanMessage(content=prompt)]
-            
-            try:
-                if hasattr(llm, 'astream'):
-                    async for chunk in llm.astream(messages):
-                        if hasattr(chunk, 'content'):
-                            content = chunk.content
-                        elif isinstance(chunk, str):
-                            content = chunk
-                        else:
-                            content = str(chunk)
-                        
-                        full_response_text += content
-                        yield f"data: {json.dumps({'textDelta': content}, ensure_ascii=False)}\n\n"
-                    
-                    # Отправляем источники через SSE
-                    if sources_list:
-                        logger.info(f"Sending {len(sources_list)} sources via SSE (fallback) for case {case_id}")
-                        yield f"data: {json.dumps({'type': 'sources', 'sources': sources_list}, ensure_ascii=False)}\n\n"
+        # Initialize LLM
+        # Используем create_legal_llm() для детерминистических юридических ответов (temperature=0.0)
+        # При deep_think=True используем GigaChat-Pro, иначе модель по умолчанию (GigaChat)
+        if deep_think:
+            llm = create_legal_llm(model="GigaChat-Pro")  # temperature=0.0 автоматически
+            logger.info(f"Using GigaChat-Pro for deep thinking mode (temperature=0.0). Context length: {len(context)} chars, History messages: {len(chat_history)}, Web search: {web_search_successful}, Legal research: {legal_research_successful}")
+        else:
+            llm = create_legal_llm()  # temperature=0.0 автоматически, использует config.GIGACHAT_MODEL (обычно "GigaChat")
+            logger.info(f"Using standard GigaChat (temperature=0.0). Context length: {len(context)} chars, History messages: {len(chat_history)}")
+        
+        # Stream response
+        # Преобразуем строку prompt в список сообщений для GigaChat
+        from langchain_core.messages import HumanMessage
+        messages = [HumanMessage(content=prompt)]
+        
+        try:
+            if hasattr(llm, 'astream'):
+                async for chunk in llm.astream(messages):
+                    if hasattr(chunk, 'content'):
+                        content = chunk.content
+                    elif isinstance(chunk, str):
+                        content = chunk
                     else:
-                        logger.warning(f"No sources to send (fallback) for case {case_id}, query: {question[:100]}")
+                        content = str(chunk)
                     
-                    yield f"data: {json.dumps({'textDelta': ''})}\n\n"
+                    full_response_text += content
+                    yield f"data: {json.dumps({'textDelta': content}, ensure_ascii=False)}\n\n"
+                
+                # Отправляем источники через SSE
+                if sources_list:
+                    logger.info(f"Sending {len(sources_list)} sources via SSE (fallback) for case {case_id}")
+                    yield f"data: {json.dumps({'type': 'sources', 'sources': sources_list}, ensure_ascii=False)}\n\n"
                 else:
-                    # Fallback: get full response and chunk it
-                    response = await loop.run_in_executor(None, lambda: llm.invoke(messages))
-                    response_text = response.content if hasattr(response, 'content') else str(response)
-                    full_response_text = response_text
-                    
-                    chunk_size = 20
-                    for i in range(0, len(response_text), chunk_size):
-                        chunk = response_text[i:i + chunk_size]
-                        yield f"data: {json.dumps({'textDelta': chunk}, ensure_ascii=False)}\n\n"
-                        await asyncio.sleep(0.05)
-                    
-                    # Отправляем источники через SSE
-                    if sources_list:
-                        logger.info(f"Sending {len(sources_list)} sources via SSE (fallback) for case {case_id}")
-                        yield f"data: {json.dumps({'type': 'sources', 'sources': sources_list}, ensure_ascii=False)}\n\n"
-                    else:
-                        logger.warning(f"No sources to send (fallback) for case {case_id}, query: {question[:100]}")
-                    
-                    yield f"data: {json.dumps({'textDelta': ''})}\n\n"
-            except Exception as stream_error:
-                logger.warning(f"Streaming failed, using fallback: {stream_error}")
+                    logger.warning(f"No sources to send (fallback) for case {case_id}, query: {question[:100]}")
+                
+                yield f"data: {json.dumps({'textDelta': ''})}\n\n"
+            else:
+                # Fallback: get full response and chunk it
                 response = await loop.run_in_executor(None, lambda: llm.invoke(messages))
                 response_text = response.content if hasattr(response, 'content') else str(response)
                 full_response_text = response_text
@@ -1005,51 +985,71 @@ async def stream_chat_response(
                 
                 # Отправляем источники через SSE
                 if sources_list:
+                    logger.info(f"Sending {len(sources_list)} sources via SSE (fallback) for case {case_id}")
                     yield f"data: {json.dumps({'type': 'sources', 'sources': sources_list}, ensure_ascii=False)}\n\n"
+                else:
+                    logger.warning(f"No sources to send (fallback) for case {case_id}, query: {question[:100]}")
                 
-                    yield f"data: {json.dumps({'textDelta': ''})}\n\n"
+                yield f"data: {json.dumps({'textDelta': ''})}\n\n"
+        except Exception as stream_error:
+            logger.warning(f"Streaming failed, using fallback: {stream_error}")
+            response = await loop.run_in_executor(None, lambda: llm.invoke(messages))
+            response_text = response.content if hasattr(response, 'content') else str(response)
+            full_response_text = response_text
             
-            # Обновляем существующее сообщение ассистента после завершения streaming
-            if assistant_message_id:
+            chunk_size = 20
+            for i in range(0, len(response_text), chunk_size):
+                chunk = response_text[i:i + chunk_size]
+                yield f"data: {json.dumps({'textDelta': chunk}, ensure_ascii=False)}\n\n"
+                await asyncio.sleep(0.05)
+            
+            # Отправляем источники через SSE
+            if sources_list:
+                yield f"data: {json.dumps({'type': 'sources', 'sources': sources_list}, ensure_ascii=False)}\n\n"
+            
+            yield f"data: {json.dumps({'textDelta': ''})}\n\n"
+        
+        # Обновляем существующее сообщение ассистента после завершения streaming
+        if assistant_message_id:
+            try:
+                assistant_message = db.query(ChatMessage).filter(
+                    ChatMessage.id == assistant_message_id
+                ).first()
+                if assistant_message:
+                    assistant_message.content = full_response_text
+                    assistant_message.source_references = sources_list if sources_list else None
+                    db.commit()
+                    logger.info(f"Assistant message updated in DB for case {case_id}, id: {assistant_message_id}")
+                else:
+                    logger.warning(f"Assistant message placeholder {assistant_message_id} not found, creating new one")
+                    # Fallback: создаём новое сообщение если placeholder не найден
+                    assistant_message = ChatMessage(
+                        case_id=case_id,
+                        role="assistant",
+                        content=full_response_text,
+                        source_references=sources_list if sources_list else None,
+                        session_id=session_id
+                    )
+                    db.add(assistant_message)
+                    db.commit()
+            except Exception as update_error:
+                db.rollback()
+                logger.error(f"Error updating assistant message in DB: {update_error}", exc_info=True)
+                # Пытаемся создать новое сообщение как fallback
                 try:
-                    assistant_message = db.query(ChatMessage).filter(
-                        ChatMessage.id == assistant_message_id
-                    ).first()
-                    if assistant_message:
-                        assistant_message.content = full_response_text
-                        assistant_message.source_references = sources_list if sources_list else None
-                        db.commit()
-                        logger.info(f"Assistant message updated in DB for case {case_id}, id: {assistant_message_id}")
-                    else:
-                        logger.warning(f"Assistant message placeholder {assistant_message_id} not found, creating new one")
-                        # Fallback: создаём новое сообщение если placeholder не найден
-                        assistant_message = ChatMessage(
-                            case_id=case_id,
-                            role="assistant",
-                            content=full_response_text,
-                            source_references=sources_list if sources_list else None,
-                            session_id=session_id
-                        )
-                        db.add(assistant_message)
-                        db.commit()
-                except Exception as update_error:
+                    assistant_message = ChatMessage(
+                        case_id=case_id,
+                        role="assistant",
+                        content=full_response_text,
+                        source_references=sources_list if sources_list else None,
+                        session_id=session_id
+                    )
+                    db.add(assistant_message)
+                    db.commit()
+                    logger.info(f"Assistant message created as fallback for case {case_id}")
+                except Exception as fallback_error:
                     db.rollback()
-                    logger.error(f"Error updating assistant message in DB: {update_error}", exc_info=True)
-                    # Пытаемся создать новое сообщение как fallback
-                    try:
-                        assistant_message = ChatMessage(
-                            case_id=case_id,
-                            role="assistant",
-                            content=full_response_text,
-                            source_references=sources_list if sources_list else None,
-                            session_id=session_id
-                        )
-                        db.add(assistant_message)
-                        db.commit()
-                        logger.info(f"Assistant message created as fallback for case {case_id}")
-                    except Exception as fallback_error:
-                        db.rollback()
-                        logger.error(f"Error creating fallback assistant message: {fallback_error}", exc_info=True)
+                    logger.error(f"Error creating fallback assistant message: {fallback_error}", exc_info=True)
     
     except Exception as e:
         logger.error(f"Error in stream_chat_response: {e}", exc_info=True)
