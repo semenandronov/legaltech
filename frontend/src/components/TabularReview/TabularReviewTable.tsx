@@ -436,7 +436,7 @@ export const TabularReviewTable = React.memo(({ reviewId, tableData, onTableData
         }
         
         const cellStatus = cell?.status || "pending"
-        const isTagType = col.column_type === "tag" || col.column_type === "multiple_tags"
+        const isTagType = col.column_type === "tag"
         
         return (
           <Box
@@ -573,7 +573,7 @@ export const TabularReviewTable = React.memo(({ reviewId, tableData, onTableData
                     flex: 1,
                     fontStyle: cellValue === "-" ? 'italic' : 'normal',
                   color: cellValue === "-" ? '#6B7280' : '#1F2937',
-                  whiteSpace: col.column_type === "bulleted_list" ? "pre-line" : "normal",
+                  whiteSpace: "normal",
                   }}
                 >
                   {cellValue === "-" ? "—" : cellValue}

@@ -13,9 +13,9 @@ logger = logging.getLogger(__name__)
 class ColumnDescription(BaseModel):
     """Structured output for column creation from description"""
     column_label: str = Field(description="Name/label of the column")
-    column_type: str = Field(description="Type: text, bulleted_list, number, currency, yes_no, date, tag, multiple_tags, verbatim")
+    column_type: str = Field(description="Type: text, number, currency, yes_no, date, tag, verbatim")
     prompt: str = Field(description="Extraction prompt for AI")
-    column_config: Optional[Dict[str, Any]] = Field(None, description="Configuration for tag/multiple_tags: {options: [{label, color}], allow_custom: bool}")
+    column_config: Optional[Dict[str, Any]] = Field(None, description="Configuration for tag: {options: [{label, color}], allow_custom: bool}")
     validation_rules: Optional[Dict[str, Any]] = Field(None, description="Additional validation rules if needed")
 
 
@@ -69,25 +69,23 @@ class SmartColumnService:
 
 Типы колонок:
 - text: свободный текст
-- bulleted_list: маркированный список
 - number: числовое значение
 - currency: денежная сумма с валютой
 - yes_no: да/нет (boolean)
 - date: дата
 - tag: один тег из предопределенного списка
-- multiple_tags: несколько тегов из предопределенного списка
 - verbatim: точная цитата из документа
 
 Определи:
 1. column_label: короткое название колонки
 2. column_type: наиболее подходящий тип
 3. prompt: четкий промпт для AI-извлечения (на английском)
-4. column_config: если tag/multiple_tags - предложи опции
+4. column_config: если tag - предложи опции
 5. validation_rules: дополнительные правила валидации (если нужны)
 
 ВАЖНО:
 - Промпт должен быть четким и конкретным
-- Для tag/multiple_tags обязательно предложи список опций
+- Для tag обязательно предложи список опций
 - Учитывай контекст юридических документов"""),
             ("human", f"""Создай колонку на основе описания:
 
@@ -175,13 +173,11 @@ class SmartColumnService:
 
 Типы колонок:
 - text: свободный текст
-- bulleted_list: маркированный список
 - number: числовое значение
 - currency: денежная сумма с валютой
 - yes_no: да/нет
 - date: дата
 - tag: один тег из предопределенного списка
-- multiple_tags: несколько тегов
 - verbatim: точная цитата
 
 Проанализируй паттерны и создай определение колонки, которое будет работать для всех примеров."""),

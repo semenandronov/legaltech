@@ -31,13 +31,11 @@ interface ColumnBuilderProps {
 
 const COLUMN_TYPES = [
   { value: "text", label: "Text", icon: "📝" },
-  { value: "bulleted_list", label: "Bulleted list", icon: "•" },
   { value: "number", label: "Number", icon: "#" },
   { value: "currency", label: "Currency", icon: "$" },
   { value: "yes_no", label: "Yes/No", icon: "✓" },
   { value: "date", label: "Date", icon: "📅" },
   { value: "tag", label: "Tag", icon: "🏷️" },
-  { value: "multiple_tags", label: "Multiple tags", icon: "🏷️🏷️" },
   { value: "verbatim", label: "Verbatim", icon: "📄" },
   { value: "manual_input", label: "Manual input", icon: "✏️" },
 ]
@@ -61,7 +59,7 @@ export function ColumnBuilder({ isOpen, onClose, onSave }: ColumnBuilderProps) {
   const [saving, setSaving] = useState(false)
   const [isGenerating, setIsGenerating] = useState(false)
   
-  // Конфигурация для tag/multiple_tags
+  // Конфигурация для tag
   const [tagOptions, setTagOptions] = useState<Array<{ label: string; color: string }>>([
     { label: "Email", color: TAG_COLORS[0] },
     { label: "Contract", color: TAG_COLORS[1] },
@@ -104,15 +102,15 @@ export function ColumnBuilder({ isOpen, onClose, onSave }: ColumnBuilderProps) {
       return
     }
 
-    // Для tag/multiple_tags нужны опции
-    if ((columnType === "tag" || columnType === "multiple_tags") && tagOptions.length === 0) {
+    // Для tag нужны опции
+    if (columnType === "tag" && tagOptions.length === 0) {
       toast.error("Добавьте хотя бы одну опцию для тегов")
       return
     }
 
     setSaving(true)
     try {
-      const columnConfig = (columnType === "tag" || columnType === "multiple_tags") 
+      const columnConfig = columnType === "tag"
         ? { options: tagOptions, allow_custom: false }
         : undefined
 
@@ -142,7 +140,7 @@ export function ColumnBuilder({ isOpen, onClose, onSave }: ColumnBuilderProps) {
   // Сброс тегов при смене типа колонки
   const handleColumnTypeChange = (newType: string) => {
     setColumnType(newType)
-    if (newType !== "tag" && newType !== "multiple_tags") {
+    if (newType !== "tag") {
       setTagOptions([])
     } else if (tagOptions.length === 0) {
       setTagOptions([
@@ -210,8 +208,8 @@ export function ColumnBuilder({ isOpen, onClose, onSave }: ColumnBuilderProps) {
           </Select>
         </div>
 
-        {/* Options для tag/multiple_tags */}
-        {(columnType === "tag" || columnType === "multiple_tags") && (
+        {/* Options для tag */}
+        {columnType === "tag" && (
           <div>
             <label className="text-sm font-medium mb-2 block">
               Options

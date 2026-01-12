@@ -87,59 +87,84 @@ class TabularCellExtractionModel(BaseModel):
     @field_validator('cell_value')
     @classmethod
     def validate_cell_value(cls, v: str, info) -> str:
-        """Validate cell_value based on column_type"""
+        """Basic validation - just trim whitespace and handle empty values"""
         if not v or v.strip() == "":
-            # Allow empty for N/A cases
-            return v.strip() if v else "N/A"
-        
-        # Get column_type from context if available
-        column_type = None
-        if hasattr(info, 'data') and info.data:
-            column_type = info.data.get('column_type')
-        
-        # If no column_type, return as-is
-        if not column_type:
-            return v.strip()
-        
-        # Validate based on type
-        if column_type == 'date':
-            try:
-                # Try to normalize date
-                normalized = parse_and_normalize_date(v)
-                # Verify it's valid date format
-                datetime.strptime(normalized, "%Y-%m-%d")
-                return normalized
-            except Exception as e:
-                logger.warning(f"Could not normalize date '{v}': {e}")
-                # Return original if normalization fails
-                return v.strip()
-        
-        elif column_type == 'currency':
-            try:
-                return validate_currency(v)
-            except ValueError as e:
-                logger.warning(f"Currency validation failed for '{v}': {e}")
-                return v.strip()
-        
-        elif column_type == 'number':
-            try:
-                return validate_number(v)
-            except ValueError as e:
-                logger.warning(f"Number validation failed for '{v}': {e}")
-                return v.strip()
-        
-        elif column_type == 'yes_no':
-            return validate_yes_no(v)
-        
-        # For text, verbatim, tags - no validation needed
+            return "N/A"
         return v.strip()
     
     @model_validator(mode='after')
+    def validate_by_column_type(self):
+        """Validate and normalize cell_value based on column_type after model creation"""
+        if not self.column_type:
+            # Если column_type не установлен, просто нормализуем
+            if not self.normalized_value and self.cell_value and self.cell_value != "N/A":
+                self.normalized_value = self.cell_value.strip().lower()
+            return self
+        
+        if not self.cell_value or self.cell_value.strip() == "" or self.cell_value == "N/A":
+            if not self.cell_value:
+                self.cell_value = "N/A"
+            if not self.normalized_value:
+                self.normalized_value = "N/A"
+            return self
+        
+        original_value = self.cell_value.strip()
+        
+        # Validate and normalize based on type
+        if self.column_type == 'date':
+            try:
+                normalized = parse_and_normalize_date(original_value)
+                datetime.strptime(normalized, "%Y-%m-%d")
+                self.cell_value = normalized
+                self.normalized_value = normalized
+            except Exception as e:
+                logger.warning(f"Could not normalize date '{original_value}': {e}")
+                self.cell_value = original_value
+                self.normalized_value = original_value
+        
+        elif self.column_type == 'currency':
+            try:
+                # Валидируем, что число корректно, но сохраняем оригинал с валютой
+                normalized_num = validate_currency(original_value)
+                # cell_value остается с валютой (оригинальное значение, если оно валидно)
+                self.cell_value = original_value
+                # normalized_value содержит только число
+                self.normalized_value = normalized_num
+            except ValueError as e:
+                logger.warning(f"Currency validation failed for '{original_value}': {e}")
+                self.cell_value = original_value
+                self.normalized_value = original_value
+        
+        elif self.column_type == 'number':
+            try:
+                normalized = validate_number(original_value)
+                self.cell_value = normalized
+                self.normalized_value = normalized
+            except ValueError as e:
+                logger.warning(f"Number validation failed for '{original_value}': {e}")
+                self.cell_value = original_value
+                self.normalized_value = original_value
+        
+        elif self.column_type == 'yes_no':
+            validated = validate_yes_no(original_value)
+            self.cell_value = validated
+            self.normalized_value = validated.lower()
+        
+        else:
+            # For text, verbatim, tags - no validation needed, just normalize
+            self.cell_value = original_value
+            if not self.normalized_value:
+                self.normalized_value = original_value.lower()
+        
+        return self
+    
+    @model_validator(mode='after')
     def set_normalized_value(self):
-        """Set normalized_value after validation"""
-        if not self.normalized_value:
-            _, normalized = self._normalize_value(self.cell_value, self.column_type)
-            self.normalized_value = normalized
+        """Set normalized_value if not already set (fallback)"""
+        if not self.normalized_value and self.cell_value and self.cell_value != "N/A":
+            # If not set by validate_by_column_type, set it here
+            if self.column_type not in ['date', 'number', 'currency', 'yes_no']:
+                self.normalized_value = self.cell_value.lower()
         return self
     
     @field_validator('confidence')

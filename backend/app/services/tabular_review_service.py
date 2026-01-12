@@ -561,25 +561,63 @@ class TabularReviewService:
             # Build prompt based on column type
             column_type_descriptions = {
                 "text": "свободный текст",
-                "bulleted_list": "маркированный список (каждый пункт с новой строки, начинается с •)",
                 "number": "числовое значение",
                 "currency": "денежная сумма с валютой (например: '100000 USD' или '50 000 руб.')",
                 "yes_no": "только 'Yes' или 'No'",
                 "date": "дата в формате YYYY-MM-DD или DD.MM.YYYY",
                 "tag": "один тег из предопределенного списка",
-                "multiple_tags": "несколько тегов из предопределенного списка (через запятую)",
                 "verbatim": "точная цитата из документа с указанием источника",
                 "manual_input": "ручной ввод (не используется AI)"
             }
             
             type_desc = column_type_descriptions.get(column.column_type, "свободный текст")
             
-            # Для tag/multiple_tags добавляем доступные опции
+            # Для tag добавляем доступные опции
             tag_options_text = ""
-            if column.column_type in ["tag", "multiple_tags"] and column.column_config:
+            if column.column_type == "tag" and column.column_config:
                 options = column.column_config.get("options", [])
                 if options:
                     tag_options_text = f"\n\nДоступные опции: {', '.join([opt.get('label', '') for opt in options])}"
+            
+            # Улучшенные инструкции по формату для каждого типа
+            type_format_instructions = {
+                "number": """
+КРИТИЧЕСКИ ВАЖНО для типа number:
+- cell_value ДОЛЖЕН быть ТОЛЬКО числом (например: "100", "3.14", "1000")
+- БЕЗ текста, БЕЗ валютных символов ($, руб., USD и т.д.), БЕЗ единиц измерения
+- Только цифры, точка или запятая для десятичных чисел
+- Примеры ПРАВИЛЬНО: "100", "3.14", "1000.5", "1234"
+- Примеры НЕПРАВИЛЬНО: "100 USD", "100 рублей", "около 100", "100 шт."
+""",
+                "currency": """
+КРИТИЧЕСКИ ВАЖНО для типа currency:
+- cell_value ДОЛЖЕН содержать число и валюту
+- Формат: "ЧИСЛО ВАЛЮТА" (например: "100000 USD", "50000 RUB", "50 000 руб.")
+- Число должно быть валидным (только цифры, точка/запятая)
+- Валюта указывается после числа (USD, RUB, EUR, руб. и т.д.)
+- Примеры ПРАВИЛЬНО: "100000 USD", "50 000 руб.", "5000 EUR"
+""",
+                "date": """
+КРИТИЧЕСКИ ВАЖНО для типа date:
+- cell_value ДОЛЖЕН быть ДАТОЙ в формате YYYY-MM-DD
+- ТОЛЬКО формат YYYY-MM-DD, никаких других форматов
+- Примеры ПРАВИЛЬНО: "2024-01-15", "2023-12-31", "2024-03-05"
+- Примеры НЕПРАВИЛЬНО: "15.01.2024", "2024/01/15", "15 января 2024"
+""",
+                "yes_no": """
+КРИТИЧЕСКИ ВАЖНО для типа yes_no:
+- cell_value ДОЛЖЕН быть ТОЛЬКО "Yes" или "No" или "Unknown"
+- НИКАКИХ других вариантов: не "Да", не "Нет", не "true", не "false", не "1", не "0"
+- Только строго: "Yes", "No", или "Unknown"
+""",
+                "tag": """
+КРИТИЧЕСКИ ВАЖНО для типа tag:
+- cell_value ДОЛЖЕН быть ОДНИМ из предопределенных тегов из списка выше
+- Используй ТОЛЬКО опции из списка, БЕЗ создания новых тегов
+""",
+            }
+            
+            format_instruction = type_format_instructions.get(column.column_type, "")
             
             system_prompt = f"""Ты эксперт по извлечению информации из юридических документов.
 Твоя задача - ответить на вопрос о документе и предоставить подробное обоснование.
@@ -587,17 +625,20 @@ class TabularReviewService:
 Тип ответа: {column.column_type}
 Описание: {type_desc}{tag_options_text}
 
+{format_instruction}
+
 ВАЖНО:
 1. Если информация не найдена, верни "N/A" для cell_value
-2. Для yes_no: только "Yes" или "No" или "Unknown"
-3. Для verbatim: приведи точную цитату из документа
-4. Для tag/multiple_tags: используй ТОЛЬКО опции из списка выше
-5. ВСЕГДА указывай reasoning - подробное объяснение, откуда взялась информация
-6. ВСЕГДА указывай source_references - конкретные места в документе (страницы, разделы, цитаты)
+2. СТРОГО соблюдай формат для типа {column.column_type} - это КРИТИЧЕСКИ ВАЖНО
+3. Для yes_no: только "Yes" или "No" или "Unknown"
+4. Для verbatim: приведи точную цитату из документа
+5. Для tag: используй ТОЛЬКО опции из списка выше
+6. ВСЕГДА указывай reasoning - подробное объяснение, откуда взялась информация
+7. ВСЕГДА указывай source_references - конкретные места в документе (страницы, разделы, цитаты)
 
 Формат ответа (JSON):
 {{
-    "cell_value": "извлеченное значение",
+    "cell_value": "извлеченное значение (СТРОГО по формату типа {column.column_type})",
     "reasoning": "подробное объяснение, почему именно такой ответ, с указанием конкретных мест в документе",
     "source_references": [
         {{"page": 1, "section": "Раздел 3.1", "text": "цитата из документа"}},
@@ -618,32 +659,33 @@ class TabularReviewService:
             
             # Try structured output first, fallback to regular if not supported
             try:
-                from langchain_core.pydantic_v1 import BaseModel as PydanticBaseModel
-                from typing import List as TypingList
-                
-                class ExtractionResponse(PydanticBaseModel):
-                    cell_value: str
-                    reasoning: str
-                    source_references: TypingList[dict] = []
-                    confidence: float = 0.85
+                from app.services.tabular_review_models import TabularCellExtractionModel
+                from langchain_core.messages import SystemMessage, HumanMessage
                 
                 # Use structured output if LLM supports it
                 if hasattr(self.llm, 'with_structured_output'):
-                    structured_llm = self.llm.with_structured_output(ExtractionResponse)
-                    from langchain_core.messages import SystemMessage, HumanMessage
+                    structured_llm = self.llm.with_structured_output(TabularCellExtractionModel)
                     messages = [
                         SystemMessage(content=system_prompt),
                         HumanMessage(content=user_prompt)
                     ]
                     result = await structured_llm.ainvoke(messages)
                     
-                    cell_value = result.cell_value
-                    reasoning = result.reasoning
-                    source_references = result.source_references or []
-                    confidence = result.confidence
+                    # Устанавливаем column_type для активации валидации
+                    result_dict = result.model_dump()
+                    result_dict['column_type'] = column.column_type
+                    
+                    # Создаем новый экземпляр с column_type для валидации
+                    validated_result = TabularCellExtractionModel(**result_dict)
+                    
+                    cell_value = validated_result.cell_value  # Уже валидировано и нормализовано
+                    reasoning = validated_result.reasoning
+                    source_references = validated_result.source_references or []
+                    confidence = validated_result.confidence
+                    normalized_value = validated_result.normalized_value
+                    verbatim_extract = validated_result.verbatim_extract
                 else:
                     # Fallback to regular LLM call with JSON parsing
-                    from langchain_core.messages import SystemMessage, HumanMessage
                     messages = [
                         SystemMessage(content=system_prompt),
                         HumanMessage(content=user_prompt)
@@ -684,20 +726,38 @@ class TabularReviewService:
                     if json_match:
                         try:
                             parsed = json.loads(json_match.group(0))
-                            cell_value = parsed.get("cell_value", response_text)
+                            cell_value_raw = parsed.get("cell_value", response_text)
                             reasoning = parsed.get("reasoning", f"Извлечено из документа '{file.filename}'")
                             source_references = parsed.get("source_references", [])
                             confidence = parsed.get("confidence", 0.85)
                         except:
-                            cell_value = response_text
+                            cell_value_raw = response_text
                             reasoning = f"Извлечено из документа '{file.filename}' на основе вопроса: {column.prompt}"
                             source_references = []
                             confidence = 0.85
                     else:
-                        cell_value = response_text
+                        cell_value_raw = response_text
                         reasoning = f"Извлечено из документа '{file.filename}' на основе вопроса: {column.prompt}"
                         source_references = []
                         confidence = 0.85
+                    
+                    # После парсинга JSON создаем модель с валидацией
+                    try:
+                        parsed_result = TabularCellExtractionModel(
+                            cell_value=cell_value_raw,
+                            reasoning=reasoning,
+                            source_references=source_references,
+                            confidence=confidence,
+                            column_type=column.column_type  # Ключевой момент - передаем тип колонки
+                        )
+                        cell_value = parsed_result.cell_value  # Валидированное значение
+                        normalized_value = parsed_result.normalized_value
+                        verbatim_extract = parsed_result.verbatim_extract
+                    except Exception as validation_error:
+                        logger.warning(f"Validation failed: {validation_error}, using raw value")
+                        cell_value = cell_value_raw
+                        normalized_value = None
+                        verbatim_extract = None
             except Exception as e:
                 logger.warning(f"Structured output failed, using fallback: {e}")
                 # Fallback to simple extraction
@@ -707,45 +767,39 @@ class TabularReviewService:
                     HumanMessage(content=user_prompt)
                 ]
                 response = await self.llm.ainvoke(messages)
-                cell_value = response.content.strip() if hasattr(response, 'content') else str(response).strip()
+                cell_value_raw = response.content.strip() if hasattr(response, 'content') else str(response).strip()
                 reasoning = f"Извлечено из документа '{file.filename}' на основе вопроса: {column.prompt}"
                 source_references = []
                 confidence = 0.85
+                
+                # Применяем валидацию через модель
+                try:
+                    parsed_result = TabularCellExtractionModel(
+                        cell_value=cell_value_raw,
+                        reasoning=reasoning,
+                        source_references=source_references,
+                        confidence=confidence,
+                        column_type=column.column_type
+                    )
+                    cell_value = parsed_result.cell_value
+                    normalized_value = parsed_result.normalized_value
+                    verbatim_extract = parsed_result.verbatim_extract
+                except Exception as validation_error:
+                    logger.warning(f"Validation failed in fallback: {validation_error}, using raw value")
+                    cell_value = cell_value_raw
+                    normalized_value = None
+                    verbatim_extract = cell_value if column.column_type == "verbatim" else None
             
-            # Format value based on type
-            if column.column_type == "yes_no":
-                if cell_value.lower() in ["yes", "да", "есть", "true"]:
-                    cell_value = "Yes"
-                elif cell_value.lower() in ["no", "нет", "нету", "false"]:
-                    cell_value = "No"
-                else:
-                    cell_value = "Unknown"
-            elif column.column_type == "bulleted_list":
-                # Ensure bulleted list format
-                if cell_value and not cell_value.startswith("•"):
-                    lines = [line.strip() for line in cell_value.split("\n") if line.strip()]
-                    cell_value = "\n".join([f"• {line}" if not line.startswith("•") else line for line in lines])
-            elif column.column_type in ["tag", "multiple_tags"]:
-                # Validate against column_config options
-                if column.column_config and column.column_config.get("options"):
-                    valid_options = [opt.get("label", "").lower() for opt in column.column_config["options"]]
-                    # Split by comma for multiple_tags
-                    if column.column_type == "multiple_tags":
-                        tags = [tag.strip() for tag in cell_value.split(",")]
-                        # Filter to only valid options
-                        valid_tags = [tag for tag in tags if tag.lower() in valid_options]
-                        cell_value = ", ".join(valid_tags) if valid_tags else cell_value
-                    else:
-                        # Single tag - check if valid
-                        if cell_value.lower() not in valid_options:
-                            # Try to find closest match
-                            for opt in column.column_config["options"]:
-                                if opt.get("label", "").lower() in cell_value.lower():
-                                    cell_value = opt.get("label", "")
-                                    break
-            
-            # Extract verbatim if type is verbatim
-            verbatim_extract = cell_value if column.column_type == "verbatim" else None
+            # Дополнительная обработка для tag типа (валидация против опций)
+            if column.column_type == "tag" and column.column_config and column.column_config.get("options"):
+                valid_options = [opt.get("label", "").lower() for opt in column.column_config["options"]]
+                # Проверяем, что значение соответствует одному из опций
+                if cell_value.lower() not in valid_options:
+                    # Пытаемся найти ближайшее совпадение
+                    for opt in column.column_config["options"]:
+                        if opt.get("label", "").lower() in cell_value.lower():
+                            cell_value = opt.get("label", "")
+                            break
             
             return {
                 "file_id": file.id,
@@ -999,22 +1053,20 @@ class TabularReviewService:
                     # Build type descriptions
                     column_type_descriptions = {
                         "text": "свободный текст",
-                        "bulleted_list": "маркированный список (каждый пункт с новой строки, начинается с •)",
                         "number": "числовое значение",
                         "currency": "денежная сумма с валютой (например: '100000 USD' или '50 000 руб.')",
                         "yes_no": "только 'Yes' или 'No'",
                         "date": "дата в формате YYYY-MM-DD или DD.MM.YYYY",
                         "tag": "один тег из предопределенного списка",
-                        "multiple_tags": "несколько тегов из предопределенного списка (через запятую)",
                         "verbatim": "точная цитата из документа с указанием источника",
                         "manual_input": "ручной ввод (не используется AI)"
                     }
                     
                     type_desc = column_type_descriptions.get(column.column_type, "свободный текст")
                     
-                    # Для tag/multiple_tags добавляем доступные опции
+                    # Для tag добавляем доступные опции
                     tag_options_text = ""
-                    if column.column_type in ["tag", "multiple_tags"] and column.column_config:
+                    if column.column_type == "tag" and column.column_config:
                         options = column.column_config.get("options", [])
                         if options:
                             tag_options_text = f"\n\nДоступные опции: {', '.join([opt.get('label', '') for opt in options])}"
@@ -1032,7 +1084,7 @@ class TabularReviewService:
 - Указывай reasoning - подробное объяснение, почему именно такой ответ, с указанием конкретных мест в документе
 - Указывай confidence - насколько ты уверен (0.0-1.0)
 - Если информация не найдена, верни "N/A" для cell_value
-- Для tag/multiple_tags используй ТОЛЬКО опции из списка выше"""),
+- Для tag используй ТОЛЬКО опции из списка выше"""),
                         ("human", f"""Вопрос: {column.prompt}
 
 Документ:

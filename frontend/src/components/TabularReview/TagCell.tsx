@@ -16,12 +16,9 @@ export const TagCell: React.FC<TagCellProps> = ({ value, column }) => {
 
   // Get tag options from column config
   const tagOptions = column.column_config?.options || []
-  const isMultiple = column.column_type === "multiple_tags"
 
-  // Parse tags (comma-separated for multiple_tags)
-  const tags = isMultiple
-    ? value.split(",").map((tag) => tag.trim()).filter(Boolean)
-    : [value.trim()]
+  // Single tag
+  const tags = [value.trim()].filter(Boolean)
 
   // Find color for each tag
   const getTagColor = (tagLabel: string): string => {

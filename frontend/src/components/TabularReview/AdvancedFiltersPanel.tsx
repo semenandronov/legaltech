@@ -45,7 +45,7 @@ export interface AdvancedFilters {
   isLocked: boolean | null // null = all, true = locked, false = unlocked
   
   // Column type filter
-  columnTypes: string[] // text, bulleted_list, number, currency, yes_no, date, tag, multiple_tags, verbatim, manual_input
+  columnTypes: string[] // text, number, currency, yes_no, date, tag, verbatim, manual_input
   
   // Date filters
   createdAfter: string | null
@@ -369,13 +369,11 @@ export const AdvancedFiltersPanel: React.FC<AdvancedFiltersPanelProps> = ({
             )}
           >
             <MenuItem value="text">Text</MenuItem>
-            <MenuItem value="bulleted_list">Bulleted List</MenuItem>
             <MenuItem value="number">Number</MenuItem>
             <MenuItem value="currency">Currency</MenuItem>
             <MenuItem value="yes_no">Yes/No</MenuItem>
             <MenuItem value="date">Date</MenuItem>
             <MenuItem value="tag">Tag</MenuItem>
-            <MenuItem value="multiple_tags">Multiple Tags</MenuItem>
             <MenuItem value="verbatim">Verbatim</MenuItem>
             <MenuItem value="manual_input">Manual Input</MenuItem>
           </Select>

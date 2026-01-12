@@ -67,7 +67,7 @@ export interface TabularReview {
 export interface TabularColumn {
   id: string
   column_label: string
-  column_type: 'text' | 'bulleted_list' | 'number' | 'currency' | 'yes_no' | 'date' | 'tag' | 'multiple_tags' | 'verbatim' | 'manual_input'
+  column_type: 'text' | 'number' | 'currency' | 'yes_no' | 'date' | 'tag' | 'verbatim' | 'manual_input'
   prompt: string
   column_config?: {
     options?: Array<{ label: string; color: string }>

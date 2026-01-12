@@ -13,10 +13,7 @@ from app.services.rag_service import RAGService
 from app.services.document_processor import DocumentProcessor
 from app.services.langchain_memory import MemoryService
 from app.services.llm_factory import create_llm, create_legal_llm
-from app.services.langchain_agents import PlanningAgent
-from app.services.langchain_agents.advanced_planning_agent import AdvancedPlanningAgent
-from app.services.analysis_service import AnalysisService
-from app.services.langchain_agents.pipeline_service import PipelineService
+# Agents removed - using simple RAG chat only
 from app.services.external_sources.web_research_service import get_web_research_service
 from app.services.external_sources.source_router import get_source_router, initialize_source_router
 from app.services.external_sources.cache_manager import get_cache_manager
@@ -344,7 +341,7 @@ async def stream_chat_response(
     deep_think: bool = False
 ) -> AsyncGenerator[str, None]:
     """
-    Stream chat response using RAG and LLM OR agents for tasks
+    Stream chat response using RAG and LLM with optional web search and legal research
     
     Yields:
         JSON strings in assistant-ui format
@@ -431,16 +428,11 @@ async def stream_chat_response(
             logger.error(f"Error saving messages to DB: {save_error}", exc_info=True)
             # Продолжаем без сохранения - не критичная ошибка
         
-        # Классифицируем запрос - задача или вопрос?
-        # Оптимизированные параметры для классификации: temperature=0.0 (детерминированность), top_p=1.0, max_tokens ограничен
-        classification_llm = create_llm(temperature=0.0, top_p=1.0, max_tokens=100)
-        is_task = await classify_request(question, classification_llm)
-        
         # Переменные для накопления ответа и источников
         full_response_text = ""
         sources_list = []
         
-        if is_task:
+        # Используем только RAG - агенты убраны, все запросы обрабатываются через RAG
             # Это задача - используем Planning Agent и агентов
             logger.info(f"Detected task request for case {case_id}: {question[:100]}...")
             

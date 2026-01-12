@@ -88,24 +88,6 @@ export const InlineCellEditor: React.FC<InlineCellEditorProps> = ({
           />
         )
 
-      case "bulleted_list":
-        return (
-          <TextField
-            multiline
-            rows={4}
-            fullWidth
-            value={value}
-            onChange={(e) => setValue(e.target.value)}
-            onKeyDown={handleKeyDown}
-            placeholder="Enter items, one per line (will be formatted as bullets)..."
-            variant="outlined"
-            size="small"
-            autoFocus
-            error={!!error}
-            helperText={error}
-          />
-        )
-
       case "number":
       case "currency":
         return (
@@ -157,57 +139,36 @@ export const InlineCellEditor: React.FC<InlineCellEditorProps> = ({
         )
 
       case "tag":
-      case "multiple_tags":
         const options = column.column_config?.options || []
-        const isMultiple = column.column_type === "multiple_tags"
-        
-        if (isMultiple) {
-          // For multiple tags, use a text field with comma-separated values
-          return (
-            <TextField
-              fullWidth
+        // Single tag - use select
+        return (
+          <FormControl fullWidth size="small">
+            <InputLabel>{column.column_label}</InputLabel>
+            <Select
               value={value}
               onChange={(e) => setValue(e.target.value)}
               onKeyDown={handleKeyDown}
-              placeholder={`Enter tags separated by commas. Available: ${options.map((o: any) => o.label).join(", ")}`}
-              variant="outlined"
-              size="small"
+              label={column.column_label}
               autoFocus
-              error={!!error}
-              helperText={error || `Available options: ${options.map((o: any) => o.label).join(", ")}`}
-            />
-          )
-        } else {
-          // Single tag - use select
-          return (
-            <FormControl fullWidth size="small">
-              <InputLabel>{column.column_label}</InputLabel>
-              <Select
-                value={value}
-                onChange={(e) => setValue(e.target.value)}
-                onKeyDown={handleKeyDown}
-                label={column.column_label}
-                autoFocus
-              >
-                {options.map((option: any) => (
-                  <MenuItem key={option.label} value={option.label}>
-                    <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
-                      <Box
-                        sx={{
-                          width: 12,
-                          height: 12,
-                          borderRadius: "50%",
-                          backgroundColor: option.color || "#3B82F6",
-                        }}
-                      />
-                      {option.label}
-                    </Box>
-                  </MenuItem>
-                ))}
-              </Select>
-            </FormControl>
-          )
-        }
+            >
+              {options.map((option: any) => (
+                <MenuItem key={option.label} value={option.label}>
+                  <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
+                    <Box
+                      sx={{
+                        width: 12,
+                        height: 12,
+                        borderRadius: "50%",
+                        backgroundColor: option.color || "#3B82F6",
+                      }}
+                    />
+                    {option.label}
+                  </Box>
+                </MenuItem>
+              ))}
+            </Select>
+          </FormControl>
+        )
 
       default:
         return (

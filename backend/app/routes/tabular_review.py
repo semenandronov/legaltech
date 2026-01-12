@@ -25,9 +25,9 @@ class TabularReviewCreateRequest(BaseModel):
 
 class ColumnCreateRequest(BaseModel):
     column_label: str
-    column_type: str  # text, bulleted_list, number, currency, yes_no, date, tag, multiple_tags, verbatim, manual_input
+    column_type: str  # text, number, currency, yes_no, date, tag, verbatim, manual_input
     prompt: str
-    column_config: Optional[dict] = None  # Конфигурация для tag/multiple_tags: {options: [{label, color}], allow_custom: bool}
+    column_config: Optional[dict] = None  # Конфигурация для tag: {options: [{label, color}], allow_custom: bool}
 
 
 class DocumentStatusUpdateRequest(BaseModel):
@@ -84,7 +84,7 @@ class TemplateCreateRequest(BaseModel):
 
 class ColumnPromptGenerateRequest(BaseModel):
     column_label: str
-    column_type: str  # text, bulleted_list, number, currency, yes_no, date, tag, multiple_tags, verbatim, manual_input
+    column_type: str  # text, number, currency, yes_no, date, tag, verbatim, manual_input
 
 
 class ColumnDescriptionRequest(BaseModel):
@@ -1955,20 +1955,18 @@ async def generate_column_prompt(
 
 Типы колонок:
 - text: свободный текст
-- bulleted_list: маркированный список
 - number: числовое значение
 - currency: денежная сумма с валютой
 - yes_no: да/нет (boolean)
 - date: дата
 - tag: один тег из предопределенного списка
-- multiple_tags: несколько тегов из предопределенного списка
 - verbatim: точная цитата из документа
 - manual_input: ручной ввод (без AI)
 
 Создай промпт на английском языке, который:
 1. Четко описывает, какую информацию нужно извлечь
 2. Указывает формат ответа
-3. Для tag/multiple_tags - перечисляет доступные опции
+3. Для tag - перечисляет доступные опции
 4. Для verbatim - требует точную цитату с указанием источника
 
 Верни ТОЛЬКО промпт, без дополнительных объяснений."""
