@@ -119,10 +119,12 @@ class GarantSource(BaseSource):
         
         # Build request body according to API v2.1.0
         # Для обычных текстовых запросов автоматически используем MorphoText()
+        # В документации примеры показывают пробел после команды: MorphoText (налог)
         garant_query = query
         if not use_query_language and query.strip():
             # Обертываем обычный текст в MorphoText для поиска по словам
-            garant_query = f"MorphoText({query})"
+            # Используем формат с пробелом как в документации: MorphoText (текст)
+            garant_query = f"MorphoText ({query.strip()})"
             use_query_language = True
         
         request_body = {
@@ -159,6 +161,30 @@ class GarantSource(BaseSource):
                     try:
                         data = await response.json()
                         logger.info(f"Garant API response: status={response.status}, keys={list(data.keys()) if isinstance(data, dict) else 'not_dict'}")
+                        
+                        # Детальное логирование ответа для отладки
+                        if isinstance(data, dict):
+                            total = data.get("total", 0)
+                            items_count = len(data.get("items", []))
+                            logger.info(f"Garant API response details: total={total}, items_count={items_count}")
+                            
+                            # Логируем структуру ответа для отладки
+                            import json as json_module
+                            response_preview = json_module.dumps(data, ensure_ascii=False, indent=2)[:1000]
+                            logger.info(f"Garant API response structure: {response_preview}")
+                            
+                            # Если есть ошибка в ответе, логируем её
+                            if "error" in data:
+                                logger.error(f"Garant API returned error: {data.get('error')}")
+                            if "message" in data:
+                                logger.warning(f"Garant API message: {data.get('message')}")
+                            
+                            # Если items пустой, но total > 0, это странно
+                            if total > 0 and items_count == 0:
+                                logger.warning(f"Garant API: total={total} but items array is empty - possible pagination issue")
+                            elif total == 0 and items_count == 0:
+                                logger.info(f"Garant API: No results found for query '{garant_query}' (this might be normal if query doesn't match any documents)")
+                        
                         return self._parse_garant_response(data)
                     except json.JSONDecodeError as e:
                         logger.error(f"Garant API: Failed to parse JSON response. Status: {response.status}, Response: {response_text[:500]}, Error: {e}")
