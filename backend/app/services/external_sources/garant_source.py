@@ -214,21 +214,26 @@ class GarantSource(BaseSource):
         results = []
         
         # Parse API v2.1.0 response structure
-        items = data.get("items", [])
-        total = data.get("total", 0)
+        # API возвращает документы в поле "documents", а не "items"
+        items = data.get("documents", []) or data.get("items", [])
+        total = data.get("totalDocs", 0) or data.get("total", 0) or len(items)
         
         logger.info(f"Garant API returned {len(items)} items (total: {total})")
         
         for item in items:
             try:
                 # Parse API v2.1.0 response structure
-                doc_id = item.get("id") or item.get("docId") or item.get("documentId")
+                # В API v2 поле с ID документа называется "topic"
+                doc_id = item.get("topic") or item.get("id") or item.get("docId") or item.get("documentId")
                 title = item.get("title") or item.get("name") or "Без названия"
                 snippet = item.get("snippet") or item.get("text") or item.get("preview") or ""
                 
                 # URL документа
                 url = item.get("url")
-                if not url and doc_id:
+                if url and url.startswith("/#/"):
+                    # Если URL относительный, добавляем базовый домен
+                    url = f"https://internet.garant.ru{url}"
+                elif not url and doc_id:
                     # Формируем URL если его нет
                     url = f"https://internet.garant.ru/#/document/{doc_id}"
                 
