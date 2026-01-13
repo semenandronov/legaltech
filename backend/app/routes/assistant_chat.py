@@ -446,7 +446,7 @@ async def stream_chat_response(
                 source_router = initialize_source_router(rag_service=rag_service, register_official_sources=True)
                 
                 # Определяем источники для поиска
-                sources_to_search = ["pravo_gov", "vsrf", "web"]
+                sources_to_search = ["garant"]
                 
                 # Выполняем поиск через source router
                 search_results = await source_router.search(
@@ -737,8 +737,8 @@ async def stream_chat_response(
                 # Инициализируем source_router с официальными источниками
                 source_router = initialize_source_router(rag_service=rag_service, register_official_sources=True)
                 
-                # Определяем источники для поиска (приоритет pravo_gov для статей кодексов)
-                sources_to_search = ["pravo_gov", "vsrf", "web"]  # pravo_gov для законодательства, vsrf для позиций ВС
+                # Определяем источники для поиска
+                sources_to_search = ["garant"]  # База Гарант
                 
                 # Выполняем поиск через source router
                 search_results = await source_router.search(

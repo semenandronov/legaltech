@@ -15,15 +15,15 @@ class GarantSource(BaseSource):
     Garant is one of the major Russian legal information systems
     containing laws, regulations, court decisions, and legal articles.
     
-    Note: This implementation uses a mock/placeholder API.
-    For production, you need to obtain API access from Garant.
+    Implements Garant API v2.1.0
+    Documentation: https://api.garant.ru
     """
     
     def __init__(self):
         super().__init__(name="garant", enabled=True)
         # Garant API credentials (to be configured)
         self.api_key = getattr(config, 'GARANT_API_KEY', None)
-        self.api_url = getattr(config, 'GARANT_API_URL', 'https://api.garant.ru/v1')
+        self.api_url = getattr(config, 'GARANT_API_URL', 'https://api.garant.ru/v2')
         
     async def initialize(self) -> bool:
         """Initialize Garant source"""
@@ -94,23 +94,26 @@ class GarantSource(BaseSource):
             "Accept": "application/json",
         }
         
-        # Build request body
-        request_body = {
-            "query": query,
-            "limit": max_results,
-            "offset": 0,
-        }
+        # Determine if query uses Garant query language
+        use_query_language = False
+        if filters and filters.get("use_query_language"):
+            use_query_language = True
+        else:
+            # Auto-detect if query contains Garant commands
+            garant_commands = ["MorphoText", "Type", "Date", "RDate", "MorphoName", 
+                             "Adopted", "Number", "Correspondents", "Respondents", 
+                             "SortDate", "Changed"]
+            use_query_language = any(query.startswith(cmd) for cmd in garant_commands)
         
-        # Add filters
-        if filters:
-            if filters.get("doc_type"):
-                request_body["doc_type"] = filters["doc_type"]
-            if filters.get("date_from"):
-                request_body["date_from"] = filters["date_from"]
-            if filters.get("date_to"):
-                request_body["date_to"] = filters["date_to"]
-            if filters.get("jurisdiction"):
-                request_body["jurisdiction"] = filters["jurisdiction"]
+        # Build request body according to API v2.1.0
+        request_body = {
+            "text": query,
+            "isQuery": use_query_language,
+            "env": "internet",
+            "sort": filters.get("sort", 0) if filters else 0,  # 0 - по релевантности, 1 - по дате
+            "sortOrder": filters.get("sort_order", 0) if filters else 0,  # 0 - по возрастанию, 1 - по убыванию
+            "page": 1,
+        }
         
         try:
             async with aiohttp.ClientSession() as session:
@@ -126,9 +129,10 @@ class GarantSource(BaseSource):
                     elif response.status == 403:
                         logger.error("Garant API: Forbidden - check permissions")
                         return []
-                    elif response.status != 200:
-                        logger.error(f"Garant API error: {response.status}")
-                        return []
+                    el            if response.status != 200:
+                error_text = await response.text()
+                logger.error(f"Garant API error: {response.status}, {error_text}")
+                return []
                     
                     data = await response.json()
                     return self._parse_garant_response(data)
@@ -152,42 +156,49 @@ class GarantSource(BaseSource):
         """
         results = []
         
+        # Parse API v2.1.0 response structure
         items = data.get("items", [])
+        total = data.get("total", 0)
+        
+        logger.info(f"Garant API returned {len(items)} items (total: {total})")
         
         for item in items:
             try:
-                # Map Garant document types to readable names
-                doc_type = item.get("type", "document")
-                doc_type_names = {
-                    "law": "Закон",
-                    "decree": "Указ",
-                    "resolution": "Постановление",
-                    "order": "Приказ",
-                    "court_decision": "Судебное решение",
-                    "article": "Статья",
-                    "commentary": "Комментарий",
+                # Parse API v2.1.0 response structure
+                doc_id = item.get("id") or item.get("docId") or item.get("documentId")
+                title = item.get("title") or item.get("name") or "Без названия"
+                snippet = item.get("snippet") or item.get("text") or item.get("preview") or ""
+                
+                # URL документа
+                url = item.get("url")
+                if not url and doc_id:
+                    # Формируем URL если его нет
+                    url = f"https://internet.garant.ru/#/document/{doc_id}"
+                
+                # Метаданные
+                metadata = {
+                    "doc_id": doc_id,
+                    "doc_number": item.get("number"),
+                    "doc_date": item.get("date"),
+                    "doc_type": item.get("type"),
+                    "issuing_authority": item.get("authority") or item.get("adoptedBy"),
                 }
-                doc_type_name = doc_type_names.get(doc_type, "Документ")
+                
+                # Релевантность (если есть)
+                relevance = item.get("relevance") or item.get("score") or 0.5
                 
                 result = SourceResult(
-                    content=item.get("snippet", item.get("text", "")),
-                    title=item.get("title", "Без названия"),
+                    content=snippet,
+                    title=title,
                     source_name="garant",
-                    url=item.get("url"),
-                    relevance_score=item.get("relevance", 0.5),
-                    metadata={
-                        "doc_type": doc_type,
-                        "doc_type_name": doc_type_name,
-                        "doc_id": item.get("id"),
-                        "doc_number": item.get("number"),
-                        "doc_date": item.get("date"),
-                        "issuing_authority": item.get("authority"),
-                    }
+                    url=url,
+                    relevance_score=float(relevance) if isinstance(relevance, (int, float)) else 0.5,
+                    metadata=metadata
                 )
                 results.append(result)
                 
             except Exception as e:
-                logger.warning(f"Error parsing Garant item: {e}")
+                logger.warning(f"Error parsing Garant item: {e}, item: {item}")
                 continue
         
         logger.info(f"Parsed {len(results)} results from Garant API")
@@ -199,13 +210,26 @@ class GarantSource(BaseSource):
             return False
         
         try:
+            # Простой поиск для проверки доступности API
             headers = {
                 "Authorization": f"Bearer {self.api_key}",
+                "Content-Type": "application/json",
+                "Accept": "application/json",
+            }
+            
+            request_body = {
+                "text": "MorphoText(тест)",
+                "isQuery": True,
+                "env": "internet",
+                "sort": 0,
+                "sortOrder": 0,
+                "page": 1,
             }
             
             async with aiohttp.ClientSession() as session:
-                async with session.get(
-                    f"{self.api_url}/health",
+                async with session.post(
+                    f"{self.api_url}/search",
+                    json=request_body,
                     headers=headers,
                     timeout=aiohttp.ClientTimeout(total=10)
                 ) as response:
@@ -219,6 +243,7 @@ class GarantSource(BaseSource):
         """Get source information"""
         info = super().get_info()
         info["api_configured"] = bool(self.api_key)
+        info["api_version"] = "2.1.0"
         info["description"] = "Гарант - правовая информационная система"
         return info
 

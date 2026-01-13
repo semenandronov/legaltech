@@ -330,6 +330,15 @@ def initialize_source_router(rag_service=None, register_official_sources: bool =
             logger.info("Registered KadArbitrSource")
         except Exception as e:
             logger.warning(f"Failed to register KadArbitrSource: {e}")
+        
+        # Добавляем GarantSource
+        try:
+            from .garant_source import GarantSource
+            garant_source = GarantSource()
+            _global_router.register_source(garant_source, priority=140)  # Высокий приоритет (API источник)
+            logger.info("Registered GarantSource")
+        except Exception as e:
+            logger.warning(f"Failed to register GarantSource: {e}")
     
     # Register legal research sources (fallback sources)
     try:
