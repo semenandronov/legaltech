@@ -223,9 +223,9 @@ class PipelineService:
             yield f"data: {json.dumps(clarification_event, ensure_ascii=False)}\n\n"
             return
         
-        # Если включено юридическое исследование, всегда используем RAG путь (без агентов)
-        if legal_research:
-            logger.info(f"[PipelineService] Legal research enabled, forcing RAG path (no agents) for case {case_id}")
+        # Если включено юридическое исследование или глубокое мышление, всегда используем RAG путь (без агентов)
+        if legal_research or deep_think:
+            logger.info(f"[PipelineService] Legal research={legal_research} or deep_think={deep_think} enabled, forcing RAG path (no agents) for case {case_id}")
             async for chunk in self._stream_rag_response(
                 case_id=case_id,
                 query=query,
