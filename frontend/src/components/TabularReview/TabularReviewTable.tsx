@@ -18,7 +18,6 @@ import {
 import { useVirtualizer } from "@tanstack/react-virtual"
 import {
   Box,
-  TextField,
   Button,
   Table,
   TableBody,
@@ -28,24 +27,19 @@ import {
   TableRow,
   Paper,
   Stack,
-  Menu,
   MenuItem,
   Checkbox,
   Typography,
   IconButton,
-  Chip,
   Pagination,
   Select,
   FormControl,
   InputLabel,
 } from '@mui/material'
 import {
-  SwapVert as ArrowUpDownIcon,
-  ExpandMore as ExpandMoreIcon,
   Description as FileTextIcon,
   PlayArrow as PlayArrowIcon,
   Close as CloseIcon,
-  FilterList as FilterIcon,
 } from '@mui/icons-material'
 import { TabularRow, TabularColumn, TabularCell, CellDetails } from "@/services/tabularReviewApi"
 import { tabularReviewApi } from "@/services/tabularReviewApi"
@@ -55,6 +49,7 @@ import { useBatchSelection } from "@/hooks/useBatchSelection"
 import { CellHistoryPanel } from "./CellHistoryPanel"
 import { AdvancedFiltersPanel, AdvancedFilters } from "./AdvancedFiltersPanel"
 import { useKeyboardNavigation } from "@/hooks/useKeyboardNavigation"
+import { ColumnHeaderMenu } from "./ColumnHeaderMenu"
 
 interface TabularReviewTableProps {
   reviewId: string
@@ -84,14 +79,16 @@ interface TabularReviewTableProps {
   onCellEdit?: (fileId: string, columnId: string, cell: TabularCell) => void
   onRemoveDocument?: (fileId: string) => void
   onRunColumn?: (columnId: string) => void
+  onColumnEdit?: (columnId: string) => void
+  onColumnDelete?: (columnId: string) => void
 }
 
-export const TabularReviewTable = React.memo(({ reviewId, tableData, onTableDataUpdate: _onTableDataUpdate, onCellClick, onCellEdit, onRemoveDocument, onRunColumn }: TabularReviewTableProps) => {
+export const TabularReviewTable = React.memo(({ reviewId, tableData, onTableDataUpdate: _onTableDataUpdate, onCellClick, onCellEdit, onRemoveDocument, onRunColumn, onColumnEdit, onColumnDelete }: TabularReviewTableProps) => {
   const [sorting, setSorting] = React.useState<SortingState>([])
   const [columnFilters, setColumnFilters] = React.useState<ColumnFiltersState>([])
   const [columnVisibility, setColumnVisibility] = React.useState<VisibilityState>({})
   const [columnSizing, setColumnSizing] = React.useState<ColumnSizingState>({})
-  const [columnPinning, setColumnPinning] = React.useState<ColumnPinningState>({ left: ['file_name'], right: [] })
+  const [columnPinning, setColumnPinning] = React.useState<ColumnPinningState>({ left: ['select', 'file_name'], right: [] })
   const [globalFilter, setGlobalFilter] = React.useState("")
   const [globalFilterInput, setGlobalFilterInput] = React.useState("")
   const [_loadingCell, setLoadingCell] = React.useState(false)
@@ -101,7 +98,6 @@ export const TabularReviewTable = React.memo(({ reviewId, tableData, onTableData
     columnId: string
     columnLabel: string
   } | null>(null)
-  const [anchorEl, setAnchorEl] = React.useState<null | HTMLElement>(null)
   const [runningColumns, setRunningColumns] = React.useState<Set<string>>(new Set())
   const [advancedFilters, setAdvancedFilters] = React.useState<AdvancedFilters>({
     cellStatuses: [],
@@ -305,14 +301,9 @@ export const TabularReviewTable = React.memo(({ reviewId, tableData, onTableData
         header: ({ column }) => {
           return (
             <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-              <Button
-                variant="text"
-                onClick={() => column.toggleSorting(column.getIsSorted() === "asc")}
-                endIcon={<ArrowUpDownIcon />}
-                sx={{ textTransform: 'none', fontWeight: 600, color: '#1F2937' }}
-              >
-              Document
-              </Button>
+              <Typography sx={{ fontWeight: 600, color: '#1F2937' }}>
+                Document
+              </Typography>
             </Box>
           )
         },
@@ -375,47 +366,57 @@ export const TabularReviewTable = React.memo(({ reviewId, tableData, onTableData
         columnLabel: col.column_label, // Store column label in meta for dropdown
       },
       header: ({ column }) => {
+        const isPinned = column.getIsPinned() === 'left'
+        const sortDirection = column.getIsSorted() === false ? null : (column.getIsSorted() === "asc" ? "asc" : "desc")
+        
         return (
-          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-            <Button
-              variant="text"
-              onClick={() => column.toggleSorting(column.getIsSorted() === "asc")}
-              endIcon={<ArrowUpDownIcon />}
-                sx={{ textTransform: 'none', fontWeight: 600, color: '#1F2937' }}
-            >
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, width: '100%' }}>
+            <Typography sx={{ fontWeight: 600, color: '#1F2937', flex: 1 }}>
               {col.column_label}
-            </Button>
-              <IconButton
-                size="small"
-                onClick={async (e) => {
-                  e.stopPropagation()
-                    setRunningColumns(prev => new Set(prev).add(col.id))
-                  try {
-                    await tabularReviewApi.runColumnExtraction(reviewId, col.id)
-                    // WebSocket обновит ячейки автоматически
-                    if (onRunColumn) {
+            </Typography>
+            <ColumnHeaderMenu
+              columnId={col.id}
+              columnLabel={col.column_label}
+              isPinned={isPinned}
+              sortDirection={sortDirection}
+              onEdit={() => onColumnEdit?.(col.id)}
+              onPin={() => column.pin('left')}
+              onUnpin={() => column.pin(false)}
+              onDelete={() => onColumnDelete?.(col.id)}
+              onSortAsc={() => column.toggleSorting(false)}
+              onSortDesc={() => column.toggleSorting(true)}
+            />
+            <IconButton
+              size="small"
+              onClick={async (e) => {
+                e.stopPropagation()
+                setRunningColumns(prev => new Set(prev).add(col.id))
+                try {
+                  await tabularReviewApi.runColumnExtraction(reviewId, col.id)
+                  // WebSocket обновит ячейки автоматически
+                  if (onRunColumn) {
                     onRunColumn(col.id)
-                    }
-                  } catch (error) {
-                    console.error("Error running column extraction:", error)
-                  } finally {
-                      setRunningColumns(prev => {
-                        const next = new Set(prev)
-                        next.delete(col.id)
-                        return next
-                      })
                   }
-                }}
-                disabled={runningColumns.has(col.id)}
-                sx={{ 
-                  p: 0.5,
-                  color: runningColumns.has(col.id) ? '#9CA3AF' : '#6B7280',
-                  '&:hover': { color: '#1F2937', bgcolor: 'action.hover' },
-                  '&.Mui-disabled': { color: '#9CA3AF' }
-                }}
-              >
-                <PlayArrowIcon fontSize="small" />
-              </IconButton>
+                } catch (error) {
+                  console.error("Error running column extraction:", error)
+                } finally {
+                  setRunningColumns(prev => {
+                    const next = new Set(prev)
+                    next.delete(col.id)
+                    return next
+                  })
+                }
+              }}
+              disabled={runningColumns.has(col.id)}
+              sx={{ 
+                p: 0.5,
+                color: runningColumns.has(col.id) ? '#9CA3AF' : '#6B7280',
+                '&:hover': { color: '#1F2937', bgcolor: 'action.hover' },
+                '&.Mui-disabled': { color: '#9CA3AF' }
+              }}
+            >
+              <PlayArrowIcon fontSize="small" />
+            </IconButton>
           </Box>
         )
       },
@@ -704,13 +705,6 @@ export const TabularReviewTable = React.memo(({ reviewId, tableData, onTableData
   const virtualRows = virtualizer.getVirtualItems()
   const totalSize = virtualizer.getTotalSize()
 
-  const handleMenuOpen = React.useCallback((event: React.MouseEvent<HTMLElement>) => {
-    setAnchorEl(event.currentTarget)
-  }, [])
-
-  const handleMenuClose = React.useCallback(() => {
-    setAnchorEl(null)
-  }, [])
 
   // Bulk action handlers
   const handleBulkMarkAsReviewed = React.useCallback(async () => {
@@ -771,81 +765,6 @@ export const TabularReviewTable = React.memo(({ reviewId, tableData, onTableData
         onClearSelection={clearSelection}
       />
       
-      <Stack direction="row" spacing={2} alignItems="center" sx={{ py: 2 }}>
-        <TextField
-          placeholder="Поиск по всем полям..."
-          value={globalFilterInput}
-          onChange={(event: React.ChangeEvent<HTMLInputElement>) =>
-            setGlobalFilterInput(event.target.value)
-          }
-          size="small"
-          sx={{ maxWidth: 300 }}
-        />
-        <Button
-          variant="outlined"
-          startIcon={<FilterIcon />}
-          onClick={() => setFiltersPanelOpen(true)}
-          sx={{ ml: 'auto' }}
-        >
-          Фильтры
-          {Object.values(advancedFilters).some((v) => {
-            if (Array.isArray(v)) return v.length > 0
-            if (typeof v === 'object' && v !== null) return Object.keys(v).length > 0
-            return v !== null && v !== undefined && v !== ""
-          }) && (
-            <Chip
-              label={Object.values(advancedFilters).filter((v) => {
-                if (Array.isArray(v)) return v.length > 0
-                if (typeof v === 'object' && v !== null) return Object.keys(v).length > 0
-                return v !== null && v !== undefined && v !== ""
-              }).length}
-              size="small"
-              sx={{ ml: 1, height: 20 }}
-            />
-          )}
-        </Button>
-        <Button
-          variant="outlined"
-          endIcon={<ExpandMoreIcon />}
-          onClick={handleMenuOpen}
-        >
-          Колонки
-        </Button>
-        <Menu
-          anchorEl={anchorEl}
-          open={Boolean(anchorEl)}
-          onClose={handleMenuClose}
-        >
-          {table
-            .getAllColumns()
-            .filter((column) => {
-              // Only show columns that are in tableData.columns (user-created columns)
-              // Exclude: "select" (selection column), "file_name" (file name column), and any auto-generated columns
-              if (column.id === "select") return false
-              if (column.id === "file_name") return false
-              
-              // Check if this column exists in tableData.columns
-              const existsInTableData = tableData.columns.some(col => col.id === column.id)
-              
-              
-              return existsInTableData && column.getCanHide()
-            })
-            .map((column) => {
-              // Get column label from tableData.columns
-              const tableDataColumn = tableData.columns.find(col => col.id === column.id)
-              const columnLabel = tableDataColumn?.column_label || (column.columnDef as any)?.meta?.column_label || column.id
-              
-              return (
-              <MenuItem key={column.id} onClick={() => column.toggleVisibility(!column.getIsVisible())}>
-                <Checkbox checked={column.getIsVisible()} />
-                <Typography sx={{ textTransform: 'capitalize' }}>
-                    {columnLabel}
-                </Typography>
-              </MenuItem>
-              )
-            })}
-        </Menu>
-      </Stack>
       <TableContainer 
         component={Paper} 
         variant="outlined"
@@ -853,7 +772,8 @@ export const TabularReviewTable = React.memo(({ reviewId, tableData, onTableData
         sx={{
           border: '1px solid #E5E7EB',
           borderRadius: '8px',
-          overflow: shouldVirtualize ? 'auto' : 'hidden',
+          overflowX: 'auto',
+          overflowY: shouldVirtualize ? 'auto' : 'hidden',
           maxHeight: shouldVirtualize ? '600px' : 'none',
         }}
       >
@@ -872,7 +792,7 @@ export const TabularReviewTable = React.memo(({ reviewId, tableData, onTableData
                     key={header.id}
                     sx={{
                       borderRight: '1px solid #E5E7EB',
-                      bgcolor: '#F9FAFB',
+                      bgcolor: header.column.getIsPinned() ? '#F9FAFB' : '#F9FAFB',
                       py: 1.5,
                       px: 2,
                       width: header.getSize(),

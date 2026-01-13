@@ -122,53 +122,18 @@ export const ColumnHeaderMenu: React.FC<ColumnHeaderMenuProps> = ({
         transformOrigin={{ horizontal: "right", vertical: "top" }}
         anchorOrigin={{ horizontal: "right", vertical: "bottom" }}
       >
-        <MenuItem onClick={handleEdit}>
-          <ListItemIcon>
-            <EditIcon fontSize="small" />
-          </ListItemIcon>
-          <ListItemText>Edit column</ListItemText>
-        </MenuItem>
-        
         <MenuItem onClick={handlePin}>
           <ListItemIcon>
             <PinIcon fontSize="small" />
           </ListItemIcon>
-          <ListItemText>{isPinned ? "Unpin column" : "Pin column"}</ListItemText>
-          {isPinned && <Checkbox checked size="small" sx={{ ml: "auto" }} />}
+          <ListItemText>{isPinned ? "Открепить колонку" : "Закрепить колонку"}</ListItemText>
         </MenuItem>
         
-        <Divider />
-        
-        <MenuItem onClick={handleMarkAllReviewed}>
+        <MenuItem onClick={handleEdit}>
           <ListItemIcon>
-            <CheckCircleIcon fontSize="small" />
+            <EditIcon fontSize="small" />
           </ListItemIcon>
-          <ListItemText>Mark all as reviewed</ListItemText>
-        </MenuItem>
-        
-        <Divider />
-        
-        <MenuItem onClick={handleSortAsc} disabled={sortDirection === "asc"}>
-          <ListItemIcon>
-            <ArrowUpIcon fontSize="small" />
-          </ListItemIcon>
-          <ListItemText>Sort ascending</ListItemText>
-          {sortDirection === "asc" && <Checkbox checked size="small" sx={{ ml: "auto" }} />}
-        </MenuItem>
-        
-        <MenuItem onClick={handleSortDesc} disabled={sortDirection === "desc"}>
-          <ListItemIcon>
-            <ArrowDownIcon fontSize="small" />
-          </ListItemIcon>
-          <ListItemText>Sort descending</ListItemText>
-          {sortDirection === "desc" && <Checkbox checked size="small" sx={{ ml: "auto" }} />}
-        </MenuItem>
-        
-        <MenuItem onClick={handleFilter}>
-          <ListItemIcon>
-            <FilterIcon fontSize="small" />
-          </ListItemIcon>
-          <ListItemText>Filter</ListItemText>
+          <ListItemText>Редактировать</ListItemText>
         </MenuItem>
         
         <Divider />
@@ -177,7 +142,7 @@ export const ColumnHeaderMenu: React.FC<ColumnHeaderMenuProps> = ({
           <ListItemIcon>
             <DeleteIcon fontSize="small" color="error" />
           </ListItemIcon>
-          <ListItemText>Delete column</ListItemText>
+          <ListItemText>Удалить</ListItemText>
         </MenuItem>
       </Menu>
     </>

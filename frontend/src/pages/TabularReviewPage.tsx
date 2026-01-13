@@ -37,6 +37,7 @@ const TabularReviewPage: React.FC = () => {
   const [loading, setLoading] = useState(false) // Start with false, will be set to true when actually loading
   const [processing, setProcessing] = useState(false)
   const [showColumnBuilder, setShowColumnBuilder] = useState(false)
+  const [editingColumn, setEditingColumn] = useState<{ id: string; label: string; type: string; prompt: string; column_config?: any } | null>(null)
   const [showDocumentSelector, setShowDocumentSelector] = useState(false)
   const [showTemplatesModal, setShowTemplatesModal] = useState(false)
   const [selectedFileIds, setSelectedFileIds] = useState<string[]>([])
@@ -67,6 +68,7 @@ const TabularReviewPage: React.FC = () => {
   const loadingRef = useRef(false)
   const [workMode, setWorkMode] = useState<"manual" | "agent">("manual")
   const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false)
+  const [isChatOpen, setIsChatOpen] = useState(false)
   
   // State for review selector (when no reviewId)
   const [existingReviews, setExistingReviews] = useState<Array<{
@@ -276,6 +278,71 @@ const TabularReviewPage: React.FC = () => {
       await loadReviewData()
     } catch (err: any) {
       toast.error("Не удалось добавить колонку: " + (err.message || ""))
+      throw err
+    }
+  }
+
+  const handleColumnEdit = (columnId: string) => {
+    if (!tableData) return
+    const column = tableData.columns.find(c => c.id === columnId)
+    if (!column) return
+    
+    setEditingColumn({
+      id: column.id,
+      label: column.column_label,
+      type: column.column_type,
+      prompt: column.prompt || "",
+      column_config: column.column_config,
+    })
+    setShowColumnBuilder(true)
+  }
+
+  const handleColumnDelete = async (columnId: string) => {
+    if (!reviewId) return
+    
+    const column = tableData?.columns.find(c => c.id === columnId)
+    if (!column) return
+    
+    if (!confirm(`Вы уверены, что хотите удалить колонку "${column.column_label}"? Это действие нельзя отменить.`)) {
+      return
+    }
+    
+    try {
+      await tabularReviewApi.deleteColumn(reviewId, columnId)
+      toast.success("Колонка удалена")
+      await loadReviewData()
+    } catch (err: any) {
+      toast.error("Не удалось удалить колонку: " + (err.message || ""))
+    }
+  }
+
+  const handleUpdateColumn = async (column: {
+    column_label: string
+    column_type: string
+    prompt: string
+    column_config?: {
+      options?: Array<{ label: string; color: string }>
+      allow_custom?: boolean
+    }
+  }) => {
+    if (!reviewId || !editingColumn) return
+    
+    try {
+      await tabularReviewApi.updateColumn(
+        reviewId,
+        editingColumn.id,
+        {
+          column_label: column.column_label,
+          prompt: column.prompt,
+          column_config: column.column_config,
+        }
+      )
+      toast.success("Колонка обновлена")
+      setEditingColumn(null)
+      setShowColumnBuilder(false)
+      await loadReviewData()
+    } catch (err: any) {
+      toast.error("Не удалось обновить колонку: " + (err.message || ""))
       throw err
     }
   }
@@ -698,6 +765,8 @@ const TabularReviewPage: React.FC = () => {
           onUpdateDocuments={reviewId ? () => setShowDocumentSelector(true) : undefined}
           onAddColumns={() => setShowColumnBuilder(true)}
           onRunAll={handleRunAll}
+          onToggleChat={() => setIsChatOpen(!isChatOpen)}
+          isChatOpen={isChatOpen}
           processing={processing}
         />
 
@@ -714,8 +783,8 @@ const TabularReviewPage: React.FC = () => {
 
         {/* Main Content Area */}
         <div className="flex-1 overflow-hidden flex">
-          {/* Chat / Agent panel (Left) */}
-          {reviewId && tableData && workMode === "manual" && (
+          {/* Chat panel (Left) - показывается когда isChatOpen === true */}
+          {isChatOpen && reviewId && tableData && (
             <div className="w-80 border-r border-border shrink-0 bg-bg-elevated flex flex-col">
               <TabularReviewContextChat
                 reviewId={reviewId}
@@ -725,8 +794,19 @@ const TabularReviewPage: React.FC = () => {
             </div>
           )}
 
-          {/* Agent Chat - показываем когда режим "agent" и есть caseId */}
-          {workMode === "agent" && caseId && (
+          {/* Chat / Agent panel (Left) - показывается когда isChatOpen === false и workMode === "manual" */}
+          {!isChatOpen && reviewId && tableData && workMode === "manual" && (
+            <div className="w-80 border-r border-border shrink-0 bg-bg-elevated flex flex-col">
+              <TabularReviewContextChat
+                reviewId={reviewId}
+                reviewName={tableData.review.name}
+                tableData={tableData}
+              />
+            </div>
+          )}
+
+          {/* Agent Chat - показываем когда режим "agent" и есть caseId и чат не открыт */}
+          {!isChatOpen && workMode === "agent" && caseId && (
             <div className="w-80 border-r border-border shrink-0 bg-bg-elevated flex flex-col">
               <TabularReviewAgentChat
                 caseId={caseId}
@@ -772,6 +852,8 @@ const TabularReviewPage: React.FC = () => {
                     setEditingCell({ fileId, columnId, cell })
                     setHasUnsavedChanges(true)  // Начали редактирование
                   }}
+                  onColumnEdit={handleColumnEdit}
+                  onColumnDelete={handleColumnDelete}
                   onCellClick={async (fileId, columnId, cellData) => {
                     // Find file type and name from table data
                     const row = tableData.rows.find(r => r.file_id === fileId)
@@ -899,8 +981,12 @@ const TabularReviewPage: React.FC = () => {
         {/* Column Builder Modal */}
         <ColumnBuilder
           isOpen={showColumnBuilder}
-          onClose={() => setShowColumnBuilder(false)}
-          onSave={handleAddColumn}
+          onClose={() => {
+            setShowColumnBuilder(false)
+            setEditingColumn(null)
+          }}
+          onSave={editingColumn ? handleUpdateColumn : handleAddColumn}
+          editingColumn={editingColumn}
         />
 
         {/* Document Selector Modal */}

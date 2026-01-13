@@ -27,6 +27,16 @@ interface ColumnBuilderProps {
       allow_custom?: boolean
     }
   }) => Promise<void>
+  editingColumn?: {
+    id: string
+    label: string
+    type: string
+    prompt: string
+    column_config?: {
+      options?: Array<{ label: string; color: string }>
+      allow_custom?: boolean
+    }
+  } | null
 }
 
 const COLUMN_TYPES = [
@@ -52,20 +62,45 @@ const TAG_COLORS = [
   "#84CC16", // лайм
 ]
 
-export function ColumnBuilder({ isOpen, onClose, onSave }: ColumnBuilderProps) {
-  const [columnLabel, setColumnLabel] = useState("")
-  const [columnType, setColumnType] = useState("text")
-  const [prompt, setPrompt] = useState("")
+export function ColumnBuilder({ isOpen, onClose, onSave, editingColumn }: ColumnBuilderProps) {
+  const [columnLabel, setColumnLabel] = useState(editingColumn?.label || "")
+  const [columnType, setColumnType] = useState(editingColumn?.type || "text")
+  const [prompt, setPrompt] = useState(editingColumn?.prompt || "")
   const [saving, setSaving] = useState(false)
   const [isGenerating, setIsGenerating] = useState(false)
   
   // Конфигурация для tag
-  const [tagOptions, setTagOptions] = useState<Array<{ label: string; color: string }>>([
-    { label: "Email", color: TAG_COLORS[0] },
-    { label: "Contract", color: TAG_COLORS[1] },
-    { label: "Letter", color: TAG_COLORS[2] },
-  ])
+  const [tagOptions, setTagOptions] = useState<Array<{ label: string; color: string }>>(
+    editingColumn?.column_config?.options || [
+      { label: "Email", color: TAG_COLORS[0] },
+      { label: "Contract", color: TAG_COLORS[1] },
+      { label: "Letter", color: TAG_COLORS[2] },
+    ]
+  )
   const [newTagLabel, setNewTagLabel] = useState("")
+  
+  // Обновляем поля при изменении editingColumn
+  useEffect(() => {
+    if (editingColumn) {
+      setColumnLabel(editingColumn.label)
+      setColumnType(editingColumn.type)
+      setPrompt(editingColumn.prompt || "")
+      setTagOptions(editingColumn.column_config?.options || [
+        { label: "Email", color: TAG_COLORS[0] },
+        { label: "Contract", color: TAG_COLORS[1] },
+        { label: "Letter", color: TAG_COLORS[2] },
+      ])
+    } else {
+      setColumnLabel("")
+      setColumnType("text")
+      setPrompt("")
+      setTagOptions([
+        { label: "Email", color: TAG_COLORS[0] },
+        { label: "Contract", color: TAG_COLORS[1] },
+        { label: "Letter", color: TAG_COLORS[2] },
+      ])
+    }
+  }, [editingColumn])
 
   const handleGeneratePrompt = async () => {
     if (!columnLabel.trim()) {
@@ -152,7 +187,7 @@ export function ColumnBuilder({ isOpen, onClose, onSave }: ColumnBuilderProps) {
   }
 
   return (
-    <Modal isOpen={isOpen} onClose={onClose} title="Добавить колонку" size="md">
+    <Modal isOpen={isOpen} onClose={onClose} title={editingColumn ? "Редактировать колонку" : "Добавить колонку"} size="md">
       <div className="space-y-4">
         <div>
           <label className="text-sm font-medium mb-2 block">
