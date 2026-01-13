@@ -223,7 +223,22 @@ class PipelineService:
             yield f"data: {json.dumps(clarification_event, ensure_ascii=False)}\n\n"
             return
         
-        # Маршрутизируем на основе классификации
+        # Если включено юридическое исследование, всегда используем RAG путь (без агентов)
+        if legal_research:
+            logger.info(f"[PipelineService] Legal research enabled, forcing RAG path (no agents) for case {case_id}")
+            async for chunk in self._stream_rag_response(
+                case_id=case_id,
+                query=query,
+                current_user=current_user,
+                classification=classification,
+                web_search=web_search,
+                legal_research=legal_research,
+                deep_think=deep_think
+            ):
+                yield chunk
+            return
+        
+        # Маршрутизируем на основе классификации (только если legal_research=False)
         if classification.recommended_path == "rag":
             # RAG путь - простой вопрос
             async for chunk in self._stream_rag_response(
