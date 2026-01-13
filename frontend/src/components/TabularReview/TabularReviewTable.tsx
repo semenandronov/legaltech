@@ -748,7 +748,7 @@ export const TabularReviewTable = React.memo(({ reviewId, tableData, onTableData
   }, [reviewId, selectedIds, clearSelection])
 
   return (
-    <Box sx={{ width: '100%' }}>
+    <Box sx={{ width: '100%', height: '100%', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
       {/* Bulk Actions Toolbar */}
       <BulkActionsToolbar
         selectedCount={selectedCount}
@@ -767,8 +767,10 @@ export const TabularReviewTable = React.memo(({ reviewId, tableData, onTableData
           borderRadius: '8px',
           overflowX: 'auto',
           overflowY: shouldVirtualize ? 'auto' : 'hidden',
-          maxHeight: shouldVirtualize ? '600px' : 'none',
+          maxHeight: shouldVirtualize ? '600px' : '100%',
           width: '100%',
+          flex: 1,
+          minWidth: 0,
           '&::-webkit-scrollbar': {
             height: '8px',
             width: '8px',

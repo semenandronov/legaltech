@@ -796,7 +796,7 @@ const TabularReviewPage: React.FC = () => {
           {/* Table, Cell Detail, and Document Split View */}
           <div className="flex-1 overflow-hidden flex">
             {/* Table */}
-            <div className={`overflow-x-auto overflow-y-auto p-6 transition-all bg-bg-primary ${selectedDocument ? 'w-1/4 min-w-[300px]' : 'flex-1'}`}>
+            <div className={`overflow-hidden p-6 transition-all bg-bg-primary ${selectedDocument ? 'w-1/4 min-w-[300px]' : 'flex-1'} flex flex-col`}>
               {tableData.columns.length === 0 ? (
                 <Card className="p-6 hoverable">
                   <div className="text-center">
