@@ -768,9 +768,24 @@ export const TabularReviewTable = React.memo(({ reviewId, tableData, onTableData
           overflowX: 'auto',
           overflowY: shouldVirtualize ? 'auto' : 'hidden',
           maxHeight: shouldVirtualize ? '600px' : 'none',
+          width: '100%',
+          '&::-webkit-scrollbar': {
+            height: '8px',
+            width: '8px',
+          },
+          '&::-webkit-scrollbar-track': {
+            background: '#f1f1f1',
+          },
+          '&::-webkit-scrollbar-thumb': {
+            background: '#888',
+            borderRadius: '4px',
+          },
+          '&::-webkit-scrollbar-thumb:hover': {
+            background: '#555',
+          },
         }}
       >
-        <Table sx={{ borderCollapse: 'separate' }}>
+        <Table sx={{ borderCollapse: 'separate', minWidth: 'max-content', width: '100%' }}>
           <TableHead sx={{ position: shouldVirtualize ? 'sticky' : 'static', top: 0, zIndex: 10 }}>
             {table.getHeaderGroups().map((headerGroup) => (
               <TableRow 

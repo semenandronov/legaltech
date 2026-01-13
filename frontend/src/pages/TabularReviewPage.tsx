@@ -783,7 +783,7 @@ const TabularReviewPage: React.FC = () => {
 
         {/* Main Content Area */}
         <div className="flex-1 overflow-hidden flex">
-          {/* Chat panel (Left) - показывается когда isChatOpen === true */}
+          {/* Chat panel (Left) - показывается только когда isChatOpen === true */}
           {isChatOpen && reviewId && tableData && (
             <div className="w-80 border-r border-border shrink-0 bg-bg-elevated flex flex-col">
               <TabularReviewContextChat
@@ -794,34 +794,10 @@ const TabularReviewPage: React.FC = () => {
             </div>
           )}
 
-          {/* Chat / Agent panel (Left) - показывается когда isChatOpen === false и workMode === "manual" */}
-          {!isChatOpen && reviewId && tableData && workMode === "manual" && (
-            <div className="w-80 border-r border-border shrink-0 bg-bg-elevated flex flex-col">
-              <TabularReviewContextChat
-                reviewId={reviewId}
-                reviewName={tableData.review.name}
-                tableData={tableData}
-              />
-            </div>
-          )}
-
-          {/* Agent Chat - показываем когда режим "agent" и есть caseId и чат не открыт */}
-          {!isChatOpen && workMode === "agent" && caseId && (
-            <div className="w-80 border-r border-border shrink-0 bg-bg-elevated flex flex-col">
-              <TabularReviewAgentChat
-                caseId={caseId}
-                onTableCreated={(newReviewId) => {
-                  // при создании новой таблицы переходим на нее
-                  navigate(`/cases/${caseId}/tabular-review/${newReviewId}`, { replace: true })
-                }}
-              />
-            </div>
-          )}
-
           {/* Table, Cell Detail, and Document Split View */}
           <div className="flex-1 overflow-hidden flex">
             {/* Table */}
-            <div className={`overflow-auto p-6 transition-all bg-bg-primary ${selectedDocument ? 'w-1/4 min-w-[300px]' : 'flex-1'}`}>
+            <div className={`overflow-x-auto overflow-y-auto p-6 transition-all bg-bg-primary ${selectedDocument ? 'w-1/4 min-w-[300px]' : 'flex-1'}`}>
               {tableData.columns.length === 0 ? (
                 <Card className="p-6 hoverable">
                   <div className="text-center">
