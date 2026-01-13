@@ -18,7 +18,6 @@ import {
 import { useVirtualizer } from "@tanstack/react-virtual"
 import {
   Box,
-  Button,
   Table,
   TableBody,
   TableCell,
@@ -31,6 +30,7 @@ import {
   Checkbox,
   Typography,
   IconButton,
+  Chip,
   Pagination,
   Select,
   FormControl,
@@ -90,7 +90,6 @@ export const TabularReviewTable = React.memo(({ reviewId, tableData, onTableData
   const [columnSizing, setColumnSizing] = React.useState<ColumnSizingState>({})
   const [columnPinning, setColumnPinning] = React.useState<ColumnPinningState>({ left: ['select', 'file_name'], right: [] })
   const [globalFilter, setGlobalFilter] = React.useState("")
-  const [globalFilterInput, setGlobalFilterInput] = React.useState("")
   const [_loadingCell, setLoadingCell] = React.useState(false)
   const [historyPanelOpen, setHistoryPanelOpen] = React.useState(false)
   const [historyCellInfo, setHistoryCellInfo] = React.useState<{
@@ -133,13 +132,7 @@ export const TabularReviewTable = React.memo(({ reviewId, tableData, onTableData
   // Кеш для cellDetails
   const cellDetailsCache = React.useRef<Map<string, CellDetails>>(new Map())
   
-  // Debounced глобальный фильтр
-  React.useEffect(() => {
-    const timer = setTimeout(() => {
-      setGlobalFilter(globalFilterInput)
-    }, 300)
-    return () => clearTimeout(timer)
-  }, [globalFilterInput])
+  // Debounced глобальный фильтр (оставлен для внутренней логики фильтрации)
 
   // Apply advanced filters to rows
   const applyAdvancedFilters = React.useCallback((rows: typeof tableData.rows, filters: AdvancedFilters, columns: TabularColumn[]) => {
@@ -298,7 +291,7 @@ export const TabularReviewTable = React.memo(({ reviewId, tableData, onTableData
       meta: {
         columnLabel: "Document", // Store column label in meta for dropdown
         },
-        header: ({ column }) => {
+        header: () => {
           return (
             <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
               <Typography sx={{ fontWeight: 600, color: '#1F2937' }}>

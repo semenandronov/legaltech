@@ -8,17 +8,12 @@ import {
   ListItemIcon,
   ListItemText,
   Divider,
-  Checkbox,
 } from "@mui/material"
 import {
   MoreVert as MoreVertIcon,
   Edit as EditIcon,
   PushPin as PinIcon,
-  CheckCircle as CheckCircleIcon,
   Delete as DeleteIcon,
-  ArrowUpward as ArrowUpIcon,
-  ArrowDownward as ArrowDownIcon,
-  FilterList as FilterIcon,
 } from "@mui/icons-material"
 
 interface ColumnHeaderMenuProps {
@@ -40,15 +35,10 @@ export const ColumnHeaderMenu: React.FC<ColumnHeaderMenuProps> = ({
   columnId: _columnId,
   columnLabel: _columnLabel,
   isPinned = false,
-  sortDirection,
   onEdit,
   onPin,
   onUnpin,
-  onMarkAllReviewed,
   onDelete,
-  onSortAsc,
-  onSortDesc,
-  onFilter,
 }) => {
   const [anchorEl, setAnchorEl] = useState<null | HTMLElement>(null)
   const open = Boolean(anchorEl)
@@ -76,29 +66,9 @@ export const ColumnHeaderMenu: React.FC<ColumnHeaderMenuProps> = ({
     }
   }
 
-  const handleMarkAllReviewed = () => {
-    handleClose()
-    onMarkAllReviewed?.()
-  }
-
   const handleDelete = () => {
     handleClose()
     onDelete?.()
-  }
-
-  const handleSortAsc = () => {
-    handleClose()
-    onSortAsc?.()
-  }
-
-  const handleSortDesc = () => {
-    handleClose()
-    onSortDesc?.()
-  }
-
-  const handleFilter = () => {
-    handleClose()
-    onFilter?.()
   }
 
   return (
