@@ -40,14 +40,14 @@ interface ColumnBuilderProps {
 }
 
 const COLUMN_TYPES = [
-  { value: "text", label: "Text", icon: "📝" },
-  { value: "number", label: "Number", icon: "#" },
-  { value: "currency", label: "Currency", icon: "$" },
-  { value: "yes_no", label: "Yes/No", icon: "✓" },
-  { value: "date", label: "Date", icon: "📅" },
-  { value: "tag", label: "Tag", icon: "🏷️" },
-  { value: "verbatim", label: "Verbatim", icon: "📄" },
-  { value: "manual_input", label: "Manual input", icon: "✏️" },
+  { value: "text", label: "Текст", icon: "📝" },
+  { value: "number", label: "Число", icon: "#" },
+  { value: "currency", label: "Валюта", icon: "$" },
+  { value: "yes_no", label: "Да/Нет", icon: "✓" },
+  { value: "date", label: "Дата", icon: "📅" },
+  { value: "tag", label: "Тег", icon: "🏷️" },
+  { value: "verbatim", label: "Дословно", icon: "📄" },
+  { value: "manual_input", label: "Ручной ввод", icon: "✏️" },
 ]
 
 // Цвета для тегов (как у Legora)
