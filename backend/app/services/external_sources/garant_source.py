@@ -4,6 +4,7 @@ from .base_source import BaseSource, SourceResult
 from app.config import config
 import aiohttp
 import logging
+import json
 
 logger = logging.getLogger(__name__)
 
@@ -117,14 +118,23 @@ class GarantSource(BaseSource):
             use_query_language = any(query.startswith(cmd) for cmd in garant_commands)
         
         # Build request body according to API v2.1.0
+        # Для обычных текстовых запросов автоматически используем MorphoText()
+        garant_query = query
+        if not use_query_language and query.strip():
+            # Обертываем обычный текст в MorphoText для поиска по словам
+            garant_query = f"MorphoText({query})"
+            use_query_language = True
+        
         request_body = {
-            "text": query,
+            "text": garant_query,
             "isQuery": use_query_language,
             "env": "internet",
             "sort": filters.get("sort", 0) if filters else 0,  # 0 - по релевантности, 1 - по дате
             "sortOrder": filters.get("sort_order", 0) if filters else 0,  # 0 - по возрастанию, 1 - по убыванию
             "page": 1,
         }
+        
+        logger.info(f"Garant API request: text='{garant_query}', isQuery={use_query_language}, URL={self.api_url}/search")
         
         try:
             async with aiohttp.ClientSession() as session:
@@ -134,19 +144,25 @@ class GarantSource(BaseSource):
                     headers=headers,
                     timeout=aiohttp.ClientTimeout(total=30)
                 ) as response:
+                    response_text = await response.text()
+                    
                     if response.status == 401:
-                        logger.error("Garant API: Unauthorized - check API key")
+                        logger.error(f"Garant API: Unauthorized - check API key. Response: {response_text[:200]}")
                         return []
                     elif response.status == 403:
-                        logger.error("Garant API: Forbidden - check permissions")
+                        logger.error(f"Garant API: Forbidden - check permissions. Response: {response_text[:200]}")
                         return []
                     elif response.status != 200:
-                        error_text = await response.text()
-                        logger.error(f"Garant API error: {response.status}, {error_text}")
+                        logger.error(f"Garant API error: status={response.status}, response={response_text[:500]}")
                         return []
                     
-                    data = await response.json()
-                    return self._parse_garant_response(data)
+                    try:
+                        data = await response.json()
+                        logger.info(f"Garant API response: status={response.status}, keys={list(data.keys()) if isinstance(data, dict) else 'not_dict'}")
+                        return self._parse_garant_response(data)
+                    except json.JSONDecodeError as e:
+                        logger.error(f"Garant API: Failed to parse JSON response. Status: {response.status}, Response: {response_text[:500]}, Error: {e}")
+                        return []
                     
         except aiohttp.ClientError as e:
             logger.error(f"Garant API connection error: {e}")
