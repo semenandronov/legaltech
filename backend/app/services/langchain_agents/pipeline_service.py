@@ -347,7 +347,15 @@ class PipelineService:
             JSON строки в формате assistant-ui SSE
         """
         try:
-            logger.info(f"[PipelineService:Agent] Processing complex task for case {case_id}")
+            logger.info(f"[PipelineService:Agent] Processing complex task for case {case_id}, legal_research={legal_research}, deep_think={deep_think}, web_search={web_search}")
+            # #region debug log
+            try:
+                import json as json_module
+                log_file = "/Users/semyon_andronov04/Desktop/C ДВ/.cursor/debug.log"
+                with open(log_file, "a") as f:
+                    f.write(json_module.dumps({"timestamp": time.time(), "sessionId": "debug-session", "runId": "agent-start", "hypothesisId": "A,B,C", "location": "pipeline_service.py:350", "message": "_stream_agent_response called", "data": {"case_id": case_id, "legal_research": legal_research, "deep_think": deep_think, "web_search": web_search}}) + "\n")
+            except: pass
+            # #endregion
             
             # Фаза 8.3: Используем унифицированные streaming events
             # Отправляем событие начала планирования
@@ -359,18 +367,29 @@ class PipelineService:
             )
             yield progress_event.to_sse_format()
             
+            # Модифицируем user_task на основе параметров legal_research и deep_think
+            enhanced_query = query
+            if legal_research:
+                enhanced_query = f"""{query}
+
+ВАЖНО: Для выполнения этой задачи включено юридическое исследование. Используй инструмент legal_research_tool для поиска прецедентов и судебной практики по релевантным вопросам. Используй источник "garant" или "all" для поиска в базах данных Гарант."""
+            if deep_think:
+                enhanced_query = f"""{enhanced_query}
+
+ВАЖНО: Для этой задачи включено глубокое размышление. Выполняй многошаговый анализ, рассматривай проблему с разных сторон и объясняй свой reasoning на каждом этапе."""
+            
             # Используем новый stream_analysis_events для нативного streaming через astream_events
             # #region debug log
-            import json as json_module
-            log_file = "/Users/semyon_andronov04/Desktop/C ДВ/.cursor/debug.log"
             try:
+                import json as json_module
+                log_file = "/Users/semyon_andronov04/Desktop/C ДВ/.cursor/debug.log"
                 with open(log_file, "a") as f:
-                    f.write(json_module.dumps({"timestamp": time.time(), "sessionId": "debug-session", "runId": "pipeline-start", "hypothesisId": "E", "location": "pipeline_service.py:363", "message": "Starting stream_analysis_events", "data": {"case_id": case_id}}) + "\n")
+                    f.write(json_module.dumps({"timestamp": time.time(), "sessionId": "debug-session", "runId": "before-stream", "hypothesisId": "A,B,C", "location": "pipeline_service.py:380", "message": "Before stream_analysis_events call", "data": {"case_id": case_id, "legal_research": legal_research, "deep_think": deep_think, "original_query": query[:100], "enhanced_query": enhanced_query[:200]}}) + "\n")
             except: pass
             # #endregion
             async for event in self.coordinator.stream_analysis_events(
                 case_id=case_id,
-                user_task=query,
+                user_task=enhanced_query,
                 config=None
             ):
                 event_type = event.get("type")
