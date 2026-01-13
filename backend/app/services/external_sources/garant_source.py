@@ -25,16 +25,27 @@ class GarantSource(BaseSource):
         self.api_key = getattr(config, 'GARANT_API_KEY', None)
         self.api_url = getattr(config, 'GARANT_API_URL', 'https://api.garant.ru/v2')
         
+        # Normalize API key - remove "Bearer " prefix if present (we add it in headers)
+        if self.api_key:
+            self.api_key = str(self.api_key).strip()
+            if self.api_key.startswith("Bearer "):
+                self.api_key = self.api_key[7:].strip()
+            # Log key status (but not the actual key value for security)
+            logger.info(f"GarantSource initialized: API key present (length: {len(self.api_key)}), URL: {self.api_url}")
+        else:
+            logger.warning("GarantSource initialized: GARANT_API_KEY not found in config")
+        
     async def initialize(self) -> bool:
         """Initialize Garant source"""
-        if self.api_key:
+        if self.api_key and len(self.api_key) > 0:
             self._initialized = True
+            self.enabled = True
             logger.info("Garant source initialized with API key")
         else:
             # Disable if not configured
             self.enabled = False
             self._initialized = False
-            logger.info("Garant source: API key not configured, source disabled")
+            logger.warning("Garant source: API key not configured or empty, source disabled")
         return self._initialized
     
     async def search(
