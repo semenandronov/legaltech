@@ -564,6 +564,11 @@ async def stream_chat_response(
                         }
                         if result.content:
                             source_info["text_preview"] = result.content[:200]
+                        # Логируем URL для отладки
+                        if result.url:
+                            logger.info(f"Adding source with URL: {result.url}, title: {result.title}")
+                        else:
+                            logger.warning(f"Source has no URL: title={result.title}, source_name={result.source_name}")
                         sources_list.append(source_info)
                     
                     logger.info(f"Legal research completed: {len(aggregated)} sources found from {len(search_results)} sources")
