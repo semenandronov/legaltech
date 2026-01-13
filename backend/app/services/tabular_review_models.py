@@ -44,17 +44,100 @@ def validate_number(value: str) -> str:
 
 def validate_yes_no(value: str) -> str:
     """Validate and normalize yes/no value"""
+    # #region agent log
+    import json
+    import os
+    import logging
+    logger = logging.getLogger(__name__)
+    log_data = {
+        "timestamp": int(__import__('time').time() * 1000),
+        "location": "tabular_review_models.py:45",
+        "message": "validate_yes_no called",
+        "data": {
+            "input_value": value,
+            "input_type": str(type(value)),
+            "is_empty": not value,
+            "is_string": isinstance(value, str)
+        },
+        "sessionId": "debug-session",
+        "runId": "run1",
+        "hypothesisId": "G"
+    }
+    logger.info(f"[DEBUG] {json.dumps(log_data)}")
+    log_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), '.cursor', 'debug.log')
+    try:
+        os.makedirs(os.path.dirname(log_path), exist_ok=True)
+        with open(log_path, 'a') as f:
+            f.write(json.dumps(log_data) + "\n")
+    except Exception:
+        pass
+    # #endregion
+    
     if not value or not isinstance(value, str):
         return "Unknown"
     
-    value_lower = value.lower().strip()
+    # Убираем все знаки препинания и лишние пробелы для более гибкого распознавания
+    value_clean = value.lower().strip()
+    # Убираем точки, запятые, восклицательные и вопросительные знаки
+    value_clean = value_clean.rstrip('.,!?;:')
     
-    if value_lower in ['yes', 'да', 'есть', 'true', '1', 'да, есть', 'есть, да']:
+    # Расширенный список вариантов для "Yes"
+    yes_variants = [
+        'yes', 'да', 'есть', 'true', '1', 'да, есть', 'есть, да',
+        'имеется', 'присутствует', 'существует', 'найдено', 'найден',
+        'подтверждаю', 'подтверждено', 'согласен', 'согласна',
+        'верно', 'правильно', 'корректно', 'так', 'именно так'
+    ]
+    
+    # Расширенный список вариантов для "No"
+    no_variants = [
+        'no', 'нет', 'нету', 'false', '0', 'не', 'отсутствует',
+        'не имеется', 'не присутствует', 'не существует', 'не найдено', 'не найден',
+        'не подтверждаю', 'не подтверждено', 'не согласен', 'не согласна',
+        'неверно', 'неправильно', 'некорректно', 'не так', 'не именно так',
+        'отрицаю', 'отрицается'
+    ]
+    
+    # Проверяем точное совпадение
+    if value_clean in yes_variants:
         return 'Yes'
-    elif value_lower in ['no', 'нет', 'нету', 'false', '0', 'не', 'отсутствует']:
+    elif value_clean in no_variants:
         return 'No'
-    else:
-        return 'Unknown'
+    
+    # Проверяем частичное совпадение (если значение содержит ключевые слова)
+    for yes_variant in yes_variants:
+        if yes_variant in value_clean:
+            return 'Yes'
+    
+    for no_variant in no_variants:
+        if no_variant in value_clean:
+            return 'No'
+    
+    # #region agent log
+    import logging
+    logger = logging.getLogger(__name__)
+    log_data = {
+        "timestamp": int(__import__('time').time() * 1000),
+        "location": "tabular_review_models.py:95",
+        "message": "validate_yes_no returning Unknown",
+        "data": {
+            "value_clean": value_clean,
+            "original_value": value,
+            "reason": "not in yes or no lists"
+        },
+        "sessionId": "debug-session",
+        "runId": "run1",
+        "hypothesisId": "G"
+    }
+    logger.info(f"[DEBUG] {json.dumps(log_data)}")
+    try:
+        with open(log_path, 'a') as f:
+            f.write(json.dumps(log_data) + "\n")
+    except Exception:
+        pass
+    # #endregion
+    
+    return 'Unknown'
 
 
 class SourceReference(BaseModel):
@@ -146,7 +229,55 @@ class TabularCellExtractionModel(BaseModel):
                 self.normalized_value = original_value
         
         elif self.column_type == 'yes_no':
+            # #region agent log
+            import json
+            import os
+            log_data = {
+                "timestamp": int(__import__('time').time() * 1000),
+                "location": "tabular_review_models.py:231",
+                "message": "Validating yes_no value",
+                "data": {
+                    "original_value": original_value,
+                    "original_value_type": str(type(original_value)),
+                    "original_value_lower": original_value.lower() if original_value else None
+                },
+                "sessionId": "debug-session",
+                "runId": "run1",
+                "hypothesisId": "F"
+            }
+            logger.info(f"[DEBUG] {json.dumps(log_data)}")
+            log_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), '.cursor', 'debug.log')
+            try:
+                os.makedirs(os.path.dirname(log_path), exist_ok=True)
+                with open(log_path, 'a') as f:
+                    f.write(json.dumps(log_data) + "\n")
+            except Exception:
+                pass
+            # #endregion
+            
             validated = validate_yes_no(original_value)
+            
+            # #region agent log
+            log_data = {
+                "timestamp": int(__import__('time').time() * 1000),
+                "location": "tabular_review_models.py:255",
+                "message": "After validate_yes_no",
+                "data": {
+                    "validated_value": validated,
+                    "original_value": original_value
+                },
+                "sessionId": "debug-session",
+                "runId": "run1",
+                "hypothesisId": "F"
+            }
+            logger.info(f"[DEBUG] {json.dumps(log_data)}")
+            try:
+                with open(log_path, 'a') as f:
+                    f.write(json.dumps(log_data) + "\n")
+            except Exception:
+                pass
+            # #endregion
+            
             self.cell_value = validated
             self.normalized_value = validated.lower()
         

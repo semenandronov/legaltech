@@ -607,8 +607,13 @@ class TabularReviewService:
                 "yes_no": """
 КРИТИЧЕСКИ ВАЖНО для типа yes_no:
 - cell_value ДОЛЖЕН быть ТОЛЬКО "Yes" или "No" или "Unknown"
-- НИКАКИХ других вариантов: не "Да", не "Нет", не "true", не "false", не "1", не "0"
+- Если информация найдена и ответ положительный - используй "Yes"
+- Если информация найдена и ответ отрицательный - используй "No"
+- Если информация не найдена в документе - используй "Unknown"
+- НИКАКИХ других вариантов: не "Да", не "Нет", не "true", не "false", не "1", не "0", не "есть", не "нету"
 - Только строго: "Yes", "No", или "Unknown"
+- Примеры ПРАВИЛЬНО: "Yes", "No", "Unknown"
+- Примеры НЕПРАВИЛЬНО: "Да", "Нет", "да", "нет", "true", "false", "1", "0", "есть", "отсутствует"
 """,
                 "tag": """
 КРИТИЧЕСКИ ВАЖНО для типа tag:
@@ -671,12 +676,108 @@ class TabularReviewService:
                     ]
                     result = await structured_llm.ainvoke(messages)
                     
-                    # Устанавливаем column_type для активации валидации
-                    result_dict = result.model_dump()
+                    # #region agent log
+                    import json
+                    import os
+                    log_data = {
+                        "timestamp": int(__import__('time').time() * 1000),
+                        "location": "tabular_review_service.py:677",
+                        "message": "Structured LLM result",
+                        "data": {
+                            "result_is_none": result is None,
+                            "result_type": str(type(result)) if result else "None",
+                            "has_model_dump": hasattr(result, 'model_dump') if result else False,
+                            "column_type": column.column_type,
+                            "column_label": column.column_label,
+                            "file_id": file.id
+                        },
+                        "sessionId": "debug-session",
+                        "runId": "run1",
+                        "hypothesisId": "A"
+                    }
+                    logger.info(f"[DEBUG] {json.dumps(log_data)}")
+                    # Try to write to file if local
+                    log_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), '.cursor', 'debug.log')
+                    try:
+                        os.makedirs(os.path.dirname(log_path), exist_ok=True)
+                        with open(log_path, 'a') as f:
+                            f.write(json.dumps(log_data) + "\n")
+                    except Exception:
+                        pass  # File logging not available (e.g., on Render)
+                    # #endregion
+                    
+                    if result is None:
+                        logger.error(f"Structured LLM returned None for column {column.column_label} (type: {column.column_type}), file {file.id}")
+                        raise ValueError("Structured LLM returned None")
+                    
+                    if not hasattr(result, 'model_dump'):
+                        logger.error(f"Structured LLM result has no model_dump method for column {column.column_label} (type: {column.column_type}), file {file.id}, result type: {type(result)}")
+                        # Попробуем получить данные другим способом
+                        if hasattr(result, 'dict'):
+                            result_dict = result.dict()
+                        elif hasattr(result, '__dict__'):
+                            result_dict = result.__dict__
+                        else:
+                            raise ValueError(f"Cannot extract data from structured LLM result: {type(result)}")
+                    else:
+                        # Устанавливаем column_type для активации валидации
+                        result_dict = result.model_dump()
+                    
+                    # #region agent log
+                    import json
+                    import os
+                    log_data = {
+                        "timestamp": int(__import__('time').time() * 1000),
+                        "location": "tabular_review_service.py:717",
+                        "message": "Before validation",
+                        "data": {
+                            "raw_cell_value": result_dict.get("cell_value"),
+                            "column_type": column.column_type,
+                            "column_label": column.column_label
+                        },
+                        "sessionId": "debug-session",
+                        "runId": "run1",
+                        "hypothesisId": "B"
+                    }
+                    logger.info(f"[DEBUG] {json.dumps(log_data)}")
+                    log_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), '.cursor', 'debug.log')
+                    try:
+                        with open(log_path, 'a') as f:
+                            f.write(json.dumps(log_data) + "\n")
+                    except Exception:
+                        pass
+                    # #endregion
+                    
                     result_dict['column_type'] = column.column_type
                     
                     # Создаем новый экземпляр с column_type для валидации
                     validated_result = TabularCellExtractionModel(**result_dict)
+                    
+                    # #region agent log
+                    import json
+                    import os
+                    log_data = {
+                        "timestamp": int(__import__('time').time() * 1000),
+                        "location": "tabular_review_service.py:750",
+                        "message": "After validation",
+                        "data": {
+                            "validated_cell_value": validated_result.cell_value,
+                            "normalized_value": validated_result.normalized_value,
+                            "column_type": column.column_type,
+                            "column_label": column.column_label
+                        },
+                        "sessionId": "debug-session",
+                        "runId": "run1",
+                        "hypothesisId": "B"
+                    }
+                    logger.info(f"[DEBUG] {json.dumps(log_data)}")
+                    log_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), '.cursor', 'debug.log')
+                    try:
+                        with open(log_path, 'a') as f:
+                            f.write(json.dumps(log_data) + "\n")
+                    except Exception:
+                        pass
+                    # #endregion
                     
                     cell_value = validated_result.cell_value  # Уже валидировано и нормализовано
                     reasoning = validated_result.reasoning
@@ -742,6 +843,32 @@ class TabularReviewService:
                         confidence = 0.85
                     
                     # После парсинга JSON создаем модель с валидацией
+                    # #region agent log
+                    import json
+                    import os
+                    log_data = {
+                        "timestamp": int(__import__('time').time() * 1000),
+                        "location": "tabular_review_service.py:790",
+                        "message": "Before validation (fallback JSON)",
+                        "data": {
+                            "raw_cell_value": cell_value_raw,
+                            "column_type": column.column_type,
+                            "column_label": column.column_label,
+                            "file_id": file.id
+                        },
+                        "sessionId": "debug-session",
+                        "runId": "run1",
+                        "hypothesisId": "C"
+                    }
+                    logger.info(f"[DEBUG] {json.dumps(log_data)}")
+                    log_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), '.cursor', 'debug.log')
+                    try:
+                        with open(log_path, 'a') as f:
+                            f.write(json.dumps(log_data) + "\n")
+                    except Exception:
+                        pass
+                    # #endregion
+                    
                     try:
                         parsed_result = TabularCellExtractionModel(
                             cell_value=cell_value_raw,
@@ -750,11 +877,63 @@ class TabularReviewService:
                             confidence=confidence,
                             column_type=column.column_type  # Ключевой момент - передаем тип колонки
                         )
+                        
+                        # #region agent log
+                        import json
+                        import os
+                        log_data = {
+                            "timestamp": int(__import__('time').time() * 1000),
+                            "location": "tabular_review_service.py:810",
+                            "message": "After validation (fallback JSON)",
+                            "data": {
+                                "validated_cell_value": parsed_result.cell_value,
+                                "normalized_value": parsed_result.normalized_value,
+                                "column_type": column.column_type,
+                                "column_label": column.column_label
+                            },
+                            "sessionId": "debug-session",
+                            "runId": "run1",
+                            "hypothesisId": "C"
+                        }
+                        logger.info(f"[DEBUG] {json.dumps(log_data)}")
+                        log_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), '.cursor', 'debug.log')
+                        try:
+                            with open(log_path, 'a') as f:
+                                f.write(json.dumps(log_data) + "\n")
+                        except Exception:
+                            pass
+                        # #endregion
+                        
                         cell_value = parsed_result.cell_value  # Валидированное значение
                         normalized_value = parsed_result.normalized_value
                         verbatim_extract = parsed_result.verbatim_extract
                     except Exception as validation_error:
                         logger.warning(f"Validation failed: {validation_error}, using raw value")
+                        # #region agent log
+                        import json
+                        import os
+                        log_data = {
+                            "timestamp": int(__import__('time').time() * 1000),
+                            "location": "tabular_review_service.py:830",
+                            "message": "Validation error",
+                            "data": {
+                                "error": str(validation_error),
+                                "raw_cell_value": cell_value_raw,
+                                "column_type": column.column_type,
+                                "column_label": column.column_label
+                            },
+                            "sessionId": "debug-session",
+                            "runId": "run1",
+                            "hypothesisId": "D"
+                        }
+                        logger.info(f"[DEBUG] {json.dumps(log_data)}")
+                        log_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), '.cursor', 'debug.log')
+                        try:
+                            with open(log_path, 'a') as f:
+                                f.write(json.dumps(log_data) + "\n")
+                        except Exception:
+                            pass
+                        # #endregion
                         cell_value = cell_value_raw
                         normalized_value = None
                         verbatim_extract = None
@@ -773,6 +952,32 @@ class TabularReviewService:
                 confidence = 0.85
                 
                 # Применяем валидацию через модель
+                # #region agent log
+                import json
+                import os
+                log_data = {
+                    "timestamp": int(__import__('time').time() * 1000),
+                    "location": "tabular_review_service.py:850",
+                    "message": "Before validation (final fallback)",
+                    "data": {
+                        "raw_cell_value": cell_value_raw,
+                        "column_type": column.column_type,
+                        "column_label": column.column_label,
+                        "file_id": file.id
+                    },
+                    "sessionId": "debug-session",
+                    "runId": "run1",
+                    "hypothesisId": "E"
+                }
+                logger.info(f"[DEBUG] {json.dumps(log_data)}")
+                log_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), '.cursor', 'debug.log')
+                try:
+                    with open(log_path, 'a') as f:
+                        f.write(json.dumps(log_data) + "\n")
+                except Exception:
+                    pass
+                # #endregion
+                
                 try:
                     parsed_result = TabularCellExtractionModel(
                         cell_value=cell_value_raw,
@@ -781,11 +986,63 @@ class TabularReviewService:
                         confidence=confidence,
                         column_type=column.column_type
                     )
+                    
+                    # #region agent log
+                    import json
+                    import os
+                    log_data = {
+                        "timestamp": int(__import__('time').time() * 1000),
+                        "location": "tabular_review_service.py:870",
+                        "message": "After validation (final fallback)",
+                        "data": {
+                            "validated_cell_value": parsed_result.cell_value,
+                            "normalized_value": parsed_result.normalized_value,
+                            "column_type": column.column_type,
+                            "column_label": column.column_label
+                        },
+                        "sessionId": "debug-session",
+                        "runId": "run1",
+                        "hypothesisId": "E"
+                    }
+                    logger.info(f"[DEBUG] {json.dumps(log_data)}")
+                    log_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), '.cursor', 'debug.log')
+                    try:
+                        with open(log_path, 'a') as f:
+                            f.write(json.dumps(log_data) + "\n")
+                    except Exception:
+                        pass
+                    # #endregion
+                    
                     cell_value = parsed_result.cell_value
                     normalized_value = parsed_result.normalized_value
                     verbatim_extract = parsed_result.verbatim_extract
                 except Exception as validation_error:
                     logger.warning(f"Validation failed in fallback: {validation_error}, using raw value")
+                    # #region agent log
+                    import json
+                    import os
+                    log_data = {
+                        "timestamp": int(__import__('time').time() * 1000),
+                        "location": "tabular_review_service.py:890",
+                        "message": "Validation error (final fallback)",
+                        "data": {
+                            "error": str(validation_error),
+                            "raw_cell_value": cell_value_raw,
+                            "column_type": column.column_type,
+                            "column_label": column.column_label
+                        },
+                        "sessionId": "debug-session",
+                        "runId": "run1",
+                        "hypothesisId": "E"
+                    }
+                    logger.info(f"[DEBUG] {json.dumps(log_data)}")
+                    log_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), '.cursor', 'debug.log')
+                    try:
+                        with open(log_path, 'a') as f:
+                            f.write(json.dumps(log_data) + "\n")
+                    except Exception:
+                        pass
+                    # #endregion
                     cell_value = cell_value_raw
                     normalized_value = None
                     verbatim_extract = cell_value if column.column_type == "verbatim" else None
