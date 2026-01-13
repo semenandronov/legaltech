@@ -18,6 +18,8 @@ from app.services.external_sources.web_research_service import get_web_research_
 from app.services.external_sources.source_router import get_source_router, initialize_source_router
 from app.services.external_sources.cache_manager import get_cache_manager
 from app.services.langchain_agents.pipeline_service import PipelineService
+from app.services.langchain_agents.planning_agent import PlanningAgent
+from app.services.langchain_agents.advanced_planning_agent import AdvancedPlanningAgent
 from app.config import config
 import json
 import logging
