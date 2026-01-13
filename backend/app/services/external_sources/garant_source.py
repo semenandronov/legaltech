@@ -129,10 +129,10 @@ class GarantSource(BaseSource):
                     elif response.status == 403:
                         logger.error("Garant API: Forbidden - check permissions")
                         return []
-                    el            if response.status != 200:
-                error_text = await response.text()
-                logger.error(f"Garant API error: {response.status}, {error_text}")
-                return []
+                    elif response.status != 200:
+                        error_text = await response.text()
+                        logger.error(f"Garant API error: {response.status}, {error_text}")
+                        return []
                     
                     data = await response.json()
                     return self._parse_garant_response(data)
