@@ -146,21 +146,25 @@ class GarantSource(BaseSource):
                     headers=headers,
                     timeout=aiohttp.ClientTimeout(total=30)
                 ) as response:
+                    response_status = response.status
                     response_text = await response.text()
                     
-                    if response.status == 401:
+                    logger.info(f"Garant API response: status={response_status}, response_length={len(response_text)}")
+                    
+                    if response_status == 401:
                         logger.error(f"Garant API: Unauthorized - check API key. Response: {response_text[:200]}")
                         return []
-                    elif response.status == 403:
+                    elif response_status == 403:
                         logger.error(f"Garant API: Forbidden - check permissions. Response: {response_text[:200]}")
                         return []
-                    elif response.status != 200:
-                        logger.error(f"Garant API error: status={response.status}, response={response_text[:500]}")
+                    elif response_status != 200:
+                        logger.error(f"Garant API error: status={response_status}, response={response_text[:500]}")
                         return []
                     
                     try:
-                        data = await response.json()
-                        logger.info(f"Garant API response: status={response.status}, keys={list(data.keys()) if isinstance(data, dict) else 'not_dict'}")
+                        import json as json_module
+                        data = json_module.loads(response_text)
+                        logger.info(f"Garant API response: status={response_status}, keys={list(data.keys()) if isinstance(data, dict) else 'not_dict'}")
                         
                         # Детальное логирование ответа для отладки
                         if isinstance(data, dict):
