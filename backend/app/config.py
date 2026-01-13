@@ -91,7 +91,11 @@ class Config:
     
     # Yandex Cloud AI Studio (GPT + Embeddings + Vector Store)
     YANDEX_API_KEY: str = os.getenv("YANDEX_API_KEY", "")
-    YANDEX_IAM_TOKEN: str = os.getenv("YANDEX_IAM_TOKEN", "")  # Альтернатива API ключу
+    YANDEX_IAM_TOKEN: str = os.getenv("YANDEX_IAM_TOKEN", "")
+    
+    # Garant API
+    GARANT_API_KEY: str = os.getenv("GARANT_API_KEY", "")
+    GARANT_API_URL: str = os.getenv("GARANT_API_URL", "https://api.garant.ru/v2")  # Альтернатива API ключу
     YANDEX_FOLDER_ID: str = os.getenv("YANDEX_FOLDER_ID", "")  # Обязательно для работы Yandex сервисов
     YANDEX_GPT_MODEL: str = os.getenv("YANDEX_GPT_MODEL", "yandexgpt-lite/latest")  # Модель по умолчанию
     YANDEX_EMBEDDING_MODEL: str = os.getenv("YANDEX_EMBEDDING_MODEL", "text-search-query/latest")  # Модель embeddings по умолчанию
