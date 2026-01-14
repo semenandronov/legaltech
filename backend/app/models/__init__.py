@@ -25,6 +25,7 @@ from app.models.agent_interaction import AgentInteraction, AgentExecutionLog
 from app.models.prompt_library import PromptTemplate, PromptCategory
 from app.models.workflow_template import WorkflowTemplate
 from app.models.folder import Folder, FileTag, FileTagAssociation
+from app.models.document_editor import Document, DocumentVersion
 
 __all__ = [
     # Base
@@ -62,4 +63,7 @@ __all__ = [
     "Folder",
     "FileTag",
     "FileTagAssociation",
+    # Document editor
+    "Document",
+    "DocumentVersion",
 ]

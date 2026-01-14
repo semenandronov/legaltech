@@ -15,6 +15,7 @@ const DocumentsPage = lazy(() => import('./pages/DocumentsPage'))
 const AnalysisPage = lazy(() => import('./pages/AnalysisPage'))
 const ReportsPage = lazy(() => import('./pages/ReportsPage'))
 const TabularReviewPage = lazy(() => import('./pages/TabularReviewPage'))
+const DocumentEditorPage = lazy(() => import('./pages/DocumentEditorPage'))
 
 // Loading fallback
 const PageLoader = () => (
@@ -115,6 +116,16 @@ function App() {
           <ProtectedRoute>
             <Suspense fallback={<PageLoader />}>
               <TabularReviewPage />
+            </Suspense>
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/cases/:caseId/editor/:documentId?"
+        element={
+          <ProtectedRoute>
+            <Suspense fallback={<PageLoader />}>
+              <DocumentEditorPage />
             </Suspense>
           </ProtectedRoute>
         }

@@ -1,0 +1,164 @@
+/* TipTap Editor Styles */
+.editor-content {
+  min-height: 100%;
+  padding: 2rem;
+}
+
+.editor-content .ProseMirror {
+  outline: none;
+  min-height: 500px;
+}
+
+.editor-content .ProseMirror p {
+  margin: 1rem 0;
+  line-height: 1.6;
+}
+
+.editor-content .ProseMirror h1 {
+  font-size: 2rem;
+  font-weight: 700;
+  margin: 1.5rem 0 1rem 0;
+  line-height: 1.2;
+}
+
+.editor-content .ProseMirror h2 {
+  font-size: 1.5rem;
+  font-weight: 600;
+  margin: 1.25rem 0 0.75rem 0;
+  line-height: 1.3;
+}
+
+.editor-content .ProseMirror h3 {
+  font-size: 1.25rem;
+  font-weight: 600;
+  margin: 1rem 0 0.5rem 0;
+  line-height: 1.4;
+}
+
+.editor-content .ProseMirror h4 {
+  font-size: 1.125rem;
+  font-weight: 600;
+  margin: 0.875rem 0 0.5rem 0;
+}
+
+.editor-content .ProseMirror h5 {
+  font-size: 1rem;
+  font-weight: 600;
+  margin: 0.75rem 0 0.5rem 0;
+}
+
+.editor-content .ProseMirror h6 {
+  font-size: 0.875rem;
+  font-weight: 600;
+  margin: 0.625rem 0 0.5rem 0;
+}
+
+.editor-content .ProseMirror ul,
+.editor-content .ProseMirror ol {
+  margin: 1rem 0;
+  padding-left: 1.5rem;
+}
+
+.editor-content .ProseMirror li {
+  margin: 0.5rem 0;
+}
+
+.editor-content .ProseMirror blockquote {
+  border-left: 4px solid #e5e7eb;
+  padding-left: 1rem;
+  margin: 1rem 0;
+  font-style: italic;
+  color: #6b7280;
+}
+
+.editor-content .ProseMirror code {
+  background-color: #f3f4f6;
+  padding: 0.125rem 0.375rem;
+  border-radius: 0.25rem;
+  font-size: 0.875em;
+  font-family: 'Courier New', monospace;
+}
+
+.editor-content .ProseMirror pre {
+  background-color: #1f2937;
+  color: #f9fafb;
+  padding: 1rem;
+  border-radius: 0.5rem;
+  overflow-x: auto;
+  margin: 1rem 0;
+}
+
+.editor-content .ProseMirror pre code {
+  background-color: transparent;
+  padding: 0;
+  color: inherit;
+}
+
+.editor-link {
+  color: #2563eb;
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+.editor-link:hover {
+  color: #1d4ed8;
+}
+
+.editor-table {
+  border-collapse: collapse;
+  margin: 1rem 0;
+  width: 100%;
+  table-layout: fixed;
+}
+
+.editor-table td,
+.editor-table th {
+  border: 1px solid #e5e7eb;
+  padding: 0.5rem;
+  min-width: 100px;
+  vertical-align: top;
+}
+
+.editor-table th {
+  background-color: #f9fafb;
+  font-weight: 600;
+  text-align: left;
+}
+
+.editor-table .selectedCell {
+  background-color: #dbeafe;
+}
+
+/* Placeholder styles */
+.editor-content .ProseMirror p.is-editor-empty:first-child::before {
+  content: attr(data-placeholder);
+  float: left;
+  color: #9ca3af;
+  pointer-events: none;
+  height: 0;
+}
+
+/* Highlight styles */
+.editor-content .ProseMirror mark {
+  background-color: #fef08a;
+  padding: 0.125rem 0;
+  border-radius: 0.125rem;
+}
+
+/* Typography improvements */
+.editor-content .ProseMirror {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+  color: #1f2937;
+  line-height: 1.6;
+}
+
+/* Focus styles */
+.editor-content .ProseMirror:focus {
+  outline: none;
+}
+
+/* Selection styles */
+.editor-content .ProseMirror ::selection {
+  background-color: #bfdbfe;
+}
+

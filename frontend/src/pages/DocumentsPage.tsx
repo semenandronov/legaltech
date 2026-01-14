@@ -8,7 +8,7 @@ import {
   Drawer,
 } from '@mui/material'
 import { Description as DescriptionIcon, Close as CloseIcon, OpenInNew as OpenInNewIcon } from '@mui/icons-material'
-import { MessageSquare, FileText, Table, Filter } from 'lucide-react'
+import { MessageSquare, FileText, Table, Filter, FileEdit } from 'lucide-react'
 import UnifiedSidebar from '../components/Layout/UnifiedSidebar'
 import DocumentViewer from '../components/Documents/DocumentViewer'
 import DocumentFilters, { DocumentFiltersState } from '../components/Documents/DocumentFilters'
@@ -166,6 +166,7 @@ const DocumentsPage = () => {
             navItems={[
               { id: 'chat', label: 'Ассистент', icon: MessageSquare, path: `/cases/${caseId}/chat` },
               { id: 'documents', label: 'Документы', icon: FileText, path: `/cases/${caseId}/documents` },
+              { id: 'editor', label: 'Редактор', icon: FileEdit, path: `/cases/${caseId}/editor` },
               { id: 'tabular-review', label: 'Tabular Review', icon: Table, path: `/cases/${caseId}/tabular-review` },
             ]} 
             title="Legal AI" 
@@ -181,6 +182,7 @@ const DocumentsPage = () => {
   const navItems = [
     { id: 'chat', label: 'Ассистент', icon: MessageSquare, path: `/cases/${caseId}/chat` },
     { id: 'documents', label: 'Документы', icon: FileText, path: `/cases/${caseId}/documents` },
+    { id: 'editor', label: 'Редактор', icon: FileEdit, path: `/cases/${caseId}/editor` },
     { id: 'tabular-review', label: 'Tabular Review', icon: Table, path: `/cases/${caseId}/tabular-review` },
   ]
 
