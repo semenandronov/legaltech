@@ -2,7 +2,6 @@ import { Editor } from '@tiptap/react'
 import { 
   Bold, 
   Italic, 
-  Underline, 
   List, 
   ListOrdered, 
   Link as LinkIcon,

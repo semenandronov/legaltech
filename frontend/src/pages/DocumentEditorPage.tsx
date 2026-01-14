@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
-import { Save, Download, Sparkles, FileText, ArrowLeft } from 'lucide-react'
+import { Save, Download, Sparkles, ArrowLeft } from 'lucide-react'
 import { toast } from 'sonner'
 import { DocumentEditor, DocumentEditorRef } from '../components/Editor/DocumentEditor'
 import { AIAssistantSidebar } from '../components/Editor/AIAssistantSidebar'
@@ -24,7 +24,7 @@ const DocumentEditorPage = () => {
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false)
-  const saveTimeoutRef = useRef<NodeJS.Timeout | null>(null)
+  const saveTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const editorRef = useRef<DocumentEditorRef>(null)
 
   // Load document if documentId is provided

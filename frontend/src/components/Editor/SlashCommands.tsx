@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react'
+import React from 'react'
 import { Extension } from '@tiptap/core'
 import { ReactRenderer } from '@tiptap/react'
 import Suggestion from '@tiptap/suggestion'
@@ -22,6 +22,7 @@ const SlashCommands = Extension.create<SlashCommandsOptions>({
   },
 
   addProseMirrorPlugins() {
+    const options = this.options
     return [
       Suggestion({
         editor: this.editor,
@@ -32,8 +33,8 @@ const SlashCommands = Extension.create<SlashCommandsOptions>({
         items: ({ query }: any) => {
           return getSuggestionItems({
             query,
-            caseId: this.options.caseId,
-            onInsertText: this.options.onInsertText,
+            caseId: options.caseId,
+            onInsertText: options.onInsertText,
           })
         },
         render: () => {
@@ -44,8 +45,8 @@ const SlashCommands = Extension.create<SlashCommandsOptions>({
             onStart: (props: any) => {
               const items = getSuggestionItems({
                 query: props.query,
-                caseId: this.options.caseId,
-                onInsertText: this.options.onInsertText,
+                caseId: options.caseId,
+                onInsertText: options.onInsertText,
               })
 
               component = new ReactRenderer(CommandList, {
@@ -71,8 +72,8 @@ const SlashCommands = Extension.create<SlashCommandsOptions>({
             onUpdate(props: any) {
               const items = getSuggestionItems({
                 query: props.query,
-                caseId: this.options.caseId,
-                onInsertText: this.options.onInsertText,
+                caseId: options.caseId,
+                onInsertText: options.onInsertText,
               })
 
               component.updateProps({ items, command: props.command })
@@ -92,7 +93,7 @@ const SlashCommands = Extension.create<SlashCommandsOptions>({
                 return true
               }
 
-              return component.ref?.onKeyDown(props)
+              return component.ref?.onKeyDown?.(props) ?? false
             },
 
             onExit() {
@@ -208,7 +209,7 @@ export const getSuggestionItems = ({ query, caseId, onInsertText }: { query: str
         description: 'Проверить текст на юридические риски',
         icon: AlertTriangle,
         command: async ({ editor, range }: any) => {
-          const selectedText = editor.state.doc.textBetween(range.from, range.to)
+          editor.chain().focus().deleteRange(range).run()
           if (onInsertText) {
             onInsertText('Проверка рисков...')
           }
@@ -219,7 +220,7 @@ export const getSuggestionItems = ({ query, caseId, onInsertText }: { query: str
         description: 'Улучшить текст с помощью AI',
         icon: Wand2,
         command: async ({ editor, range }: any) => {
-          const selectedText = editor.state.doc.textBetween(range.from, range.to)
+          editor.chain().focus().deleteRange(range).run()
           if (onInsertText) {
             onInsertText('Улучшение текста...')
           }

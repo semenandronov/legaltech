@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { Sparkles, FileText, AlertTriangle, Wand2, Loader2 } from 'lucide-react'
 import { toast } from 'sonner'
-import { aiAssist } from '../services/documentEditorApi'
+import { aiAssist } from '../../services/documentEditorApi'
 
 interface AIAssistantSidebarProps {
   caseId?: string
@@ -11,7 +11,6 @@ interface AIAssistantSidebarProps {
 }
 
 export const AIAssistantSidebar = ({
-  caseId,
   documentId,
   selectedText,
   onInsertText
