@@ -121,78 +121,132 @@ class GarantSource(BaseSource):
         # Для обычных текстовых запросов автоматически используем MorphoText()
         # В документации примеры показывают пробел после команды: MorphoText (налог)
         garant_query = query
-        if not use_query_language and query.strip():
+        
+        # Если есть фильтры, добавляем их через язык запросов ГАРАНТ
+        filter_parts = []
+        if filters:
+            # Фильтр по типу документа
+            if filters.get("doc_type"):
+                doc_type = filters["doc_type"]
+                # Маппинг наших типов на типы ГАРАНТ (если нужен)
+                type_mapping = {
+                    "law": "Акт",
+                    "court_decision": "Решение",
+                    "article": "Статья",
+                    "commentary": "Комментарий"
+                }
+                garant_type = type_mapping.get(doc_type, doc_type)
+                filter_parts.append(f"Type({garant_type})")
+            
+            # Фильтр по дате
+            if filters.get("date_from") or filters.get("date_to"):
+                date_from = filters.get("date_from", "")
+                date_to = filters.get("date_to", "")
+                # Преобразуем формат даты из YYYY-MM-DD в DD.MM.YYYY для ГАРАНТ
+                if date_from:
+                    try:
+                        from datetime import datetime
+                        d = datetime.strptime(date_from, "%Y-%m-%d")
+                        date_from = d.strftime("%d.%m.%Y")
+                    except:
+                        pass
+                if date_to:
+                    try:
+                        from datetime import datetime
+                        d = datetime.strptime(date_to, "%Y-%m-%d")
+                        date_to = d.strftime("%d.%m.%Y")
+                    except:
+                        pass
+                filter_parts.append(f"Date({date_from};{date_to})")
+        
+        # Если есть фильтры, объединяем их с основным запросом
+        if filter_parts:
+            if not use_query_language and query.strip():
+                garant_query = f"MorphoText ({query.strip()})"
+                use_query_language = True
+            # Объединяем через оператор И (&)
+            garant_query = " & ".join([garant_query] + filter_parts)
+        elif not use_query_language and query.strip():
             # Обертываем обычный текст в MorphoText для поиска по словам
             # Используем формат с пробелом как в документации: MorphoText (текст)
             garant_query = f"MorphoText ({query.strip()})"
             use_query_language = True
         
-        request_body = {
-            "text": garant_query,
-            "isQuery": use_query_language,
-            "env": "internet",
-            "sort": filters.get("sort", 0) if filters else 0,  # 0 - по релевантности, 1 - по дате
-            "sortOrder": filters.get("sort_order", 0) if filters else 0,  # 0 - по возрастанию, 1 - по убыванию
-            "page": 1,
-        }
+        # Согласно документации API v2.1.0, результаты приходят постранично
+        # Нужно делать несколько запросов если max_results больше чем на одной странице
+        # Обычно на странице 10-20 результатов, будем запрашивать по 20 на страницу
+        results_per_page = 20
+        all_results = []
+        page = 1
+        max_pages = (max_results + results_per_page - 1) // results_per_page  # Округление вверх
         
-        logger.info(f"Garant API request: text='{garant_query}', isQuery={use_query_language}, URL={self.api_url}/search")
+        logger.info(f"Garant API: requesting up to {max_results} results, {max_pages} pages")
         
         try:
             async with aiohttp.ClientSession() as session:
-                async with session.post(
-                    f"{self.api_url}/search",
-                    json=request_body,
-                    headers=headers,
-                    timeout=aiohttp.ClientTimeout(total=30)
-                ) as response:
-                    response_status = response.status
-                    response_text = await response.text()
+                while page <= max_pages and len(all_results) < max_results:
+                    request_body = {
+                        "text": garant_query,
+                        "isQuery": use_query_language,
+                        "env": "internet",
+                        "sort": filters.get("sort", 0) if filters else 0,  # 0 - по релевантности, 1 - по дате
+                        "sortOrder": filters.get("sort_order", 0) if filters else 0,  # 0 - по возрастанию, 1 - по убыванию
+                        "page": page,
+                    }
                     
-                    logger.info(f"Garant API response: status={response_status}, response_length={len(response_text)}")
+                    logger.info(f"Garant API request page {page}: text='{garant_query}', isQuery={use_query_language}, URL={self.api_url}/search")
                     
-                    if response_status == 401:
-                        logger.error(f"Garant API: Unauthorized - check API key. Response: {response_text[:200]}")
-                        return []
-                    elif response_status == 403:
-                        logger.error(f"Garant API: Forbidden - check permissions. Response: {response_text[:200]}")
-                        return []
-                    elif response_status != 200:
-                        logger.error(f"Garant API error: status={response_status}, response={response_text[:500]}")
-                        return []
-                    
-                    try:
-                        import json as json_module
-                        data = json_module.loads(response_text)
-                        logger.info(f"Garant API response: status={response_status}, keys={list(data.keys()) if isinstance(data, dict) else 'not_dict'}")
+                    async with session.post(
+                        f"{self.api_url}/search",
+                        json=request_body,
+                        headers=headers,
+                        timeout=aiohttp.ClientTimeout(total=30)
+                    ) as response:
+                        response_status = response.status
+                        response_text = await response.text()
                         
-                        # Детальное логирование ответа для отладки
-                        if isinstance(data, dict):
-                            total = data.get("total", 0)
-                            items_count = len(data.get("items", []))
-                            logger.info(f"Garant API response details: total={total}, items_count={items_count}")
-                            
-                            # Логируем структуру ответа для отладки
+                        logger.info(f"Garant API response page {page}: status={response_status}, response_length={len(response_text)}")
+                        
+                        if response_status == 401:
+                            logger.error(f"Garant API: Unauthorized - check API key. Response: {response_text[:200]}")
+                            break
+                        elif response_status == 403:
+                            logger.error(f"Garant API: Forbidden - check permissions. Response: {response_text[:200]}")
+                            break
+                        elif response_status != 200:
+                            logger.error(f"Garant API error: status={response_status}, response={response_text[:500]}")
+                            break
+                        
+                        try:
                             import json as json_module
-                            response_preview = json_module.dumps(data, ensure_ascii=False, indent=2)[:1000]
-                            logger.info(f"Garant API response structure: {response_preview}")
+                            data = json_module.loads(response_text)
                             
-                            # Если есть ошибка в ответе, логируем её
-                            if "error" in data:
-                                logger.error(f"Garant API returned error: {data.get('error')}")
-                            if "message" in data:
-                                logger.warning(f"Garant API message: {data.get('message')}")
+                            # Парсим результаты со страницы
+                            page_results = self._parse_garant_response(data)
+                            all_results.extend(page_results)
                             
-                            # Если items пустой, но total > 0, это странно
-                            if total > 0 and items_count == 0:
-                                logger.warning(f"Garant API: total={total} but items array is empty - possible pagination issue")
-                            elif total == 0 and items_count == 0:
-                                logger.info(f"Garant API: No results found for query '{garant_query}' (this might be normal if query doesn't match any documents)")
-                        
-                        return self._parse_garant_response(data)
-                    except json.JSONDecodeError as e:
-                        logger.error(f"Garant API: Failed to parse JSON response. Status: {response.status}, Response: {response_text[:500]}, Error: {e}")
-                        return []
+                            # Проверяем, есть ли еще страницы
+                            total = data.get("totalDocs", 0) or data.get("total", 0)
+                            items_count = len(data.get("documents", []) or data.get("items", []))
+                            
+                            logger.info(f"Garant API page {page}: got {items_count} items, total={total}, collected={len(all_results)}")
+                            
+                            # Если на странице меньше результатов чем ожидалось, значит это последняя страница
+                            if items_count < results_per_page:
+                                break
+                            
+                            # Если уже собрали достаточно результатов
+                            if len(all_results) >= max_results:
+                                break
+                                
+                        except json.JSONDecodeError as e:
+                            logger.error(f"Garant API: Failed to parse JSON response. Status: {response.status}, Response: {response_text[:500]}, Error: {e}")
+                            break
+                    
+                    page += 1
+                
+                # Ограничиваем результаты до max_results
+                return all_results[:max_results]
                     
         except aiohttp.ClientError as e:
             logger.error(f"Garant API connection error: {e}")
@@ -280,7 +334,7 @@ class GarantSource(BaseSource):
             }
             
             request_body = {
-                "text": "MorphoText(тест)",
+                "text": "MorphoText (тест)",  # Согласно документации: пробел после команды
                 "isQuery": True,
                 "env": "internet",
                 "sort": 0,
