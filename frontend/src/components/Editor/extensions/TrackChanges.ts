@@ -34,7 +34,7 @@ export const TrackChanges = Extension.create<TrackChangesOptions>({
           init() {
             return DecorationSet.empty
           },
-          apply(tr: Transaction, set: DecorationSet) {
+          apply(tr: Transaction, _set: DecorationSet) {
             if (!extension.options.enabled) {
               return DecorationSet.empty
             }

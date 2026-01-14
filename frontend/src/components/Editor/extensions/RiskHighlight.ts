@@ -32,7 +32,7 @@ export const RiskHighlight = Extension.create<RiskHighlightOptions>({
           init() {
             return DecorationSet.empty
           },
-          apply(tr: Transaction, set: DecorationSet) {
+          apply(tr: Transaction, _set: DecorationSet) {
             const decorations: Decoration[] = []
             const risks = extension.options.risks || []
 

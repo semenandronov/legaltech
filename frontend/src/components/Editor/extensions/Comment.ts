@@ -1,7 +1,7 @@
 import { Extension } from '@tiptap/core'
 import { Plugin, PluginKey } from '@tiptap/pm/state'
 import { Decoration, DecorationSet } from '@tiptap/pm/view'
-import { Transaction, EditorState } from '@tiptap/pm/state'
+import { Transaction } from '@tiptap/pm/state'
 
 export interface CommentOptions {
   comments: Array<{
@@ -33,7 +33,7 @@ export const Comment = Extension.create<CommentOptions>({
           init() {
             return DecorationSet.empty
           },
-          apply(tr: Transaction, set: DecorationSet) {
+          apply(tr: Transaction, _set: DecorationSet) {
             const decorations: Decoration[] = []
             const comments = extension.options.comments || []
 
