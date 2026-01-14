@@ -625,6 +625,30 @@ def init_db():
     except Exception as e:
         logger.warning(f"Could not apply document_templates migration: {e}", exc_info=True)
     
+    # Check if documents table has case_id column, add if missing
+    try:
+        inspector = inspect(engine)
+        if "documents" in inspector.get_table_names():
+            columns = [col['name'] for col in inspector.get_columns("documents")]
+            if "case_id" not in columns:
+                logger.info("⚠️  documents table missing case_id column. Adding it...")
+                with engine.begin() as conn:
+                    conn.execute(text("""
+                        ALTER TABLE documents 
+                        ADD COLUMN IF NOT EXISTS case_id VARCHAR 
+                        REFERENCES cases(id) ON DELETE CASCADE
+                    """))
+                    # Create index if it doesn't exist
+                    conn.execute(text("""
+                        CREATE INDEX IF NOT EXISTS idx_documents_case_id 
+                        ON documents(case_id)
+                    """))
+                logger.info("✅ Added case_id column to documents table")
+            else:
+                logger.info("✅ documents table has case_id column")
+    except Exception as e:
+        logger.warning(f"Could not check/add case_id to documents table: {e}", exc_info=True)
+    
     # Setup LangGraph checkpointer tables
     try:
         from app.utils.checkpointer_setup import setup_checkpointer
