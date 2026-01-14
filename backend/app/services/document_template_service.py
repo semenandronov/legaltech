@@ -145,32 +145,70 @@ class DocumentTemplateService:
         Returns:
             Первый найденный шаблон из Гаранта или None
         """
+        # #region agent log
+        import json
+        with open('/Users/semyon_andronov04/Desktop/C ДВ/.cursor/debug.log', 'a', encoding='utf-8') as f:
+            f.write(json.dumps({"sessionId":"debug-session","runId":"run1","hypothesisId":"A","location":"document_template_service.py:148","message":"search_in_garant called","data":{"query":query,"max_results":max_results},"timestamp":int(__import__('time').time()*1000)}) + '\n')
+        # #endregion
+        
         garant_source = self._get_garant_source()
+        
+        # #region agent log
+        with open('/Users/semyon_andronov04/Desktop/C ДВ/.cursor/debug.log', 'a', encoding='utf-8') as f:
+            f.write(json.dumps({"sessionId":"debug-session","runId":"run1","hypothesisId":"A","location":"document_template_service.py:152","message":"GarantSource check","data":{"garant_source_available":garant_source is not None,"has_api_key":hasattr(garant_source,'api_key') and garant_source.api_key is not None if garant_source else False},"timestamp":int(__import__('time').time()*1000)}) + '\n')
+        # #endregion
+        
         if not garant_source:
             logger.warning("GarantSource not available")
             return None
         
         try:
-            # Ищем документы в Гаранте
+            # Ищем документы в Гаранте - убираем фильтр doc_type для более широкого поиска
+            # #region agent log
+            with open('/Users/semyon_andronov04/Desktop/C ДВ/.cursor/debug.log', 'a', encoding='utf-8') as f:
+                f.write(json.dumps({"sessionId":"debug-session","runId":"run1","hypothesisId":"B","location":"document_template_service.py:160","message":"Calling garant_source.search","data":{"query":query,"max_results":max_results},"timestamp":int(__import__('time').time()*1000)}) + '\n')
+            # #endregion
+            
             results = await garant_source.search(
                 query=query,
                 max_results=max_results,
-                filters={"doc_type": "law"}  # Ищем законы/документы
+                filters=None  # Убираем фильтр doc_type для более широкого поиска
             )
             
+            # #region agent log
+            with open('/Users/semyon_andronov04/Desktop/C ДВ/.cursor/debug.log', 'a', encoding='utf-8') as f:
+                f.write(json.dumps({"sessionId":"debug-session","runId":"run1","hypothesisId":"C","location":"document_template_service.py:167","message":"Garant search results","data":{"results_count":len(results) if results else 0,"first_result_title":results[0].title if results and len(results) > 0 else None,"first_result_metadata":results[0].metadata if results and len(results) > 0 else None},"timestamp":int(__import__('time').time()*1000)}) + '\n')
+            # #endregion
+            
             if not results:
+                logger.warning(f"No results from Garant for query: {query}")
                 return None
             
             # Берем первый результат и получаем полный текст
             first_result = results[0]
             doc_id = first_result.metadata.get("doc_id") or first_result.metadata.get("topic")
             
+            # #region agent log
+            with open('/Users/semyon_andronov04/Desktop/C ДВ/.cursor/debug.log', 'a', encoding='utf-8') as f:
+                f.write(json.dumps({"sessionId":"debug-session","runId":"run1","hypothesisId":"D","location":"document_template_service.py:175","message":"Extracted doc_id","data":{"doc_id":doc_id,"metadata_keys":list(first_result.metadata.keys()) if hasattr(first_result,'metadata') else []},"timestamp":int(__import__('time').time()*1000)}) + '\n')
+            # #endregion
+            
             if not doc_id:
                 logger.warning("No doc_id in Garant result")
                 return None
             
             # Получаем HTML шаблон
+            # #region agent log
+            with open('/Users/semyon_andronov04/Desktop/C ДВ/.cursor/debug.log', 'a', encoding='utf-8') as f:
+                f.write(json.dumps({"sessionId":"debug-session","runId":"run1","hypothesisId":"E","location":"document_template_service.py:182","message":"Calling get_document_full_text","data":{"doc_id":doc_id},"timestamp":int(__import__('time').time()*1000)}) + '\n')
+            # #endregion
+            
             html_content = await garant_source.get_document_full_text(doc_id, format="html")
+            
+            # #region agent log
+            with open('/Users/semyon_andronov04/Desktop/C ДВ/.cursor/debug.log', 'a', encoding='utf-8') as f:
+                f.write(json.dumps({"sessionId":"debug-session","runId":"run1","hypothesisId":"E","location":"document_template_service.py:186","message":"get_document_full_text result","data":{"html_content_length":len(html_content) if html_content else 0,"html_content_preview":html_content[:200] if html_content else None},"timestamp":int(__import__('time').time()*1000)}) + '\n')
+            # #endregion
             
             if not html_content:
                 logger.warning(f"Failed to get full text for document {doc_id}")
@@ -184,6 +222,10 @@ class DocumentTemplateService:
                 "url": first_result.url
             }
         except Exception as e:
+            # #region agent log
+            with open('/Users/semyon_andronov04/Desktop/C ДВ/.cursor/debug.log', 'a', encoding='utf-8') as f:
+                f.write(json.dumps({"sessionId":"debug-session","runId":"run1","hypothesisId":"F","location":"document_template_service.py:195","message":"Exception in search_in_garant","data":{"error":str(e),"error_type":type(e).__name__},"timestamp":int(__import__('time').time()*1000)}) + '\n')
+            # #endregion
             logger.error(f"Error searching in Garant: {e}", exc_info=True)
             return None
     

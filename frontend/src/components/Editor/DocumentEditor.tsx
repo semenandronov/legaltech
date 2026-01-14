@@ -11,6 +11,9 @@ import Typography from '@tiptap/extension-typography'
 import Highlight from '@tiptap/extension-highlight'
 import { EditorToolbar } from './EditorToolbar'
 import { SlashCommands } from './SlashCommands'
+import { TrackChanges } from './extensions/TrackChanges'
+import { Comment } from './extensions/Comment'
+import { RiskHighlight } from './extensions/RiskHighlight'
 import './Editor.css'
 
 interface DocumentEditorProps {
@@ -24,6 +27,15 @@ interface DocumentEditorProps {
 export interface DocumentEditorRef {
   insertText: (text: string) => void
   setContent: (content: string) => void
+  replaceSelectedText: (text: string) => void
+  getSelectedText: () => string
+  getSelectedRange: () => { from: number; to: number } | null
+  addComment: (from: number, to: number, text: string) => void
+  removeComment: (id: string) => void
+  getComments: () => Array<{ id: string; from: number; to: number; text: string; createdAt?: string }>
+  addRisk: (from: number, to: number, level: 'high' | 'medium' | 'low', description: string) => void
+  clearRisks: () => void
+  getRisks: () => Array<{ id: string; from: number; to: number; level: 'high' | 'medium' | 'low'; description: string }>
 }
 
 export const DocumentEditor = forwardRef<DocumentEditorRef, DocumentEditorProps>(({
@@ -63,6 +75,16 @@ export const DocumentEditor = forwardRef<DocumentEditorRef, DocumentEditorProps>
         multicolor: true,
       }),
       SlashCommands.configure({ caseId, onInsertText }),
+      TrackChanges.configure({
+        enabled: false,
+        pendingChanges: [],
+      }),
+      Comment.configure({
+        comments: [],
+      }),
+      RiskHighlight.configure({
+        risks: [],
+      }),
     ],
     content,
     editorProps: {
@@ -101,6 +123,81 @@ export const DocumentEditor = forwardRef<DocumentEditorRef, DocumentEditorProps>
         editor.commands.setContent(newContent, false)
         onChange(editor.getHTML())
       }
+    },
+    replaceSelectedText: (text: string) => {
+      if (editor) {
+        const { from, to } = editor.state.selection
+        if (from !== to) {
+          // Replace selected text
+          editor.chain()
+            .focus()
+            .deleteRange({ from, to })
+            .insertContent(text)
+            .run()
+        } else {
+          // If nothing selected, just insert
+          editor.chain().focus().insertContent(text).run()
+        }
+        onChange(editor.getHTML())
+      }
+    },
+    getSelectedText: () => {
+      if (editor) {
+        const { from, to } = editor.state.selection
+        return editor.state.doc.textBetween(from, to)
+      }
+      return ''
+    },
+    getSelectedRange: () => {
+      if (editor) {
+        const { from, to } = editor.state.selection
+        if (from !== to) {
+          return { from, to }
+        }
+      }
+      return null
+    },
+    addComment: (from: number, to: number, text: string) => {
+      if (editor) {
+        editor.chain().focus().addComment(from, to, text).run()
+        onChange(editor.getHTML())
+      }
+    },
+    removeComment: (id: string) => {
+      if (editor) {
+        editor.chain().focus().removeComment(id).run()
+        onChange(editor.getHTML())
+      }
+    },
+    getComments: () => {
+      if (editor) {
+        const commentExtension = editor.extensionManager.extensions.find(ext => ext.name === 'comment')
+        if (commentExtension && commentExtension.options.comments) {
+          return commentExtension.options.comments
+        }
+      }
+      return []
+    },
+    addRisk: (from: number, to: number, level: 'high' | 'medium' | 'low', description: string) => {
+      if (editor) {
+        editor.chain().focus().addRisk(from, to, level, description).run()
+        onChange(editor.getHTML())
+      }
+    },
+    clearRisks: () => {
+      if (editor) {
+        editor.chain().focus().clearRisks().run()
+        onChange(editor.getHTML())
+      }
+    },
+    getRisks: () => {
+      if (editor) {
+        const riskExtension = editor.extensionManager.extensions.find(ext => ext.name === 'riskHighlight')
+        if (riskExtension && riskExtension.options.risks) {
+          return riskExtension.options.risks
+        }
+      }
+      return []
     }
   }), [editor, onChange])
 

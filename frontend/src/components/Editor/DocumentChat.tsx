@@ -13,18 +13,21 @@ interface Message {
   role: "user" | "assistant"
   content: string
   citations?: Array<{ file: string; file_id: string }>
+  editedContent?: string
 }
 
 interface DocumentChatProps {
   documentId: string
   documentTitle?: string
   onDocumentClick?: (fileId: string) => void
+  onApplyEdit?: (editedContent: string) => void
 }
 
 export const DocumentChat: React.FC<DocumentChatProps> = ({
   documentId,
   documentTitle,
   onDocumentClick,
+  onApplyEdit,
 }) => {
   const [messages, setMessages] = useState<Message[]>([])
   const [inputValue, setInputValue] = useState("")
@@ -58,6 +61,7 @@ export const DocumentChat: React.FC<DocumentChatProps> = ({
         role: "assistant",
         content: response.answer,
         citations: response.citations,
+        editedContent: response.edited_content,
       }
 
       setMessages((prev) => [...prev, assistantMessage])
@@ -122,6 +126,19 @@ export const DocumentChat: React.FC<DocumentChatProps> = ({
               >
                 <CardContent className="p-3">
                   <div className="text-sm whitespace-pre-wrap">{message.content}</div>
+                  
+                  {message.editedContent && (
+                    <div className="mt-3 pt-3 border-t border-border/50">
+                      <Button
+                        onClick={() => onApplyEdit?.(message.editedContent!)}
+                        size="sm"
+                        className="w-full"
+                        variant="default"
+                      >
+                        Применить изменения к документу
+                      </Button>
+                    </div>
+                  )}
                   
                   {message.citations && message.citations.length > 0 && (
                     <div className="mt-2 pt-2 border-t border-border/50">

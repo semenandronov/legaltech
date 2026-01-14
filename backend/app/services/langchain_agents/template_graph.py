@@ -67,7 +67,14 @@ def create_template_graph(db: Session) -> StateGraph:
         }
     )
     
-    graph.add_edge("search_garant", "save_template")
+    graph.add_conditional_edges(
+        "search_garant",
+        check_garant_result,
+        {
+            "found": "save_template",
+            "not_found": END  # Если не найден в Гаранте, завершаем с ошибкой
+        }
+    )
     graph.add_edge("save_template", "adapt_template")
     graph.add_edge("adapt_template", "create_document")
     graph.add_edge("create_document", END)
@@ -79,6 +86,16 @@ def check_template_found(state: TemplateState) -> str:
     """Проверка: найден ли шаблон в кэше"""
     if state.get("cached_template"):
         return "found"
+    return "not_found"
+
+
+def check_garant_result(state: TemplateState) -> str:
+    """Проверка: найден ли шаблон в Гаранте"""
+    if state.get("garant_template"):
+        return "found"
+    # Если не найден, добавляем ошибку и завершаем
+    if "Шаблон не найден в Гаранте" not in state.get("errors", []):
+        state["errors"].append("Шаблон не найден в Гаранте")
     return "not_found"
 
 
@@ -103,11 +120,28 @@ async def search_cache_node(state: TemplateState, db: Session) -> TemplateState:
 
 async def search_garant_node(state: TemplateState, db: Session) -> TemplateState:
     """Узел: поиск шаблона в Гаранте"""
+    # #region agent log
+    import json
+    with open('/Users/semyon_andronov04/Desktop/C ДВ/.cursor/debug.log', 'a', encoding='utf-8') as f:
+        f.write(json.dumps({"sessionId":"debug-session","runId":"run1","hypothesisId":"C","location":"template_graph.py:104","message":"search_garant_node called","data":{"user_query":state.get("user_query")},"timestamp":int(__import__('time').time()*1000)}) + '\n')
+    # #endregion
+    
     template_service = DocumentTemplateService(db)
     
+    # Передаем запрос пользователя как есть - поиск теперь работает по смыслу
+    # Гарант сам найдет релевантные документы по смыслу запроса
+    user_query = state["user_query"]
+    
+    logger.info(f"Searching in Garant with natural language query: '{user_query}'")
+    
     garant_result = await template_service.search_in_garant(
-        query=state["user_query"]
+        query=user_query
     )
+    
+    # #region agent log
+    with open('/Users/semyon_andronov04/Desktop/C ДВ/.cursor/debug.log', 'a', encoding='utf-8') as f:
+        f.write(json.dumps({"sessionId":"debug-session","runId":"run1","hypothesisId":"C","location":"template_graph.py:112","message":"search_garant_node result","data":{"garant_result_found":garant_result is not None,"garant_result_title":garant_result.get("title") if garant_result else None},"timestamp":int(__import__('time').time()*1000)}) + '\n')
+    # #endregion
     
     if garant_result:
         state["garant_template"] = garant_result
@@ -146,10 +180,20 @@ async def save_template_node(state: TemplateState, db: Session) -> TemplateState
 
 async def adapt_template_node(state: TemplateState, db: Session) -> TemplateState:
     """Узел: адаптация шаблона под запрос пользователя с помощью ИИ"""
+    # #region agent log
+    import json
+    with open('/Users/semyon_andronov04/Desktop/C ДВ/.cursor/debug.log', 'a', encoding='utf-8') as f:
+        f.write(json.dumps({"sessionId":"debug-session","runId":"run1","hypothesisId":"F","location":"template_graph.py:121","message":"adapt_template_node called","data":{"has_cached_template":state.get("cached_template") is not None,"has_garant_template":state.get("garant_template") is not None},"timestamp":int(__import__('time').time()*1000)}) + '\n')
+    # #endregion
+    
     # Определяем какой шаблон использовать
     template_data = state.get("cached_template") or state.get("garant_template")
     
     if not template_data:
+        # #region agent log
+        with open('/Users/semyon_andronov04/Desktop/C ДВ/.cursor/debug.log', 'a', encoding='utf-8') as f:
+            f.write(json.dumps({"sessionId":"debug-session","runId":"run1","hypothesisId":"F","location":"template_graph.py:128","message":"No template data found","data":{"cached_template":state.get("cached_template"),"garant_template":state.get("garant_template")},"timestamp":int(__import__('time').time()*1000)}) + '\n')
+        # #endregion
         state["errors"].append("Нет шаблона для адаптации")
         return state
     
@@ -204,7 +248,17 @@ async def adapt_template_node(state: TemplateState, db: Session) -> TemplateStat
 
 async def create_document_node(state: TemplateState, db: Session) -> TemplateState:
     """Узел: создание или обновление документа из адаптированного шаблона"""
+    # #region agent log
+    import json
+    with open('/Users/semyon_andronov04/Desktop/C ДВ/.cursor/debug.log', 'a', encoding='utf-8') as f:
+        f.write(json.dumps({"sessionId":"debug-session","runId":"run1","hypothesisId":"F","location":"template_graph.py:179","message":"create_document_node called","data":{"has_adapted_content":state.get("adapted_content") is not None,"adapted_content_length":len(state.get("adapted_content","")) if state.get("adapted_content") else 0},"timestamp":int(__import__('time').time()*1000)}) + '\n')
+    # #endregion
+    
     if not state.get("adapted_content"):
+        # #region agent log
+        with open('/Users/semyon_andronov04/Desktop/C ДВ/.cursor/debug.log', 'a', encoding='utf-8') as f:
+            f.write(json.dumps({"sessionId":"debug-session","runId":"run1","hypothesisId":"F","location":"template_graph.py:184","message":"No adapted_content","data":{"state_keys":list(state.keys()),"adapted_content":state.get("adapted_content"),"final_template":state.get("final_template")},"timestamp":int(__import__('time').time()*1000)}) + '\n')
+        # #endregion
         state["errors"].append("Нет содержимого для создания документа")
         return state
     

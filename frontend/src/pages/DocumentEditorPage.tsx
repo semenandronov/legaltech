@@ -1,11 +1,15 @@
 import { useState, useEffect, useRef } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
-import { Save, Download, Sparkles, ArrowLeft, MessageSquare, FileText, Table, FileEdit } from 'lucide-react'
+import { Save, Download, Sparkles, ArrowLeft, MessageSquare, FileText, Table, FileEdit, History, Upload } from 'lucide-react'
 import { toast } from 'sonner'
 import UnifiedSidebar from '../components/Layout/UnifiedSidebar'
 import { DocumentEditor, DocumentEditorRef } from '../components/Editor/DocumentEditor'
 import { AIAssistantSidebar } from '../components/Editor/AIAssistantSidebar'
 import { DocumentChat } from '../components/Editor/DocumentChat'
+import { VersionHistory } from '../components/Editor/VersionHistory'
+import { CommentsPanel } from '../components/Editor/CommentsPanel'
+import { TemplateSelector } from '../components/Editor/TemplateSelector'
+import { DocxImporter } from '../components/Editor/DocxImporter'
 import { getDocument, createDocument, updateDocument, exportDocx, exportPdf } from '../services/documentEditorApi'
 
 interface DocumentData {
@@ -24,6 +28,11 @@ const DocumentEditorPage = () => {
   const [selectedText, setSelectedText] = useState('')
   const [showAISidebar, setShowAISidebar] = useState(false)
   const [isChatOpen, setIsChatOpen] = useState(false)
+  const [showVersionHistory, setShowVersionHistory] = useState(false)
+  const [showComments, setShowComments] = useState(false)
+  const [showTemplateSelector, setShowTemplateSelector] = useState(false)
+  const [showDocxImporter, setShowDocxImporter] = useState(false)
+  const [comments, setComments] = useState<Array<{ id: string; from: number; to: number; text: string; createdAt?: string }>>([])
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false)
@@ -154,6 +163,68 @@ const DocumentEditorPage = () => {
     }
   }
 
+  const handleApplyEdit = (editedContent: string) => {
+    // Apply edited content from AI to the document
+    if (editorRef.current) {
+      editorRef.current.setContent(editedContent)
+      setHasUnsavedChanges(true)
+      toast.success('Изменения применены к документу')
+    }
+  }
+
+  const handleReplaceText = (text: string) => {
+    // Replace selected text with new text
+    if (editorRef.current) {
+      editorRef.current.replaceSelectedText(text)
+      setHasUnsavedChanges(true)
+    }
+  }
+
+  const handleVersionRestored = (restoredContent: string) => {
+    setContent(restoredContent)
+    setHasUnsavedChanges(true)
+    // Reload document to get updated version
+    if (documentId) {
+      getDocument(documentId).then((doc) => {
+        setDocument(doc)
+        setTitle(doc.title)
+      })
+    }
+  }
+
+  const handleDocxImport = (html: string) => {
+    if (editorRef.current) {
+      editorRef.current.setContent(html)
+      setHasUnsavedChanges(true)
+    }
+  }
+
+  const handleAddComment = (from: number, to: number, text: string) => {
+    if (editorRef.current) {
+      editorRef.current.addComment(from, to, text)
+      // Reload comments
+      const updatedComments = editorRef.current.getComments()
+      setComments(updatedComments)
+    }
+  }
+
+  const handleRemoveComment = (id: string) => {
+    if (editorRef.current) {
+      editorRef.current.removeComment(id)
+      // Reload comments
+      const updatedComments = editorRef.current.getComments()
+      setComments(updatedComments)
+    }
+  }
+
+  // Load comments when editor is ready
+  useEffect(() => {
+    if (editorRef.current) {
+      const loadedComments = editorRef.current.getComments()
+      setComments(loadedComments)
+    }
+  }, [content, editorRef.current])
+
   const navItems = caseId ? [
     { id: 'chat', label: 'Ассистент', icon: MessageSquare, path: `/cases/${caseId}/chat` },
     { id: 'documents', label: 'Документы', icon: FileText, path: `/cases/${caseId}/documents` },
@@ -182,14 +253,29 @@ const DocumentEditorPage = () => {
       {/* Toolbar */}
       <div className="flex items-center justify-between px-6 py-4 border-b" style={{ borderBottomColor: 'var(--color-border)' }}>
         <div className="flex items-center gap-4">
-          <button
-            onClick={() => navigate(`/cases/${caseId}/documents`)}
-            className="flex items-center gap-2 px-3 py-1.5 text-sm font-medium rounded-lg transition-all duration-150 hover:bg-gray-100"
-            style={{ color: 'var(--color-text-secondary)' }}
-          >
-            <ArrowLeft className="w-4 h-4" />
-            Назад
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => navigate(`/cases/${caseId}/documents`)}
+              className="flex items-center gap-2 px-3 py-1.5 text-sm font-medium rounded-lg transition-all duration-150 hover:bg-gray-100"
+              style={{ color: 'var(--color-text-secondary)' }}
+            >
+              <ArrowLeft className="w-4 h-4" />
+              Назад
+            </button>
+            {!documentId && (
+              <button
+                onClick={() => setShowTemplateSelector(true)}
+                className="flex items-center gap-2 px-3 py-1.5 text-sm font-medium rounded-lg transition-all duration-150 hover:bg-gray-100 border"
+                style={{ 
+                  color: 'var(--color-text-primary)',
+                  borderColor: 'var(--color-border)'
+                }}
+              >
+                <FileText className="w-4 h-4" />
+                Создать из шаблона
+              </button>
+            )}
+          </div>
           <div className="h-6 w-px bg-gray-300"></div>
           <input
             type="text"
@@ -222,7 +308,17 @@ const DocumentEditorPage = () => {
             <Save className="w-4 h-4" />
             Сохранить
           </button>
-          <div className="relative">
+          <div className="relative flex gap-2">
+            <button
+              onClick={() => setShowDocxImporter(true)}
+              disabled={saving}
+              className="flex items-center gap-2 px-4 py-2 border rounded-lg hover:bg-gray-50 disabled:opacity-50 transition-colors"
+              style={{ borderColor: 'var(--color-border)' }}
+              title="Импорт DOCX"
+            >
+              <Upload className="w-4 h-4" />
+              Импорт
+            </button>
             <button
               onClick={handleExportDocx}
               disabled={!documentId || saving}
@@ -258,6 +354,17 @@ const DocumentEditorPage = () => {
               Чат
             </button>
           )}
+          {documentId && (
+            <button
+              onClick={() => setShowVersionHistory(true)}
+              className="flex items-center gap-2 px-4 py-2 border rounded-lg hover:bg-gray-50 transition-colors"
+              style={{ borderColor: 'var(--color-border)' }}
+              title="История версий"
+            >
+              <History className="w-4 h-4" />
+              Версии
+            </button>
+          )}
           <button
             onClick={() => setShowAISidebar(!showAISidebar)}
             className={`flex items-center gap-2 px-4 py-2 rounded-lg transition-colors ${
@@ -282,6 +389,7 @@ const DocumentEditorPage = () => {
             <DocumentChat
               documentId={documentId}
               documentTitle={title}
+              onApplyEdit={handleApplyEdit}
             />
           </div>
         )}
@@ -307,11 +415,52 @@ const DocumentEditorPage = () => {
               documentId={documentId}
               selectedText={selectedText}
               onInsertText={handleInsertText}
+              onReplaceText={handleReplaceText}
             />
           )}
         </div>
       </div>
       </div>
+
+      {/* Version History Dialog */}
+      {documentId && (
+        <VersionHistory
+          documentId={documentId}
+          currentVersion={document?.version || 1}
+          onVersionRestored={handleVersionRestored}
+          isOpen={showVersionHistory}
+          onClose={() => setShowVersionHistory(false)}
+        />
+      )}
+
+      {/* Comments Panel */}
+      <div className="fixed bottom-4 right-4 z-50">
+        <CommentsPanel
+          comments={comments}
+          onAddComment={handleAddComment}
+          onRemoveComment={handleRemoveComment}
+          showPanel={showComments}
+          onTogglePanel={() => setShowComments(!showComments)}
+          selectedText={selectedText}
+          selectedRange={editorRef.current?.getSelectedRange() || undefined}
+        />
+      </div>
+
+      {/* Template Selector */}
+      {caseId && (
+        <TemplateSelector
+          caseId={caseId}
+          isOpen={showTemplateSelector}
+          onClose={() => setShowTemplateSelector(false)}
+        />
+      )}
+
+      {/* DOCX Importer */}
+      <DocxImporter
+        isOpen={showDocxImporter}
+        onClose={() => setShowDocxImporter(false)}
+        onImport={handleDocxImport}
+      />
     </div>
   )
 }

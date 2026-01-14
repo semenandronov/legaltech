@@ -8,12 +8,14 @@ interface AIAssistantSidebarProps {
   documentId?: string
   selectedText: string
   onInsertText: (text: string) => void
+  onReplaceText?: (text: string) => void
 }
 
 export const AIAssistantSidebar = ({
   documentId,
   selectedText,
-  onInsertText
+  onInsertText,
+  onReplaceText
 }: AIAssistantSidebarProps) => {
   const [prompt, setPrompt] = useState('')
   const [loading, setLoading] = useState(false)
@@ -32,9 +34,14 @@ export const AIAssistantSidebar = ({
       const result = await aiAssist(documentId, command, selectedText, customPrompt || prompt)
       
       if (result.result) {
-        // Insert text at cursor position
-        onInsertText(result.result)
-        toast.success('Текст добавлен в документ')
+        // If text is selected, replace it; otherwise insert
+        if (selectedText && onReplaceText) {
+          onReplaceText(result.result)
+          toast.success('Текст заменен')
+        } else {
+          onInsertText(result.result)
+          toast.success('Текст добавлен в документ')
+        }
       } else {
         toast.error('Не удалось получить результат от AI')
       }

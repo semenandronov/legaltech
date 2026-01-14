@@ -27,6 +27,15 @@ export interface DocumentChatResponse {
   edited_content?: string
 }
 
+export interface DocumentVersion {
+  id: string
+  document_id: string
+  content: string
+  version: number
+  created_at: string
+  created_by?: string
+}
+
 /**
  * Create a new document
  */
@@ -202,6 +211,54 @@ export async function chatOverDocument(
       {
         question,
       }
+    )
+    return response.data
+  } catch (error) {
+    throw new Error(extractErrorMessage(error))
+  }
+}
+
+/**
+ * List versions for a document
+ */
+export async function listDocumentVersions(documentId: string): Promise<DocumentVersion[]> {
+  try {
+    const response = await apiClient.get<DocumentVersion[]>(
+      `${BASE_URL}/api/documents-editor/${documentId}/versions`
+    )
+    return response.data
+  } catch (error) {
+    throw new Error(extractErrorMessage(error))
+  }
+}
+
+/**
+ * Get a specific version of a document
+ */
+export async function getDocumentVersion(
+  documentId: string,
+  version: number
+): Promise<DocumentVersion> {
+  try {
+    const response = await apiClient.get<DocumentVersion>(
+      `${BASE_URL}/api/documents-editor/${documentId}/versions/${version}`
+    )
+    return response.data
+  } catch (error) {
+    throw new Error(extractErrorMessage(error))
+  }
+}
+
+/**
+ * Restore a document to a specific version
+ */
+export async function restoreDocumentVersion(
+  documentId: string,
+  version: number
+): Promise<Document> {
+  try {
+    const response = await apiClient.post<Document>(
+      `${BASE_URL}/api/documents-editor/${documentId}/restore/${version}`
     )
     return response.data
   } catch (error) {
