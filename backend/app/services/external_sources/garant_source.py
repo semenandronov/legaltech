@@ -123,22 +123,31 @@ class GarantSource(BaseSource):
         garant_query = query
         
         # Если есть фильтры, добавляем их через язык запросов ГАРАНТ
+        # Согласно документации API v2.1.0, используем команды и операторы
         filter_parts = []
+        text_parts = []
+        
         if filters:
             # Фильтр по типу документа
             if filters.get("doc_type"):
                 doc_type = filters["doc_type"]
-                # Маппинг наших типов на типы ГАРАНТ (если нужен)
-                type_mapping = {
-                    "law": "Акт",
-                    "court_decision": "Решение",
-                    "article": "Статья",
-                    "commentary": "Комментарий"
-                }
-                garant_type = type_mapping.get(doc_type, doc_type)
-                filter_parts.append(f"Type({garant_type})")
+                # Маппинг наших типов на типы ГАРАНТ согласно документации
+                if doc_type == "court_decision":
+                    # Для судебных решений используем несколько типов через ИЛИ для максимального охвата
+                    # Согласно документации: Type(Решение) | Type(Постановление) | Type(Определение)
+                    filter_parts.append("BOOL(Type(Решение) | Type(Постановление) | Type(Определение) | Type(Приговор))")
+                    logger.info("Applied court decision filter: multiple types with OR operator")
+                else:
+                    type_mapping = {
+                        "law": "Акт",
+                        "article": "Статья",
+                        "commentary": "Комментарий"
+                    }
+                    garant_type = type_mapping.get(doc_type, doc_type)
+                    filter_parts.append(f"Type({garant_type})")
+                    logger.info(f"Applied doc_type filter: Type({garant_type})")
             
-            # Фильтр по дате
+            # Фильтр по дате документа (Date)
             if filters.get("date_from") or filters.get("date_to"):
                 date_from = filters.get("date_from", "")
                 date_to = filters.get("date_to", "")
@@ -158,19 +167,65 @@ class GarantSource(BaseSource):
                     except:
                         pass
                 filter_parts.append(f"Date({date_from};{date_to})")
+                logger.info(f"Applied date filter: Date({date_from};{date_to})")
+            
+            # Фильтр по дате регистрации в Минюсте (RDate)
+            if filters.get("rdate_from") or filters.get("rdate_to"):
+                rdate_from = filters.get("rdate_from", "")
+                rdate_to = filters.get("rdate_to", "")
+                if rdate_from:
+                    try:
+                        from datetime import datetime
+                        d = datetime.strptime(rdate_from, "%Y-%m-%d")
+                        rdate_from = d.strftime("%d.%m.%Y")
+                    except:
+                        pass
+                if rdate_to:
+                    try:
+                        from datetime import datetime
+                        d = datetime.strptime(rdate_to, "%Y-%m-%d")
+                        rdate_to = d.strftime("%d.%m.%Y")
+                    except:
+                        pass
+                filter_parts.append(f"RDate({rdate_from};{rdate_to})")
+            
+            # Фильтр по органу, принявшему документ (Adopted)
+            if filters.get("adopted_by"):
+                adopted_by = filters.get("adopted_by")
+                filter_parts.append(f"Adopted({adopted_by})")
+            
+            # Фильтр по номеру документа (Number)
+            if filters.get("doc_number"):
+                doc_number = filters.get("doc_number")
+                filter_parts.append(f"Number({doc_number})")
         
-        # Если есть фильтры, объединяем их с основным запросом
-        if filter_parts:
-            if not use_query_language and query.strip():
-                garant_query = f"MorphoText ({query.strip()})"
-                use_query_language = True
-            # Объединяем через оператор И (&)
-            garant_query = " & ".join([garant_query] + filter_parts)
-        elif not use_query_language and query.strip():
-            # Обертываем обычный текст в MorphoText для поиска по словам
-            # Используем формат с пробелом как в документации: MorphoText (текст)
-            garant_query = f"MorphoText ({query.strip()})"
+        # Формируем основной текстовый запрос
+        # Если запрос уже использует язык ГАРАНТ, используем его как есть
+        if use_query_language:
+            text_parts.append(query.strip())
+        elif query.strip():
+            # Для обычных текстовых запросов используем MorphoText для поиска по словам
+            # Согласно документации: MorphoText (текст) - пробел после команды
+            text_parts.append(f"MorphoText ({query.strip()})")
             use_query_language = True
+        
+        # Объединяем все части запроса
+        # Если есть фильтры, объединяем через оператор И (&)
+        if filter_parts and text_parts:
+            garant_query = " & ".join(text_parts + filter_parts)
+        elif filter_parts:
+            # Только фильтры без текста
+            garant_query = " & ".join(filter_parts)
+            use_query_language = True
+        elif text_parts:
+            # Только текст
+            garant_query = text_parts[0]
+        else:
+            # Fallback
+            garant_query = query.strip()
+            use_query_language = False
+        
+        logger.info(f"Final Garant query: '{garant_query}', isQuery={use_query_language}")
         
         # Согласно документации API v2.1.0, результаты приходят постранично
         # Нужно делать несколько запросов если max_results больше чем на одной странице
@@ -274,13 +329,23 @@ class GarantSource(BaseSource):
         
         logger.info(f"Garant API returned {len(items)} items (total: {total})")
         
+        # Логируем первые несколько результатов для отладки
+        if items:
+            logger.info(f"First result sample: title='{items[0].get('title', 'N/A')[:100]}', type='{items[0].get('type', 'N/A')}', doc_id='{items[0].get('topic', 'N/A')}'")
+        
         for item in items:
             try:
                 # Parse API v2.1.0 response structure
-                # В API v2 поле с ID документа называется "topic"
+                # В API v2 поле с ID документа называется "topic" согласно документации
                 doc_id = item.get("topic") or item.get("id") or item.get("docId") or item.get("documentId")
                 title = item.get("title") or item.get("name") or "Без названия"
+                
+                # Получаем содержимое - приоритет: snippet, text, preview
                 snippet = item.get("snippet") or item.get("text") or item.get("preview") or ""
+                
+                # Если snippet короткий, пытаемся получить больше текста
+                if len(snippet) < 100 and item.get("text"):
+                    snippet = item.get("text")
                 
                 # URL документа
                 url = item.get("url")
@@ -288,27 +353,40 @@ class GarantSource(BaseSource):
                     # Если URL относительный, добавляем базовый домен
                     url = f"https://internet.garant.ru{url}"
                 elif not url and doc_id:
-                    # Формируем URL если его нет
+                    # Формируем URL если его нет - согласно документации формат: /#/document/{topic}
                     url = f"https://internet.garant.ru/#/document/{doc_id}"
                 
-                # Метаданные
+                # Метаданные - извлекаем все доступные поля
                 metadata = {
                     "doc_id": doc_id,
                     "doc_number": item.get("number"),
                     "doc_date": item.get("date"),
                     "doc_type": item.get("type"),
                     "issuing_authority": item.get("authority") or item.get("adoptedBy"),
+                    "sort_date": item.get("sortDate"),  # Дата добавления в систему
+                    "changed_date": item.get("changedDate"),  # Дата изменения
                 }
                 
-                # Релевантность (если есть)
+                # Релевантность - нормализуем в диапазон 0-1
                 relevance = item.get("relevance") or item.get("score") or 0.5
+                if isinstance(relevance, (int, float)):
+                    # Если релевантность в другом формате, нормализуем
+                    if relevance > 1.0:
+                        relevance = min(relevance / 100.0, 1.0)
+                    relevance = max(0.0, min(1.0, float(relevance)))
+                else:
+                    relevance = 0.5
+                
+                # Если snippet пустой, используем title как content
+                if not snippet and title:
+                    snippet = title
                 
                 result = SourceResult(
                     content=snippet,
                     title=title,
                     source_name="garant",
                     url=url,
-                    relevance_score=float(relevance) if isinstance(relevance, (int, float)) else 0.5,
+                    relevance_score=relevance,
                     metadata=metadata
                 )
                 results.append(result)
