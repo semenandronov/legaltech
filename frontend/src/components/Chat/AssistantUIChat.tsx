@@ -321,8 +321,7 @@ export const AssistantUIChat = forwardRef<{ clearMessages: () => void; loadHisto
   const [messages, setMessages] = useState<Message[]>([])
   const [isLoading, setIsLoading] = useState(false)
   const [isLoadingHistory, setIsLoadingHistory] = useState(true)
-  // Веб-поиск отключен - оставляем состояние для совместимости, но не используем
-  const [webSearch] = useState(false)
+  // Веб-поиск отключен - всегда передаем false в SettingsPanel
   const [legalResearch, setLegalResearch] = useState(false)
   const [deepThink, setDeepThink] = useState(false)
   const abortControllerRef = useRef<AbortController | null>(null)
