@@ -1,11 +1,10 @@
 import { useState, useEffect, useRef } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
-import { Save, Download, Sparkles, ArrowLeft, MessageSquare, FileText, Table, FileEdit, History, Upload } from 'lucide-react'
+import { Save, Download, ArrowLeft, MessageSquare, FileText, Table, FileEdit, History, Upload } from 'lucide-react'
 import { toast } from 'sonner'
 import UnifiedSidebar from '../components/Layout/UnifiedSidebar'
 import { DocumentEditor, DocumentEditorRef } from '../components/Editor/DocumentEditor'
-import { AIAssistantSidebar } from '../components/Editor/AIAssistantSidebar'
-import { DocumentChat } from '../components/Editor/DocumentChat'
+import { DocumentEditorChat } from '../components/Editor/DocumentEditorChat'
 import { VersionHistory } from '../components/Editor/VersionHistory'
 import { CommentsPanel } from '../components/Editor/CommentsPanel'
 import { TemplateSelector } from '../components/Editor/TemplateSelector'
@@ -27,8 +26,7 @@ const DocumentEditorPage = () => {
   const [content, setContent] = useState('')
   const [title, setTitle] = useState('Новый документ')
   const [selectedText, setSelectedText] = useState('')
-  const [showAISidebar, setShowAISidebar] = useState(false)
-  const [isChatOpen, setIsChatOpen] = useState(false)
+  const [showChat, setShowChat] = useState(false)
   const [showVersionHistory, setShowVersionHistory] = useState(false)
   const [showComments, setShowComments] = useState(false)
   const [showTemplateSelector, setShowTemplateSelector] = useState(false)
@@ -342,17 +340,17 @@ const DocumentEditorPage = () => {
           {/* Кнопка чата - показывается только если есть documentId */}
           {documentId && (
             <button
-              onClick={() => setIsChatOpen(!isChatOpen)}
+              onClick={() => setShowChat(!showChat)}
               className={`flex items-center gap-2 px-4 py-2 rounded-lg transition-colors ${
-                isChatOpen
+                showChat
                   ? 'bg-blue-100 text-blue-700'
                   : 'border hover:bg-gray-50'
               }`}
-              style={{ borderColor: isChatOpen ? 'transparent' : 'var(--color-border)' }}
+              style={{ borderColor: showChat ? 'transparent' : 'var(--color-border)' }}
               title="Чат с ИИ"
             >
               <MessageSquare className="w-4 h-4" />
-              Чат
+              Чат с ИИ
             </button>
           )}
           {documentId && (
@@ -366,60 +364,36 @@ const DocumentEditorPage = () => {
               Версии
             </button>
           )}
-          <button
-            onClick={() => setShowAISidebar(!showAISidebar)}
-            className={`flex items-center gap-2 px-4 py-2 rounded-lg transition-colors ${
-              showAISidebar
-                ? 'bg-blue-100 text-blue-700'
-                : 'border hover:bg-gray-50'
-            }`}
-            style={{ borderColor: showAISidebar ? 'transparent' : 'var(--color-border)' }}
-            title="Быстрые действия ИИ"
-          >
-            <Sparkles className="w-4 h-4" />
-            AI
-          </button>
         </div>
       </div>
 
       {/* Main content area */}
       <div className="flex-1 overflow-hidden flex">
-        {/* Chat panel (Left) - показывается когда isChatOpen === true и есть documentId */}
-        {isChatOpen && documentId && (
-          <div className="w-80 border-r border-border shrink-0 bg-bg-elevated flex flex-col">
-            <DocumentChat
+        {/* Editor */}
+        <div className={`flex-1 flex flex-col transition-all duration-300 ${showChat ? 'mr-80' : ''}`}>
+          <DocumentEditor
+            ref={editorRef}
+            content={content}
+            onChange={handleContentChange}
+            onSelectionChange={setSelectedText}
+            caseId={caseId}
+            onInsertText={handleInsertText}
+          />
+        </div>
+
+        {/* Chat справа */}
+        {showChat && documentId && (
+          <div className="w-80 border-l border-border shrink-0 bg-bg-elevated flex flex-col">
+            <DocumentEditorChat
               documentId={documentId}
               documentTitle={title}
-              onApplyEdit={handleApplyEdit}
-            />
-          </div>
-        )}
-
-        {/* Editor and AI Sidebar */}
-        <div className="flex-1 overflow-hidden flex">
-          {/* Editor */}
-          <div className={`flex-1 flex flex-col transition-all duration-300 ${showAISidebar ? 'mr-80' : ''}`}>
-            <DocumentEditor
-              ref={editorRef}
-              content={content}
-              onChange={handleContentChange}
-              onSelectionChange={setSelectedText}
-              caseId={caseId}
-              onInsertText={handleInsertText}
-            />
-          </div>
-
-          {/* AI Sidebar (Quick Actions) */}
-          {showAISidebar && (
-            <AIAssistantSidebar
-              caseId={caseId}
-              documentId={documentId}
               selectedText={selectedText}
+              onApplyEdit={handleApplyEdit}
               onInsertText={handleInsertText}
               onReplaceText={handleReplaceText}
             />
-          )}
-        </div>
+          </div>
+        )}
       </div>
       </div>
 

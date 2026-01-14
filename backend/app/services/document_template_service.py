@@ -210,47 +210,63 @@ class DocumentTemplateService:
                 logger.warning(f"No results from Garant for query: {query}")
                 return None
             
-            # Берем первый результат и получаем полный текст
-            first_result = results[0]
-            doc_id = first_result.metadata.get("doc_id") or first_result.metadata.get("topic")
+            # Пробуем получить полный текст для каждого результата, пока не найдем валидный
+            # Ограничиваем попытки первыми 10 результатами для производительности
+            max_attempts = min(10, len(results))
+            html_content = None
+            result_to_use = None
+            doc_id_to_use = None
             
-            # #region agent log
-            import time
-            _safe_debug_log({"sessionId":"debug-session","runId":"run1","hypothesisId":"D","location":"document_template_service.py:175","message":"Extracted doc_id","data":{"doc_id":doc_id,"metadata_keys":list(first_result.metadata.keys()) if hasattr(first_result,'metadata') else []},"timestamp":int(time.time()*1000)})
-            # #endregion
+            for i, result in enumerate(results[:max_attempts]):
+                doc_id = result.metadata.get("doc_id") or result.metadata.get("topic")
+                
+                # #region agent log
+                import time
+                _safe_debug_log({"sessionId":"debug-session","runId":"run1","hypothesisId":"D","location":"document_template_service.py:213","message":"Trying result","data":{"index":i,"doc_id":doc_id,"title":result.title if hasattr(result,'title') else None},"timestamp":int(time.time()*1000)})
+                # #endregion
+                
+                if not doc_id:
+                    logger.warning(f"No doc_id in Garant result {i}")
+                    continue
+                
+                # Получаем HTML шаблон
+                # #region agent log
+                import time
+                _safe_debug_log({"sessionId":"debug-session","runId":"run1","hypothesisId":"E","location":"document_template_service.py:222","message":"Calling get_document_full_text","data":{"doc_id":doc_id,"attempt":i+1},"timestamp":int(time.time()*1000)})
+                # #endregion
+                
+                html_content = await garant_source.get_document_full_text(doc_id, format="html")
+                
+                # #region agent log
+                import time
+                _safe_debug_log({"sessionId":"debug-session","runId":"run1","hypothesisId":"E","location":"document_template_service.py:227","message":"get_document_full_text result","data":{"doc_id":doc_id,"html_content_length":len(html_content) if html_content else 0,"success":html_content is not None},"timestamp":int(time.time()*1000)})
+                # #endregion
+                
+                if html_content:
+                    # Успешно получили контент, используем этот результат
+                    logger.info(f"Successfully retrieved document {doc_id} (attempt {i+1})")
+                    result_to_use = result
+                    doc_id_to_use = doc_id
+                    break
+                else:
+                    logger.warning(f"Failed to get full text for document {doc_id} (attempt {i+1}), trying next...")
             
-            if not doc_id:
-                logger.warning("No doc_id in Garant result")
-                return None
-            
-            # Получаем HTML шаблон
-            # #region agent log
-            import time
-            _safe_debug_log({"sessionId":"debug-session","runId":"run1","hypothesisId":"E","location":"document_template_service.py:182","message":"Calling get_document_full_text","data":{"doc_id":doc_id},"timestamp":int(time.time()*1000)})
-            # #endregion
-            
-            html_content = await garant_source.get_document_full_text(doc_id, format="html")
-            
-            # #region agent log
-            import time
-            _safe_debug_log({"sessionId":"debug-session","runId":"run1","hypothesisId":"E","location":"document_template_service.py:186","message":"get_document_full_text result","data":{"html_content_length":len(html_content) if html_content else 0,"html_content_preview":html_content[:200] if html_content else None},"timestamp":int(time.time()*1000)})
-            # #endregion
-            
-            if not html_content:
-                logger.warning(f"Failed to get full text for document {doc_id}")
+            if not html_content or not result_to_use:
+                # Если все попытки не удались
+                logger.error(f"Failed to get full text for any of {max_attempts} results from Garant")
                 return None
             
             return {
-                "doc_id": doc_id,
-                "title": first_result.title,
+                "doc_id": doc_id_to_use,
+                "title": result_to_use.title if hasattr(result_to_use, 'title') else "Документ из Гаранта",
                 "content": html_content,
-                "metadata": first_result.metadata,
-                "url": first_result.url
+                "metadata": result_to_use.metadata if hasattr(result_to_use, 'metadata') else {},
+                "url": result_to_use.url if hasattr(result_to_use, 'url') else None
             }
         except Exception as e:
             # #region agent log
-            with open('/Users/semyon_andronov04/Desktop/C ДВ/.cursor/debug.log', 'a', encoding='utf-8') as f:
-                f.write(json.dumps({"sessionId":"debug-session","runId":"run1","hypothesisId":"F","location":"document_template_service.py:195","message":"Exception in search_in_garant","data":{"error":str(e),"error_type":type(e).__name__},"timestamp":int(__import__('time').time()*1000)}) + '\n')
+            import time
+            _safe_debug_log({"sessionId":"debug-session","runId":"run1","hypothesisId":"F","location":"document_template_service.py:266","message":"Exception in search_in_garant","data":{"error":str(e),"error_type":type(e).__name__},"timestamp":int(time.time()*1000)})
             # #endregion
             logger.error(f"Error searching in Garant: {e}", exc_info=True)
             return None
