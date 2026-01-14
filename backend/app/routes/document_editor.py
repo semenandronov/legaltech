@@ -103,7 +103,7 @@ async def create_document(
             title=document.title,
             content=document.content,
             content_plain=document.content_plain,
-            metadata=document.metadata,
+            metadata=document.document_metadata,
             version=document.version,
             created_at=document.created_at.isoformat() if document.created_at else datetime.utcnow().isoformat(),
             updated_at=document.updated_at.isoformat() if document.updated_at else datetime.utcnow().isoformat()
@@ -146,7 +146,7 @@ async def get_document(
             title=document.title,
             content=document.content,
             content_plain=document.content_plain,
-            metadata=document.metadata,
+            metadata=document.document_metadata,
             version=document.version,
             created_at=document.created_at.isoformat() if document.created_at else datetime.utcnow().isoformat(),
             updated_at=document.updated_at.isoformat() if document.updated_at else datetime.utcnow().isoformat()
@@ -193,7 +193,7 @@ async def update_document(
             title=document.title,
             content=document.content,
             content_plain=document.content_plain,
-            metadata=document.metadata,
+            metadata=document.document_metadata,
             version=document.version,
             created_at=document.created_at.isoformat() if document.created_at else datetime.utcnow().isoformat(),
             updated_at=document.updated_at.isoformat() if document.updated_at else datetime.utcnow().isoformat()
@@ -533,7 +533,7 @@ async def restore_version(
             title=document.title,
             content=document.content,
             content_plain=document.content_plain,
-            metadata=document.metadata,
+            metadata=document.document_metadata,
             version=document.version,
             created_at=document.created_at.isoformat() if document.created_at else datetime.utcnow().isoformat(),
             updated_at=document.updated_at.isoformat() if document.updated_at else datetime.utcnow().isoformat()

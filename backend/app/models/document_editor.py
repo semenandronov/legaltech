@@ -16,7 +16,7 @@ class Document(Base):
     title = Column(String(255), nullable=False)
     content = Column(Text, nullable=False)  # HTML content from TipTap editor
     content_plain = Column(Text, nullable=True)  # Plain text version for search
-    metadata = Column(JSON, nullable=True)  # Additional metadata (version, author, tags, etc.)
+    document_metadata = Column(JSON, nullable=True)  # Additional metadata (version, author, tags, etc.) - renamed from 'metadata' to avoid SQLAlchemy reserved name
     version = Column(Integer, default=1)  # Version number for versioning
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)

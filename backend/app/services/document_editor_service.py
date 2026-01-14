@@ -72,7 +72,7 @@ class DocumentEditorService:
             title=title,
             content=content or "",
             content_plain=content_plain,
-            metadata=metadata or {},
+            document_metadata=metadata or {},
             version=1
         )
         

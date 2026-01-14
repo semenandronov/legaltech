@@ -9,7 +9,7 @@ CREATE TABLE IF NOT EXISTS documents (
     title VARCHAR(255) NOT NULL,
     content TEXT NOT NULL,
     content_plain TEXT,
-    metadata JSONB,
+    document_metadata JSONB,
     version INTEGER DEFAULT 1,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -42,6 +42,6 @@ CREATE INDEX IF NOT EXISTS idx_document_versions_version ON document_versions(do
 COMMENT ON TABLE documents IS 'Editable documents created in the document editor';
 COMMENT ON COLUMN documents.content IS 'HTML content from TipTap editor';
 COMMENT ON COLUMN documents.content_plain IS 'Plain text version for search purposes';
-COMMENT ON COLUMN documents.metadata IS 'Additional metadata (tags, author, etc.)';
+COMMENT ON COLUMN documents.document_metadata IS 'Additional metadata (tags, author, etc.)';
 COMMENT ON TABLE document_versions IS 'Version history of documents for tracking changes';
 
