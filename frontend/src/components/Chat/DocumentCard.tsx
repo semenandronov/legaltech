@@ -3,7 +3,7 @@
 import React from "react"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/UI/Card"
 import { Button } from "@/components/UI/Button"
-import { FileText, ExternalLink, Edit } from "lucide-react"
+import { FileText, Edit } from "lucide-react"
 import { useNavigate } from "react-router-dom"
 
 interface DocumentCardProps {
