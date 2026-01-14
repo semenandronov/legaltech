@@ -108,7 +108,8 @@ async def log_requests(request: Request, call_next):
                 "font-src 'self' data: blob: https: http:; "
                 "connect-src 'self' blob: https: http:; "
                 "worker-src 'self' blob:; "
-                "frame-src 'self' https: http:;"
+                "frame-src 'self' https: http:; "
+                "object-src 'self' blob:;"
             )
             response.headers["Content-Security-Policy"] = csp_policy
         return response
@@ -154,7 +155,8 @@ async def add_csp_header(request: Request, call_next):
         "font-src 'self' data: blob: https: http:; "
         "connect-src 'self' blob: https: http:; "
         "worker-src 'self' blob:; "
-        "frame-src 'self' https: http:;"
+        "frame-src 'self' https: http:; "
+        "object-src 'self' blob:;"
     )
     response.headers["Content-Security-Policy"] = csp_policy
     return response
@@ -246,7 +248,8 @@ if frontend_dist.exists():
                 "font-src 'self' data: blob: https: http:; "
                 "connect-src 'self' blob: https: http:; "
                 "worker-src 'self' blob:; "
-                "frame-src 'self' https: http:;"
+                "frame-src 'self' https: http:; "
+                "object-src 'self' blob:;"
             )
             response.headers["Content-Security-Policy"] = csp_policy
             return response
