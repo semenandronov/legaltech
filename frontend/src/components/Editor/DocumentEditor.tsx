@@ -1,5 +1,5 @@
 import { useEditor, EditorContent } from '@tiptap/react'
-import { useEffect, useImperativeHandle, forwardRef } from 'react'
+import { useEffect, useImperativeHandle, forwardRef, useState } from 'react'
 import StarterKit from '@tiptap/starter-kit'
 import Placeholder from '@tiptap/extension-placeholder'
 import Link from '@tiptap/extension-link'
@@ -14,6 +14,7 @@ import { SlashCommands } from './SlashCommands'
 import { TrackChanges } from './extensions/TrackChanges'
 import { Comment } from './extensions/Comment'
 import { RiskHighlight } from './extensions/RiskHighlight'
+import { Ruler } from './Ruler'
 import './Editor.css'
 
 interface DocumentEditorProps {
@@ -45,6 +46,8 @@ export const DocumentEditor = forwardRef<DocumentEditorRef, DocumentEditorProps>
   caseId,
   onInsertText
 }, ref) => {
+  const [zoom] = useState(100)
+  
   const editor = useEditor({
     extensions: [
       StarterKit.configure({
@@ -212,11 +215,64 @@ export const DocumentEditor = forwardRef<DocumentEditorRef, DocumentEditorProps>
     )
   }
 
+  // A4 dimensions at 96 DPI: 816px × 1056px
+  const pageWidth = 816
+  const pageHeight = 1056
+  const margin = 96 // 1 inch = 96px
+  const scaledWidth = (pageWidth * zoom) / 100
+  const scaledHeight = (pageHeight * zoom) / 100
+  const scaledMargin = (margin * zoom) / 100
+
   return (
     <div className="flex-1 flex flex-col overflow-hidden">
       <EditorToolbar editor={editor} />
-      <div className="flex-1 overflow-y-auto p-8">
-        <EditorContent editor={editor} />
+      <div 
+        className="flex-1 overflow-auto document-canvas"
+        style={{ backgroundColor: '#f1f3f4' }}
+      >
+        <div className="flex justify-center py-8 px-4">
+          <div className="document-container" style={{ width: `${scaledWidth + 20}px` }}>
+            {/* Horizontal Ruler */}
+            <div style={{ marginLeft: '20px' }}>
+              <Ruler 
+                length={scaledWidth} 
+                orientation="horizontal" 
+                zoom={zoom} 
+              />
+            </div>
+            
+            {/* Document with vertical ruler */}
+            <div className="flex">
+              {/* Vertical Ruler */}
+              <Ruler 
+                length={scaledHeight} 
+                orientation="vertical" 
+                zoom={zoom} 
+              />
+              
+              {/* White document page */}
+              <div 
+                className="document-page bg-white"
+                style={{
+                  width: `${scaledWidth}px`,
+                  minHeight: `${scaledHeight}px`,
+                  boxShadow: '0 1px 3px 0 rgba(60, 64, 67, 0.3), 0 4px 8px 3px rgba(60, 64, 67, 0.15)',
+                }}
+              >
+                {/* Document content area with margins */}
+                <div
+                  className="editor-content"
+                  style={{
+                    padding: `${scaledMargin}px`,
+                    minHeight: `${scaledHeight - (scaledMargin * 2)}px`,
+                  }}
+                >
+                  <EditorContent editor={editor} />
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
       </div>
     </div>
   )

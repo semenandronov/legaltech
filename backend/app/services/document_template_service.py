@@ -4,7 +4,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy import or_, func
 from app.models.document_template import DocumentTemplate
 from app.services.external_sources.garant_source import GarantSource
-from app.services.external_sources.source_router import SourceRouter
+from app.services.external_sources.source_router import get_source_router
 import logging
 import re
 import os
@@ -45,8 +45,10 @@ class DocumentTemplateService:
         """Получить экземпляр GarantSource"""
         if self._garant_source is None:
             try:
-                router = SourceRouter()
+                router = get_source_router()
                 self._garant_source = router.get_source("garant")
+                if self._garant_source is None:
+                    logger.warning("GarantSource not registered in source router")
             except Exception as e:
                 logger.warning(f"Failed to get GarantSource: {e}")
         return self._garant_source
