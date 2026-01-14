@@ -850,7 +850,7 @@ async def assistant_chat(
     """
     Streaming chat endpoint for assistant-ui
     
-    Uses agents for tasks, RAG for questions.
+    Uses RAG only - simple question answering without agents.
     Accepts request body with messages array and case_id
     Returns Server-Sent Events (SSE) stream
     """
@@ -886,19 +886,14 @@ async def assistant_chat(
         
         question = last_message.get("content", "")
         
-        # Create PipelineService instance for unified processing
-        pipeline_service = PipelineService(
-            db=db,
-            rag_service=rag_service,
-            document_processor=document_processor
-        )
-        
-        # Use PipelineService for unified request processing
+        # Use direct RAG stream_chat_response - no agents, simple question answering
         return StreamingResponse(
-            pipeline_service.stream_response(
+            stream_chat_response(
                 case_id=case_id,
-                query=question,
+                question=question,
+                db=db,
                 current_user=current_user,
+                background_tasks=background_tasks,
                 web_search=web_search,
                 legal_research=legal_research,
                 deep_think=deep_think

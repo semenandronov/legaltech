@@ -321,7 +321,8 @@ export const AssistantUIChat = forwardRef<{ clearMessages: () => void; loadHisto
   const [messages, setMessages] = useState<Message[]>([])
   const [isLoading, setIsLoading] = useState(false)
   const [isLoadingHistory, setIsLoadingHistory] = useState(true)
-  const [webSearch, setWebSearch] = useState(false)
+  // Веб-поиск отключен - оставляем состояние для совместимости, но не используем
+  const [webSearch] = useState(false)
   const [legalResearch, setLegalResearch] = useState(false)
   const [deepThink, setDeepThink] = useState(false)
   const abortControllerRef = useRef<AbortController | null>(null)
@@ -437,7 +438,7 @@ export const AssistantUIChat = forwardRef<{ clearMessages: () => void; loadHisto
             role: m.role,
             content: m.content,
           })),
-          web_search: webSearch,
+          web_search: false, // Веб-поиск отключен
           legal_research: legalResearch,
           deep_think: deepThink,
         }),
@@ -632,7 +633,7 @@ export const AssistantUIChat = forwardRef<{ clearMessages: () => void; loadHisto
       setIsLoading(false)
       abortControllerRef.current = null
     }
-  }, [actualCaseId, isLoading, messages, webSearch, legalResearch, deepThink])
+  }, [actualCaseId, isLoading, messages, legalResearch, deepThink])
 
   const startPlanExecutionStream = useCallback(async (planId: string, messageId: string) => {
     try {

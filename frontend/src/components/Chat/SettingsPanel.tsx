@@ -1,5 +1,5 @@
 import React from 'react'
-import { Search, Brain, Scale } from 'lucide-react'
+import { Brain, Scale } from 'lucide-react'
 import { Switch } from '../UI/switch'
 import {
   Tooltip,
@@ -27,22 +27,35 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({
   onLegalResearchChange,
   className = '',
 }) => {
+  // Обработчик для глубокого размышления - выключает другие функции
+  const handleDeepThinkChange = (checked: boolean) => {
+    if (checked) {
+      // Если включаем глубокое размышление, выключаем остальные
+      onLegalResearchChange(false)
+      onWebSearchChange(false)
+    }
+    onDeepThinkChange(checked)
+  }
+
+  // Обработчик для юридического исследования - выключает другие функции
+  const handleLegalResearchChange = (checked: boolean) => {
+    if (checked) {
+      // Если включаем юридическое исследование, выключаем остальные
+      onDeepThinkChange(false)
+      onWebSearchChange(false)
+    }
+    onLegalResearchChange(checked)
+  }
+
   const settings = [
-    {
-      id: 'webSearch',
-      label: 'Веб-поиск',
-      description: 'Используйте веб для глубокого исследования любой темы. Увеличивает время ответа на 5-10 секунд.',
-      icon: Search,
-      value: webSearch,
-      onChange: onWebSearchChange,
-    },
+    // Веб-поиск отключен - убран из списка
     {
       id: 'deepThink',
       label: 'Глубокое размышление',
       description: 'Используйте более глубокий анализ для сложных вопросов. Использует более мощную модель, увеличивает время ответа.',
       icon: Brain,
       value: deepThink,
-      onChange: onDeepThinkChange,
+      onChange: handleDeepThinkChange,
     },
     {
       id: 'legalResearch',
@@ -50,7 +63,7 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({
       description: 'Найдите ответы на свои вопросы в курируемых юридических источниках. Early access - экспериментальная функция.',
       icon: Scale,
       value: legalResearch,
-      onChange: onLegalResearchChange,
+      onChange: handleLegalResearchChange,
     },
   ]
 
