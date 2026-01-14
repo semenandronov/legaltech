@@ -44,3 +44,6 @@ gigachat>=0.1.0  # Официальный SDK для GigaChat (использу�
 # BM25 - алгоритм для sparse search (hybrid search)
 rank-bm25>=0.2.2
 
+# HTML parsing для ГАРАНТ API
+beautifulsoup4>=4.12.0
+

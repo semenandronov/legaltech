@@ -515,6 +515,8 @@ async def stream_chat_response(
         # Legal research integration - поиск в ГАРАНТ с анализом результатов
         legal_research_context = ""
         legal_research_successful = False
+        aggregated = []  # Инициализируем для использования в простановке ссылок
+        source_router = None  # Инициализируем для использования в простановке ссылок
         
         if legal_research:
             try:
@@ -577,6 +579,14 @@ async def stream_chat_response(
                     # ГАРАНТ сам определит релевантные документы
                     logger.info("Document type not detected, searching without filters for broader results")
                 
+                # Определяем, нужен ли полный текст документов
+                # Для статей, решений суда и конкретных запросов получаем полный текст
+                need_full_text = any(keyword in question.lower() for keyword in [
+                    "статья", "ст.", "полный текст", "текст статьи", 
+                    "текст решения", "полное решение", "приведи текст",
+                    "покажи текст", "выпиши текст"
+                ])
+                
                 # Выполняем поиск через source router с фильтрами
                 # Увеличиваем количество результатов для максимального охвата
                 search_results = await source_router.search(
@@ -586,6 +596,33 @@ async def stream_chat_response(
                     filters=filters if filters else None,
                     parallel=True
                 )
+                
+                # Если нужен полный текст и есть результаты из ГАРАНТ, получаем его
+                if need_full_text and "garant" in search_results:
+                    garant_source = source_router._sources.get("garant")
+                    if garant_source:
+                        logger.info(f"Getting full text for {len(search_results['garant'])} Garant documents")
+                        for result in search_results["garant"][:5]:  # Первые 5 результатов
+                            doc_id = result.metadata.get("doc_id")
+                            if doc_id:
+                                try:
+                                    full_text = await garant_source.get_document_full_text(doc_id, format="html")
+                                    if full_text:
+                                        # Парсим HTML и извлекаем текст
+                                        try:
+                                            from bs4 import BeautifulSoup
+                                            soup = BeautifulSoup(full_text, 'html.parser')
+                                            text_content = soup.get_text(separator='\n', strip=True)
+                                            result.content = text_content[:5000]  # Используем полный текст
+                                            logger.info(f"Got full text for document {doc_id}, length: {len(text_content)}")
+                                        except ImportError:
+                                            # Если BeautifulSoup не установлен, используем простую очистку HTML
+                                            import re
+                                            text_content = re.sub(r'<[^>]+>', '', full_text)
+                                            result.content = text_content[:5000]
+                                            logger.info(f"Got full text for document {doc_id} (without BeautifulSoup)")
+                                except Exception as e:
+                                    logger.warning(f"Failed to get full text for document {doc_id}: {e}")
                 
                 # Агрегируем результаты - берем больше для лучшего анализа
                 aggregated = source_router.aggregate_results(
@@ -881,6 +918,19 @@ async def stream_chat_response(
                     full_response_text += content
                     yield f"data: {json.dumps({'textDelta': content}, ensure_ascii=False)}\n\n"
                 
+                # Проставляем ссылки на документы ГАРАНТ в ответе (если включено юридическое исследование)
+                if legal_research_successful and aggregated and source_router and len(full_response_text) < 10000:
+                    try:
+                        garant_source = source_router._sources.get("garant")
+                        if garant_source:
+                            text_with_links = await garant_source.insert_links(full_response_text)
+                            if text_with_links and text_with_links != full_response_text:
+                                # Если ссылки были добавлены, обновляем ответ
+                                full_response_text = text_with_links
+                                logger.info("Successfully inserted Garant links into response")
+                    except Exception as e:
+                        logger.warning(f"Failed to insert Garant links: {e}")
+                
                 # Отправляем источники через SSE
                 if sources_list:
                     logger.info(f"Sending {len(sources_list)} sources via SSE (fallback) for case {case_id}")
@@ -894,6 +944,19 @@ async def stream_chat_response(
                 response = await loop.run_in_executor(None, lambda: llm.invoke(messages))
                 response_text = response.content if hasattr(response, 'content') else str(response)
                 full_response_text = response_text
+                
+                # Проставляем ссылки на документы ГАРАНТ в ответе (если включено юридическое исследование)
+                if legal_research_successful and aggregated and source_router and len(full_response_text) < 10000:
+                    try:
+                        garant_source = source_router._sources.get("garant")
+                        if garant_source:
+                            text_with_links = await garant_source.insert_links(full_response_text)
+                            if text_with_links and text_with_links != full_response_text:
+                                full_response_text = text_with_links
+                                response_text = text_with_links
+                                logger.info("Successfully inserted Garant links into response (fallback)")
+                    except Exception as e:
+                        logger.warning(f"Failed to insert Garant links: {e}")
                 
                 chunk_size = 20
                 for i in range(0, len(response_text), chunk_size):
@@ -914,6 +977,19 @@ async def stream_chat_response(
             response = await loop.run_in_executor(None, lambda: llm.invoke(messages))
             response_text = response.content if hasattr(response, 'content') else str(response)
             full_response_text = response_text
+            
+            # Проставляем ссылки на документы ГАРАНТ в ответе (если включено юридическое исследование)
+            if legal_research_successful and aggregated and len(full_response_text) < 10000:
+                try:
+                    garant_source = source_router._sources.get("garant")
+                    if garant_source:
+                        text_with_links = await garant_source.insert_links(full_response_text)
+                        if text_with_links and text_with_links != full_response_text:
+                            full_response_text = text_with_links
+                            response_text = text_with_links
+                            logger.info("Successfully inserted Garant links into response (error fallback)")
+                except Exception as e:
+                    logger.warning(f"Failed to insert Garant links: {e}")
             
             chunk_size = 20
             for i in range(0, len(response_text), chunk_size):

@@ -53,7 +53,8 @@ class GarantSource(BaseSource):
         self, 
         query: str, 
         max_results: int = 10,
-        filters: Optional[Dict[str, Any]] = None
+        filters: Optional[Dict[str, Any]] = None,
+        get_full_text: bool = False
     ) -> List[SourceResult]:
         """
         Search Garant legal database
@@ -66,6 +67,7 @@ class GarantSource(BaseSource):
                 - date_from: Start date (YYYY-MM-DD)
                 - date_to: End date (YYYY-MM-DD)
                 - jurisdiction: "federal", "regional"
+            get_full_text: Если True, получает полный текст для каждого документа
             
         Returns:
             List of SourceResult
@@ -78,7 +80,33 @@ class GarantSource(BaseSource):
             return []
         
         try:
-            return await self._search_garant_api(query, max_results, filters)
+            results = await self._search_garant_api(query, max_results, filters)
+            
+            # Если нужно получить полный текст
+            if get_full_text:
+                for result in results:
+                    doc_id = result.metadata.get("doc_id")
+                    if doc_id:
+                        try:
+                            full_text = await self.get_document_full_text(doc_id, format="html")
+                            if full_text:
+                                # Парсим HTML и извлекаем текст
+                                try:
+                                    from bs4 import BeautifulSoup
+                                    soup = BeautifulSoup(full_text, 'html.parser')
+                                    text_content = soup.get_text(separator='\n', strip=True)
+                                    result.content = text_content[:5000]  # Ограничиваем размер
+                                    logger.info(f"Got full text for document {doc_id}, length: {len(text_content)}")
+                                except ImportError:
+                                    # Если BeautifulSoup не установлен, используем простую очистку HTML
+                                    import re
+                                    text_content = re.sub(r'<[^>]+>', '', full_text)
+                                    result.content = text_content[:5000]
+                                    logger.info(f"Got full text for document {doc_id} (without BeautifulSoup)")
+                        except Exception as e:
+                            logger.warning(f"Failed to get full text for document {doc_id}: {e}")
+            
+            return results
         except Exception as e:
             logger.error(f"Garant search error: {e}", exc_info=True)
             return []
@@ -432,6 +460,176 @@ class GarantSource(BaseSource):
         except Exception as e:
             logger.warning(f"Garant health check failed: {e}")
             return False
+    
+    async def get_document_full_text(
+        self,
+        doc_id: str,
+        format: str = "html"  # html, rtf, pdf, odt
+    ) -> Optional[str]:
+        """
+        Получить полный текст документа из ГАРАНТ
+        
+        Args:
+            doc_id: ID документа (topic)
+            format: Формат экспорта (html, rtf, pdf, odt)
+            
+        Returns:
+            Полный текст документа или None
+        """
+        if not self.api_key:
+            logger.warning("Garant source: API key not configured")
+            return None
+        
+        headers = {
+            "Authorization": f"Bearer {self.api_key}",
+            "Content-Type": "application/json",
+            "Accept": "application/json" if format == "html" else "application/octet-stream",
+        }
+        
+        # Согласно документации API v2.1.0
+        # URL для экспорта: /v2/export/{format}
+        endpoint_map = {
+            "html": "/export/html",
+            "rtf": "/export/rtf",
+            "pdf": "/export/pdf",
+            "odt": "/export/odt"
+        }
+        
+        endpoint = endpoint_map.get(format.lower(), "/export/html")
+        
+        try:
+            async with aiohttp.ClientSession() as session:
+                request_body = {
+                    "topic": doc_id,
+                    "env": "internet"
+                }
+                
+                logger.info(f"Requesting full text for document {doc_id} in format {format}")
+                
+                async with session.post(
+                    f"{self.api_url}{endpoint}",
+                    json=request_body,
+                    headers=headers,
+                    timeout=aiohttp.ClientTimeout(total=30)
+                ) as response:
+                    if response.status == 200:
+                        if format == "html":
+                            return await response.text()
+                        else:
+                            # Для бинарных форматов возвращаем base64
+                            import base64
+                            content = await response.read()
+                            return base64.b64encode(content).decode('utf-8')
+                    else:
+                        error_text = await response.text()
+                        logger.error(f"Garant API export error: status={response.status}, response={error_text[:200]}")
+                        return None
+        except Exception as e:
+            logger.error(f"Error getting document full text: {e}", exc_info=True)
+            return None
+    
+    async def get_document_info(self, doc_id: str) -> Optional[Dict[str, Any]]:
+        """
+        Получить информацию о документе из ГАРАНТ
+        
+        Args:
+            doc_id: ID документа (topic)
+            
+        Returns:
+            Словарь с информацией о документе или None
+        """
+        if not self.api_key:
+            return None
+        
+        headers = {
+            "Authorization": f"Bearer {self.api_key}",
+            "Content-Type": "application/json",
+            "Accept": "application/json",
+        }
+        
+        try:
+            async with aiohttp.ClientSession() as session:
+                request_body = {
+                    "topic": doc_id,
+                    "env": "internet"
+                }
+                
+                logger.info(f"Requesting document info for {doc_id}")
+                
+                async with session.post(
+                    f"{self.api_url}/document/info",
+                    json=request_body,
+                    headers=headers,
+                    timeout=aiohttp.ClientTimeout(total=30)
+                ) as response:
+                    if response.status == 200:
+                        data = await response.json()
+                        return data
+                    else:
+                        error_text = await response.text()
+                        logger.error(f"Garant API document info error: status={response.status}, response={error_text[:200]}")
+                        return None
+        except Exception as e:
+            logger.error(f"Error getting document info: {e}", exc_info=True)
+            return None
+    
+    async def insert_links(self, text: str) -> Optional[str]:
+        """
+        Простановка ссылок на документы ГАРАНТ в тексте
+        
+        Согласно документации API v2.1.0, метод автоматически находит
+        упоминания документов в тексте и вставляет ссылки на них.
+        
+        Args:
+            text: Текст для обработки (максимум 20Мб)
+            
+        Returns:
+            Текст с проставленными ссылками или None
+        """
+        if not self.api_key:
+            return None
+        
+        # Проверяем размер текста (лимит 20Мб)
+        text_bytes = text.encode('utf-8')
+        if len(text_bytes) > 20 * 1024 * 1024:  # 20Мб лимит
+            logger.warning(f"Text too large for link insertion: {len(text_bytes)} bytes (max 20MB)")
+            return None
+        
+        headers = {
+            "Authorization": f"Bearer {self.api_key}",
+            "Content-Type": "application/json",
+            "Accept": "application/json",
+        }
+        
+        try:
+            async with aiohttp.ClientSession() as session:
+                request_body = {
+                    "text": text,
+                    "env": "internet"
+                }
+                
+                logger.info(f"Requesting link insertion for text ({len(text_bytes)} bytes)")
+                
+                async with session.post(
+                    f"{self.api_url}/links",
+                    json=request_body,
+                    headers=headers,
+                    timeout=aiohttp.ClientTimeout(total=60)  # Больше времени для обработки
+                ) as response:
+                    if response.status == 200:
+                        data = await response.json()
+                        # Согласно документации, ответ содержит текст с ссылками
+                        result_text = data.get("text") or data.get("result") or data.get("content")
+                        if result_text:
+                            logger.info(f"Successfully inserted links, result length: {len(result_text)}")
+                        return result_text
+                    else:
+                        error_text = await response.text()
+                        logger.error(f"Garant API link insertion error: status={response.status}, response={error_text[:200]}")
+                        return None
+        except Exception as e:
+            logger.error(f"Error inserting links: {e}", exc_info=True)
+            return None
     
     def get_info(self) -> Dict[str, Any]:
         """Get source information"""
