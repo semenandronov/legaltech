@@ -297,8 +297,10 @@ class GarantSource(BaseSource):
                     url = f"https://internet.garant.ru/#/document/{doc_id}"
                 
                 # Метаданные - извлекаем все доступные поля
+                # Сохраняем и doc_id и topic для совместимости
                 metadata = {
                     "doc_id": doc_id,
+                    "topic": doc_id,  # topic - это то же самое, что doc_id в API v2.1.0
                     "doc_number": item.get("number"),
                     "doc_date": item.get("date"),
                     "doc_type": item.get("type"),
@@ -418,12 +420,15 @@ class GarantSource(BaseSource):
         
         try:
             async with aiohttp.ClientSession() as session:
+                # Убеждаемся, что doc_id - строка (API ожидает строку согласно документации)
+                doc_id_str = str(doc_id).strip()
+                
                 request_body = {
-                    "topic": doc_id,
+                    "topic": doc_id_str,
                     "env": "internet"
                 }
                 
-                logger.info(f"[Garant API] Requesting full text for document {doc_id} in format {format}")
+                logger.info(f"[Garant API] Requesting full text for document {doc_id_str} (type: {type(doc_id).__name__}) in format {format}")
                 logger.debug(f"[Garant API] Endpoint: {full_url}, Request body: {request_body}")
                 
                 start_time = __import__('time').time()

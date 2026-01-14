@@ -222,12 +222,15 @@ class DocumentTemplateService:
                 
                 # #region agent log
                 import time
-                _safe_debug_log({"sessionId":"debug-session","runId":"run1","hypothesisId":"D","location":"document_template_service.py:213","message":"Trying result","data":{"index":i,"doc_id":doc_id,"title":result.title if hasattr(result,'title') else None},"timestamp":int(time.time()*1000)})
+                _safe_debug_log({"sessionId":"debug-session","runId":"run1","hypothesisId":"D","location":"document_template_service.py:220","message":"Trying result","data":{"index":i,"doc_id":doc_id,"doc_id_type":type(doc_id).__name__,"title":result.title if hasattr(result,'title') else None,"all_metadata_keys":list(result.metadata.keys()) if hasattr(result,'metadata') else []},"timestamp":int(time.time()*1000)})
                 # #endregion
                 
                 if not doc_id:
-                    logger.warning(f"No doc_id in Garant result {i}")
+                    logger.warning(f"No doc_id in Garant result {i}, metadata keys: {list(result.metadata.keys()) if hasattr(result, 'metadata') else 'no metadata'}")
                     continue
+                
+                # Убеждаемся, что doc_id - строка (API ожидает строку)
+                doc_id = str(doc_id).strip()
                 
                 # Получаем HTML шаблон
                 # #region agent log
