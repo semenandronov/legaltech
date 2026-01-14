@@ -232,21 +232,17 @@ class DocumentTemplateService:
                 # Убеждаемся, что doc_id - строка (API ожидает строку)
                 doc_id = str(doc_id).strip()
                 
-                # Сначала проверяем, доступен ли документ для экспорта через get_document_info
+                # Гипотеза H2: Пропускаем проверку document_info и сразу пытаемся экспортировать
+                # Возможно, document_info не работает, но экспорт работает
                 # #region agent log
                 import time
-                _safe_debug_log({"sessionId":"debug-session","runId":"run1","hypothesisId":"E","location":"document_template_service.py:232","message":"Checking document info before export","data":{"doc_id":doc_id,"attempt":i+1},"timestamp":int(time.time()*1000)})
+                _safe_debug_log({"sessionId":"debug-session","runId":"run1","hypothesisId":"H2","location":"document_template_service.py:235","message":"Skipping document_info check, trying export directly","data":{"doc_id":doc_id,"attempt":i+1},"timestamp":int(time.time()*1000)})
                 # #endregion
                 
-                doc_info = await garant_source.get_document_info(doc_id)
-                if not doc_info:
-                    logger.warning(f"Document {doc_id} info not available (attempt {i+1}), trying next...")
-                    continue
-                
-                # Получаем HTML шаблон
+                # Получаем HTML шаблон напрямую, без проверки document_info
                 # #region agent log
                 import time
-                _safe_debug_log({"sessionId":"debug-session","runId":"run1","hypothesisId":"E","location":"document_template_service.py:240","message":"Calling get_document_full_text","data":{"doc_id":doc_id,"doc_info_available":True,"attempt":i+1},"timestamp":int(time.time()*1000)})
+                _safe_debug_log({"sessionId":"debug-session","runId":"run1","hypothesisId":"H2","location":"document_template_service.py:240","message":"Calling get_document_full_text directly","data":{"doc_id":doc_id,"attempt":i+1},"timestamp":int(time.time()*1000)})
                 # #endregion
                 
                 html_content = await garant_source.get_document_full_text(doc_id, format="html")

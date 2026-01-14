@@ -431,6 +431,21 @@ class GarantSource(BaseSource):
         endpoint = endpoint_map.get(format.lower(), "/export/html")
         full_url = f"{self.api_url}{endpoint}"
         
+        # #region agent log
+        import time
+        import json
+        import os
+        def _safe_debug_log(data: dict) -> None:
+            try:
+                log_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__file__)))), '.cursor', 'debug.log')
+                os.makedirs(os.path.dirname(log_path), exist_ok=True)
+                with open(log_path, 'a', encoding='utf-8') as f:
+                    f.write(json.dumps(data) + '\n')
+            except:
+                pass
+        _safe_debug_log({"sessionId":"debug-session","runId":"run1","hypothesisId":"H1","location":"garant_source.py:432","message":"get_document_full_text endpoint","data":{"api_url":self.api_url,"endpoint":endpoint,"full_url":full_url,"doc_id":doc_id,"format":format},"timestamp":int(time.time()*1000)})
+        # #endregion
+        
         timeout_seconds = GARANT_API_TIMEOUT_EXPORT
         
         try:
@@ -524,7 +539,28 @@ class GarantSource(BaseSource):
             "Accept": "application/json",
         }
         
+        # #region agent log
+        import time
+        import json
+        import os
+        def _safe_debug_log(data: dict) -> None:
+            try:
+                log_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__file__)))), '.cursor', 'debug.log')
+                os.makedirs(os.path.dirname(log_path), exist_ok=True)
+                with open(log_path, 'a', encoding='utf-8') as f:
+                    f.write(json.dumps(data) + '\n')
+            except:
+                pass
+        # #endregion
+        
+        # Проверяем, нужно ли использовать /v2/ prefix
+        # Согласно документации API v2.1.0, endpoint должен быть /v2/document/info
+        # Но api_url уже содержит /v2, поэтому используем /document/info
         full_url = f"{self.api_url}/document/info"
+        
+        # #region agent log
+        _safe_debug_log({"sessionId":"debug-session","runId":"run1","hypothesisId":"H1","location":"garant_source.py:527","message":"get_document_info endpoint","data":{"api_url":self.api_url,"full_url":full_url,"doc_id":doc_id},"timestamp":int(time.time()*1000)})
+        # #endregion
         timeout_seconds = GARANT_API_TIMEOUT_INFO
         
         try:
