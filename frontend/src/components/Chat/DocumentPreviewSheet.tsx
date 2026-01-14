@@ -108,13 +108,15 @@ const DocumentPreviewSheet = ({
 
   useEffect(() => {
     // Загружаем файл и создаем blob URL для не-PDF файлов
+    // ИСПРАВЛЕНИЕ: Используем /content endpoint вместо /download для inline отображения
     if (isOpen && fileInfo && fileInfo.file_type !== 'pdf' && fileInfo.id && caseId) {
       const loadFile = async () => {
         try {
           const baseUrl = import.meta.env.VITE_API_URL || ''
+          // Используем /content endpoint вместо /download для inline отображения
           const url = baseUrl 
-            ? `${baseUrl}/api/cases/${caseId}/files/${fileInfo.id}/download`
-            : `/api/cases/${caseId}/files/${fileInfo.id}/download`
+            ? `${baseUrl}/api/cases/${caseId}/files/${fileInfo.id}/content`
+            : `/api/cases/${caseId}/files/${fileInfo.id}/content`
           
           const response = await fetch(url, {
             headers: {
@@ -331,18 +333,32 @@ const DocumentPreviewSheet = ({
               />
             </Box>
           ) : fileInfo && fileUrl ? (
-            // For non-PDF files, display in iframe
+            // For non-PDF files, use object tag instead of iframe to avoid CSP issues
             <Box sx={{ flex: 1, overflow: 'hidden' }}>
-              <iframe
-                src={fileUrl}
+              <object
+                data={fileUrl}
+                type={fileInfo.file_type === 'docx' ? 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' : 'text/plain'}
                 style={{
                   width: '100%',
                   height: '100%',
                   border: 'none',
                   flex: 1
                 }}
-                title={fileInfo.filename}
-              />
+              >
+                <Box sx={{ p: 2, textAlign: 'center' }}>
+                  <Typography variant="body2" color="text.secondary">
+                    Браузер не поддерживает отображение этого типа файла.
+                    <br />
+                    <a 
+                      href={`/api/cases/${caseId}/files/${fileInfo.id}/download`}
+                      download
+                      style={{ color: 'primary.main', textDecoration: 'underline' }}
+                    >
+                      Скачать файл
+                    </a>
+                  </Typography>
+                </Box>
+              </object>
             </Box>
           ) : fileInfo ? (
             // Loading file

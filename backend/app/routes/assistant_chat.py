@@ -441,14 +441,21 @@ async def stream_chat_response(
         # asyncio уже импортирован глобально
         loop = asyncio.get_event_loop()
         
-        # Загружаем историю сообщений для контекста
+        # Загружаем историю сообщений для контекста - ТОЛЬКО из текущей сессии
         chat_history = []
         try:
-            history_messages = db.query(ChatMessage).filter(
+            # Фильтруем по session_id, чтобы ИИ видел только текущий чат, а не все чаты в деле
+            history_query = db.query(ChatMessage).filter(
                 ChatMessage.case_id == case_id,
                 ChatMessage.content.isnot(None),
                 ChatMessage.content != ""
-            ).order_by(ChatMessage.created_at.desc()).limit(10).all()
+            )
+            
+            # Если есть session_id, загружаем только сообщения из этой сессии
+            if session_id:
+                history_query = history_query.filter(ChatMessage.session_id == session_id)
+            
+            history_messages = history_query.order_by(ChatMessage.created_at.desc()).limit(10).all()
             
             # Формируем историю в формате для промпта (от старых к новым)
             chat_history = []
@@ -459,9 +466,9 @@ async def stream_chat_response(
                     chat_history.append(f"Ассистент: {msg.content[:500]}...")  # Ограничиваем длину
             
             if chat_history:
-                logger.info(f"Loaded {len(chat_history)} previous messages for context")
+                logger.info(f"Loaded {len(chat_history)} previous messages for context from session {session_id}")
             else:
-                logger.info("No previous messages found for context")
+                logger.info(f"No previous messages found for context in session {session_id}")
         except Exception as history_error:
             logger.warning(f"Failed to load chat history: {history_error}, continuing without history")
             # Continue without history - не критичная ошибка
@@ -505,7 +512,7 @@ async def stream_chat_response(
                 logger.warning(f"Web search failed: {web_search_error}, continuing without web search")
                 # Continue without web search - не критичная ошибка
         
-        # Legal research integration - поиск в юридических источниках
+        # Legal research integration - поиск в ГАРАНТ с анализом результатов
         legal_research_context = ""
         legal_research_successful = False
         
@@ -513,67 +520,66 @@ async def stream_chat_response(
             try:
                 logger.info(f"Legal research enabled for query: {question[:100]}...")
                 # Инициализируем source_router с официальными источниками
-                # rag_service уже определена глобально в начале файла
                 source_router = initialize_source_router(rag_service=rag_service, register_official_sources=True)
                 
-                # Определяем источники для поиска
+                # Определяем источники для поиска - только ГАРАНТ
                 sources_to_search = ["garant"]
                 
                 # Выполняем поиск через source router
                 search_results = await source_router.search(
                     query=question,
                     source_names=sources_to_search,
-                    max_results_per_source=5,
+                    max_results_per_source=10,  # Увеличиваем для лучшего анализа
                     parallel=True
                 )
                 
                 # Агрегируем результаты
                 aggregated = source_router.aggregate_results(
                     search_results,
-                    max_total=10,
+                    max_total=15,  # Больше результатов для анализа
                     dedup_threshold=0.9
                 )
                 
                 if aggregated:
+                    # Формируем контекст с акцентом на релевантность к вопросу пользователя
                     legal_research_parts = []
-                    legal_research_parts.append(f"\n\n=== Результаты юридического исследования ===")
-                    legal_research_parts.append(f"Найдено источников: {len(aggregated)}")
+                    legal_research_parts.append(f"\n\n=== Результаты поиска в ГАРАНТ ===")
+                    legal_research_parts.append(f"Вопрос пользователя: {question}")
+                    legal_research_parts.append(f"Найдено документов: {len(aggregated)}")
+                    legal_research_parts.append("\nВАЖНО: Проанализируй эти результаты в контексте вопроса пользователя и используй только релевантную информацию для ответа.")
                     
-                    for i, result in enumerate(aggregated[:5], 1):
+                    for i, result in enumerate(aggregated[:10], 1):
                         title = result.title or "Без названия"
                         url = result.url or ""
-                        content = result.content[:500] if result.content else ""
-                        source_name = result.source_name or "unknown"
+                        content = result.content[:800] if result.content else ""  # Увеличиваем длину для лучшего контекста
+                        source_name = result.source_name or "garant"
+                        relevance = getattr(result, 'relevance_score', 0.5)
                         
                         if content:
-                            legal_research_parts.append(f"\n[Источник {i}: {title}]")
-                            legal_research_parts.append(f"Источник: {source_name}")
+                            legal_research_parts.append(f"\n[Документ {i}: {title}]")
+                            legal_research_parts.append(f"Релевантность: {relevance:.2f}")
                             if url:
                                 legal_research_parts.append(f"URL: {url}")
-                            legal_research_parts.append(f"Содержание: {content}...")
+                            legal_research_parts.append(f"Содержание: {content}")
+                            legal_research_parts.append("---")
                     
                     legal_research_context = "\n".join(legal_research_parts)
                     legal_research_successful = True
                     
                     # Добавляем источники в sources_list
-                    for result in aggregated[:5]:
+                    for result in aggregated[:10]:
                         source_info = {
-                            "title": result.title or "Юридический источник",
+                            "title": result.title or "ГАРАНТ",
                             "url": result.url or "",
-                            "source": result.source_name or "legal"
+                            "source": "garant"
                         }
                         if result.content:
                             source_info["text_preview"] = result.content[:200]
-                        # Логируем URL для отладки
-                        if result.url:
-                            logger.info(f"Adding source with URL: {result.url}, title: {result.title}")
-                        else:
-                            logger.warning(f"Source has no URL: title={result.title}, source_name={result.source_name}")
                         sources_list.append(source_info)
                     
-                    logger.info(f"Legal research completed: {len(aggregated)} sources found from {len(search_results)} sources")
+                    logger.info(f"Legal research completed: {len(aggregated)} sources found from ГАРАНТ")
                 else:
-                    logger.warning("Legal research returned no results")
+                    logger.warning("Legal research returned no results from ГАРАНТ")
             except Exception as legal_research_error:
                 logger.warning(f"Legal research failed: {legal_research_error}, continuing without legal research", exc_info=True)
                 # Continue without legal research - не критичная ошибка
@@ -647,11 +653,15 @@ async def stream_chat_response(
         legal_research_instructions = ""
         if legal_research_context:
             legal_research_instructions = """
-ИНСТРУКЦИИ ПО ИСПОЛЬЗОВАНИЮ РЕЗУЛЬТАТОВ ЮРИДИЧЕСКОГО ИССЛЕДОВАНИЯ:
-- Используй информацию из юридических источников (pravo.gov.ru, vsrf.ru и др.) для ответа на вопросы о нормах права
-- При цитировании статей кодексов или позиций ВС указывай источник (название и URL если доступен)
-- Информация из официальных юридических источников имеет приоритет над информацией из документов дела при вопросах о законодательстве
-- Если пользователь просит конкретную статью кодекса, приведи полный текст статьи из результатов юридического исследования
+ИНСТРУКЦИИ ПО ИСПОЛЬЗОВАНИЮ РЕЗУЛЬТАТОВ ПОИСКА В ГАРАНТ:
+- ВАЖНО: Ты получил результаты поиска в ГАРАНТ по запросу пользователя. НЕ просто пересказывай эти результаты, а ПРОАНАЛИЗИРУЙ их в контексте вопроса пользователя.
+- Используй информацию из ГАРАНТ для ПРЯМОГО ОТВЕТА на вопрос пользователя, а не просто перечисляй найденные документы.
+- Если пользователь спрашивает о конкретной статье кодекса - найди её в результатах и приведи полный текст статьи.
+- Если пользователь спрашивает о правовой норме - найди релевантные документы и объясни, как они отвечают на вопрос.
+- Приоритизируй документы с высокой релевантностью (указана в результатах).
+- При цитировании указывай источник (название документа и URL из ГАРАНТ).
+- Если в результатах нет информации, отвечающей на вопрос - честно скажи об этом, не придумывай ответ.
+- Структурируй ответ так, чтобы он был полезен пользователю: сначала краткий ответ, потом детали из документов.
 """
 
         # Формируем историю для промпта
