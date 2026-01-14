@@ -393,7 +393,7 @@ export const DocumentEditorChat: React.FC<DocumentEditorChatProps> = ({
                           {message.suggestions.map((suggestion, idx) => (
                             <button
                               key={idx}
-                              onClick={() => handleQuickAction(suggestion)}
+                              onClick={() => handleQuickAction(suggestion, suggestion)}
                               className="px-3 py-1.5 text-xs border rounded hover:bg-gray-100 transition-colors"
                               style={{ 
                                 borderColor: 'var(--color-border)',
