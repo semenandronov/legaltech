@@ -318,13 +318,28 @@ async def ai_assist(
         
         # Get AI assistance
         ai_service = DocumentAIService(db)
-        result = ai_service.ai_assist(
-            command=request.command,
-            selected_text=request.selected_text,
-            case_id=document.case_id,
-            document_content=document.content,
-            prompt=request.prompt
-        )
+        
+        # Если команда create_contract, используем template graph
+        if request.command == "create_contract":
+            result = await ai_service.generate_contract(
+                prompt=request.prompt,
+                case_id=document.case_id,
+                user_id=current_user.id,
+                document_id=document_id
+            )
+            # Преобразуем результат в формат ai_assist
+            result = {
+                "result": result.get("result", ""),
+                "suggestions": result.get("suggestions", [])
+            }
+        else:
+            result = ai_service.ai_assist(
+                command=request.command,
+                selected_text=request.selected_text,
+                case_id=document.case_id,
+                document_content=document.content,
+                prompt=request.prompt
+            )
         
         return AIAssistResponse(
             result=result.get("result", ""),
@@ -569,7 +584,7 @@ async def chat_over_document(
     Chat over document - ask questions and get AI assistance for editing
     
     Args:
-        document_id: Document identifier
+        document_id: Document identifier (может быть "new" для создания нового документа)
         request: Chat request with question
         db: Database session
         current_user: Current user
@@ -578,28 +593,54 @@ async def chat_over_document(
         Chat response with answer and suggestions
     """
     try:
-        # Get document
         doc_service = DocumentEditorService(db)
-        document = doc_service.get_document(document_id, current_user.id)
+        document = None
+        case_id = None
         
-        if not document:
-            raise HTTPException(status_code=404, detail="Документ не найден")
+        # Если document_id не "new", получаем существующий документ
+        if document_id != "new":
+            document = doc_service.get_document(document_id, current_user.id)
+            if not document:
+                raise HTTPException(status_code=404, detail="Документ не найден")
+            case_id = document.case_id
+            document_content = document.content
+        else:
+            # Для нового документа нужно получить case_id из запроса или создать документ
+            # В этом случае case_id должен быть в metadata запроса или мы создаем документ
+            # Пока используем пустой контент
+            document_content = ""
+            # case_id должен быть передан в metadata или через отдельный параметр
+            # Для упрощения, если document_id="new", создаем документ через template graph
         
         # Get AI chat response
         ai_service = DocumentAIService(db)
-        result = ai_service.chat_over_document(
-            document_id=document_id,
-            document_content=document.content,
-            case_id=document.case_id,
-            question=request.question
+        
+        # Если document_id="new", нужен case_id для создания документа
+        # Для упрощения, если document_id="new" и нет документа, возвращаем ошибку
+        # В реальности case_id должен передаваться через query параметр или в теле запроса
+        if document_id == "new" and not case_id:
+            raise HTTPException(status_code=400, detail="case_id required for creating new document. Use existing document_id or provide case_id.")
+        
+        result = await ai_service.chat_over_document(
+            document_id=document_id if document_id != "new" else None,
+            document_content=document_content,
+            case_id=case_id or (document.case_id if document else None),
+            question=request.question,
+            user_id=current_user.id
         )
         
-        return DocumentChatResponse(
+        response = DocumentChatResponse(
             answer=result.get("answer", ""),
             citations=result.get("citations", []),
             suggestions=result.get("suggestions", []),
             edited_content=result.get("edited_content")
         )
+        
+        # Если создан новый документ, добавляем его ID в метаданные ответа
+        if result.get("new_document_id"):
+            logger.info(f"New document created: {result.get('new_document_id')}")
+        
+        return response
     except HTTPException:
         raise
     except Exception as e:

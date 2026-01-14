@@ -3,7 +3,7 @@ import { Extension } from '@tiptap/core'
 import { ReactRenderer } from '@tiptap/react'
 import Suggestion from '@tiptap/suggestion'
 import tippy, { Instance as TippyInstance } from 'tippy.js'
-import { FileText, List, Table, Sparkles, AlertTriangle, Wand2 } from 'lucide-react'
+import { FileText, List, Table, Sparkles, AlertTriangle, Wand2, Quote, Strikethrough, Code } from 'lucide-react'
 
 interface SlashCommandsOptions {
   caseId?: string
@@ -187,6 +187,45 @@ export const getSuggestionItems = ({ query, caseId, onInsertText }: { query: str
           .focus()
           .deleteRange(range)
           .insertTable({ rows: 3, cols: 3, withHeaderRow: true })
+          .run()
+      },
+    },
+    {
+      title: 'Цитата',
+      description: 'Создать цитату',
+      icon: Quote,
+      command: ({ editor, range }: any) => {
+        editor
+          .chain()
+          .focus()
+          .deleteRange(range)
+          .toggleBlockquote()
+          .run()
+      },
+    },
+    {
+      title: 'Зачеркнуть',
+      description: 'Применить зачеркивание',
+      icon: Strikethrough,
+      command: ({ editor, range }: any) => {
+        editor
+          .chain()
+          .focus()
+          .deleteRange(range)
+          .toggleStrike()
+          .run()
+      },
+    },
+    {
+      title: 'Код',
+      description: 'Применить форматирование кода',
+      icon: Code,
+      command: ({ editor, range }: any) => {
+        editor
+          .chain()
+          .focus()
+          .deleteRange(range)
+          .toggleCode()
           .run()
       },
     },

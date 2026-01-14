@@ -417,89 +417,71 @@ async def stream_chat_response(
                 logger.warning(f"[Draft Mode] Error saving messages to DB: {save_error}")
             
             try:
+                from app.services.langchain_agents.template_graph import create_template_graph
+                from app.services.langchain_agents.template_state import TemplateState
                 from app.services.document_editor_service import DocumentEditorService
                 from app.services.llm_factory import create_legal_llm
-                from langchain_core.messages import SystemMessage, HumanMessage
+                from langchain_core.messages import HumanMessage
                 
                 logger.info(f"[Draft Mode] Creating document for case {case_id} based on: {question[:100]}...")
                 
-                # Получить контекст из документов дела через RAG (опционально)
-                context = ""
+                # Извлечь название документа из описания
                 try:
-                    documents = rag_service.retrieve_context(
-                        case_id=case_id,
-                        query=question,
-                        k=5,
-                        db=db
-                    )
-                    if documents and len(documents) > 0:
-                        context_parts = []
-                        for i, doc in enumerate(documents[:3], 1):
-                            page_content = doc.page_content if hasattr(doc, 'page_content') else str(doc)
-                            context_parts.append(f"[{i}] {page_content[:500]}")
-                        context = "\n\nКонтекст из документов дела:\n" + "\n".join(context_parts)
-                        logger.info(f"[Draft Mode] Retrieved {len(documents)} context documents")
-                except Exception as e:
-                    logger.warning(f"[Draft Mode] Could not retrieve context: {e}")
-                    context = ""
-                
-                # Промпт для генерации документа
-                system_prompt = """Ты - опытный юрист, специализирующийся на создании юридических документов.
-Создай полноценный, структурированный юридический документ на основе описания пользователя.
-Документ должен быть профессиональным, готовым к использованию и соответствовать российскому законодательству.
-Используй HTML форматирование для структуры документа."""
-                
-                user_prompt = f"""Создай документ на основе следующего описания:
-
-{question}
-
-{context}
-
-Создай документ в формате HTML с правильной структурой:
-- Используй заголовки (h1, h2, h3) для разделов
-- Используй списки (ul, ol, li) для перечислений
-- Используй параграфы (p) для текста
-- Добавь все необходимые разделы и пункты
-- Документ должен быть готов к использованию
-- Используй правильную юридическую терминологию"""
-                
-                # Генерация содержимого
-                llm = create_legal_llm(temperature=0.3)
-                messages = [
-                    SystemMessage(content=system_prompt),
-                    HumanMessage(content=user_prompt)
-                ]
-                
-                logger.info("[Draft Mode] Generating document content with LLM...")
-                response = llm.invoke(messages)
-                generated_content = response.content if hasattr(response, 'content') else str(response)
-                
-                # Извлечь название документа из описания или использовать LLM
-                title_prompt = f"Извлеки краткое название документа (максимум 5-7 слов) из описания: {question}. Ответь только названием, без дополнительных слов."
-                title_response = llm.invoke([HumanMessage(content=title_prompt)])
-                title_text = title_response.content if hasattr(title_response, 'content') else str(title_response)
-                document_title = title_text.strip().replace('"', '').replace("'", "").strip()[:255]
-                
-                # Если название не получилось или слишком короткое, используем дефолтное
-                if not document_title or len(document_title) < 3:
-                    document_title = "Новый документ"
-                else:
-                    # Ограничиваем длину названия
+                    llm = create_legal_llm(temperature=0.1)
+                    title_prompt = f"Извлеки краткое название документа (максимум 5-7 слов) из описания: {question}. Ответь только названием, без дополнительных слов."
+                    title_response = llm.invoke([HumanMessage(content=title_prompt)])
+                    title_text = title_response.content if hasattr(title_response, 'content') else str(title_response)
+                    document_title = title_text.strip().replace('"', '').replace("'", "").strip()[:255]
+                    
+                    if not document_title or len(document_title) < 3:
+                        document_title = "Новый документ"
                     if len(document_title) > 255:
                         document_title = document_title[:252] + "..."
+                except Exception as title_error:
+                    logger.warning(f"[Draft Mode] Error generating title: {title_error}")
+                    document_title = "Новый документ"
                 
-                logger.info(f"[Draft Mode] Generated document title: {document_title}")
+                # Создаем граф для работы с шаблонами
+                graph = create_template_graph(db)
                 
-                # Создать документ
+                # Инициализируем состояние для графа
+                initial_state: TemplateState = {
+                    "user_query": question,
+                    "case_id": case_id,
+                    "user_id": current_user.id,
+                    "cached_template": None,
+                    "garant_template": None,
+                    "template_source": None,
+                    "final_template": None,
+                    "adapted_content": None,
+                    "document_id": None,
+                    "messages": [],
+                    "errors": [],
+                    "metadata": {},
+                    "should_adapt": True,  # Адаптируем шаблон под запрос
+                    "document_title": document_title
+                }
+                
+                # Запускаем граф
+                logger.info("[Draft Mode] Running template graph...")
+                result = await graph.ainvoke(initial_state)
+                
+                if result.get("errors"):
+                    error_msg = "; ".join(result["errors"])
+                    logger.error(f"[Draft Mode] Template graph errors: {error_msg}")
+                    raise Exception(error_msg)
+                
+                if not result.get("document_id"):
+                    raise Exception("Не удалось создать документ")
+                
+                # Получаем созданный документ
                 doc_service = DocumentEditorService(db)
-                document = doc_service.create_document(
-                    case_id=case_id,
-                    user_id=current_user.id,
-                    title=document_title,
-                    content=generated_content
-                )
+                document = doc_service.get_document(result["document_id"], current_user.id)
                 
-                logger.info(f"[Draft Mode] Document created successfully: {document.id}")
+                if not document:
+                    raise Exception("Созданный документ не найден")
+                
+                logger.info(f"[Draft Mode] Document created successfully: {document.id} (source: {result.get('template_source', 'unknown')})")
                 
                 # Сохраняем ответ в БД
                 response_text = f'✅ Документ "{document.title}" успешно создан! Вы можете открыть его в редакторе для дальнейшего редактирования.'

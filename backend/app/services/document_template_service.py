@@ -1,0 +1,235 @@
+"""Service for managing document templates"""
+from typing import List, Optional, Dict, Any
+from sqlalchemy.orm import Session
+from sqlalchemy import or_, func
+from app.models.document_template import DocumentTemplate
+from app.services.external_sources.garant_source import GarantSource
+from app.services.external_sources.source_router import SourceRouter
+import logging
+import re
+from datetime import datetime
+
+logger = logging.getLogger(__name__)
+
+
+class DocumentTemplateService:
+    """Service for managing cached document templates"""
+    
+    def __init__(self, db: Session):
+        self.db = db
+        self._garant_source = None
+    
+    def _get_garant_source(self) -> Optional[GarantSource]:
+        """Получить экземпляр GarantSource"""
+        if self._garant_source is None:
+            try:
+                router = SourceRouter()
+                self._garant_source = router.get_source("garant")
+            except Exception as e:
+                logger.warning(f"Failed to get GarantSource: {e}")
+        return self._garant_source
+    
+    def _extract_keywords(self, query: str, title: str = "") -> List[str]:
+        """
+        Извлечь ключевые слова из запроса и названия
+        
+        Args:
+            query: Пользовательский запрос
+            title: Название шаблона
+            
+        Returns:
+            Список ключевых слов
+        """
+        keywords = set()
+        
+        # Нормализуем текст (нижний регистр, убираем пунктуацию)
+        text = (query + " " + title).lower()
+        text = re.sub(r'[^\w\s]', ' ', text)
+        
+        # Разбиваем на слова
+        words = text.split()
+        
+        # Фильтруем стоп-слова (можно расширить)
+        stop_words = {
+            "создай", "создать", "нужен", "нужно", "для", "из", "в", "на", "и", "или", 
+            "а", "но", "как", "что", "это", "тот", "та", "те", "такой", "такая", 
+            "такое", "такие", "мой", "моя", "мое", "мои", "твой", "твоя", "твое",
+            "наш", "наша", "наше", "ваш", "ваша", "ваше", "его", "её", "их"
+        }
+        
+        for word in words:
+            if len(word) > 2 and word not in stop_words:
+                keywords.add(word)
+        
+        # Добавляем фразы из 2-3 слов
+        for i in range(len(words) - 1):
+            phrase = f"{words[i]} {words[i+1]}"
+            if len(phrase) > 5 and words[i] not in stop_words and words[i+1] not in stop_words:
+                keywords.add(phrase)
+        
+        # Добавляем фразы из 3 слов
+        for i in range(len(words) - 2):
+            phrase = f"{words[i]} {words[i+1]} {words[i+2]}"
+            if len(phrase) > 8 and all(w not in stop_words for w in [words[i], words[i+1], words[i+2]]):
+                keywords.add(phrase)
+        
+        return list(keywords)
+    
+    async def find_similar_template(
+        self, 
+        query: str, 
+        user_id: Optional[str] = None,
+        threshold: float = 0.3
+    ) -> Optional[DocumentTemplate]:
+        """
+        Найти похожий шаблон в кэше по запросу
+        
+        Args:
+            query: Пользовательский запрос
+            user_id: ID пользователя (для фильтрации)
+            threshold: Минимальный порог совпадения (0-1)
+            
+        Returns:
+            Найденный шаблон или None
+        """
+        query_keywords = set(self._extract_keywords(query))
+        
+        if not query_keywords:
+            return None
+        
+        # Ищем шаблоны по ключевым словам
+        templates = self.db.query(DocumentTemplate).filter(
+            or_(
+                DocumentTemplate.is_public == True,
+                DocumentTemplate.user_id == user_id
+            )
+        ).all()
+        
+        best_match = None
+        best_score = 0
+        
+        for template in templates:
+            template_keywords = set(template.keywords or [])
+            
+            # Вычисляем коэффициент совпадения (Jaccard similarity)
+            if template_keywords:
+                intersection = query_keywords & template_keywords
+                union = query_keywords | template_keywords
+                score = len(intersection) / len(union) if union else 0
+                
+                if score > best_score and score >= threshold:
+                    best_score = score
+                    best_match = template
+        
+        if best_match:
+            # Обновляем статистику использования
+            best_match.usage_count += 1
+            best_match.last_used_at = datetime.utcnow()
+            self.db.commit()
+            logger.info(f"Found cached template: {best_match.title} (score: {best_score:.2f})")
+        
+        return best_match
+    
+    async def search_in_garant(
+        self, 
+        query: str, 
+        max_results: int = 5
+    ) -> Optional[Dict[str, Any]]:
+        """
+        Поиск шаблона в Гаранте
+        
+        Args:
+            query: Поисковый запрос
+            max_results: Максимальное количество результатов
+            
+        Returns:
+            Первый найденный шаблон из Гаранта или None
+        """
+        garant_source = self._get_garant_source()
+        if not garant_source:
+            logger.warning("GarantSource not available")
+            return None
+        
+        try:
+            # Ищем документы в Гаранте
+            results = await garant_source.search(
+                query=query,
+                max_results=max_results,
+                filters={"doc_type": "law"}  # Ищем законы/документы
+            )
+            
+            if not results:
+                return None
+            
+            # Берем первый результат и получаем полный текст
+            first_result = results[0]
+            doc_id = first_result.metadata.get("doc_id") or first_result.metadata.get("topic")
+            
+            if not doc_id:
+                logger.warning("No doc_id in Garant result")
+                return None
+            
+            # Получаем HTML шаблон
+            html_content = await garant_source.get_document_full_text(doc_id, format="html")
+            
+            if not html_content:
+                logger.warning(f"Failed to get full text for document {doc_id}")
+                return None
+            
+            return {
+                "doc_id": doc_id,
+                "title": first_result.title,
+                "content": html_content,
+                "metadata": first_result.metadata,
+                "url": first_result.url
+            }
+        except Exception as e:
+            logger.error(f"Error searching in Garant: {e}", exc_info=True)
+            return None
+    
+    async def save_template(
+        self,
+        title: str,
+        content: str,
+        source: str = "garant",
+        source_doc_id: Optional[str] = None,
+        query: Optional[str] = None,
+        user_id: Optional[str] = None,
+        garant_metadata: Optional[Dict[str, Any]] = None
+    ) -> DocumentTemplate:
+        """
+        Сохранить шаблон в кэш
+        
+        Args:
+            title: Название шаблона
+            content: HTML содержимое
+            source: Источник ("garant", "custom")
+            source_doc_id: ID документа в источнике
+            query: Исходный запрос пользователя (для извлечения ключевых слов)
+            user_id: ID пользователя
+            garant_metadata: Метаданные из Гаранта
+            
+        Returns:
+            Сохраненный шаблон
+        """
+        # Извлекаем ключевые слова
+        keywords = self._extract_keywords(query or title, title)
+        
+        # Создаем шаблон
+        template = DocumentTemplate(
+            title=title,
+            content=content,
+            source=source,
+            source_doc_id=source_doc_id,
+            keywords=keywords,
+            user_id=user_id,
+            garant_metadata=garant_metadata or {}
+        )
+        
+        self.db.add(template)
+        self.db.commit()
+        self.db.refresh(template)
+        
+        logger.info(f"Saved template: {title} with {len(keywords)} keywords")
+        return template
+

@@ -40,24 +40,32 @@ def retrieve_documents_tool(
     **kwargs
 ) -> str:
     """
-    Retrieve relevant documents from the case using semantic search.
+    Поиск в документах дела пользователя.
     
-    Use this tool to find documents related to a specific query.
-    For critical analysis (risk, discrepancy), use_iterative=True or use_hybrid=True for better relevance.
+    Используй этот инструмент когда:
+    - Пользователь спрашивает про свои документы ("мой договор", "в иске", "что в документе")
+    - Нужны факты из конкретного дела пользователя
+    - Нужно проанализировать загруженные документы
+    - Пользователь просит найти информацию в его файлах
+    
+    НЕ ИСПОЛЬЗУЙ когда:
+    - Пользователь просит статью кодекса или закон (используй search_garant)
+    - Нужна судебная практика или решения судов (используй search_garant)
+    - Вопрос про нормы права или законодательство (используй search_garant)
     
     Args:
-        query: Search query describing what information you need
-        case_id: Case identifier
-        k: Number of document chunks to retrieve (default: 20)
-        use_iterative: If True, uses iterative search with query refinement (default: False)
-        use_hybrid: If True, uses hybrid search (combines semantic + keyword search) (default: False)
-                    Recommended for critical agents (risk, discrepancy)
-        doc_types: Optional list of document types to filter by (e.g., ['statement_of_claim', 'contract'])
-                   Use this when the user asks to work with specific document types
+        query: Поисковый запрос описывающий какую информацию нужно найти
+        case_id: Идентификатор дела
+        k: Количество фрагментов документов для получения (по умолчанию: 20)
+        use_iterative: Если True, использует итеративный поиск с уточнением запроса (по умолчанию: False)
+        use_hybrid: Если True, использует гибридный поиск (семантический + ключевые слова) (по умолчанию: False)
+                   Рекомендуется для критических агентов (risk, discrepancy)
+        doc_types: Опциональный список типов документов для фильтрации (например, ['statement_of_claim', 'contract'])
+                   Используй когда пользователь просит работать с конкретными типами документов
         **kwargs: Дополнительные параметры (runtime инжектируется middleware через kwargs)
     
     Returns:
-        Formatted string with retrieved documents and their sources
+        Форматированная строка с найденными документами и их источниками
     """
     # Проверяем, есть ли runtime в kwargs (инжектируется middleware)
     runtime: Optional[ToolRuntime] = kwargs.get("runtime")

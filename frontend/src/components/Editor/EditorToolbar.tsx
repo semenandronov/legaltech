@@ -9,7 +9,10 @@ import {
   Redo,
   Heading1,
   Heading2,
-  Heading3
+  Heading3,
+  Strikethrough,
+  Code,
+  Quote
 } from 'lucide-react'
 
 interface EditorToolbarProps {
@@ -100,6 +103,24 @@ export const EditorToolbar = ({ editor }: EditorToolbarProps) => {
         isActive={editor.isActive('italic')}
         icon={Italic}
         title="Курсив (Ctrl+I)"
+      />
+      <ToolbarButton
+        onClick={() => editor.chain().focus().toggleStrike().run()}
+        isActive={editor.isActive('strike')}
+        icon={Strikethrough}
+        title="Зачеркнуть"
+      />
+      <ToolbarButton
+        onClick={() => editor.chain().focus().toggleCode().run()}
+        isActive={editor.isActive('code')}
+        icon={Code}
+        title="Код"
+      />
+      <ToolbarButton
+        onClick={() => editor.chain().focus().toggleBlockquote().run()}
+        isActive={editor.isActive('blockquote')}
+        icon={Quote}
+        title="Цитата"
       />
 
       <div className="w-px h-6 bg-gray-300 mx-1"></div>

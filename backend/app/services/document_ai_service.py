@@ -63,21 +63,99 @@ class DocumentAIService:
                 "suggestions": []
             }
     
-    def generate_contract(
+    async def generate_contract(
         self,
         prompt: str,
-        case_id: str
+        case_id: str,
+        user_id: Optional[str] = None,
+        document_id: Optional[str] = None
     ) -> Dict[str, Any]:
         """
-        Generate a contract based on prompt and case context
+        Generate a contract based on prompt using template graph
         
         Args:
             prompt: Description of contract to generate
             case_id: Case identifier for context
+            user_id: User identifier (optional, for template caching)
+            document_id: Existing document ID (optional, for updating)
             
         Returns:
             Dictionary with generated contract text
         """
+        try:
+            from app.services.langchain_agents.template_graph import create_template_graph
+            from app.services.langchain_agents.template_state import TemplateState
+            from app.services.document_editor_service import DocumentEditorService
+            
+            # Создаем граф для работы с шаблонами
+            graph = create_template_graph(self.db)
+            
+            # Инициализируем состояние для графа
+            initial_state: TemplateState = {
+                "user_query": prompt,
+                "case_id": case_id,
+                "user_id": user_id or "",
+                "cached_template": None,
+                "garant_template": None,
+                "template_source": None,
+                "final_template": None,
+                "adapted_content": None,
+                "document_id": document_id,
+                "messages": [],
+                "errors": [],
+                "metadata": {},
+                "should_adapt": True,  # Адаптируем шаблон под запрос
+                "document_title": None
+            }
+            
+            # Запускаем граф
+            logger.info(f"[DocumentAIService] Running template graph for contract generation: {prompt[:100]}...")
+            result = await graph.ainvoke(initial_state)
+            
+            if result.get("errors"):
+                error_msg = "; ".join(result["errors"])
+                logger.error(f"[DocumentAIService] Template graph errors: {error_msg}")
+                # Fallback: возвращаем ошибку, но не падаем
+                return {
+                    "result": f"Ошибка при создании документа: {error_msg}",
+                    "suggestions": []
+                }
+            
+            # Если есть document_id, обновляем существующий документ
+            if document_id and result.get("adapted_content"):
+                try:
+                    doc_service = DocumentEditorService(self.db)
+                    doc_service.update_document(
+                        document_id=document_id,
+                        user_id=user_id or "",
+                        content=result["adapted_content"],
+                        create_version=True
+                    )
+                    logger.info(f"[DocumentAIService] Updated document {document_id} with template content")
+                except Exception as update_error:
+                    logger.error(f"[DocumentAIService] Error updating document: {update_error}")
+            
+            return {
+                "result": result.get("adapted_content", ""),
+                "suggestions": [
+                    "Проверь на риски",
+                    "Улучшить формулировки",
+                    "Добавить пункт о штрафах"
+                ],
+                "template_source": result.get("template_source"),
+                "document_id": result.get("document_id")
+            }
+        except Exception as e:
+            logger.error(f"[DocumentAIService] Error in generate_contract: {e}", exc_info=True)
+            # Fallback на старую логику если template_graph не работает
+            return self._generate_contract_fallback(prompt, case_id)
+    
+    def _generate_contract_fallback(
+        self,
+        prompt: str,
+        case_id: str
+    ) -> Dict[str, Any]:
+        """Fallback method for contract generation (old logic)"""
         # Get context from case documents
         context = ""
         try:
@@ -109,7 +187,7 @@ class DocumentAIService:
 Составь профессиональный юридический документ. Используй структуру с нумерацией пунктов, четкими формулировками и всеми необходимыми разделами."""
         
         # Generate contract
-        llm = create_legal_llm(temperature=0.3)  # Slightly higher temperature for creativity
+        llm = create_legal_llm(temperature=0.3)
         messages = [
             SystemMessage(content=system_prompt),
             HumanMessage(content=user_prompt)
@@ -452,12 +530,13 @@ class DocumentAIService:
             "suggestions": []
         }
     
-    def chat_over_document(
+    async def chat_over_document(
         self,
-        document_id: str,
+        document_id: Optional[str],
         document_content: str,
         case_id: str,
-        question: str
+        question: str,
+        user_id: Optional[str] = None
     ) -> Dict[str, Any]:
         """
         Chat over document - ask questions and get AI to edit the document
@@ -467,10 +546,82 @@ class DocumentAIService:
             document_content: Current document content
             case_id: Case identifier for context
             question: User question/instruction
+            user_id: User identifier (optional, for template caching)
             
         Returns:
             Dictionary with answer and suggested edits
         """
+        # Проверяем, является ли запрос запросом на создание документа из шаблона
+        create_keywords = [
+            "создай договор", "составь договор", "нужен договор",
+            "создай документ", "составь документ",
+            "шаблон договора", "форма договора",
+            "создай", "составь", "нужен шаблон"
+        ]
+        is_create_request = any(keyword in question.lower() for keyword in create_keywords)
+        
+        # Если это запрос на создание документа из шаблона
+        if is_create_request:
+            try:
+                from app.services.langchain_agents.template_graph import create_template_graph
+                from app.services.langchain_agents.template_state import TemplateState
+                from app.services.document_editor_service import DocumentEditorService
+                
+                # Создаем граф для работы с шаблонами
+                graph = create_template_graph(self.db)
+                
+                # Инициализируем состояние для графа
+                initial_state: TemplateState = {
+                    "user_query": question,
+                    "case_id": case_id,
+                    "user_id": user_id or "",
+                    "cached_template": None,
+                    "garant_template": None,
+                    "template_source": None,
+                    "final_template": None,
+                    "adapted_content": None,
+                    "document_id": document_id,  # Обновляем существующий документ или создаем новый
+                    "messages": [],
+                    "errors": [],
+                    "metadata": {},
+                    "should_adapt": True,
+                    "document_title": None
+                }
+                
+                # Запускаем граф
+                logger.info(f"[DocumentAIService] Running template graph for document creation: {question[:100]}...")
+                result = await graph.ainvoke(initial_state)
+                
+                if result.get("errors"):
+                    error_msg = "; ".join(result["errors"])
+                    logger.error(f"[DocumentAIService] Template graph errors: {error_msg}")
+                    return {
+                        "answer": f"Ошибка при создании документа из шаблона: {error_msg}",
+                        "citations": [],
+                        "suggestions": []
+                    }
+                
+                # Если создан новый документ
+                new_document_id = result.get("document_id")
+                if new_document_id and new_document_id != document_id:
+                    return {
+                        "answer": f"Документ успешно создан из шаблона (источник: {result.get('template_source', 'unknown')}). Документ готов к редактированию.",
+                        "citations": [],
+                        "suggestions": ["Открыть документ", "Проверить на риски"],
+                        "edited_content": result.get("adapted_content"),
+                        "new_document_id": new_document_id
+                    }
+                
+                return {
+                    "answer": f"Документ обновлен из шаблона (источник: {result.get('template_source', 'unknown')}).",
+                    "citations": [],
+                    "suggestions": ["Проверить на риски", "Улучшить формулировки"],
+                    "edited_content": result.get("adapted_content")
+                }
+            except Exception as template_error:
+                logger.error(f"[DocumentAIService] Error using template graph: {template_error}", exc_info=True)
+                # Fallback на обычный чат если template_graph не работает
+        
         # Get context from case documents
         context = ""
         sources = []

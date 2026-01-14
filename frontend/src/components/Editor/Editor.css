@@ -145,6 +145,14 @@
   border-radius: 0.125rem;
 }
 
+/* Strike styles */
+.editor-content .ProseMirror s,
+.editor-content .ProseMirror del {
+  text-decoration: line-through;
+  text-decoration-color: #6b7280;
+  opacity: 0.8;
+}
+
 /* Typography improvements */
 .editor-content .ProseMirror {
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;

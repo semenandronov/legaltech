@@ -5,7 +5,7 @@ import { toast } from 'sonner'
 import UnifiedSidebar from '../components/Layout/UnifiedSidebar'
 import { DocumentEditor, DocumentEditorRef } from '../components/Editor/DocumentEditor'
 import { AIAssistantSidebar } from '../components/Editor/AIAssistantSidebar'
-import { DocumentEditorContextChat } from '../components/Editor/DocumentEditorContextChat'
+import { DocumentChat } from '../components/Editor/DocumentChat'
 import { getDocument, createDocument, updateDocument, exportDocx, exportPdf } from '../services/documentEditorApi'
 
 interface DocumentData {
@@ -23,7 +23,7 @@ const DocumentEditorPage = () => {
   const [title, setTitle] = useState('Новый документ')
   const [selectedText, setSelectedText] = useState('')
   const [showAISidebar, setShowAISidebar] = useState(false)
-  const [isChatOpen, setIsChatOpen] = useState(true)
+  const [isChatOpen, setIsChatOpen] = useState(false)
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false)
@@ -154,18 +154,6 @@ const DocumentEditorPage = () => {
     }
   }
 
-  const handleApplyEdit = (editedContent: string) => {
-    // Apply edited content to document using editor ref
-    if (editorRef.current) {
-      editorRef.current.setContent(editedContent)
-      setHasUnsavedChanges(true)
-    } else {
-      // Fallback: set content directly
-      setContent(editedContent)
-      setHasUnsavedChanges(true)
-    }
-  }
-
   const navItems = caseId ? [
     { id: 'chat', label: 'Ассистент', icon: MessageSquare, path: `/cases/${caseId}/chat` },
     { id: 'documents', label: 'Документы', icon: FileText, path: `/cases/${caseId}/documents` },
@@ -254,19 +242,22 @@ const DocumentEditorPage = () => {
             <Download className="w-4 h-4" />
             PDF
           </button>
-          <button
-            onClick={() => setIsChatOpen(!isChatOpen)}
-            className={`flex items-center gap-2 px-4 py-2 rounded-lg transition-colors ${
-              isChatOpen
-                ? 'bg-blue-100 text-blue-700'
-                : 'border hover:bg-gray-50'
-            }`}
-            style={{ borderColor: isChatOpen ? 'transparent' : 'var(--color-border)' }}
-            title="Переключить чат с ИИ"
-          >
-            <MessageSquare className="w-4 h-4" />
-            Чат
-          </button>
+          {/* Кнопка чата - показывается только если есть documentId */}
+          {documentId && (
+            <button
+              onClick={() => setIsChatOpen(!isChatOpen)}
+              className={`flex items-center gap-2 px-4 py-2 rounded-lg transition-colors ${
+                isChatOpen
+                  ? 'bg-blue-100 text-blue-700'
+                  : 'border hover:bg-gray-50'
+              }`}
+              style={{ borderColor: isChatOpen ? 'transparent' : 'var(--color-border)' }}
+              title="Чат с ИИ"
+            >
+              <MessageSquare className="w-4 h-4" />
+              Чат
+            </button>
+          )}
           <button
             onClick={() => setShowAISidebar(!showAISidebar)}
             className={`flex items-center gap-2 px-4 py-2 rounded-lg transition-colors ${
@@ -285,13 +276,12 @@ const DocumentEditorPage = () => {
 
       {/* Main content area */}
       <div className="flex-1 overflow-hidden flex">
-        {/* Chat panel (Left) - показывается только когда isChatOpen === true и documentId существует */}
+        {/* Chat panel (Left) - показывается когда isChatOpen === true и есть documentId */}
         {isChatOpen && documentId && (
           <div className="w-80 border-r border-border shrink-0 bg-bg-elevated flex flex-col">
-            <DocumentEditorContextChat
+            <DocumentChat
               documentId={documentId}
               documentTitle={title}
-              onApplyEdit={handleApplyEdit}
             />
           </div>
         )}
