@@ -341,7 +341,8 @@ async def stream_chat_response(
     background_tasks: BackgroundTasks,
     web_search: bool = False,
     legal_research: bool = False,
-    deep_think: bool = False
+    deep_think: bool = False,
+    draft_mode: bool = False
 ) -> AsyncGenerator[str, None]:
     """
     Stream chat response using RAG and LLM with optional web search and legal research
@@ -360,7 +361,187 @@ async def stream_chat_response(
             yield f"data: {json.dumps({'error': 'Дело не найдено'})}\n\n"
             return
         
-        # Verify case has files uploaded
+        # Режим Draft: создание документа через ИИ
+        if draft_mode:
+            # Сохраняем пользовательское сообщение в БД
+            import uuid
+            from datetime import datetime, timedelta
+            user_message_id = str(uuid.uuid4())
+            assistant_message_id = None
+            
+            # Определяем session_id
+            session_id = None
+            try:
+                last_message = db.query(ChatMessage).filter(
+                    ChatMessage.case_id == case_id,
+                    ChatMessage.content.isnot(None),
+                    ChatMessage.content != ""
+                ).order_by(ChatMessage.created_at.desc()).first()
+                
+                if last_message and last_message.created_at:
+                    time_diff = datetime.utcnow() - last_message.created_at
+                    if time_diff < timedelta(minutes=30) and last_message.session_id:
+                        session_id = last_message.session_id
+                    else:
+                        session_id = str(uuid.uuid4())
+                else:
+                    session_id = str(uuid.uuid4())
+            except Exception as session_error:
+                logger.warning(f"Error determining session_id: {session_error}, creating new session")
+                session_id = str(uuid.uuid4())
+            
+            try:
+                user_message = ChatMessage(
+                    id=user_message_id,
+                    case_id=case_id,
+                    role="user",
+                    content=question,
+                    session_id=session_id
+                )
+                db.add(user_message)
+                
+                assistant_message_id = str(uuid.uuid4())
+                assistant_message_placeholder = ChatMessage(
+                    id=assistant_message_id,
+                    case_id=case_id,
+                    role="assistant",
+                    content="",
+                    source_references=None,
+                    session_id=session_id
+                )
+                db.add(assistant_message_placeholder)
+                db.commit()
+                logger.info(f"[Draft Mode] Messages saved to DB, session: {session_id}")
+            except Exception as save_error:
+                db.rollback()
+                logger.warning(f"[Draft Mode] Error saving messages to DB: {save_error}")
+            
+            try:
+                from app.services.document_editor_service import DocumentEditorService
+                from app.services.llm_factory import create_legal_llm
+                from langchain_core.messages import SystemMessage, HumanMessage
+                
+                logger.info(f"[Draft Mode] Creating document for case {case_id} based on: {question[:100]}...")
+                
+                # Получить контекст из документов дела через RAG (опционально)
+                context = ""
+                try:
+                    documents = rag_service.retrieve_context(
+                        case_id=case_id,
+                        query=question,
+                        k=5,
+                        db=db
+                    )
+                    if documents and len(documents) > 0:
+                        context_parts = []
+                        for i, doc in enumerate(documents[:3], 1):
+                            page_content = doc.page_content if hasattr(doc, 'page_content') else str(doc)
+                            context_parts.append(f"[{i}] {page_content[:500]}")
+                        context = "\n\nКонтекст из документов дела:\n" + "\n".join(context_parts)
+                        logger.info(f"[Draft Mode] Retrieved {len(documents)} context documents")
+                except Exception as e:
+                    logger.warning(f"[Draft Mode] Could not retrieve context: {e}")
+                    context = ""
+                
+                # Промпт для генерации документа
+                system_prompt = """Ты - опытный юрист, специализирующийся на создании юридических документов.
+Создай полноценный, структурированный юридический документ на основе описания пользователя.
+Документ должен быть профессиональным, готовым к использованию и соответствовать российскому законодательству.
+Используй HTML форматирование для структуры документа."""
+                
+                user_prompt = f"""Создай документ на основе следующего описания:
+
+{question}
+
+{context}
+
+Создай документ в формате HTML с правильной структурой:
+- Используй заголовки (h1, h2, h3) для разделов
+- Используй списки (ul, ol, li) для перечислений
+- Используй параграфы (p) для текста
+- Добавь все необходимые разделы и пункты
+- Документ должен быть готов к использованию
+- Используй правильную юридическую терминологию"""
+                
+                # Генерация содержимого
+                llm = create_legal_llm(temperature=0.3)
+                messages = [
+                    SystemMessage(content=system_prompt),
+                    HumanMessage(content=user_prompt)
+                ]
+                
+                logger.info("[Draft Mode] Generating document content with LLM...")
+                response = llm.invoke(messages)
+                generated_content = response.content if hasattr(response, 'content') else str(response)
+                
+                # Извлечь название документа из описания или использовать LLM
+                title_prompt = f"Извлеки краткое название документа (максимум 5-7 слов) из описания: {question}. Ответь только названием, без дополнительных слов."
+                title_response = llm.invoke([HumanMessage(content=title_prompt)])
+                title_text = title_response.content if hasattr(title_response, 'content') else str(title_response)
+                document_title = title_text.strip().replace('"', '').replace("'", "").strip()[:255]
+                
+                # Если название не получилось или слишком короткое, используем дефолтное
+                if not document_title or len(document_title) < 3:
+                    document_title = "Новый документ"
+                else:
+                    # Ограничиваем длину названия
+                    if len(document_title) > 255:
+                        document_title = document_title[:252] + "..."
+                
+                logger.info(f"[Draft Mode] Generated document title: {document_title}")
+                
+                # Создать документ
+                doc_service = DocumentEditorService(db)
+                document = doc_service.create_document(
+                    case_id=case_id,
+                    user_id=current_user.id,
+                    title=document_title,
+                    content=generated_content
+                )
+                
+                logger.info(f"[Draft Mode] Document created successfully: {document.id}")
+                
+                # Сохраняем ответ в БД
+                response_text = f'✅ Документ "{document.title}" успешно создан! Вы можете открыть его в редакторе для дальнейшего редактирования.'
+                try:
+                    if assistant_message_id:
+                        assistant_message = db.query(ChatMessage).filter(
+                            ChatMessage.id == assistant_message_id
+                        ).first()
+                        if assistant_message:
+                            assistant_message.content = response_text
+                            db.commit()
+                            logger.info(f"[Draft Mode] Response saved to DB")
+                except Exception as save_error:
+                    db.rollback()
+                    logger.warning(f"[Draft Mode] Failed to save response: {save_error}")
+                
+                # Отправить событие в SSE stream
+                yield f"data: {json.dumps({
+                    'type': 'document_created',
+                    'document': {
+                        'id': document.id,
+                        'title': document.title,
+                        'content': document.content[:500] if document.content else '',  # Превью
+                        'case_id': document.case_id
+                    }
+                }, ensure_ascii=False)}\n\n"
+                
+                # Также отправим текстовое сообщение о создании документа
+                yield f"data: {json.dumps({
+                    'textDelta': response_text
+                }, ensure_ascii=False)}\n\n"
+                
+                return
+                
+            except Exception as draft_error:
+                logger.error(f"[Draft Mode] Error creating document: {draft_error}", exc_info=True)
+                yield f"data: {json.dumps({
+                    'textDelta': f'\n\n❌ Ошибка при создании документа: {str(draft_error)}. Попробуйте еще раз или опишите документ более подробно.'
+                }, ensure_ascii=False)}\n\n"
+                return
+        
+        # Verify case has files uploaded (только для обычного режима, не для draft)
         file_count = db.query(FileModel).filter(FileModel.case_id == case_id).count()
         if file_count == 0:
             yield f"data: {json.dumps({'error': 'В деле нет загруженных документов. Пожалуйста, сначала загрузите документы.'})}\n\n"
@@ -512,529 +693,61 @@ async def stream_chat_response(
                 logger.warning(f"Web search failed: {web_search_error}, continuing without web search")
                 # Continue without web search - не критичная ошибка
         
-        # Legal research integration - поиск в ГАРАНТ с анализом результатов
-        legal_research_context = ""
-        legal_research_successful = False
-        aggregated = []  # Инициализируем для использования в простановке ссылок
-        source_router = None  # Инициализируем для использования в простановке ссылок
+        # ВСЕГДА используем умного ChatAgent с инструментами (с ГАРАНТ или без)
+        # ChatAgent умно выбирает инструменты на основе вопроса
+        from app.services.langchain_agents.chat_agent import ChatAgent
         
-        if legal_research:
-            try:
-                logger.info(f"Legal research enabled for query: {question[:100]}...")
-                # Инициализируем source_router с официальными источниками
-                source_router = initialize_source_router(rag_service=rag_service, register_official_sources=True)
-                
-                # Определяем источники для поиска - только ГАРАНТ
-                sources_to_search = ["garant"]
-                
-                # Определяем фильтры на основе запроса пользователя
-                filters = {}
-                
-                # Умное определение типа документа по ключевым словам в запросе
-                # Используем расширенный анализ для максимальной точности
-                question_lower = question.lower()
-                detected_type = None
-                
-                # Приоритет 1: Судебные решения и акты (самый частый запрос)
-                court_keywords = [
-                    "судебн", "решен", "постановлен", "определен", "приговор", 
-                    "кассац", "апелляц", "судебный акт", "судебное решение",
-                    "решение суда", "постановление суда", "определение суда",
-                    "практика суд", "судебная практика", "прецедент"
-                ]
-                if any(keyword in question_lower for keyword in court_keywords):
-                    detected_type = "court_decision"
-                    logger.info("Detected court decision search, applying doc_type filter")
-                
-                # Приоритет 2: Законы и нормативные акты
-                elif any(keyword in question_lower for keyword in [
-                    "закон", "нормативн", "постановлен правительств", "приказ министерств",
-                    "федеральн закон", "кодекс", "указ президент", "федеральный закон",
-                    "нормативный акт", "подзаконный акт"
-                ]):
-                    detected_type = "law"
-                    logger.info("Detected law/regulation search, applying doc_type filter")
-                
-                # Приоритет 3: Статьи кодексов и законов (конкретные ссылки)
-                elif any(keyword in question_lower for keyword in [
-                    "статья", "ст.", "пункт", "часть статьи", "статья кодекс",
-                    "ст ", "п. ", "ч. ", "часть ", "пункт статьи"
-                ]):
-                    detected_type = "article"
-                    logger.info("Detected article search, applying doc_type filter")
-                
-                # Приоритет 4: Комментарии и разъяснения
-                elif any(keyword in question_lower for keyword in [
-                    "комментар", "разъяснен", "позиция верховн", "обзор практик",
-                    "постановлен пленум", "пленум верховн", "разъяснения пленум"
-                ]):
-                    detected_type = "commentary"
-                    logger.info("Detected commentary search, applying doc_type filter")
-                
-                # Применяем фильтр только если тип определен с высокой уверенностью
-                if detected_type:
-                    filters["doc_type"] = detected_type
-                else:
-                    # Если тип не определен, ищем без фильтров - это даст более широкие результаты
-                    # ГАРАНТ сам определит релевантные документы
-                    logger.info("Document type not detected, searching without filters for broader results")
-                
-                # Определяем, нужен ли полный текст документов
-                # Для статей, решений суда и конкретных запросов получаем полный текст
-                need_full_text = any(keyword in question.lower() for keyword in [
-                    "статья", "ст.", "полный текст", "текст статьи", 
-                    "текст решения", "полное решение", "приведи текст",
-                    "покажи текст", "выпиши текст"
-                ])
-                
-                # Выполняем поиск через source router с фильтрами
-                # Увеличиваем количество результатов для максимального охвата
-                search_results = await source_router.search(
-                    query=question,
-                    source_names=sources_to_search,
-                    max_results_per_source=20,  # Увеличиваем для лучшего анализа (API поддерживает до 20 на страницу)
-                    filters=filters if filters else None,
-                    parallel=True
-                )
-                
-                # Если нужен полный текст и есть результаты из ГАРАНТ, получаем его
-                if need_full_text and "garant" in search_results:
-                    garant_source = source_router._sources.get("garant")
-                    if garant_source:
-                        garant_results = search_results["garant"]
-                        logger.info(f"[Legal Research] Getting full text for {len(garant_results)} Garant documents (requested: need_full_text={need_full_text})")
-                        
-                        # Ограничиваем количество документов для безопасности на Render (избегаем таймаутов)
-                        from app.services.external_sources.garant_source import MAX_FULL_TEXT_DOCS, MAX_CONTENT_LENGTH
-                        max_full_text_docs = MAX_FULL_TEXT_DOCS
-                        for i, result in enumerate(garant_results[:max_full_text_docs], 1):
-                            doc_id = result.metadata.get("doc_id")
-                            if doc_id:
-                                try:
-                                    logger.info(f"[Legal Research] Fetching full text for document {i}/{max_full_text_docs}: doc_id={doc_id}")
-                                    full_text = await garant_source.get_document_full_text(doc_id, format="html")
-                                    if full_text:
-                                        # Парсим HTML и извлекаем текст
-                                        try:
-                                            from bs4 import BeautifulSoup
-                                            soup = BeautifulSoup(full_text, 'html.parser')
-                                            text_content = soup.get_text(separator='\n', strip=True)
-                                            # Ограничиваем размер для безопасности на Render
-                                            result.content = text_content[:MAX_CONTENT_LENGTH]
-                                            logger.info(f"[Legal Research] Got full text for document {doc_id}, extracted: {len(text_content)} chars, using: {len(result.content)} chars")
-                                        except ImportError:
-                                            # Если BeautifulSoup не установлен, используем простую очистку HTML
-                                            import re
-                                            text_content = re.sub(r'<[^>]+>', '', full_text)
-                                            result.content = text_content[:MAX_CONTENT_LENGTH]
-                                            logger.info(f"[Legal Research] Got full text for document {doc_id} (without BeautifulSoup), length: {len(result.content)}")
-                                    else:
-                                        logger.warning(f"[Legal Research] Failed to get full text for document {doc_id} (API returned None)")
-                                except Exception as e:
-                                    logger.warning(f"[Legal Research] Error getting full text for document {doc_id}: {e}", exc_info=True)
-                        logger.info(f"[Legal Research] Finished fetching full text for documents")
-                
-                # Агрегируем результаты - берем больше для лучшего анализа
-                aggregated = source_router.aggregate_results(
-                    search_results,
-                    max_total=20,  # Больше результатов для анализа
-                    dedup_threshold=0.85  # Немного снижаем порог для большего разнообразия
-                )
-                
-                if aggregated:
-                    # Формируем контекст с акцентом на релевантность к вопросу пользователя
-                    legal_research_parts = []
-                    legal_research_parts.append(f"\n\n=== Результаты поиска в ГАРАНТ ===")
-                    legal_research_parts.append(f"Вопрос пользователя: {question}")
-                    legal_research_parts.append(f"Найдено документов: {len(aggregated)}")
-                    legal_research_parts.append("\nВАЖНО: Проанализируй эти результаты в контексте вопроса пользователя и используй только релевантную информацию для ответа.")
-                    
-                    for i, result in enumerate(aggregated[:15], 1):  # Увеличиваем до 15 документов
-                        title = result.title or "Без названия"
-                        url = result.url or ""
-                        content = result.content[:2000] if result.content else ""  # Увеличиваем до 2000 символов
-                        source_name = result.source_name or "garant"
-                        relevance = getattr(result, 'relevance_score', 0.5)
-                        
-                        # Извлекаем метаданные
-                        metadata = getattr(result, 'metadata', {}) or {}
-                        doc_type = metadata.get('doc_type', '')
-                        doc_date = metadata.get('doc_date', '')
-                        doc_number = metadata.get('doc_number', '')
-                        issuing_authority = metadata.get('issuing_authority', '')
-                        
-                        if content or title:
-                            legal_research_parts.append(f"\n{'='*60}")
-                            legal_research_parts.append(f"ДОКУМЕНТ {i} ИЗ ГАРАНТ")
-                            legal_research_parts.append(f"{'='*60}")
-                            legal_research_parts.append(f"Название: {title}")
-                            
-                            # Формируем информативную строку с метаданными
-                            meta_info = []
-                            if doc_type:
-                                meta_info.append(f"Тип: {doc_type}")
-                            if doc_date:
-                                meta_info.append(f"Дата: {doc_date}")
-                            if doc_number:
-                                meta_info.append(f"Номер: {doc_number}")
-                            if issuing_authority:
-                                meta_info.append(f"Орган: {issuing_authority}")
-                            if meta_info:
-                                legal_research_parts.append(" | ".join(meta_info))
-                            
-                            legal_research_parts.append(f"Релевантность: {relevance:.2%} ({relevance:.2f})")
-                            
-                            if url:
-                                legal_research_parts.append(f"Ссылка в ГАРАНТ: {url}")
-                            
-                            if content:
-                                legal_research_parts.append(f"\nСОДЕРЖАНИЕ ДОКУМЕНТА:")
-                                legal_research_parts.append(f"{content}")
-                                if len(result.content) > 2000:
-                                    legal_research_parts.append(f"\n[... документ обрезан, полный текст доступен по ссылке выше ...]")
-                            else:
-                                legal_research_parts.append(f"\nДоступен только заголовок документа")
-                            
-                            legal_research_parts.append(f"{'='*60}\n")
-                    
-                    legal_research_context = "\n".join(legal_research_parts)
-                    legal_research_successful = True
-                    
-                    # Добавляем источники в sources_list
-                    for result in aggregated[:10]:
-                        source_info = {
-                            "title": result.title or "ГАРАНТ",
-                            "url": result.url or "",
-                            "source": "garant"
-                        }
-                        if result.content:
-                            source_info["text_preview"] = result.content[:200]
-                        sources_list.append(source_info)
-                    
-                    logger.info(f"Legal research completed: {len(aggregated)} sources found from ГАРАНТ")
-                else:
-                    logger.warning("Legal research returned no results from ГАРАНТ")
-            except Exception as legal_research_error:
-                logger.warning(f"Legal research failed: {legal_research_error}, continuing without legal research", exc_info=True)
-                # Continue without legal research - не критичная ошибка
+        logger.info(f"[ChatAgent] Initializing ChatAgent for question: {question[:100]}... (legal_research={legal_research})")
+        chat_agent = ChatAgent(
+            case_id=case_id,
+            rag_service=rag_service,
+            db=db,
+            legal_research_enabled=legal_research  # Включаем ГАРАНТ только если legal_research=True
+        )
+        logger.info(f"[ChatAgent] ChatAgent initialized successfully, legal_research_enabled={legal_research}")
         
-        # Get relevant documents using RAG - ВСЕГДА выполняем RAG для получения контекста из документов дела
-        # Веб-поиск и юридическое исследование дополняют, но не заменяют RAG
-        context = ""
-        try:
-            # Используем аргумент по умолчанию для захвата rag_service в lambda
-            documents = await loop.run_in_executor(
-                None,
-                lambda rs=rag_service: rs.retrieve_context(
-                    case_id=case_id,
-                    query=question,
-                    k=10,
-                    db=db
-                )
-            )
-            
-            # Build context from documents and collect sources using RAGService.format_sources
-            context_parts = []
-            if documents:
-                # Use RAGService.format_sources for consistent source formatting
-                formatted_sources = rag_service.format_sources(documents[:5])
-                sources_list.extend(formatted_sources)
-                
-                # Build context from documents
-                for i, doc in enumerate(documents[:5], 1):
-                    if hasattr(doc, 'page_content'):
-                        content = doc.page_content[:500] if doc.page_content else ""
-                        source = doc.metadata.get("source_file", "unknown") if hasattr(doc, 'metadata') and doc.metadata else "unknown"
-                    elif isinstance(doc, dict):
-                        content = doc.get("content", "")[:500]
-                        source = doc.get("file", "unknown")
-                    else:
-                        continue
-                    
-                    context_parts.append(f"[Документ {i}: {source}]\n{content}")
-                
-                context = "\n\n".join(context_parts)
-                if context:
-                    logger.info(f"RAG retrieved {len(documents)} documents for context, {len(sources_list)} sources formatted")
-                else:
-                    logger.warning(f"RAG retrieved {len(documents)} documents but context is empty")
-        except Exception as rag_error:
-            logger.warning(f"RAG retrieval failed: {rag_error}, continuing without RAG context", exc_info=True)
-            # Continue without RAG context - не критичная ошибка, но важно для deep_think
-        
-        # Добавляем источники из веб-поиска
-        if web_search_successful and 'research_result' in locals() and research_result.sources:
-            for source in research_result.sources[:5]:
-                source_info = {
-                    "title": source.get("title", "Веб-источник"),
-                    "url": source.get("url", ""),
-                }
-                if source.get("content"):
-                    source_info["text_preview"] = source.get("content", "")[:200]
-                sources_list.append(source_info)
-        
-        # Create prompt
-        web_search_instructions = ""
-        if web_search_context:
-            web_search_instructions = """
-ИНСТРУКЦИИ ПО ИСПОЛЬЗОВАНИЮ РЕЗУЛЬТАТОВ ВЕБ-ПОИСКА:
-- Используй информацию из веб-поиска для дополнения ответа, когда информации из документов дела недостаточно
-- При цитировании информации из веб-поиска указывай источник (название и URL если доступен)
-- Предпочтительно использовать информацию из документов дела, веб-поиск - для дополнительного контекста
-- Если информация из веб-поиска противоречит документам дела, укажи это и приоритизируй документы дела
-"""
-
-        legal_research_instructions = ""
-        if legal_research_context:
-            legal_research_instructions = """
-═══════════════════════════════════════════════════════════════════
-КРИТИЧЕСКИ ВАЖНО - ИСПОЛЬЗОВАНИЕ РЕЗУЛЬТАТОВ ПОИСКА В ГАРАНТ
-═══════════════════════════════════════════════════════════════════
-
-Ты получил результаты поиска в ГАРАНТ - это ПРИОРИТЕТНЫЙ ИСТОЧНИК информации!
-
-ОБЯЗАТЕЛЬНЫЕ ПРАВИЛА:
-1. НЕ просто пересказывай результаты - ПРОАНАЛИЗИРУЙ их и дай ПРЯМОЙ ОТВЕТ на вопрос
-2. Используй КОНКРЕТНЫЕ данные из результатов ГАРАНТ: названия документов, даты, номера, цитаты
-3. Приоритизируй документы с высокой релевантностью (показана в результатах)
-4. При цитировании ВСЕГДА указывай источник: [Название документа](URL из ГАРАНТ)
-
-ДЛЯ РАЗНЫХ ТИПОВ ЗАПРОСОВ:
-
-📋 Судебные решения:
-- ПРИВЕДИ КОНКРЕТНЫЕ РЕШЕНИЯ с названиями, датами, номерами дел
-- Укажи основные выводы и правовые позиции из каждого решения
-- Если есть несколько решений - структурируй их по датам или темам
-
-📜 Законы и нормативные акты:
-- Приведи полный текст или релевантные части документа
-- Укажи номер, дату принятия, орган, принявший документ
-- Если есть изменения - укажи актуальную редакцию
-
-📖 Статьи кодексов:
-- Найди конкретную статью в результатах и приведи её полный текст
-- Укажи пункты и части статьи, если они релевантны
-- Приведи ссылку на документ в ГАРАНТ
-
-💡 Комментарии и разъяснения:
-- Используй разъяснения для толкования норм права
-- Приведи позиции Верховного Суда или Пленумов
-- Укажи, как это применимо к вопросу пользователя
-
-⚠️ ЕСЛИ ИНФОРМАЦИИ НЕДОСТАТОЧНО:
-- Честно скажи, что в результатах ГАРАНТ нет полной информации
-- НЕ придумывай ответ - лучше признать ограничения
-- Предложи уточнить запрос или поискать в других источниках
-
-СТРУКТУРА ОТВЕТА:
-1. Краткий ответ на вопрос (1-2 предложения)
-2. Детали из документов ГАРАНТ с цитатами и ссылками
-3. Выводы и рекомендации на основе найденной информации
-
-НЕ ИГНОРИРУЙ РЕЗУЛЬТАТЫ ИЗ ГАРАНТ - они являются основным источником!
-═══════════════════════════════════════════════════════════════════
-"""
-
-        # Формируем историю для промпта
-        history_context = ""
-        if chat_history:
-            history_context = f"""
-Контекст предыдущих сообщений в этом чате:
-{chr(10).join(chat_history)}
-
-ВАЖНО: Учитывай контекст предыдущих сообщений при ответе. Если пользователь задает уточняющий вопрос (например, "подробнее"), используй информацию из предыдущих сообщений для более полного ответа.
-"""
-
-        prompt = f"""Ты - юридический AI-ассистент. Ты помогаешь анализировать документы дела.
-
-Контекст из документов дела:
-{context if context else "Контекст из документов дела не найден. Используй общие знания и информацию из других источников."}{web_search_context}{legal_research_context}{history_context}
-
-Вопрос пользователя: {question}{web_search_instructions}{legal_research_instructions}
-
-ВАЖНО - ФОРМАТИРОВАНИЕ ОТВЕТА:
-1. ВСЕГДА используй Markdown форматирование для ответов:
-   - **жирный текст** для важных терминов
-   - *курсив* для акцентов
-   - Заголовки (##, ###) для структуры
-   - Списки (- или 1.) для перечислений
-
-2. КРИТИЧЕСКИ ВАЖНО - ФОРМАТ ССЫЛОК НА ДОКУМЕНТЫ (ОБЯЗАТЕЛЬНО!):
-   При цитировании информации из документов дела ВСЕГДА используй ТОЛЬКО формат [1], [2], [3] и т.д.
-   - Первый документ в контексте = [1]
-   - Второй документ в контексте = [2]
-   - Третий документ в контексте = [3]
-   - Запрещено использовать: [Document 1], [Документ 1], [Документ: filename.pdf], [Документ 1: ...]
-   - Разрешен ТОЛЬКО формат: [1], [2], [3] - только число в квадратных скобках
-   - Пример правильного ответа: "Согласно документам дела [1][2], стороны обязаны..."
-   - Пример неправильного (запрещен): "Согласно [Document 1] и [Документ 2]..."
-   ЗАПОМНИ: ТОЛЬКО [1], [2], [3] - никаких других форматов!
-
-3. ЕСЛИ пользователь просит создать ТАБЛИЦУ:
-   - ВСЕГДА используй Markdown таблицы в формате:
-   | Колонка 1 | Колонка 2 | Колонка 3 |
-   |-----------|-----------|-----------|
-   | Данные 1  | Данные 2  | Данные 3  |
-   
-   - НЕ отправляй таблицы как простой текст со звездочками
-   - НЕ используй формат "Дата | Судья | Документ" без markdown таблицы
-   - Таблица должна быть правильно отформатирована в Markdown
-
-4. Для структурированных данных (даты, судьи, документы, события):
-   - ВСЕГДА используй Markdown таблицы
-   - Заголовки таблицы должны быть четкими
-   - Данные должны быть в строках таблицы
-
-5. Пример правильного ответа с таблицей:
-   ## Таблица судебных заседаний
-   
-   | Дата | Судья | Номер документа |
-   |------|-------|-----------------|
-   | 22.08.2016 | Не указан | A83-6426-2015 |
-   | 15.03.2017 | Е.А. Остапов | A83-6426-2015 |
-
-Ответь на вопрос, используя информацию из документов дела. {f"Если информации из документов недостаточно, используй результаты веб-поиска для дополнения ответа." if web_search_context else ""}{f" Используй результаты юридического исследования для ответа на вопросы о нормах права и законодательстве." if legal_research_context else ""}{" Если информации недостаточно, укажи это." if not web_search_context and not legal_research_context else ""}
-
-ПОВТОРЯЮ КРИТИЧЕСКИ ВАЖНОЕ ПРАВИЛО: При цитировании документов дела используй ТОЛЬКО формат [1], [2], [3] - число в квадратных скобках. НЕ используй [Document 1], [Документ 1] или любой другой формат!
-
-Будь точным и профессиональным. ВСЕГДА используй Markdown форматирование.
-{f"При цитировании информации из веб-поиска указывай источник в формате: [Название источника](URL) или просто название источника, если URL недоступен." if web_search_context else ""}{f" При цитировании статей кодексов или норм права указывай источник: [Название статьи](URL) или просто название источника." if legal_research_context else ""}"""
-
-        # Initialize LLM
-        # Используем create_legal_llm() для детерминистических юридических ответов (temperature=0.0)
-        # При deep_think=True используем GigaChat-Pro, иначе модель по умолчанию (GigaChat)
-        if deep_think:
-            llm = create_legal_llm(model="GigaChat-Pro")  # temperature=0.0 автоматически
-            logger.info(f"Using GigaChat-Pro for deep thinking mode (temperature=0.0). Context length: {len(context)} chars, History messages: {len(chat_history)}, Web search: {web_search_successful}, Legal research: {legal_research_successful}")
-        else:
-            llm = create_legal_llm()  # temperature=0.0 автоматически, использует config.GIGACHAT_MODEL (обычно "GigaChat")
-            logger.info(f"Using standard GigaChat (temperature=0.0). Context length: {len(context)} chars, History messages: {len(chat_history)}")
-        
-        # Stream response
-        # Преобразуем строку prompt в список сообщений для GigaChat
-        from langchain_core.messages import HumanMessage
-        messages = [HumanMessage(content=prompt)]
+        # ВСЕГДА используем ChatAgent - он умно выбирает инструменты
+        logger.info("[ChatAgent] Using ChatAgent for intelligent tool selection")
         
         try:
-            if hasattr(llm, 'astream'):
-                async for chunk in llm.astream(messages):
-                    if hasattr(chunk, 'content'):
-                        content = chunk.content
-                    elif isinstance(chunk, str):
-                        content = chunk
-                    else:
-                        content = str(chunk)
-                    
-                    full_response_text += content
-                    yield f"data: {json.dumps({'textDelta': content}, ensure_ascii=False)}\n\n"
-                
-                # Проставляем ссылки на документы ГАРАНТ в ответе (если включено юридическое исследование)
-                # Ограничиваем размер текста для безопасности на Render (лимит API: 20Мб, но используем 8КБ для безопасности)
-                max_text_for_links = 8000  # 8KB для безопасности на Render
-                if legal_research_successful and aggregated and source_router and len(full_response_text) < max_text_for_links:
-                    try:
-                        garant_source = source_router._sources.get("garant")
-                        if garant_source:
-                            logger.info(f"[Legal Research] Attempting to insert Garant links into response (text length: {len(full_response_text)} chars)")
-                            text_with_links = await garant_source.insert_links(full_response_text)
-                            if text_with_links and text_with_links != full_response_text:
-                                # Если ссылки были добавлены, обновляем ответ
-                                full_response_text = text_with_links
-                                logger.info(f"[Legal Research] Successfully inserted Garant links, new length: {len(full_response_text)} chars")
-                            elif text_with_links == full_response_text:
-                                logger.info(f"[Legal Research] Link insertion returned same text (no links found or inserted)")
-                            else:
-                                logger.warning(f"[Legal Research] Link insertion returned None (API error or limit exceeded)")
-                    except Exception as e:
-                        logger.warning(f"[Legal Research] Failed to insert Garant links: {e}", exc_info=True)
-                elif legal_research_successful and len(full_response_text) >= max_text_for_links:
-                    logger.info(f"[Legal Research] Skipping link insertion: text too long ({len(full_response_text)} chars, max: {max_text_for_links})")
-                
-                # Отправляем источники через SSE
-                if sources_list:
-                    logger.info(f"Sending {len(sources_list)} sources via SSE (fallback) for case {case_id}")
-                    yield f"data: {json.dumps({'type': 'sources', 'sources': sources_list}, ensure_ascii=False)}\n\n"
-                else:
-                    logger.warning(f"No sources to send (fallback) for case {case_id}, query: {question[:100]}")
-                
-                yield f"data: {json.dumps({'textDelta': ''})}\n\n"
-            else:
-                # Fallback: get full response and chunk it
-                response = await loop.run_in_executor(None, lambda: llm.invoke(messages))
-                response_text = response.content if hasattr(response, 'content') else str(response)
-                full_response_text = response_text
-                
-                # Проставляем ссылки на документы ГАРАНТ в ответе (если включено юридическое исследование)
-                max_text_for_links = 8000  # 8KB для безопасности на Render
-                if legal_research_successful and aggregated and source_router and len(full_response_text) < max_text_for_links:
-                    try:
-                        garant_source = source_router._sources.get("garant")
-                        if garant_source:
-                            logger.info(f"[Legal Research] Attempting to insert Garant links (fallback, text length: {len(full_response_text)} chars)")
-                            text_with_links = await garant_source.insert_links(full_response_text)
-                            if text_with_links and text_with_links != full_response_text:
-                                full_response_text = text_with_links
-                                response_text = text_with_links
-                                logger.info(f"[Legal Research] Successfully inserted Garant links (fallback), new length: {len(full_response_text)} chars")
-                            else:
-                                logger.info(f"[Legal Research] Link insertion returned same text or None (fallback)")
-                    except Exception as e:
-                        logger.warning(f"[Legal Research] Failed to insert Garant links (fallback): {e}", exc_info=True)
-                elif legal_research_successful and len(full_response_text) >= max_text_for_links:
-                    logger.info(f"[Legal Research] Skipping link insertion (fallback): text too long ({len(full_response_text)} chars)")
-                
-                chunk_size = 20
-                for i in range(0, len(response_text), chunk_size):
-                    chunk = response_text[i:i + chunk_size]
+            # Stream ответ от ChatAgent
+            async for chunk in chat_agent.answer_stream(question):
+                if chunk:
+                    full_response_text += chunk
                     yield f"data: {json.dumps({'textDelta': chunk}, ensure_ascii=False)}\n\n"
-                    await asyncio.sleep(0.05)
-                
-                # Отправляем источники через SSE
-                if sources_list:
-                    logger.info(f"Sending {len(sources_list)} sources via SSE (fallback) for case {case_id}")
-                    yield f"data: {json.dumps({'type': 'sources', 'sources': sources_list}, ensure_ascii=False)}\n\n"
-                else:
-                    logger.warning(f"No sources to send (fallback) for case {case_id}, query: {question[:100]}")
-                
-                yield f"data: {json.dumps({'textDelta': ''})}\n\n"
-        except Exception as stream_error:
-            logger.warning(f"Streaming failed, using fallback: {stream_error}")
-            response = await loop.run_in_executor(None, lambda: llm.invoke(messages))
-            response_text = response.content if hasattr(response, 'content') else str(response)
-            full_response_text = response_text
             
-            # Проставляем ссылки на документы ГАРАНТ в ответе (если включено юридическое исследование)
-            max_text_for_links = 8000  # 8KB для безопасности на Render
-            if legal_research_successful and aggregated and source_router and len(full_response_text) < max_text_for_links:
+            # Проставляем ссылки на документы ГАРАНТ в ответе (если включен legal_research)
+            if legal_research and len(full_response_text) < 8000:
                 try:
-                    garant_source = source_router._sources.get("garant")
+                    from app.services.external_sources.source_router import initialize_source_router
+                    source_router = initialize_source_router(rag_service=rag_service, register_official_sources=True)
+                    garant_source = source_router._sources.get("garant") if source_router else None
                     if garant_source:
-                        logger.info(f"[Legal Research] Attempting to insert Garant links (error fallback, text length: {len(full_response_text)} chars)")
+                        logger.info(f"[ChatAgent] Attempting to insert Garant links (text length: {len(full_response_text)} chars)")
                         text_with_links = await garant_source.insert_links(full_response_text)
                         if text_with_links and text_with_links != full_response_text:
                             full_response_text = text_with_links
-                            response_text = text_with_links
-                            logger.info(f"[Legal Research] Successfully inserted Garant links (error fallback), new length: {len(full_response_text)} chars")
-                        else:
-                            logger.info(f"[Legal Research] Link insertion returned same text or None (error fallback)")
+                            logger.info(f"[ChatAgent] Successfully inserted Garant links")
                 except Exception as e:
-                    logger.warning(f"[Legal Research] Failed to insert Garant links (error fallback): {e}", exc_info=True)
-            elif legal_research_successful and len(full_response_text) >= max_text_for_links:
-                logger.info(f"[Legal Research] Skipping link insertion (error fallback): text too long ({len(full_response_text)} chars)")
+                    logger.warning(f"[ChatAgent] Failed to insert Garant links: {e}", exc_info=True)
             
-            chunk_size = 20
-            for i in range(0, len(response_text), chunk_size):
-                chunk = response_text[i:i + chunk_size]
-                yield f"data: {json.dumps({'textDelta': chunk}, ensure_ascii=False)}\n\n"
-                await asyncio.sleep(0.05)
+            # Сохраняем ответ в БД
+            try:
+                assistant_message_placeholder.content = full_response_text
+                db.commit()
+                logger.info(f"[ChatAgent] Response saved to DB")
+            except Exception as save_error:
+                db.rollback()
+                logger.warning(f"[ChatAgent] Failed to save response: {save_error}")
             
-            # Отправляем источники через SSE
-            if sources_list:
-                yield f"data: {json.dumps({'type': 'sources', 'sources': sources_list}, ensure_ascii=False)}\n\n"
+            return
             
-            yield f"data: {json.dumps({'textDelta': ''})}\n\n"
-        
-        # Обновляем существующее сообщение ассистента после завершения streaming
+        except Exception as agent_error:
+            logger.error(f"[ChatAgent] Error using ChatAgent: {agent_error}", exc_info=True)
+            yield f"data: {json.dumps({'error': 'Ошибка при обработке запроса. ChatAgent обязателен и не может быть использован.'})}\n\n"
+            return
+    
+    except Exception as e:
         if assistant_message_id:
             try:
                 assistant_message = db.query(ChatMessage).filter(
@@ -1075,8 +788,7 @@ async def stream_chat_response(
                 except Exception as fallback_error:
                     db.rollback()
                     logger.error(f"Error creating fallback assistant message: {fallback_error}", exc_info=True)
-    
-    except Exception as e:
+        
         logger.error(f"Error in stream_chat_response: {e}", exc_info=True)
         yield f"data: {json.dumps({'error': str(e)})}\n\n"
 
@@ -1113,6 +825,12 @@ async def assistant_chat(
         else:
             legal_research = bool(legal_research_raw)
         deep_think = body.get("deep_think", False)
+        draft_mode_raw = body.get("draft_mode", False)
+        # Normalize draft_mode to boolean
+        if isinstance(draft_mode_raw, str):
+            draft_mode = draft_mode_raw.lower() in ("true", "1", "yes")
+        else:
+            draft_mode = bool(draft_mode_raw)
         
         if not case_id:
             raise HTTPException(status_code=400, detail="case_id is required")
@@ -1137,7 +855,8 @@ async def assistant_chat(
                 background_tasks=background_tasks,
                 web_search=web_search,
                 legal_research=legal_research,
-                deep_think=deep_think
+                deep_think=deep_think,
+                draft_mode=draft_mode
             ),
             media_type="text/event-stream",
             headers={

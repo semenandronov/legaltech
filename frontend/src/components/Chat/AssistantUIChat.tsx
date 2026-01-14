@@ -11,6 +11,7 @@ import { EnhancedAgentStepsView } from './EnhancedAgentStepsView'
 import { TableCard } from './TableCard'
 import { HumanFeedbackRequestCard } from './HumanFeedbackRequestCard'
 import { TableClarificationModal } from './TableClarificationModal'
+import { DocumentCard } from './DocumentCard'
 import { WelcomeScreen } from './WelcomeScreen'
 import { SettingsPanel } from './SettingsPanel'
 import {
@@ -101,6 +102,13 @@ interface Message {
     isTableClarification?: boolean // Флаг для table_clarification
     availableDocTypes?: string[] // Доступные типы документов
     questions?: string[] // Список вопросов для table_clarification
+  }
+  // Режим Draft: карточка созданного документа
+  documentCard?: {
+    documentId: string
+    title: string
+    preview?: string
+    caseId: string
   }
 }
 
@@ -324,6 +332,7 @@ export const AssistantUIChat = forwardRef<{ clearMessages: () => void; loadHisto
   // Веб-поиск отключен - всегда передаем false в SettingsPanel
   const [legalResearch, setLegalResearch] = useState(false)
   const [deepThink, setDeepThink] = useState(false)
+  const [draftMode, setDraftMode] = useState(false)
   const abortControllerRef = useRef<AbortController | null>(null)
   const [previewOpen, setPreviewOpen] = useState(false)
   const [previewSource, setPreviewSource] = useState<SourceInfo | null>(null)
@@ -440,6 +449,7 @@ export const AssistantUIChat = forwardRef<{ clearMessages: () => void; loadHisto
           web_search: false, // Веб-поиск отключен
           legal_research: legalResearch,
           deep_think: deepThink,
+          draft_mode: draftMode,
         }),
         signal: abortControllerRef.current.signal,
       })
@@ -606,6 +616,25 @@ export const AssistantUIChat = forwardRef<{ clearMessages: () => void; loadHisto
                   )
                 )
               }
+              // Обработка создания документа в режиме Draft
+              if (data.type === 'document_created' && data.document) {
+                setMessages((prev) =>
+                  prev.map((msg) =>
+                    msg.id === assistantMsgId
+                      ? {
+                          ...msg,
+                          documentCard: {
+                            documentId: data.document.id,
+                            title: data.document.title,
+                            preview: data.document.content?.substring(0, 150),
+                            caseId: data.document.case_id,
+                          },
+                          content: msg.content + `\n\n✅ Документ "${data.document.title}" создан!`,
+                        }
+                      : msg
+                  )
+                )
+              }
               if (data.error) {
                 throw new Error(data.error)
               }
@@ -632,7 +661,7 @@ export const AssistantUIChat = forwardRef<{ clearMessages: () => void; loadHisto
       setIsLoading(false)
       abortControllerRef.current = null
     }
-  }, [actualCaseId, isLoading, messages, legalResearch, deepThink])
+  }, [actualCaseId, isLoading, messages, legalResearch, deepThink, draftMode])
 
   const startPlanExecutionStream = useCallback(async (planId: string, messageId: string) => {
     try {
@@ -951,6 +980,17 @@ export const AssistantUIChat = forwardRef<{ clearMessages: () => void; loadHisto
                   />
                 </div>
               ) : null}
+              {/* Отображение созданного документа в режиме Draft */}
+              {message.documentCard && (
+                <div className="mt-4">
+                  <DocumentCard
+                    documentId={message.documentCard.documentId}
+                    title={message.documentCard.title}
+                    preview={message.documentCard.preview}
+                    caseId={message.documentCard.caseId}
+                  />
+                </div>
+              )}
               {/* Фаза 9.3: Human feedback request card */}
               {message.feedbackRequest && (
                 message.feedbackRequest.isTableClarification ? (
@@ -1101,9 +1141,11 @@ export const AssistantUIChat = forwardRef<{ clearMessages: () => void; loadHisto
               webSearch={false}
               deepThink={deepThink}
               legalResearch={legalResearch}
+              draftMode={draftMode}
               onWebSearchChange={() => {}}
               onDeepThinkChange={setDeepThink}
               onLegalResearchChange={setLegalResearch}
+              onDraftModeChange={setDraftMode}
             />
 
           </div>
@@ -1137,9 +1179,11 @@ export const AssistantUIChat = forwardRef<{ clearMessages: () => void; loadHisto
               webSearch={false}
               deepThink={deepThink}
               legalResearch={legalResearch}
+              draftMode={draftMode}
               onWebSearchChange={() => {}}
               onDeepThinkChange={setDeepThink}
               onLegalResearchChange={setLegalResearch}
+              onDraftModeChange={setDraftMode}
             />
 
           </div>

@@ -1,5 +1,5 @@
 import React from 'react'
-import { Brain, Scale } from 'lucide-react'
+import { Brain, Scale, FileText } from 'lucide-react'
 import { Switch } from '../UI/switch'
 import {
   Tooltip,
@@ -12,9 +12,11 @@ interface SettingsPanelProps {
   webSearch: boolean
   deepThink: boolean
   legalResearch: boolean
+  draftMode: boolean
   onWebSearchChange: (value: boolean) => void
   onDeepThinkChange: (value: boolean) => void
   onLegalResearchChange: (value: boolean) => void
+  onDraftModeChange: (value: boolean) => void
   className?: string
 }
 
@@ -22,9 +24,11 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({
   webSearch: _webSearch, // Неиспользуется, но оставлен для совместимости интерфейса
   deepThink,
   legalResearch,
+  draftMode,
   onWebSearchChange,
   onDeepThinkChange,
   onLegalResearchChange,
+  onDraftModeChange,
   className = '',
 }) => {
   // Обработчик для глубокого размышления - выключает другие функции
@@ -33,6 +37,7 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({
       // Если включаем глубокое размышление, выключаем остальные
       onLegalResearchChange(false)
       onWebSearchChange(false)
+      onDraftModeChange(false)
     }
     onDeepThinkChange(checked)
   }
@@ -43,8 +48,20 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({
       // Если включаем ГАРАНТ, выключаем остальные
       onDeepThinkChange(false)
       onWebSearchChange(false)
+      onDraftModeChange(false)
     }
     onLegalResearchChange(checked)
+  }
+
+  // Обработчик для режима Draft - выключает другие функции
+  const handleDraftModeChange = (checked: boolean) => {
+    if (checked) {
+      // Если включаем режим Draft, выключаем остальные
+      onDeepThinkChange(false)
+      onLegalResearchChange(false)
+      onWebSearchChange(false)
+    }
+    onDraftModeChange(checked)
   }
 
   const settings = [
@@ -64,6 +81,14 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({
       icon: Scale,
       value: legalResearch,
       onChange: handleLegalResearchChange,
+    },
+    {
+      id: 'draftMode',
+      label: 'Режим Draft',
+      description: 'Создание документов через ИИ. Опишите нужный документ, и ИИ создаст его для редактирования в редакторе.',
+      icon: FileText,
+      value: draftMode,
+      onChange: handleDraftModeChange,
     },
   ]
 
