@@ -1099,10 +1099,10 @@ export const AssistantUIChat = forwardRef<{ clearMessages: () => void; loadHisto
 
             {/* Компактная панель настроек */}
             <SettingsPanel
-              webSearch={webSearch}
+              webSearch={false}
               deepThink={deepThink}
               legalResearch={legalResearch}
-              onWebSearchChange={setWebSearch}
+              onWebSearchChange={() => {}}
               onDeepThinkChange={setDeepThink}
               onLegalResearchChange={setLegalResearch}
             />
@@ -1135,10 +1135,10 @@ export const AssistantUIChat = forwardRef<{ clearMessages: () => void; loadHisto
 
             {/* Компактная панель настроек - всегда под полем ввода */}
             <SettingsPanel
-              webSearch={webSearch}
+              webSearch={false}
               deepThink={deepThink}
               legalResearch={legalResearch}
-              onWebSearchChange={setWebSearch}
+              onWebSearchChange={() => {}}
               onDeepThinkChange={setDeepThink}
               onLegalResearchChange={setLegalResearch}
             />

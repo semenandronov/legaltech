@@ -19,7 +19,7 @@ interface SettingsPanelProps {
 }
 
 export const SettingsPanel: React.FC<SettingsPanelProps> = ({
-  webSearch,
+  webSearch: _webSearch, // Неиспользуется, но оставлен для совместимости интерфейса
   deepThink,
   legalResearch,
   onWebSearchChange,
