@@ -211,8 +211,8 @@ class DocumentTemplateService:
                 return None
             
             # Пробуем получить полный текст для каждого результата, пока не найдем валидный
-            # Ограничиваем попытки первыми 10 результатами для производительности
-            max_attempts = min(10, len(results))
+            # Увеличиваем количество попыток, так как многие документы могут быть недоступны (404)
+            max_attempts = min(30, len(results))
             html_content = None
             result_to_use = None
             doc_id_to_use = None
@@ -253,7 +253,11 @@ class DocumentTemplateService:
             
             if not html_content or not result_to_use:
                 # Если все попытки не удались
-                logger.error(f"Failed to get full text for any of {max_attempts} results from Garant")
+                logger.error(f"Failed to get full text for any of {max_attempts} results from Garant (total results available: {len(results)})")
+                # #region agent log
+                import time
+                _safe_debug_log({"sessionId":"debug-session","runId":"run1","hypothesisId":"G","location":"document_template_service.py:256","message":"All attempts failed","data":{"max_attempts":max_attempts,"total_results":len(results),"attempted_doc_ids":[r.metadata.get("doc_id") or r.metadata.get("topic") for r in results[:max_attempts]]},"timestamp":int(time.time()*1000)})
+                # #endregion
                 return None
             
             return {

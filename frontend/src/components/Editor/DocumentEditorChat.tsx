@@ -55,7 +55,12 @@ export const DocumentEditorChat: React.FC<DocumentEditorChatProps> = ({
   }, [messages])
 
   const sendMessage = useCallback(async (userMessage: string) => {
-    if (!userMessage.trim() || !documentId || isLoading) return
+    if (!userMessage.trim() || !documentId || isLoading) {
+      if (!documentId) {
+        toast.error('Сначала сохраните документ или создайте его из шаблона')
+      }
+      return
+    }
 
     // Add user message
     const userMsg: Message = {

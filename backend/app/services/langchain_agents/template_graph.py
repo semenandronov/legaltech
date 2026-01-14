@@ -156,7 +156,8 @@ async def search_garant_node(state: TemplateState, db: Session) -> TemplateState
     logger.info(f"Searching in Garant with natural language query: '{user_query}'")
     
     garant_result = await template_service.search_in_garant(
-        query=user_query
+        query=user_query,
+        max_results=30  # Увеличиваем количество результатов для поиска доступных документов
     )
     
     # #region agent log

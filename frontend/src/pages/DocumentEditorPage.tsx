@@ -337,22 +337,20 @@ const DocumentEditorPage = () => {
             <Download className="w-4 h-4" />
             PDF
           </button>
-          {/* Кнопка чата - показывается только если есть documentId */}
-          {documentId && (
-            <button
-              onClick={() => setShowChat(!showChat)}
-              className={`flex items-center gap-2 px-4 py-2 rounded-lg transition-colors ${
-                showChat
-                  ? 'bg-blue-100 text-blue-700'
-                  : 'border hover:bg-gray-50'
-              }`}
-              style={{ borderColor: showChat ? 'transparent' : 'var(--color-border)' }}
-              title="Чат с ИИ"
-            >
-              <MessageSquare className="w-4 h-4" />
-              Чат с ИИ
-            </button>
-          )}
+          {/* Кнопка чата - показывается всегда */}
+          <button
+            onClick={() => setShowChat(!showChat)}
+            className={`flex items-center gap-2 px-4 py-2 rounded-lg transition-colors ${
+              showChat
+                ? 'bg-blue-100 text-blue-700'
+                : 'border hover:bg-gray-50'
+            }`}
+            style={{ borderColor: showChat ? 'transparent' : 'var(--color-border)' }}
+            title="Чат с ИИ"
+          >
+            <MessageSquare className="w-4 h-4" />
+            Чат с ИИ
+          </button>
           {documentId && (
             <button
               onClick={() => setShowVersionHistory(true)}
@@ -382,10 +380,10 @@ const DocumentEditorPage = () => {
         </div>
 
         {/* Chat справа */}
-        {showChat && documentId && (
+        {showChat && caseId && (
           <div className="w-80 border-l border-border shrink-0 bg-bg-elevated flex flex-col">
             <DocumentEditorChat
-              documentId={documentId}
+              documentId={documentId || 'new'}
               documentTitle={title}
               selectedText={selectedText}
               onApplyEdit={handleApplyEdit}
