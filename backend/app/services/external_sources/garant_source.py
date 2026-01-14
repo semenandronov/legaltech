@@ -271,7 +271,22 @@ class GarantSource(BaseSource):
         
         # Логируем первые несколько результатов для отладки
         if items:
-            logger.info(f"First result sample: title='{items[0].get('title', 'N/A')[:100]}', type='{items[0].get('type', 'N/A')}', doc_id='{items[0].get('topic', 'N/A')}'")
+            first_item = items[0]
+            # #region agent log
+            import time
+            import json
+            import os
+            def _safe_debug_log(data: dict) -> None:
+                try:
+                    log_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__file__)))), '.cursor', 'debug.log')
+                    os.makedirs(os.path.dirname(log_path), exist_ok=True)
+                    with open(log_path, 'a', encoding='utf-8') as f:
+                        f.write(json.dumps(data) + '\n')
+                except:
+                    pass
+            # #endregion
+            _safe_debug_log({"sessionId":"debug-session","runId":"run1","hypothesisId":"A","location":"garant_source.py:274","message":"First search result structure","data":{"all_keys":list(first_item.keys()),"topic":first_item.get('topic'),"id":first_item.get('id'),"docId":first_item.get('docId'),"documentId":first_item.get('documentId'),"title":first_item.get('title'),"type":first_item.get('type'),"full_item":first_item},"timestamp":int(time.time()*1000)})
+            logger.info(f"First result sample: title='{first_item.get('title', 'N/A')[:100]}', type='{first_item.get('type', 'N/A')}', doc_id='{first_item.get('topic', 'N/A')}'")
         
         for item in items:
             try:
