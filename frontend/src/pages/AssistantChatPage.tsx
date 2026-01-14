@@ -3,7 +3,7 @@ import { useParams, useNavigate, useSearchParams } from 'react-router-dom'
 import { AssistantUIChat } from '../components/Chat/AssistantUIChat'
 import { ChatHistoryPanel } from '../components/Chat/ChatHistoryPanel'
 import { DocumentsPanel } from '../components/Chat/DocumentsPanel'
-import { History, FileText, MessageSquare, FileEdit } from 'lucide-react'
+import { History, FileText, MessageSquare } from 'lucide-react'
 import { toast } from 'sonner'
 import { getCase } from '../services/api'
 

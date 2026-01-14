@@ -93,7 +93,10 @@ const SlashCommands = Extension.create<SlashCommandsOptions>({
                 return true
               }
 
-              return component.ref?.onKeyDown?.(props) ?? false
+              if (component.ref && typeof (component.ref as any).onKeyDown === 'function') {
+                return (component.ref as any).onKeyDown(props)
+              }
+              return false
             },
 
             onExit() {
