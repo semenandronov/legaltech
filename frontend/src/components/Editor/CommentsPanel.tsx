@@ -3,7 +3,6 @@ import { MessageSquare, X, Plus } from 'lucide-react'
 import { Button } from '@/components/UI/Button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/UI/Card'
 import { Textarea } from '@/components/UI/Textarea'
-import { ScrollArea } from '@/components/UI/scroll-area'
 
 interface Comment {
   id: string

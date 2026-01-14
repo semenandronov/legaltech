@@ -1,6 +1,7 @@
 import { Extension } from '@tiptap/core'
 import { Plugin, PluginKey } from '@tiptap/pm/state'
 import { Decoration, DecorationSet } from '@tiptap/pm/view'
+import { Transaction, EditorState } from '@tiptap/pm/state'
 
 export interface CommentOptions {
   comments: Array<{
@@ -32,7 +33,7 @@ export const Comment = Extension.create<CommentOptions>({
           init() {
             return DecorationSet.empty
           },
-          apply(tr, set) {
+          apply(tr: Transaction, set: DecorationSet) {
             const decorations: Decoration[] = []
             const comments = extension.options.comments || []
 
@@ -65,7 +66,7 @@ export const Comment = Extension.create<CommentOptions>({
 
   addCommands() {
     return {
-      addComment: (from: number, to: number, text: string, id?: string) => ({ tr, dispatch }) => {
+      addComment: (from: number, to: number, text: string, id?: string) => ({ tr, dispatch }: { tr: Transaction; dispatch?: (tr: Transaction) => void }) => {
         if (dispatch) {
           if (!this.options.comments) {
             this.options.comments = []
@@ -82,7 +83,7 @@ export const Comment = Extension.create<CommentOptions>({
         }
         return true
       },
-      removeComment: (id: string) => ({ tr, dispatch }) => {
+      removeComment: (id: string) => ({ tr, dispatch }: { tr: Transaction; dispatch?: (tr: Transaction) => void }) => {
         if (dispatch) {
           if (this.options.comments) {
             this.options.comments = this.options.comments.filter((c) => c.id !== id)
@@ -91,14 +92,14 @@ export const Comment = Extension.create<CommentOptions>({
         }
         return true
       },
-      setComments: (comments: CommentOptions['comments']) => ({ tr, dispatch }) => {
+      setComments: (comments: CommentOptions['comments']) => ({ tr, dispatch }: { tr: Transaction; dispatch?: (tr: Transaction) => void }) => {
         if (dispatch) {
           this.options.comments = comments
           dispatch(tr)
         }
         return true
       },
-    }
+    } as any
   },
 })
 

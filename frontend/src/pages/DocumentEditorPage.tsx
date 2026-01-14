@@ -17,6 +17,7 @@ interface DocumentData {
   title: string
   content: string
   case_id: string
+  version?: number
 }
 
 const DocumentEditorPage = () => {

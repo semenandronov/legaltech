@@ -159,13 +159,13 @@ export const DocumentEditor = forwardRef<DocumentEditorRef, DocumentEditorProps>
     },
     addComment: (from: number, to: number, text: string) => {
       if (editor) {
-        editor.chain().focus().addComment(from, to, text).run()
+        ;(editor.chain().focus() as any).addComment(from, to, text).run()
         onChange(editor.getHTML())
       }
     },
     removeComment: (id: string) => {
       if (editor) {
-        editor.chain().focus().removeComment(id).run()
+        ;(editor.chain().focus() as any).removeComment(id).run()
         onChange(editor.getHTML())
       }
     },
@@ -180,13 +180,13 @@ export const DocumentEditor = forwardRef<DocumentEditorRef, DocumentEditorProps>
     },
     addRisk: (from: number, to: number, level: 'high' | 'medium' | 'low', description: string) => {
       if (editor) {
-        editor.chain().focus().addRisk(from, to, level, description).run()
+        ;(editor.chain().focus() as any).addRisk(from, to, level, description).run()
         onChange(editor.getHTML())
       }
     },
     clearRisks: () => {
       if (editor) {
-        editor.chain().focus().clearRisks().run()
+        ;(editor.chain().focus() as any).clearRisks().run()
         onChange(editor.getHTML())
       }
     },

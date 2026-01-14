@@ -1,6 +1,7 @@
 import { Extension } from '@tiptap/core'
 import { Plugin, PluginKey } from '@tiptap/pm/state'
 import { Decoration, DecorationSet } from '@tiptap/pm/view'
+import { Transaction } from '@tiptap/pm/state'
 
 export interface RiskHighlightOptions {
   risks: Array<{
@@ -31,7 +32,7 @@ export const RiskHighlight = Extension.create<RiskHighlightOptions>({
           init() {
             return DecorationSet.empty
           },
-          apply(tr, set) {
+          apply(tr: Transaction, set: DecorationSet) {
             const decorations: Decoration[] = []
             const risks = extension.options.risks || []
 
@@ -75,7 +76,7 @@ export const RiskHighlight = Extension.create<RiskHighlightOptions>({
 
   addCommands() {
     return {
-      addRisk: (from: number, to: number, level: 'high' | 'medium' | 'low', description: string, id?: string) => ({ tr, dispatch }) => {
+      addRisk: (from: number, to: number, level: 'high' | 'medium' | 'low', description: string, id?: string) => ({ tr, dispatch }: { tr: Transaction; dispatch?: (tr: Transaction) => void }) => {
         if (dispatch) {
           if (!this.options.risks) {
             this.options.risks = []
@@ -92,7 +93,7 @@ export const RiskHighlight = Extension.create<RiskHighlightOptions>({
         }
         return true
       },
-      removeRisk: (id: string) => ({ tr, dispatch }) => {
+      removeRisk: (id: string) => ({ tr, dispatch }: { tr: Transaction; dispatch?: (tr: Transaction) => void }) => {
         if (dispatch) {
           if (this.options.risks) {
             this.options.risks = this.options.risks.filter((r) => r.id !== id)
@@ -101,21 +102,21 @@ export const RiskHighlight = Extension.create<RiskHighlightOptions>({
         }
         return true
       },
-      clearRisks: () => ({ tr, dispatch }) => {
+      clearRisks: () => ({ tr, dispatch }: { tr: Transaction; dispatch?: (tr: Transaction) => void }) => {
         if (dispatch) {
           this.options.risks = []
           dispatch(tr)
         }
         return true
       },
-      setRisks: (risks: RiskHighlightOptions['risks']) => ({ tr, dispatch }) => {
+      setRisks: (risks: RiskHighlightOptions['risks']) => ({ tr, dispatch }: { tr: Transaction; dispatch?: (tr: Transaction) => void }) => {
         if (dispatch) {
           this.options.risks = risks
           dispatch(tr)
         }
         return true
       },
-    }
+    } as any
   },
 })
 

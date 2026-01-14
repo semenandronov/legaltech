@@ -2,7 +2,7 @@ import React, { useState } from 'react'
 import { FileText, Search, Loader2 } from 'lucide-react'
 import { Button } from '@/components/UI/Button'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/UI/dialog'
-import { Input } from '@/components/UI/input'
+import { Input } from '@/components/UI/Input'
 import { Textarea } from '@/components/UI/Textarea'
 import { toast } from 'sonner'
 import { createDocument } from '@/services/documentEditorApi'
@@ -89,7 +89,7 @@ export const TemplateSelector: React.FC<TemplateSelectorProps> = ({
             <label className="text-sm font-medium mb-2 block">Название документа</label>
             <Input
               value={title}
-              onChange={(e) => setTitle(e.target.value)}
+              onChange={(e: React.ChangeEvent<HTMLInputElement>) => setTitle(e.target.value)}
               placeholder="Например: Договор поставки №1"
             />
           </div>

@@ -1,6 +1,7 @@
 import { Extension } from '@tiptap/core'
 import { Plugin, PluginKey } from '@tiptap/pm/state'
 import { Decoration, DecorationSet } from '@tiptap/pm/view'
+import { Transaction } from '@tiptap/pm/state'
 
 export interface TrackChangesOptions {
   enabled: boolean
@@ -33,7 +34,7 @@ export const TrackChanges = Extension.create<TrackChangesOptions>({
           init() {
             return DecorationSet.empty
           },
-          apply(tr, set) {
+          apply(tr: Transaction, set: DecorationSet) {
             if (!extension.options.enabled) {
               return DecorationSet.empty
             }
@@ -81,14 +82,14 @@ export const TrackChanges = Extension.create<TrackChangesOptions>({
 
   addCommands() {
     return {
-      setTrackChangesEnabled: (enabled: boolean) => ({ tr, dispatch }) => {
+      setTrackChangesEnabled: (enabled: boolean) => ({ tr, dispatch }: { tr: Transaction; dispatch?: (tr: Transaction) => void }) => {
         if (dispatch) {
           this.options.enabled = enabled
           dispatch(tr)
         }
         return true
       },
-      addPendingChange: (change: TrackChangesOptions['pendingChanges'][0]) => ({ tr, dispatch }) => {
+      addPendingChange: (change: NonNullable<TrackChangesOptions['pendingChanges']>[0]) => ({ tr, dispatch }: { tr: Transaction; dispatch?: (tr: Transaction) => void }) => {
         if (dispatch) {
           if (!this.options.pendingChanges) {
             this.options.pendingChanges = []
@@ -98,14 +99,14 @@ export const TrackChanges = Extension.create<TrackChangesOptions>({
         }
         return true
       },
-      clearPendingChanges: () => ({ tr, dispatch }) => {
+      clearPendingChanges: () => ({ tr, dispatch }: { tr: Transaction; dispatch?: (tr: Transaction) => void }) => {
         if (dispatch) {
           this.options.pendingChanges = []
           dispatch(tr)
         }
         return true
       },
-    }
+    } as any
   },
 })
 
