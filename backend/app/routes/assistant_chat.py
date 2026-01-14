@@ -601,11 +601,17 @@ async def stream_chat_response(
                 if need_full_text and "garant" in search_results:
                     garant_source = source_router._sources.get("garant")
                     if garant_source:
-                        logger.info(f"Getting full text for {len(search_results['garant'])} Garant documents")
-                        for result in search_results["garant"][:5]:  # Первые 5 результатов
+                        garant_results = search_results["garant"]
+                        logger.info(f"[Legal Research] Getting full text for {len(garant_results)} Garant documents (requested: need_full_text={need_full_text})")
+                        
+                        # Ограничиваем количество документов для безопасности на Render (избегаем таймаутов)
+                        from app.services.external_sources.garant_source import MAX_FULL_TEXT_DOCS, MAX_CONTENT_LENGTH
+                        max_full_text_docs = MAX_FULL_TEXT_DOCS
+                        for i, result in enumerate(garant_results[:max_full_text_docs], 1):
                             doc_id = result.metadata.get("doc_id")
                             if doc_id:
                                 try:
+                                    logger.info(f"[Legal Research] Fetching full text for document {i}/{max_full_text_docs}: doc_id={doc_id}")
                                     full_text = await garant_source.get_document_full_text(doc_id, format="html")
                                     if full_text:
                                         # Парсим HTML и извлекаем текст
@@ -613,16 +619,20 @@ async def stream_chat_response(
                                             from bs4 import BeautifulSoup
                                             soup = BeautifulSoup(full_text, 'html.parser')
                                             text_content = soup.get_text(separator='\n', strip=True)
-                                            result.content = text_content[:5000]  # Используем полный текст
-                                            logger.info(f"Got full text for document {doc_id}, length: {len(text_content)}")
+                                            # Ограничиваем размер для безопасности на Render
+                                            result.content = text_content[:MAX_CONTENT_LENGTH]
+                                            logger.info(f"[Legal Research] Got full text for document {doc_id}, extracted: {len(text_content)} chars, using: {len(result.content)} chars")
                                         except ImportError:
                                             # Если BeautifulSoup не установлен, используем простую очистку HTML
                                             import re
                                             text_content = re.sub(r'<[^>]+>', '', full_text)
-                                            result.content = text_content[:5000]
-                                            logger.info(f"Got full text for document {doc_id} (without BeautifulSoup)")
+                                            result.content = text_content[:MAX_CONTENT_LENGTH]
+                                            logger.info(f"[Legal Research] Got full text for document {doc_id} (without BeautifulSoup), length: {len(result.content)}")
+                                    else:
+                                        logger.warning(f"[Legal Research] Failed to get full text for document {doc_id} (API returned None)")
                                 except Exception as e:
-                                    logger.warning(f"Failed to get full text for document {doc_id}: {e}")
+                                    logger.warning(f"[Legal Research] Error getting full text for document {doc_id}: {e}", exc_info=True)
+                        logger.info(f"[Legal Research] Finished fetching full text for documents")
                 
                 # Агрегируем результаты - берем больше для лучшего анализа
                 aggregated = source_router.aggregate_results(
@@ -919,17 +929,26 @@ async def stream_chat_response(
                     yield f"data: {json.dumps({'textDelta': content}, ensure_ascii=False)}\n\n"
                 
                 # Проставляем ссылки на документы ГАРАНТ в ответе (если включено юридическое исследование)
-                if legal_research_successful and aggregated and source_router and len(full_response_text) < 10000:
+                # Ограничиваем размер текста для безопасности на Render (лимит API: 20Мб, но используем 8КБ для безопасности)
+                max_text_for_links = 8000  # 8KB для безопасности на Render
+                if legal_research_successful and aggregated and source_router and len(full_response_text) < max_text_for_links:
                     try:
                         garant_source = source_router._sources.get("garant")
                         if garant_source:
+                            logger.info(f"[Legal Research] Attempting to insert Garant links into response (text length: {len(full_response_text)} chars)")
                             text_with_links = await garant_source.insert_links(full_response_text)
                             if text_with_links and text_with_links != full_response_text:
                                 # Если ссылки были добавлены, обновляем ответ
                                 full_response_text = text_with_links
-                                logger.info("Successfully inserted Garant links into response")
+                                logger.info(f"[Legal Research] Successfully inserted Garant links, new length: {len(full_response_text)} chars")
+                            elif text_with_links == full_response_text:
+                                logger.info(f"[Legal Research] Link insertion returned same text (no links found or inserted)")
+                            else:
+                                logger.warning(f"[Legal Research] Link insertion returned None (API error or limit exceeded)")
                     except Exception as e:
-                        logger.warning(f"Failed to insert Garant links: {e}")
+                        logger.warning(f"[Legal Research] Failed to insert Garant links: {e}", exc_info=True)
+                elif legal_research_successful and len(full_response_text) >= max_text_for_links:
+                    logger.info(f"[Legal Research] Skipping link insertion: text too long ({len(full_response_text)} chars, max: {max_text_for_links})")
                 
                 # Отправляем источники через SSE
                 if sources_list:
@@ -946,17 +965,23 @@ async def stream_chat_response(
                 full_response_text = response_text
                 
                 # Проставляем ссылки на документы ГАРАНТ в ответе (если включено юридическое исследование)
-                if legal_research_successful and aggregated and source_router and len(full_response_text) < 10000:
+                max_text_for_links = 8000  # 8KB для безопасности на Render
+                if legal_research_successful and aggregated and source_router and len(full_response_text) < max_text_for_links:
                     try:
                         garant_source = source_router._sources.get("garant")
                         if garant_source:
+                            logger.info(f"[Legal Research] Attempting to insert Garant links (fallback, text length: {len(full_response_text)} chars)")
                             text_with_links = await garant_source.insert_links(full_response_text)
                             if text_with_links and text_with_links != full_response_text:
                                 full_response_text = text_with_links
                                 response_text = text_with_links
-                                logger.info("Successfully inserted Garant links into response (fallback)")
+                                logger.info(f"[Legal Research] Successfully inserted Garant links (fallback), new length: {len(full_response_text)} chars")
+                            else:
+                                logger.info(f"[Legal Research] Link insertion returned same text or None (fallback)")
                     except Exception as e:
-                        logger.warning(f"Failed to insert Garant links: {e}")
+                        logger.warning(f"[Legal Research] Failed to insert Garant links (fallback): {e}", exc_info=True)
+                elif legal_research_successful and len(full_response_text) >= max_text_for_links:
+                    logger.info(f"[Legal Research] Skipping link insertion (fallback): text too long ({len(full_response_text)} chars)")
                 
                 chunk_size = 20
                 for i in range(0, len(response_text), chunk_size):
@@ -979,17 +1004,23 @@ async def stream_chat_response(
             full_response_text = response_text
             
             # Проставляем ссылки на документы ГАРАНТ в ответе (если включено юридическое исследование)
-            if legal_research_successful and aggregated and len(full_response_text) < 10000:
+            max_text_for_links = 8000  # 8KB для безопасности на Render
+            if legal_research_successful and aggregated and source_router and len(full_response_text) < max_text_for_links:
                 try:
                     garant_source = source_router._sources.get("garant")
                     if garant_source:
+                        logger.info(f"[Legal Research] Attempting to insert Garant links (error fallback, text length: {len(full_response_text)} chars)")
                         text_with_links = await garant_source.insert_links(full_response_text)
                         if text_with_links and text_with_links != full_response_text:
                             full_response_text = text_with_links
                             response_text = text_with_links
-                            logger.info("Successfully inserted Garant links into response (error fallback)")
+                            logger.info(f"[Legal Research] Successfully inserted Garant links (error fallback), new length: {len(full_response_text)} chars")
+                        else:
+                            logger.info(f"[Legal Research] Link insertion returned same text or None (error fallback)")
                 except Exception as e:
-                    logger.warning(f"Failed to insert Garant links: {e}")
+                    logger.warning(f"[Legal Research] Failed to insert Garant links (error fallback): {e}", exc_info=True)
+            elif legal_research_successful and len(full_response_text) >= max_text_for_links:
+                logger.info(f"[Legal Research] Skipping link insertion (error fallback): text too long ({len(full_response_text)} chars)")
             
             chunk_size = 20
             for i in range(0, len(response_text), chunk_size):

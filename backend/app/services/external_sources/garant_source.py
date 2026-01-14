@@ -8,6 +8,19 @@ import json
 
 logger = logging.getLogger(__name__)
 
+# Константы для таймаутов с учетом ограничений Render
+# Render имеет максимальный timeout ~300 секунд для HTTP запросов
+# Используем консервативные значения для безопасности
+GARANT_API_TIMEOUT_SEARCH = 25  # секунд для поиска
+GARANT_API_TIMEOUT_EXPORT = 25  # секунд для экспорта документов
+GARANT_API_TIMEOUT_LINKS = 50   # секунд для простановки ссылок (может быть долгим)
+GARANT_API_TIMEOUT_INFO = 25   # секунд для получения информации о документе
+
+# Ограничения для Render (безопасные значения)
+MAX_TEXT_SIZE_FOR_LINKS = 10 * 1024 * 1024  # 10MB (API лимит 20MB, но используем меньше для безопасности)
+MAX_FULL_TEXT_DOCS = 3  # Максимум документов для получения полного текста за раз
+MAX_CONTENT_LENGTH = 5000  # Максимальная длина контента документа (символов)
+
 
 class GarantSource(BaseSource):
     """
@@ -277,18 +290,22 @@ class GarantSource(BaseSource):
                         "page": page,
                     }
                     
-                    logger.info(f"Garant API request page {page}: text='{garant_query}', isQuery={use_query_language}, URL={self.api_url}/search")
+                    logger.info(f"[Garant API] Request page {page}: text='{garant_query[:100]}...', isQuery={use_query_language}, max_results={max_results}")
+                    logger.debug(f"[Garant API] Full request: {request_body}")
+                    
+                    start_time = __import__('time').time()
                     
                     async with session.post(
                         f"{self.api_url}/search",
                         json=request_body,
                         headers=headers,
-                        timeout=aiohttp.ClientTimeout(total=30)
+                        timeout=aiohttp.ClientTimeout(total=GARANT_API_TIMEOUT_SEARCH)
                     ) as response:
+                        elapsed_time = __import__('time').time() - start_time
                         response_status = response.status
                         response_text = await response.text()
                         
-                        logger.info(f"Garant API response page {page}: status={response_status}, response_length={len(response_text)}")
+                        logger.info(f"[Garant API] Response page {page}: status={response_status}, length={len(response_text)} chars, elapsed={elapsed_time:.2f}s")
                         
                         if response_status == 401:
                             logger.error(f"Garant API: Unauthorized - check API key. Response: {response_text[:200]}")
@@ -477,7 +494,11 @@ class GarantSource(BaseSource):
             Полный текст документа или None
         """
         if not self.api_key:
-            logger.warning("Garant source: API key not configured")
+            logger.warning("[Garant API] API key not configured, cannot get document full text")
+            return None
+        
+        if not doc_id:
+            logger.warning("[Garant API] Document ID is empty")
             return None
         
         headers = {
@@ -496,6 +517,9 @@ class GarantSource(BaseSource):
         }
         
         endpoint = endpoint_map.get(format.lower(), "/export/html")
+        full_url = f"{self.api_url}{endpoint}"
+        
+        timeout_seconds = GARANT_API_TIMEOUT_EXPORT
         
         try:
             async with aiohttp.ClientSession() as session:
@@ -504,28 +528,61 @@ class GarantSource(BaseSource):
                     "env": "internet"
                 }
                 
-                logger.info(f"Requesting full text for document {doc_id} in format {format}")
+                logger.info(f"[Garant API] Requesting full text for document {doc_id} in format {format}")
+                logger.debug(f"[Garant API] Endpoint: {full_url}, Request body: {request_body}")
+                
+                start_time = __import__('time').time()
                 
                 async with session.post(
-                    f"{self.api_url}{endpoint}",
+                    full_url,
                     json=request_body,
                     headers=headers,
-                    timeout=aiohttp.ClientTimeout(total=30)
+                    timeout=aiohttp.ClientTimeout(total=timeout_seconds)
                 ) as response:
+                    elapsed_time = __import__('time').time() - start_time
+                    
+                    logger.info(f"[Garant API] Export response: status={response.status}, elapsed={elapsed_time:.2f}s")
+                    
                     if response.status == 200:
-                        if format == "html":
-                            return await response.text()
-                        else:
-                            # Для бинарных форматов возвращаем base64
-                            import base64
-                            content = await response.read()
-                            return base64.b64encode(content).decode('utf-8')
+                        try:
+                            if format == "html":
+                                content = await response.text()
+                                logger.info(f"[Garant API] Successfully got HTML content, length: {len(content)} chars")
+                                return content
+                            else:
+                                # Для бинарных форматов возвращаем base64
+                                import base64
+                                content = await response.read()
+                                encoded = base64.b64encode(content).decode('utf-8')
+                                logger.info(f"[Garant API] Successfully got {format} content, size: {len(content)} bytes, encoded: {len(encoded)} chars")
+                                return encoded
+                        except Exception as parse_error:
+                            logger.error(f"[Garant API] Error parsing response content: {parse_error}", exc_info=True)
+                            return None
+                    elif response.status == 401:
+                        error_text = await response.text()
+                        logger.error(f"[Garant API] Unauthorized (401) - check API key. Response: {error_text[:200]}")
+                        return None
+                    elif response.status == 403:
+                        error_text = await response.text()
+                        logger.error(f"[Garant API] Forbidden (403) - check permissions or API limits. Response: {error_text[:200]}")
+                        return None
+                    elif response.status == 404:
+                        error_text = await response.text()
+                        logger.warning(f"[Garant API] Document not found (404) for doc_id={doc_id}. Response: {error_text[:200]}")
+                        return None
                     else:
                         error_text = await response.text()
-                        logger.error(f"Garant API export error: status={response.status}, response={error_text[:200]}")
+                        logger.error(f"[Garant API] Export error: status={response.status}, doc_id={doc_id}, format={format}, response={error_text[:500]}")
                         return None
+        except aiohttp.ClientTimeout:
+            logger.error(f"[Garant API] Timeout ({timeout_seconds}s) while getting document {doc_id} in format {format}")
+            return None
+        except aiohttp.ClientError as e:
+            logger.error(f"[Garant API] Client error getting document full text: {e}", exc_info=True)
+            return None
         except Exception as e:
-            logger.error(f"Error getting document full text: {e}", exc_info=True)
+            logger.error(f"[Garant API] Unexpected error getting document full text: {e}", exc_info=True)
             return None
     
     async def get_document_info(self, doc_id: str) -> Optional[Dict[str, Any]]:
@@ -539,6 +596,11 @@ class GarantSource(BaseSource):
             Словарь с информацией о документе или None
         """
         if not self.api_key:
+            logger.warning("[Garant API] API key not configured, cannot get document info")
+            return None
+        
+        if not doc_id:
+            logger.warning("[Garant API] Document ID is empty")
             return None
         
         headers = {
@@ -547,6 +609,9 @@ class GarantSource(BaseSource):
             "Accept": "application/json",
         }
         
+        full_url = f"{self.api_url}/document/info"
+        timeout_seconds = GARANT_API_TIMEOUT_INFO
+        
         try:
             async with aiohttp.ClientSession() as session:
                 request_body = {
@@ -554,23 +619,53 @@ class GarantSource(BaseSource):
                     "env": "internet"
                 }
                 
-                logger.info(f"Requesting document info for {doc_id}")
+                logger.info(f"[Garant API] Requesting document info for {doc_id}")
+                logger.debug(f"[Garant API] Endpoint: {full_url}, Request body: {request_body}")
+                
+                start_time = __import__('time').time()
                 
                 async with session.post(
-                    f"{self.api_url}/document/info",
+                    full_url,
                     json=request_body,
                     headers=headers,
-                    timeout=aiohttp.ClientTimeout(total=30)
+                    timeout=aiohttp.ClientTimeout(total=timeout_seconds)
                 ) as response:
+                    elapsed_time = __import__('time').time() - start_time
+                    
+                    logger.info(f"[Garant API] Document info response: status={response.status}, elapsed={elapsed_time:.2f}s")
+                    
                     if response.status == 200:
-                        data = await response.json()
-                        return data
+                        try:
+                            data = await response.json()
+                            logger.info(f"[Garant API] Successfully got document info, keys: {list(data.keys()) if isinstance(data, dict) else 'N/A'}")
+                            return data
+                        except Exception as parse_error:
+                            logger.error(f"[Garant API] Error parsing JSON response: {parse_error}", exc_info=True)
+                            return None
+                    elif response.status == 401:
+                        error_text = await response.text()
+                        logger.error(f"[Garant API] Unauthorized (401) - check API key. Response: {error_text[:200]}")
+                        return None
+                    elif response.status == 403:
+                        error_text = await response.text()
+                        logger.error(f"[Garant API] Forbidden (403) - check permissions. Response: {error_text[:200]}")
+                        return None
+                    elif response.status == 404:
+                        error_text = await response.text()
+                        logger.warning(f"[Garant API] Document not found (404) for doc_id={doc_id}. Response: {error_text[:200]}")
+                        return None
                     else:
                         error_text = await response.text()
-                        logger.error(f"Garant API document info error: status={response.status}, response={error_text[:200]}")
+                        logger.error(f"[Garant API] Document info error: status={response.status}, doc_id={doc_id}, response={error_text[:500]}")
                         return None
+        except aiohttp.ClientTimeout:
+            logger.error(f"[Garant API] Timeout ({timeout_seconds}s) while getting document info for {doc_id}")
+            return None
+        except aiohttp.ClientError as e:
+            logger.error(f"[Garant API] Client error getting document info: {e}", exc_info=True)
+            return None
         except Exception as e:
-            logger.error(f"Error getting document info: {e}", exc_info=True)
+            logger.error(f"[Garant API] Unexpected error getting document info: {e}", exc_info=True)
             return None
     
     async def insert_links(self, text: str) -> Optional[str]:
@@ -587,19 +682,36 @@ class GarantSource(BaseSource):
             Текст с проставленными ссылками или None
         """
         if not self.api_key:
+            logger.warning("[Garant API] API key not configured, cannot insert links")
             return None
         
-        # Проверяем размер текста (лимит 20Мб)
-        text_bytes = text.encode('utf-8')
-        if len(text_bytes) > 20 * 1024 * 1024:  # 20Мб лимит
-            logger.warning(f"Text too large for link insertion: {len(text_bytes)} bytes (max 20MB)")
+        if not text or not text.strip():
+            logger.warning("[Garant API] Text is empty, cannot insert links")
             return None
+        
+        # Проверяем размер текста (лимит 20Мб согласно документации)
+        text_bytes = text.encode('utf-8')
+        text_size_mb = len(text_bytes) / (1024 * 1024)
+        
+        if len(text_bytes) > 20 * 1024 * 1024:  # 20Мб лимит
+            logger.warning(f"[Garant API] Text too large for link insertion: {text_size_mb:.2f}MB (max 20MB)")
+            return None
+        
+        # Для Render: ограничиваем размер текста для безопасности
+        # (оставляем запас для обработки и избежания таймаутов)
+        if len(text_bytes) > MAX_TEXT_SIZE_FOR_LINKS:
+            logger.warning(f"[Garant API] Text size {text_size_mb:.2f}MB exceeds safe limit for Render ({MAX_TEXT_SIZE_FOR_LINKS / (1024*1024):.0f}MB), truncating")
+            text = text[:MAX_TEXT_SIZE_FOR_LINKS]
+            text_bytes = text.encode('utf-8')
         
         headers = {
             "Authorization": f"Bearer {self.api_key}",
             "Content-Type": "application/json",
             "Accept": "application/json",
         }
+        
+        full_url = f"{self.api_url}/links"
+        timeout_seconds = GARANT_API_TIMEOUT_LINKS
         
         try:
             async with aiohttp.ClientSession() as session:
@@ -608,27 +720,70 @@ class GarantSource(BaseSource):
                     "env": "internet"
                 }
                 
-                logger.info(f"Requesting link insertion for text ({len(text_bytes)} bytes)")
+                logger.info(f"[Garant API] Requesting link insertion for text ({text_size_mb:.2f}MB, {len(text)} chars)")
+                logger.debug(f"[Garant API] Endpoint: {full_url}, Text preview: {text[:200]}...")
+                
+                start_time = __import__('time').time()
                 
                 async with session.post(
-                    f"{self.api_url}/links",
+                    full_url,
                     json=request_body,
                     headers=headers,
-                    timeout=aiohttp.ClientTimeout(total=60)  # Больше времени для обработки
+                    timeout=aiohttp.ClientTimeout(total=timeout_seconds)
                 ) as response:
+                    elapsed_time = __import__('time').time() - start_time
+                    
+                    logger.info(f"[Garant API] Link insertion response: status={response.status}, elapsed={elapsed_time:.2f}s")
+                    
                     if response.status == 200:
-                        data = await response.json()
-                        # Согласно документации, ответ содержит текст с ссылками
-                        result_text = data.get("text") or data.get("result") or data.get("content")
-                        if result_text:
-                            logger.info(f"Successfully inserted links, result length: {len(result_text)}")
-                        return result_text
+                        try:
+                            data = await response.json()
+                            logger.debug(f"[Garant API] Response keys: {list(data.keys()) if isinstance(data, dict) else 'N/A'}")
+                            
+                            # Согласно документации, ответ содержит текст с ссылками
+                            # Пробуем разные возможные поля ответа
+                            result_text = (
+                                data.get("text") or 
+                                data.get("result") or 
+                                data.get("content") or
+                                data.get("textWithLinks") or
+                                (data if isinstance(data, str) else None)
+                            )
+                            
+                            if result_text:
+                                result_size = len(result_text.encode('utf-8')) / (1024 * 1024)
+                                logger.info(f"[Garant API] Successfully inserted links, result length: {len(result_text)} chars ({result_size:.2f}MB)")
+                                return result_text
+                            else:
+                                logger.warning(f"[Garant API] Response status 200 but no text found in response. Data: {data}")
+                                return None
+                        except Exception as parse_error:
+                            logger.error(f"[Garant API] Error parsing JSON response: {parse_error}", exc_info=True)
+                            return None
+                    elif response.status == 401:
+                        error_text = await response.text()
+                        logger.error(f"[Garant API] Unauthorized (401) - check API key. Response: {error_text[:200]}")
+                        return None
+                    elif response.status == 403:
+                        error_text = await response.text()
+                        logger.error(f"[Garant API] Forbidden (403) - check permissions or monthly limit (1000 requests/month). Response: {error_text[:200]}")
+                        return None
+                    elif response.status == 413:
+                        error_text = await response.text()
+                        logger.error(f"[Garant API] Payload too large (413) - text size {text_size_mb:.2f}MB exceeds limit. Response: {error_text[:200]}")
+                        return None
                     else:
                         error_text = await response.text()
-                        logger.error(f"Garant API link insertion error: status={response.status}, response={error_text[:200]}")
+                        logger.error(f"[Garant API] Link insertion error: status={response.status}, text_size={text_size_mb:.2f}MB, response={error_text[:500]}")
                         return None
+        except aiohttp.ClientTimeout:
+            logger.error(f"[Garant API] Timeout ({timeout_seconds}s) while inserting links for text ({text_size_mb:.2f}MB)")
+            return None
+        except aiohttp.ClientError as e:
+            logger.error(f"[Garant API] Client error inserting links: {e}", exc_info=True)
+            return None
         except Exception as e:
-            logger.error(f"Error inserting links: {e}", exc_info=True)
+            logger.error(f"[Garant API] Unexpected error inserting links: {e}", exc_info=True)
             return None
     
     def get_info(self) -> Dict[str, Any]:
