@@ -4,7 +4,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy import or_, func
 from app.models.document_template import DocumentTemplate
 from app.services.external_sources.garant_source import GarantSource
-from app.services.external_sources.source_router import get_source_router
+from app.services.external_sources.source_router import get_source_router, initialize_source_router
 import logging
 import re
 import os
@@ -45,10 +45,13 @@ class DocumentTemplateService:
         """Получить экземпляр GarantSource"""
         if self._garant_source is None:
             try:
-                router = get_source_router()
+                # Инициализируем router с официальными источниками, если еще не инициализирован
+                router = initialize_source_router(rag_service=None, register_official_sources=True)
                 self._garant_source = router.get_source("garant")
                 if self._garant_source is None:
                     logger.warning("GarantSource not registered in source router")
+                elif not self._garant_source.enabled:
+                    logger.warning("GarantSource is disabled (likely missing GARANT_API_KEY)")
             except Exception as e:
                 logger.warning(f"Failed to get GarantSource: {e}")
         return self._garant_source
