@@ -7,9 +7,31 @@ from app.services.external_sources.garant_source import GarantSource
 from app.services.external_sources.source_router import SourceRouter
 import logging
 import re
+import os
+import json
 from datetime import datetime
 
 logger = logging.getLogger(__name__)
+
+
+def _safe_debug_log(data: dict) -> None:
+    """Безопасное логирование в debug.log с обработкой ошибок"""
+    try:
+        # Пытаемся найти путь к debug.log относительно корня проекта
+        base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
+        log_path = os.path.join(base_dir, '.cursor', 'debug.log')
+        
+        # Создаем директорию если не существует
+        log_dir = os.path.dirname(log_path)
+        if not os.path.exists(log_dir):
+            os.makedirs(log_dir, exist_ok=True)
+        
+        # Записываем лог
+        with open(log_path, 'a', encoding='utf-8') as f:
+            f.write(json.dumps(data) + '\n')
+    except Exception:
+        # Игнорируем ошибки логирования - это не критично
+        pass
 
 
 class DocumentTemplateService:
@@ -146,16 +168,15 @@ class DocumentTemplateService:
             Первый найденный шаблон из Гаранта или None
         """
         # #region agent log
-        import json
-        with open('/Users/semyon_andronov04/Desktop/C ДВ/.cursor/debug.log', 'a', encoding='utf-8') as f:
-            f.write(json.dumps({"sessionId":"debug-session","runId":"run1","hypothesisId":"A","location":"document_template_service.py:148","message":"search_in_garant called","data":{"query":query,"max_results":max_results},"timestamp":int(__import__('time').time()*1000)}) + '\n')
+        import time
+        _safe_debug_log({"sessionId":"debug-session","runId":"run1","hypothesisId":"A","location":"document_template_service.py:148","message":"search_in_garant called","data":{"query":query,"max_results":max_results},"timestamp":int(time.time()*1000)})
         # #endregion
         
         garant_source = self._get_garant_source()
         
         # #region agent log
-        with open('/Users/semyon_andronov04/Desktop/C ДВ/.cursor/debug.log', 'a', encoding='utf-8') as f:
-            f.write(json.dumps({"sessionId":"debug-session","runId":"run1","hypothesisId":"A","location":"document_template_service.py:152","message":"GarantSource check","data":{"garant_source_available":garant_source is not None,"has_api_key":hasattr(garant_source,'api_key') and garant_source.api_key is not None if garant_source else False},"timestamp":int(__import__('time').time()*1000)}) + '\n')
+        import time
+        _safe_debug_log({"sessionId":"debug-session","runId":"run1","hypothesisId":"A","location":"document_template_service.py:152","message":"GarantSource check","data":{"garant_source_available":garant_source is not None,"has_api_key":hasattr(garant_source,'api_key') and garant_source.api_key is not None if garant_source else False},"timestamp":int(time.time()*1000)})
         # #endregion
         
         if not garant_source:
@@ -165,8 +186,8 @@ class DocumentTemplateService:
         try:
             # Ищем документы в Гаранте - убираем фильтр doc_type для более широкого поиска
             # #region agent log
-            with open('/Users/semyon_andronov04/Desktop/C ДВ/.cursor/debug.log', 'a', encoding='utf-8') as f:
-                f.write(json.dumps({"sessionId":"debug-session","runId":"run1","hypothesisId":"B","location":"document_template_service.py:160","message":"Calling garant_source.search","data":{"query":query,"max_results":max_results},"timestamp":int(__import__('time').time()*1000)}) + '\n')
+            import time
+            _safe_debug_log({"sessionId":"debug-session","runId":"run1","hypothesisId":"B","location":"document_template_service.py:160","message":"Calling garant_source.search","data":{"query":query,"max_results":max_results},"timestamp":int(time.time()*1000)})
             # #endregion
             
             results = await garant_source.search(
@@ -176,8 +197,8 @@ class DocumentTemplateService:
             )
             
             # #region agent log
-            with open('/Users/semyon_andronov04/Desktop/C ДВ/.cursor/debug.log', 'a', encoding='utf-8') as f:
-                f.write(json.dumps({"sessionId":"debug-session","runId":"run1","hypothesisId":"C","location":"document_template_service.py:167","message":"Garant search results","data":{"results_count":len(results) if results else 0,"first_result_title":results[0].title if results and len(results) > 0 else None,"first_result_metadata":results[0].metadata if results and len(results) > 0 else None},"timestamp":int(__import__('time').time()*1000)}) + '\n')
+            import time
+            _safe_debug_log({"sessionId":"debug-session","runId":"run1","hypothesisId":"C","location":"document_template_service.py:167","message":"Garant search results","data":{"results_count":len(results) if results else 0,"first_result_title":results[0].title if results and len(results) > 0 else None,"first_result_metadata":results[0].metadata if results and len(results) > 0 else None},"timestamp":int(time.time()*1000)})
             # #endregion
             
             if not results:
@@ -189,8 +210,8 @@ class DocumentTemplateService:
             doc_id = first_result.metadata.get("doc_id") or first_result.metadata.get("topic")
             
             # #region agent log
-            with open('/Users/semyon_andronov04/Desktop/C ДВ/.cursor/debug.log', 'a', encoding='utf-8') as f:
-                f.write(json.dumps({"sessionId":"debug-session","runId":"run1","hypothesisId":"D","location":"document_template_service.py:175","message":"Extracted doc_id","data":{"doc_id":doc_id,"metadata_keys":list(first_result.metadata.keys()) if hasattr(first_result,'metadata') else []},"timestamp":int(__import__('time').time()*1000)}) + '\n')
+            import time
+            _safe_debug_log({"sessionId":"debug-session","runId":"run1","hypothesisId":"D","location":"document_template_service.py:175","message":"Extracted doc_id","data":{"doc_id":doc_id,"metadata_keys":list(first_result.metadata.keys()) if hasattr(first_result,'metadata') else []},"timestamp":int(time.time()*1000)})
             # #endregion
             
             if not doc_id:
@@ -199,15 +220,15 @@ class DocumentTemplateService:
             
             # Получаем HTML шаблон
             # #region agent log
-            with open('/Users/semyon_andronov04/Desktop/C ДВ/.cursor/debug.log', 'a', encoding='utf-8') as f:
-                f.write(json.dumps({"sessionId":"debug-session","runId":"run1","hypothesisId":"E","location":"document_template_service.py:182","message":"Calling get_document_full_text","data":{"doc_id":doc_id},"timestamp":int(__import__('time').time()*1000)}) + '\n')
+            import time
+            _safe_debug_log({"sessionId":"debug-session","runId":"run1","hypothesisId":"E","location":"document_template_service.py:182","message":"Calling get_document_full_text","data":{"doc_id":doc_id},"timestamp":int(time.time()*1000)})
             # #endregion
             
             html_content = await garant_source.get_document_full_text(doc_id, format="html")
             
             # #region agent log
-            with open('/Users/semyon_andronov04/Desktop/C ДВ/.cursor/debug.log', 'a', encoding='utf-8') as f:
-                f.write(json.dumps({"sessionId":"debug-session","runId":"run1","hypothesisId":"E","location":"document_template_service.py:186","message":"get_document_full_text result","data":{"html_content_length":len(html_content) if html_content else 0,"html_content_preview":html_content[:200] if html_content else None},"timestamp":int(__import__('time').time()*1000)}) + '\n')
+            import time
+            _safe_debug_log({"sessionId":"debug-session","runId":"run1","hypothesisId":"E","location":"document_template_service.py:186","message":"get_document_full_text result","data":{"html_content_length":len(html_content) if html_content else 0,"html_content_preview":html_content[:200] if html_content else None},"timestamp":int(time.time()*1000)})
             # #endregion
             
             if not html_content:

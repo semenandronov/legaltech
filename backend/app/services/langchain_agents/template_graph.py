@@ -5,8 +5,30 @@ from app.services.document_template_service import DocumentTemplateService
 from app.services.document_editor_service import DocumentEditorService
 from sqlalchemy.orm import Session
 import logging
+import os
+import json
 
 logger = logging.getLogger(__name__)
+
+
+def _safe_debug_log(data: dict) -> None:
+    """Безопасное логирование в debug.log с обработкой ошибок"""
+    try:
+        # Пытаемся найти путь к debug.log относительно корня проекта
+        base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
+        log_path = os.path.join(base_dir, '.cursor', 'debug.log')
+        
+        # Создаем директорию если не существует
+        log_dir = os.path.dirname(log_path)
+        if not os.path.exists(log_dir):
+            os.makedirs(log_dir, exist_ok=True)
+        
+        # Записываем лог
+        with open(log_path, 'a', encoding='utf-8') as f:
+            f.write(json.dumps(data) + '\n')
+    except Exception:
+        # Игнорируем ошибки логирования - это не критично
+        pass
 
 
 def create_template_graph(db: Session) -> StateGraph:
@@ -121,9 +143,8 @@ async def search_cache_node(state: TemplateState, db: Session) -> TemplateState:
 async def search_garant_node(state: TemplateState, db: Session) -> TemplateState:
     """Узел: поиск шаблона в Гаранте"""
     # #region agent log
-    import json
-    with open('/Users/semyon_andronov04/Desktop/C ДВ/.cursor/debug.log', 'a', encoding='utf-8') as f:
-        f.write(json.dumps({"sessionId":"debug-session","runId":"run1","hypothesisId":"C","location":"template_graph.py:104","message":"search_garant_node called","data":{"user_query":state.get("user_query")},"timestamp":int(__import__('time').time()*1000)}) + '\n')
+    import time
+    _safe_debug_log({"sessionId":"debug-session","runId":"run1","hypothesisId":"C","location":"template_graph.py:121","message":"search_garant_node called","data":{"user_query":state.get("user_query")},"timestamp":int(time.time()*1000)})
     # #endregion
     
     template_service = DocumentTemplateService(db)
@@ -139,8 +160,8 @@ async def search_garant_node(state: TemplateState, db: Session) -> TemplateState
     )
     
     # #region agent log
-    with open('/Users/semyon_andronov04/Desktop/C ДВ/.cursor/debug.log', 'a', encoding='utf-8') as f:
-        f.write(json.dumps({"sessionId":"debug-session","runId":"run1","hypothesisId":"C","location":"template_graph.py:112","message":"search_garant_node result","data":{"garant_result_found":garant_result is not None,"garant_result_title":garant_result.get("title") if garant_result else None},"timestamp":int(__import__('time').time()*1000)}) + '\n')
+    import time
+    _safe_debug_log({"sessionId":"debug-session","runId":"run1","hypothesisId":"C","location":"template_graph.py:142","message":"search_garant_node result","data":{"garant_result_found":garant_result is not None,"garant_result_title":garant_result.get("title") if garant_result else None},"timestamp":int(time.time()*1000)})
     # #endregion
     
     if garant_result:
@@ -181,9 +202,8 @@ async def save_template_node(state: TemplateState, db: Session) -> TemplateState
 async def adapt_template_node(state: TemplateState, db: Session) -> TemplateState:
     """Узел: адаптация шаблона под запрос пользователя с помощью ИИ"""
     # #region agent log
-    import json
-    with open('/Users/semyon_andronov04/Desktop/C ДВ/.cursor/debug.log', 'a', encoding='utf-8') as f:
-        f.write(json.dumps({"sessionId":"debug-session","runId":"run1","hypothesisId":"F","location":"template_graph.py:121","message":"adapt_template_node called","data":{"has_cached_template":state.get("cached_template") is not None,"has_garant_template":state.get("garant_template") is not None},"timestamp":int(__import__('time').time()*1000)}) + '\n')
+    import time
+    _safe_debug_log({"sessionId":"debug-session","runId":"run1","hypothesisId":"F","location":"template_graph.py:181","message":"adapt_template_node called","data":{"has_cached_template":state.get("cached_template") is not None,"has_garant_template":state.get("garant_template") is not None},"timestamp":int(time.time()*1000)})
     # #endregion
     
     # Определяем какой шаблон использовать
@@ -191,8 +211,8 @@ async def adapt_template_node(state: TemplateState, db: Session) -> TemplateStat
     
     if not template_data:
         # #region agent log
-        with open('/Users/semyon_andronov04/Desktop/C ДВ/.cursor/debug.log', 'a', encoding='utf-8') as f:
-            f.write(json.dumps({"sessionId":"debug-session","runId":"run1","hypothesisId":"F","location":"template_graph.py:128","message":"No template data found","data":{"cached_template":state.get("cached_template"),"garant_template":state.get("garant_template")},"timestamp":int(__import__('time').time()*1000)}) + '\n')
+        import time
+        _safe_debug_log({"sessionId":"debug-session","runId":"run1","hypothesisId":"F","location":"template_graph.py:193","message":"No template data found","data":{"cached_template":state.get("cached_template"),"garant_template":state.get("garant_template")},"timestamp":int(time.time()*1000)})
         # #endregion
         state["errors"].append("Нет шаблона для адаптации")
         return state
@@ -249,15 +269,14 @@ async def adapt_template_node(state: TemplateState, db: Session) -> TemplateStat
 async def create_document_node(state: TemplateState, db: Session) -> TemplateState:
     """Узел: создание или обновление документа из адаптированного шаблона"""
     # #region agent log
-    import json
-    with open('/Users/semyon_andronov04/Desktop/C ДВ/.cursor/debug.log', 'a', encoding='utf-8') as f:
-        f.write(json.dumps({"sessionId":"debug-session","runId":"run1","hypothesisId":"F","location":"template_graph.py:179","message":"create_document_node called","data":{"has_adapted_content":state.get("adapted_content") is not None,"adapted_content_length":len(state.get("adapted_content","")) if state.get("adapted_content") else 0},"timestamp":int(__import__('time').time()*1000)}) + '\n')
+    import time
+    _safe_debug_log({"sessionId":"debug-session","runId":"run1","hypothesisId":"F","location":"template_graph.py:249","message":"create_document_node called","data":{"has_adapted_content":state.get("adapted_content") is not None,"adapted_content_length":len(state.get("adapted_content","")) if state.get("adapted_content") else 0},"timestamp":int(time.time()*1000)})
     # #endregion
     
     if not state.get("adapted_content"):
         # #region agent log
-        with open('/Users/semyon_andronov04/Desktop/C ДВ/.cursor/debug.log', 'a', encoding='utf-8') as f:
-            f.write(json.dumps({"sessionId":"debug-session","runId":"run1","hypothesisId":"F","location":"template_graph.py:184","message":"No adapted_content","data":{"state_keys":list(state.keys()),"adapted_content":state.get("adapted_content"),"final_template":state.get("final_template")},"timestamp":int(__import__('time').time()*1000)}) + '\n')
+        import time
+        _safe_debug_log({"sessionId":"debug-session","runId":"run1","hypothesisId":"F","location":"template_graph.py:257","message":"No adapted_content","data":{"state_keys":list(state.keys()),"adapted_content":state.get("adapted_content"),"final_template":state.get("final_template")},"timestamp":int(time.time()*1000)})
         # #endregion
         state["errors"].append("Нет содержимого для создания документа")
         return state
