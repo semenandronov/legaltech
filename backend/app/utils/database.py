@@ -6,6 +6,8 @@ from app.models.case import Base, Case, ChatMessage, File  # Import models to re
 from app.models.user import User, UserSession  # Import user models to register them
 from app.models.analysis import AnalysisResult, Discrepancy, TimelineEvent, DocumentChunk  # Import analysis models to register them
 from app.models.tabular_review import TabularReview, TabularColumn, TabularCell, TabularColumnTemplate, TabularDocumentStatus, CellComment  # Import tabular review models to register them
+from app.models.document_editor import Document, DocumentVersion  # Import document editor models to register them
+from app.models.document_template import DocumentTemplate  # Import document template model to register it
 import logging
 
 logger = logging.getLogger(__name__)
@@ -422,6 +424,8 @@ def init_db():
         TabularReview, TabularColumn, TabularCell,
         TabularColumnTemplate, TabularDocumentStatus, CellComment
     )
+    from app.models.document_editor import Document, DocumentVersion
+    from app.models.document_template import DocumentTemplate
     
     # Check if tabular_reviews table exists with wrong schema and fix it
     try:
@@ -578,6 +582,48 @@ def init_db():
                 logger.info("✅ source_references, normalized_value, candidates, conflict_resolution, primary_source_doc_id, primary_source_char_start, primary_source_char_end, and verified_flag already exist in tabular_cells")
     except Exception as e:
         logger.warning(f"Could not apply tabular_columns migration: {e}", exc_info=True)
+    
+    # Apply document_templates migration if needed
+    try:
+        inspector = sql_inspect(engine)
+        if "document_templates" not in inspector.get_table_names():
+            logger.info("⚠️  Applying migration: creating document_templates table")
+            try:
+                with engine.begin() as conn:
+                    # Read and execute migration file
+                    from pathlib import Path
+                    migration_path = Path(__file__).parent.parent / "migrations" / "017_add_document_templates.sql"
+                    if migration_path.exists():
+                        with open(migration_path, 'r', encoding='utf-8') as f:
+                            migration_sql = f.read()
+                        # Execute migration (split by semicolons for multiple statements)
+                        for statement in migration_sql.split(';'):
+                            statement = statement.strip()
+                            if statement and not statement.startswith('--'):
+                                try:
+                                    conn.execute(text(statement))
+                                except Exception as stmt_error:
+                                    # Ignore errors for IF NOT EXISTS statements
+                                    if "already exists" not in str(stmt_error).lower():
+                                        logger.warning(f"Migration statement error (may be expected): {stmt_error}")
+                        logger.info("✅ Migration applied: document_templates table created")
+                    else:
+                        logger.warning(f"Migration file not found: {migration_path}")
+                        # Fallback: create table using SQLAlchemy
+                        Base.metadata.create_all(bind=engine, tables=[DocumentTemplate.__table__])
+                        logger.info("✅ document_templates table created via SQLAlchemy")
+            except Exception as mig_error:
+                logger.error(f"❌ Failed to apply document_templates migration: {mig_error}", exc_info=True)
+                # Fallback: try to create via SQLAlchemy
+                try:
+                    Base.metadata.create_all(bind=engine, tables=[DocumentTemplate.__table__])
+                    logger.info("✅ document_templates table created via SQLAlchemy fallback")
+                except Exception as fallback_error:
+                    logger.error(f"❌ SQLAlchemy fallback also failed: {fallback_error}", exc_info=True)
+        else:
+            logger.info("✅ document_templates table already exists")
+    except Exception as e:
+        logger.warning(f"Could not apply document_templates migration: {e}", exc_info=True)
     
     # Setup LangGraph checkpointer tables
     try:
