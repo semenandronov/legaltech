@@ -37,10 +37,10 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({
     onDeepThinkChange(checked)
   }
 
-  // Обработчик для юридического исследования - выключает другие функции
+  // Обработчик для ГАРАНТ - выключает другие функции
   const handleLegalResearchChange = (checked: boolean) => {
     if (checked) {
-      // Если включаем юридическое исследование, выключаем остальные
+      // Если включаем ГАРАНТ, выключаем остальные
       onDeepThinkChange(false)
       onWebSearchChange(false)
     }
@@ -59,8 +59,8 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({
     },
     {
       id: 'legalResearch',
-      label: 'Юридическое исследование',
-      description: 'Найдите ответы на свои вопросы в курируемых юридических источниках. Early access - экспериментальная функция.',
+      label: 'ГАРАНТ',
+      description: 'Поиск в базе ГАРАНТ: законы, кодексы, судебные решения, правовые позиции. ИИ анализирует результаты и отвечает на ваш вопрос с учетом найденных документов.',
       icon: Scale,
       value: legalResearch,
       onChange: handleLegalResearchChange,
