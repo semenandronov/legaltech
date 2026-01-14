@@ -23,6 +23,7 @@ interface DocumentEditorProps {
 
 export interface DocumentEditorRef {
   insertText: (text: string) => void
+  setContent: (content: string) => void
 }
 
 export const DocumentEditor = forwardRef<DocumentEditorRef, DocumentEditorProps>(({
@@ -87,11 +88,17 @@ export const DocumentEditor = forwardRef<DocumentEditorRef, DocumentEditorProps>
     }
   }, [content, editor])
 
-  // Expose insertText method via ref
+  // Expose insertText and setContent methods via ref
   useImperativeHandle(ref, () => ({
     insertText: (text: string) => {
       if (editor) {
         editor.chain().focus().insertContent('\n\n' + text).run()
+        onChange(editor.getHTML())
+      }
+    },
+    setContent: (newContent: string) => {
+      if (editor) {
+        editor.commands.setContent(newContent, false)
         onChange(editor.getHTML())
       }
     }

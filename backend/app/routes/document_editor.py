@@ -3,7 +3,7 @@ import logging
 from fastapi import APIRouter, HTTPException, Depends
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
-from typing import List, Optional
+from typing import List, Optional, Dict
 from datetime import datetime
 from app.utils.database import get_db
 from app.utils.auth import get_current_user
@@ -275,7 +275,7 @@ async def list_documents(
                 title=doc.title,
                 content=doc.content,
                 content_plain=doc.content_plain,
-                metadata=doc.metadata,
+                metadata=doc.document_metadata,
                 version=doc.version,
                 created_at=doc.created_at.isoformat() if doc.created_at else datetime.utcnow().isoformat(),
                 updated_at=doc.updated_at.isoformat() if doc.updated_at else datetime.utcnow().isoformat()
@@ -543,4 +543,66 @@ async def restore_version(
     except Exception as e:
         logger.error(f"Error restoring version: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail="Ошибка при восстановлении версии")
+
+
+class DocumentChatRequest(BaseModel):
+    """Request model for document chat"""
+    question: str = Field(..., min_length=1, description="User question or instruction")
+
+
+class DocumentChatResponse(BaseModel):
+    """Response model for document chat"""
+    answer: str
+    citations: List[Dict[str, str]] = []
+    suggestions: List[str] = []
+    edited_content: Optional[str] = None
+
+
+@router.post("/{document_id}/chat", response_model=DocumentChatResponse)
+async def chat_over_document(
+    document_id: str,
+    request: DocumentChatRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """
+    Chat over document - ask questions and get AI assistance for editing
+    
+    Args:
+        document_id: Document identifier
+        request: Chat request with question
+        db: Database session
+        current_user: Current user
+        
+    Returns:
+        Chat response with answer and suggestions
+    """
+    try:
+        # Get document
+        doc_service = DocumentEditorService(db)
+        document = doc_service.get_document(document_id, current_user.id)
+        
+        if not document:
+            raise HTTPException(status_code=404, detail="Документ не найден")
+        
+        # Get AI chat response
+        ai_service = DocumentAIService(db)
+        result = ai_service.chat_over_document(
+            document_id=document_id,
+            document_content=document.content,
+            case_id=document.case_id,
+            question=request.question
+        )
+        
+        return DocumentChatResponse(
+            answer=result.get("answer", ""),
+            citations=result.get("citations", []),
+            suggestions=result.get("suggestions", []),
+            edited_content=result.get("edited_content")
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error in chat over document: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Ошибка при обработке запроса: {str(e)}")
 

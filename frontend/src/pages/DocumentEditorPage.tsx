@@ -1,9 +1,11 @@
 import { useState, useEffect, useRef } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
-import { Save, Download, Sparkles, ArrowLeft } from 'lucide-react'
+import { Save, Download, Sparkles, ArrowLeft, MessageSquare, FileText, Table, FileEdit } from 'lucide-react'
 import { toast } from 'sonner'
+import UnifiedSidebar from '../components/Layout/UnifiedSidebar'
 import { DocumentEditor, DocumentEditorRef } from '../components/Editor/DocumentEditor'
 import { AIAssistantSidebar } from '../components/Editor/AIAssistantSidebar'
+import { DocumentEditorContextChat } from '../components/Editor/DocumentEditorContextChat'
 import { getDocument, createDocument, updateDocument, exportDocx, exportPdf } from '../services/documentEditorApi'
 
 interface DocumentData {
@@ -20,7 +22,8 @@ const DocumentEditorPage = () => {
   const [content, setContent] = useState('')
   const [title, setTitle] = useState('Новый документ')
   const [selectedText, setSelectedText] = useState('')
-  const [showAISidebar, setShowAISidebar] = useState(true)
+  const [showAISidebar, setShowAISidebar] = useState(false)
+  const [isChatOpen, setIsChatOpen] = useState(true)
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false)
@@ -151,19 +154,43 @@ const DocumentEditorPage = () => {
     }
   }
 
+  const handleApplyEdit = (editedContent: string) => {
+    // Apply edited content to document using editor ref
+    if (editorRef.current) {
+      editorRef.current.setContent(editedContent)
+      setHasUnsavedChanges(true)
+    } else {
+      // Fallback: set content directly
+      setContent(editedContent)
+      setHasUnsavedChanges(true)
+    }
+  }
+
+  const navItems = caseId ? [
+    { id: 'chat', label: 'Ассистент', icon: MessageSquare, path: `/cases/${caseId}/chat` },
+    { id: 'documents', label: 'Документы', icon: FileText, path: `/cases/${caseId}/documents` },
+    { id: 'editor', label: 'Редактор', icon: FileEdit, path: `/cases/${caseId}/editor` },
+    { id: 'tabular-review', label: 'Tabular Review', icon: Table, path: `/cases/${caseId}/tabular-review` },
+  ] : []
+
   if (loading) {
     return (
-      <div className="h-screen flex items-center justify-center">
-        <div className="text-center">
-          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto mb-4"></div>
-          <p className="text-gray-600">Загрузка документа...</p>
+      <div className="h-screen bg-bg-primary flex">
+        {caseId && <UnifiedSidebar navItems={navItems} title="Legal AI" />}
+        <div className="flex-1 flex items-center justify-center">
+          <div className="text-center">
+            <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto mb-4"></div>
+            <p className="text-gray-600">Загрузка документа...</p>
+          </div>
         </div>
       </div>
     )
   }
 
   return (
-    <div className="h-screen flex flex-col" style={{ backgroundColor: 'var(--color-bg-primary)' }}>
+    <div className="h-screen bg-bg-primary flex">
+      {caseId && <UnifiedSidebar navItems={navItems} title="Legal AI" />}
+      <div className="flex-1 flex flex-col" style={{ backgroundColor: 'var(--color-bg-primary)' }}>
       {/* Toolbar */}
       <div className="flex items-center justify-between px-6 py-4 border-b" style={{ borderBottomColor: 'var(--color-border)' }}>
         <div className="flex items-center gap-4">
@@ -228,6 +255,19 @@ const DocumentEditorPage = () => {
             PDF
           </button>
           <button
+            onClick={() => setIsChatOpen(!isChatOpen)}
+            className={`flex items-center gap-2 px-4 py-2 rounded-lg transition-colors ${
+              isChatOpen
+                ? 'bg-blue-100 text-blue-700'
+                : 'border hover:bg-gray-50'
+            }`}
+            style={{ borderColor: isChatOpen ? 'transparent' : 'var(--color-border)' }}
+            title="Переключить чат с ИИ"
+          >
+            <MessageSquare className="w-4 h-4" />
+            Чат
+          </button>
+          <button
             onClick={() => setShowAISidebar(!showAISidebar)}
             className={`flex items-center gap-2 px-4 py-2 rounded-lg transition-colors ${
               showAISidebar
@@ -235,6 +275,7 @@ const DocumentEditorPage = () => {
                 : 'border hover:bg-gray-50'
             }`}
             style={{ borderColor: showAISidebar ? 'transparent' : 'var(--color-border)' }}
+            title="Быстрые действия ИИ"
           >
             <Sparkles className="w-4 h-4" />
             AI
@@ -244,27 +285,42 @@ const DocumentEditorPage = () => {
 
       {/* Main content area */}
       <div className="flex-1 overflow-hidden flex">
-        {/* Editor */}
-        <div className={`flex-1 flex flex-col transition-all duration-300 ${showAISidebar ? 'mr-80' : ''}`}>
-          <DocumentEditor
-            ref={editorRef}
-            content={content}
-            onChange={handleContentChange}
-            onSelectionChange={setSelectedText}
-            caseId={caseId}
-            onInsertText={handleInsertText}
-          />
-        </div>
-
-        {/* AI Sidebar */}
-        {showAISidebar && (
-          <AIAssistantSidebar
-            caseId={caseId}
-            documentId={documentId}
-            selectedText={selectedText}
-            onInsertText={handleInsertText}
-          />
+        {/* Chat panel (Left) - показывается только когда isChatOpen === true и documentId существует */}
+        {isChatOpen && documentId && (
+          <div className="w-80 border-r border-border shrink-0 bg-bg-elevated flex flex-col">
+            <DocumentEditorContextChat
+              documentId={documentId}
+              documentTitle={title}
+              onApplyEdit={handleApplyEdit}
+            />
+          </div>
         )}
+
+        {/* Editor and AI Sidebar */}
+        <div className="flex-1 overflow-hidden flex">
+          {/* Editor */}
+          <div className={`flex-1 flex flex-col transition-all duration-300 ${showAISidebar ? 'mr-80' : ''}`}>
+            <DocumentEditor
+              ref={editorRef}
+              content={content}
+              onChange={handleContentChange}
+              onSelectionChange={setSelectedText}
+              caseId={caseId}
+              onInsertText={handleInsertText}
+            />
+          </div>
+
+          {/* AI Sidebar (Quick Actions) */}
+          {showAISidebar && (
+            <AIAssistantSidebar
+              caseId={caseId}
+              documentId={documentId}
+              selectedText={selectedText}
+              onInsertText={handleInsertText}
+            />
+          )}
+        </div>
+      </div>
       </div>
     </div>
   )

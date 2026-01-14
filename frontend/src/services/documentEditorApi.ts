@@ -20,6 +20,13 @@ export interface AIAssistResponse {
   suggestions: string[]
 }
 
+export interface DocumentChatResponse {
+  answer: string
+  citations: Array<{ file: string; file_id: string }>
+  suggestions: string[]
+  edited_content?: string
+}
+
 /**
  * Create a new document
  */
@@ -177,6 +184,26 @@ export async function exportPdf(documentId: string): Promise<void> {
     link.click()
     link.remove()
     window.URL.revokeObjectURL(url)
+  } catch (error) {
+    throw new Error(extractErrorMessage(error))
+  }
+}
+
+/**
+ * Chat over document - ask questions and get AI assistance
+ */
+export async function chatOverDocument(
+  documentId: string,
+  question: string
+): Promise<DocumentChatResponse> {
+  try {
+    const response = await apiClient.post<DocumentChatResponse>(
+      `${BASE_URL}/api/documents-editor/${documentId}/chat`,
+      {
+        question,
+      }
+    )
+    return response.data
   } catch (error) {
     throw new Error(extractErrorMessage(error))
   }

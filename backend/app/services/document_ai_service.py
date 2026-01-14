@@ -6,6 +6,7 @@ from app.services.llm_factory import create_legal_llm
 from app.services.document_processor import DocumentProcessor
 from langchain_core.messages import HumanMessage, SystemMessage
 import logging
+import re
 
 logger = logging.getLogger(__name__)
 
@@ -450,4 +451,115 @@ class DocumentAIService:
             "result": result,
             "suggestions": []
         }
+    
+    def chat_over_document(
+        self,
+        document_id: str,
+        document_content: str,
+        case_id: str,
+        question: str
+    ) -> Dict[str, Any]:
+        """
+        Chat over document - ask questions and get AI to edit the document
+        
+        Args:
+            document_id: Document identifier
+            document_content: Current document content
+            case_id: Case identifier for context
+            question: User question/instruction
+            
+        Returns:
+            Dictionary with answer and suggested edits
+        """
+        # Get context from case documents
+        context = ""
+        sources = []
+        try:
+            docs, source_list = self.rag_service.generate_with_sources(
+                case_id=case_id,
+                query=question,
+                k=5,
+                db=self.db
+            )
+            if isinstance(docs, tuple):
+                context_text, source_list = docs
+                context = context_text
+            else:
+                context = str(docs)
+                source_list = []
+            sources = source_list
+        except Exception as e:
+            logger.warning(f"Could not retrieve context: {e}")
+            context = ""
+            sources = []
+        
+        # Check if user wants to edit the document
+        is_edit_request = any(keyword in question.lower() for keyword in [
+            "изменить", "редактировать", "исправить", "добавить", "удалить", 
+            "переписать", "улучшить", "изменить текст", "заменить"
+        ])
+        
+        # Create LLM prompt for document editing
+        system_prompt = """Ты - опытный AI-ассистент для редактирования юридических документов.
+Ты можешь:
+1. Отвечать на вопросы о документе
+2. Предлагать правки и улучшения
+3. Редактировать текст по запросу пользователя
+4. Анализировать документ на предмет рисков и противоречий
+
+Когда пользователь просит изменить документ:
+- Предоставь четкий ответ на вопрос
+- Если требуется редактирование, предоставь ОБНОВЛЕННЫЙ ПОЛНЫЙ ТЕКСТ ДОКУМЕНТА в формате HTML
+- Оберни обновленный текст в блок ```html ... ``` чтобы его можно было извлечь
+- Если редактируется только часть, укажи это в ответе
+
+Используй контекст дела для более точных рекомендаций."""
+        
+        user_prompt = f"""Вопрос/запрос пользователя: {question}
+
+Текущее содержимое документа (HTML):
+{document_content[:4000]}
+
+{f'Контекст дела:\n{context}' if context else ''}
+
+Ответь на вопрос. Если требуется редактирование документа, предоставь обновленный HTML в блоке ```html ... ```"""
+        
+        llm = create_legal_llm(temperature=0.3)
+        messages = [
+            SystemMessage(content=system_prompt),
+            HumanMessage(content=user_prompt)
+        ]
+        
+        response = llm.invoke(messages)
+        answer = response.content if hasattr(response, 'content') else str(response)
+        
+        # Try to extract edited HTML from answer
+        edited_content = None
+        suggestions = []
+        
+        if is_edit_request:
+            # Try to extract HTML from code blocks
+            import re
+            html_match = re.search(r'```(?:html)?\s*\n(.*?)\n```', answer, re.DOTALL)
+            if html_match:
+                edited_content = html_match.group(1).strip()
+                suggestions.append("Применить изменения")
+            else:
+                # Try to find HTML tags in the answer
+                html_tag_match = re.search(r'<[^>]+>.*?</[^>]+>', answer, re.DOTALL)
+                if html_tag_match:
+                    edited_content = html_tag_match.group(0)
+                    suggestions.append("Применить изменения")
+        
+        result = {
+            "answer": answer,
+            "citations": [{"file": s.get("file", "Документ дела"), "file_id": s.get("file_id", "")} for s in sources[:3]],
+            "suggestions": suggestions
+        }
+        
+        # Add edited content if found
+        if edited_content:
+            result["edited_content"] = edited_content
+        
+        return result
 
