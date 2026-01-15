@@ -12,6 +12,7 @@ import logging
 import io
 import tempfile
 import os
+import re
 
 logger = logging.getLogger(__name__)
 
@@ -87,19 +88,11 @@ class DocumentLoaderService:
             raise ValueError(f"Файл {filename} слишком маленький для DOCX формата")
         
         # DOCX - это ZIP архив, должен начинаться с PK (0x50, 0x4B)
-        if content[:2] != b'PK':
-            logger.warning(f"File {filename} does not have DOCX signature (PK header), might not be a valid DOCX")
-            # Пытаемся обработать как текстовый файл
-            try:
-                text_content = content.decode('utf-8', errors='ignore')
-                if text_content.strip():
-                    logger.info(f"Loaded {filename} as plain text (not a valid DOCX)")
-                    return [Document(page_content=text_content, metadata={"source_file": filename, "note": "loaded as text"})]
-            except Exception:
-                pass
-            raise ValueError(
-                f"Файл {filename} не является корректным DOCX файлом. "
-                f"Убедитесь, что вы загружаете правильный файл."
+        has_zip_signature = content[:2] == b'PK'
+        if not has_zip_signature:
+            logger.warning(
+                f"File {filename} does not have DOCX signature (PK header), "
+                "will still attempt alternative DOCX parsers"
             )
         
         try:
@@ -112,6 +105,7 @@ class DocumentLoaderService:
                 documents = None
                 unstructured_error = None
                 docx_error = None
+                mammoth_error = None
                 
                 # Try python-docx first (more reliable for basic DOCX)
                 try:
@@ -150,13 +144,45 @@ class DocumentLoaderService:
                         unstructured_error = e
                         logger.debug(f"UnstructuredWordDocumentLoader failed for {filename}: {e}")
                 
-                # If both methods failed
+                # Fallback: try mammoth (same as template converter) for better tolerance
                 if not documents or not any(doc.page_content.strip() for doc in documents):
+                    try:
+                        import mammoth
+                        result = mammoth.convert_to_html(io.BytesIO(content))
+                        html = result.value or ""
+                        # Basic HTML -> text conversion
+                        text = html
+                        text = text.replace("<br/>", "\n").replace("<br>", "\n")
+                        text = text.replace("</p>", "\n").replace("</div>", "\n")
+                        text = re.sub(r"<[^>]+>", " ", text)
+                        text = re.sub(r"\s+\n", "\n", text)
+                        text = re.sub(r"[ \t]+", " ", text).strip()
+                        if text:
+                            documents = [Document(page_content=text, metadata={"source_file": filename})]
+                            logger.info(f"Loaded DOCX {filename} using mammoth: {len(text)} chars")
+                    except Exception as e:
+                        mammoth_error = e
+                        logger.debug(f"mammoth failed for {filename}: {e}")
+                
+                # If all methods failed
+                if not documents or not any(doc.page_content.strip() for doc in documents):
+                    # Last resort: try plain text for files without DOCX signature
+                    if not has_zip_signature:
+                        try:
+                            text_content = content.decode('utf-8', errors='ignore')
+                            if text_content.strip():
+                                logger.info(f"Loaded {filename} as plain text (not a valid DOCX)")
+                                return [Document(page_content=text_content, metadata={"source_file": filename, "note": "loaded as text"})]
+                        except Exception:
+                            pass
+                    
                     error_msgs = []
                     if docx_error:
                         error_msgs.append(f"python-docx: {str(docx_error)[:100]}")
                     if unstructured_error:
                         error_msgs.append(f"unstructured: {str(unstructured_error)[:100]}")
+                    if mammoth_error:
+                        error_msgs.append(f"mammoth: {str(mammoth_error)[:100]}")
                     
                     raise ValueError(
                         f"Не удалось извлечь текст из файла {filename}. "
