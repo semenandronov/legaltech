@@ -36,7 +36,7 @@ requests>=2.32.5  # Обновлено для совместимости с lang
 
 # GigaChat (Сбер) - используем кастомный wrapper (совместим с langchain-core 1.2.2)
 # langchain-gigachat требует langchain-core<0.4, что несовместимо с нашими версиями
-gigachat>=0.1.0  # Официальный SDK для GigaChat (используется в нашем кастомном wrapper)
+gigachat>=0.1.37  # Официальный SDK для GigaChat с поддержкой functions (используется в нашем кастомном wrapper)
 # langchain-gigachat>=0.1.0  # Несовместим с langchain-core==1.2.2, используем кастомный wrapper
 
 # LexNLP удален - используется только regex для русского языка

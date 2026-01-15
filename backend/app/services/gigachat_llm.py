@@ -150,11 +150,39 @@ class ChatGigaChat(BaseChatModel):
         
         # Подготавливаем параметры для Chat
         # GigaChat SDK использует объект Chat с messages
-        chat_obj = Chat(
-            messages=gigachat_messages,
-            temperature=self.temperature,
-            model=self.model
-        )
+        # В новых версиях SDK functions передаются в объект Chat, а не как параметр chat()
+        chat_kwargs = {
+            "messages": gigachat_messages,
+            "temperature": self.temperature,
+            "model": self.model
+        }
+        
+        # Добавляем functions если есть - в объект Chat
+        if self._functions:
+            # Конвертируем functions в формат GigaChat SDK
+            try:
+                from gigachat.models import Function, FunctionParameters
+                gigachat_functions = []
+                for func in self._functions:
+                    func_params = FunctionParameters(
+                        type=func.get("parameters", {}).get("type", "object"),
+                        properties=func.get("parameters", {}).get("properties", {}),
+                        required=func.get("parameters", {}).get("required", [])
+                    )
+                    gigachat_func = Function(
+                        name=func["name"],
+                        description=func.get("description", ""),
+                        parameters=func_params
+                    )
+                    gigachat_functions.append(gigachat_func)
+                chat_kwargs["functions"] = gigachat_functions
+                logger.info(f"[GigaChat] Added {len(gigachat_functions)} functions to Chat object")
+            except ImportError as e:
+                logger.warning(f"[GigaChat] Function/FunctionParameters not available in this SDK version: {e}")
+            except Exception as e:
+                logger.warning(f"[GigaChat] Failed to add functions to Chat: {e}")
+        
+        chat_obj = Chat(**chat_kwargs)
         
         # Вызываем GigaChat API with retry for rate limiting
         import time
@@ -166,18 +194,7 @@ class ChatGigaChat(BaseChatModel):
         for attempt in range(max_retries):
             try:
                 # Make API call
-                if self._functions:
-                    # GigaChat SDK может принимать functions через отдельный параметр
-                    # Проверяем документацию SDK для правильного формата
-                    try:
-                        # Попробуем передать functions в chat
-                        response = self._client.chat(chat_obj, functions=self._functions)
-                    except TypeError:
-                        # Если не поддерживается через параметр, пробуем другой способ
-                        logger.warning("Functions parameter not supported in this SDK version, trying without")
-                        response = self._client.chat(chat_obj)
-                else:
-                    response = self._client.chat(chat_obj)
+                response = self._client.chat(chat_obj)
                 
                 # If successful, break out of retry loop
                 break

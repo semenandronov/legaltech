@@ -709,8 +709,28 @@ async def stream_chat_response(
                 logger.warning(f"Web search failed: {web_search_error}, continuing without web search")
                 # Continue without web search - не критичная ошибка
         
-        # ВСЕГДА используем умного ChatAgent с инструментами (с ГАРАНТ или без)
-        # ChatAgent умно выбирает инструменты на основе вопроса
+        # Если включен legal_research (ГАРАНТ), сначала ищем в ГАРАНТ
+        # ВАЖНО: GigaChat SDK не поддерживает functions/tools, поэтому
+        # вызываем ГАРАНТ напрямую и добавляем результаты в контекст
+        garant_context = ""
+        if legal_research:
+            try:
+                logger.info(f"[ГАРАНТ] Legal research enabled, searching in ГАРАНТ for: {question[:100]}...")
+                from app.services.langchain_agents.garant_tools import _garant_search_sync
+                
+                # Выполняем поиск в ГАРАНТ
+                garant_results = _garant_search_sync(query=question, doc_type="all", max_results=5)
+                
+                if garant_results and not garant_results.startswith("Ошибка") and not garant_results.startswith("Не найдено"):
+                    garant_context = f"\n\n=== РЕЗУЛЬТАТЫ ПОИСКА В ГАРАНТ ===\n{garant_results}\n=== КОНЕЦ РЕЗУЛЬТАТОВ ГАРАНТ ===\n"
+                    logger.info(f"[ГАРАНТ] Found results, context length: {len(garant_context)} chars")
+                else:
+                    logger.warning(f"[ГАРАНТ] No results or error: {garant_results[:200] if garant_results else 'empty'}")
+            except Exception as garant_error:
+                logger.error(f"[ГАРАНТ] Error searching in ГАРАНТ: {garant_error}", exc_info=True)
+        
+        # ВСЕГДА используем умного ChatAgent
+        # Передаем legal_research для включения tools ГАРАНТ + добавляем контекст ГАРАНТ напрямую для надежности
         from app.services.langchain_agents.chat_agent import ChatAgent
         
         logger.info(f"[ChatAgent] Initializing ChatAgent for question: {question[:100]}... (legal_research={legal_research})")
@@ -718,15 +738,20 @@ async def stream_chat_response(
             case_id=case_id,
             rag_service=rag_service,
             db=db,
-            legal_research_enabled=legal_research  # Включаем ГАРАНТ только если legal_research=True
+            legal_research_enabled=legal_research  # Включаем tools ГАРАНТ если legal_research=True
         )
         logger.info(f"[ChatAgent] ChatAgent initialized successfully, legal_research_enabled={legal_research}")
         
-        # ВСЕГДА используем ChatAgent - он умно выбирает инструменты
-        logger.info("[ChatAgent] Using ChatAgent for intelligent tool selection")
+        logger.info("[ChatAgent] Using ChatAgent with tools and ГАРАНТ context injection")
         
-        # Добавляем контекст документа редактора в вопрос, если он есть
+        # Добавляем контекст документа редактора и ГАРАНТ в вопрос
         enhanced_question = question
+        
+        # Добавляем результаты ГАРАНТ если есть
+        if garant_context:
+            enhanced_question = f"{question}\n\n{garant_context}\n\nИспользуй информацию из ГАРАНТ для ответа на вопрос пользователя. Цитируй источники из ГАРАНТ."
+            logger.info(f"[ChatAgent] Added ГАРАНТ context to question")
+        
         if document_context or selected_text:
             context_parts = []
             if document_context:
