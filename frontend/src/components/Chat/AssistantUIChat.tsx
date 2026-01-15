@@ -198,6 +198,32 @@ const PromptInputWithDrop = ({ actualCaseId, onDocumentDrop, handlePromptSubmit,
   const [isDraggingOver, setIsDraggingOver] = useState(false)
   const dragCounterRef = useRef(0)
   
+  // Сбрасываем индикатор drag при потере фокуса окна или через таймаут
+  useEffect(() => {
+    const resetDragState = () => {
+      setIsDraggingOver(false)
+      dragCounterRef.current = 0
+    }
+    
+    // Сбрасываем при потере фокуса окна
+    window.addEventListener('blur', resetDragState)
+    // Сбрасываем при клике в любом месте (на случай если drag отменен)
+    document.addEventListener('click', resetDragState)
+    // Сбрасываем при нажатии Escape
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        resetDragState()
+      }
+    }
+    document.addEventListener('keydown', handleKeyDown)
+    
+    return () => {
+      window.removeEventListener('blur', resetDragState)
+      document.removeEventListener('click', resetDragState)
+      document.removeEventListener('keydown', handleKeyDown)
+    }
+  }, [])
+  
   useEffect(() => {
     const container = containerRef.current
     if (!container) return
@@ -247,10 +273,15 @@ const PromptInputWithDrop = ({ actualCaseId, onDocumentDrop, handlePromptSubmit,
         if (attachments) {
           attachments.add(e.dataTransfer.files)
           logger.info(`Добавлено ${e.dataTransfer.files.length} файлов через drag&drop`)
-          // Убеждаемся что индикатор выключен после добавления
+        }
+        // Убеждаемся что индикатор выключен после добавления (даже если attachments не доступен)
+        setIsDraggingOver(false)
+        dragCounterRef.current = 0
+        // Дополнительный таймаут для гарантии сброса
+        setTimeout(() => {
           setIsDraggingOver(false)
           dragCounterRef.current = 0
-        }
+        }, 100)
       } else {
         // Если это drag из панели документов (только имя файла)
         const documentFilename = e.dataTransfer?.getData('text/plain')
@@ -970,15 +1001,26 @@ export const AssistantUIChat = forwardRef<{ clearMessages: () => void; loadHisto
     }
     
     if (text && !isLoading && actualCaseId) {
-      await sendMessage(text)
+      // Сначала очищаем поле ввода и attachments ПЕРЕД отправкой
+      // чтобы пользователь сразу видел что сообщение отправляется
+      try {
+        if (controller) {
+          controller.textInput.clear()
+        }
+      } catch (e) {
+        logger.warn('Failed to clear text input:', e)
+      }
       
-      // Очищаем поле ввода и attachments после успешной отправки
-      if (controller) {
-        controller.textInput.clear()
+      try {
+        if (attachments) {
+          attachments.clear()
+        }
+      } catch (e) {
+        logger.warn('Failed to clear attachments:', e)
       }
-      if (attachments) {
-        attachments.clear()
-      }
+      
+      // Затем отправляем сообщение
+      await sendMessage(text)
     }
   }, [sendMessage, isLoading, actualCaseId, controller, attachments])
 
