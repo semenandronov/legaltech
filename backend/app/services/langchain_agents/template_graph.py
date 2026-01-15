@@ -163,8 +163,9 @@ async def load_template_file_node(state: TemplateState, db: Session) -> Template
     # Проверяем, есть ли уже готовый HTML контент (локальный файл)
     template_file_content = state.get("template_file_content")
     if template_file_content:
-        logger.info("Template file content already provided (local file), using it directly")
+        logger.info(f"Template file content already provided (local file), using it directly. Content length: {len(template_file_content)}")
         state["template_source"] = "user_file"
+        # template_file_content уже сохранен в state, будет использован в adapt_template_node
         return state
     
     # Если контента нет, пытаемся загрузить из БД по template_file_id

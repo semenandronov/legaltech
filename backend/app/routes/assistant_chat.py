@@ -429,6 +429,7 @@ async def stream_chat_response(
                 from langchain_core.messages import HumanMessage
                 
                 logger.info(f"[Draft Mode] Creating document for case {case_id} based on: {question[:100]}...")
+                logger.info(f"[Draft Mode] Template file ID: {template_file_id}, Template file content length: {len(template_file_content) if template_file_content else 0}")
                 
                 # Извлечь название документа из описания
                 try:
