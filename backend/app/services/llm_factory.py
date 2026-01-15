@@ -201,10 +201,11 @@ def create_llm_for_agent(
 def create_legal_llm(
     model: Optional[str] = None,
     use_rate_limiting: bool = True,
+    temperature: Optional[float] = None,
     **kwargs
 ) -> Any:
     """
-    Create LLM for legal content generation (temperature=0.0 ALWAYS).
+    Create LLM for legal content generation (temperature=0.0 by default, but can be overridden).
     
     Use this for ALL legal RAG responses and agent outputs.
     Ensures deterministic, factual outputs without hallucinations.
@@ -212,14 +213,17 @@ def create_legal_llm(
     Args:
         model: Model name (optional, uses default from config)
         use_rate_limiting: Whether to wrap with rate limiter (default: True)
+        temperature: Temperature override (default: uses config.LLM_TEMPERATURE_LEGAL)
         **kwargs: Additional arguments passed to create_llm
     
     Returns:
-        LLM instance (ChatGigaChat) with temperature=0.0
+        LLM instance (ChatGigaChat) with temperature (default 0.0)
     """
+    # Use provided temperature or default to legal temperature
+    final_temperature = temperature if temperature is not None else config.LLM_TEMPERATURE_LEGAL
     return create_llm(
         model=model,
-        temperature=config.LLM_TEMPERATURE_LEGAL,  # 0.0
+        temperature=final_temperature,
         use_rate_limiting=use_rate_limiting,
         **kwargs
     )
