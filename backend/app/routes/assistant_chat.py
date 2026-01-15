@@ -827,11 +827,47 @@ async def stream_chat_response(
             logger.info(f"[ChatAgent] Enhanced question with document context (doc_len={len(document_context) if document_context else 0}, selected_len={len(selected_text) if selected_text else 0})")
         
         try:
-            # Stream ответ от ChatAgent
+            # Stream ответ от ChatAgent (с защитой от JSON-ответов)
+            avoid_json = not chat_agent.user_requested_json(question)
+            buffered_chunks: List[str] = []
+            decision_made = False
+            json_candidate = False
+            
             async for chunk in chat_agent.answer_stream(enhanced_question):
-                if chunk:
-                    full_response_text += chunk
-                    yield f"data: {json.dumps({'textDelta': chunk}, ensure_ascii=False)}\n\n"
+                if not chunk:
+                    continue
+                
+                full_response_text += chunk
+                
+                if avoid_json and not decision_made:
+                    buffered_chunks.append(chunk)
+                    for ch in chunk:
+                        if not ch.isspace():
+                            decision_made = True
+                            json_candidate = ch in "{["
+                            break
+                    
+                    if decision_made and not json_candidate:
+                        for buffered in buffered_chunks:
+                            yield f"data: {json.dumps({'textDelta': buffered}, ensure_ascii=False)}\n\n"
+                        buffered_chunks = []
+                    continue
+                
+                if avoid_json and json_candidate:
+                    # Пока не стримим JSON-подобный ответ
+                    continue
+                
+                yield f"data: {json.dumps({'textDelta': chunk}, ensure_ascii=False)}\n\n"
+            
+            if avoid_json and json_candidate:
+                rewritten = chat_agent.rewrite_json_response(full_response_text, question)
+                if rewritten:
+                    full_response_text = rewritten
+                    yield f"data: {json.dumps({'textDelta': rewritten}, ensure_ascii=False)}\n\n"
+                else:
+                    # Если это не JSON, отдаём оригинал целиком
+                    if full_response_text:
+                        yield f"data: {json.dumps({'textDelta': full_response_text}, ensure_ascii=False)}\n\n"
             
             # Проставляем ссылки на документы ГАРАНТ в ответе (если включен legal_research)
             if legal_research and len(full_response_text) < 8000:

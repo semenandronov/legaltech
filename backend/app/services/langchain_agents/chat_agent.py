@@ -7,7 +7,7 @@ from app.services.langchain_agents.agent_factory import create_legal_agent, safe
 from app.services.langchain_agents.garant_tools import search_garant, get_garant_full_text
 from app.services.langchain_agents.tools import retrieve_documents_tool, initialize_tools
 from app.services.rag_service import RAGService
-from app.services.langchain_agents.llm_helper import direct_llm_call_with_rag
+from app.services.langchain_agents.llm_helper import direct_llm_call_with_rag, extract_json_from_response
 from sqlalchemy.orm import Session
 import logging
 
@@ -122,6 +122,50 @@ class ChatAgent:
             )
             logger.info("[ChatAgent] Agent created successfully")
             return agent
+
+    @staticmethod
+    def user_requested_json(question: str) -> bool:
+        q = (question or "").lower()
+        triggers = [
+            "json",
+            "в формате json",
+            "в виде json",
+            "структурирован",
+            "структура",
+        ]
+        return any(t in q for t in triggers)
+
+    def rewrite_json_response(self, json_text: str, question: str) -> str:
+        """
+        Преобразовать JSON-ответ в обычный текст, если JSON не запрошен.
+        """
+        try:
+            if not json_text:
+                return ""
+            parsed = extract_json_from_response(json_text)
+            if parsed is None:
+                return ""
+            system_message = SystemMessage(content=(
+                "Ты - юридический AI-ассистент. Преобразуй структурированный JSON в обычный "
+                "человеческий ответ без JSON. Используй краткие пункты и вывод. "
+                "Не выдумывай факты, опирайся только на переданный JSON."
+            ))
+            human_message = HumanMessage(content=(
+                f"Вопрос пользователя: {question}\n\n"
+                f"JSON:\n{json_text}\n\n"
+                "Ответ обычным текстом:"
+            ))
+            response = self.llm.invoke([system_message, human_message])
+            if isinstance(response, AIMessage):
+                content = getattr(response, 'content', None)
+                return str(content) if content is not None else ""
+            elif hasattr(response, 'content'):
+                content = getattr(response, 'content', None)
+                return str(content) if content is not None else ""
+            return str(response) if response else ""
+        except Exception as e:
+            logger.warning(f"[ChatAgent] Failed to rewrite JSON response: {e}")
+            return ""
         except Exception as e:
             logger.error(f"[ChatAgent] Failed to create agent: {e}", exc_info=True)
             raise
