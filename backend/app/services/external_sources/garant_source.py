@@ -216,6 +216,11 @@ class GarantSource(BaseSource):
                             import json as json_module
                             data = json_module.loads(response_text)
                             
+                            # Логируем структуру ответа для диагностики
+                            if page == 1 and data.get("documents"):
+                                first_doc = data["documents"][0] if data["documents"] else {}
+                                logger.info(f"[DEBUG] First document structure: keys={list(first_doc.keys())}, topic={first_doc.get('topic')}, id={first_doc.get('id')}, docId={first_doc.get('docId')}, documentId={first_doc.get('documentId')}")
+                            
                             # Парсим результаты со страницы
                             page_results = self._parse_garant_response(data)
                             all_results.extend(page_results)
@@ -285,7 +290,7 @@ class GarantSource(BaseSource):
                 except:
                     pass
             # #endregion
-            _safe_debug_log({"sessionId":"debug-session","runId":"run1","hypothesisId":"A","location":"garant_source.py:274","message":"First search result structure","data":{"all_keys":list(first_item.keys()),"topic":first_item.get('topic'),"id":first_item.get('id'),"docId":first_item.get('docId'),"documentId":first_item.get('documentId'),"title":first_item.get('title'),"type":first_item.get('type'),"full_item":first_item},"timestamp":int(time.time()*1000)})
+            _safe_debug_log({"sessionId":"debug-session","runId":"run1","hypothesisId":"A","location":"garant_source.py:289","message":"First search result structure","data":{"all_keys":list(first_item.keys()),"topic":first_item.get('topic'),"id":first_item.get('id'),"docId":first_item.get('docId'),"documentId":first_item.get('documentId'),"title":first_item.get('title'),"type":first_item.get('type'),"full_item":first_item},"timestamp":int(time.time()*1000)})
             logger.info(f"First result sample: title='{first_item.get('title', 'N/A')[:100]}', type='{first_item.get('type', 'N/A')}', doc_id='{first_item.get('topic', 'N/A')}'")
         
         for item in items:
@@ -443,7 +448,7 @@ class GarantSource(BaseSource):
                     f.write(json.dumps(data) + '\n')
             except:
                 pass
-        _safe_debug_log({"sessionId":"debug-session","runId":"run1","hypothesisId":"H1","location":"garant_source.py:432","message":"get_document_full_text endpoint","data":{"api_url":self.api_url,"endpoint":endpoint,"full_url":full_url,"doc_id":doc_id,"format":format},"timestamp":int(time.time()*1000)})
+        _safe_debug_log({"sessionId":"debug-session","runId":"run1","hypothesisId":"H1","location":"garant_source.py:461","message":"get_document_full_text endpoint","data":{"api_url":self.api_url,"endpoint":endpoint,"full_url":full_url,"doc_id":doc_id,"format":format,"request_body":{"topic":doc_id_str,"env":"internet"}},"timestamp":int(time.time()*1000)})
         # #endregion
         
         timeout_seconds = GARANT_API_TIMEOUT_EXPORT
@@ -459,6 +464,7 @@ class GarantSource(BaseSource):
                 }
                 
                 logger.info(f"[Garant API] Requesting full text for document {doc_id_str} (type: {type(doc_id).__name__}) in format {format}")
+                logger.info(f"[DEBUG] Export request: endpoint={full_url}, body={request_body}")
                 logger.debug(f"[Garant API] Endpoint: {full_url}, Request body: {request_body}")
                 
                 start_time = __import__('time').time()
