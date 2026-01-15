@@ -12,7 +12,7 @@ class Document(Base):
     
     id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
     case_id = Column(String, ForeignKey("cases.id", ondelete="CASCADE"), nullable=False, index=True)
-    user_id = Column(String, name="userId", ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    user_id = Column(String, ForeignKey("users.id", ondelete="CASCADE"), name="userId", nullable=False, index=True)
     title = Column(String(255), nullable=False)
     content = Column(Text, nullable=False)  # HTML content from TipTap editor
     content_plain = Column(Text, nullable=True)  # Plain text version for search
