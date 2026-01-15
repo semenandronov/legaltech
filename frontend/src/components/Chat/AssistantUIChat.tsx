@@ -469,26 +469,35 @@ export const AssistantUIChat = forwardRef<{ clearMessages: () => void; loadHisto
       }
 
       // Обработка файлов-шаблонов в draft mode
-      if (draftMode && attachments && attachments.files && attachments.files.length > 0) {
-        // Ищем файл с sourceFileId (из БД)
-        const templateFileFromDb = attachments.files.find(f => f.sourceFileId)
-        if (templateFileFromDb?.sourceFileId) {
-          // Файл из БД - используем template_file_id
-          requestBody.template_file_id = templateFileFromDb.sourceFileId
-        } else {
-          // Локальный файл - загружаем и конвертируем
-          const localFile = attachments.files.find(f => f.file && !f.sourceFileId)
-          if (localFile?.file) {
-            try {
-              logger.info(`Uploading local template file: ${localFile.file.name}`)
-              const templateResponse = await uploadTemplateFile(localFile.file)
-              requestBody.template_file_content = templateResponse.content
-              logger.info(`Template file converted to HTML (${templateResponse.content.length} chars)`)
-            } catch (error: any) {
-              logger.error(`Error uploading template file: ${error}`)
-              throw new Error(`Ошибка при загрузке файла-шаблона: ${error.message || error}`)
+      if (draftMode) {
+        logger.info(`[Draft Mode] Checking attachments: draftMode=${draftMode}, attachments=${!!attachments}, filesCount=${attachments?.files?.length || 0}`)
+        if (attachments && attachments.files && attachments.files.length > 0) {
+          logger.info(`[Draft Mode] Files found: ${attachments.files.map(f => ({ name: f.filename, hasFile: !!f.file, hasSourceFileId: !!f.sourceFileId }))}`)
+          // Ищем файл с sourceFileId (из БД)
+          const templateFileFromDb = attachments.files.find(f => f.sourceFileId)
+          if (templateFileFromDb?.sourceFileId) {
+            // Файл из БД - используем template_file_id
+            requestBody.template_file_id = templateFileFromDb.sourceFileId
+            logger.info(`[Draft Mode] Using file from DB: ${templateFileFromDb.sourceFileId}`)
+          } else {
+            // Локальный файл - загружаем и конвертируем
+            const localFile = attachments.files.find(f => f.file && !f.sourceFileId)
+            if (localFile?.file) {
+              try {
+                logger.info(`[Draft Mode] Uploading local template file: ${localFile.file.name}`)
+                const templateResponse = await uploadTemplateFile(localFile.file)
+                requestBody.template_file_content = templateResponse.content
+                logger.info(`[Draft Mode] Template file converted to HTML (${templateResponse.content.length} chars)`)
+              } catch (error: any) {
+                logger.error(`[Draft Mode] Error uploading template file: ${error}`)
+                throw new Error(`Ошибка при загрузке файла-шаблона: ${error.message || error}`)
+              }
+            } else {
+              logger.warn(`[Draft Mode] No local file found in attachments`)
             }
           }
+        } else {
+          logger.warn(`[Draft Mode] No attachments or files found`)
         }
       }
 
