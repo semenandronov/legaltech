@@ -13,6 +13,23 @@ logger = logging.getLogger(__name__)
 _garant_source = None
 
 
+def _run_async_safely(coro):
+    """
+    Безопасный запуск async корутины из sync контекста.
+    Обрабатывает случаи когда уже есть запущенный event loop.
+    """
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        # Нет запущенного loop - можно использовать asyncio.run()
+        return asyncio.run(coro)
+    
+    # Есть запущенный loop - используем ThreadPoolExecutor
+    with concurrent.futures.ThreadPoolExecutor() as executor:
+        future = executor.submit(asyncio.run, coro)
+        return future.result(timeout=30)
+
+
 def get_garant_source() -> Optional[GarantSource]:
     """Получить экземпляр GarantSource"""
     global _garant_source
@@ -27,13 +44,15 @@ def get_garant_source() -> Optional[GarantSource]:
             else:
                 # Создаем новый экземпляр
                 _garant_source = GarantSource()
-                asyncio.run(_garant_source.initialize())
+                # Используем безопасный async запуск
+                _run_async_safely(_garant_source.initialize())
                 logger.info("[Garant Tools] Created new GarantSource instance")
         except Exception as e:
             logger.warning(f"[Garant Tools] Failed to get GarantSource from router: {e}, creating new instance")
             _garant_source = GarantSource()
             try:
-                asyncio.run(_garant_source.initialize())
+                # Используем безопасный async запуск
+                _run_async_safely(_garant_source.initialize())
             except Exception as init_error:
                 logger.error(f"[Garant Tools] Failed to initialize GarantSource: {init_error}")
                 return None
@@ -65,26 +84,10 @@ def _garant_search_sync(query: str, doc_type: str = "all", max_results: int = 10
         filters = {"doc_type": doc_type}
     
     try:
-        # Вызываем async метод синхронно
-        try:
-            loop = asyncio.get_event_loop()
-            if loop.is_running():
-                # Если loop уже запущен, используем ThreadPoolExecutor
-                with concurrent.futures.ThreadPoolExecutor() as executor:
-                    future = executor.submit(
-                        asyncio.run,
-                        garant_source.search(query, max_results=max_results, filters=filters)
-                    )
-                    results = future.result()
-            else:
-                results = loop.run_until_complete(
-                    garant_source.search(query, max_results=max_results, filters=filters)
-                )
-        except RuntimeError:
-            # Нет event loop, создаем новый
-            results = asyncio.run(
-                garant_source.search(query, max_results=max_results, filters=filters)
-            )
+        # Вызываем async метод синхронно с безопасным запуском
+        results = _run_async_safely(
+            garant_source.search(query, max_results=max_results, filters=filters)
+        )
         
         if not results:
             return f"Не найдено результатов по запросу: {query}\n\nПопробуйте изменить формулировку запроса."
@@ -151,24 +154,10 @@ def _garant_full_text_sync(doc_id: str) -> str:
         return "Ошибка: не указан ID документа."
     
     try:
-        # Вызываем async метод синхронно
-        try:
-            loop = asyncio.get_event_loop()
-            if loop.is_running():
-                with concurrent.futures.ThreadPoolExecutor() as executor:
-                    future = executor.submit(
-                        asyncio.run,
-                        garant_source.get_document_full_text(doc_id, format="html")
-                    )
-                    full_text = future.result()
-            else:
-                full_text = loop.run_until_complete(
-                    garant_source.get_document_full_text(doc_id, format="html")
-                )
-        except RuntimeError:
-            full_text = asyncio.run(
-                garant_source.get_document_full_text(doc_id, format="html")
-            )
+        # Вызываем async метод синхронно с безопасным запуском
+        full_text = _run_async_safely(
+            garant_source.get_document_full_text(doc_id, format="html")
+        )
         
         if not full_text:
             return f"Не удалось получить полный текст документа {doc_id}."

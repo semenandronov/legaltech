@@ -1,6 +1,6 @@
 """Pydantic схемы для входов tools - типобезопасность и валидация"""
 from pydantic import BaseModel, Field
-from typing import Optional, List
+from typing import Optional
 
 
 class DocumentSearchInput(BaseModel):
@@ -11,7 +11,9 @@ class DocumentSearchInput(BaseModel):
     k: int = Field(default=20, ge=1, le=100, description="Количество документов для извлечения (1-100)")
     use_iterative: bool = Field(default=False, description="Использовать итеративный поиск с переформулировкой запроса")
     use_hybrid: bool = Field(default=False, description="Использовать гибридный поиск (семантический + ключевые слова)")
-    doc_types: Optional[List[str]] = Field(None, description="Фильтр по типам документов (например, ['contract', 'statement_of_claim'])")
+    # Изменено с Optional[List[str]] на Optional[str] для совместимости с GigaChat API
+    # GigaChat не поддерживает сложные типы (array) без nested properties
+    doc_types: Optional[str] = Field(None, description="Фильтр по типам документов через запятую (например: 'contract,statement_of_claim')")
 
 
 class SaveTimelineInput(BaseModel):

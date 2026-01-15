@@ -36,7 +36,7 @@ def retrieve_documents_tool(
     k: int = 20,
     use_iterative: bool = False,
     use_hybrid: bool = False,
-    doc_types: Optional[List[str]] = None,
+    doc_types: Optional[str] = None,
     **kwargs
 ) -> str:
     """
@@ -60,7 +60,7 @@ def retrieve_documents_tool(
         use_iterative: Если True, использует итеративный поиск с уточнением запроса (по умолчанию: False)
         use_hybrid: Если True, использует гибридный поиск (семантический + ключевые слова) (по умолчанию: False)
                    Рекомендуется для критических агентов (risk, discrepancy)
-        doc_types: Опциональный список типов документов для фильтрации (например, ['statement_of_claim', 'contract'])
+        doc_types: Опциональные типы документов через запятую (например: 'contract,statement_of_claim')
                    Используй когда пользователь просит работать с конкретными типами документов
         **kwargs: Дополнительные параметры (runtime инжектируется middleware через kwargs)
     
@@ -70,10 +70,15 @@ def retrieve_documents_tool(
     # Проверяем, есть ли runtime в kwargs (инжектируется middleware)
     runtime: Optional[ToolRuntime] = kwargs.get("runtime")
     
+    # Парсим doc_types из строки в список
+    doc_types_list: Optional[List[str]] = None
+    if doc_types:
+        doc_types_list = [t.strip() for t in doc_types.split(",") if t.strip()]
+    
     try:
         # Новый путь: использовать runtime.store если доступен
         if runtime and runtime.store:
-            filters = {"doc_types": doc_types} if doc_types else None
+            filters = {"doc_types": doc_types_list} if doc_types_list else None
             retrieval_strategy = "iterative" if use_iterative else ("hybrid" if use_hybrid else "multi_query")
             
             documents = runtime.store.search(
@@ -112,7 +117,7 @@ def retrieve_documents_tool(
                 k=k,
                 retrieval_strategy="hybrid",
                 use_hybrid=True,
-                doc_types=doc_types
+                doc_types=doc_types_list
             )
         # Use iterative search if requested (better for critical agents)
         elif use_iterative:
@@ -123,7 +128,7 @@ def retrieve_documents_tool(
                 k=k,
                 retrieval_strategy="iterative",
                 use_iterative=True,
-                doc_types=doc_types
+                doc_types=doc_types_list
             )
         else:
             # Retrieve relevant documents with multi_query (better than simple search)
@@ -132,7 +137,7 @@ def retrieve_documents_tool(
                 query=query,
                 k=k,
                 retrieval_strategy="multi_query",
-                doc_types=doc_types
+                doc_types=doc_types_list
             )
         
         if not documents:
