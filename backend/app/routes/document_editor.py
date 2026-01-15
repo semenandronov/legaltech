@@ -492,24 +492,37 @@ async def export_docx(
         DOCX file
     """
     try:
+        logger.info(f"Exporting document {document_id} to DOCX for user {current_user.id}")
+        
+        # First check if document exists
+        doc_service = DocumentEditorService(db)
+        document = doc_service.get_document(document_id, current_user.id)
+        if not document:
+            logger.warning(f"Document {document_id} not found for user {current_user.id}")
+            raise HTTPException(status_code=404, detail=f"Документ {document_id} не найден")
+        
         export_service = DocumentExportService(db)
         buffer = export_service.export_to_docx(document_id, current_user.id)
         
-        # Get document for filename
-        doc_service = DocumentEditorService(db)
-        document = doc_service.get_document(document_id, current_user.id)
         filename = f"{document.title if document else 'document'}.docx"
+        # Sanitize filename
+        filename = "".join(c for c in filename if c.isalnum() or c in (' ', '-', '_', '.')).strip()
+        
+        logger.info(f"Successfully exported document {document_id} to DOCX, filename: {filename}")
         
         return StreamingResponse(
             buffer,
             media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
             headers={"Content-Disposition": f'attachment; filename="{filename}"'}
         )
+    except HTTPException:
+        raise
     except ValueError as e:
+        logger.error(f"ValueError exporting to DOCX: {e}", exc_info=True)
         raise HTTPException(status_code=404, detail=str(e))
     except Exception as e:
         logger.error(f"Error exporting to DOCX: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail="Ошибка при экспорте в DOCX")
+        raise HTTPException(status_code=500, detail=f"Ошибка при экспорте в DOCX: {str(e)}")
 
 
 @router.post("/{document_id}/export/pdf")
@@ -530,24 +543,37 @@ async def export_pdf(
         PDF file
     """
     try:
+        logger.info(f"Exporting document {document_id} to PDF for user {current_user.id}")
+        
+        # First check if document exists
+        doc_service = DocumentEditorService(db)
+        document = doc_service.get_document(document_id, current_user.id)
+        if not document:
+            logger.warning(f"Document {document_id} not found for user {current_user.id}")
+            raise HTTPException(status_code=404, detail=f"Документ {document_id} не найден")
+        
         export_service = DocumentExportService(db)
         buffer = export_service.export_to_pdf(document_id, current_user.id)
         
-        # Get document for filename
-        doc_service = DocumentEditorService(db)
-        document = doc_service.get_document(document_id, current_user.id)
         filename = f"{document.title if document else 'document'}.pdf"
+        # Sanitize filename
+        filename = "".join(c for c in filename if c.isalnum() or c in (' ', '-', '_', '.')).strip()
+        
+        logger.info(f"Successfully exported document {document_id} to PDF, filename: {filename}")
         
         return StreamingResponse(
             buffer,
             media_type="application/pdf",
             headers={"Content-Disposition": f'attachment; filename="{filename}"'}
         )
+    except HTTPException:
+        raise
     except ValueError as e:
+        logger.error(f"ValueError exporting to PDF: {e}", exc_info=True)
         raise HTTPException(status_code=404, detail=str(e))
     except Exception as e:
         logger.error(f"Error exporting to PDF: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail="Ошибка при экспорте в PDF")
+        raise HTTPException(status_code=500, detail=f"Ошибка при экспорте в PDF: {str(e)}")
 
 
 class DocumentVersionResponse(BaseModel):

@@ -237,3 +237,4 @@ def get_garant_full_text(doc_id: str) -> str:
     logger.info(f"[Garant Tools] Getting full text for document: {doc_id}")
     return _garant_full_text_sync(doc_id)
 
+

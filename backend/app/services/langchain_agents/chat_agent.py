@@ -192,6 +192,9 @@ class ChatAgent:
             # Формируем вопрос с информацией о case_id для агента
             enhanced_question = f"{question}\n\n[Контекст: case_id={self.case_id} - используй этот case_id при вызове retrieve_documents_tool]"
             
+            last_content = ""  # Отслеживаем последний контент для извлечения дельт
+            seen_contents = set()  # Отслеживаем уже отправленные контенты
+            
             # Вызываем агента с streaming
             async for chunk in self.agent.astream(
                 {"messages": [HumanMessage(content=enhanced_question)]},
@@ -201,13 +204,56 @@ class ChatAgent:
                 if isinstance(chunk, dict):
                     messages = chunk.get("messages", [])
                     if messages:
-                        last_message = messages[-1]
-                        if hasattr(last_message, 'content'):
-                            content = str(last_message.content)
-                            if content:
-                                yield content
+                        # Ищем последнее AIMessage с контентом (не ToolMessage)
+                        for message in reversed(messages):
+                            # Проверяем, что это AIMessage (не ToolMessage или HumanMessage)
+                            if isinstance(message, AIMessage):
+                                content = str(message.content) if hasattr(message, 'content') else ""
+                                
+                                # Пропускаем пустой контент и tool calls
+                                if not content or (hasattr(message, 'tool_calls') and message.tool_calls):
+                                    continue
+                                
+                                # Если контент изменился, отправляем дельту
+                                if content and content != last_content:
+                                    # Извлекаем только новую часть (дельту)
+                                    if last_content and content.startswith(last_content):
+                                        delta = content[len(last_content):]
+                                        if delta and delta not in seen_contents:
+                                            logger.debug(f"[ChatAgent] Yielding delta: {len(delta)} chars")
+                                            seen_contents.add(delta)
+                                            yield delta
+                                    else:
+                                        # Первый chunk или полная замена - отправляем весь контент
+                                        if content and content not in seen_contents:
+                                            logger.debug(f"[ChatAgent] Yielding full content: {len(content)} chars")
+                                            seen_contents.add(content)
+                                            yield content
+                                    
+                                    last_content = content
+                                break  # Берем только последнее AIMessage
+            
+            # Если после streaming не было контента, используем fallback
+            if not last_content:
+                logger.warning("[ChatAgent] No content received from stream, using fallback")
+                try:
+                    answer = await self.answer(question, config)
+                    if answer:
+                        logger.info(f"[ChatAgent] Fallback answer received: {len(answer)} chars")
+                        yield answer
+                except Exception as fallback_error:
+                    logger.error(f"[ChatAgent] Fallback also failed: {fallback_error}", exc_info=True)
+                    yield "Извините, не удалось получить ответ. Попробуйте переформулировать вопрос."
                 
         except Exception as e:
             logger.error(f"[ChatAgent] Error streaming answer: {e}", exc_info=True)
-            raise
+            # В случае ошибки пытаемся получить ответ без streaming
+            try:
+                logger.info("[ChatAgent] Falling back to non-streaming answer due to error")
+                answer = await self.answer(question, config)
+                if answer:
+                    yield answer
+            except Exception as fallback_error:
+                logger.error(f"[ChatAgent] Fallback also failed: {fallback_error}", exc_info=True)
+                yield f"Ошибка при генерации ответа: {str(e)}"
 
