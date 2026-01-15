@@ -340,8 +340,6 @@ export const AssistantUIChat = forwardRef<{ clearMessages: () => void; loadHisto
   currentDocumentContent,
   selectedText,
   onApplyEdit,
-  onInsertText,
-  onReplaceText,
   onOpenDocumentInEditor
 }, ref) => {
   const params = useParams<{ caseId: string }>()

@@ -286,11 +286,11 @@ const DocumentEditorPage = () => {
         {caseId && <UnifiedSidebar navItems={navItems} title="Legal AI" />}
         <div className="flex-1 flex flex-col" style={{ backgroundColor: 'var(--color-bg-primary)' }}>
           {documentsList.length === 0 ? (
-            <CreateDocumentScreen caseId={caseId} onDocumentCreated={handleDocumentCreated} />
+            <CreateDocumentScreen caseId={caseId!} onDocumentCreated={handleDocumentCreated} />
           ) : (
             <DocumentsList
               documents={documentsList}
-              caseId={caseId}
+              caseId={caseId!}
               onDocumentSelect={handleDocumentSelect}
               onDocumentDeleted={handleDocumentDeleted}
             />

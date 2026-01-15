@@ -78,6 +78,7 @@ import {
 export type ExtendedFileUIPart = FileUIPart & { 
   id: string;
   sourceFileId?: string;  // ID файла из БД (для drag&drop из панели документов)
+  file?: File;  // Оригинальный File объект (для локальных файлов)
 };
 
 export type AttachmentsContext = {
@@ -558,6 +559,7 @@ export const PromptInput = ({
             url: URL.createObjectURL(file),
             mediaType: file.type,
             filename: file.name,
+            file: file,  // Сохраняем оригинальный File объект
           });
         }
         return prev.concat(next);
