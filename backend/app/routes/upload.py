@@ -4,7 +4,7 @@ import json
 import os
 from fastapi import APIRouter, UploadFile, File, HTTPException, Depends, Form
 from pydantic import BaseModel, Field, field_validator
-from typing import List, Optional
+from typing import List, Optional, Dict
 from sqlalchemy.orm import Session
 from app.services.langchain_loaders import DocumentLoaderService
 from app.utils.database import get_db
