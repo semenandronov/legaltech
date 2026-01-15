@@ -738,6 +738,21 @@ async def stream_chat_response(
             if selected_text:
                 context_parts.append(f"\n\n=== ВЫДЕЛЕННЫЙ ТЕКСТ ===\n{selected_text}")
             
+            # Добавляем инструкцию для режима редактора
+            context_parts.append(f"\n\n=== ВАЖНО: РЕЖИМ РЕДАКТОРА ДОКУМЕНТА ===\n")
+            context_parts.append(f"Ты работаешь в режиме редактирования документа. Пользователь может попросить тебя:\n")
+            context_parts.append(f"- Изменить выделенный текст\n")
+            context_parts.append(f"- Улучшить текст\n")
+            context_parts.append(f"- Переписать часть документа\n")
+            context_parts.append(f"- Добавить или удалить информацию\n\n")
+            context_parts.append(f"Если пользователь просит изменить документ, ты ДОЛЖЕН:\n")
+            context_parts.append(f"1. Дать текстовый ответ с объяснением изменений\n")
+            context_parts.append(f"2. В конце ответа добавить блок с HTML кодом измененного документа в формате:\n")
+            context_parts.append(f"```html\n<полный HTML код документа с изменениями>\n```\n")
+            context_parts.append(f"ВАЖНО: HTML должен быть полным и валидным, включая все теги и структуру документа.\n")
+            context_parts.append(f"Если пользователь выделил текст, изменения должны применяться к выделенному тексту.\n")
+            context_parts.append(f"Ты имеешь доступ ко всему делу (case_id={case_id}) и можешь использовать информацию из всех документов дела для контекста.\n")
+            
             enhanced_question = question + "".join(context_parts)
             logger.info(f"[ChatAgent] Enhanced question with document context (doc_len={len(document_context) if document_context else 0}, selected_len={len(selected_text) if selected_text else 0})")
         
@@ -762,6 +777,28 @@ async def stream_chat_response(
                             logger.info(f"[ChatAgent] Successfully inserted Garant links")
                 except Exception as e:
                     logger.warning(f"[ChatAgent] Failed to insert Garant links: {e}", exc_info=True)
+            
+            # Для режима редактора документа: извлекаем edited_content из ответа
+            if document_id and document_context:
+                import re
+                edited_content = None
+                
+                # Пытаемся извлечь HTML из code blocks
+                html_match = re.search(r'```(?:html)?\s*\n(.*?)\n```', full_response_text, re.DOTALL)
+                if html_match:
+                    edited_content = html_match.group(1).strip()
+                    logger.info(f"[ChatAgent] Extracted edited_content from code block (length: {len(edited_content)})")
+                else:
+                    # Пытаемся найти HTML теги в ответе
+                    html_tag_match = re.search(r'<[^>]+>.*?</[^>]+>', full_response_text, re.DOTALL)
+                    if html_tag_match:
+                        edited_content = html_tag_match.group(0)
+                        logger.info(f"[ChatAgent] Extracted edited_content from HTML tags (length: {len(edited_content)})")
+                
+                # Если нашли edited_content, отправляем его через SSE
+                if edited_content:
+                    yield f"data: {json.dumps({'type': 'edited_content', 'edited_content': edited_content}, ensure_ascii=False)}\n\n"
+                    logger.info(f"[ChatAgent] Sent edited_content event (length: {len(edited_content)})")
             
             # Сохраняем ответ в БД
             try:

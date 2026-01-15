@@ -142,6 +142,8 @@ interface PromptInputWithDropProps {
   onDocumentDrop?: (documentFilename: string) => void
   handlePromptSubmit: (message: { text: string; files: any[] }, event: React.FormEvent<HTMLFormElement>) => void | Promise<void>
   isLoading: boolean
+  selectedText?: string
+  documentEditorMode?: boolean
 }
 
 // Компонент для отображения файла как чипа (chip)
@@ -190,7 +192,7 @@ const FileChip = ({
   );
 };
 
-const PromptInputWithDrop = ({ actualCaseId, onDocumentDrop, handlePromptSubmit, isLoading }: PromptInputWithDropProps) => {
+const PromptInputWithDrop = ({ actualCaseId, onDocumentDrop, handlePromptSubmit, isLoading, selectedText, documentEditorMode }: PromptInputWithDropProps) => {
   const attachments = useOptionalProviderAttachments()
   const containerRef = useRef<HTMLDivElement | null>(null)
   const [isDraggingOver, setIsDraggingOver] = useState(false)
@@ -319,6 +321,29 @@ const PromptInputWithDrop = ({ actualCaseId, onDocumentDrop, handlePromptSubmit,
   
   return (
     <div ref={containerRef} className="w-full relative">
+      {/* Выделенный текст (чип) НАД полем ввода - только в режиме редактора */}
+      {documentEditorMode && selectedText && selectedText.trim() && (
+        <div className="px-4 pt-3 pb-2 mb-2">
+          <div 
+            className="flex items-start gap-3 px-4 py-2.5 rounded-lg border border-blue-200/50 bg-blue-50/80 backdrop-blur-sm shadow-sm"
+            style={{
+              background: 'linear-gradient(135deg, rgba(239, 246, 255, 0.9) 0%, rgba(219, 234, 254, 0.9) 100%)',
+              boxShadow: '0 1px 3px 0 rgba(0, 0, 0, 0.1), 0 1px 2px 0 rgba(0, 0, 0, 0.06)',
+            }}
+          >
+            <div className="flex-shrink-0 mt-0.5">
+              <FileText className="w-5 h-5 text-blue-600" strokeWidth={1.5} />
+            </div>
+            <div className="flex-1 min-w-0">
+              <div className="text-xs font-medium text-blue-900 mb-1">Выделенный текст:</div>
+              <div className="text-sm text-blue-800 line-clamp-2">
+                {selectedText.length > 100 ? selectedText.substring(0, 100) + '...' : selectedText}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+      
       {/* Файлы (чипы) НАД полем ввода - ВНЕ PromptInput, но внутри контейнера */}
       {attachments && attachments.files.length > 0 && (
         <div className="px-4 pt-3 pb-2 space-y-2 mb-2">
@@ -1024,70 +1049,6 @@ export const AssistantUIChat = forwardRef<{ clearMessages: () => void; loadHisto
     >
       {/* Messages area */}
       <div className="flex-1 min-h-0 flex flex-col">
-        {/* Selection-aware quick actions */}
-        {documentEditorMode && selectedText && selectedText.trim() && (
-          <div className="p-3 border-b border-border bg-bg-elevated shrink-0">
-            <div className="text-xs text-text-secondary mb-2" style={{ color: 'var(--color-text-secondary)' }}>
-              Выделено: "{selectedText.slice(0, 50)}{selectedText.length > 50 ? '...' : ''}"
-            </div>
-            <div className="flex gap-2 flex-wrap">
-              <button
-                onClick={() => sendMessage(`Улучши текст: ${selectedText}`)}
-                disabled={isLoading}
-                className="px-3 py-1.5 text-xs font-medium rounded-lg border transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                style={{ 
-                  borderColor: 'var(--color-border)',
-                  color: 'var(--color-text-primary)',
-                  backgroundColor: 'var(--color-bg-primary)'
-                }}
-                onMouseEnter={(e) => {
-                  e.currentTarget.style.backgroundColor = 'var(--color-bg-hover)'
-                }}
-                onMouseLeave={(e) => {
-                  e.currentTarget.style.backgroundColor = 'var(--color-bg-primary)'
-                }}
-              >
-                Улучшить
-              </button>
-              <button
-                onClick={() => sendMessage(`Проверь на риски: ${selectedText}`)}
-                disabled={isLoading}
-                className="px-3 py-1.5 text-xs font-medium rounded-lg border transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                style={{ 
-                  borderColor: 'var(--color-border)',
-                  color: 'var(--color-text-primary)',
-                  backgroundColor: 'var(--color-bg-primary)'
-                }}
-                onMouseEnter={(e) => {
-                  e.currentTarget.style.backgroundColor = 'var(--color-bg-hover)'
-                }}
-                onMouseLeave={(e) => {
-                  e.currentTarget.style.backgroundColor = 'var(--color-bg-primary)'
-                }}
-              >
-                Проверить риски
-              </button>
-              <button
-                onClick={() => sendMessage(`Переписать: ${selectedText}`)}
-                disabled={isLoading}
-                className="px-3 py-1.5 text-xs font-medium rounded-lg border transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                style={{ 
-                  borderColor: 'var(--color-border)',
-                  color: 'var(--color-text-primary)',
-                  backgroundColor: 'var(--color-bg-primary)'
-                }}
-                onMouseEnter={(e) => {
-                  e.currentTarget.style.backgroundColor = 'var(--color-bg-hover)'
-                }}
-                onMouseLeave={(e) => {
-                  e.currentTarget.style.backgroundColor = 'var(--color-bg-primary)'
-                }}
-              >
-                Переписать
-              </button>
-            </div>
-          </div>
-        )}
         <Conversation className="flex-1 min-h-0 flex flex-col">
           <ConversationContent className="flex-1 overflow-y-auto">
               {isLoadingHistory ? (
@@ -1402,6 +1363,8 @@ export const AssistantUIChat = forwardRef<{ clearMessages: () => void; loadHisto
                 onDocumentDrop={onDocumentDrop}
                 handlePromptSubmit={handlePromptSubmit}
                 isLoading={isLoading}
+                selectedText={selectedText}
+                documentEditorMode={documentEditorMode}
               />
             </PromptInputProvider>
 
@@ -1440,6 +1403,8 @@ export const AssistantUIChat = forwardRef<{ clearMessages: () => void; loadHisto
                 onDocumentDrop={onDocumentDrop}
                 handlePromptSubmit={handlePromptSubmit}
                 isLoading={isLoading}
+                selectedText={selectedText}
+                documentEditorMode={documentEditorMode}
               />
             </PromptInputProvider>
 
