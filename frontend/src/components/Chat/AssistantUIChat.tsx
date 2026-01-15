@@ -25,7 +25,7 @@ import {
 import { Loader } from '../ai-elements/loader'
 import DocumentPreviewSheet from './DocumentPreviewSheet'
 import { SourceInfo } from '@/services/api'
-import { useOptionalProviderAttachments } from '../ai-elements/prompt-input'
+import { useOptionalProviderAttachments, useOptionalPromptInputController } from '../ai-elements/prompt-input'
 import { Plus, Check, FileText, X } from 'lucide-react'
 import type { ExtendedFileUIPart } from '../ai-elements/prompt-input'
 
@@ -33,6 +33,7 @@ interface Message {
   id: string
   role: 'user' | 'assistant'
   content: string
+  attachments?: ExtendedFileUIPart[]  // Файлы, прикрепленные к сообщению
   planId?: string
   plan?: any
   agentSteps?: AgentStep[]
@@ -234,6 +235,7 @@ const PromptInputWithDrop = ({ actualCaseId, onDocumentDrop, handlePromptSubmit,
     const handleDrop = async (e: DragEvent) => {
       e.preventDefault()
       e.stopPropagation()
+      // СБРАСЫВАЕМ СРАЗУ при drop - это важно!
       setIsDraggingOver(false)
       dragCounterRef.current = 0
       
@@ -243,6 +245,9 @@ const PromptInputWithDrop = ({ actualCaseId, onDocumentDrop, handlePromptSubmit,
         if (attachments) {
           attachments.add(e.dataTransfer.files)
           logger.info(`Добавлено ${e.dataTransfer.files.length} файлов через drag&drop`)
+          // Убеждаемся что индикатор выключен после добавления
+          setIsDraggingOver(false)
+          dragCounterRef.current = 0
         }
       } else {
         // Если это drag из панели документов (только имя файла)
@@ -274,13 +279,27 @@ const PromptInputWithDrop = ({ actualCaseId, onDocumentDrop, handlePromptSubmit,
               attachments.add([file], [{ sourceFileId: document.id }])
               logger.info(`Файл "${file.name}" добавлен в attachments с sourceFileId: ${document.id}`)
               
+              // Убеждаемся что индикатор выключен после добавления
+              setIsDraggingOver(false)
+              dragCounterRef.current = 0
+              
               // Не вызываем onDocumentDrop, так как файл уже виден в attachments
             } else {
               logger.warn(`Документ "${documentFilename}" не найден в списке документов`)
+              // Даже если файл не найден, сбрасываем индикатор
+              setIsDraggingOver(false)
+              dragCounterRef.current = 0
             }
           } catch (error) {
             logger.error('Ошибка при загрузке документа:', error)
+            // При ошибке тоже сбрасываем индикатор
+            setIsDraggingOver(false)
+            dragCounterRef.current = 0
           }
+        } else {
+          // Если не удалось обработать, все равно сбрасываем индикатор
+          setIsDraggingOver(false)
+          dragCounterRef.current = 0
         }
       }
     }
@@ -300,6 +319,19 @@ const PromptInputWithDrop = ({ actualCaseId, onDocumentDrop, handlePromptSubmit,
   
   return (
     <div ref={containerRef} className="w-full relative">
+      {/* Файлы (чипы) НАД полем ввода - ВНЕ PromptInput, но внутри контейнера */}
+      {attachments && attachments.files.length > 0 && (
+        <div className="px-4 pt-3 pb-2 space-y-2 mb-2">
+          {attachments.files.map((attachment) => (
+            <FileChip
+              key={attachment.id}
+              attachment={attachment}
+              onRemove={() => attachments.remove(attachment.id)}
+            />
+          ))}
+        </div>
+      )}
+      
       <PromptInput
         onSubmit={(message, event) => handlePromptSubmit(message, event)}
         className="w-full [&_form_input-group]:border [&_form_input-group]:border-border [&_form_input-group]:rounded-lg [&_form_input-group]:bg-bg-elevated [&_form_input-group]:focus-within:border-border-strong [&_form_input-group]:transition-all [&_form_input-group]:hover:border-border-strong"
@@ -309,19 +341,6 @@ const PromptInputWithDrop = ({ actualCaseId, onDocumentDrop, handlePromptSubmit,
           '--input-focus-border': 'var(--color-border-strong)',
         } as React.CSSProperties}
       >
-        {/* Файлы (чипы) НАД полем ввода - отдельная строка сверху, каждый чип на полную ширину */}
-        {attachments && attachments.files.length > 0 && (
-          <div className="px-4 pt-3 pb-2 space-y-2">
-            {attachments.files.map((attachment) => (
-              <FileChip
-                key={attachment.id}
-                attachment={attachment}
-                onRemove={() => attachments.remove(attachment.id)}
-              />
-            ))}
-          </div>
-        )}
-        
         <PromptInputBody>
           <div className="flex items-end gap-2 w-full">
             <div className="flex-1 relative">
@@ -444,11 +463,15 @@ export const AssistantUIChat = forwardRef<{ clearMessages: () => void; loadHisto
   const sendMessage = useCallback(async (userMessage: string) => {
     if (!userMessage.trim() || !actualCaseId || isLoading) return
 
-    // Add user message
+    // Сохраняем файлы из attachments перед очисткой
+    const currentAttachments = attachments?.files ? [...attachments.files] : []
+
+    // Add user message с файлами
     const userMsg: Message = {
       id: `user-${Date.now()}`,
       role: 'user',
       content: userMessage,
+      attachments: currentAttachments.length > 0 ? currentAttachments : undefined,
     }
     setMessages((prev) => [...prev, userMsg])
     setIsLoading(true)
@@ -910,6 +933,8 @@ export const AssistantUIChat = forwardRef<{ clearMessages: () => void; loadHisto
     }
   }, [])
 
+  const controller = useOptionalPromptInputController()
+
   const handlePromptSubmit = useCallback(async (message: { text: string; files: any[] }, _event: React.FormEvent<HTMLFormElement>) => {
     const text = message.text?.trim()
     
@@ -921,8 +946,16 @@ export const AssistantUIChat = forwardRef<{ clearMessages: () => void; loadHisto
     
     if (text && !isLoading && actualCaseId) {
       await sendMessage(text)
+      
+      // Очищаем поле ввода и attachments после успешной отправки
+      if (controller) {
+        controller.textInput.clear()
+      }
+      if (attachments) {
+        attachments.clear()
+      }
     }
-  }, [sendMessage, isLoading, actualCaseId])
+  }, [sendMessage, isLoading, actualCaseId, controller, attachments])
 
   // Expose sendMessage for WelcomeScreen
   const handleQuickAction = useCallback((prompt: string) => {
@@ -1081,7 +1114,21 @@ export const AssistantUIChat = forwardRef<{ clearMessages: () => void; loadHisto
         {messages.map((message) => {
           if (message.role === 'user') {
             return (
-              <UserMessage key={message.id} content={message.content} />
+              <div key={message.id}>
+                <UserMessage content={message.content} />
+                {/* Отображаем файлы под сообщением пользователя */}
+                {message.attachments && message.attachments.length > 0 && (
+                  <div className="mt-2 space-y-2">
+                    {message.attachments.map((attachment) => (
+                      <FileChip
+                        key={attachment.id}
+                        attachment={attachment}
+                        onRemove={() => {}} // В отправленном сообщении нельзя удалять
+                      />
+                    ))}
+                  </div>
+                )}
+              </div>
             )
           }
 
