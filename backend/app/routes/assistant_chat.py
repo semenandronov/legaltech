@@ -3,7 +3,7 @@ from fastapi import APIRouter, HTTPException, Depends, Request, BackgroundTasks
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
-from typing import AsyncGenerator, Optional, Literal
+from typing import AsyncGenerator, Optional, Literal, List
 import hashlib
 from app.utils.database import get_db
 from app.utils.auth import get_current_user
@@ -347,7 +347,8 @@ async def stream_chat_response(
     document_id: Optional[str] = None,
     selected_text: Optional[str] = None,
     template_file_id: Optional[str] = None,
-    template_file_content: Optional[str] = None
+    template_file_content: Optional[str] = None,
+    attached_file_ids: Optional[List[str]] = None
 ) -> AsyncGenerator[str, None]:
     """
     Stream chat response using RAG and LLM with optional web search and legal research
@@ -628,6 +629,12 @@ async def stream_chat_response(
         # Используем только RAG - эта функция используется для простых вопросов через PipelineService
         logger.info(f"Processing RAG query for case {case_id}: {question[:100]}...")
         
+        # Логируем прикрепленные файлы
+        if attached_file_ids:
+            logger.info(f"Attached file IDs for this query: {attached_file_ids}")
+            # Файлы уже в базе и доступны через RAG по case_id
+            # RAG автоматически найдет их при поиске по case_id
+        
         # asyncio уже импортирован глобально
         loop = asyncio.get_event_loop()
         
@@ -867,6 +874,11 @@ async def assistant_chat(
         # Template file content for draft mode (optional) - для локальных файлов
         template_file_content = body.get("template_file_content")
         
+        # Attached file IDs for regular messages (optional) - для явного указания файлов
+        attached_file_ids = body.get("attached_file_ids")
+        if attached_file_ids:
+            logger.info(f"Attached file IDs received: {attached_file_ids}")
+        
         if not case_id:
             raise HTTPException(status_code=400, detail="case_id is required")
         
@@ -896,7 +908,8 @@ async def assistant_chat(
                 document_id=document_id,
                 selected_text=selected_text,
                 template_file_id=template_file_id,
-                template_file_content=template_file_content
+                template_file_content=template_file_content,
+                attached_file_ids=attached_file_ids
             ),
             media_type="text/event-stream",
             headers={
