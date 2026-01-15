@@ -5,7 +5,7 @@ from langchain_core.tools import BaseTool
 from app.services.llm_factory import create_legal_llm
 from app.services.langchain_agents.agent_factory import create_legal_agent, safe_agent_invoke
 from app.services.langchain_agents.garant_tools import search_garant, get_garant_full_text
-from app.services.langchain_agents.tools import retrieve_documents_tool
+from app.services.langchain_agents.tools import retrieve_documents_tool, initialize_tools
 from app.services.rag_service import RAGService
 from app.services.langchain_agents.llm_helper import direct_llm_call_with_rag
 from sqlalchemy.orm import Session
@@ -44,6 +44,12 @@ class ChatAgent:
         self.rag_service = rag_service
         self.db = db
         self.legal_research_enabled = legal_research_enabled
+        # Инициализируем инструменты для доступа к RAG в чате
+        try:
+            initialize_tools(self.rag_service, self.rag_service.document_processor)
+            logger.info("[ChatAgent] Tools initialized with RAG service")
+        except Exception as e:
+            logger.warning(f"[ChatAgent] Failed to initialize tools: {e}")
         self.tools = self._create_tools()
         self.agent = self._create_agent()
     

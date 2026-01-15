@@ -729,6 +729,23 @@ async def stream_chat_response(
             except Exception as garant_error:
                 logger.error(f"[ГАРАНТ] Error searching in ГАРАНТ: {garant_error}", exc_info=True)
         
+        # Подмешиваем контекст из документов дела (RAG) для вопросов по делу
+        rag_context = ""
+        try:
+            # Берем релевантный контекст по вопросу
+            rag_docs = rag_service.retrieve_context(
+                case_id=case_id,
+                query=question,
+                k=5,
+                retrieval_strategy="multi_query",
+                db=db
+            )
+            if rag_docs:
+                rag_context = rag_service.format_sources_for_prompt(rag_docs, max_context_chars=4000)
+                logger.info(f"[RAG] Added {len(rag_docs)} docs to context (len={len(rag_context)})")
+        except Exception as rag_error:
+            logger.warning(f"[RAG] Failed to load context: {rag_error}")
+        
         # ВСЕГДА используем умного ChatAgent
         # Передаем legal_research для включения tools ГАРАНТ + добавляем контекст ГАРАНТ напрямую для надежности
         from app.services.langchain_agents.chat_agent import ChatAgent
@@ -774,6 +791,11 @@ async def stream_chat_response(
         if garant_context:
             enhanced_question = f"{enhanced_question}\n\n{garant_context}\n\nИспользуй информацию из ГАРАНТ для ответа на вопрос пользователя. Цитируй источники из ГАРАНТ."
             logger.info(f"[ChatAgent] Added ГАРАНТ context to question")
+
+        # Добавляем RAG контекст по документам дела
+        if rag_context:
+            enhanced_question = f"{enhanced_question}\n\n=== КОНТЕКСТ ИЗ ДОКУМЕНТОВ ДЕЛА ===\n{rag_context}\n=== КОНЕЦ КОНТЕКСТА ===\n"
+            logger.info("[ChatAgent] Added RAG context to question")
         
         if document_context or selected_text:
             context_parts = []
