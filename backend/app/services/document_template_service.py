@@ -239,13 +239,33 @@ class DocumentTemplateService:
                 _safe_debug_log({"sessionId":"debug-session","runId":"run1","hypothesisId":"H2","location":"document_template_service.py:235","message":"Skipping document_info check, trying export directly","data":{"doc_id":doc_id,"attempt":i+1},"timestamp":int(time.time()*1000)})
                 # #endregion
                 
-                # Получаем HTML шаблон напрямую, без проверки document_info
+                # Сначала получаем информацию о документе, чтобы проверить его доступность и структуру
                 # #region agent log
                 import time
-                _safe_debug_log({"sessionId":"debug-session","runId":"run1","hypothesisId":"H2","location":"document_template_service.py:240","message":"Calling get_document_full_text directly","data":{"doc_id":doc_id,"attempt":i+1},"timestamp":int(time.time()*1000)})
+                _safe_debug_log({"sessionId":"debug-session","runId":"run1","hypothesisId":"H6","location":"document_template_service.py:240","message":"Calling get_document_info first","data":{"doc_id":doc_id,"attempt":i+1},"timestamp":int(time.time()*1000)})
                 # #endregion
                 
-                html_content = await garant_source.get_document_full_text(doc_id, format="html")
+                doc_info = await garant_source.get_document_info(doc_id)
+                
+                # #region agent log
+                import time
+                _safe_debug_log({"sessionId":"debug-session","runId":"run1","hypothesisId":"H6","location":"document_template_service.py:247","message":"get_document_info result","data":{"doc_id":doc_id,"doc_info_keys":list(doc_info.keys()) if doc_info and isinstance(doc_info, dict) else None,"doc_info_topic":doc_info.get("topic") if doc_info and isinstance(doc_info, dict) else None,"doc_info_id":doc_info.get("id") if doc_info and isinstance(doc_info, dict) else None,"doc_info_docId":doc_info.get("docId") if doc_info and isinstance(doc_info, dict) else None,"success":doc_info is not None},"timestamp":int(time.time()*1000)})
+                # #endregion
+                
+                # Если document_info вернул None, пропускаем этот документ
+                if not doc_info:
+                    logger.warning(f"Document info not available for {doc_id} (attempt {i+1}), trying next...")
+                    continue
+                
+                # Проверяем, есть ли в doc_info другой идентификатор для экспорта
+                export_id = doc_info.get("id") or doc_info.get("docId") or doc_info.get("topic") or doc_id
+                
+                # #region agent log
+                import time
+                _safe_debug_log({"sessionId":"debug-session","runId":"run1","hypothesisId":"H6","location":"document_template_service.py:256","message":"Calling get_document_full_text with export_id","data":{"original_doc_id":doc_id,"export_id":export_id,"attempt":i+1},"timestamp":int(time.time()*1000)})
+                # #endregion
+                
+                html_content = await garant_source.get_document_full_text(export_id, format="html")
                 
                 # #region agent log
                 import time
