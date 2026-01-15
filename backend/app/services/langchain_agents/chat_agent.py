@@ -122,6 +122,9 @@ class ChatAgent:
             )
             logger.info("[ChatAgent] Agent created successfully")
             return agent
+        except Exception as e:
+            logger.error(f"[ChatAgent] Failed to create agent: {e}", exc_info=True)
+            raise
 
     @staticmethod
     def user_requested_json(question: str) -> bool:
@@ -166,9 +169,6 @@ class ChatAgent:
         except Exception as e:
             logger.warning(f"[ChatAgent] Failed to rewrite JSON response: {e}")
             return ""
-        except Exception as e:
-            logger.error(f"[ChatAgent] Failed to create agent: {e}", exc_info=True)
-            raise
     
     async def _direct_llm_fallback(self, question: str) -> str:
         """
