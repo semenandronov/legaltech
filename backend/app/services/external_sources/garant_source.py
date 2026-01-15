@@ -506,7 +506,21 @@ class GarantSource(BaseSource):
                         return None
                     elif response.status == 404:
                         error_text = await response.text()
-                        logger.warning(f"[Garant API] Document not found (404) for doc_id={doc_id}. Response: {error_text[:200]}")
+                        logger.warning(f"[Garant API] Document not found (404) for doc_id={doc_id_str}. Response: {error_text[:500]}")
+                        # #region agent log
+                        import time
+                        import json
+                        import os
+                        def _safe_debug_log(data: dict) -> None:
+                            try:
+                                log_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__file__)))), '.cursor', 'debug.log')
+                                os.makedirs(os.path.dirname(log_path), exist_ok=True)
+                                with open(log_path, 'a', encoding='utf-8') as f:
+                                    f.write(json.dumps(data) + '\n')
+                            except:
+                                pass
+                        _safe_debug_log({"sessionId":"debug-session","runId":"run1","hypothesisId":"H4","location":"garant_source.py:509","message":"404 response details","data":{"doc_id_str":doc_id_str,"endpoint":endpoint,"full_url":full_url,"request_body":{"topic":doc_id_str,"env":"internet"},"response_status":404,"response_text_preview":error_text[:500]},"timestamp":int(time.time()*1000)})
+                        # #endregion
                         return None
                     else:
                         error_text = await response.text()
