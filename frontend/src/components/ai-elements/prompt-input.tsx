@@ -175,6 +175,7 @@ export function PromptInputProvider({
           url: URL.createObjectURL(file),
           mediaType: file.type,
           filename: file.name,
+          file: file,  // Сохраняем оригинальный File объект для локальных файлов
           sourceFileId: metadata?.[index]?.sourceFileId,
         }))
       )
