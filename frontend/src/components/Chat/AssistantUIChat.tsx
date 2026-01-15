@@ -21,8 +21,6 @@ import {
   PromptInputBody,
   PromptInputTextarea,
   PromptInputSubmit,
-  PromptInputAttachments,
-  PromptInputAttachment,
 } from '../ai-elements/prompt-input'
 import { Loader } from '../ai-elements/loader'
 import DocumentPreviewSheet from './DocumentPreviewSheet'
