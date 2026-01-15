@@ -273,6 +273,46 @@ class ChatGigaChat(BaseChatModel):
             logger.error(f"Error calling GigaChat: {e}", exc_info=True)
             raise
     
+    def _sanitize_property_for_gigachat(self, prop_name: str, prop_schema: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        """
+        Преобразует property схему в формат совместимый с GigaChat API.
+        
+        GigaChat не поддерживает сложные типы (array, anyOf, allOf) без properties.
+        Для таких типов мы либо упрощаем их до string, либо пропускаем.
+        """
+        # Если есть anyOf или allOf - это сложный тип, упрощаем до string
+        if "anyOf" in prop_schema or "allOf" in prop_schema or "oneOf" in prop_schema:
+            # Для Optional[List[str]] и подобных - делаем string с описанием
+            description = prop_schema.get("description", "")
+            return {
+                "type": "string",
+                "description": f"{description} (comma-separated values if multiple)"
+            }
+        
+        prop_type = prop_schema.get("type")
+        
+        # Примитивные типы - оставляем как есть
+        if prop_type in ("string", "integer", "number", "boolean"):
+            return prop_schema
+        
+        # Array типы - преобразуем в string с comma-separated values
+        if prop_type == "array":
+            description = prop_schema.get("description", "")
+            items = prop_schema.get("items", {})
+            items_type = items.get("type", "string")
+            return {
+                "type": "string",
+                "description": f"{description} (comma-separated list of {items_type}s)"
+            }
+        
+        # Object типы без properties - пропускаем
+        if prop_type == "object" and "properties" not in prop_schema:
+            logger.warning(f"Skipping property '{prop_name}' - object without properties")
+            return None
+        
+        # Остальное оставляем как есть
+        return prop_schema
+    
     def bind_tools(
         self,
         tools: List[Any],
@@ -313,12 +353,23 @@ class ChatGigaChat(BaseChatModel):
                         if hasattr(schema, 'schema'):
                             json_schema = schema.schema()
                             if "properties" in json_schema:
-                                parameters["properties"] = json_schema["properties"]
+                                # Фильтруем и преобразуем properties для GigaChat
+                                sanitized_props = {}
+                                for prop_name, prop_schema in json_schema["properties"].items():
+                                    sanitized = self._sanitize_property_for_gigachat(prop_name, prop_schema)
+                                    if sanitized:
+                                        sanitized_props[prop_name] = sanitized
+                                parameters["properties"] = sanitized_props
                             if "required" in json_schema:
-                                parameters["required"] = json_schema["required"]
+                                # Оставляем в required только те поля которые есть в properties
+                                parameters["required"] = [
+                                    r for r in json_schema["required"] 
+                                    if r in parameters["properties"]
+                                ]
                     
                     function_def["parameters"] = parameters
                     functions.append(function_def)
+                    logger.debug(f"Tool '{tool.name}' converted: {len(parameters['properties'])} params")
             except Exception as e:
                 logger.warning(f"Error converting tool {tool} to function: {e}")
                 continue
