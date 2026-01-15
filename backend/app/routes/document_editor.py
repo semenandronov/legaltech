@@ -1,5 +1,7 @@
 """Document Editor routes for Legal AI Vault"""
 import logging
+import re
+from urllib.parse import quote
 from fastapi import APIRouter, HTTPException, Depends, UploadFile, File
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
@@ -17,6 +19,21 @@ from fastapi.responses import StreamingResponse
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
+
+
+def _build_content_disposition(filename: str) -> Dict[str, str]:
+    safe_filename = (filename or "").strip() or "document"
+    ascii_filename = re.sub(r"[^A-Za-z0-9._-]+", "_", safe_filename)
+    if not ascii_filename:
+        ascii_filename = "document"
+    # RFC 5987 encoding for non-ASCII filenames
+    encoded = quote(safe_filename, safe="")
+    return {
+        "Content-Disposition": (
+            f'attachment; filename="{ascii_filename}"; '
+            f"filename*=UTF-8''{encoded}"
+        )
+    }
 
 
 class DocumentCreateRequest(BaseModel):
@@ -505,15 +522,13 @@ async def export_docx(
         buffer = export_service.export_to_docx(document_id, current_user.id)
         
         filename = f"{document.title if document else 'document'}.docx"
-        # Sanitize filename
-        filename = "".join(c for c in filename if c.isalnum() or c in (' ', '-', '_', '.')).strip()
         
         logger.info(f"Successfully exported document {document_id} to DOCX, filename: {filename}")
         
         return StreamingResponse(
             buffer,
             media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-            headers={"Content-Disposition": f'attachment; filename="{filename}"'}
+            headers=_build_content_disposition(filename)
         )
     except HTTPException:
         raise
@@ -556,15 +571,13 @@ async def export_pdf(
         buffer = export_service.export_to_pdf(document_id, current_user.id)
         
         filename = f"{document.title if document else 'document'}.pdf"
-        # Sanitize filename
-        filename = "".join(c for c in filename if c.isalnum() or c in (' ', '-', '_', '.')).strip()
         
         logger.info(f"Successfully exported document {document_id} to PDF, filename: {filename}")
         
         return StreamingResponse(
             buffer,
             media_type="application/pdf",
-            headers={"Content-Disposition": f'attachment; filename="{filename}"'}
+            headers=_build_content_disposition(filename)
         )
     except HTTPException:
         raise
