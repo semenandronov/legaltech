@@ -502,13 +502,14 @@ async def create_document_node(state: TemplateState, db: Session) -> TemplateSta
             except Exception as update_error:
                 logger.warning(f"Error updating document, creating new: {update_error}")
                 # Создаем новый документ
+                cached_template = state.get("cached_template") or {}
                 document = editor_service.create_document(
                     case_id=state["case_id"],
                     user_id=state["user_id"],
                     title=document_title,
                     content=state["adapted_content"],
                     metadata={
-                        "template_id": state.get("cached_template", {}).get("id"),
+                        "template_id": cached_template.get("id") if isinstance(cached_template, dict) else None,
                         "template_source": state.get("template_source"),
                         "template_file_id": state.get("template_file_id"),
                         "original_query": state["user_query"]
