@@ -59,7 +59,7 @@ export const DocumentsList: React.FC<DocumentsListProps> = ({
       <div className="max-w-4xl mx-auto">
         <div className="flex items-center gap-4 mb-6">
           <button
-            onClick={() => navigate(`/cases/${caseId}/documents`)}
+            onClick={() => navigate(`/cases/${caseId}/editor`)}
             className="flex items-center gap-2 px-3 py-1.5 text-sm font-medium rounded-lg transition-all duration-150 hover:bg-gray-100"
             style={{ color: 'var(--color-text-secondary)' }}
           >
