@@ -123,20 +123,24 @@ class ChatAgent:
         Прямой вызов LLM без агента и инструментов (последний fallback)
         
         Args:
-            question: Вопрос пользователя
+            question: Вопрос пользователя (оригинальный, без внутреннего контекста)
             
         Returns:
             Ответ LLM
         """
         logger.info("[ChatAgent] Using direct LLM fallback without tools")
+        
+        # Убираем внутренний контекст если он случайно попал
+        clean_question = question.split("[Контекст:")[0].strip() if "[Контекст:" in question else question
+        
         try:
             # Простой системный промпт без инструкций по инструментам
             system_message = SystemMessage(content="""Ты - юридический AI-ассистент. 
 Отвечай на вопросы пользователя кратко и по существу. 
-Если вопрос касается конкретных документов дела, укажи что для детального ответа нужна информация из документов.
+Если вопрос касается конкретных документов дела, укажи что для получения точного ответа нужно проанализировать загруженные документы.
 Используй Markdown для форматирования.""")
             
-            human_message = HumanMessage(content=question)
+            human_message = HumanMessage(content=clean_question)
             
             # Вызываем LLM напрямую
             response = self.llm.invoke([system_message, human_message])
@@ -191,34 +195,40 @@ class ChatAgent:
             if isinstance(result, dict):
                 messages = result.get("messages", [])
                 if messages:
+                    # Логируем типы всех сообщений для диагностики
+                    msg_types = [type(m).__name__ for m in messages]
+                    logger.debug(f"[ChatAgent] Messages in result: {msg_types}")
+                    
                     # Ищем последнее AIMessage с непустым контентом
+                    # ВАЖНО: НЕ возвращаем HumanMessage - это сообщение пользователя!
                     for last_message in reversed(messages):
                         if isinstance(last_message, AIMessage):
                             # Правильная обработка None content
                             raw_content = getattr(last_message, 'content', None)
                             response = str(raw_content) if raw_content is not None else ""
                             
+                            # Фильтруем внутренний контекст если он попал в ответ
+                            if "[Контекст: case_id=" in response:
+                                logger.warning("[ChatAgent] Response contains internal context, filtering it out")
+                                response = response.split("[Контекст:")[0].strip()
+                            
                             if response:
-                                logger.info(f"[ChatAgent] Response generated, length: {len(response)} chars")
+                                logger.info(f"[ChatAgent] Response generated from AIMessage, length: {len(response)} chars")
                                 return response
                             else:
                                 # Если есть tool_calls но нет контента, продолжаем искать
                                 if hasattr(last_message, 'tool_calls') and last_message.tool_calls:
                                     logger.debug("[ChatAgent] Found AIMessage with tool_calls but no content, continuing search")
                                     continue
-                        elif hasattr(last_message, 'content'):
-                            raw_content = getattr(last_message, 'content', None)
-                            response = str(raw_content) if raw_content is not None else ""
-                            if response:
-                                logger.info(f"[ChatAgent] Response generated from non-AIMessage, length: {len(response)} chars")
-                                return response
+                        # НЕ обрабатываем другие типы сообщений (HumanMessage, ToolMessage) как ответы!
+                        # Это была критическая ошибка - мы возвращали HumanMessage с контекстом
                     
-                    # Если не нашли контент, логируем детали
-                    logger.warning(f"[ChatAgent] No content found in {len(messages)} messages")
+                    # Если не нашли контент в AIMessage, логируем детали
+                    logger.warning(f"[ChatAgent] No AIMessage with content found in {len(messages)} messages (types: {msg_types})")
             
-            # Fallback если формат неожиданный
-            logger.warning(f"[ChatAgent] Unexpected result format: {type(result)}")
-            return str(result) if result else ""
+            # Fallback если формат неожиданный или нет контента
+            logger.warning(f"[ChatAgent] No valid response, returning empty string")
+            return ""
             
         except Exception as e:
             logger.error(f"[ChatAgent] Error answering question: {e}", exc_info=True)
@@ -256,13 +266,42 @@ class ChatAgent:
                 config=agent_config
             ):
                 total_chunks += 1
+                # Детальное логирование chunk для диагностики
+                logger.debug(f"[ChatAgent] Chunk #{total_chunks}: type={type(chunk).__name__}, keys={chunk.keys() if isinstance(chunk, dict) else 'N/A'}")
+                
                 # Извлекаем текст из chunk
+                # LangGraph возвращает chunks в формате {"node_name": {"messages": [...]}}
                 if isinstance(chunk, dict):
-                    messages = chunk.get("messages", [])
+                    # Пробуем разные форматы ответа
+                    messages = []
+                    
+                    # Формат 1: {"messages": [...]} (прямой)
+                    if "messages" in chunk:
+                        messages = chunk.get("messages", [])
+                    else:
+                        # Формат 2: {"node_name": {"messages": [...]}} (langgraph)
+                        for node_name, node_data in chunk.items():
+                            if isinstance(node_data, dict) and "messages" in node_data:
+                                messages = node_data.get("messages", [])
+                                logger.debug(f"[ChatAgent] Found messages in node '{node_name}'")
+                                break
+                    
+                    # Логируем типы сообщений для диагностики
+                    msg_types = [type(m).__name__ for m in messages]
+                    logger.debug(f"[ChatAgent] Chunk #{total_chunks}: {len(messages)} messages, types: {msg_types}")
+                    
                     if messages:
-                        # Ищем последнее AIMessage с контентом (не ToolMessage)
-                        for message in reversed(messages):
-                            # Проверяем, что это AIMessage (не ToolMessage или HumanMessage)
+                        # Обрабатываем все типы сообщений для диагностики
+                        from langchain_core.messages import ToolMessage
+                        
+                        for message in messages:
+                            # Логируем ToolMessage для диагностики
+                            if isinstance(message, ToolMessage):
+                                tool_result = getattr(message, 'content', '')
+                                logger.debug(f"[ChatAgent] ToolMessage received: {tool_result[:100] if tool_result else '(empty)'}...")
+                                continue
+                            
+                            # Ищем AIMessage с контентом
                             if isinstance(message, AIMessage):
                                 ai_messages_count += 1
                                 
@@ -274,14 +313,17 @@ class ChatAgent:
                                 has_tool_calls = hasattr(message, 'tool_calls') and message.tool_calls
                                 if has_tool_calls:
                                     tool_calls_count += 1
-                                    logger.debug(f"[ChatAgent] AIMessage with tool_calls, content: '{content[:50] if content else '(empty)'}...'")
+                                    tool_names = [tc.get('name', 'unknown') if isinstance(tc, dict) else getattr(tc, 'name', 'unknown') for tc in message.tool_calls]
+                                    logger.info(f"[ChatAgent] AIMessage with tool_calls: {tool_names}, content: '{content[:50] if content else '(empty)'}...'")
+                                    # НЕ пропускаем - это нормально, tool будет вызван, потом придёт финальный ответ
                                 
-                                # Пропускаем только если нет контента (но не если есть tool_calls с контентом)
-                                if not content:
-                                    continue
-                                
-                                # Если контент изменился, отправляем дельту
+                                # Если есть контент (даже если есть tool_calls), отправляем его
                                 if content and content != last_content:
+                                    # Фильтруем внутренний контекст если он попал
+                                    if "[Контекст: case_id=" in content:
+                                        logger.warning("[ChatAgent] Response contains internal context, filtering it out")
+                                        content = content.split("[Контекст:")[0].strip()
+                                    
                                     # Извлекаем только новую часть (дельту)
                                     if last_content and content.startswith(last_content):
                                         delta = content[len(last_content):]
@@ -297,13 +339,15 @@ class ChatAgent:
                                             yield content
                                     
                                     last_content = content
-                                break  # Берем только последнее AIMessage
             
             logger.info(f"[ChatAgent] Streaming complete: {total_chunks} chunks, {ai_messages_count} AIMessages, {tool_calls_count} tool_calls, final content: {len(last_content)} chars")
             
             # Если после streaming не было контента, используем fallback
             if not last_content:
-                logger.warning(f"[ChatAgent] No content received from stream (chunks={total_chunks}, ai_msgs={ai_messages_count}, tool_calls={tool_calls_count}), using fallback")
+                logger.warning(
+                    f"[ChatAgent] No content received from stream (chunks={total_chunks}, "
+                    f"ai_msgs={ai_messages_count}, tool_calls={tool_calls_count}), using fallback"
+                )
                 try:
                     # Сначала пробуем обычный fallback через агента
                     answer = await self.answer(question, config)
@@ -321,7 +365,6 @@ class ChatAgent:
                             yield "Извините, не удалось получить ответ. Попробуйте переформулировать вопрос."
                 except Exception as fallback_error:
                     logger.error(f"[ChatAgent] Agent fallback failed: {fallback_error}, trying direct LLM", exc_info=True)
-                    # При ошибке агента используем прямой вызов LLM
                     try:
                         direct_answer = await self._direct_llm_fallback(question)
                         if direct_answer:
