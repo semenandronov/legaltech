@@ -239,12 +239,18 @@ class ChatGigaChat(BaseChatModel):
         try:
             if response.choices and len(response.choices) > 0:
                 message = response.choices[0].message
-                content = message.content if hasattr(message, 'content') else ""
+                # Правильная обработка None content
+                raw_content = getattr(message, 'content', None)
+                content = str(raw_content) if raw_content is not None else ""
+                
+                # Логируем для диагностики
+                logger.debug(f"[GigaChat] Response content: {content[:200] if content else '(empty)'}")
                 
                 # Проверяем, есть ли function calls
                 function_calls = None
                 if hasattr(message, 'function_calls') and message.function_calls:
                     function_calls = message.function_calls
+                    logger.info(f"[GigaChat] Response has {len(function_calls)} function calls")
                 
                 # Создаем LangChain message
                 ai_message = AIMessage(content=content)
@@ -266,6 +272,7 @@ class ChatGigaChat(BaseChatModel):
                 )
             else:
                 # Пустой ответ
+                logger.warning("[GigaChat] Empty response - no choices in response")
                 return ChatResult(
                     generations=[ChatGeneration(message=AIMessage(content=""))]
                 )

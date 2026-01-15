@@ -384,7 +384,7 @@ def save_summary_tool(summary_data: str, case_id: str, **kwargs) -> str:
 
 
 @tool
-def retrieve_documents_iterative_tool(query: str, case_id: str, k: int = 20, doc_types: Optional[List[str]] = None) -> str:
+def retrieve_documents_iterative_tool(query: str, case_id: str, k: int = 20, doc_types: Optional[str] = None) -> str:
     """
     Retrieve relevant documents using iterative search with query refinement.
     
@@ -396,7 +396,7 @@ def retrieve_documents_iterative_tool(query: str, case_id: str, k: int = 20, doc
         query: Search query describing what information you need
         case_id: Case identifier
         k: Number of document chunks to retrieve (default: 20)
-        doc_types: Optional list of document types to filter by (e.g., ['statement_of_claim', 'contract'])
+        doc_types: Optional comma-separated list of document types to filter by (e.g., 'statement_of_claim,contract')
                    Use this when the user asks to work with specific document types
     
     Returns:
@@ -404,6 +404,11 @@ def retrieve_documents_iterative_tool(query: str, case_id: str, k: int = 20, doc
     """
     if not _rag_service:
         raise ValueError("RAG service not initialized. Call initialize_tools() first.")
+    
+    # Парсим doc_types из строки в список
+    doc_types_list: Optional[List[str]] = None
+    if doc_types:
+        doc_types_list = [t.strip() for t in doc_types.split(",") if t.strip()]
     
     try:
         # Always use iterative search for this tool
@@ -414,7 +419,7 @@ def retrieve_documents_iterative_tool(query: str, case_id: str, k: int = 20, doc
             k=k,
             retrieval_strategy="iterative",
             use_iterative=True,
-            doc_types=doc_types
+            doc_types=doc_types_list
         )
         
         if not documents:

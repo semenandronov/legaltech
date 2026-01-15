@@ -1,6 +1,6 @@
 """Chat Agent with smart tool selection for assistant chat"""
 from typing import List, Optional, Dict, Any
-from langchain_core.messages import HumanMessage, AIMessage
+from langchain_core.messages import HumanMessage, AIMessage, SystemMessage
 from langchain_core.tools import BaseTool
 from app.services.llm_factory import create_legal_llm
 from app.services.langchain_agents.agent_factory import create_legal_agent, safe_agent_invoke
@@ -67,7 +67,7 @@ class ChatAgent:
     
     def _create_agent(self):
         """Создать агента с инструментами"""
-        llm = create_legal_llm()
+        self.llm = create_legal_llm()  # Сохраняем LLM для fallback
         
         system_prompt = """Ты - юридический AI-ассистент, который помогает анализировать документы дела и отвечать на вопросы о праве.
 
@@ -108,7 +108,7 @@ class ChatAgent:
         
         try:
             agent = create_legal_agent(
-                llm=llm,
+                llm=self.llm,
                 tools=self.tools,
                 system_prompt=system_prompt
             )
@@ -117,6 +117,43 @@ class ChatAgent:
         except Exception as e:
             logger.error(f"[ChatAgent] Failed to create agent: {e}", exc_info=True)
             raise
+    
+    async def _direct_llm_fallback(self, question: str) -> str:
+        """
+        Прямой вызов LLM без агента и инструментов (последний fallback)
+        
+        Args:
+            question: Вопрос пользователя
+            
+        Returns:
+            Ответ LLM
+        """
+        logger.info("[ChatAgent] Using direct LLM fallback without tools")
+        try:
+            # Простой системный промпт без инструкций по инструментам
+            system_message = SystemMessage(content="""Ты - юридический AI-ассистент. 
+Отвечай на вопросы пользователя кратко и по существу. 
+Если вопрос касается конкретных документов дела, укажи что для детального ответа нужна информация из документов.
+Используй Markdown для форматирования.""")
+            
+            human_message = HumanMessage(content=question)
+            
+            # Вызываем LLM напрямую
+            response = self.llm.invoke([system_message, human_message])
+            
+            # Извлекаем контент
+            if isinstance(response, AIMessage):
+                content = getattr(response, 'content', None)
+                return str(content) if content is not None else ""
+            elif hasattr(response, 'content'):
+                content = getattr(response, 'content', None)
+                return str(content) if content is not None else ""
+            else:
+                return str(response) if response else ""
+                
+        except Exception as e:
+            logger.error(f"[ChatAgent] Direct LLM fallback failed: {e}", exc_info=True)
+            return ""
     
     async def answer(self, question: str, config: Optional[Dict[str, Any]] = None) -> str:
         """
@@ -154,19 +191,34 @@ class ChatAgent:
             if isinstance(result, dict):
                 messages = result.get("messages", [])
                 if messages:
-                    last_message = messages[-1]
-                    if isinstance(last_message, AIMessage):
-                        response = last_message.content
-                        logger.info(f"[ChatAgent] Response generated, length: {len(response)} chars")
-                        return response
-                    elif hasattr(last_message, 'content'):
-                        response = str(last_message.content)
-                        logger.info(f"[ChatAgent] Response generated, length: {len(response)} chars")
-                        return response
+                    # Ищем последнее AIMessage с непустым контентом
+                    for last_message in reversed(messages):
+                        if isinstance(last_message, AIMessage):
+                            # Правильная обработка None content
+                            raw_content = getattr(last_message, 'content', None)
+                            response = str(raw_content) if raw_content is not None else ""
+                            
+                            if response:
+                                logger.info(f"[ChatAgent] Response generated, length: {len(response)} chars")
+                                return response
+                            else:
+                                # Если есть tool_calls но нет контента, продолжаем искать
+                                if hasattr(last_message, 'tool_calls') and last_message.tool_calls:
+                                    logger.debug("[ChatAgent] Found AIMessage with tool_calls but no content, continuing search")
+                                    continue
+                        elif hasattr(last_message, 'content'):
+                            raw_content = getattr(last_message, 'content', None)
+                            response = str(raw_content) if raw_content is not None else ""
+                            if response:
+                                logger.info(f"[ChatAgent] Response generated from non-AIMessage, length: {len(response)} chars")
+                                return response
+                    
+                    # Если не нашли контент, логируем детали
+                    logger.warning(f"[ChatAgent] No content found in {len(messages)} messages")
             
             # Fallback если формат неожиданный
             logger.warning(f"[ChatAgent] Unexpected result format: {type(result)}")
-            return str(result)
+            return str(result) if result else ""
             
         except Exception as e:
             logger.error(f"[ChatAgent] Error answering question: {e}", exc_info=True)
@@ -194,12 +246,16 @@ class ChatAgent:
             
             last_content = ""  # Отслеживаем последний контент для извлечения дельт
             seen_contents = set()  # Отслеживаем уже отправленные контенты
+            total_chunks = 0
+            ai_messages_count = 0
+            tool_calls_count = 0
             
             # Вызываем агента с streaming
             async for chunk in self.agent.astream(
                 {"messages": [HumanMessage(content=enhanced_question)]},
                 config=agent_config
             ):
+                total_chunks += 1
                 # Извлекаем текст из chunk
                 if isinstance(chunk, dict):
                     messages = chunk.get("messages", [])
@@ -208,10 +264,20 @@ class ChatAgent:
                         for message in reversed(messages):
                             # Проверяем, что это AIMessage (не ToolMessage или HumanMessage)
                             if isinstance(message, AIMessage):
-                                content = str(message.content) if hasattr(message, 'content') else ""
+                                ai_messages_count += 1
                                 
-                                # Пропускаем пустой контент и tool calls
-                                if not content or (hasattr(message, 'tool_calls') and message.tool_calls):
+                                # Правильная обработка None content
+                                raw_content = getattr(message, 'content', None)
+                                content = str(raw_content) if raw_content is not None else ""
+                                
+                                # Проверяем наличие tool calls
+                                has_tool_calls = hasattr(message, 'tool_calls') and message.tool_calls
+                                if has_tool_calls:
+                                    tool_calls_count += 1
+                                    logger.debug(f"[ChatAgent] AIMessage with tool_calls, content: '{content[:50] if content else '(empty)'}...'")
+                                
+                                # Пропускаем только если нет контента (но не если есть tool_calls с контентом)
+                                if not content:
                                     continue
                                 
                                 # Если контент изменился, отправляем дельту
@@ -233,17 +299,39 @@ class ChatAgent:
                                     last_content = content
                                 break  # Берем только последнее AIMessage
             
+            logger.info(f"[ChatAgent] Streaming complete: {total_chunks} chunks, {ai_messages_count} AIMessages, {tool_calls_count} tool_calls, final content: {len(last_content)} chars")
+            
             # Если после streaming не было контента, используем fallback
             if not last_content:
-                logger.warning("[ChatAgent] No content received from stream, using fallback")
+                logger.warning(f"[ChatAgent] No content received from stream (chunks={total_chunks}, ai_msgs={ai_messages_count}, tool_calls={tool_calls_count}), using fallback")
                 try:
+                    # Сначала пробуем обычный fallback через агента
                     answer = await self.answer(question, config)
                     if answer:
-                        logger.info(f"[ChatAgent] Fallback answer received: {len(answer)} chars")
+                        logger.info(f"[ChatAgent] Agent fallback answer received: {len(answer)} chars")
                         yield answer
+                    else:
+                        # Если агент тоже вернул пустой ответ, используем прямой вызов LLM
+                        logger.warning("[ChatAgent] Agent fallback returned empty, trying direct LLM")
+                        direct_answer = await self._direct_llm_fallback(question)
+                        if direct_answer:
+                            logger.info(f"[ChatAgent] Direct LLM fallback answer: {len(direct_answer)} chars")
+                            yield direct_answer
+                        else:
+                            yield "Извините, не удалось получить ответ. Попробуйте переформулировать вопрос."
                 except Exception as fallback_error:
-                    logger.error(f"[ChatAgent] Fallback also failed: {fallback_error}", exc_info=True)
-                    yield "Извините, не удалось получить ответ. Попробуйте переформулировать вопрос."
+                    logger.error(f"[ChatAgent] Agent fallback failed: {fallback_error}, trying direct LLM", exc_info=True)
+                    # При ошибке агента используем прямой вызов LLM
+                    try:
+                        direct_answer = await self._direct_llm_fallback(question)
+                        if direct_answer:
+                            logger.info(f"[ChatAgent] Direct LLM fallback after error: {len(direct_answer)} chars")
+                            yield direct_answer
+                        else:
+                            yield "Извините, не удалось получить ответ. Попробуйте переформулировать вопрос."
+                    except Exception as direct_error:
+                        logger.error(f"[ChatAgent] Direct LLM fallback also failed: {direct_error}", exc_info=True)
+                        yield "Извините, не удалось получить ответ. Попробуйте переформулировать вопрос."
                 
         except Exception as e:
             logger.error(f"[ChatAgent] Error streaming answer: {e}", exc_info=True)
@@ -253,7 +341,22 @@ class ChatAgent:
                 answer = await self.answer(question, config)
                 if answer:
                     yield answer
+                else:
+                    # Прямой вызов LLM как последний resort
+                    direct_answer = await self._direct_llm_fallback(question)
+                    if direct_answer:
+                        yield direct_answer
+                    else:
+                        yield f"Ошибка при генерации ответа: {str(e)}"
             except Exception as fallback_error:
-                logger.error(f"[ChatAgent] Fallback also failed: {fallback_error}", exc_info=True)
-                yield f"Ошибка при генерации ответа: {str(e)}"
+                logger.error(f"[ChatAgent] All fallbacks failed: {fallback_error}", exc_info=True)
+                # Последняя попытка - прямой вызов LLM
+                try:
+                    direct_answer = await self._direct_llm_fallback(question)
+                    if direct_answer:
+                        yield direct_answer
+                    else:
+                        yield f"Ошибка при генерации ответа: {str(e)}"
+                except Exception:
+                    yield f"Ошибка при генерации ответа: {str(e)}"
 
