@@ -436,8 +436,17 @@ class GarantSource(BaseSource):
         endpoint = endpoint_map.get(format.lower(), "/export/html")
         full_url = f"{self.api_url}{endpoint}"
         
-        # Убеждаемся, что doc_id - строка (API ожидает строку согласно документации)
-        doc_id_str = str(doc_id).strip()
+        # Пробуем разные форматы topic: сначала как число (если возможно), потом как строку
+        # Согласно документации API v2.1.0, topic может быть числом или строкой
+        try:
+            # Пробуем преобразовать в число, если это возможно
+            doc_id_num = int(doc_id) if isinstance(doc_id, str) and doc_id.isdigit() else doc_id
+            if isinstance(doc_id_num, int):
+                doc_id_for_export = doc_id_num
+            else:
+                doc_id_for_export = str(doc_id).strip()
+        except (ValueError, TypeError):
+            doc_id_for_export = str(doc_id).strip()
         
         # #region agent log
         import time
@@ -451,7 +460,7 @@ class GarantSource(BaseSource):
                     f.write(json.dumps(data) + '\n')
             except:
                 pass
-        _safe_debug_log({"sessionId":"debug-session","runId":"run1","hypothesisId":"H1","location":"garant_source.py:461","message":"get_document_full_text endpoint","data":{"api_url":self.api_url,"endpoint":endpoint,"full_url":full_url,"doc_id":doc_id,"doc_id_str":doc_id_str,"format":format,"request_body":{"topic":doc_id_str,"env":"internet"}},"timestamp":int(time.time()*1000)})
+        _safe_debug_log({"sessionId":"debug-session","runId":"run1","hypothesisId":"H7","location":"garant_source.py:461","message":"get_document_full_text endpoint","data":{"api_url":self.api_url,"endpoint":endpoint,"full_url":full_url,"doc_id":doc_id,"doc_id_for_export":doc_id_for_export,"doc_id_for_export_type":type(doc_id_for_export).__name__,"format":format,"request_body":{"topic":doc_id_for_export,"env":"internet"}},"timestamp":int(time.time()*1000)})
         # #endregion
         
         timeout_seconds = GARANT_API_TIMEOUT_EXPORT
@@ -460,11 +469,11 @@ class GarantSource(BaseSource):
             async with aiohttp.ClientSession() as session:
                 
                 request_body = {
-                    "topic": doc_id_str,
+                    "topic": doc_id_for_export,
                     "env": "internet"
                 }
                 
-                logger.info(f"[Garant API] Requesting full text for document {doc_id_str} (type: {type(doc_id).__name__}) in format {format}")
+                logger.info(f"[Garant API] Requesting full text for document {doc_id_for_export} (type: {type(doc_id_for_export).__name__}) in format {format}")
                 logger.info(f"[DEBUG] Export request: endpoint={full_url}, body={request_body}")
                 logger.debug(f"[Garant API] Endpoint: {full_url}, Request body: {request_body}")
                 
@@ -506,7 +515,7 @@ class GarantSource(BaseSource):
                         return None
                     elif response.status == 404:
                         error_text = await response.text()
-                        logger.warning(f"[Garant API] Document not found (404) for doc_id={doc_id_str}. Response: {error_text[:500]}")
+                        logger.warning(f"[Garant API] Document not found (404) for doc_id={doc_id_for_export}. Response: {error_text[:500]}")
                         # #region agent log
                         import time
                         import json
@@ -519,15 +528,15 @@ class GarantSource(BaseSource):
                                     f.write(json.dumps(data) + '\n')
                             except:
                                 pass
-                        _safe_debug_log({"sessionId":"debug-session","runId":"run1","hypothesisId":"H4","location":"garant_source.py:509","message":"404 response details","data":{"doc_id_str":doc_id_str,"endpoint":endpoint,"full_url":full_url,"request_body":{"topic":doc_id_str,"env":"internet"},"response_status":404,"response_text_preview":error_text[:500]},"timestamp":int(time.time()*1000)})
+                        _safe_debug_log({"sessionId":"debug-session","runId":"run1","hypothesisId":"H7","location":"garant_source.py:509","message":"404 response details","data":{"doc_id_for_export":doc_id_for_export,"doc_id_for_export_type":type(doc_id_for_export).__name__,"endpoint":endpoint,"full_url":full_url,"request_body":{"topic":doc_id_for_export,"env":"internet"},"response_status":404,"response_text_preview":error_text[:500]},"timestamp":int(time.time()*1000)})
                         # #endregion
                         return None
                     else:
                         error_text = await response.text()
-                        logger.error(f"[Garant API] Export error: status={response.status}, doc_id={doc_id_str}, format={format}, response={error_text[:500]}")
+                        logger.error(f"[Garant API] Export error: status={response.status}, doc_id={doc_id_for_export}, format={format}, response={error_text[:500]}")
                         return None
         except aiohttp.ClientTimeout:
-            logger.error(f"[Garant API] Timeout ({timeout_seconds}s) while getting document {doc_id_str} in format {format}")
+            logger.error(f"[Garant API] Timeout ({timeout_seconds}s) while getting document {doc_id_for_export} in format {format}")
             return None
         except aiohttp.ClientError as e:
             logger.error(f"[Garant API] Client error getting document full text: {e}", exc_info=True)
