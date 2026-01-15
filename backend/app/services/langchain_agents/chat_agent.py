@@ -7,6 +7,7 @@ from app.services.langchain_agents.agent_factory import create_legal_agent, safe
 from app.services.langchain_agents.garant_tools import search_garant, get_garant_full_text
 from app.services.langchain_agents.tools import retrieve_documents_tool
 from app.services.rag_service import RAGService
+from app.services.langchain_agents.llm_helper import direct_llm_call_with_rag
 from sqlalchemy.orm import Session
 import logging
 
@@ -158,6 +159,29 @@ class ChatAgent:
         except Exception as e:
             logger.error(f"[ChatAgent] Direct LLM fallback failed: {e}", exc_info=True)
             return ""
+
+    async def _direct_llm_with_rag_fallback(self, question: str) -> str:
+        """
+        Прямой вызов LLM с RAG контекстом (fallback при сбоях агента/инструментов)
+        """
+        logger.info("[ChatAgent] Using direct LLM + RAG fallback")
+        clean_question = question.split("[Контекст:")[0].strip() if "[Контекст:" in question else question
+        system_prompt = (
+            "Ты - юридический AI-ассистент. Отвечай только по данным из документов дела. "
+            "Если информации недостаточно, прямо скажи об этом."
+        )
+        try:
+            return direct_llm_call_with_rag(
+                case_id=self.case_id,
+                system_prompt=system_prompt,
+                user_query=clean_question,
+                rag_service=self.rag_service,
+                db=self.db,
+                k=10
+            )
+        except Exception as e:
+            logger.error(f"[ChatAgent] Direct LLM + RAG fallback failed: {e}", exc_info=True)
+            return ""
     
     async def answer(self, question: str, config: Optional[Dict[str, Any]] = None) -> str:
         """
@@ -223,11 +247,19 @@ class ChatAgent:
                         # НЕ обрабатываем другие типы сообщений (HumanMessage, ToolMessage) как ответы!
                         # Это была критическая ошибка - мы возвращали HumanMessage с контекстом
                     
-                    # Если не нашли контент в AIMessage, логируем детали
+                    # Если не нашли контент в AIMessage, пробуем RAG fallback
                     logger.warning(f"[ChatAgent] No AIMessage with content found in {len(messages)} messages (types: {msg_types})")
+                    rag_fallback = await self._direct_llm_with_rag_fallback(question)
+                    if rag_fallback:
+                        logger.info(f"[ChatAgent] RAG fallback answer received: {len(rag_fallback)} chars")
+                        return rag_fallback
             
             # Fallback если формат неожиданный или нет контента
-            logger.warning(f"[ChatAgent] No valid response, returning empty string")
+            logger.warning(f"[ChatAgent] No valid response, trying RAG fallback")
+            rag_fallback = await self._direct_llm_with_rag_fallback(question)
+            if rag_fallback:
+                logger.info(f"[ChatAgent] RAG fallback answer received: {len(rag_fallback)} chars")
+                return rag_fallback
             return ""
             
         except Exception as e:
@@ -355,23 +387,35 @@ class ChatAgent:
                         logger.info(f"[ChatAgent] Agent fallback answer received: {len(answer)} chars")
                         yield answer
                     else:
-                        # Если агент тоже вернул пустой ответ, используем прямой вызов LLM
-                        logger.warning("[ChatAgent] Agent fallback returned empty, trying direct LLM")
-                        direct_answer = await self._direct_llm_fallback(question)
-                        if direct_answer:
-                            logger.info(f"[ChatAgent] Direct LLM fallback answer: {len(direct_answer)} chars")
-                            yield direct_answer
+                        # Если агент тоже вернул пустой ответ, используем RAG fallback
+                        logger.warning("[ChatAgent] Agent fallback returned empty, trying direct RAG")
+                        rag_answer = await self._direct_llm_with_rag_fallback(question)
+                        if rag_answer:
+                            logger.info(f"[ChatAgent] Direct RAG fallback answer: {len(rag_answer)} chars")
+                            yield rag_answer
                         else:
-                            yield "Извините, не удалось получить ответ. Попробуйте переформулировать вопрос."
+                            # Последний шанс - прямой вызов LLM без инструментов
+                            logger.warning("[ChatAgent] Direct RAG fallback empty, trying direct LLM")
+                            direct_answer = await self._direct_llm_fallback(question)
+                            if direct_answer:
+                                logger.info(f"[ChatAgent] Direct LLM fallback answer: {len(direct_answer)} chars")
+                                yield direct_answer
+                            else:
+                                yield "Извините, не удалось получить ответ. Попробуйте переформулировать вопрос."
                 except Exception as fallback_error:
-                    logger.error(f"[ChatAgent] Agent fallback failed: {fallback_error}, trying direct LLM", exc_info=True)
+                    logger.error(f"[ChatAgent] Agent fallback failed: {fallback_error}, trying direct RAG", exc_info=True)
                     try:
-                        direct_answer = await self._direct_llm_fallback(question)
-                        if direct_answer:
-                            logger.info(f"[ChatAgent] Direct LLM fallback after error: {len(direct_answer)} chars")
-                            yield direct_answer
+                        rag_answer = await self._direct_llm_with_rag_fallback(question)
+                        if rag_answer:
+                            logger.info(f"[ChatAgent] Direct RAG fallback after error: {len(rag_answer)} chars")
+                            yield rag_answer
                         else:
-                            yield "Извините, не удалось получить ответ. Попробуйте переформулировать вопрос."
+                            direct_answer = await self._direct_llm_fallback(question)
+                            if direct_answer:
+                                logger.info(f"[ChatAgent] Direct LLM fallback after error: {len(direct_answer)} chars")
+                                yield direct_answer
+                            else:
+                                yield "Извините, не удалось получить ответ. Попробуйте переформулировать вопрос."
                     except Exception as direct_error:
                         logger.error(f"[ChatAgent] Direct LLM fallback also failed: {direct_error}", exc_info=True)
                         yield "Извините, не удалось получить ответ. Попробуйте переформулировать вопрос."
