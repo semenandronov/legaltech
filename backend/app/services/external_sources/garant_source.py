@@ -436,6 +436,9 @@ class GarantSource(BaseSource):
         endpoint = endpoint_map.get(format.lower(), "/export/html")
         full_url = f"{self.api_url}{endpoint}"
         
+        # Убеждаемся, что doc_id - строка (API ожидает строку согласно документации)
+        doc_id_str = str(doc_id).strip()
+        
         # #region agent log
         import time
         import json
@@ -448,15 +451,13 @@ class GarantSource(BaseSource):
                     f.write(json.dumps(data) + '\n')
             except:
                 pass
-        _safe_debug_log({"sessionId":"debug-session","runId":"run1","hypothesisId":"H1","location":"garant_source.py:461","message":"get_document_full_text endpoint","data":{"api_url":self.api_url,"endpoint":endpoint,"full_url":full_url,"doc_id":doc_id,"format":format,"request_body":{"topic":doc_id_str,"env":"internet"}},"timestamp":int(time.time()*1000)})
+        _safe_debug_log({"sessionId":"debug-session","runId":"run1","hypothesisId":"H1","location":"garant_source.py:461","message":"get_document_full_text endpoint","data":{"api_url":self.api_url,"endpoint":endpoint,"full_url":full_url,"doc_id":doc_id,"doc_id_str":doc_id_str,"format":format,"request_body":{"topic":doc_id_str,"env":"internet"}},"timestamp":int(time.time()*1000)})
         # #endregion
         
         timeout_seconds = GARANT_API_TIMEOUT_EXPORT
         
         try:
             async with aiohttp.ClientSession() as session:
-                # Убеждаемся, что doc_id - строка (API ожидает строку согласно документации)
-                doc_id_str = str(doc_id).strip()
                 
                 request_body = {
                     "topic": doc_id_str,
@@ -509,10 +510,10 @@ class GarantSource(BaseSource):
                         return None
                     else:
                         error_text = await response.text()
-                        logger.error(f"[Garant API] Export error: status={response.status}, doc_id={doc_id}, format={format}, response={error_text[:500]}")
+                        logger.error(f"[Garant API] Export error: status={response.status}, doc_id={doc_id_str}, format={format}, response={error_text[:500]}")
                         return None
         except aiohttp.ClientTimeout:
-            logger.error(f"[Garant API] Timeout ({timeout_seconds}s) while getting document {doc_id} in format {format}")
+            logger.error(f"[Garant API] Timeout ({timeout_seconds}s) while getting document {doc_id_str} in format {format}")
             return None
         except aiohttp.ClientError as e:
             logger.error(f"[Garant API] Client error getting document full text: {e}", exc_info=True)
