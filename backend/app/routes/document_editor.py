@@ -78,6 +78,7 @@ async def create_document(
         Created document
     """
     try:
+        logger.info(f"Creating document: case_id={request.case_id}, user_id={current_user.id}, title={request.title}")
         # Verify case exists and user has access
         case = db.query(Case).filter(
             Case.id == request.case_id,
@@ -89,13 +90,18 @@ async def create_document(
         
         # Create document
         service = DocumentEditorService(db)
-        document = service.create_document(
-            case_id=request.case_id,
-            user_id=current_user.id,
-            title=request.title,
-            content=request.initial_content or "",
-            metadata=request.metadata
-        )
+        try:
+            document = service.create_document(
+                case_id=request.case_id,
+                user_id=current_user.id,
+                title=request.title,
+                content=request.initial_content or "",
+                metadata=request.metadata
+            )
+            logger.info(f"Document created successfully: {document.id}")
+        except Exception as create_error:
+            logger.error(f"Error in create_document service: {create_error}", exc_info=True)
+            raise
         
         return DocumentResponse(
             id=document.id,
@@ -374,8 +380,14 @@ async def list_documents(
         if not case:
             raise HTTPException(status_code=404, detail="Дело не найдено")
         
+        logger.info(f"Listing documents for case {case_id}, user {current_user.id}")
         service = DocumentEditorService(db)
-        documents = service.list_documents(case_id, current_user.id)
+        try:
+            documents = service.list_documents(case_id, current_user.id)
+            logger.info(f"Found {len(documents)} documents")
+        except Exception as list_error:
+            logger.error(f"Error in list_documents: {list_error}", exc_info=True)
+            raise
         
         return [
             DocumentResponse(

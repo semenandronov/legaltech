@@ -66,19 +66,28 @@ class DocumentEditorService:
         content_plain = self._extract_plain_text(content)
         
         # Create document
-        document = Document(
-            case_id=case_id,
-            user_id=user_id,
-            title=title,
-            content=content or "",
-            content_plain=content_plain,
-            document_metadata=metadata or {},
-            version=1
-        )
-        
-        self.db.add(document)
-        self.db.commit()
-        self.db.refresh(document)
+        try:
+            logger.info(f"Creating Document object: case_id={case_id}, user_id={user_id}, title={title[:50]}")
+            document = Document(
+                case_id=case_id,
+                user_id=user_id,
+                title=title,
+                content=content or "",
+                content_plain=content_plain,
+                document_metadata=metadata or {},
+                version=1
+            )
+            
+            logger.info(f"Adding document to session...")
+            self.db.add(document)
+            logger.info(f"Committing to database...")
+            self.db.commit()
+            logger.info(f"Refreshing document...")
+            self.db.refresh(document)
+        except Exception as db_error:
+            logger.error(f"Database error creating document: {db_error}", exc_info=True)
+            self.db.rollback()
+            raise
         
         logger.info(f"Created document {document.id} for case {case_id}")
         return document
@@ -186,14 +195,19 @@ class DocumentEditorService:
         Returns:
             List of Document objects
         """
-        documents = self.db.query(Document).filter(
-            and_(
-                Document.case_id == case_id,
-                Document.user_id == user_id
-            )
-        ).order_by(desc(Document.updated_at)).offset(offset).limit(limit).all()
-        
-        return documents
+        try:
+            logger.info(f"Querying documents: case_id={case_id}, user_id={user_id}")
+            documents = self.db.query(Document).filter(
+                and_(
+                    Document.case_id == case_id,
+                    Document.user_id == user_id
+                )
+            ).order_by(desc(Document.updated_at)).offset(offset).limit(limit).all()
+            logger.info(f"Query successful, found {len(documents)} documents")
+            return documents
+        except Exception as query_error:
+            logger.error(f"Database error querying documents: {query_error}", exc_info=True)
+            raise
     
     def _extract_plain_text(self, html_content: str) -> str:
         """
