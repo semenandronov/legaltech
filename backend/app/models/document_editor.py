@@ -8,7 +8,7 @@ from app.models.case import Base
 
 class Document(Base):
     """Document model - represents an editable document created in the editor"""
-    __tablename__ = "documents"
+    __tablename__ = "editor_documents"
     
     id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
     case_id = Column(String, ForeignKey("cases.id", ondelete="CASCADE"), nullable=False, index=True)
@@ -28,10 +28,10 @@ class Document(Base):
 
 class DocumentVersion(Base):
     """DocumentVersion model - stores version history of documents"""
-    __tablename__ = "document_versions"
+    __tablename__ = "editor_document_versions"
     
     id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
-    document_id = Column(String, ForeignKey("documents.id", ondelete="CASCADE"), nullable=False, index=True)
+    document_id = Column(String, ForeignKey("editor_documents.id", ondelete="CASCADE"), nullable=False, index=True)
     content = Column(Text, nullable=False)  # HTML content snapshot
     version = Column(Integer, nullable=False)  # Version number
     created_at = Column(DateTime, default=datetime.utcnow)
