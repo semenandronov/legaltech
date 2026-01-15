@@ -9,7 +9,9 @@ import { VersionHistory } from '../components/Editor/VersionHistory'
 import { CommentsPanel } from '../components/Editor/CommentsPanel'
 import { TemplateSelector } from '../components/Editor/TemplateSelector'
 import { DocxImporter } from '../components/Editor/DocxImporter'
-import { getDocument, createDocument, updateDocument, exportDocx, exportPdf } from '../services/documentEditorApi'
+import { getDocument, createDocument, updateDocument, exportDocx, exportPdf, listDocuments, Document } from '../services/documentEditorApi'
+import { DocumentsList } from '../components/Editor/DocumentsList'
+import { CreateDocumentScreen } from '../components/Editor/CreateDocumentScreen'
 
 interface DocumentData {
   id: string
@@ -35,10 +37,12 @@ const DocumentEditorPage = () => {
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false)
+  const [documentsList, setDocumentsList] = useState<Document[]>([])
+  const [loadingDocuments, setLoadingDocuments] = useState(false)
   const saveTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const editorRef = useRef<DocumentEditorRef>(null)
 
-  // Load document if documentId is provided
+  // Load documents list if documentId is not provided
   useEffect(() => {
     if (!caseId) {
       toast.error('Дело не найдено')
@@ -46,8 +50,9 @@ const DocumentEditorPage = () => {
       return
     }
 
-    const loadDocument = async () => {
+    const loadData = async () => {
       if (documentId) {
+        // Load specific document
         try {
           setLoading(true)
           const doc = await getDocument(documentId)
@@ -56,21 +61,47 @@ const DocumentEditorPage = () => {
           setContent(doc.content || '')
         } catch (error: any) {
           toast.error(error.message || 'Ошибка при загрузке документа')
-          navigate(`/cases/${caseId}/documents`)
+          navigate(`/cases/${caseId}/editor`)
         } finally {
           setLoading(false)
         }
       } else {
-        // New document
-        setLoading(false)
-        setDocument(null)
-        setContent('')
-        setTitle('Новый документ')
+        // Load documents list
+        try {
+          setLoadingDocuments(true)
+          const docs = await listDocuments(caseId)
+          setDocumentsList(docs)
+        } catch (error: any) {
+          toast.error(error.message || 'Ошибка при загрузке списка документов')
+        } finally {
+          setLoadingDocuments(false)
+          setLoading(false)
+        }
       }
     }
 
-    loadDocument()
+    loadData()
   }, [caseId, documentId, navigate])
+
+  const handleDocumentSelect = (selectedDocumentId: string) => {
+    navigate(`/cases/${caseId}/editor/${selectedDocumentId}`)
+  }
+
+  const handleDocumentCreated = (createdDocumentId: string) => {
+    navigate(`/cases/${caseId}/editor/${createdDocumentId}`)
+  }
+
+  const handleDocumentDeleted = async () => {
+    // Reload documents list
+    if (caseId) {
+      try {
+        const docs = await listDocuments(caseId)
+        setDocumentsList(docs)
+      } catch (error: any) {
+        toast.error(error.message || 'Ошибка при обновлении списка документов')
+      }
+    }
+  }
 
   // Auto-save with debounce
   useEffect(() => {
@@ -231,20 +262,45 @@ const DocumentEditorPage = () => {
     { id: 'tabular-review', label: 'Tabular Review', icon: Table, path: `/cases/${caseId}/tabular-review` },
   ] : []
 
-  if (loading) {
+  // Show loading state
+  if (loading || loadingDocuments) {
     return (
       <div className="h-screen bg-bg-primary flex">
         {caseId && <UnifiedSidebar navItems={navItems} title="Legal AI" />}
         <div className="flex-1 flex items-center justify-center">
           <div className="text-center">
             <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto mb-4"></div>
-            <p className="text-gray-600">Загрузка документа...</p>
+            <p className="text-gray-600">
+              {documentId ? 'Загрузка документа...' : 'Загрузка списка документов...'}
+            </p>
           </div>
         </div>
       </div>
     )
   }
 
+  // Show documents list or create screen if no documentId
+  if (!documentId) {
+    return (
+      <div className="h-screen bg-bg-primary flex">
+        {caseId && <UnifiedSidebar navItems={navItems} title="Legal AI" />}
+        <div className="flex-1 flex flex-col" style={{ backgroundColor: 'var(--color-bg-primary)' }}>
+          {documentsList.length === 0 ? (
+            <CreateDocumentScreen caseId={caseId} onDocumentCreated={handleDocumentCreated} />
+          ) : (
+            <DocumentsList
+              documents={documentsList}
+              caseId={caseId}
+              onDocumentSelect={handleDocumentSelect}
+              onDocumentDeleted={handleDocumentDeleted}
+            />
+          )}
+        </div>
+      </div>
+    )
+  }
+
+  // Show editor for specific document
   return (
     <div className="h-screen bg-bg-primary flex">
       {caseId && <UnifiedSidebar navItems={navItems} title="Legal AI" />}

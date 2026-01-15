@@ -154,7 +154,20 @@ def check_garant_result(state: TemplateState) -> str:
 
 
 async def load_template_file_node(state: TemplateState, db: Session) -> TemplateState:
-    """Узел: загрузка и конвертация файла-шаблона пользователя"""
+    """Узел: загрузка и конвертация файла-шаблона пользователя
+    
+    Поддерживает два варианта:
+    1. Локальный файл: template_file_content уже заполнен (из временной загрузки)
+    2. Файл из БД: template_file_id указан, нужно загрузить и конвертировать
+    """
+    # Проверяем, есть ли уже готовый HTML контент (локальный файл)
+    template_file_content = state.get("template_file_content")
+    if template_file_content:
+        logger.info("Template file content already provided (local file), using it directly")
+        state["template_source"] = "user_file"
+        return state
+    
+    # Если контента нет, пытаемся загрузить из БД по template_file_id
     template_file_id = state.get("template_file_id")
     if not template_file_id:
         logger.info("No template_file_id provided, skipping file load")

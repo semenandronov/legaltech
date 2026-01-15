@@ -266,3 +266,33 @@ export async function restoreDocumentVersion(
   }
 }
 
+export interface TemplateUploadResponse {
+  content: string
+  filename: string
+  file_type: string
+}
+
+/**
+ * Upload and convert a template file to HTML (temporary, not saved to DB)
+ * Used for draft mode with local files
+ */
+export async function uploadTemplateFile(file: File): Promise<TemplateUploadResponse> {
+  try {
+    const formData = new FormData()
+    formData.append('file', file)
+
+    const response = await apiClient.post<TemplateUploadResponse>(
+      `${BASE_URL}/api/documents-editor/upload-template`,
+      formData,
+      {
+        headers: {
+          'Content-Type': 'multipart/form-data',
+        },
+      }
+    )
+    return response.data
+  } catch (error) {
+    throw new Error(extractErrorMessage(error))
+  }
+}
+

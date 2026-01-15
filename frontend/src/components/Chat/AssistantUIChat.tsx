@@ -3,6 +3,7 @@ import { useParams } from 'react-router-dom'
 import { getApiUrl, getDocuments, getDocumentContent } from '@/services/api'
 import { logger } from '@/lib/logger'
 import { loadChatHistory } from '@/services/chatHistoryService'
+import { uploadTemplateFile } from '@/services/documentEditorApi'
 import { Conversation, ConversationContent } from '../ai-elements/conversation'
 import { UserMessage, AssistantMessage } from '../ai-elements/message'
 import { PlanApprovalCard } from './PlanApprovalCard'
@@ -469,11 +470,27 @@ export const AssistantUIChat = forwardRef<{ clearMessages: () => void; loadHisto
         draft_mode: draftMode,
       }
 
-      // Добавляем template_file_id если в draft mode и есть прикрепленный файл с sourceFileId
-      if (draftMode && attachments) {
-        const templateFile = attachments.files?.find(f => f.sourceFileId)
-        if (templateFile?.sourceFileId) {
-          requestBody.template_file_id = templateFile.sourceFileId
+      // Обработка файлов-шаблонов в draft mode
+      if (draftMode && attachments && attachments.files && attachments.files.length > 0) {
+        // Ищем файл с sourceFileId (из БД)
+        const templateFileFromDb = attachments.files.find(f => f.sourceFileId)
+        if (templateFileFromDb?.sourceFileId) {
+          // Файл из БД - используем template_file_id
+          requestBody.template_file_id = templateFileFromDb.sourceFileId
+        } else {
+          // Локальный файл - загружаем и конвертируем
+          const localFile = attachments.files.find(f => f.file && !f.sourceFileId)
+          if (localFile?.file) {
+            try {
+              logger.info(`Uploading local template file: ${localFile.file.name}`)
+              const templateResponse = await uploadTemplateFile(localFile.file)
+              requestBody.template_file_content = templateResponse.content
+              logger.info(`Template file converted to HTML (${templateResponse.content.length} chars)`)
+            } catch (error: any) {
+              logger.error(`Error uploading template file: ${error}`)
+              throw new Error(`Ошибка при загрузке файла-шаблона: ${error.message || error}`)
+            }
+          }
         }
       }
 

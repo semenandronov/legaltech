@@ -346,7 +346,8 @@ async def stream_chat_response(
     document_context: Optional[str] = None,
     document_id: Optional[str] = None,
     selected_text: Optional[str] = None,
-    template_file_id: Optional[str] = None
+    template_file_id: Optional[str] = None,
+    template_file_content: Optional[str] = None
 ) -> AsyncGenerator[str, None]:
     """
     Stream chat response using RAG and LLM with optional web search and legal research
@@ -464,8 +465,8 @@ async def stream_chat_response(
                     "metadata": {},
                     "should_adapt": True,  # Адаптируем шаблон под запрос
                     "document_title": document_title,
-                    "template_file_id": template_file_id,  # ID файла-шаблона от пользователя
-                    "template_file_content": None,  # Будет заполнено в load_template_file_node
+                    "template_file_id": template_file_id,  # ID файла-шаблона от пользователя (из БД)
+                    "template_file_content": template_file_content,  # HTML контент локального файла или None
                     "case_context": None  # Будет заполнено в get_case_context_node
                 }
                 
@@ -860,8 +861,10 @@ async def assistant_chat(
         document_id = body.get("document_id")
         selected_text = body.get("selected_text")
         
-        # Template file ID for draft mode (optional)
+        # Template file ID for draft mode (optional) - для файлов из БД
         template_file_id = body.get("template_file_id")
+        # Template file content for draft mode (optional) - для локальных файлов
+        template_file_content = body.get("template_file_content")
         
         if not case_id:
             raise HTTPException(status_code=400, detail="case_id is required")
@@ -891,7 +894,8 @@ async def assistant_chat(
                 document_context=document_context,
                 document_id=document_id,
                 selected_text=selected_text,
-                template_file_id=template_file_id
+                template_file_id=template_file_id,
+                template_file_content=template_file_content
             ),
             media_type="text/event-stream",
             headers={

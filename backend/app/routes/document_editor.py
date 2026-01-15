@@ -1,6 +1,6 @@
 """Document Editor routes for Legal AI Vault"""
 import logging
-from fastapi import APIRouter, HTTPException, Depends
+from fastapi import APIRouter, HTTPException, Depends, UploadFile, File
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 from typing import List, Optional, Dict
@@ -756,4 +756,73 @@ async def chat_over_document(
     except Exception as e:
         logger.error(f"Error in chat over document: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Ошибка при обработке запроса: {str(e)}")
+
+
+class TemplateUploadResponse(BaseModel):
+    """Response model for template file upload"""
+    content: str  # HTML content
+    filename: str
+    file_type: str
+
+
+@router.post("/upload-template", response_model=TemplateUploadResponse)
+async def upload_template_file(
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """
+    Upload and convert a template file to HTML (temporary, not saved to DB)
+    
+    This endpoint is used for draft mode when user wants to use a local file
+    as a template without uploading it to the case first.
+    
+    Args:
+        file: Template file to convert
+        db: Database session
+        current_user: Current user
+        
+    Returns:
+        HTML content and file metadata
+    """
+    try:
+        if not file.filename:
+            raise HTTPException(status_code=400, detail="Имя файла не указано")
+        
+        # Read file content
+        file_content = await file.read()
+        
+        if len(file_content) == 0:
+            raise HTTPException(status_code=400, detail="Файл пуст")
+        
+        # Determine file type from filename
+        _, ext = file.filename.rsplit(".", 1) if "." in file.filename else (file.filename, "")
+        file_type = ext.lower()
+        
+        # Convert to HTML
+        converter = DocumentConverterService()
+        try:
+            html_content = converter.convert_to_html(
+                file_content=file_content,
+                filename=file.filename,
+                file_type=file_type
+            )
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+        except Exception as e:
+            logger.error(f"Error converting template file {file.filename}: {e}", exc_info=True)
+            raise HTTPException(status_code=500, detail=f"Ошибка при конвертации файла: {str(e)}")
+        
+        logger.info(f"Successfully converted template file {file.filename} to HTML")
+        
+        return TemplateUploadResponse(
+            content=html_content,
+            filename=file.filename,
+            file_type=file_type
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error uploading template file: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Ошибка при загрузке файла-шаблона")
 
