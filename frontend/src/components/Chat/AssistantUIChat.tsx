@@ -28,7 +28,8 @@ import { Loader } from '../ai-elements/loader'
 import DocumentPreviewSheet from './DocumentPreviewSheet'
 import { SourceInfo } from '@/services/api'
 import { useOptionalProviderAttachments } from '../ai-elements/prompt-input'
-import { Plus, Check } from 'lucide-react'
+import { Plus, Check, FileText, X } from 'lucide-react'
+import type { ExtendedFileUIPart } from '../ai-elements/prompt-input'
 
 interface Message {
   id: string
@@ -143,6 +144,52 @@ interface PromptInputWithDropProps {
   handlePromptSubmit: (message: { text: string; files: any[] }, event: React.FormEvent<HTMLFormElement>) => void | Promise<void>
   isLoading: boolean
 }
+
+// Компонент для отображения файла как чипа (chip)
+const FileChip = ({ 
+  attachment, 
+  onRemove 
+}: { 
+  attachment: ExtendedFileUIPart; 
+  onRemove: () => void;
+}) => {
+  const filename = attachment.filename || "Файл";
+  const fileSize = attachment.file?.size || 0;
+  const sizeInKB = (fileSize / 1024).toFixed(1);
+  const displayFilename = filename.length > 35 ? filename.substring(0, 35) + '...' : filename;
+
+  return (
+    <div 
+      className="flex items-center gap-3 px-4 py-2.5 rounded-lg border border-gray-200/50 bg-white/80 backdrop-blur-sm shadow-sm hover:shadow-md transition-all"
+      style={{
+        background: 'linear-gradient(135deg, rgba(255, 255, 255, 0.9) 0%, rgba(249, 250, 251, 0.9) 100%)',
+        boxShadow: '0 1px 3px 0 rgba(0, 0, 0, 0.1), 0 1px 2px 0 rgba(0, 0, 0, 0.06)',
+      }}
+    >
+      <div className="flex-shrink-0">
+        <FileText className="w-5 h-5 text-gray-600" strokeWidth={1.5} />
+      </div>
+      <div className="flex-1 min-w-0 flex items-center justify-between gap-3">
+        <span className="text-sm font-medium text-gray-900 truncate">
+          {displayFilename}
+        </span>
+        <span className="text-xs text-gray-500 whitespace-nowrap flex-shrink-0">
+          {sizeInKB} KB
+        </span>
+      </div>
+      <button
+        onClick={(e) => {
+          e.stopPropagation();
+          onRemove();
+        }}
+        className="flex-shrink-0 p-1 rounded-md hover:bg-gray-200/60 transition-colors"
+        aria-label="Удалить файл"
+      >
+        <X className="w-4 h-4 text-gray-500" />
+      </button>
+    </div>
+  );
+};
 
 const PromptInputWithDrop = ({ actualCaseId, onDocumentDrop, handlePromptSubmit, isLoading }: PromptInputWithDropProps) => {
   const attachments = useOptionalProviderAttachments()
@@ -264,6 +311,19 @@ const PromptInputWithDrop = ({ actualCaseId, onDocumentDrop, handlePromptSubmit,
           '--input-focus-border': 'var(--color-border-strong)',
         } as React.CSSProperties}
       >
+        {/* Файлы (чипы) НАД полем ввода - отдельная строка сверху, каждый чип на полную ширину */}
+        {attachments && attachments.files.length > 0 && (
+          <div className="px-4 pt-3 pb-2 space-y-2">
+            {attachments.files.map((attachment) => (
+              <FileChip
+                key={attachment.id}
+                attachment={attachment}
+                onRemove={() => attachments.remove(attachment.id)}
+              />
+            ))}
+          </div>
+        )}
+        
         <PromptInputBody>
           <div className="flex items-end gap-2 w-full">
             <div className="flex-1 relative">
@@ -290,15 +350,6 @@ const PromptInputWithDrop = ({ actualCaseId, onDocumentDrop, handlePromptSubmit,
             aria-label="Отправить сообщение"
           />
         </PromptInputBody>
-        
-        {/* Вложения под полем ввода - внутри формы, но не влияют на layout SettingsPanel */}
-        <div style={{ padding: '0 var(--space-4) var(--space-2)', minHeight: 0 }}>
-          <PromptInputAttachments>
-            {(attachment) => (
-              <PromptInputAttachment data={attachment} />
-            )}
-          </PromptInputAttachments>
-        </div>
       </PromptInput>
       
       {/* Индикатор drag-and-drop */}
@@ -362,58 +413,23 @@ export const AssistantUIChat = forwardRef<{ clearMessages: () => void; loadHisto
 
   // Load chat history on mount
   useEffect(() => {
+    // НЕ загружаем историю автоматически в режиме редактора
+    if (documentEditorMode) {
+      setIsLoadingHistory(false)
+      setMessages([])
+      return
+    }
+
     if (!actualCaseId) {
       setIsLoadingHistory(false)
       return
     }
 
-    const loadHistory = async () => {
-      setIsLoadingHistory(true)
-      try {
-        const historyMessages = await loadChatHistory(actualCaseId)
-        // Фильтруем пустые сообщения
-        const validMessages = historyMessages.filter((msg) => msg.content && msg.content.trim() !== '')
-        
-        // Convert HistoryMessage to Message format
-        const convertedMessages: Message[] = validMessages.map((msg, index) => {
-          // Обрабатываем источники - они могут быть в разных форматах
-          let sources: Array<{ title?: string; url?: string; page?: number; file?: string }> = []
-          
-          if (msg.sources && Array.isArray(msg.sources)) {
-            sources = msg.sources.map((source: any) => {
-              // Если источник - строка (старый формат)
-              if (typeof source === 'string') {
-                return { title: source, file: source }
-              }
-              // Если источник - объект
-              return {
-                title: source.title || source.file || 'Источник',
-                url: source.url,
-                page: source.page,
-                file: source.file,
-              }
-            })
-          }
-          
-          return {
-            id: `msg-${msg.created_at || Date.now()}-${index}`,
-            role: msg.role,
-            content: msg.content || '',
-            sources: sources.length > 0 ? sources : undefined,
-          }
-        })
-        
-        setMessages(convertedMessages)
-      } catch (error) {
-        logger.error('Error loading chat history:', error)
-        // Continue with empty messages
-      } finally {
-        setIsLoadingHistory(false)
-      }
-    }
-
-    loadHistory()
-  }, [actualCaseId])
+    // НЕ загружаем историю автоматически - показываем пустой чат
+    // История будет загружаться только при выборе сессии из панели истории
+    setIsLoadingHistory(false)
+    setMessages([])
+  }, [actualCaseId, documentEditorMode])
 
   // Update input when initialQuery changes
   useEffect(() => {
@@ -511,6 +527,30 @@ export const AssistantUIChat = forwardRef<{ clearMessages: () => void; loadHisto
         }
         if (selectedText) {
           requestBody.selected_text = selectedText
+        }
+      }
+
+      // Обработка прикрепленных файлов для обычных сообщений (не draft_mode)
+      if (!draftMode && attachments && attachments.files && attachments.files.length > 0) {
+        logger.info(`[Chat] Checking attachments: filesCount=${attachments.files.length}`)
+        
+        // Собираем ID файлов из базы данных
+        const fileIdsFromDb = attachments.files
+          .filter(f => f.sourceFileId)
+          .map(f => f.sourceFileId)
+          .filter((id): id is string => !!id)
+        
+        if (fileIdsFromDb.length > 0) {
+          requestBody.attached_file_ids = fileIdsFromDb
+          logger.info(`[Chat] Attached file IDs: ${fileIdsFromDb.join(', ')}`)
+        }
+        
+        // Для новых локальных файлов нужно их загрузить в дело
+        // Пока что просто логируем - в будущем можно добавить автоматическую загрузку
+        const localFiles = attachments.files.filter(f => f.file && !f.sourceFileId)
+        if (localFiles.length > 0) {
+          logger.warn(`[Chat] Local files detected but not uploaded yet: ${localFiles.map(f => f.filename).join(', ')}`)
+          // TODO: Автоматически загружать локальные файлы в дело перед отправкой сообщения
         }
       }
 
@@ -900,6 +940,14 @@ export const AssistantUIChat = forwardRef<{ clearMessages: () => void; loadHisto
     },
     loadHistory: async (sessionId?: string) => {
       if (!actualCaseId) return
+      
+      // Если sessionId не указан, не загружаем историю (показываем пустой чат)
+      if (!sessionId) {
+        setMessages([])
+        setIsLoadingHistory(false)
+        return
+      }
+      
       setIsLoadingHistory(true)
       try {
         const historyMessages = await loadChatHistory(actualCaseId, sessionId)
@@ -930,6 +978,7 @@ export const AssistantUIChat = forwardRef<{ clearMessages: () => void; loadHisto
         setMessages(convertedMessages)
       } catch (error) {
         logger.error('Error loading chat history:', error)
+        setMessages([])
       } finally {
         setIsLoadingHistory(false)
       }
