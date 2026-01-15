@@ -70,6 +70,7 @@ class File(Base):
     original_text = Column(Text, nullable=False)
     file_path = Column(String(512), nullable=True)  # Путь к оригинальному файлу на диске (deprecated, kept for backward compatibility)
     file_content = Column(LargeBinary, nullable=True)  # Binary content of the original file stored in DB
+    html_content = Column(Text, nullable=True)  # Cached HTML representation of the file for faster viewing
     # metadata удалено - не существует в БД, используем другие поля для хранения метаданных
     created_at = Column(DateTime, default=datetime.utcnow)
 

@@ -47,3 +47,8 @@ rank-bm25>=0.2.2
 # HTML parsing для ГАРАНТ API
 beautifulsoup4>=4.12.0
 
+# Document conversion to HTML
+mammoth==1.7.0  # DOCX to HTML converter
+markitdown>=0.0.1a0  # Universal document converter (PDF, DOCX, PPTX, XLSX)
+markdown==3.7  # Markdown to HTML converter
+

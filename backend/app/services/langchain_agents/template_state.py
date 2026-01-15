@@ -16,7 +16,14 @@ class TemplateState(TypedDict):
     garant_template: Optional[Dict[str, Any]]  # Шаблон из Гаранта
     
     # Источник шаблона
-    template_source: Optional[str]  # "cache" или "garant"
+    template_source: Optional[str]  # "cache", "garant" или "user_file"
+    
+    # Файл-шаблон от пользователя
+    template_file_id: Optional[str]  # ID файла из БД
+    template_file_content: Optional[str]  # HTML контент файла-шаблона
+    
+    # Контекст дела
+    case_context: Optional[str]  # Извлеченные факты из документов дела
     
     # Финальный шаблон для использования
     final_template: Optional[Dict[str, Any]]  # Шаблон для адаптации

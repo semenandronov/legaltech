@@ -13,7 +13,7 @@ from app.utils.auth import get_current_user
 from app.models.case import Case, File as FileModel
 from app.models.user import User
 from app.config import config
-from fastapi.responses import Response, StreamingResponse
+from fastapi.responses import Response, StreamingResponse, JSONResponse
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -641,6 +641,143 @@ async def get_file_content(
             "Content-Disposition": content_disposition
         }
     )
+
+
+@router.get("/{case_id}/files/{file_id}/html")
+async def get_file_html(
+    case_id: str,
+    file_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+    force_refresh: bool = Query(False, description="Force refresh HTML cache")
+) -> JSONResponse:
+    """
+    Get HTML representation of a file
+    
+    Returns cached HTML if available, otherwise converts and caches the result.
+    Supports: DOCX, PDF, XLSX, XLS, PPTX, PPT, TXT
+    
+    Args:
+        case_id: Case identifier
+        file_id: File identifier
+        db: Database session
+        current_user: Current user
+        force_refresh: Force refresh HTML cache even if cached
+        
+    Returns:
+        JSONResponse with HTML content and cache status
+    """
+    # Verify case ownership
+    case = db.query(Case).filter(
+        Case.id == case_id,
+        Case.user_id == current_user.id
+    ).first()
+    
+    if not case:
+        raise HTTPException(status_code=404, detail="Дело не найдено")
+    
+    # Get file
+    file = db.query(FileModel).filter(
+        FileModel.id == file_id,
+        FileModel.case_id == case_id
+    ).first()
+    
+    if not file:
+        raise HTTPException(status_code=404, detail="Файл не найден")
+    
+    # Import services
+    from app.services.document_html_cache import DocumentHtmlCacheService
+    from app.services.document_converter_service import DocumentConverterService
+    
+    cache_service = DocumentHtmlCacheService(db)
+    converter_service = DocumentConverterService()
+    
+    # Check cache if not forcing refresh
+    cached_html = None
+    if not force_refresh:
+        cached_html = cache_service.get_cached_html(file_id)
+    
+    if cached_html:
+        logger.info(f"Returning cached HTML for file {file_id}")
+        return JSONResponse(
+            content={
+                "html": cached_html,
+                "cached": True,
+                "file_id": file_id,
+                "filename": file.filename
+            }
+        )
+    
+    # Need to convert - get file content
+    file_content = None
+    
+    # Try to get from file_content field first
+    if file.file_content:
+        file_content = file.file_content
+    # Fallback to file_path
+    elif file.file_path:
+        import os
+        from app.config import config
+        
+        if os.path.isabs(file.file_path):
+            file_full_path = file.file_path
+        else:
+            file_full_path = os.path.join(config.UPLOAD_DIR, file.file_path)
+        
+        if os.path.exists(file_full_path):
+            try:
+                with open(file_full_path, 'rb') as f:
+                    file_content = f.read()
+            except Exception as e:
+                logger.error(f"Error reading file {file_full_path}: {e}", exc_info=True)
+                raise HTTPException(
+                    status_code=500,
+                    detail=f"Ошибка при чтении файла: {str(e)}"
+                )
+    
+    if not file_content:
+        raise HTTPException(
+            status_code=404,
+            detail="Содержимое файла недоступно для конвертации"
+        )
+    
+    # Convert to HTML
+    try:
+        logger.info(f"Converting file {file_id} ({file.filename}) to HTML")
+        html = converter_service.convert_to_html(
+            file_content=file_content,
+            filename=file.filename,
+            file_type=file.file_type
+        )
+        
+        # Cache the result
+        try:
+            cache_service.cache_html(file_id, html)
+        except Exception as cache_error:
+            logger.warning(f"Failed to cache HTML for file {file_id}: {cache_error}")
+            # Continue even if caching fails
+        
+        logger.info(f"Successfully converted file {file_id} to HTML")
+        return JSONResponse(
+            content={
+                "html": html,
+                "cached": False,
+                "file_id": file_id,
+                "filename": file.filename
+            }
+        )
+    except ValueError as e:
+        logger.error(f"Conversion error for file {file_id}: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=400,
+            detail=str(e)
+        )
+    except Exception as e:
+        logger.error(f"Unexpected error converting file {file_id}: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=500,
+            detail=f"Ошибка при конвертации файла: {str(e)}"
+        )
 
 
 @router.get("/{case_id}/files/{file_id}/download")

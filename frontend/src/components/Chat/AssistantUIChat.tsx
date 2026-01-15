@@ -27,7 +27,7 @@ import { Loader } from '../ai-elements/loader'
 import DocumentPreviewSheet from './DocumentPreviewSheet'
 import { SourceInfo } from '@/services/api'
 import { useOptionalProviderAttachments } from '../ai-elements/prompt-input'
-import { Plus } from 'lucide-react'
+import { Plus, Check } from 'lucide-react'
 
 interface Message {
   id: string
@@ -110,6 +110,8 @@ interface Message {
     preview?: string
     caseId: string
   }
+  // Редактирование документа
+  editedContent?: string  // Для применения правок к документу
 }
 
 interface AssistantUIChatProps {
@@ -121,6 +123,16 @@ interface AssistantUIChatProps {
   documentCount?: number
   isLoadingCaseInfo?: boolean
   onDocumentDrop?: (documentFilename: string) => void
+  // Режим редактора документов
+  documentEditorMode?: boolean
+  currentDocumentId?: string
+  currentDocumentContent?: string  // Для передачи контекста документа
+  selectedText?: string
+  // Callbacks для редактора
+  onApplyEdit?: (editedContent: string) => void
+  onInsertText?: (text: string) => void
+  onReplaceText?: (text: string) => void
+  onOpenDocumentInEditor?: (documentId: string) => void
 }
 
 // Компонент-обертка для PromptInput с поддержкой drag&drop
@@ -212,9 +224,9 @@ const PromptInputWithDrop = ({ actualCaseId, onDocumentDrop, handlePromptSubmit,
                 { type: blob.type || 'application/octet-stream' }
               )
               
-              // Добавляем файл в attachments
-              attachments.add([file])
-              logger.info(`Файл "${file.name}" добавлен в attachments`)
+              // Добавляем файл в attachments с сохранением sourceFileId
+              attachments.add([file], [{ sourceFileId: document.id }])
+              logger.info(`Файл "${file.name}" добавлен в attachments с sourceFileId: ${document.id}`)
               
               // Не вызываем onDocumentDrop, так как файл уже виден в attachments
             } else {
@@ -321,7 +333,15 @@ export const AssistantUIChat = forwardRef<{ clearMessages: () => void; loadHisto
   caseTitle,
   documentCount,
   isLoadingCaseInfo = false,
-  onDocumentDrop
+  onDocumentDrop,
+  documentEditorMode = false,
+  currentDocumentId,
+  currentDocumentContent,
+  selectedText,
+  onApplyEdit,
+  onInsertText,
+  onReplaceText,
+  onOpenDocumentInEditor
 }, ref) => {
   const params = useParams<{ caseId: string }>()
   const actualCaseId = caseId || params.caseId || ''
@@ -337,6 +357,9 @@ export const AssistantUIChat = forwardRef<{ clearMessages: () => void; loadHisto
   const [previewOpen, setPreviewOpen] = useState(false)
   const [previewSource, setPreviewSource] = useState<SourceInfo | null>(null)
   const [allCurrentSources, setAllCurrentSources] = useState<SourceInfo[]>([])
+  
+  // Получаем attachments для извлечения template_file_id
+  const attachments = useOptionalProviderAttachments()
 
   // Load chat history on mount
   useEffect(() => {
@@ -434,23 +457,46 @@ export const AssistantUIChat = forwardRef<{ clearMessages: () => void; loadHisto
 
     try {
       const token = localStorage.getItem('access_token')
+      const requestBody: any = {
+        case_id: actualCaseId,
+        messages: [...messages, userMsg].map((m) => ({
+          role: m.role,
+          content: m.content,
+        })),
+        web_search: false, // Веб-поиск отключен
+        legal_research: legalResearch,
+        deep_think: deepThink,
+        draft_mode: draftMode,
+      }
+
+      // Добавляем template_file_id если в draft mode и есть прикрепленный файл с sourceFileId
+      if (draftMode && attachments) {
+        const templateFile = attachments.files?.find(f => f.sourceFileId)
+        if (templateFile?.sourceFileId) {
+          requestBody.template_file_id = templateFile.sourceFileId
+        }
+      }
+
+      // Добавляем контекст документа редактора если в режиме редактора
+      if (documentEditorMode) {
+        if (currentDocumentContent) {
+          requestBody.document_context = currentDocumentContent
+        }
+        if (currentDocumentId) {
+          requestBody.document_id = currentDocumentId
+        }
+        if (selectedText) {
+          requestBody.selected_text = selectedText
+        }
+      }
+
       const response = await fetch(getApiUrl('/api/assistant/chat'), {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${token}`,
         },
-        body: JSON.stringify({
-          case_id: actualCaseId,
-          messages: [...messages, userMsg].map((m) => ({
-            role: m.role,
-            content: m.content,
-          })),
-          web_search: false, // Веб-поиск отключен
-          legal_research: legalResearch,
-          deep_think: deepThink,
-          draft_mode: draftMode,
-        }),
+        body: JSON.stringify(requestBody),
         signal: abortControllerRef.current.signal,
       })
 
@@ -635,6 +681,26 @@ export const AssistantUIChat = forwardRef<{ clearMessages: () => void; loadHisto
                   )
                 )
               }
+              // Обработка edited_content для применения правок к документу
+              if (data.type === 'edited_content' && data.edited_content) {
+                setMessages((prev) =>
+                  prev.map((msg) =>
+                    msg.id === assistantMsgId
+                      ? { ...msg, editedContent: data.edited_content }
+                      : msg
+                  )
+                )
+              }
+              // Также проверяем edited_content в обычном ответе (если приходит сразу)
+              if (data.edited_content && !data.type) {
+                setMessages((prev) =>
+                  prev.map((msg) =>
+                    msg.id === assistantMsgId
+                      ? { ...msg, editedContent: data.edited_content }
+                      : msg
+                  )
+                )
+              }
               if (data.error) {
                 throw new Error(data.error)
               }
@@ -661,7 +727,7 @@ export const AssistantUIChat = forwardRef<{ clearMessages: () => void; loadHisto
       setIsLoading(false)
       abortControllerRef.current = null
     }
-  }, [actualCaseId, isLoading, messages, legalResearch, deepThink, draftMode])
+  }, [actualCaseId, isLoading, messages, legalResearch, deepThink, draftMode, documentEditorMode, currentDocumentContent, currentDocumentId, selectedText, attachments])
 
   const startPlanExecutionStream = useCallback(async (planId: string, messageId: string) => {
     try {
@@ -854,6 +920,70 @@ export const AssistantUIChat = forwardRef<{ clearMessages: () => void; loadHisto
     >
       {/* Messages area */}
       <div className="flex-1 min-h-0 flex flex-col">
+        {/* Selection-aware quick actions */}
+        {documentEditorMode && selectedText && selectedText.trim() && (
+          <div className="p-3 border-b border-border bg-bg-elevated shrink-0">
+            <div className="text-xs text-text-secondary mb-2" style={{ color: 'var(--color-text-secondary)' }}>
+              Выделено: "{selectedText.slice(0, 50)}{selectedText.length > 50 ? '...' : ''}"
+            </div>
+            <div className="flex gap-2 flex-wrap">
+              <button
+                onClick={() => sendMessage(`Улучши текст: ${selectedText}`)}
+                disabled={isLoading}
+                className="px-3 py-1.5 text-xs font-medium rounded-lg border transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                style={{ 
+                  borderColor: 'var(--color-border)',
+                  color: 'var(--color-text-primary)',
+                  backgroundColor: 'var(--color-bg-primary)'
+                }}
+                onMouseEnter={(e) => {
+                  e.currentTarget.style.backgroundColor = 'var(--color-bg-hover)'
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.backgroundColor = 'var(--color-bg-primary)'
+                }}
+              >
+                Улучшить
+              </button>
+              <button
+                onClick={() => sendMessage(`Проверь на риски: ${selectedText}`)}
+                disabled={isLoading}
+                className="px-3 py-1.5 text-xs font-medium rounded-lg border transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                style={{ 
+                  borderColor: 'var(--color-border)',
+                  color: 'var(--color-text-primary)',
+                  backgroundColor: 'var(--color-bg-primary)'
+                }}
+                onMouseEnter={(e) => {
+                  e.currentTarget.style.backgroundColor = 'var(--color-bg-hover)'
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.backgroundColor = 'var(--color-bg-primary)'
+                }}
+              >
+                Проверить риски
+              </button>
+              <button
+                onClick={() => sendMessage(`Переписать: ${selectedText}`)}
+                disabled={isLoading}
+                className="px-3 py-1.5 text-xs font-medium rounded-lg border transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                style={{ 
+                  borderColor: 'var(--color-border)',
+                  color: 'var(--color-text-primary)',
+                  backgroundColor: 'var(--color-bg-primary)'
+                }}
+                onMouseEnter={(e) => {
+                  e.currentTarget.style.backgroundColor = 'var(--color-bg-hover)'
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.backgroundColor = 'var(--color-bg-primary)'
+                }}
+              >
+                Переписать
+              </button>
+            </div>
+          </div>
+        )}
         <Conversation className="flex-1 min-h-0 flex flex-col">
           <ConversationContent className="flex-1 overflow-y-auto">
               {isLoadingHistory ? (
@@ -988,6 +1118,10 @@ export const AssistantUIChat = forwardRef<{ clearMessages: () => void; loadHisto
                     title={message.documentCard.title}
                     preview={message.documentCard.preview}
                     caseId={message.documentCard.caseId}
+                    onOpen={onOpenDocumentInEditor 
+                      ? () => onOpenDocumentInEditor(message.documentCard!.documentId)
+                      : undefined
+                    }
                   />
                 </div>
               )}
@@ -1091,6 +1225,23 @@ export const AssistantUIChat = forwardRef<{ clearMessages: () => void; loadHisto
                     }}
                   />
                 )
+              )}
+              {/* Кнопка "Применить изменения" для edited_content */}
+              {message.editedContent && documentEditorMode && onApplyEdit && (
+                <div className="mt-4 p-3 border rounded-lg bg-green-50 border-green-200">
+                  <div className="flex items-center justify-between">
+                    <span className="text-sm text-green-800">
+                      Предложены изменения документа
+                    </span>
+                    <button
+                      onClick={() => onApplyEdit(message.editedContent!)}
+                      className="flex items-center gap-2 px-3 py-1.5 text-sm font-medium rounded-lg bg-green-600 text-white hover:bg-green-700 transition-colors"
+                    >
+                      <Check className="w-4 h-4" />
+                      Применить
+                    </button>
+                  </div>
+                </div>
               )}
             </AssistantMessage>
           )

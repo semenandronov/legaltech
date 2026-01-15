@@ -4,7 +4,7 @@ import { Save, Download, ArrowLeft, MessageSquare, FileText, Table, FileEdit, Hi
 import { toast } from 'sonner'
 import UnifiedSidebar from '../components/Layout/UnifiedSidebar'
 import { DocumentEditor, DocumentEditorRef } from '../components/Editor/DocumentEditor'
-import { DocumentEditorChat } from '../components/Editor/DocumentEditorChat'
+import { AssistantUIChat } from '../components/Chat/AssistantUIChat'
 import { VersionHistory } from '../components/Editor/VersionHistory'
 import { CommentsPanel } from '../components/Editor/CommentsPanel'
 import { TemplateSelector } from '../components/Editor/TemplateSelector'
@@ -368,7 +368,7 @@ const DocumentEditorPage = () => {
       {/* Main content area */}
       <div className="flex-1 overflow-hidden flex">
         {/* Editor */}
-        <div className={`flex-1 flex flex-col transition-all duration-300 ${showChat ? 'mr-80' : ''}`}>
+        <div className={`flex-1 flex flex-col transition-all duration-300 ${showChat ? 'mr-96' : ''}`}>
           <DocumentEditor
             ref={editorRef}
             content={content}
@@ -381,14 +381,20 @@ const DocumentEditorPage = () => {
 
         {/* Chat справа */}
         {showChat && caseId && (
-          <div className="w-80 border-l border-border shrink-0 bg-bg-elevated flex flex-col">
-            <DocumentEditorChat
-              documentId={documentId || 'new'}
-              documentTitle={title}
+          <div className="w-96 border-l border-border shrink-0 bg-bg-elevated flex flex-col">
+            <AssistantUIChat
+              caseId={caseId}
+              className="h-full"
+              documentEditorMode={true}
+              currentDocumentId={documentId}
+              currentDocumentContent={content}
               selectedText={selectedText}
               onApplyEdit={handleApplyEdit}
               onInsertText={handleInsertText}
               onReplaceText={handleReplaceText}
+              onOpenDocumentInEditor={(docId) => {
+                navigate(`/cases/${caseId}/editor/${docId}`, { replace: true })
+              }}
             />
           </div>
         )}

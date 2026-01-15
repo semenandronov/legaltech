@@ -8,10 +8,11 @@ from datetime import datetime
 from app.utils.database import get_db
 from app.utils.auth import get_current_user
 from app.models.user import User
-from app.models.case import Case
+from app.models.case import Case, File as FileModel
 from app.services.document_editor_service import DocumentEditorService
 from app.services.document_ai_service import DocumentAIService
 from app.services.document_export_service import DocumentExportService
+from app.services.document_converter_service import DocumentConverterService
 from fastapi.responses import StreamingResponse
 
 logger = logging.getLogger(__name__)
@@ -113,6 +114,115 @@ async def create_document(
     except Exception as e:
         logger.error(f"Error creating document: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail="Ошибка при создании документа")
+
+
+@router.post("/create-from-file/{file_id}", response_model=DocumentResponse)
+async def create_document_from_file(
+    file_id: str,
+    request: DocumentCreateRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """
+    Create a new document in editor from an uploaded file
+    
+    Converts file to HTML and creates editable document.
+    
+    Args:
+        file_id: File identifier to convert
+        request: Document creation request (case_id, title)
+        db: Database session
+        current_user: Current user
+        
+    Returns:
+        Created document with HTML content from file
+    """
+    try:
+        # Verify case exists and user has access
+        case = db.query(Case).filter(
+            Case.id == request.case_id,
+            Case.user_id == current_user.id
+        ).first()
+        
+        if not case:
+            raise HTTPException(status_code=404, detail="Дело не найдено или доступ запрещен")
+        
+        # Get file
+        file = db.query(FileModel).filter(
+            FileModel.id == file_id,
+            FileModel.case_id == request.case_id
+        ).first()
+        
+        if not file:
+            raise HTTPException(status_code=404, detail="Файл не найден")
+        
+        # Get file content
+        file_content = None
+        if file.file_content:
+            file_content = file.file_content
+        elif file.file_path:
+            import os
+            from app.config import config
+            
+            if os.path.isabs(file.file_path):
+                file_full_path = file.file_path
+            else:
+                file_full_path = os.path.join(config.UPLOAD_DIR, file.file_path)
+            
+            if os.path.exists(file_full_path):
+                with open(file_full_path, 'rb') as f:
+                    file_content = f.read()
+        
+        if not file_content:
+            raise HTTPException(status_code=404, detail="Содержимое файла недоступно")
+        
+        # Convert to HTML
+        converter_service = DocumentConverterService()
+        try:
+            html_content = converter_service.convert_to_html(
+                file_content=file_content,
+                filename=file.filename,
+                file_type=file.file_type
+            )
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+        except Exception as e:
+            logger.error(f"Error converting file {file_id} to HTML: {e}", exc_info=True)
+            raise HTTPException(status_code=500, detail=f"Ошибка при конвертации файла: {str(e)}")
+        
+        # Create document with HTML content
+        doc_service = DocumentEditorService(db)
+        document = doc_service.create_document(
+            case_id=request.case_id,
+            user_id=current_user.id,
+            title=request.title or file.filename,
+            content=html_content,
+            metadata={
+                "source_file_id": file_id,
+                "source_filename": file.filename,
+                "source_file_type": file.file_type
+            }
+        )
+        
+        logger.info(f"Created document {document.id} from file {file_id}")
+        
+        return DocumentResponse(
+            id=document.id,
+            case_id=document.case_id,
+            user_id=document.user_id,
+            title=document.title,
+            content=document.content,
+            content_plain=document.content_plain,
+            metadata=document.document_metadata,
+            version=document.version,
+            created_at=document.created_at.isoformat() if document.created_at else datetime.utcnow().isoformat(),
+            updated_at=document.updated_at.isoformat() if document.updated_at else datetime.utcnow().isoformat()
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error creating document from file: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Ошибка при создании документа из файла")
 
 
 @router.get("/{document_id}", response_model=DocumentResponse)

@@ -342,7 +342,11 @@ async def stream_chat_response(
     web_search: bool = False,
     legal_research: bool = False,
     deep_think: bool = False,
-    draft_mode: bool = False
+    draft_mode: bool = False,
+    document_context: Optional[str] = None,
+    document_id: Optional[str] = None,
+    selected_text: Optional[str] = None,
+    template_file_id: Optional[str] = None
 ) -> AsyncGenerator[str, None]:
     """
     Stream chat response using RAG and LLM with optional web search and legal research
@@ -459,20 +463,41 @@ async def stream_chat_response(
                     "errors": [],
                     "metadata": {},
                     "should_adapt": True,  # Адаптируем шаблон под запрос
-                    "document_title": document_title
+                    "document_title": document_title,
+                    "template_file_id": template_file_id,  # ID файла-шаблона от пользователя
+                    "template_file_content": None,  # Будет заполнено в load_template_file_node
+                    "case_context": None  # Будет заполнено в get_case_context_node
                 }
                 
                 # Запускаем граф
                 logger.info("[Draft Mode] Running template graph...")
                 result = await graph.ainvoke(initial_state)
                 
-                if result.get("errors"):
-                    error_msg = "; ".join(result["errors"])
-                    logger.error(f"[Draft Mode] Template graph errors: {error_msg}")
-                    raise Exception(error_msg)
-                
+                # Проверяем критические ошибки (если документ не создан)
                 if not result.get("document_id"):
-                    raise Exception("Не удалось создать документ")
+                    if result.get("errors"):
+                        error_msg = "; ".join(result["errors"])
+                        logger.error(f"[Draft Mode] Template graph errors: {error_msg}")
+                        raise Exception(error_msg)
+                    else:
+                        raise Exception("Не удалось создать документ")
+                
+                # Если документ создан, но есть некритичные ошибки (например, файл не найден) - логируем, но не прерываем
+                if result.get("errors"):
+                    # Фильтруем некритичные ошибки (ошибки загрузки файла, если документ все равно создан)
+                    critical_errors = [
+                        err for err in result["errors"] 
+                        if "Нет содержимого для создания документа" in err or 
+                           "Ошибка при создании/обновлении документа" in err
+                    ]
+                    if critical_errors:
+                        error_msg = "; ".join(critical_errors)
+                        logger.error(f"[Draft Mode] Critical template graph errors: {error_msg}")
+                        raise Exception(error_msg)
+                    else:
+                        # Некритичные ошибки (например, файл не найден, но документ создан с нуля)
+                        warning_msg = "; ".join(result["errors"])
+                        logger.warning(f"[Draft Mode] Non-critical template graph warnings: {warning_msg}")
                 
                 # Получаем созданный документ
                 doc_service = DocumentEditorService(db)
@@ -691,9 +716,25 @@ async def stream_chat_response(
         # ВСЕГДА используем ChatAgent - он умно выбирает инструменты
         logger.info("[ChatAgent] Using ChatAgent for intelligent tool selection")
         
+        # Добавляем контекст документа редактора в вопрос, если он есть
+        enhanced_question = question
+        if document_context or selected_text:
+            context_parts = []
+            if document_context:
+                # Ограничиваем размер контекста документа (первые 4000 символов)
+                doc_preview = document_context[:4000]
+                context_parts.append(f"\n\n=== ТЕКУЩИЙ ДОКУМЕНТ В РЕДАКТОРЕ ===\n{doc_preview}")
+                if len(document_context) > 4000:
+                    context_parts.append(f"\n[Документ обрезан, всего {len(document_context)} символов]")
+            if selected_text:
+                context_parts.append(f"\n\n=== ВЫДЕЛЕННЫЙ ТЕКСТ ===\n{selected_text}")
+            
+            enhanced_question = question + "".join(context_parts)
+            logger.info(f"[ChatAgent] Enhanced question with document context (doc_len={len(document_context) if document_context else 0}, selected_len={len(selected_text) if selected_text else 0})")
+        
         try:
             # Stream ответ от ChatAgent
-            async for chunk in chat_agent.answer_stream(question):
+            async for chunk in chat_agent.answer_stream(enhanced_question):
                 if chunk:
                     full_response_text += chunk
                     yield f"data: {json.dumps({'textDelta': chunk}, ensure_ascii=False)}\n\n"
@@ -814,6 +855,14 @@ async def assistant_chat(
         else:
             draft_mode = bool(draft_mode_raw)
         
+        # Document editor context (optional)
+        document_context = body.get("document_context")
+        document_id = body.get("document_id")
+        selected_text = body.get("selected_text")
+        
+        # Template file ID for draft mode (optional)
+        template_file_id = body.get("template_file_id")
+        
         if not case_id:
             raise HTTPException(status_code=400, detail="case_id is required")
         
@@ -838,7 +887,11 @@ async def assistant_chat(
                 web_search=web_search,
                 legal_research=legal_research,
                 deep_think=deep_think,
-                draft_mode=draft_mode
+                draft_mode=draft_mode,
+                document_context=document_context,
+                document_id=document_id,
+                selected_text=selected_text,
+                template_file_id=template_file_id
             ),
             media_type="text/event-stream",
             headers={

@@ -21,6 +21,7 @@ import {
   Print as PrintIcon,
   Info as InfoIcon,
 } from '@mui/icons-material'
+import { getFileHtml } from '../../services/fileHtmlApi'
 import './Documents.css'
 
 interface DOCXViewerProps {
@@ -68,34 +69,61 @@ const DOCXViewer: React.FC<DOCXViewerProps> = ({
       setLoading(true)
       setError(null)
 
-      const baseUrl = import.meta.env.VITE_API_URL || ''
-      const url = baseUrl 
-        ? `${baseUrl}/api/cases/${caseId}/files/${fileId}/content`
-        : `/api/cases/${caseId}/files/${fileId}/content`
+      // Try to get HTML from backend first
+      try {
+        const htmlResponse = await getFileHtml(caseId, fileId, false)
+        setHtmlContent(htmlResponse.html)
+        
+        // Also load original file for download/print
+        const baseUrl = import.meta.env.VITE_API_URL || ''
+        const url = baseUrl 
+          ? `${baseUrl}/api/cases/${caseId}/files/${fileId}/content`
+          : `/api/cases/${caseId}/files/${fileId}/content`
 
-      const response = await fetch(url, {
-        headers: {
-          'Authorization': `Bearer ${localStorage.getItem('access_token')}`
+        const response = await fetch(url, {
+          headers: {
+            'Authorization': `Bearer ${localStorage.getItem('access_token')}`
+          }
+        })
+
+        if (response.ok) {
+          const blob = await response.blob()
+          const urlObj = URL.createObjectURL(blob)
+          setDocxUrl(urlObj)
         }
-      })
+      } catch (htmlError: any) {
+        // Fallback to client-side conversion if backend endpoint fails
+        console.warn('Backend HTML conversion failed, falling back to client-side:', htmlError)
+        
+        const baseUrl = import.meta.env.VITE_API_URL || ''
+        const url = baseUrl 
+          ? `${baseUrl}/api/cases/${caseId}/files/${fileId}/content`
+          : `/api/cases/${caseId}/files/${fileId}/content`
 
-      if (!response.ok) {
-        throw new Error(`Failed to load document: ${response.statusText}`)
-      }
+        const response = await fetch(url, {
+          headers: {
+            'Authorization': `Bearer ${localStorage.getItem('access_token')}`
+          }
+        })
 
-      const blob = await response.blob()
-      const urlObj = URL.createObjectURL(blob)
-      setDocxUrl(urlObj)
+        if (!response.ok) {
+          throw new Error(`Failed to load document: ${response.statusText}`)
+        }
 
-      // Convert DOCX to HTML using mammoth
-      const arrayBuffer = await blob.arrayBuffer()
-      const result = await mammoth.convertToHtml({ arrayBuffer })
-      
-      setHtmlContent(result.value)
-      
-      // Log warnings if any
-      if (result.messages.length > 0) {
-        console.warn('Mammoth conversion warnings:', result.messages)
+        const blob = await response.blob()
+        const urlObj = URL.createObjectURL(blob)
+        setDocxUrl(urlObj)
+
+        // Convert DOCX to HTML using mammoth (fallback)
+        const arrayBuffer = await blob.arrayBuffer()
+        const result = await mammoth.convertToHtml({ arrayBuffer })
+        
+        setHtmlContent(result.value)
+        
+        // Log warnings if any
+        if (result.messages.length > 0) {
+          console.warn('Mammoth conversion warnings:', result.messages)
+        }
       }
     } catch (err: any) {
       console.error('Error loading DOCX:', err)

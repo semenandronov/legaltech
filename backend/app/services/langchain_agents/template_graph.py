@@ -3,6 +3,7 @@ from langgraph.graph import StateGraph, END, START
 from app.services.langchain_agents.template_state import TemplateState
 from app.services.document_template_service import DocumentTemplateService
 from app.services.document_editor_service import DocumentEditorService
+from app.models.case import File as FileModel
 from sqlalchemy.orm import Session
 import logging
 import os
@@ -45,6 +46,16 @@ def create_template_graph(db: Session) -> StateGraph:
     graph = StateGraph(TemplateState)
     
     # Создаем узлы с замыканием для передачи db
+    def make_load_template_file_node():
+        async def node(state: TemplateState) -> TemplateState:
+            return await load_template_file_node(state, db)
+        return node
+    
+    def make_get_case_context_node():
+        async def node(state: TemplateState) -> TemplateState:
+            return await get_case_context_node(state, db)
+        return node
+    
     def make_search_cache_node():
         async def node(state: TemplateState) -> TemplateState:
             return await search_cache_node(state, db)
@@ -71,14 +82,30 @@ def create_template_graph(db: Session) -> StateGraph:
         return node
     
     # Добавляем узлы
+    graph.add_node("load_template_file", make_load_template_file_node())
+    graph.add_node("get_case_context", make_get_case_context_node())
     graph.add_node("search_cache", make_search_cache_node())
     graph.add_node("search_garant", make_search_garant_node())
     graph.add_node("save_template", make_save_template_node())
     graph.add_node("adapt_template", make_adapt_template_node())
     graph.add_node("create_document", make_create_document_node())
     
-    # Определяем связи
-    graph.add_edge(START, "search_cache")
+    # Новый flow:
+    # START -> load_template_file -> get_case_context -> check_has_template
+    #   -> has_template: adapt_template -> create_document -> END
+    #   -> no_template: search_cache -> ...
+    
+    graph.add_edge(START, "load_template_file")
+    graph.add_edge("load_template_file", "get_case_context")
+    
+    graph.add_conditional_edges(
+        "get_case_context",
+        check_has_template_file,
+        {
+            "has_template": "adapt_template",
+            "no_template": "search_cache"
+        }
+    )
     
     graph.add_conditional_edges(
         "search_cache",
@@ -94,7 +121,7 @@ def create_template_graph(db: Session) -> StateGraph:
         check_garant_result,
         {
             "found": "save_template",
-            "not_found": END  # Если не найден в Гаранте, завершаем с ошибкой
+            "not_found": "adapt_template"  # Если не найден в Гаранте, все равно пытаемся адаптировать (LLM создаст с нуля)
         }
     )
     graph.add_edge("save_template", "adapt_template")
@@ -111,14 +138,119 @@ def check_template_found(state: TemplateState) -> str:
     return "not_found"
 
 
+def check_has_template_file(state: TemplateState) -> str:
+    """Проверка: есть ли файл-шаблон от пользователя"""
+    if state.get("template_file_content"):
+        return "has_template"
+    return "no_template"
+
+
 def check_garant_result(state: TemplateState) -> str:
     """Проверка: найден ли шаблон в Гаранте"""
     if state.get("garant_template"):
         return "found"
-    # Если не найден, добавляем ошибку и завершаем
-    if "Шаблон не найден в Гаранте" not in state.get("errors", []):
-        state["errors"].append("Шаблон не найден в Гаранте")
+    # Если не найден, не добавляем ошибку - LLM создаст документ с нуля
     return "not_found"
+
+
+async def load_template_file_node(state: TemplateState, db: Session) -> TemplateState:
+    """Узел: загрузка и конвертация файла-шаблона пользователя"""
+    template_file_id = state.get("template_file_id")
+    if not template_file_id:
+        logger.info("No template_file_id provided, skipping file load")
+        return state
+    
+    try:
+        # Получить файл из БД с проверкой принадлежности к делу
+        file = db.query(FileModel).filter(
+            FileModel.id == template_file_id,
+            FileModel.case_id == state["case_id"]  # Безопасность: проверяем принадлежность к делу
+        ).first()
+        if not file:
+            logger.warning(f"Template file {template_file_id} not found or doesn't belong to case {state['case_id']}")
+            state["errors"].append(f"Файл-шаблон не найден или не принадлежит данному делу")
+            return state
+        
+        # Получить content
+        file_content = file.file_content
+        if not file_content and file.file_path:
+            # Загрузить с диска
+            from app.config import config
+            if os.path.isabs(file.file_path):
+                file_full_path = file.file_path
+            else:
+                file_full_path = os.path.join(config.UPLOAD_DIR, file.file_path)
+            
+            if os.path.exists(file_full_path):
+                with open(file_full_path, 'rb') as f:
+                    file_content = f.read()
+            else:
+                logger.warning(f"Template file path {file_full_path} does not exist")
+                state["errors"].append(f"Файл-шаблон не найден по пути: {file_full_path}")
+                return state
+        
+        if not file_content:
+            logger.warning(f"Template file {template_file_id} has no content")
+            state["errors"].append(f"Файл-шаблон {template_file_id} не содержит данных")
+            return state
+        
+        # Конвертировать в HTML
+        from app.services.document_converter_service import DocumentConverterService
+        converter = DocumentConverterService()
+        html_content = converter.convert_to_html(
+            file_content=file_content,
+            filename=file.filename,
+            file_type=file.file_type
+        )
+        
+        state["template_file_content"] = html_content
+        state["template_source"] = "user_file"
+        logger.info(f"Successfully loaded and converted template file {template_file_id} ({file.filename})")
+        
+    except Exception as e:
+        logger.error(f"Error loading template file {template_file_id}: {e}", exc_info=True)
+        state["errors"].append(f"Ошибка при загрузке файла-шаблона: {str(e)}")
+    
+    return state
+
+
+async def get_case_context_node(state: TemplateState, db: Session) -> TemplateState:
+    """Узел: получение контекста дела через RAG"""
+    try:
+        from app.services.rag_service import RAGService
+        
+        rag = RAGService()
+        
+        # Извлечь ключевые факты для адаптации шаблона
+        context_query = """Извлеки ключевую информацию для составления документа:
+        - Стороны (имена, названия организаций)
+        - Даты (заключения, сроки)
+        - Суммы и реквизиты
+        - Предмет спора/договора
+        - Ключевые условия"""
+        
+        documents = rag.retrieve_context(
+            case_id=state["case_id"],
+            query=context_query,
+            k=10,
+            retrieval_strategy="multi_query",
+            db=db
+        )
+        
+        if documents:
+            context = rag.format_sources_for_prompt(documents)
+            state["case_context"] = context
+            logger.info(f"Retrieved case context: {len(documents)} documents")
+        else:
+            logger.warning("No documents found for case context")
+            state["case_context"] = ""
+        
+    except Exception as e:
+        logger.error(f"Error getting case context: {e}", exc_info=True)
+        state["case_context"] = ""
+        # Не добавляем ошибку - контекст опционален
+    
+    return state
 
 
 async def search_cache_node(state: TemplateState, db: Session) -> TemplateState:
@@ -141,38 +273,21 @@ async def search_cache_node(state: TemplateState, db: Session) -> TemplateState:
 
 
 async def search_garant_node(state: TemplateState, db: Session) -> TemplateState:
-    """Узел: поиск шаблона в Гаранте"""
+    """Узел: поиск шаблона в Гаранте
+    
+    ВРЕМЕННО ОТКЛЮЧЕНО: не используем Гарант для составления шаблонов в режиме draft
+    Вместо этого создаем документ через AI без шаблона
+    """
     # #region agent log
     import time
-    _safe_debug_log({"sessionId":"debug-session","runId":"run1","hypothesisId":"C","location":"template_graph.py:121","message":"search_garant_node called","data":{"user_query":state.get("user_query")},"timestamp":int(time.time()*1000)})
+    _safe_debug_log({"sessionId":"debug-session","runId":"run1","hypothesisId":"C","location":"template_graph.py:121","message":"search_garant_node called (DISABLED)","data":{"user_query":state.get("user_query")},"timestamp":int(time.time()*1000)})
     # #endregion
     
-    template_service = DocumentTemplateService(db)
+    # ВРЕМЕННО ОТКЛЮЧЕНО: пропускаем поиск в Гаранте
+    logger.info("Garant search temporarily disabled - will create document via AI instead")
     
-    # Передаем запрос пользователя как есть - поиск теперь работает по смыслу
-    # Гарант сам найдет релевантные документы по смыслу запроса
-    user_query = state["user_query"]
-    
-    logger.info(f"Searching in Garant with natural language query: '{user_query}'")
-    
-    garant_result = await template_service.search_in_garant(
-        query=user_query,
-        max_results=30  # Увеличиваем количество результатов для поиска доступных документов
-    )
-    
-    # #region agent log
-    import time
-    _safe_debug_log({"sessionId":"debug-session","runId":"run1","hypothesisId":"C","location":"template_graph.py:142","message":"search_garant_node result","data":{"garant_result_found":garant_result is not None,"garant_result_title":garant_result.get("title") if garant_result else None},"timestamp":int(time.time()*1000)})
-    # #endregion
-    
-    if garant_result:
-        state["garant_template"] = garant_result
-        state["template_source"] = "garant"
-        logger.info(f"Found template in Garant: {garant_result.get('title')}")
-    else:
-        state["errors"].append("Шаблон не найден в Гаранте")
-        logger.warning("Template not found in Garant")
-    
+    # Не добавляем ошибку, просто возвращаем состояние без garant_template
+    # Это позволит adapt_template_node создать документ через AI без шаблона
     return state
 
 
@@ -204,47 +319,107 @@ async def adapt_template_node(state: TemplateState, db: Session) -> TemplateStat
     """Узел: адаптация шаблона под запрос пользователя с помощью ИИ"""
     # #region agent log
     import time
-    _safe_debug_log({"sessionId":"debug-session","runId":"run1","hypothesisId":"F","location":"template_graph.py:181","message":"adapt_template_node called","data":{"has_cached_template":state.get("cached_template") is not None,"has_garant_template":state.get("garant_template") is not None},"timestamp":int(time.time()*1000)})
+    _safe_debug_log({"sessionId":"debug-session","runId":"run1","hypothesisId":"F","location":"template_graph.py:181","message":"adapt_template_node called","data":{"has_template_file":state.get("template_file_content") is not None,"has_cached_template":state.get("cached_template") is not None,"has_garant_template":state.get("garant_template") is not None},"timestamp":int(time.time()*1000)})
     # #endregion
     
-    # Определяем какой шаблон использовать
-    template_data = state.get("cached_template") or state.get("garant_template")
+    # Приоритет: файл-шаблон > кэш > garant
+    template_html = state.get("template_file_content")
+    template_data = None
     
-    if not template_data:
+    if template_html:
+        # Используем файл-шаблон от пользователя
+        template_data = {
+            "content": template_html,
+            "title": "Шаблон из файла",
+            "source": "user_file"
+        }
+        logger.info("Using template from user file")
+    else:
+        # Используем шаблон из кэша или Гаранта
+        template_data = state.get("cached_template") or state.get("garant_template")
+        if template_data:
+            template_html = template_data.get("content", "")
+    
+    if not template_html:
         # #region agent log
         import time
-        _safe_debug_log({"sessionId":"debug-session","runId":"run1","hypothesisId":"F","location":"template_graph.py:193","message":"No template data found","data":{"cached_template":state.get("cached_template"),"garant_template":state.get("garant_template")},"timestamp":int(time.time()*1000)})
+        _safe_debug_log({"sessionId":"debug-session","runId":"run1","hypothesisId":"F","location":"template_graph.py:193","message":"No template data found, creating from scratch","data":{"template_file_content":state.get("template_file_content"),"cached_template":state.get("cached_template"),"garant_template":state.get("garant_template")},"timestamp":int(time.time()*1000)})
         # #endregion
-        state["errors"].append("Нет шаблона для адаптации")
-        return state
+        # Создаем документ с нуля через LLM
+        try:
+            from app.services.llm_factory import create_legal_llm
+            from langchain_core.messages import SystemMessage, HumanMessage
+            
+            llm = create_legal_llm(temperature=0.3)
+            case_context = state.get("case_context", "")
+            
+            system_prompt = """Ты - опытный юрист, специализирующийся на создании юридических документов.
+Создай документ на основе запроса пользователя и контекста дела.
+Верни документ в формате HTML с правильной структурой."""
+            
+            user_prompt = f"""Запрос пользователя: {state['user_query']}
+
+КОНТЕКСТ ДЕЛА (используй для заполнения):
+{case_context[:3000] if case_context else "Контекст дела не предоставлен"}
+
+Создай полный юридический документ в формате HTML."""
+            
+            messages = [
+                SystemMessage(content=system_prompt),
+                HumanMessage(content=user_prompt)
+            ]
+            
+            response = llm.invoke(messages)
+            adapted_content = response.content if hasattr(response, 'content') else str(response)
+            
+            state["adapted_content"] = adapted_content
+            logger.info("Document created from scratch via LLM")
+            return state
+        except Exception as e:
+            logger.error(f"Error creating document from scratch: {e}", exc_info=True)
+            state["errors"].append(f"Ошибка при создании документа: {str(e)}")
+            return state
     
     # Если адаптация не нужна, используем шаблон как есть
     if not state.get("should_adapt", False):
         state["final_template"] = template_data
-        state["adapted_content"] = template_data["content"]
+        state["adapted_content"] = template_html
         logger.info("Using template as-is (no adaptation)")
         return state
     
-    # Здесь можно использовать LLM для адаптации шаблона
-    # Пока просто используем шаблон как есть
-    # TODO: Добавить адаптацию через LLM
+    # Адаптация с учетом контекста дела
     try:
         from app.services.llm_factory import create_legal_llm
         from langchain_core.messages import SystemMessage, HumanMessage
         
         llm = create_legal_llm(temperature=0.3)
+        case_context = state.get("case_context", "")
         
         system_prompt = """Ты - опытный юрист, специализирующийся на адаптации юридических документов.
-Адаптируй предоставленный шаблон документа под запрос пользователя.
+Адаптируй предоставленный шаблон документа под запрос пользователя и контекст дела.
 Сохрани структуру и юридическую корректность, но адаптируй содержание под конкретный запрос.
+Замени placeholder'ы данными из контекста дела.
+Если данных нет - оставь понятные [ЗАПОЛНИТЬ: что именно].
 Верни адаптированный документ в формате HTML."""
         
-        user_prompt = f"""Запрос пользователя: {state['user_query']}
+        # Ограничиваем размер шаблона для промпта
+        template_preview = template_html[:5000] if len(template_html) > 5000 else template_html
+        
+        user_prompt = f"""Адаптируй шаблон документа под запрос пользователя и контекст дела.
 
-Шаблон документа (HTML):
-{template_data['content'][:5000]}
+ЗАПРОС: {state['user_query']}
 
-Адаптируй этот шаблон под запрос пользователя. Верни полный адаптированный HTML документ."""
+КОНТЕКСТ ДЕЛА (используй для заполнения):
+{case_context[:3000] if case_context else "Контекст дела не предоставлен"}
+
+ШАБЛОН:
+{template_preview}
+
+Требования:
+1. Сохрани структуру шаблона
+2. Замени placeholder'ы данными из контекста дела
+3. Если данных нет - оставь понятные [ЗАПОЛНИТЬ: что именно]
+4. Верни полный адаптированный HTML документ"""
         
         messages = [
             SystemMessage(content=system_prompt),
@@ -256,12 +431,12 @@ async def adapt_template_node(state: TemplateState, db: Session) -> TemplateStat
         
         state["final_template"] = template_data
         state["adapted_content"] = adapted_content
-        logger.info("Template adapted successfully")
+        logger.info("Template adapted successfully with case context")
     except Exception as e:
         logger.error(f"Error adapting template: {e}", exc_info=True)
         # Fallback: используем шаблон как есть
         state["final_template"] = template_data
-        state["adapted_content"] = template_data["content"]
+        state["adapted_content"] = template_html
         state["errors"].append(f"Ошибка адаптации, использован оригинальный шаблон: {str(e)}")
     
     return state
@@ -321,6 +496,7 @@ async def create_document_node(state: TemplateState, db: Session) -> TemplateSta
                     metadata={
                         "template_id": state.get("cached_template", {}).get("id"),
                         "template_source": state.get("template_source"),
+                        "template_file_id": state.get("template_file_id"),
                         "original_query": state["user_query"]
                     }
                 )
@@ -336,6 +512,7 @@ async def create_document_node(state: TemplateState, db: Session) -> TemplateSta
                 metadata={
                     "template_id": state.get("cached_template", {}).get("id"),
                     "template_source": state.get("template_source"),
+                    "template_file_id": state.get("template_file_id"),
                     "original_query": state["user_query"]
                 }
             )
