@@ -490,54 +490,33 @@ class GigaChatStructuredOutput(Runnable[Any, Any]):
     
     def _add_json_instruction(self, messages: List[BaseMessage]) -> List[BaseMessage]:
         """Добавляет инструкцию для JSON output в системное сообщение"""
-        # Простой пример формата (не JSON Schema!)
-        json_example = """{
-  "answer": "Ваш ответ на вопрос здесь. Используйте маркеры [1], [2] для ссылок на источники.",
-  "citations": [
-    {
-      "source_id": "id документа",
-      "file_name": "имя файла",
-      "page": 1,
-      "quote": "точная цитата из документа",
-      "char_start": 0,
-      "char_end": 100,
-      "context_before": "",
-      "context_after": ""
-    }
-  ],
-  "confidence": 0.9
-}"""
-        
-        json_instruction = f"""
+        # Инструкция для структурированного ответа - добавляется в конец последнего user сообщения
+        json_instruction = """
 
-ВАЖНО: Верни ответ СТРОГО в формате JSON как в примере ниже.
-НЕ возвращай определение схемы, НЕ возвращай "$defs" или "properties".
-Верни ТОЛЬКО данные в таком формате:
+--- ФОРМАТ ОТВЕТА ---
+Ответь в формате JSON. Пример:
+{"answer": "Твой ответ здесь. Ссылки на документы ставь как [1], [2].", "citations": [], "confidence": 0.8}
 
-{json_example}
-
-Поле "answer" обязательно - это твой ответ на вопрос пользователя.
-Поле "citations" - массив цитат из документов (может быть пустым []).
-Поле "confidence" - число от 0 до 1.
-
-Начни ответ сразу с {{ и закончи }}. Никакого текста до или после JSON.
+ВАЖНО:
+- Поле "answer" ОБЯЗАТЕЛЬНО содержит твой текстовый ответ
+- Используй [1], [2] и т.д. для ссылок на документы в тексте ответа
+- citations - массив цитат, может быть пустым []
+- Никакого текста ДО или ПОСЛЕ JSON!
 """
         
-        new_messages = []
-        system_found = False
+        # Добавляем инструкцию к ПОСЛЕДНЕМУ user сообщению (а не к системному)
+        # Это лучше работает с GigaChat
+        new_messages = list(messages)  # Копируем
         
-        for msg in messages:
-            if isinstance(msg, SystemMessage) and not system_found:
-                # Добавляем инструкцию к существующему системному сообщению
-                new_content = msg.content + json_instruction
-                new_messages.append(SystemMessage(content=new_content))
-                system_found = True
-            else:
-                new_messages.append(msg)
-        
-        # Если не было системного сообщения, добавляем новое
-        if not system_found:
-            new_messages.insert(0, SystemMessage(content=json_instruction))
+        # Находим последнее HumanMessage и добавляем инструкцию
+        for i in range(len(new_messages) - 1, -1, -1):
+            if isinstance(new_messages[i], HumanMessage):
+                new_content = new_messages[i].content + json_instruction
+                new_messages[i] = HumanMessage(content=new_content)
+                break
+        else:
+            # Если нет HumanMessage, добавляем как системное
+            new_messages.insert(0, SystemMessage(content=json_instruction.strip()))
         
         return new_messages
     
@@ -611,11 +590,25 @@ class GigaChatStructuredOutput(Runnable[Any, Any]):
         result = self.llm._generate(messages_with_json, **kwargs)
         ai_message = result.generations[0].message
         
+        # Логируем сырой ответ для диагностики
+        raw_content = ai_message.content
+        logger.info(f"[GigaChat Structured] Raw response length: {len(raw_content)}")
+        logger.debug(f"[GigaChat Structured] Raw response: {raw_content[:500]}...")
+        
         # Парсим JSON из ответа
-        json_data = self._parse_json_from_response(ai_message.content)
+        json_data = self._parse_json_from_response(raw_content)
+        logger.info(f"[GigaChat Structured] Parsed JSON keys: {list(json_data.keys()) if json_data else 'None'}")
         
         # Создаем и возвращаем экземпляр Pydantic модели
         try:
+            # Проверяем, что есть поле answer
+            if "answer" not in json_data or not json_data.get("answer"):
+                # Если нет поля answer, используем весь контент как ответ
+                logger.warning(f"[GigaChat Structured] No 'answer' field in response, using raw content")
+                json_data["answer"] = raw_content
+                json_data.setdefault("citations", [])
+                json_data.setdefault("confidence", 0.5)
+            
             if hasattr(self.schema, 'model_validate'):
                 # Pydantic v2
                 return self.schema.model_validate(json_data)
@@ -624,9 +617,9 @@ class GigaChatStructuredOutput(Runnable[Any, Any]):
                 return self.schema(**json_data)
         except Exception as e:
             logger.error(f"Failed to validate schema: {e}")
-            # Возвращаем объект с минимальными данными
+            # Возвращаем объект с минимальными данными - используем сырой контент
             return self.schema(
-                answer=json_data.get("answer", ai_message.content),
+                answer=json_data.get("answer") or raw_content,
                 citations=json_data.get("citations", []),
                 confidence=json_data.get("confidence", 0.0)
             )

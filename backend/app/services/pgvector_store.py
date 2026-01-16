@@ -209,18 +209,26 @@ class CaseVectorStore:
         """
         from langchain_core.retrievers import BaseRetriever
         from langchain_core.callbacks import CallbackManagerForRetrieverRun
+        from typing import ClassVar
+        
+        # Сохраняем ссылки в локальные переменные для closure
+        _vector_store = self
+        _case_id = case_id
+        _k = k
         
         class CaseRetriever(BaseRetriever):
-            def __init__(self, vector_store, case_id, k):
-                super().__init__()
-                self.vector_store = vector_store
-                self.case_id = case_id
-                self.k = k
+            """
+            Простой retriever для case-specific поиска.
+            Использует closure вместо instance переменных из-за ограничений Pydantic в BaseRetriever.
+            """
             
-            def _get_relevant_documents(self, query: str, *, run_manager: CallbackManagerForRetrieverRun):
-                return self.vector_store.similarity_search(query, self.case_id, k=self.k)
+            # Для Pydantic v2 - разрешаем произвольные типы
+            model_config: ClassVar[dict] = {"arbitrary_types_allowed": True}
+            
+            def _get_relevant_documents(self, query: str, *, run_manager: CallbackManagerForRetrieverRun = None):
+                return _vector_store.similarity_search(query, _case_id, k=_k)
         
-        return CaseRetriever(self, case_id, k)
+        return CaseRetriever()
     
     def add_documents(self, documents: List[Document], case_id: str) -> List[str]:
         """
