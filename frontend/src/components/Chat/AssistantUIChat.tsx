@@ -464,7 +464,7 @@ const PromptInputWithDrop = ({
               />
               <PromptInputSubmit 
                 variant="default"
-                className="absolute left-[834px] top-[32px] rounded-xl h-10 w-10 p-0 flex items-center justify-center shrink-0 transition-all duration-150 disabled:opacity-50 disabled:cursor-not-allowed"
+                className="absolute right-[5px] top-[32px] rounded-xl h-10 w-10 p-0 flex items-center justify-center shrink-0 transition-all duration-150 disabled:opacity-50 disabled:cursor-not-allowed"
                 style={{
                   backgroundColor: 'var(--color-accent)',
                   color: 'var(--color-bg-primary)',
