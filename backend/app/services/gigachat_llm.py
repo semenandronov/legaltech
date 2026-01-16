@@ -1,10 +1,11 @@
 """GigaChat integration for LangChain with function calling support"""
-from typing import Optional, List, Any, Dict
+from typing import Optional, List, Any, Dict, Iterator
 from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import BaseMessage, HumanMessage, SystemMessage, AIMessage
 from langchain_core.callbacks import CallbackManagerForLLMRun
 from langchain_core.outputs import ChatGeneration, ChatResult
 from langchain_core.tools import BaseTool
+from langchain_core.runnables import Runnable, RunnableConfig
 import logging
 from app.config import config
 
@@ -463,27 +464,33 @@ class ChatGigaChat(BaseChatModel):
         return result.generations[0].message
 
 
-class GigaChatStructuredOutput:
+class GigaChatStructuredOutput(Runnable[Any, Any]):
     """
     Обертка для structured output через GigaChat.
     
-    Реализует интерфейс LangChain Runnable для использования в цепочках (|).
+    Наследует от LangChain Runnable для использования в цепочках (|).
     """
     
-    def __init__(self, llm: ChatGigaChat, schema: Any):
-        self.llm = llm
-        self.schema = schema
-        self._schema_json = self._get_schema_json()
+    llm: Any  # ChatGigaChat
+    schema: Any  # Pydantic модель
+    _schema_json: str = ""
     
-    def _get_schema_json(self) -> str:
+    def __init__(self, llm: "ChatGigaChat", schema: Any, **kwargs):
+        super().__init__(**kwargs)
+        object.__setattr__(self, 'llm', llm)
+        object.__setattr__(self, 'schema', schema)
+        object.__setattr__(self, '_schema_json', self._get_schema_json_static(schema))
+    
+    @staticmethod
+    def _get_schema_json_static(schema: Any) -> str:
         """Получает JSON схему из Pydantic модели"""
         import json
-        if hasattr(self.schema, 'model_json_schema'):
+        if hasattr(schema, 'model_json_schema'):
             # Pydantic v2
-            return json.dumps(self.schema.model_json_schema(), ensure_ascii=False, indent=2)
-        elif hasattr(self.schema, 'schema'):
+            return json.dumps(schema.model_json_schema(), ensure_ascii=False, indent=2)
+        elif hasattr(schema, 'schema'):
             # Pydantic v1
-            return json.dumps(self.schema.schema(), ensure_ascii=False, indent=2)
+            return json.dumps(schema.schema(), ensure_ascii=False, indent=2)
         else:
             return "{}"
     
@@ -550,15 +557,17 @@ class GigaChatStructuredOutput:
     def invoke(
         self, 
         input: Any, 
-        config: Optional[Any] = None,
+        config: Optional[RunnableConfig] = None,
         **kwargs
     ) -> Any:
         """
         Invoke LLM и вернуть structured output.
         
+        Соответствует интерфейсу LangChain Runnable.
+        
         Args:
             input: Входные данные (список сообщений, dict или строка)
-            config: RunnableConfig (игнорируется)
+            config: RunnableConfig (игнорируется, но принимается для совместимости)
             **kwargs: Дополнительные аргументы
         
         Returns:
