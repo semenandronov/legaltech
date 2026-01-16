@@ -789,19 +789,26 @@ async def stream_chat_response(
             if selected_text:
                 context_parts.append(f"\n\n=== ВЫДЕЛЕННЫЙ ТЕКСТ (фокус внимания) ===\n{selected_text}")
             
-            # КРИТИЧЕСКИЕ инструкции для режима редактора
+            # Инструкции для точечного редактирования
             editor_instructions = (
-                "\n\n=== КРИТИЧЕСКИЕ ПРАВИЛА РЕДАКТИРОВАНИЯ ===\n\n"
-                "⚠️ ЗАПРЕЩЕНО возвращать только фрагмент или изменённую часть!\n"
-                "⚠️ ЗАПРЕЩЕНО удалять или терять части оригинального документа!\n\n"
-                "✅ ОБЯЗАТЕЛЬНО возвращай ВЕСЬ документ ПОЛНОСТЬЮ с внесёнными изменениями\n"
-                "✅ Копируй ВЕСЬ оригинальный документ и вноси изменения в нужных местах\n"
-                "✅ Сохраняй ВСЮ структуру, ВСЕ абзацы, ВСЕ разделы документа\n\n"
+                "\n\n=== РЕЖИМ РЕДАКТОРА ДОКУМЕНТА ===\n\n"
+                "Ты можешь отвечать на вопросы о документе и вносить точечные правки.\n\n"
                 "ФОРМАТ ОТВЕТА ПРИ РЕДАКТИРОВАНИИ:\n"
-                "1. Сначала объясни какие изменения сделаны\n"
-                "2. Затем в блоке ```html ... ``` верни ПОЛНЫЙ документ:\n\n"
-                "```html\n<ВЕСЬ документ от начала до конца с внесёнными изменениями>\n```\n\n"
-                "ЕСЛИ ПОЛЬЗОВАТЕЛЬ ПРОСТО ЗАДАЁТ ВОПРОС - просто ответь, без HTML.\n"
+                "1. Объясни какие изменения нужно внести\n"
+                "2. Укажи ТОЧНУЮ команду замены:\n\n"
+                "```edit\n"
+                "НАЙТИ: <точный текст из документа>\n"
+                "ЗАМЕНИТЬ: <новый текст>\n"
+                "```\n\n"
+                "ПРИМЕР:\n"
+                "Пользователь: 'Добавь номер 123'\n"
+                "Ответ: 'Добавляю номер в заголовок.\n"
+                "```edit\n"
+                "НАЙТИ: Договор поставки\n"
+                "ЗАМЕНИТЬ: Договор поставки №123\n"
+                "```'\n\n"
+                "ВАЖНО: В НАЙТИ указывай ТОЧНЫЙ текст из документа!\n"
+                "Если просто вопрос - отвечай без блока edit.\n"
             )
             context_parts.append(editor_instructions)
             
@@ -914,38 +921,50 @@ async def stream_chat_response(
                 except Exception as e:
                     logger.warning(f"[ChatAgent] Failed to insert Garant links: {e}", exc_info=True)
             
-            # Для режима редактора документа: извлекаем edited_content из ответа
+            # Для режима редактора документа: применяем команды редактирования
             if document_id and document_context:
                 edited_content = None
-                original_len = len(document_context) if document_context else 0
                 
-                # Пытаемся извлечь HTML из code blocks
-                html_match = re.search(r'```(?:html)?\s*\n(.*?)\n```', full_response_text, re.DOTALL)
-                if html_match:
-                    extracted_html = html_match.group(1).strip()
-                    extracted_len = len(extracted_html)
+                # Новый подход: извлекаем команды НАЙТИ/ЗАМЕНИТЬ
+                edit_blocks = re.findall(r'```edit\s*\n(.*?)\n```', full_response_text, re.DOTALL)
+                
+                if edit_blocks:
+                    modified_content = document_context
+                    changes_applied = 0
                     
-                    # КРИТИЧЕСКАЯ ПРОВЕРКА: не позволяем заменить документ фрагментом
-                    if original_len > 0 and extracted_len < original_len * 0.4:
-                        logger.warning(f"[ChatAgent] Extracted HTML too short ({extracted_len} vs {original_len}), likely a fragment. NOT sending.")
-                        # Добавляем предупреждение
-                        warning_msg = "\n\n⚠️ Система обнаружила, что возвращённый HTML является фрагментом. Изменения НЕ применены автоматически."
-                        yield f"data: {json.dumps({'textDelta': warning_msg}, ensure_ascii=False)}\n\n"
+                    for block in edit_blocks:
+                        find_match = re.search(r'НАЙТИ:\s*(.+?)(?=\nЗАМЕНИТЬ:|$)', block, re.DOTALL)
+                        replace_match = re.search(r'ЗАМЕНИТЬ:\s*(.+?)$', block, re.DOTALL)
+                        
+                        if find_match and replace_match:
+                            find_text = find_match.group(1).strip()
+                            replace_text = replace_match.group(1).strip()
+                            
+                            if find_text in modified_content:
+                                modified_content = modified_content.replace(find_text, replace_text, 1)
+                                changes_applied += 1
+                                logger.info(f"[ChatAgent] Applied edit: '{find_text[:50]}...' -> '{replace_text[:50]}...'")
+                            else:
+                                logger.warning(f"[ChatAgent] Text not found: '{find_text[:100]}...'")
+                    
+                    if changes_applied > 0:
+                        edited_content = modified_content
+                        logger.info(f"[ChatAgent] Applied {changes_applied} edits")
                     else:
-                        edited_content = extracted_html
-                        logger.info(f"[ChatAgent] Extracted edited_content from code block (length: {extracted_len})")
+                        warning_msg = "\n\n⚠️ Не удалось найти указанный текст в документе."
+                        yield f"data: {json.dumps({'textDelta': warning_msg}, ensure_ascii=False)}\n\n"
                 else:
-                    # Пытаемся найти HTML теги в ответе
-                    html_tag_match = re.search(r'<[^>]+>.*?</[^>]+>', full_response_text, re.DOTALL)
-                    if html_tag_match:
-                        extracted_html = html_tag_match.group(0)
-                        if original_len > 0 and len(extracted_html) < original_len * 0.4:
-                            logger.warning(f"[ChatAgent] Found HTML tag but too short, NOT sending.")
-                        else:
+                    # Fallback: старый подход с полным HTML
+                    html_match = re.search(r'```(?:html)?\s*\n(.*?)\n```', full_response_text, re.DOTALL)
+                    if html_match:
+                        extracted_html = html_match.group(1).strip()
+                        original_len = len(document_context)
+                        # Принимаем только если HTML близок по размеру (±30%)
+                        if original_len * 0.7 <= len(extracted_html) <= original_len * 1.5:
                             edited_content = extracted_html
-                            logger.info(f"[ChatAgent] Extracted edited_content from HTML tags (length: {len(edited_content)})")
+                            logger.info(f"[ChatAgent] Using full HTML fallback ({len(extracted_html)} chars)")
                 
-                # Если нашли полный edited_content, отправляем его через SSE
+                # Отправляем edited_content если есть
                 if edited_content:
                     yield f"data: {json.dumps({'type': 'edited_content', 'edited_content': edited_content}, ensure_ascii=False)}\n\n"
                     logger.info(f"[ChatAgent] Sent edited_content event (length: {len(edited_content)})")

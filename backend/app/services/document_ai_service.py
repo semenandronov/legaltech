@@ -659,34 +659,32 @@ class DocumentAIService:
         # Create LLM prompt for document editing
         system_prompt = """Ты - AI-ассистент для редактирования юридических документов.
 
-ПРИ РЕДАКТИРОВАНИИ ДОКУМЕНТА СОБЛЮДАЙ КРИТИЧЕСКИЕ ПРАВИЛА:
-
-⚠️ ЗАПРЕЩЕНО возвращать только фрагмент или измененную часть!
-⚠️ ЗАПРЕЩЕНО удалять или терять части оригинального документа!
-
-✅ ОБЯЗАТЕЛЬНО возвращай ВЕСЬ документ ПОЛНОСТЬЮ с внесенными изменениями
-✅ Копируй ВЕСЬ оригинальный документ и вноси изменения в нужных местах
-✅ Сохраняй ВСЮ структуру, ВСЕ абзацы, ВСЕ разделы документа
+ТВОИ ЗАДАЧИ:
+1. Отвечать на вопросы о документе
+2. Вносить точечные правки по запросу пользователя
 
 ФОРМАТ ОТВЕТА ПРИ РЕДАКТИРОВАНИИ:
-1. Сначала объясни какие изменения сделаны
-2. Затем в блоке ```html ... ``` верни ПОЛНЫЙ документ:
+1. Сначала объясни какие изменения нужно внести
+2. Затем укажи ТОЧНУЮ команду замены в формате:
 
-```html
-<ВЕСЬ документ от начала до конца с внесенными изменениями>
+```edit
+НАЙТИ: <точный текст который нужно найти в документе>
+ЗАМЕНИТЬ: <новый текст на замену>
 ```
 
-ПРИМЕР ПРАВИЛЬНОГО ОТВЕТА:
-"Я внёс изменения в пункт 3.1, добавив номер договора.
-```html
-<p>1. Общие положения</p>
-<p>1.1. Данный договор...</p>
-... ВЕСЬ остальной документ ...
-<p>3.1. Номер договора: 123/2024</p>  <!-- вот изменённый пункт -->
-... ВЕСЬ остальной документ до конца ...
+ПРИМЕР:
+Пользователь: "Добавь номер договора 123/2024 в пункт 1.1"
+Ответ: "Добавляю номер договора в пункт 1.1.
+```edit
+НАЙТИ: 1.1. Предмет договора
+ЗАМЕНИТЬ: 1.1. Договор №123/2024. Предмет договора
 ```"
 
-ЕСЛИ ПОЛЬЗОВАТЕЛЬ ПРОСТО ЗАДАЁТ ВОПРОС (без редактирования) - просто ответь на вопрос."""
+ВАЖНО:
+- В НАЙТИ указывай ТОЧНЫЙ текст из документа (можно короткий уникальный фрагмент)
+- В ЗАМЕНИТЬ указывай полный новый текст
+- Если нужно несколько замен - используй несколько блоков ```edit```
+- Если пользователь просто задаёт вопрос - просто ответь без блока edit"""
         
         # Увеличиваем лимит до 15000 символов для полноценной работы с документом
         doc_limit = 15000
@@ -719,37 +717,50 @@ class DocumentAIService:
         edited_content = None
         suggestions = []
         
-        if is_edit_request:
-            # Try to extract HTML from code blocks
+        if is_edit_request and document_content:
             import re
-            html_match = re.search(r'```(?:html)?\s*\n(.*?)\n```', answer, re.DOTALL)
-            if html_match:
-                extracted_html = html_match.group(1).strip()
+            # Новый подход: извлекаем команды НАЙТИ/ЗАМЕНИТЬ и применяем к оригиналу
+            edit_blocks = re.findall(r'```edit\s*\n(.*?)\n```', answer, re.DOTALL)
+            
+            if edit_blocks:
+                modified_content = document_content
+                changes_applied = 0
                 
-                # КРИТИЧЕСКАЯ ПРОВЕРКА: не позволяем заменить документ фрагментом
-                # Если извлеченный HTML меньше 40% от оригинала - это фрагмент, не полный документ
-                original_len = len(document_content) if document_content else 0
-                extracted_len = len(extracted_html)
+                for block in edit_blocks:
+                    # Парсим НАЙТИ и ЗАМЕНИТЬ
+                    find_match = re.search(r'НАЙТИ:\s*(.+?)(?=\nЗАМЕНИТЬ:|$)', block, re.DOTALL)
+                    replace_match = re.search(r'ЗАМЕНИТЬ:\s*(.+?)$', block, re.DOTALL)
+                    
+                    if find_match and replace_match:
+                        find_text = find_match.group(1).strip()
+                        replace_text = replace_match.group(1).strip()
+                        
+                        if find_text in modified_content:
+                            modified_content = modified_content.replace(find_text, replace_text, 1)
+                            changes_applied += 1
+                            logger.info(f"[DocumentAI] Applied edit: '{find_text[:50]}...' -> '{replace_text[:50]}...'")
+                        else:
+                            logger.warning(f"[DocumentAI] Text not found in document: '{find_text[:100]}...'")
                 
-                if original_len > 0 and extracted_len < original_len * 0.4:
-                    logger.warning(f"[DocumentAI] Extracted HTML too short ({extracted_len} vs {original_len}), likely a fragment. NOT applying.")
-                    # Добавляем предупреждение в ответ
-                    answer += "\n\n⚠️ **Внимание:** Система обнаружила, что возвращённый HTML является фрагментом, а не полным документом. Изменения НЕ будут применены автоматически, чтобы не потерять остальное содержимое документа. Пожалуйста, скопируйте нужный фрагмент вручную."
-                else:
-                    edited_content = extracted_html
+                if changes_applied > 0:
+                    edited_content = modified_content
                     suggestions.append("Применить изменения")
-                    logger.info(f"[DocumentAI] Extracted full document HTML ({extracted_len} chars)")
+                    logger.info(f"[DocumentAI] Applied {changes_applied} edits to document")
+                else:
+                    answer += "\n\n⚠️ Не удалось найти указанный текст в документе. Попробуйте указать точную фразу из документа."
             else:
-                # Try to find HTML tags in the answer (only if substantial)
-                html_tag_match = re.search(r'<[^>]+>.*?</[^>]+>', answer, re.DOTALL)
-                if html_tag_match:
-                    extracted_html = html_tag_match.group(0)
-                    original_len = len(document_content) if document_content else 0
-                    if original_len > 0 and len(extracted_html) < original_len * 0.4:
-                        logger.warning(f"[DocumentAI] Found HTML tag but too short, NOT applying.")
-                    else:
+                # Fallback: старый подход с полным HTML (если ИИ вернул его)
+                html_match = re.search(r'```(?:html)?\s*\n(.*?)\n```', answer, re.DOTALL)
+                if html_match:
+                    extracted_html = html_match.group(1).strip()
+                    original_len = len(document_content)
+                    # Принимаем только если HTML близок по размеру к оригиналу (±30%)
+                    if original_len * 0.7 <= len(extracted_html) <= original_len * 1.5:
                         edited_content = extracted_html
                         suggestions.append("Применить изменения")
+                        logger.info(f"[DocumentAI] Using full HTML fallback ({len(extracted_html)} chars)")
+                    else:
+                        logger.warning(f"[DocumentAI] HTML size mismatch, not applying")
         
         result = {
             "answer": answer,
