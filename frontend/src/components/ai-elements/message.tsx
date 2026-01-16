@@ -73,8 +73,18 @@ export interface AssistantMessageProps {
   }>
   response?: string
   sources?: Array<{ title?: string; url?: string; page?: number; text_preview?: string; file?: string }>
+  citations?: Array<{  // EnhancedCitation для подсветки
+    source_id: string
+    file_name: string
+    page: number
+    quote: string
+    char_start: number
+    char_end: number
+    context_before?: string
+    context_after?: string
+  }>
   isStreaming?: boolean
-  onSourceClick?: (source: { title?: string; url?: string; page?: number; file?: string }) => void
+  onSourceClick?: (source: { title?: string; url?: string; page?: number; file?: string; source_id?: string; char_start?: number; char_end?: number; quote?: string }) => void
   className?: string
   children?: React.ReactNode
 }
@@ -85,11 +95,39 @@ export const AssistantMessage = React.memo(function AssistantMessage({
   toolCalls,
   response,
   sources,
+  citations,
   isStreaming = false,
   className,
   children,
   onSourceClick,
 }: AssistantMessageProps) {
+  // Преобразуем citations в SourceInfo[] для использования в MessageContent
+  const effectiveSources: SourceInfo[] = React.useMemo(() => {
+    if (citations && citations.length > 0) {
+      // Преобразуем EnhancedCitation в SourceInfo
+      return citations.map(citation => ({
+        file: citation.file_name,
+        title: citation.file_name,
+        page: citation.page,
+        text_preview: citation.quote,
+        char_start: citation.char_start,
+        char_end: citation.char_end,
+        quote: citation.quote,
+        source_id: citation.source_id,
+        context_before: citation.context_before,
+        context_after: citation.context_after,
+      }))
+    } else if (sources) {
+      // Используем обычные sources если citations нет
+      return sources.map(s => ({
+        file: s.file || s.title || '',
+        title: s.title || s.file || '',
+        page: s.page,
+        text_preview: s.text_preview,
+      }))
+    }
+    return []
+  }, [citations, sources])
   return (
     <Message role="assistant" className={className}>
       <div className="text-sm leading-relaxed prose prose-sm max-w-none">
@@ -124,17 +162,17 @@ export const AssistantMessage = React.memo(function AssistantMessage({
           <div className="mb-4">
             <MessageContent
               content={content}
-              sources={sources?.map(s => ({
-                file: s.file || s.title || '',
-                page: s.page,
-                text_preview: s.text_preview,
-              })) as SourceInfo[]}
+              sources={effectiveSources}
               onCitationClick={(source) => {
                 if (onSourceClick) {
                   onSourceClick({
                     file: source.file,
-                    title: source.file,
+                    title: source.file || source.title,
                     page: source.page,
+                    source_id: source.source_id,
+                    char_start: source.char_start,
+                    char_end: source.char_end,
+                    quote: source.quote,
                   })
                 }
               }}
@@ -148,17 +186,17 @@ export const AssistantMessage = React.memo(function AssistantMessage({
           <div className="mb-4">
             <MessageContent
               content={response}
-              sources={sources?.map(s => ({
-                file: s.file || s.title || '',
-                page: s.page,
-                text_preview: s.text_preview,
-              })) as SourceInfo[]}
+              sources={effectiveSources}
               onCitationClick={(source) => {
                 if (onSourceClick) {
                   onSourceClick({
                     file: source.file,
-                    title: source.file,
+                    title: source.file || source.title,
                     page: source.page,
+                    source_id: source.source_id,
+                    char_start: source.char_start,
+                    char_end: source.char_end,
+                    quote: source.quote,
                   })
                 }
               }}

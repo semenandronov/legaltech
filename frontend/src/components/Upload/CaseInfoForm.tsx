@@ -69,7 +69,7 @@ const CaseInfoForm = ({ onSubmit, onCancel }: CaseInfoFormProps) => {
             Отменить
           </button>
           <button type="submit" className="upload-button-primary">
-            Далее
+            Создать дело
           </button>
         </div>
       </form>

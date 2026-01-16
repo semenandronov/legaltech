@@ -1202,25 +1202,47 @@ export const AssistantUIChat = forwardRef<{ clearMessages: () => void; loadHisto
               toolCalls={message.toolCalls}
               response={message.response}
               sources={message.sources}
+              citations={message.citations}
               isStreaming={isLoading && message.id === messages[messages.length - 1]?.id}
               onSourceClick={(source) => {
                 if (source.file) {
-                  // Открываем документ справа в панели предпросмотра
+                  // Открываем документ справа в панели предпросмотра с подсветкой
                   const sourceInfo: SourceInfo = {
                     file: source.file || source.title || '',
+                    title: source.title || source.file || '',
                     page: source.page,
-                    text_preview: (source as any).text_preview,
+                    text_preview: (source as any).text_preview || source.quote,
+                    char_start: source.char_start,
+                    char_end: source.char_end,
+                    quote: source.quote,
+                    source_id: source.source_id,
+                    context_before: (source as any).context_before,
+                    context_after: (source as any).context_after,
                   }
                   setPreviewSource(sourceInfo)
                   setPreviewOpen(true)
                   // Собираем все источники из текущего сообщения для навигации
-                  if (message.sources) {
-                    setAllCurrentSources(message.sources.map(s => ({
-                      file: s.file || s.title || '',
-                      page: s.page,
-                      text_preview: s.text_preview,
-                    })))
-                  }
+                  // Используем citations если есть, иначе sources
+                  const allSources = message.citations 
+                    ? message.citations.map(c => ({
+                        file: c.file_name,
+                        title: c.file_name,
+                        page: c.page,
+                        text_preview: c.quote,
+                        char_start: c.char_start,
+                        char_end: c.char_end,
+                        quote: c.quote,
+                        source_id: c.source_id,
+                      }))
+                    : message.sources 
+                    ? message.sources.map(s => ({
+                        file: s.file || s.title || '',
+                        title: s.title || s.file || '',
+                        page: s.page,
+                        text_preview: s.text_preview,
+                      }))
+                    : []
+                  setAllCurrentSources(allSources)
                 }
               }}
             >

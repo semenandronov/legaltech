@@ -731,6 +731,7 @@ async def stream_chat_response(
         
         # Подмешиваем контекст из документов дела (RAG) для вопросов по делу
         rag_context = ""
+        rag_docs = []  # Инициализируем для использования в citations
         try:
             # Берем релевантный контекст по вопросу
             rag_docs = rag_service.retrieve_context(
@@ -745,6 +746,7 @@ async def stream_chat_response(
                 logger.info(f"[RAG] Added {len(rag_docs)} docs to context (len={len(rag_context)})")
         except Exception as rag_error:
             logger.warning(f"[RAG] Failed to load context: {rag_error}")
+            rag_docs = []  # Устанавливаем пустой список при ошибке
         
         # ВСЕГДА используем умного ChatAgent
         # Передаем legal_research для включения tools ГАРАНТ + добавляем контекст ГАРАНТ напрямую для надежности
@@ -905,6 +907,64 @@ async def stream_chat_response(
                 if edited_content:
                     yield f"data: {json.dumps({'type': 'edited_content', 'edited_content': edited_content}, ensure_ascii=False)}\n\n"
                     logger.info(f"[ChatAgent] Sent edited_content event (length: {len(edited_content)})")
+            
+            # Получаем структурированные citations для подсветки в документах
+            # Используем те же документы, что использовались для RAG контекста
+            citations_data = []
+            try:
+                if rag_docs and len(rag_docs) > 0:
+                    logger.info(f"[Citations] Generating structured citations for {len(rag_docs)} documents")
+                    
+                    # Преобразуем историю в формат для generate_with_structured_citations
+                    citation_history = []
+                    if chat_history:
+                        for msg in chat_history:
+                            if "Пользователь:" in msg:
+                                citation_history.append({
+                                    "role": "user",
+                                    "content": msg.replace("Пользователь: ", "")
+                                })
+                            elif "Ассистент:" in msg:
+                                citation_history.append({
+                                    "role": "assistant",
+                                    "content": msg.replace("Ассистент: ", "").replace("...", "")
+                                })
+                    
+                    # Генерируем структурированные citations
+                    try:
+                        structured_result = rag_service.generate_with_structured_citations(
+                            query=question,
+                            documents=rag_docs,
+                            history=citation_history
+                        )
+                        
+                        # Преобразуем EnhancedCitation в формат для frontend
+                        for citation in structured_result.citations:
+                            citations_data.append({
+                                "source_id": citation.source_id,
+                                "file_name": citation.file_name,
+                                "page": citation.page,
+                                "quote": citation.quote,
+                                "char_start": citation.char_start,
+                                "char_end": citation.char_end,
+                                "context_before": citation.context_before if hasattr(citation, 'context_before') else "",
+                                "context_after": citation.context_after if hasattr(citation, 'context_after') else ""
+                            })
+                        
+                        logger.info(f"[Citations] Generated {len(citations_data)} structured citations")
+                    except Exception as citation_error:
+                        logger.warning(f"[Citations] Failed to generate structured citations: {citation_error}", exc_info=True)
+                        # Продолжаем без citations - не критичная ошибка
+                else:
+                    logger.info("[Citations] No RAG documents available for citations")
+            except Exception as citations_error:
+                logger.warning(f"[Citations] Error processing citations: {citations_error}", exc_info=True)
+                # Продолжаем без citations - не критичная ошибка
+            
+            # Отправляем citations через SSE если они есть
+            if citations_data:
+                yield f"data: {json.dumps({'type': 'citations', 'citations': citations_data}, ensure_ascii=False)}\n\n"
+                logger.info(f"[Citations] Sent {len(citations_data)} citations via SSE")
             
             # Сохраняем ответ в БД
             try:

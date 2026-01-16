@@ -130,6 +130,7 @@ export interface UploadResponse {
 
 export interface SourceInfo {
   file: string
+  title?: string  // Optional title (alternative to file)
   page?: number
   chunk_index?: number
   start_line?: number
@@ -342,6 +343,93 @@ export interface CaseResponse {
 
 export const getCase = async (caseId: string): Promise<CaseResponse> => {
   const response = await apiClient.get(getApiUrl(`/api/cases/${caseId}`))
+  return response.data
+}
+
+export const createCase = async (caseInfo: CaseInfo): Promise<CaseResponse> => {
+  const response = await apiClient.post(getApiUrl('/api/cases/'), caseInfo)
+  return response.data
+}
+
+// File management API
+export interface UploadedFile {
+  id: string
+  filename: string
+  file_type: string
+  size?: number
+  created_at?: string
+}
+
+export interface FilesResponse {
+  files: UploadedFile[]
+  total: number
+  added?: number
+}
+
+export const addFilesToCase = async (
+  caseId: string,
+  files: File[],
+  onProgress?: (percent: number) => void
+): Promise<FilesResponse> => {
+  const formData = new FormData()
+  files.forEach((file) => {
+    formData.append('files', file)
+  })
+
+  const response = await apiClient.post(
+    getApiUrl(`/api/cases/${caseId}/files`),
+    formData,
+    {
+      headers: {
+        'Content-Type': 'multipart/form-data',
+      },
+      onUploadProgress: (progressEvent) => {
+        if (onProgress && progressEvent.total) {
+          const percent = Math.round((progressEvent.loaded * 100) / progressEvent.total)
+          onProgress(percent)
+        }
+      },
+    }
+  )
+
+  return response.data
+}
+
+export const deleteFileFromCase = async (
+  caseId: string,
+  fileId: string
+): Promise<FilesResponse> => {
+  const response = await apiClient.delete(getApiUrl(`/api/cases/${caseId}/files/${fileId}`))
+  return response.data
+}
+
+export const getCaseFiles = async (caseId: string): Promise<FilesResponse> => {
+  const response = await apiClient.get(getApiUrl(`/api/cases/${caseId}/files`))
+  return {
+    files: response.data.documents?.map((doc: any) => ({
+      id: doc.id,
+      filename: doc.filename,
+      file_type: doc.file_type,
+      created_at: doc.created_at,
+    })) || [],
+    total: response.data.total || 0,
+  }
+}
+
+export interface ProcessResponse {
+  status: string
+  message: string
+  case_id: string
+  num_files: number
+}
+
+export const processCaseFiles = async (
+  caseId: string,
+  analysisConfig?: AnalysisConfig
+): Promise<ProcessResponse> => {
+  const response = await apiClient.post(getApiUrl(`/api/cases/${caseId}/process`), {
+    analysis_config: analysisConfig,
+  })
   return response.data
 }
 

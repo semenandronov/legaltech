@@ -57,3 +57,5 @@ cursor.close()
 conn.close()
 print('\n✅ Проверка завершена')
 
+
+

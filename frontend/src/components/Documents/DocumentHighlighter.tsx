@@ -1,4 +1,4 @@
-import React, { useMemo } from 'react'
+import React, { useMemo, useEffect, useRef } from 'react'
 
 export interface HighlightRange {
   char_start: number
@@ -25,10 +25,28 @@ export const DocumentHighlighter: React.FC<DocumentHighlighterProps> = ({
   className = '',
   highlightColor = '#fef08a' // Yellow background
 }) => {
+  const containerRef = useRef<HTMLDivElement>(null)
+  
   // Сортируем highlights по char_start
   const sortedHighlights = useMemo(() => {
     return [...highlights].sort((a, b) => a.char_start - b.char_start)
   }, [highlights])
+  
+  // Автоскролл к первому highlight после рендера
+  useEffect(() => {
+    if (sortedHighlights.length === 0 || !containerRef.current) return
+    
+    // Находим первый элемент <mark> в контейнере
+    const firstMark = containerRef.current.querySelector('mark')
+    if (firstMark) {
+      // Прокручиваем к первому подсвеченному элементу
+      firstMark.scrollIntoView({ 
+        behavior: 'smooth', 
+        block: 'center',
+        inline: 'nearest'
+      })
+    }
+  }, [sortedHighlights, text]) // Зависимости: highlights и text
 
   // Разбиваем текст на части с подсветкой
   const parts = useMemo(() => {
@@ -75,7 +93,7 @@ export const DocumentHighlighter: React.FC<DocumentHighlighterProps> = ({
   }, [text, sortedHighlights, highlightColor])
 
   return (
-    <div className={className}>
+    <div ref={containerRef} className={className}>
       {parts.map((part, index) => {
         if (part.isHighlight) {
           return (

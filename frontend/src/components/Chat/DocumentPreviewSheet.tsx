@@ -21,6 +21,10 @@ import {
 } from '@mui/icons-material'
 import { SourceInfo } from '@/services/api'
 import PDFViewer from '@/components/Documents/PDFViewer'
+import { DocumentHighlighter, useCitationHighlights } from '@/components/Documents/DocumentHighlighter'
+import { TextHighlighter } from '@/components/TabularReview/TextHighlighter'
+import { getFileHtml } from '@/services/fileHtmlApi'
+import { getDocumentContent } from '@/services/api'
 
 interface DocumentPreviewSheetProps {
   isOpen: boolean
@@ -41,6 +45,8 @@ const DocumentPreviewSheet = ({
 }: DocumentPreviewSheetProps) => {
   const [copied, setCopied] = useState(false)
   const [documentContent, setDocumentContent] = useState<string | null>(null)
+  const [documentText, setDocumentText] = useState<string | null>(null) // Текстовый контент для подсветки
+  const [documentHtml, setDocumentHtml] = useState<string | null>(null) // HTML контент для DOCX
   const [loading, setLoading] = useState(false)
   const [fileInfo, setFileInfo] = useState<{ id: string; file_type: string; filename: string } | null>(null)
   const [fileUrl, setFileUrl] = useState<string | null>(null)
@@ -48,6 +54,9 @@ const DocumentPreviewSheet = ({
   const currentIndex = source ? allSources.findIndex(s => s.file === source.file) : -1
   const hasPrev = currentIndex > 0
   const hasNext = currentIndex < allSources.length - 1
+  
+  // Преобразуем source в highlights для DocumentHighlighter (для текстовых документов)
+  const highlights = useCitationHighlights(source && source.char_start !== undefined && source.char_end !== undefined ? [source] : [])
 
   useEffect(() => {
     if (source && isOpen) {
@@ -62,6 +71,8 @@ const DocumentPreviewSheet = ({
     setLoading(true)
     setFileInfo(null)
     setDocumentContent(null)
+    setDocumentText(null)
+    setDocumentHtml(null)
     
     try {
       // Get list of files to find file by filename or id
@@ -94,6 +105,9 @@ const DocumentPreviewSheet = ({
           file_type: file.file_type || 'txt',
           filename: file.filename
         })
+        
+        // Загружаем контент для подсветки в зависимости от типа файла
+        await loadDocumentContentForHighlight(file.id, file.file_type || 'txt', source)
       } else {
         // File not found - show preview text if available
         setDocumentContent(source.text_preview || 'Документ не найден')
@@ -103,6 +117,49 @@ const DocumentPreviewSheet = ({
       setDocumentContent('Ошибка загрузки документа')
     } finally {
       setLoading(false)
+    }
+  }
+  
+  // Загрузка контента документа для подсветки
+  const loadDocumentContentForHighlight = async (
+    fileId: string, 
+    fileType: string, 
+    source: SourceInfo
+  ) => {
+    // Проверяем, есть ли координаты для подсветки
+    const hasCoordinates = source.char_start !== undefined && source.char_end !== undefined
+    const hasQuote = !!source.quote
+    
+    if (!hasCoordinates && !hasQuote) {
+      // Нет данных для подсветки - пропускаем
+      return
+    }
+    
+    try {
+      // Определяем тип файла
+      const isTextFile = ['txt', 'html', 'md', 'json', 'xml', 'csv'].includes(fileType.toLowerCase())
+      const isDocx = fileType.toLowerCase() === 'docx'
+      
+      if (isTextFile && hasCoordinates) {
+        // Текстовые документы - загружаем текст для точной подсветки по координатам
+        try {
+          const textBlob = await getDocumentContent(caseId, fileId)
+          const text = await textBlob.text()
+          setDocumentText(text)
+        } catch (error) {
+          console.warn('Failed to load text content for highlighting:', error)
+        }
+      } else if (isDocx && hasQuote) {
+        // DOCX - загружаем HTML версию для подсветки по тексту
+        try {
+          const htmlResponse = await getFileHtml(caseId, fileId, false)
+          setDocumentHtml(htmlResponse.html)
+        } catch (error) {
+          console.warn('Failed to load HTML content for DOCX highlighting:', error)
+        }
+      }
+    } catch (error) {
+      console.warn('Error loading document content for highlighting:', error)
     }
   }
 
@@ -322,15 +379,61 @@ const DocumentPreviewSheet = ({
               </Stack>
             </Box>
           ) : fileInfo && fileInfo.file_type === 'pdf' ? (
-            // PDF viewer - like on Documents page
+            // PDF viewer - like on Documents page, with highlighting support
             <Box sx={{ flex: 1, overflow: 'hidden' }}>
               <PDFViewer
                 fileId={fileInfo.id}
                 caseId={caseId}
                 filename={fileInfo.filename}
+                initialPage={source.page} // Переход на страницу из citation
                 showTabs={false}
                 showAbout={false}
+                // TODO: Добавить searchQuery для подсветки через PDF.js text layer
+                // searchQuery={source.quote}
               />
+            </Box>
+          ) : fileInfo && documentHtml && fileInfo.file_type === 'docx' ? (
+            // DOCX - отображаем HTML с подсветкой
+            <Box sx={{ flex: 1, overflow: 'auto', p: 2 }}>
+              {source.quote ? (
+                <TextHighlighter
+                  text={documentHtml}
+                  highlightText={source.quote}
+                  className="whitespace-pre-wrap text-sm"
+                />
+              ) : (
+                <Box
+                  component="div"
+                  dangerouslySetInnerHTML={{ __html: documentHtml }}
+                  sx={{
+                    fontSize: '0.875rem',
+                    fontFamily: 'inherit',
+                  }}
+                />
+              )}
+            </Box>
+          ) : fileInfo && documentText && ['txt', 'html', 'md', 'json', 'xml', 'csv'].includes(fileInfo.file_type.toLowerCase()) ? (
+            // Текстовые документы - отображаем с подсветкой по координатам
+            <Box sx={{ flex: 1, overflow: 'auto', p: 2 }}>
+              {source.char_start !== undefined && source.char_end !== undefined && highlights.length > 0 ? (
+                <DocumentHighlighter
+                  text={documentText}
+                  highlights={highlights}
+                  className="whitespace-pre-wrap text-sm"
+                />
+              ) : (
+                <Box
+                  component="pre"
+                  sx={{
+                    whiteSpace: 'pre-wrap',
+                    fontSize: '0.875rem',
+                    fontFamily: 'monospace',
+                    m: 0,
+                  }}
+                >
+                  {documentText}
+                </Box>
+              )}
             </Box>
           ) : fileInfo && fileUrl ? (
             // For non-PDF files, use object tag instead of iframe to avoid CSP issues
