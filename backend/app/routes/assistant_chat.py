@@ -525,29 +525,19 @@ async def stream_chat_response(
                     db.rollback()
                     logger.warning(f"[Draft Mode] Failed to save response: {save_error}")
                 
-                # Отправить событие в SSE stream
-                yield f"data: {json.dumps({
-                    'type': 'document_created',
-                    'document': {
-                        'id': document.id,
-                        'title': document.title,
-                        'content': document.content[:500] if document.content else '',  # Превью
-                        'case_id': document.case_id
-                    }
-                }, ensure_ascii=False)}\n\n"
+                # Отправить событие в SSE stream (превью контента - первые 500 символов)
+                doc_preview = document.content[:500] if document.content else ''
+                yield f"data: {json.dumps({'type': 'document_created', 'document': {'id': document.id, 'title': document.title, 'content': doc_preview, 'case_id': document.case_id}}, ensure_ascii=False)}\n\n"
                 
                 # Также отправим текстовое сообщение о создании документа
-                yield f"data: {json.dumps({
-                    'textDelta': response_text
-                }, ensure_ascii=False)}\n\n"
+                yield f"data: {json.dumps({'textDelta': response_text}, ensure_ascii=False)}\n\n"
                 
                 return
                 
             except Exception as draft_error:
                 logger.error(f"[Draft Mode] Error creating document: {draft_error}", exc_info=True)
-                yield f"data: {json.dumps({
-                    'textDelta': f'\n\n❌ Ошибка при создании документа: {str(draft_error)}. Попробуйте еще раз или опишите документ более подробно.'
-                }, ensure_ascii=False)}\n\n"
+                error_msg = f'\n\n❌ Ошибка при создании документа: {str(draft_error)}. Попробуйте еще раз или опишите документ более подробно.'
+                yield f"data: {json.dumps({'textDelta': error_msg}, ensure_ascii=False)}\n\n"
                 return
         
         # Verify case has files uploaded (только для обычного режима, не для draft)
@@ -790,28 +780,33 @@ async def stream_chat_response(
         if document_context or selected_text:
             context_parts = []
             if document_context:
-                # Ограничиваем размер контекста документа (первые 4000 символов)
-                doc_preview = document_context[:4000]
-                context_parts.append(f"\n\n=== ТЕКУЩИЙ ДОКУМЕНТ В РЕДАКТОРЕ ===\n{doc_preview}")
-                if len(document_context) > 4000:
-                    context_parts.append(f"\n[Документ обрезан, всего {len(document_context)} символов]")
+                # Увеличиваем лимит до 15000 символов для полноценной работы с документом
+                doc_limit = 15000
+                doc_preview = document_context[:doc_limit]
+                context_parts.append(f"\n\n=== ПОЛНЫЙ ТЕКСТ ДОКУМЕНТА В РЕДАКТОРЕ ===\n{doc_preview}")
+                if len(document_context) > doc_limit:
+                    context_parts.append(f"\n[... документ обрезан, показано {doc_limit} из {len(document_context)} символов ...]")
             if selected_text:
-                context_parts.append(f"\n\n=== ВЫДЕЛЕННЫЙ ТЕКСТ ===\n{selected_text}")
+                context_parts.append(f"\n\n=== ВЫДЕЛЕННЫЙ ТЕКСТ (фокус внимания) ===\n{selected_text}")
             
-            # Добавляем инструкцию для режима редактора
-            context_parts.append(f"\n\n=== ВАЖНО: РЕЖИМ РЕДАКТОРА ДОКУМЕНТА ===\n")
-            context_parts.append(f"Ты работаешь в режиме редактирования документа. Пользователь может попросить тебя:\n")
-            context_parts.append(f"- Изменить выделенный текст\n")
-            context_parts.append(f"- Улучшить текст\n")
-            context_parts.append(f"- Переписать часть документа\n")
-            context_parts.append(f"- Добавить или удалить информацию\n\n")
-            context_parts.append(f"Если пользователь просит изменить документ, ты ДОЛЖЕН:\n")
-            context_parts.append(f"1. Дать текстовый ответ с объяснением изменений\n")
-            context_parts.append(f"2. В конце ответа добавить блок с HTML кодом измененного документа в формате:\n")
-            context_parts.append(f"```html\n<полный HTML код документа с изменениями>\n```\n")
-            context_parts.append(f"ВАЖНО: HTML должен быть полным и валидным, включая все теги и структуру документа.\n")
-            context_parts.append(f"Если пользователь выделил текст, изменения должны применяться к выделенному тексту.\n")
-            context_parts.append(f"Ты имеешь доступ ко всему делу (case_id={case_id}) и можешь использовать информацию из всех документов дела для контекста.\n")
+            # Улучшенные инструкции для режима редактора
+            editor_instructions = (
+                "\n\n=== РЕЖИМ РЕДАКТОРА ДОКУМЕНТА ===\n\n"
+                "Ты - ИИ-помощник в текстовом редакторе. Ты ВИДИШЬ ВЕСЬ ДОКУМЕНТ выше и можешь:\n\n"
+                "1. ОТВЕЧАТЬ НА ВОПРОСЫ о содержании документа\n"
+                "2. РЕДАКТИРОВАТЬ документ по просьбе пользователя (даже без выделения текста!)\n"
+                f"3. ИСПОЛЬЗОВАТЬ информацию из других документов дела (case_id={case_id})\n\n"
+                "ПРАВИЛА РЕДАКТИРОВАНИЯ:\n"
+                "- Если пользователь просит изменить/улучшить/добавить/удалить что-то - СДЕЛАЙ ЭТО\n"
+                "- Выделенный текст НЕ обязателен - ты видишь весь документ и можешь найти нужное место\n"
+                "- После объяснения изменений ОБЯЗАТЕЛЬНО добавь готовый HTML код:\n\n"
+                "```html\n<исправленный HTML код документа>\n```\n\n"
+                "ВАЖНО:\n"
+                "- HTML должен быть ПОЛНЫМ и ВАЛИДНЫМ\n"
+                "- Сохраняй структуру и форматирование оригинала\n"
+                "- Вноси ТОЛЬКО те изменения, которые просит пользователь\n"
+            )
+            context_parts.append(editor_instructions)
             
             enhanced_question = question + "".join(context_parts)
             logger.info(f"[ChatAgent] Enhanced question with document context (doc_len={len(document_context) if document_context else 0}, selected_len={len(selected_text) if selected_text else 0})")
