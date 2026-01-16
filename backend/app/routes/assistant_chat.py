@@ -108,8 +108,6 @@ async def classify_request(question: str, llm) -> bool:
     Returns:
         True если это задача, False если вопрос
     """
-    import re
-    
     # 1. Нормализация входного текста
     normalized_question = normalize_text(question)
     question_lower = normalized_question.lower()
@@ -926,7 +924,6 @@ async def stream_chat_response(
             
             # Для режима редактора документа: извлекаем edited_content из ответа
             if document_id and document_context:
-                import re
                 edited_content = None
                 
                 # Пытаемся извлечь HTML из code blocks
