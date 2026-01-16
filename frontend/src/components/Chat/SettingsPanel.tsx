@@ -19,6 +19,7 @@ interface SettingsPanelProps {
   onDraftModeChange: (value: boolean) => void
   className?: string
   variant?: 'default' | 'compact'
+  style?: React.CSSProperties
 }
 
 export const SettingsPanel: React.FC<SettingsPanelProps> = ({
@@ -32,6 +33,7 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({
   onDraftModeChange,
   className = '',
   variant = 'default',
+  style,
 }) => {
   // Обработчик для глубокого размышления - выключает другие функции
   const handleDeepThinkChange = (checked: boolean) => {
@@ -97,7 +99,7 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({
   return (
     <TooltipProvider delayDuration={200}>
       {variant === 'compact' ? (
-        <div className={`flex items-center gap-1 ${className}`}>
+        <div className={`flex items-center gap-1 ${className}`} style={style}>
           {settings.map((setting) => {
             const Icon = setting.icon
             return (
@@ -127,7 +129,7 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({
           })}
         </div>
       ) : (
-        <div className={`flex items-center gap-6 px-4 py-2.5 bg-gray-50 border-t border-gray-200 ${className}`}>
+        <div className={`flex items-center gap-6 px-4 py-2.5 bg-gray-50 border-t border-gray-200 ${className}`} style={style}>
           {settings.map((setting) => {
             const Icon = setting.icon
             return (
