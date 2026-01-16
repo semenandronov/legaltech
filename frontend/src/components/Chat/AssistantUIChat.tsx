@@ -183,6 +183,10 @@ const FileChip = ({
       style={{
         background: 'linear-gradient(135deg, rgba(255, 255, 255, 0.9) 0%, rgba(249, 250, 251, 0.9) 100%)',
         boxShadow: '0 1px 3px 0 rgba(0, 0, 0, 0.1), 0 1px 2px 0 rgba(0, 0, 0, 0.06)',
+        width: '60%',
+        maxWidth: '60%',
+        position: 'absolute',
+        left: '610px',
       }}
     >
       <div className="flex-shrink-0">
@@ -438,13 +442,13 @@ const PromptInputWithDrop = ({
           <div className="flex flex-col w-full gap-2 px-2 pt-1.5 pb-2">
             <PromptInputTextarea 
               placeholder="Задайте уточняющий вопрос"
-              className="w-full min-h-[56px] max-h-[200px] text-base px-3 py-2 mt-1 resize-none focus:outline-none leading-relaxed overflow-y-auto"
+              className="absolute top-[9px] w-full min-h-[56px] max-h-[200px] text-base px-3 py-2 resize-none focus:outline-none leading-relaxed overflow-y-auto"
               style={{
                 color: 'var(--color-text-primary)',
                 backgroundColor: 'transparent',
               }}
             />
-            <PromptInputFooter className="items-center gap-2 px-2 pb-1 -mt-1">
+            <PromptInputFooter className="absolute top-[42px] h-[49px] items-center gap-2 px-2 pb-1">
               <SettingsPanel
                 webSearch={false}
                 deepThink={deepThink}
@@ -455,11 +459,12 @@ const PromptInputWithDrop = ({
                 onLegalResearchChange={onLegalResearchChange}
                 onDraftModeChange={onDraftModeChange}
                 variant="compact"
-                className="bg-white/80 border border-[#E7EAF0] rounded-xl px-1.5 py-1"
+                className="absolute left-[5px] top-[32px] bg-white/80 border border-[#E7EAF0] rounded-xl px-1.5 py-1"
+                style={{ paddingTop: 4, paddingBottom: 4 }}
               />
               <PromptInputSubmit 
                 variant="default"
-                className="rounded-xl h-10 w-10 p-0 flex items-center justify-center shrink-0 transition-all duration-150 disabled:opacity-50 disabled:cursor-not-allowed"
+                className="absolute left-[834px] top-[32px] rounded-xl h-10 w-10 p-0 flex items-center justify-center shrink-0 transition-all duration-150 disabled:opacity-50 disabled:cursor-not-allowed"
                 style={{
                   backgroundColor: 'var(--color-accent)',
                   color: 'var(--color-bg-primary)',
@@ -1066,6 +1071,9 @@ export const AssistantUIChat = forwardRef<{ clearMessages: () => void; loadHisto
     const rawText = message.text || ''
     const trimmedText = rawText.trim()
     const filesSnapshot = (message.files || []) as ExtendedFileUIPart[]
+    // #region agent log
+    fetch('http://127.0.0.1:7242/ingest/2db1e09b-2b5d-4ee0-85d8-a551f942254c',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'AssistantUIChat.tsx:handlePromptSubmit:entry',message:'submit received',data:{rawTextLength:rawText.length,trimmedTextLength:trimmedText.length,filesCount:filesSnapshot.length,hasController:!!controller,isLoading,hasCaseId:!!actualCaseId},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'H2'})}).catch(()=>{});
+    // #endregion agent log
     
     // Валидация: проверяем, что есть текст или файлы
     if (!trimmedText && filesSnapshot.length === 0) {
@@ -1082,6 +1090,9 @@ export const AssistantUIChat = forwardRef<{ clearMessages: () => void; loadHisto
       } catch (e) {
         logger.warn('Failed to clear text input:', e)
       }
+      // #region agent log
+      fetch('http://127.0.0.1:7242/ingest/2db1e09b-2b5d-4ee0-85d8-a551f942254c',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'AssistantUIChat.tsx:handlePromptSubmit:clearText',message:'clear text attempted',data:{hasController:!!controller},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'H2'})}).catch(()=>{});
+      // #endregion agent log
       
       try {
         if (attachments) {
@@ -1090,6 +1101,9 @@ export const AssistantUIChat = forwardRef<{ clearMessages: () => void; loadHisto
       } catch (e) {
         logger.warn('Failed to clear attachments:', e)
       }
+      // #region agent log
+      fetch('http://127.0.0.1:7242/ingest/2db1e09b-2b5d-4ee0-85d8-a551f942254c',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'AssistantUIChat.tsx:handlePromptSubmit:clearAttachments',message:'clear attachments attempted',data:{hasAttachments:!!attachments},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'H2'})}).catch(()=>{});
+      // #endregion agent log
       
       // Затем отправляем сообщение
       await sendMessage(rawText, filesSnapshot)
