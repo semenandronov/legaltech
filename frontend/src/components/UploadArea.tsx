@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState } from 'react'
 import './UploadArea.css'
 import { createCase, processCaseFiles, getCase, AnalysisConfig, CaseInfo as CaseInfoType } from '../services/api'
 import CaseInfoForm, { CaseInfo } from './Upload/CaseInfoForm'
@@ -99,10 +99,17 @@ const UploadArea = ({ onUpload }: UploadAreaProps) => {
 
   if (step === 'info') {
     return (
-      <CaseInfoForm
-        onSubmit={handleCaseInfoSubmit}
-        onCancel={handleCancel}
-      />
+      <>
+        {error && (
+          <div className="auth-error" style={{ margin: '16px auto', maxWidth: '600px', padding: '12px', borderRadius: '8px', background: '#fee', border: '1px solid #fcc' }}>
+            {error}
+          </div>
+        )}
+        <CaseInfoForm
+          onSubmit={handleCaseInfoSubmit}
+          onCancel={handleCancel}
+        />
+      </>
     )
   }
 
@@ -118,10 +125,17 @@ const UploadArea = ({ onUpload }: UploadAreaProps) => {
 
   if (step === 'processing') {
     return (
-      <ProcessingScreen
-        caseId={caseId || ''}
-        onComplete={handleProcessingComplete}
-      />
+      <>
+        {error && (
+          <div className="auth-error" style={{ margin: '16px auto', maxWidth: '600px', padding: '12px', borderRadius: '8px', background: '#fee', border: '1px solid #fcc' }}>
+            {error}
+          </div>
+        )}
+        <ProcessingScreen
+          caseId={caseId || ''}
+          onComplete={handleProcessingComplete}
+        />
+      </>
     )
   }
 
