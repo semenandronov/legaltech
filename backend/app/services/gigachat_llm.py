@@ -483,26 +483,44 @@ class GigaChatStructuredOutput(Runnable[Any, Any]):
     
     @staticmethod
     def _get_schema_json_static(schema: Any) -> str:
-        """Получает JSON схему из Pydantic модели"""
-        import json
-        if hasattr(schema, 'model_json_schema'):
-            # Pydantic v2
-            return json.dumps(schema.model_json_schema(), ensure_ascii=False, indent=2)
-        elif hasattr(schema, 'schema'):
-            # Pydantic v1
-            return json.dumps(schema.schema(), ensure_ascii=False, indent=2)
-        else:
-            return "{}"
+        """Получает простой пример JSON из Pydantic модели (не полную схему!)"""
+        # НЕ используем model_json_schema() - он возвращает сложную схему с $defs
+        # Вместо этого создаем простой пример формата
+        return ""  # Мы будем использовать фиксированный пример в _add_json_instruction
     
     def _add_json_instruction(self, messages: List[BaseMessage]) -> List[BaseMessage]:
         """Добавляет инструкцию для JSON output в системное сообщение"""
+        # Простой пример формата (не JSON Schema!)
+        json_example = """{
+  "answer": "Ваш ответ на вопрос здесь. Используйте маркеры [1], [2] для ссылок на источники.",
+  "citations": [
+    {
+      "source_id": "id документа",
+      "file_name": "имя файла",
+      "page": 1,
+      "quote": "точная цитата из документа",
+      "char_start": 0,
+      "char_end": 100,
+      "context_before": "",
+      "context_after": ""
+    }
+  ],
+  "confidence": 0.9
+}"""
+        
         json_instruction = f"""
 
-ВАЖНО: Ты ДОЛЖЕН вернуть ответ СТРОГО в формате JSON согласно следующей схеме:
-{self._schema_json}
+ВАЖНО: Верни ответ СТРОГО в формате JSON как в примере ниже.
+НЕ возвращай определение схемы, НЕ возвращай "$defs" или "properties".
+Верни ТОЛЬКО данные в таком формате:
 
-Верни ТОЛЬКО валидный JSON без каких-либо комментариев или текста до/после JSON.
-Начни ответ сразу с {{ и закончи }}.
+{json_example}
+
+Поле "answer" обязательно - это твой ответ на вопрос пользователя.
+Поле "citations" - массив цитат из документов (может быть пустым []).
+Поле "confidence" - число от 0 до 1.
+
+Начни ответ сразу с {{ и закончи }}. Никакого текста до или после JSON.
 """
         
         new_messages = []
