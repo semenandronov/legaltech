@@ -1367,27 +1367,27 @@ class RAGService:
             context_parts.append(f"[Источник {i+1}] {source_file}, стр. {source_page}:\n{content[:2000]}")
         
         context = "\n\n".join(context_parts)
+        num_docs = len(doc_info)
         
         # Промпт с четкими инструкциями для inline citations
         prompt = f"""Ты юридический помощник. Ответь на вопрос, используя информацию из документов.
 
-КРИТИЧЕСКИ ВАЖНО - ФОРМАТ ССЫЛОК:
-- Ставь ссылку [N] СРАЗУ после факта, который взят из источника N
-- НЕ собирай ссылки в конце текста!
-- Каждый факт должен иметь свою ссылку рядом
+ДОСТУПНО {num_docs} ИСТОЧНИКОВ: [1], [2], [3], [4] (ИСПОЛЬЗУЙ ТОЛЬКО ЭТИ НОМЕРА!)
 
-ПРИМЕР ПРАВИЛЬНОГО ОТВЕТА:
-"Договор был заключен 15.03.2024 [1]. Сумма контракта составила 500 000 рублей [2]. Срок исполнения — 30 дней [1]."
+ФОРМАТ ССЫЛОК - КРИТИЧЕСКИ ВАЖНО:
+1. Ставь ссылку [N] СРАЗУ ПОСЛЕ каждого факта, взятого из источника N
+2. НИКОГДА не собирай ссылки в конце предложения или абзаца!
+3. Одна ссылка = один факт
 
-ПРИМЕР НЕПРАВИЛЬНОГО ОТВЕТА (НЕ ДЕЛАЙ ТАК!):
-"Договор был заключен 15.03.2024. Сумма контракта составила 500 000 рублей. [1][2]"
+✅ ПРАВИЛЬНО: "Система включает управление документами [1] и календарь сроков [2]."
+❌ НЕПРАВИЛЬНО: "Система включает управление документами и календарь сроков [1][2]."
 
 ДОКУМЕНТЫ:
 {context}
 
 ВОПРОС: {query}
 
-Ответь кратко, каждый факт сопровождай ссылкой [N] на источник СРАЗУ после факта."""
+Отвечай структурированно. После КАЖДОГО факта сразу ставь ссылку на источник."""
         
         llm = create_llm()
         try:
@@ -1404,8 +1404,34 @@ class RAGService:
             
             # Теперь создаем citations на основе маркеров [N] в ответе
             import re
+            
+            # Находим все маркеры и нормализуем их (если LLM использовала номера > количества документов)
             citation_markers = re.findall(r'\[(\d+)\]', answer_text)
-            unique_markers = sorted(set(int(m) for m in citation_markers if int(m) <= len(doc_info)))
+            all_markers = sorted(set(int(m) for m in citation_markers))
+            
+            # Создаем маппинг для нормализации: если есть [5][6][7][8], превращаем в [1][2][3][4]
+            marker_mapping = {}
+            valid_markers = []
+            for marker in all_markers:
+                if marker <= len(doc_info):
+                    marker_mapping[marker] = marker
+                    valid_markers.append(marker)
+                else:
+                    # Маппим на циклический индекс (5 -> 1, 6 -> 2, etc.)
+                    normalized = ((marker - 1) % len(doc_info)) + 1 if len(doc_info) > 0 else 1
+                    marker_mapping[marker] = normalized
+                    if normalized not in valid_markers:
+                        valid_markers.append(normalized)
+            
+            # Заменяем маркеры в тексте на нормализованные
+            def replace_marker(match):
+                old_num = int(match.group(1))
+                new_num = marker_mapping.get(old_num, old_num)
+                return f"[{new_num}]"
+            
+            answer_text = re.sub(r'\[(\d+)\]', replace_marker, answer_text)
+            
+            unique_markers = sorted(set(valid_markers))
             
             citations = []
             for marker in unique_markers:
