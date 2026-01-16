@@ -792,7 +792,19 @@ async def delete_file_from_case(
     # #region agent log
     try:
         with open("/Users/semyon_andronov04/Desktop/C ДВ/.cursor/debug.log", "a") as f:
-            f.write("{\"sessionId\":\"debug-session\",\"runId\":\"run1\",\"hypothesisId\":\"H1\",\"location\":\"backend/app/routes/cases.py:delete_file_from_case:entry\",\"message\":\"delete_file_from_case called\",\"data\":{\"caseId\":\"" + str(case_id) + "\",\"fileId\":\"" + str(file_id) + "\"},\"timestamp\":" + str(int(__import__("time").time() * 1000)) + "}\n")
+            log_entry = {
+                "sessionId": "debug-session",
+                "runId": "run1",
+                "hypothesisId": "H1",
+                "location": "backend/app/routes/cases.py:delete_file_from_case:entry",
+                "message": "delete_file_from_case called",
+                "data": {
+                    "caseId": str(case_id),
+                    "fileId": str(file_id)
+                },
+                "timestamp": int(time.time() * 1000)
+            }
+            f.write(json.dumps(log_entry) + "\n")
     except Exception:
         pass
     # #endregion agent log
@@ -806,7 +818,18 @@ async def delete_file_from_case(
         # #region agent log
         try:
             with open("/Users/semyon_andronov04/Desktop/C ДВ/.cursor/debug.log", "a") as f:
-                f.write("{\"sessionId\":\"debug-session\",\"runId\":\"run1\",\"hypothesisId\":\"H1\",\"location\":\"backend/app/routes/cases.py:delete_file_from_case:case_missing\",\"message\":\"case not found\",\"data\":{\"caseId\":\"" + str(case_id) + "\"},\"timestamp\":" + str(int(__import__("time").time() * 1000)) + "}\n")
+                log_entry = {
+                    "sessionId": "debug-session",
+                    "runId": "run1",
+                    "hypothesisId": "H1",
+                    "location": "backend/app/routes/cases.py:delete_file_from_case:case_missing",
+                    "message": "case not found",
+                    "data": {
+                        "caseId": str(case_id)
+                    },
+                    "timestamp": int(time.time() * 1000)
+                }
+                f.write(json.dumps(log_entry) + "\n")
         except Exception:
             pass
         # #endregion agent log
@@ -822,7 +845,19 @@ async def delete_file_from_case(
         # #region agent log
         try:
             with open("/Users/semyon_andronov04/Desktop/C ДВ/.cursor/debug.log", "a") as f:
-                f.write("{\"sessionId\":\"debug-session\",\"runId\":\"run1\",\"hypothesisId\":\"H1\",\"location\":\"backend/app/routes/cases.py:delete_file_from_case:file_missing\",\"message\":\"file not found\",\"data\":{\"caseId\":\"" + str(case_id) + "\",\"fileId\":\"" + str(file_id) + "\"},\"timestamp\":" + str(int(__import__("time").time() * 1000)) + "}\n")
+                log_entry = {
+                    "sessionId": "debug-session",
+                    "runId": "run1",
+                    "hypothesisId": "H1",
+                    "location": "backend/app/routes/cases.py:delete_file_from_case:file_missing",
+                    "message": "file not found",
+                    "data": {
+                        "caseId": str(case_id),
+                        "fileId": str(file_id)
+                    },
+                    "timestamp": int(time.time() * 1000)
+                }
+                f.write(json.dumps(log_entry) + "\n")
         except Exception:
             pass
         # #endregion agent log
@@ -848,7 +883,20 @@ async def delete_file_from_case(
             # #region agent log
             try:
                 with open("/Users/semyon_andronov04/Desktop/C ДВ/.cursor/debug.log", "a") as f:
-                    f.write("{\"sessionId\":\"debug-session\",\"runId\":\"run1\",\"hypothesisId\":\"H2\",\"location\":\"backend/app/routes/cases.py:delete_file_from_case:disk_cleanup\",\"message\":\"disk cleanup attempted\",\"data\":{\"filePath\":\"" + str(file.file_path) + "\",\"fileFullPath\":\"" + str(file_full_path) + "\",\"exists\":" + ("true" if os.path.exists(file_full_path) else "false") + "},\"timestamp\":" + str(int(__import__("time").time() * 1000)) + "}\n")
+                    log_entry = {
+                        "sessionId": "debug-session",
+                        "runId": "run1",
+                        "hypothesisId": "H2",
+                        "location": "backend/app/routes/cases.py:delete_file_from_case:disk_cleanup",
+                        "message": "disk cleanup attempted",
+                        "data": {
+                            "filePath": str(file.file_path),
+                            "fileFullPath": str(file_full_path),
+                            "exists": os.path.exists(file_full_path)
+                        },
+                        "timestamp": int(time.time() * 1000)
+                    }
+                    f.write(json.dumps(log_entry) + "\n")
             except Exception:
                 pass
             # #endregion agent log
@@ -874,7 +922,20 @@ async def delete_file_from_case(
         # #region agent log
         try:
             with open("/Users/semyon_andronov04/Desktop/C ДВ/.cursor/debug.log", "a") as f:
-                f.write("{\"sessionId\":\"debug-session\",\"runId\":\"run1\",\"hypothesisId\":\"H1\",\"location\":\"backend/app/routes/cases.py:delete_file_from_case:commit\",\"message\":\"delete committed\",\"data\":{\"caseId\":\"" + str(case_id) + "\",\"fileId\":\"" + str(file_id) + "\",\"remainingFiles\":" + str(len(remaining_files)) + "},\"timestamp\":" + str(int(__import__("time").time() * 1000)) + "}\n")
+                log_entry = {
+                    "sessionId": "debug-session",
+                    "runId": "run1",
+                    "hypothesisId": "H1",
+                    "location": "backend/app/routes/cases.py:delete_file_from_case:commit",
+                    "message": "delete committed",
+                    "data": {
+                        "caseId": str(case_id),
+                        "fileId": str(file_id),
+                        "remainingFiles": len(remaining_files)
+                    },
+                    "timestamp": int(time.time() * 1000)
+                }
+                f.write(json.dumps(log_entry) + "\n")
         except Exception:
             pass
         # #endregion agent log
@@ -901,7 +962,20 @@ async def delete_file_from_case(
         # #region agent log
         try:
             with open("/Users/semyon_andronov04/Desktop/C ДВ/.cursor/debug.log", "a") as f:
-                f.write("{\"sessionId\":\"debug-session\",\"runId\":\"run1\",\"hypothesisId\":\"H3\",\"location\":\"backend/app/routes/cases.py:delete_file_from_case:exception\",\"message\":\"delete failed\",\"data\":{\"caseId\":\"" + str(case_id) + "\",\"fileId\":\"" + str(file_id) + "\",\"error\":\"" + str(e).replace(\"\\\"\",\"'\") + "\"},\"timestamp\":" + str(int(__import__("time").time() * 1000)) + "}\n")
+                log_entry = {
+                    "sessionId": "debug-session",
+                    "runId": "run1",
+                    "hypothesisId": "H3",
+                    "location": "backend/app/routes/cases.py:delete_file_from_case:exception",
+                    "message": "delete failed",
+                    "data": {
+                        "caseId": str(case_id),
+                        "fileId": str(file_id),
+                        "error": str(e)
+                    },
+                    "timestamp": int(time.time() * 1000)
+                }
+                f.write(json.dumps(log_entry) + "\n")
         except Exception:
             pass
         # #endregion agent log
