@@ -362,7 +362,7 @@ class ChatAgent:
                     
                     # Формат 1: {"messages": [...]} (прямой)
                     if "messages" in chunk:
-                    messages = chunk.get("messages", [])
+                        messages = chunk.get("messages", [])
                     else:
                         # Формат 2: {"node_name": {"messages": [...]}} (langgraph)
                         for node_name, node_data in chunk.items():
@@ -421,7 +421,7 @@ class ChatAgent:
                                         if content and content not in seen_contents:
                                             logger.debug(f"[ChatAgent] Yielding full content: {len(content)} chars")
                                             seen_contents.add(content)
-                                yield content
+                                            yield content
                                     
                                     last_content = content
             
