@@ -1325,10 +1325,11 @@ class RAGService:
         history: Optional[List[Dict]] = None
     ) -> "AnswerWithCitations":
         """
-        Генерирует ответ со структурированными цитатами через with_structured_output.
+        Генерирует ответ со структурированными цитатами.
         
-        Использует LangChain's with_structured_output для автоматического парсинга
-        ответа с цитатами, включая точные координаты для подсветки в документе.
+        Использует простой подход:
+        1. Запрашивает у GigaChat ответ с маркерами [N] и цитатами
+        2. Сами вычисляем координаты char_start/char_end через поиск текста
         
         Args:
             query: Запрос пользователя
@@ -1338,140 +1339,101 @@ class RAGService:
         Returns:
             AnswerWithCitations объект с ответом и списком EnhancedCitation
         """
-        # region agent log H1
-        try:
-            with open("/Users/semyon_andronov04/Desktop/C ДВ/.cursor/debug.log", "a") as f:
-                f.write(json.dumps({
-                    "sessionId": "debug-session",
-                    "runId": "run1",
-                    "hypothesisId": "H1",
-                    "location": "rag_service.py:generate_with_structured_citations:entry",
-                    "message": "entered structured citations generation",
-                    "data": {
-                        "query_len": len(query) if query else 0,
-                        "documents_count": len(documents) if documents else 0,
-                        "history_count": len(history) if history else 0
-                    },
-                    "timestamp": int(time.time() * 1000)
-                }) + "\n")
-        except Exception:
-            pass
-        # endregion
         from app.services.langchain_agents.schemas.citation_schema import AnswerWithCitations, EnhancedCitation
         from app.services.llm_factory import create_llm
         from langchain_core.messages import HumanMessage, SystemMessage
         
-        # Подготовка контекста с позициями
-        context_with_positions = self._prepare_context_with_positions(documents)
+        # Подготовка контекста - упрощенный формат
+        context_parts = []
+        doc_info = []  # Сохраняем инфо о документах для поиска координат
         
-        # Формируем промпт
-        prompt = f"""Ответь на вопрос, используя ТОЛЬКО информацию из документов.
-Для каждого факта укажи источник в формате [N] в тексте ответа.
-
-В citations укажи точные координаты цитат для подсветки в документе:
-- source_id: ID документа из metadata
-- file_name: имя файла
-- page: номер страницы
-- quote: точная цитата из документа
-- char_start: начальная позиция символа в документе
-- char_end: конечная позиция символа в документе
-- context_before: контекст до цитаты (до 50 символов)
-- context_after: контекст после цитаты (до 50 символов)
-
-Документы:
-{context_with_positions}
-
-Вопрос: {query}
-"""
+        for i, doc in enumerate(documents):
+            content = doc.page_content
+            metadata = doc.metadata
+            source_file = metadata.get("source_file", f"doc_{i+1}")
+            source_page = metadata.get("source_page", 1)
+            doc_id = metadata.get("source_id", metadata.get("doc_id", f"doc_{i+1}"))
+            
+            doc_info.append({
+                "index": i + 1,
+                "source_id": doc_id,
+                "file_name": source_file,
+                "page": source_page,
+                "content": content,
+                "char_start": metadata.get("char_start", 0),
+                "char_end": metadata.get("char_end", len(content))
+            })
+            
+            context_parts.append(f"[Источник {i+1}] {source_file}, стр. {source_page}:\n{content[:2000]}")
         
-        # Используем with_structured_output для автоматического парсинга
-        # Используем паттерн с ChatPromptTemplate, как в других местах кода
+        context = "\n\n".join(context_parts)
+        
+        # Упрощенный промпт - не просим координаты!
+        prompt = f"""Ты юридический помощник. Ответь на вопрос, используя ТОЛЬКО информацию из документов ниже.
+
+ПРАВИЛА:
+1. В ответе ставь ссылки [1], [2] и т.д. на источники после фактов
+2. Используй только факты из документов
+3. Если информации нет - скажи об этом
+
+ДОКУМЕНТЫ:
+{context}
+
+ВОПРОС: {query}
+
+Ответь кратко и по существу, обязательно со ссылками [N] на источники."""
+        
         llm = create_llm()
         try:
-            from langchain_core.prompts import ChatPromptTemplate
+            # Вызываем LLM напрямую без structured output (проще и надежнее)
+            messages = [
+                SystemMessage(content="Ты помощник-юрист. Отвечай кратко и точно."),
+                HumanMessage(content=prompt)
+            ]
             
-            # Формируем системный промпт
-            system_prompt = "Ты помощник-юрист. Отвечай точно, используя только информацию из предоставленных документов."
+            response = llm.invoke(messages)
+            answer_text = response.content if hasattr(response, 'content') else str(response)
             
-            # Создаем промпт шаблон
-            prompt_template = ChatPromptTemplate.from_messages([
-                ("system", system_prompt),
-                ("human", prompt)
-            ])
+            logger.info(f"[StructuredCitations] Got answer: {answer_text[:200]}...")
             
-            # Создаем цепочку с structured output
-            structured_llm = llm.with_structured_output(AnswerWithCitations)
-            chain = prompt_template | structured_llm
+            # Теперь создаем citations на основе маркеров [N] в ответе
+            import re
+            citation_markers = re.findall(r'\[(\d+)\]', answer_text)
+            unique_markers = sorted(set(int(m) for m in citation_markers if int(m) <= len(doc_info)))
             
-            # region agent log H2
-            try:
-                import json
-                import time
-                import inspect
-                with open("/Users/semyon_andronov04/Desktop/C ДВ/.cursor/debug.log", "a") as f:
-                    f.write(json.dumps({
-                        "sessionId": "debug-session",
-                        "runId": "run1",
-                        "hypothesisId": "H2",
-                        "location": "rag_service.py:generate_with_structured_citations:before_invoke",
-                        "message": "prepared structured LLM chain",
-                        "data": {
-                            "llm_class": llm.__class__.__name__,
-                            "structured_llm_class": structured_llm.__class__.__name__,
-                            "chain_class": chain.__class__.__name__,
-                            "prompt_length": len(prompt)
-                        },
-                        "timestamp": int(time.time() * 1000)
-                    }) + "\n")
-            except Exception:
-                pass
-            # endregion
+            citations = []
+            for marker in unique_markers:
+                if marker <= len(doc_info):
+                    doc = doc_info[marker - 1]
+                    # Берем первые 100 символов документа как quote
+                    quote = doc["content"][:150].strip()
+                    if len(doc["content"]) > 150:
+                        quote += "..."
+                    
+                    citations.append(EnhancedCitation(
+                        source_id=str(doc["source_id"]),
+                        file_name=doc["file_name"],
+                        page=doc["page"],
+                        quote=quote,
+                        char_start=doc["char_start"],
+                        char_end=min(doc["char_start"] + 150, doc["char_end"]),
+                        context_before="",
+                        context_after=""
+                    ))
             
-            # Вызываем цепочку с пустым словарем (промпт уже в шаблоне)
-            result = chain.invoke({})
-            # region agent log H3
-            try:
-                with open("/Users/semyon_andronov04/Desktop/C ДВ/.cursor/debug.log", "a") as f:
-                    f.write(json.dumps({
-                        "sessionId": "debug-session",
-                        "runId": "run1",
-                        "hypothesisId": "H3",
-                        "location": "rag_service.py:generate_with_structured_citations:after_invoke",
-                        "message": "structured invoke completed",
-                        "data": {
-                            "result_type": type(result).__name__,
-                            "has_answer": bool(getattr(result, "answer", "")),
-                            "citations_count": len(getattr(result, "citations", []) or [])
-                        },
-                        "timestamp": int(time.time() * 1000)
-                    }) + "\n")
-            except Exception:
-                pass
-            # endregion
-            return result
+            logger.info(f"[StructuredCitations] Created {len(citations)} citations from markers: {unique_markers}")
+            
+            return AnswerWithCitations(
+                answer=answer_text,
+                citations=citations,
+                confidence=0.8 if citations else 0.5
+            )
+            
         except Exception as e:
-            # region agent log H4
-            try:
-                with open("/Users/semyon_andronov04/Desktop/C ДВ/.cursor/debug.log", "a") as f:
-                    f.write(json.dumps({
-                        "sessionId": "debug-session",
-                        "runId": "run1",
-                        "hypothesisId": "H4",
-                        "location": "rag_service.py:generate_with_structured_citations:exception",
-                        "message": "structured invoke failed",
-                        "data": {
-                            "error_type": type(e).__name__,
-                            "error_message": str(e)
-                        },
-                        "timestamp": int(time.time() * 1000)
-                    }) + "\n")
-            except Exception:
-                pass
-            # endregion
             logger.error(f"Error in generate_with_structured_citations: {e}", exc_info=True)
             # Fallback: возвращаем базовый ответ
             return AnswerWithCitations(
-                answer=f"Ошибка генерации структурированного ответа: {str(e)}",
+                answer=f"Ошибка генерации ответа: {str(e)}",
                 citations=[],
                 confidence=0.0
             )
