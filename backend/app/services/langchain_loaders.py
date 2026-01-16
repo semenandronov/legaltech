@@ -158,7 +158,7 @@ class DocumentLoaderService:
                         text = re.sub(r"\s+\n", "\n", text)
                         text = re.sub(r"[ \t]+", " ", text).strip()
                         if text:
-                        documents = [Document(page_content=text, metadata={"source_file": filename})]
+                            documents = [Document(page_content=text, metadata={"source_file": filename})]
                             logger.info(f"Loaded DOCX {filename} using mammoth: {len(text)} chars")
                     except Exception as e:
                         mammoth_error = e
