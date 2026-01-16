@@ -750,20 +750,8 @@ async def stream_chat_response(
             logger.warning(f"[RAG] Failed to load context: {rag_error}")
             rag_docs = []  # Устанавливаем пустой список при ошибке
         
-        # ВСЕГДА используем умного ChatAgent
-        # Передаем legal_research для включения tools ГАРАНТ + добавляем контекст ГАРАНТ напрямую для надежности
-        from app.services.langchain_agents.chat_agent import ChatAgent
-        
-        logger.info(f"[ChatAgent] Initializing ChatAgent for question: {question[:100]}... (legal_research={legal_research})")
-        chat_agent = ChatAgent(
-            case_id=case_id,
-            rag_service=rag_service,
-            db=db,
-            legal_research_enabled=legal_research  # Включаем tools ГАРАНТ если legal_research=True
-        )
-        logger.info(f"[ChatAgent] ChatAgent initialized successfully, legal_research_enabled={legal_research}")
-        
-        logger.info("[ChatAgent] Using ChatAgent with tools and ГАРАНТ context injection")
+        # ChatAgent используется только когда не применяем structured citations
+        chat_agent = None
         
         # Добавляем контекст документа редактора и ГАРАНТ в вопрос
         enhanced_question = question
@@ -859,6 +847,17 @@ async def stream_chat_response(
                     chunk = word + (" " if i < len(words) - 1 else "")
                     yield f"data: {json.dumps({'textDelta': chunk}, ensure_ascii=False)}\n\n"
             else:
+                # Импортируем ChatAgent только если нужен обычный режим
+                from app.services.langchain_agents.chat_agent import ChatAgent
+                logger.info(f"[ChatAgent] Initializing ChatAgent for question: {question[:100]}... (legal_research={legal_research})")
+                chat_agent = ChatAgent(
+                    case_id=case_id,
+                    rag_service=rag_service,
+                    db=db,
+                    legal_research_enabled=legal_research  # Включаем tools ГАРАНТ если legal_research=True
+                )
+                logger.info(f"[ChatAgent] ChatAgent initialized successfully, legal_research_enabled={legal_research}")
+                logger.info("[ChatAgent] Using ChatAgent with tools and ГАРАНТ context injection")
                 # Stream ответ от ChatAgent (с защитой от JSON-ответов)
                 avoid_json = not chat_agent.user_requested_json(question)
                 buffered_chunks: List[str] = []
