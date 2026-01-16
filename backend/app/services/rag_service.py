@@ -3,6 +3,9 @@
 Phase 1.3: Added multi-stage RAG pipeline with reranking and query condensation.
 """
 from typing import List, Dict, Any, Tuple, Optional, Type
+import json
+import time
+import inspect
 from sqlalchemy.orm import Session
 from langchain_core.documents import Document
 from app.config import config
@@ -1335,6 +1338,25 @@ class RAGService:
         Returns:
             AnswerWithCitations объект с ответом и списком EnhancedCitation
         """
+        # region agent log H1
+        try:
+            with open("/Users/semyon_andronov04/Desktop/C ДВ/.cursor/debug.log", "a") as f:
+                f.write(json.dumps({
+                    "sessionId": "debug-session",
+                    "runId": "run1",
+                    "hypothesisId": "H1",
+                    "location": "rag_service.py:generate_with_structured_citations:entry",
+                    "message": "entered structured citations generation",
+                    "data": {
+                        "query_len": len(query) if query else 0,
+                        "documents_count": len(documents) if documents else 0,
+                        "history_count": len(history) if history else 0
+                    },
+                    "timestamp": int(time.time() * 1000)
+                }) + "\n")
+        except Exception:
+            pass
+        # endregion
         from app.services.langchain_agents.schemas.citation_schema import AnswerWithCitations, EnhancedCitation
         from app.services.llm_factory import create_llm
         from langchain_core.messages import HumanMessage, SystemMessage
@@ -1362,29 +1384,90 @@ class RAGService:
 Вопрос: {query}
 """
         
-        # Создаём сообщения
-        messages = [SystemMessage(content="Ты помощник-юрист. Отвечай точно, используя только информацию из предоставленных документов.")]
-        
-        # Добавляем историю если есть
-        if history:
-            from langchain_core.messages import AIMessage
-            for msg in history:
-                role = msg.get("role", "")
-                content = msg.get("content", "")
-                if role == "user":
-                    messages.append(HumanMessage(content=content))
-                elif role == "assistant":
-                    messages.append(AIMessage(content=content))
-        
-        messages.append(HumanMessage(content=prompt))
-        
         # Используем with_structured_output для автоматического парсинга
+        # Используем паттерн с ChatPromptTemplate, как в других местах кода
         llm = create_llm()
         try:
+            from langchain_core.prompts import ChatPromptTemplate
+            
+            # Формируем системный промпт
+            system_prompt = "Ты помощник-юрист. Отвечай точно, используя только информацию из предоставленных документов."
+            
+            # Создаем промпт шаблон
+            prompt_template = ChatPromptTemplate.from_messages([
+                ("system", system_prompt),
+                ("human", prompt)
+            ])
+            
+            # Создаем цепочку с structured output
             structured_llm = llm.with_structured_output(AnswerWithCitations)
-            result = structured_llm.invoke(messages)
+            chain = prompt_template | structured_llm
+            
+            # region agent log H2
+            try:
+                import json
+                import time
+                import inspect
+                with open("/Users/semyon_andronov04/Desktop/C ДВ/.cursor/debug.log", "a") as f:
+                    f.write(json.dumps({
+                        "sessionId": "debug-session",
+                        "runId": "run1",
+                        "hypothesisId": "H2",
+                        "location": "rag_service.py:generate_with_structured_citations:before_invoke",
+                        "message": "prepared structured LLM chain",
+                        "data": {
+                            "llm_class": llm.__class__.__name__,
+                            "structured_llm_class": structured_llm.__class__.__name__,
+                            "chain_class": chain.__class__.__name__,
+                            "prompt_length": len(prompt)
+                        },
+                        "timestamp": int(time.time() * 1000)
+                    }) + "\n")
+            except Exception:
+                pass
+            # endregion
+            
+            # Вызываем цепочку с пустым словарем (промпт уже в шаблоне)
+            result = chain.invoke({})
+            # region agent log H3
+            try:
+                with open("/Users/semyon_andronov04/Desktop/C ДВ/.cursor/debug.log", "a") as f:
+                    f.write(json.dumps({
+                        "sessionId": "debug-session",
+                        "runId": "run1",
+                        "hypothesisId": "H3",
+                        "location": "rag_service.py:generate_with_structured_citations:after_invoke",
+                        "message": "structured invoke completed",
+                        "data": {
+                            "result_type": type(result).__name__,
+                            "has_answer": bool(getattr(result, "answer", "")),
+                            "citations_count": len(getattr(result, "citations", []) or [])
+                        },
+                        "timestamp": int(time.time() * 1000)
+                    }) + "\n")
+            except Exception:
+                pass
+            # endregion
             return result
         except Exception as e:
+            # region agent log H4
+            try:
+                with open("/Users/semyon_andronov04/Desktop/C ДВ/.cursor/debug.log", "a") as f:
+                    f.write(json.dumps({
+                        "sessionId": "debug-session",
+                        "runId": "run1",
+                        "hypothesisId": "H4",
+                        "location": "rag_service.py:generate_with_structured_citations:exception",
+                        "message": "structured invoke failed",
+                        "data": {
+                            "error_type": type(e).__name__,
+                            "error_message": str(e)
+                        },
+                        "timestamp": int(time.time() * 1000)
+                    }) + "\n")
+            except Exception:
+                pass
+            # endregion
             logger.error(f"Error in generate_with_structured_citations: {e}", exc_info=True)
             # Fallback: возвращаем базовый ответ
             return AnswerWithCitations(
