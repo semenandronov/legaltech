@@ -26,7 +26,7 @@ import {
 import { Loader } from '../ai-elements/loader'
 import DocumentPreviewSheet from './DocumentPreviewSheet'
 import { SourceInfo } from '@/services/api'
-import { useOptionalProviderAttachments, useOptionalPromptInputController } from '../ai-elements/prompt-input'
+import { useOptionalProviderAttachments } from '../ai-elements/prompt-input'
 import { Plus, Check, FileText, X } from 'lucide-react'
 import type { ExtendedFileUIPart } from '../ai-elements/prompt-input'
 
@@ -534,7 +534,10 @@ export const AssistantUIChat = forwardRef<{ clearMessages: () => void; loadHisto
   const [previewSource, setPreviewSource] = useState<SourceInfo | null>(null)
   const [allCurrentSources, setAllCurrentSources] = useState<SourceInfo[]>([])
   
-  // Получаем attachments для извлечения template_file_id
+  // ВАЖНО: Этот хук вызывается ВНЕ PromptInputProvider, поэтому возвращает null.
+  // Используется только для логирования в sendMessage.
+  // Реальный attachments находится в PromptInputWithDrop (внутри Provider).
+  // Очистка поля ввода происходит автоматически в prompt-input.tsx после успешного onSubmit.
   const attachments = useOptionalProviderAttachments()
 
   // Load chat history on mount
@@ -1065,15 +1068,10 @@ export const AssistantUIChat = forwardRef<{ clearMessages: () => void; loadHisto
     }
   }, [])
 
-  const controller = useOptionalPromptInputController()
-
   const handlePromptSubmit = useCallback(async (message: { text: string; files: any[] }, _event: React.FormEvent<HTMLFormElement>) => {
     const rawText = message.text || ''
     const trimmedText = rawText.trim()
     const filesSnapshot = (message.files || []) as ExtendedFileUIPart[]
-    // #region agent log
-    fetch('http://127.0.0.1:7242/ingest/2db1e09b-2b5d-4ee0-85d8-a551f942254c',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'AssistantUIChat.tsx:handlePromptSubmit:entry',message:'submit received',data:{rawTextLength:rawText.length,trimmedTextLength:trimmedText.length,filesCount:filesSnapshot.length,hasController:!!controller,isLoading,hasCaseId:!!actualCaseId},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'H2'})}).catch(()=>{});
-    // #endregion agent log
     
     // Валидация: проверяем, что есть текст или файлы
     if (!trimmedText && filesSnapshot.length === 0) {
@@ -1081,34 +1079,15 @@ export const AssistantUIChat = forwardRef<{ clearMessages: () => void; loadHisto
     }
     
     if (!isLoading && actualCaseId) {
-      // Сначала очищаем поле ввода и attachments ПЕРЕД отправкой
-      // чтобы пользователь сразу видел что сообщение отправляется
-      try {
-        if (controller) {
-          controller.textInput.clear()
-        }
-      } catch (e) {
-        logger.warn('Failed to clear text input:', e)
-      }
-      // #region agent log
-      fetch('http://127.0.0.1:7242/ingest/2db1e09b-2b5d-4ee0-85d8-a551f942254c',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'AssistantUIChat.tsx:handlePromptSubmit:clearText',message:'clear text attempted',data:{hasController:!!controller},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'H2'})}).catch(()=>{});
-      // #endregion agent log
+      // ВАЖНО: Очистка поля ввода и attachments происходит автоматически
+      // в prompt-input.tsx после успешного завершения этой async функции.
+      // НЕ пытаемся очистить здесь вручную - хуки controller/attachments 
+      // вызваны вне PromptInputProvider и всегда null.
       
-      try {
-        if (attachments) {
-          attachments.clear()
-        }
-      } catch (e) {
-        logger.warn('Failed to clear attachments:', e)
-      }
-      // #region agent log
-      fetch('http://127.0.0.1:7242/ingest/2db1e09b-2b5d-4ee0-85d8-a551f942254c',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'AssistantUIChat.tsx:handlePromptSubmit:clearAttachments',message:'clear attachments attempted',data:{hasAttachments:!!attachments},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'H2'})}).catch(()=>{});
-      // #endregion agent log
-      
-      // Затем отправляем сообщение
+      // Отправляем сообщение
       await sendMessage(rawText, filesSnapshot)
     }
-  }, [sendMessage, isLoading, actualCaseId, controller, attachments])
+  }, [sendMessage, isLoading, actualCaseId])
 
   // Expose sendMessage for WelcomeScreen
   const handleQuickAction = useCallback((prompt: string) => {

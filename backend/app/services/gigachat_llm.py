@@ -399,8 +399,44 @@ class ChatGigaChat(BaseChatModel):
         """Проверяет, доступен ли GigaChat"""
         return bool(self.credentials and hasattr(self, '_client') and self._client)
     
-    def invoke(self, messages: List[BaseMessage], **kwargs) -> BaseMessage:
-        """Invoke LLM and return message"""
+    def invoke(
+        self, 
+        input: Any, 
+        config: Optional[Any] = None,
+        **kwargs
+    ) -> BaseMessage:
+        """
+        Invoke LLM and return message.
+        
+        Соответствует интерфейсу LangChain Runnable для совместимости с 
+        with_structured_output() и другими цепочками.
+        
+        Args:
+            input: Сообщения (List[BaseMessage]) или другой input
+            config: RunnableConfig (игнорируется, но принимается для совместимости)
+            **kwargs: Дополнительные аргументы
+        
+        Returns:
+            AIMessage с ответом модели
+        """
+        # Если input уже список сообщений - используем напрямую
+        if isinstance(input, list):
+            messages = input
+        # Если input - это dict (например, от ChatPromptTemplate)
+        elif isinstance(input, dict):
+            # Пытаемся извлечь messages из dict
+            messages = input.get("messages", [])
+            if not messages:
+                # Или создаем сообщение из text/content
+                text = input.get("text") or input.get("content") or str(input)
+                messages = [HumanMessage(content=text)]
+        # Если input - строка
+        elif isinstance(input, str):
+            messages = [HumanMessage(content=input)]
+        else:
+            # Пробуем преобразовать в строку
+            messages = [HumanMessage(content=str(input))]
+        
         result = self._generate(messages, **kwargs)
         return result.generations[0].message
 
