@@ -21,6 +21,7 @@ import {
   PromptInputBody,
   PromptInputTextarea,
   PromptInputSubmit,
+  PromptInputFooter,
 } from '../ai-elements/prompt-input'
 import { Loader } from '../ai-elements/loader'
 import DocumentPreviewSheet from './DocumentPreviewSheet'
@@ -88,6 +89,17 @@ interface Message {
       }
     }
   }>
+  // Структурированные citations для подсветки в документах
+  citations?: Array<{  // EnhancedCitation
+    source_id: string
+    file_name: string
+    page: number
+    quote: string
+    char_start: number
+    char_end: number
+    context_before?: string
+    context_after?: string
+  }>
   // Фаза 9.3: Human feedback request
   feedbackRequest?: {
     requestId: string
@@ -144,6 +156,12 @@ interface PromptInputWithDropProps {
   isLoading: boolean
   selectedText?: string
   documentEditorMode?: boolean
+  deepThink: boolean
+  legalResearch: boolean
+  draftMode: boolean
+  onDeepThinkChange: (value: boolean) => void
+  onLegalResearchChange: (value: boolean) => void
+  onDraftModeChange: (value: boolean) => void
 }
 
 // Компонент для отображения файла как чипа (chip)
@@ -192,7 +210,20 @@ const FileChip = ({
   );
 };
 
-const PromptInputWithDrop = ({ actualCaseId, onDocumentDrop, handlePromptSubmit, isLoading, selectedText, documentEditorMode }: PromptInputWithDropProps) => {
+const PromptInputWithDrop = ({
+  actualCaseId,
+  onDocumentDrop,
+  handlePromptSubmit,
+  isLoading,
+  selectedText,
+  documentEditorMode,
+  deepThink,
+  legalResearch,
+  draftMode,
+  onDeepThinkChange,
+  onLegalResearchChange,
+  onDraftModeChange,
+}: PromptInputWithDropProps) => {
   const attachments = useOptionalProviderAttachments()
   const containerRef = useRef<HTMLDivElement | null>(null)
   const [isDraggingOver, setIsDraggingOver] = useState(false)
@@ -390,38 +421,44 @@ const PromptInputWithDrop = ({ actualCaseId, onDocumentDrop, handlePromptSubmit,
       
       <PromptInput
         onSubmit={(message, event) => handlePromptSubmit(message, event)}
-        className="w-full [&_form_input-group]:border [&_form_input-group]:border-border [&_form_input-group]:rounded-lg [&_form_input-group]:bg-bg-elevated [&_form_input-group]:focus-within:border-border-strong [&_form_input-group]:transition-all [&_form_input-group]:hover:border-border-strong"
-        style={{
-          '--input-border': 'var(--color-border)',
-          '--input-bg': 'var(--color-bg-elevated)',
-          '--input-focus-border': 'var(--color-border-strong)',
-        } as React.CSSProperties}
+        className="w-full [&_[data-slot=input-group]]:rounded-2xl [&_[data-slot=input-group]]:border [&_[data-slot=input-group]]:border-[#E7EAF0] [&_[data-slot=input-group]]:bg-[#F8FAFC] [&_[data-slot=input-group]]:shadow-sm [&_[data-slot=input-group]]:focus-within:border-[#CBD5E1] [&_[data-slot=input-group]]:transition-all"
       >
         <PromptInputBody>
-          <div className="flex items-end gap-2 w-full">
-            <div className="flex-1 relative">
-              <PromptInputTextarea 
-                placeholder="Введите вопрос или используйте промпт..."
-                className="w-full min-h-[120px] max-h-[300px] text-base py-4 px-4 resize-none focus:outline-none leading-relaxed overflow-y-auto"
-                style={{
-                  color: 'var(--color-text-primary)',
-                  backgroundColor: 'transparent',
-                  padding: 'var(--space-4)',
-                }}
+          <div className="flex flex-col w-full gap-2 px-2 py-2">
+            <PromptInputTextarea 
+              placeholder="Задайте уточняющий вопрос"
+              className="w-full min-h-[56px] max-h-[200px] text-base px-3 py-2 resize-none focus:outline-none leading-relaxed overflow-y-auto"
+              style={{
+                color: 'var(--color-text-primary)',
+                backgroundColor: 'transparent',
+              }}
+            />
+            <PromptInputFooter className="items-center gap-2 px-2 pb-1">
+              <SettingsPanel
+                webSearch={false}
+                deepThink={deepThink}
+                legalResearch={legalResearch}
+                draftMode={draftMode}
+                onWebSearchChange={() => {}}
+                onDeepThinkChange={onDeepThinkChange}
+                onLegalResearchChange={onLegalResearchChange}
+                onDraftModeChange={onDraftModeChange}
+                variant="compact"
+                className="bg-white/80 border border-[#E7EAF0] rounded-xl px-1.5 py-1"
               />
-            </div>
+              <PromptInputSubmit 
+                variant="default"
+                className="rounded-xl h-10 w-10 p-0 flex items-center justify-center shrink-0 transition-all duration-150 disabled:opacity-50 disabled:cursor-not-allowed"
+                style={{
+                  backgroundColor: 'var(--color-accent)',
+                  color: 'var(--color-bg-primary)',
+                }}
+                disabled={isLoading || !actualCaseId}
+                status={isLoading ? "submitted" : undefined}
+                aria-label="Отправить сообщение"
+              />
+            </PromptInputFooter>
           </div>
-          <PromptInputSubmit 
-            variant="default"
-            className="rounded-md h-10 w-10 p-0 flex items-center justify-center shrink-0 transition-all duration-150 disabled:opacity-50 disabled:cursor-not-allowed"
-            style={{
-              backgroundColor: 'var(--color-accent)',
-              color: 'var(--color-bg-primary)',
-            }}
-            disabled={isLoading || !actualCaseId}
-            status={isLoading ? "submitted" : undefined}
-            aria-label="Отправить сообщение"
-          />
         </PromptInputBody>
       </PromptInput>
       
@@ -739,6 +776,28 @@ export const AssistantUIChat = forwardRef<{ clearMessages: () => void; loadHisto
                             title: source.title || source.file,
                             url: source.url,
                             page: source.page,
+                          })),
+                        }
+                      : msg
+                  )
+                )
+              }
+              // Обработка структурированных citations из SSE
+              if (data.type === 'citations' && data.citations) {
+                setMessages((prev) =>
+                  prev.map((msg) =>
+                    msg.id === assistantMsgId
+                      ? {
+                          ...msg,
+                          citations: data.citations.map((citation: any) => ({
+                            source_id: citation.source_id,
+                            file_name: citation.file_name,
+                            page: citation.page || 1,
+                            quote: citation.quote || '',
+                            char_start: citation.char_start,
+                            char_end: citation.char_end,
+                            context_before: citation.context_before || '',
+                            context_after: citation.context_after || '',
                           })),
                         }
                       : msg
@@ -1407,20 +1466,14 @@ export const AssistantUIChat = forwardRef<{ clearMessages: () => void; loadHisto
                 isLoading={isLoading}
                 selectedText={selectedText}
                 documentEditorMode={documentEditorMode}
+                deepThink={deepThink}
+                legalResearch={legalResearch}
+                draftMode={draftMode}
+                onDeepThinkChange={setDeepThink}
+                onLegalResearchChange={setLegalResearch}
+                onDraftModeChange={setDraftMode}
               />
             </PromptInputProvider>
-
-            {/* Компактная панель настроек */}
-            <SettingsPanel
-              webSearch={false}
-              deepThink={deepThink}
-              legalResearch={legalResearch}
-              draftMode={draftMode}
-              onWebSearchChange={() => {}}
-              onDeepThinkChange={setDeepThink}
-              onLegalResearchChange={setLegalResearch}
-              onDraftModeChange={setDraftMode}
-            />
 
           </div>
         </div>
@@ -1447,20 +1500,14 @@ export const AssistantUIChat = forwardRef<{ clearMessages: () => void; loadHisto
                 isLoading={isLoading}
                 selectedText={selectedText}
                 documentEditorMode={documentEditorMode}
+                deepThink={deepThink}
+                legalResearch={legalResearch}
+                draftMode={draftMode}
+                onDeepThinkChange={setDeepThink}
+                onLegalResearchChange={setLegalResearch}
+                onDraftModeChange={setDraftMode}
               />
             </PromptInputProvider>
-
-            {/* Компактная панель настроек - всегда под полем ввода */}
-            <SettingsPanel
-              webSearch={false}
-              deepThink={deepThink}
-              legalResearch={legalResearch}
-              draftMode={draftMode}
-              onWebSearchChange={() => {}}
-              onDeepThinkChange={setDeepThink}
-              onLegalResearchChange={setLegalResearch}
-              onDraftModeChange={setDraftMode}
-            />
 
           </div>
         </div>

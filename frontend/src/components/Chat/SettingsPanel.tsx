@@ -18,6 +18,7 @@ interface SettingsPanelProps {
   onLegalResearchChange: (value: boolean) => void
   onDraftModeChange: (value: boolean) => void
   className?: string
+  variant?: 'default' | 'compact'
 }
 
 export const SettingsPanel: React.FC<SettingsPanelProps> = ({
@@ -30,6 +31,7 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({
   onLegalResearchChange,
   onDraftModeChange,
   className = '',
+  variant = 'default',
 }) => {
   // Обработчик для глубокого размышления - выключает другие функции
   const handleDeepThinkChange = (checked: boolean) => {
@@ -94,37 +96,69 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({
 
   return (
     <TooltipProvider delayDuration={200}>
-      <div className={`flex items-center gap-6 px-4 py-2.5 bg-gray-50 border-t border-gray-200 ${className}`}>
-        {settings.map((setting) => {
-          const Icon = setting.icon
-          return (
-            <Tooltip key={setting.id}>
-              <TooltipTrigger asChild>
-                <div className="flex items-center gap-2 cursor-pointer group">
-                  <Icon 
-                    className={`w-5 h-5 transition-colors ${
-                      setting.value 
-                        ? 'text-blue-600' 
-                        : 'text-gray-400 group-hover:text-gray-600'
-                    }`} 
-                  />
-                  <Switch
-                    checked={setting.value}
-                    onCheckedChange={setting.onChange}
-                    className="scale-90"
-                  />
-                </div>
-              </TooltipTrigger>
-              <TooltipContent side="top" className="max-w-xs z-50">
-                <div>
-                  <p className="font-semibold text-sm mb-1">{setting.label}</p>
-                  <p className="text-xs text-gray-300 whitespace-normal">{setting.description}</p>
-                </div>
-              </TooltipContent>
-            </Tooltip>
-          )
-        })}
-      </div>
+      {variant === 'compact' ? (
+        <div className={`flex items-center gap-1 ${className}`}>
+          {settings.map((setting) => {
+            const Icon = setting.icon
+            return (
+              <Tooltip key={setting.id}>
+                <TooltipTrigger asChild>
+                  <button
+                    type="button"
+                    onClick={() => setting.onChange(!setting.value)}
+                    aria-pressed={setting.value}
+                    className={`flex items-center justify-center w-8 h-8 rounded-lg transition-colors ${
+                      setting.value
+                        ? 'bg-blue-50 text-blue-600 border border-blue-200'
+                        : 'bg-transparent text-gray-400 hover:text-gray-600 hover:bg-gray-100'
+                    }`}
+                  >
+                    <Icon className="w-4 h-4" />
+                  </button>
+                </TooltipTrigger>
+                <TooltipContent side="top" className="max-w-xs z-50">
+                  <div>
+                    <p className="font-semibold text-sm mb-1">{setting.label}</p>
+                    <p className="text-xs text-gray-300 whitespace-normal">{setting.description}</p>
+                  </div>
+                </TooltipContent>
+              </Tooltip>
+            )
+          })}
+        </div>
+      ) : (
+        <div className={`flex items-center gap-6 px-4 py-2.5 bg-gray-50 border-t border-gray-200 ${className}`}>
+          {settings.map((setting) => {
+            const Icon = setting.icon
+            return (
+              <Tooltip key={setting.id}>
+                <TooltipTrigger asChild>
+                  <div className="flex items-center gap-2 cursor-pointer group">
+                    <Icon 
+                      className={`w-5 h-5 transition-colors ${
+                        setting.value 
+                          ? 'text-blue-600' 
+                          : 'text-gray-400 group-hover:text-gray-600'
+                      }`} 
+                    />
+                    <Switch
+                      checked={setting.value}
+                      onCheckedChange={setting.onChange}
+                      className="scale-90"
+                    />
+                  </div>
+                </TooltipTrigger>
+                <TooltipContent side="top" className="max-w-xs z-50">
+                  <div>
+                    <p className="font-semibold text-sm mb-1">{setting.label}</p>
+                    <p className="text-xs text-gray-300 whitespace-normal">{setting.description}</p>
+                  </div>
+                </TooltipContent>
+              </Tooltip>
+            )
+          })}
+        </div>
+      )}
     </TooltipProvider>
   )
 }
