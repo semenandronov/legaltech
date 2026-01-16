@@ -1368,20 +1368,26 @@ class RAGService:
         
         context = "\n\n".join(context_parts)
         
-        # Упрощенный промпт - не просим координаты!
-        prompt = f"""Ты юридический помощник. Ответь на вопрос, используя ТОЛЬКО информацию из документов ниже.
+        # Промпт с четкими инструкциями для inline citations
+        prompt = f"""Ты юридический помощник. Ответь на вопрос, используя информацию из документов.
 
-ПРАВИЛА:
-1. В ответе ставь ссылки [1], [2] и т.д. на источники после фактов
-2. Используй только факты из документов
-3. Если информации нет - скажи об этом
+КРИТИЧЕСКИ ВАЖНО - ФОРМАТ ССЫЛОК:
+- Ставь ссылку [N] СРАЗУ после факта, который взят из источника N
+- НЕ собирай ссылки в конце текста!
+- Каждый факт должен иметь свою ссылку рядом
+
+ПРИМЕР ПРАВИЛЬНОГО ОТВЕТА:
+"Договор был заключен 15.03.2024 [1]. Сумма контракта составила 500 000 рублей [2]. Срок исполнения — 30 дней [1]."
+
+ПРИМЕР НЕПРАВИЛЬНОГО ОТВЕТА (НЕ ДЕЛАЙ ТАК!):
+"Договор был заключен 15.03.2024. Сумма контракта составила 500 000 рублей. [1][2]"
 
 ДОКУМЕНТЫ:
 {context}
 
 ВОПРОС: {query}
 
-Ответь кратко и по существу, обязательно со ссылками [N] на источники."""
+Ответь кратко, каждый факт сопровождай ссылкой [N] на источник СРАЗУ после факта."""
         
         llm = create_llm()
         try:
@@ -1405,20 +1411,32 @@ class RAGService:
             for marker in unique_markers:
                 if marker <= len(doc_info):
                     doc = doc_info[marker - 1]
-                    # Берем первые 100 символов документа как quote
-                    quote = doc["content"][:150].strip()
-                    if len(doc["content"]) > 150:
+                    content = doc["content"]
+                    
+                    # Используем весь chunk как цитату (это то, что реально использовалось)
+                    # Ограничиваем для отображения, но координаты берем реальные
+                    quote = content[:300].strip()
+                    if len(content) > 300:
                         quote += "..."
+                    
+                    # Реальные координаты chunk'а в документе
+                    char_start = doc["char_start"]
+                    char_end = doc["char_end"]
+                    
+                    # Если координаты не заданы, используем длину контента
+                    if char_start == 0 and char_end == len(content):
+                        # Координаты по умолчанию - весь chunk
+                        char_end = len(content)
                     
                     citations.append(EnhancedCitation(
                         source_id=str(doc["source_id"]),
                         file_name=doc["file_name"],
                         page=doc["page"],
                         quote=quote,
-                        char_start=doc["char_start"],
-                        char_end=min(doc["char_start"] + 150, doc["char_end"]),
-                        context_before="",
-                        context_after=""
+                        char_start=char_start,
+                        char_end=char_end,
+                        context_before=content[:50] if char_start > 0 else "",
+                        context_after=content[-50:] if len(content) > 50 else ""
                     ))
             
             logger.info(f"[StructuredCitations] Created {len(citations)} citations from markers: {unique_markers}")

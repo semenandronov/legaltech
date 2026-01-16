@@ -1,9 +1,7 @@
 import React from 'react'
 import {
   InlineCitation,
-  InlineCitationText,
   InlineCitationCard,
-  InlineCitationCardTrigger,
   InlineCitationCardBody,
   InlineCitationCarousel,
   InlineCitationCarouselContent,
@@ -12,6 +10,7 @@ import {
   InlineCitationQuote,
 } from '../ai-elements/inline-citation'
 import { SourceInfo } from '@/services/api'
+import { HoverCardTrigger } from '@/components/UI/hover-card'
 
 interface InlineCitationAdapterProps {
   index: number
@@ -28,18 +27,9 @@ export const InlineCitationAdapter: React.FC<InlineCitationAdapterProps> = ({
 
   if (!source) {
     return (
-      <InlineCitation>
-        <InlineCitationText className="text-gray-500">[{index}]</InlineCitationText>
-      </InlineCitation>
+      <span className="text-gray-400 cursor-default">[{index}]</span>
     )
   }
-
-  // Create full URL for the source (InlineCitationCardTrigger needs full URL for hostname extraction)
-  const sourceUrl = source.file 
-    ? (source.file.startsWith('http') 
-        ? source.file 
-        : `${window.location.origin}/api/files/${encodeURIComponent(source.file)}`)
-    : window.location.href
 
   const handleClick = (e: React.MouseEvent) => {
     e.preventDefault()
@@ -51,23 +41,29 @@ export const InlineCitationAdapter: React.FC<InlineCitationAdapterProps> = ({
 
   // Use quote if available, otherwise fallback to text_preview
   const quoteText = source.quote || source.text_preview || ''
+  
+  // Format short file name for display
+  const shortFileName = source.file 
+    ? source.file.replace(/\.[^/.]+$/, '').substring(0, 30) + (source.file.length > 30 ? '...' : '')
+    : 'Документ'
 
   return (
     <InlineCitation>
-      <InlineCitationText>[{index}]</InlineCitationText>
       <InlineCitationCard>
-        <InlineCitationCardTrigger 
-          sources={[sourceUrl]}
-          onClick={handleClick}
-          className="cursor-pointer"
-        />
+        <HoverCardTrigger asChild>
+          <span 
+            className="inline-flex items-center justify-center min-w-[1.5rem] h-5 px-1 text-xs font-medium text-blue-600 bg-blue-100 rounded cursor-pointer hover:bg-blue-200 transition-colors"
+            onClick={handleClick}
+          >
+            [{index}]
+          </span>
+        </HoverCardTrigger>
         <InlineCitationCardBody>
           <InlineCitationCarousel>
             <InlineCitationCarouselContent>
               <InlineCitationCarouselItem>
                 <InlineCitationSource
-                  title={source.file}
-                  url={sourceUrl}
+                  title={shortFileName}
                   description={
                     quoteText 
                       ? (quoteText.length > 200 
@@ -78,25 +74,15 @@ export const InlineCitationAdapter: React.FC<InlineCitationAdapterProps> = ({
                 >
                   {source.page && (
                     <div className="text-xs text-muted-foreground mt-1">
-                      Страница {source.page}
-                    </div>
-                  )}
-                  {source.similarity_score !== undefined && (
-                    <div className="text-xs text-green-600 mt-1">
-                      Релевантность: {Math.round(source.similarity_score * 100)}%
+                      📄 Страница {source.page}
                     </div>
                   )}
                   {quoteText && (
                     <InlineCitationQuote className="mt-2">
-                      {quoteText.length > 200
-                        ? quoteText.substring(0, 200) + '...'
-                        : quoteText}
+                      "{quoteText.length > 150
+                        ? quoteText.substring(0, 150) + '...'
+                        : quoteText}"
                     </InlineCitationQuote>
-                  )}
-                  {(source.char_start !== undefined && source.char_end !== undefined) && (
-                    <div className="text-xs text-muted-foreground mt-1">
-                      Позиция: {source.char_start}–{source.char_end}
-                    </div>
                   )}
                 </InlineCitationSource>
               </InlineCitationCarouselItem>
