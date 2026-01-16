@@ -657,27 +657,36 @@ class DocumentAIService:
         ])
         
         # Create LLM prompt for document editing
-        system_prompt = """Ты - опытный AI-ассистент для редактирования юридических документов.
+        system_prompt = """Ты - AI-ассистент для редактирования юридических документов.
 
-ТВОИ ВОЗМОЖНОСТИ:
-1. ВИДЕТЬ и АНАЛИЗИРОВАТЬ весь документ, открытый в редакторе
-2. ОТВЕЧАТЬ на любые вопросы по документу  
-3. РЕДАКТИРОВАТЬ документ по просьбе пользователя (даже без выделения текста!)
-4. ИСПОЛЬЗОВАТЬ информацию из других документов дела для контекста
-5. Анализировать документ на предмет рисков и противоречий
+ПРИ РЕДАКТИРОВАНИИ ДОКУМЕНТА СОБЛЮДАЙ КРИТИЧЕСКИЕ ПРАВИЛА:
 
-ПРАВИЛА РЕДАКТИРОВАНИЯ:
-- Если пользователь просит изменить/улучшить/добавить/удалить что-то - СДЕЛАЙ ЭТО
-- Выделенный текст НЕ обязателен - ты видишь весь документ и можешь найти нужное место
-- После объяснения изменений ОБЯЗАТЕЛЬНО добавь готовый HTML код в блоке:
+⚠️ ЗАПРЕЩЕНО возвращать только фрагмент или измененную часть!
+⚠️ ЗАПРЕЩЕНО удалять или терять части оригинального документа!
+
+✅ ОБЯЗАТЕЛЬНО возвращай ВЕСЬ документ ПОЛНОСТЬЮ с внесенными изменениями
+✅ Копируй ВЕСЬ оригинальный документ и вноси изменения в нужных местах
+✅ Сохраняй ВСЮ структуру, ВСЕ абзацы, ВСЕ разделы документа
+
+ФОРМАТ ОТВЕТА ПРИ РЕДАКТИРОВАНИИ:
+1. Сначала объясни какие изменения сделаны
+2. Затем в блоке ```html ... ``` верни ПОЛНЫЙ документ:
+
 ```html
-<полный исправленный HTML код документа>
+<ВЕСЬ документ от начала до конца с внесенными изменениями>
 ```
 
-ВАЖНО:
-- HTML должен быть ПОЛНЫМ и ВАЛИДНЫМ
-- Сохраняй структуру и форматирование оригинала
-- Вноси ТОЛЬКО те изменения, которые просит пользователь"""
+ПРИМЕР ПРАВИЛЬНОГО ОТВЕТА:
+"Я внёс изменения в пункт 3.1, добавив номер договора.
+```html
+<p>1. Общие положения</p>
+<p>1.1. Данный договор...</p>
+... ВЕСЬ остальной документ ...
+<p>3.1. Номер договора: 123/2024</p>  <!-- вот изменённый пункт -->
+... ВЕСЬ остальной документ до конца ...
+```"
+
+ЕСЛИ ПОЛЬЗОВАТЕЛЬ ПРОСТО ЗАДАЁТ ВОПРОС (без редактирования) - просто ответь на вопрос."""
         
         # Увеличиваем лимит до 15000 символов для полноценной работы с документом
         doc_limit = 15000
@@ -715,14 +724,32 @@ class DocumentAIService:
             import re
             html_match = re.search(r'```(?:html)?\s*\n(.*?)\n```', answer, re.DOTALL)
             if html_match:
-                edited_content = html_match.group(1).strip()
-                suggestions.append("Применить изменения")
+                extracted_html = html_match.group(1).strip()
+                
+                # КРИТИЧЕСКАЯ ПРОВЕРКА: не позволяем заменить документ фрагментом
+                # Если извлеченный HTML меньше 40% от оригинала - это фрагмент, не полный документ
+                original_len = len(document_content) if document_content else 0
+                extracted_len = len(extracted_html)
+                
+                if original_len > 0 and extracted_len < original_len * 0.4:
+                    logger.warning(f"[DocumentAI] Extracted HTML too short ({extracted_len} vs {original_len}), likely a fragment. NOT applying.")
+                    # Добавляем предупреждение в ответ
+                    answer += "\n\n⚠️ **Внимание:** Система обнаружила, что возвращённый HTML является фрагментом, а не полным документом. Изменения НЕ будут применены автоматически, чтобы не потерять остальное содержимое документа. Пожалуйста, скопируйте нужный фрагмент вручную."
+                else:
+                    edited_content = extracted_html
+                    suggestions.append("Применить изменения")
+                    logger.info(f"[DocumentAI] Extracted full document HTML ({extracted_len} chars)")
             else:
-                # Try to find HTML tags in the answer
+                # Try to find HTML tags in the answer (only if substantial)
                 html_tag_match = re.search(r'<[^>]+>.*?</[^>]+>', answer, re.DOTALL)
                 if html_tag_match:
-                    edited_content = html_tag_match.group(0)
-                    suggestions.append("Применить изменения")
+                    extracted_html = html_tag_match.group(0)
+                    original_len = len(document_content) if document_content else 0
+                    if original_len > 0 and len(extracted_html) < original_len * 0.4:
+                        logger.warning(f"[DocumentAI] Found HTML tag but too short, NOT applying.")
+                    else:
+                        edited_content = extracted_html
+                        suggestions.append("Применить изменения")
         
         result = {
             "answer": answer,
@@ -730,7 +757,7 @@ class DocumentAIService:
             "suggestions": suggestions
         }
         
-        # Add edited content if found
+        # Add edited content if found and validated
         if edited_content:
             result["edited_content"] = edited_content
         

@@ -789,22 +789,19 @@ async def stream_chat_response(
             if selected_text:
                 context_parts.append(f"\n\n=== ВЫДЕЛЕННЫЙ ТЕКСТ (фокус внимания) ===\n{selected_text}")
             
-            # Улучшенные инструкции для режима редактора
+            # КРИТИЧЕСКИЕ инструкции для режима редактора
             editor_instructions = (
-                "\n\n=== РЕЖИМ РЕДАКТОРА ДОКУМЕНТА ===\n\n"
-                "Ты - ИИ-помощник в текстовом редакторе. Ты ВИДИШЬ ВЕСЬ ДОКУМЕНТ выше и можешь:\n\n"
-                "1. ОТВЕЧАТЬ НА ВОПРОСЫ о содержании документа\n"
-                "2. РЕДАКТИРОВАТЬ документ по просьбе пользователя (даже без выделения текста!)\n"
-                f"3. ИСПОЛЬЗОВАТЬ информацию из других документов дела (case_id={case_id})\n\n"
-                "ПРАВИЛА РЕДАКТИРОВАНИЯ:\n"
-                "- Если пользователь просит изменить/улучшить/добавить/удалить что-то - СДЕЛАЙ ЭТО\n"
-                "- Выделенный текст НЕ обязателен - ты видишь весь документ и можешь найти нужное место\n"
-                "- После объяснения изменений ОБЯЗАТЕЛЬНО добавь готовый HTML код:\n\n"
-                "```html\n<исправленный HTML код документа>\n```\n\n"
-                "ВАЖНО:\n"
-                "- HTML должен быть ПОЛНЫМ и ВАЛИДНЫМ\n"
-                "- Сохраняй структуру и форматирование оригинала\n"
-                "- Вноси ТОЛЬКО те изменения, которые просит пользователь\n"
+                "\n\n=== КРИТИЧЕСКИЕ ПРАВИЛА РЕДАКТИРОВАНИЯ ===\n\n"
+                "⚠️ ЗАПРЕЩЕНО возвращать только фрагмент или изменённую часть!\n"
+                "⚠️ ЗАПРЕЩЕНО удалять или терять части оригинального документа!\n\n"
+                "✅ ОБЯЗАТЕЛЬНО возвращай ВЕСЬ документ ПОЛНОСТЬЮ с внесёнными изменениями\n"
+                "✅ Копируй ВЕСЬ оригинальный документ и вноси изменения в нужных местах\n"
+                "✅ Сохраняй ВСЮ структуру, ВСЕ абзацы, ВСЕ разделы документа\n\n"
+                "ФОРМАТ ОТВЕТА ПРИ РЕДАКТИРОВАНИИ:\n"
+                "1. Сначала объясни какие изменения сделаны\n"
+                "2. Затем в блоке ```html ... ``` верни ПОЛНЫЙ документ:\n\n"
+                "```html\n<ВЕСЬ документ от начала до конца с внесёнными изменениями>\n```\n\n"
+                "ЕСЛИ ПОЛЬЗОВАТЕЛЬ ПРОСТО ЗАДАЁТ ВОПРОС - просто ответь, без HTML.\n"
             )
             context_parts.append(editor_instructions)
             
@@ -920,20 +917,35 @@ async def stream_chat_response(
             # Для режима редактора документа: извлекаем edited_content из ответа
             if document_id and document_context:
                 edited_content = None
+                original_len = len(document_context) if document_context else 0
                 
                 # Пытаемся извлечь HTML из code blocks
                 html_match = re.search(r'```(?:html)?\s*\n(.*?)\n```', full_response_text, re.DOTALL)
                 if html_match:
-                    edited_content = html_match.group(1).strip()
-                    logger.info(f"[ChatAgent] Extracted edited_content from code block (length: {len(edited_content)})")
+                    extracted_html = html_match.group(1).strip()
+                    extracted_len = len(extracted_html)
+                    
+                    # КРИТИЧЕСКАЯ ПРОВЕРКА: не позволяем заменить документ фрагментом
+                    if original_len > 0 and extracted_len < original_len * 0.4:
+                        logger.warning(f"[ChatAgent] Extracted HTML too short ({extracted_len} vs {original_len}), likely a fragment. NOT sending.")
+                        # Добавляем предупреждение
+                        warning_msg = "\n\n⚠️ Система обнаружила, что возвращённый HTML является фрагментом. Изменения НЕ применены автоматически."
+                        yield f"data: {json.dumps({'textDelta': warning_msg}, ensure_ascii=False)}\n\n"
+                    else:
+                        edited_content = extracted_html
+                        logger.info(f"[ChatAgent] Extracted edited_content from code block (length: {extracted_len})")
                 else:
                     # Пытаемся найти HTML теги в ответе
                     html_tag_match = re.search(r'<[^>]+>.*?</[^>]+>', full_response_text, re.DOTALL)
                     if html_tag_match:
-                        edited_content = html_tag_match.group(0)
-                        logger.info(f"[ChatAgent] Extracted edited_content from HTML tags (length: {len(edited_content)})")
+                        extracted_html = html_tag_match.group(0)
+                        if original_len > 0 and len(extracted_html) < original_len * 0.4:
+                            logger.warning(f"[ChatAgent] Found HTML tag but too short, NOT sending.")
+                        else:
+                            edited_content = extracted_html
+                            logger.info(f"[ChatAgent] Extracted edited_content from HTML tags (length: {len(edited_content)})")
                 
-                # Если нашли edited_content, отправляем его через SSE
+                # Если нашли полный edited_content, отправляем его через SSE
                 if edited_content:
                     yield f"data: {json.dumps({'type': 'edited_content', 'edited_content': edited_content}, ensure_ascii=False)}\n\n"
                     logger.info(f"[ChatAgent] Sent edited_content event (length: {len(edited_content)})")
