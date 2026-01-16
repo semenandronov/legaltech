@@ -827,6 +827,15 @@ async def stream_chat_response(
                     documents=rag_docs,
                     history=None
                 )
+                # Проверяем что structured_result не None
+                if structured_result is None:
+                    logger.warning("[ChatAgent] generate_with_structured_citations returned None, using fallback")
+                    from app.services.rag_service import AnswerWithCitations
+                    structured_result = AnswerWithCitations(
+                        answer="Не удалось получить структурированный ответ. Попробуйте переформулировать вопрос.",
+                        citations=[],
+                        confidence=0.0
+                    )
                 structured_citations_result = structured_result
                 full_response_text = structured_result.answer or ""
 

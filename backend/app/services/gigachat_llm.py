@@ -399,6 +399,28 @@ class ChatGigaChat(BaseChatModel):
         """Проверяет, доступен ли GigaChat"""
         return bool(self.credentials and hasattr(self, '_client') and self._client)
     
+    def with_structured_output(
+        self,
+        schema: Any,
+        **kwargs
+    ) -> "GigaChatStructuredOutput":
+        """
+        Создает обертку для structured output.
+        
+        GigaChat не поддерживает structured output нативно, поэтому мы:
+        1. Добавляем инструкцию в промпт для JSON output
+        2. Парсим JSON из ответа
+        3. Валидируем через Pydantic модель
+        
+        Args:
+            schema: Pydantic модель для валидации output
+            **kwargs: Дополнительные аргументы (игнорируются)
+        
+        Returns:
+            GigaChatStructuredOutput - обертка для structured output
+        """
+        return GigaChatStructuredOutput(self, schema)
+    
     def invoke(
         self, 
         input: Any, 
@@ -439,4 +461,146 @@ class ChatGigaChat(BaseChatModel):
         
         result = self._generate(messages, **kwargs)
         return result.generations[0].message
+
+
+class GigaChatStructuredOutput:
+    """
+    Обертка для structured output через GigaChat.
+    
+    Реализует интерфейс LangChain Runnable для использования в цепочках (|).
+    """
+    
+    def __init__(self, llm: ChatGigaChat, schema: Any):
+        self.llm = llm
+        self.schema = schema
+        self._schema_json = self._get_schema_json()
+    
+    def _get_schema_json(self) -> str:
+        """Получает JSON схему из Pydantic модели"""
+        import json
+        if hasattr(self.schema, 'model_json_schema'):
+            # Pydantic v2
+            return json.dumps(self.schema.model_json_schema(), ensure_ascii=False, indent=2)
+        elif hasattr(self.schema, 'schema'):
+            # Pydantic v1
+            return json.dumps(self.schema.schema(), ensure_ascii=False, indent=2)
+        else:
+            return "{}"
+    
+    def _add_json_instruction(self, messages: List[BaseMessage]) -> List[BaseMessage]:
+        """Добавляет инструкцию для JSON output в системное сообщение"""
+        json_instruction = f"""
+
+ВАЖНО: Ты ДОЛЖЕН вернуть ответ СТРОГО в формате JSON согласно следующей схеме:
+{self._schema_json}
+
+Верни ТОЛЬКО валидный JSON без каких-либо комментариев или текста до/после JSON.
+Начни ответ сразу с {{ и закончи }}.
+"""
+        
+        new_messages = []
+        system_found = False
+        
+        for msg in messages:
+            if isinstance(msg, SystemMessage) and not system_found:
+                # Добавляем инструкцию к существующему системному сообщению
+                new_content = msg.content + json_instruction
+                new_messages.append(SystemMessage(content=new_content))
+                system_found = True
+            else:
+                new_messages.append(msg)
+        
+        # Если не было системного сообщения, добавляем новое
+        if not system_found:
+            new_messages.insert(0, SystemMessage(content=json_instruction))
+        
+        return new_messages
+    
+    def _parse_json_from_response(self, content: str) -> Dict[str, Any]:
+        """Извлекает JSON из ответа модели"""
+        import json
+        import re
+        
+        # Убираем возможные markdown блоки кода
+        content = content.strip()
+        if content.startswith("```"):
+            # Убираем ```json или ``` в начале и ``` в конце
+            content = re.sub(r'^```(?:json)?\s*', '', content)
+            content = re.sub(r'\s*```$', '', content)
+        
+        # Пытаемся найти JSON объект в ответе
+        # Ищем от первой { до последней }
+        json_match = re.search(r'\{.*\}', content, re.DOTALL)
+        if json_match:
+            json_str = json_match.group(0)
+            try:
+                return json.loads(json_str)
+            except json.JSONDecodeError:
+                pass
+        
+        # Пробуем распарсить весь контент как JSON
+        try:
+            return json.loads(content)
+        except json.JSONDecodeError as e:
+            logger.warning(f"Failed to parse JSON from response: {e}")
+            logger.debug(f"Response content: {content[:500]}")
+            # Возвращаем пустой ответ как fallback
+            return {"answer": content, "citations": [], "confidence": 0.0}
+    
+    def invoke(
+        self, 
+        input: Any, 
+        config: Optional[Any] = None,
+        **kwargs
+    ) -> Any:
+        """
+        Invoke LLM и вернуть structured output.
+        
+        Args:
+            input: Входные данные (список сообщений, dict или строка)
+            config: RunnableConfig (игнорируется)
+            **kwargs: Дополнительные аргументы
+        
+        Returns:
+            Экземпляр Pydantic модели (schema)
+        """
+        # Получаем сообщения из input
+        if isinstance(input, list):
+            messages = input
+        elif isinstance(input, dict):
+            messages = input.get("messages", [])
+            if not messages:
+                text = input.get("text") or input.get("content") or str(input)
+                messages = [HumanMessage(content=text)]
+        elif isinstance(input, str):
+            messages = [HumanMessage(content=input)]
+        else:
+            messages = [HumanMessage(content=str(input))]
+        
+        # Добавляем JSON инструкцию
+        messages_with_json = self._add_json_instruction(messages)
+        
+        # Вызываем LLM
+        result = self.llm._generate(messages_with_json, **kwargs)
+        ai_message = result.generations[0].message
+        
+        # Парсим JSON из ответа
+        json_data = self._parse_json_from_response(ai_message.content)
+        
+        # Создаем и возвращаем экземпляр Pydantic модели
+        try:
+            if hasattr(self.schema, 'model_validate'):
+                # Pydantic v2
+                return self.schema.model_validate(json_data)
+            else:
+                # Pydantic v1
+                return self.schema(**json_data)
+        except Exception as e:
+            logger.error(f"Failed to validate schema: {e}")
+            # Возвращаем объект с минимальными данными
+            return self.schema(
+                answer=json_data.get("answer", ai_message.content),
+                citations=json_data.get("citations", []),
+                confidence=json_data.get("confidence", 0.0)
+            )
 
