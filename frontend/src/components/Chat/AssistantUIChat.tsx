@@ -238,6 +238,8 @@ const PromptInputWithDrop = ({
     
     // Сбрасываем при потере фокуса окна
     window.addEventListener('blur', resetDragState)
+    window.addEventListener('dragend', resetDragState)
+    window.addEventListener('drop', resetDragState)
     // Сбрасываем при клике в любом месте (на случай если drag отменен)
     document.addEventListener('click', resetDragState)
     // Сбрасываем при нажатии Escape
@@ -250,10 +252,19 @@ const PromptInputWithDrop = ({
     
     return () => {
       window.removeEventListener('blur', resetDragState)
+      window.removeEventListener('dragend', resetDragState)
+      window.removeEventListener('drop', resetDragState)
       document.removeEventListener('click', resetDragState)
       document.removeEventListener('keydown', handleKeyDown)
     }
   }, [])
+
+  useEffect(() => {
+    if (attachments?.files.length) {
+      setIsDraggingOver(false)
+      dragCounterRef.current = 0
+    }
+  }, [attachments?.files.length])
   
   useEffect(() => {
     const container = containerRef.current
@@ -424,16 +435,16 @@ const PromptInputWithDrop = ({
         className="w-full [&_[data-slot=input-group]]:rounded-2xl [&_[data-slot=input-group]]:border [&_[data-slot=input-group]]:border-[#E7EAF0] [&_[data-slot=input-group]]:bg-[#F8FAFC] [&_[data-slot=input-group]]:shadow-sm [&_[data-slot=input-group]]:focus-within:border-[#CBD5E1] [&_[data-slot=input-group]]:transition-all"
       >
         <PromptInputBody>
-          <div className="flex flex-col w-full gap-2 px-2 py-2">
+          <div className="flex flex-col w-full gap-2 px-2 pt-1.5 pb-2">
             <PromptInputTextarea 
               placeholder="Задайте уточняющий вопрос"
-              className="w-full min-h-[56px] max-h-[200px] text-base px-3 py-2 resize-none focus:outline-none leading-relaxed overflow-y-auto"
+              className="w-full min-h-[56px] max-h-[200px] text-base px-3 py-2 mt-1 resize-none focus:outline-none leading-relaxed overflow-y-auto"
               style={{
                 color: 'var(--color-text-primary)',
                 backgroundColor: 'transparent',
               }}
             />
-            <PromptInputFooter className="items-center gap-2 px-2 pb-1">
+            <PromptInputFooter className="items-center gap-2 px-2 pb-1 -mt-1">
               <SettingsPanel
                 webSearch={false}
                 deepThink={deepThink}
@@ -553,11 +564,12 @@ export const AssistantUIChat = forwardRef<{ clearMessages: () => void; loadHisto
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [messages])
 
-  const sendMessage = useCallback(async (userMessage: string) => {
-    if (!userMessage.trim() || !actualCaseId || isLoading) return
+  const sendMessage = useCallback(async (userMessage: string, filesSnapshot: ExtendedFileUIPart[] = []) => {
+    const hasText = userMessage.trim().length > 0
+    const hasFiles = filesSnapshot.length > 0
+    if (!actualCaseId || isLoading || (!hasText && !hasFiles)) return
 
-    // Сохраняем файлы из attachments перед очисткой
-    const currentAttachments = attachments?.files ? [...attachments.files] : []
+    const currentAttachments = filesSnapshot.length > 0 ? [...filesSnapshot] : []
 
     // Add user message с файлами
     const userMsg: Message = {
@@ -601,17 +613,17 @@ export const AssistantUIChat = forwardRef<{ clearMessages: () => void; loadHisto
       // Обработка файлов-шаблонов в draft mode
       if (draftMode) {
         logger.info(`[Draft Mode] Checking attachments: draftMode=${draftMode}, attachments=${!!attachments}, filesCount=${attachments?.files?.length || 0}`)
-        if (attachments && attachments.files && attachments.files.length > 0) {
-          logger.info(`[Draft Mode] Files found: ${attachments.files.map(f => ({ name: f.filename, hasFile: !!f.file, hasSourceFileId: !!f.sourceFileId }))}`)
+        if (currentAttachments.length > 0) {
+          logger.info(`[Draft Mode] Files found: ${currentAttachments.map(f => ({ name: f.filename, hasFile: !!f.file, hasSourceFileId: !!f.sourceFileId }))}`)
           // Ищем файл с sourceFileId (из БД)
-          const templateFileFromDb = attachments.files.find(f => f.sourceFileId)
+          const templateFileFromDb = currentAttachments.find(f => f.sourceFileId)
           if (templateFileFromDb?.sourceFileId) {
             // Файл из БД - используем template_file_id
             requestBody.template_file_id = templateFileFromDb.sourceFileId
             logger.info(`[Draft Mode] Using file from DB: ${templateFileFromDb.sourceFileId}`)
           } else {
             // Локальный файл - загружаем и конвертируем
-            const localFile = attachments.files.find(f => f.file && !f.sourceFileId)
+            const localFile = currentAttachments.find(f => f.file && !f.sourceFileId)
             if (localFile?.file) {
               try {
                 logger.info(`[Draft Mode] Uploading local template file: ${localFile.file.name}`)
@@ -645,11 +657,11 @@ export const AssistantUIChat = forwardRef<{ clearMessages: () => void; loadHisto
       }
 
       // Обработка прикрепленных файлов для обычных сообщений (не draft_mode)
-      if (!draftMode && attachments && attachments.files && attachments.files.length > 0) {
-        logger.info(`[Chat] Checking attachments: filesCount=${attachments.files.length}`)
+      if (!draftMode && currentAttachments.length > 0) {
+        logger.info(`[Chat] Checking attachments: filesCount=${currentAttachments.length}`)
         
         // Собираем ID файлов из базы данных
-        const fileIdsFromDb = attachments.files
+        const fileIdsFromDb = currentAttachments
           .filter(f => f.sourceFileId)
           .map(f => f.sourceFileId)
           .filter((id): id is string => !!id)
@@ -661,7 +673,7 @@ export const AssistantUIChat = forwardRef<{ clearMessages: () => void; loadHisto
         
         // Для новых локальных файлов нужно их загрузить в дело
         // Пока что просто логируем - в будущем можно добавить автоматическую загрузку
-        const localFiles = attachments.files.filter(f => f.file && !f.sourceFileId)
+        const localFiles = currentAttachments.filter(f => f.file && !f.sourceFileId)
         if (localFiles.length > 0) {
           logger.warn(`[Chat] Local files detected but not uploaded yet: ${localFiles.map(f => f.filename).join(', ')}`)
           // TODO: Автоматически загружать локальные файлы в дело перед отправкой сообщения
@@ -927,7 +939,7 @@ export const AssistantUIChat = forwardRef<{ clearMessages: () => void; loadHisto
       setIsLoading(false)
       abortControllerRef.current = null
     }
-  }, [actualCaseId, isLoading, messages, legalResearch, deepThink, draftMode, documentEditorMode, currentDocumentContent, currentDocumentId, selectedText, attachments])
+  }, [actualCaseId, isLoading, messages, legalResearch, deepThink, draftMode, documentEditorMode, currentDocumentContent, currentDocumentId, selectedText])
 
   const startPlanExecutionStream = useCallback(async (planId: string, messageId: string) => {
     try {
@@ -1051,15 +1063,16 @@ export const AssistantUIChat = forwardRef<{ clearMessages: () => void; loadHisto
   const controller = useOptionalPromptInputController()
 
   const handlePromptSubmit = useCallback(async (message: { text: string; files: any[] }, _event: React.FormEvent<HTMLFormElement>) => {
-    const text = message.text?.trim()
+    const rawText = message.text || ''
+    const trimmedText = rawText.trim()
+    const filesSnapshot = (message.files || []) as ExtendedFileUIPart[]
     
     // Валидация: проверяем, что есть текст или файлы
-    if (!text && (!message.files || message.files.length === 0)) {
-      // Можно показать toast или другое уведомление
+    if (!trimmedText && filesSnapshot.length === 0) {
       return
     }
     
-    if (text && !isLoading && actualCaseId) {
+    if (!isLoading && actualCaseId) {
       // Сначала очищаем поле ввода и attachments ПЕРЕД отправкой
       // чтобы пользователь сразу видел что сообщение отправляется
       try {
@@ -1079,7 +1092,7 @@ export const AssistantUIChat = forwardRef<{ clearMessages: () => void; loadHisto
       }
       
       // Затем отправляем сообщение
-      await sendMessage(text)
+      await sendMessage(rawText, filesSnapshot)
     }
   }, [sendMessage, isLoading, actualCaseId, controller, attachments])
 
@@ -1175,9 +1188,10 @@ export const AssistantUIChat = forwardRef<{ clearMessages: () => void; loadHisto
 
         {messages.map((message) => {
           if (message.role === 'user') {
+            const hasUserText = message.content?.trim().length > 0
             return (
               <div key={message.id}>
-                <UserMessage content={message.content} />
+                {hasUserText && <UserMessage content={message.content} />}
                 {/* Отображаем файлы под сообщением пользователя */}
                 {message.attachments && message.attachments.length > 0 && (
                   <div className="mt-2 space-y-2">
@@ -1480,22 +1494,20 @@ export const AssistantUIChat = forwardRef<{ clearMessages: () => void; loadHisto
             style={{ padding: 'var(--space-4) var(--space-6)' }}
           >
             {/* PromptInput с готовыми компонентами из @ai */}
-            <PromptInputProvider>
-              <PromptInputWithDrop
-                actualCaseId={actualCaseId}
-                onDocumentDrop={onDocumentDrop}
-                handlePromptSubmit={handlePromptSubmit}
-                isLoading={isLoading}
-                selectedText={selectedText}
-                documentEditorMode={documentEditorMode}
-                deepThink={deepThink}
-                legalResearch={legalResearch}
-                draftMode={draftMode}
-                onDeepThinkChange={setDeepThink}
-                onLegalResearchChange={setLegalResearch}
-                onDraftModeChange={setDraftMode}
-              />
-            </PromptInputProvider>
+            <PromptInputWithDrop
+              actualCaseId={actualCaseId}
+              onDocumentDrop={onDocumentDrop}
+              handlePromptSubmit={handlePromptSubmit}
+              isLoading={isLoading}
+              selectedText={selectedText}
+              documentEditorMode={documentEditorMode}
+              deepThink={deepThink}
+              legalResearch={legalResearch}
+              draftMode={draftMode}
+              onDeepThinkChange={setDeepThink}
+              onLegalResearchChange={setLegalResearch}
+              onDraftModeChange={setDraftMode}
+            />
 
           </div>
         </div>
@@ -1514,22 +1526,20 @@ export const AssistantUIChat = forwardRef<{ clearMessages: () => void; loadHisto
               gap: 'var(--space-4)' 
             }}
           >
-            <PromptInputProvider>
-              <PromptInputWithDrop
-                actualCaseId={actualCaseId}
-                onDocumentDrop={onDocumentDrop}
-                handlePromptSubmit={handlePromptSubmit}
-                isLoading={isLoading}
-                selectedText={selectedText}
-                documentEditorMode={documentEditorMode}
-                deepThink={deepThink}
-                legalResearch={legalResearch}
-                draftMode={draftMode}
-                onDeepThinkChange={setDeepThink}
-                onLegalResearchChange={setLegalResearch}
-                onDraftModeChange={setDraftMode}
-              />
-            </PromptInputProvider>
+            <PromptInputWithDrop
+              actualCaseId={actualCaseId}
+              onDocumentDrop={onDocumentDrop}
+              handlePromptSubmit={handlePromptSubmit}
+              isLoading={isLoading}
+              selectedText={selectedText}
+              documentEditorMode={documentEditorMode}
+              deepThink={deepThink}
+              legalResearch={legalResearch}
+              draftMode={draftMode}
+              onDeepThinkChange={setDeepThink}
+              onLegalResearchChange={setLegalResearch}
+              onDraftModeChange={setDraftMode}
+            />
 
           </div>
         </div>

@@ -86,8 +86,8 @@ def _garant_search_sync(query: str, doc_type: str = "all", max_results: int = 10
     try:
         # Вызываем async метод синхронно с безопасным запуском
         results = _run_async_safely(
-            garant_source.search(query, max_results=max_results, filters=filters)
-        )
+                garant_source.search(query, max_results=max_results, filters=filters)
+            )
         
         if not results:
             return f"Не найдено результатов по запросу: {query}\n\nПопробуйте изменить формулировку запроса."
@@ -156,8 +156,8 @@ def _garant_full_text_sync(doc_id: str) -> str:
     try:
         # Вызываем async метод синхронно с безопасным запуском
         full_text = _run_async_safely(
-            garant_source.get_document_full_text(doc_id, format="html")
-        )
+                garant_source.get_document_full_text(doc_id, format="html")
+            )
         
         if not full_text:
             return f"Не удалось получить полный текст документа {doc_id}."

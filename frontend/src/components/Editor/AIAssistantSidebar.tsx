@@ -39,8 +39,8 @@ export const AIAssistantSidebar = ({
           onReplaceText(result.result)
           toast.success('Текст заменен')
         } else {
-          onInsertText(result.result)
-          toast.success('Текст добавлен в документ')
+        onInsertText(result.result)
+        toast.success('Текст добавлен в документ')
         }
       } else {
         toast.error('Не удалось получить результат от AI')

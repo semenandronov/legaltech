@@ -104,11 +104,17 @@ const DocumentsUploadStep = ({ caseId, onContinue, onCancel }: DocumentsUploadSt
     }
 
     try {
+      // #region agent log
+      fetch('http://127.0.0.1:7242/ingest/2db1e09b-2b5d-4ee0-85d8-a551f942254c',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'DocumentsUploadStep.tsx:handleDeleteFile:before',message:'delete file request',data:{caseId,fileId,filename},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'H4'})}).catch(()=>{});
+      // #endregion agent log
       setDeletingFileId(fileId)
       setError(null)
       const response = await deleteFileFromCase(caseId, fileId)
       setUploadedFiles(response.files || [])
     } catch (err: any) {
+      // #region agent log
+      fetch('http://127.0.0.1:7242/ingest/2db1e09b-2b5d-4ee0-85d8-a551f942254c',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'DocumentsUploadStep.tsx:handleDeleteFile:catch',message:'delete file failed',data:{caseId,fileId,filename,error:err?.message||String(err),status:err?.response?.status},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'H4'})}).catch(()=>{});
+      // #endregion agent log
       setError(err.response?.data?.detail || err.message || 'Ошибка при удалении файла')
     } finally {
       setDeletingFileId(null)

@@ -24,6 +24,7 @@ from app.config import config
 import json
 import logging
 import asyncio
+import re
 from datetime import datetime
 
 logger = logging.getLogger(__name__)
@@ -566,6 +567,7 @@ async def stream_chat_response(
         # Определяем session_id: если есть недавние сообщения (в течение 30 минут), используем их session_id
         # Иначе создаём новую сессию
         session_id = None
+        structured_citations_result = None
         try:
             # Проверяем последнее сообщение для этого дела
             last_message = db.query(ChatMessage).filter(
@@ -829,47 +831,75 @@ async def stream_chat_response(
             logger.info(f"[ChatAgent] Enhanced question with document context (doc_len={len(document_context) if document_context else 0}, selected_len={len(selected_text) if selected_text else 0})")
         
         try:
-            # Stream ответ от ChatAgent (с защитой от JSON-ответов)
-            avoid_json = not chat_agent.user_requested_json(question)
-            buffered_chunks: List[str] = []
-            decision_made = False
-            json_candidate = False
-            
-            async for chunk in chat_agent.answer_stream(enhanced_question):
-                if not chunk:
-                    continue
+            # Если нет режима редактора и нет спец. режимов — используем структурированные citations
+            use_structured_citations = not document_context and not selected_text and not legal_research
+            if use_structured_citations and rag_docs:
+                structured_result = rag_service.generate_with_structured_citations(
+                    query=question,
+                    documents=rag_docs,
+                    history=None
+                )
+                structured_citations_result = structured_result
+                full_response_text = structured_result.answer or ""
+
+                # Если модель не поставила [N], добавляем маркеры по абзацам как fallback
+                if structured_result.citations and not re.search(r"\[\d+\]", full_response_text):
+                    paragraphs = [p for p in full_response_text.split("\n\n") if p.strip()]
+                    rebuilt = []
+                    for idx, paragraph in enumerate(paragraphs):
+                        if idx < len(structured_result.citations):
+                            rebuilt.append(f"{paragraph} [{idx + 1}]")
+                        else:
+                            rebuilt.append(paragraph)
+                    full_response_text = "\n\n".join(rebuilt)
+
+                # Stream ответ по словам
+                words = full_response_text.split(" ")
+                for i, word in enumerate(words):
+                    chunk = word + (" " if i < len(words) - 1 else "")
+                    yield f"data: {json.dumps({'textDelta': chunk}, ensure_ascii=False)}\n\n"
+            else:
+                # Stream ответ от ChatAgent (с защитой от JSON-ответов)
+                avoid_json = not chat_agent.user_requested_json(question)
+                buffered_chunks: List[str] = []
+                decision_made = False
+                json_candidate = False
                 
-                full_response_text += chunk
-                
-                if avoid_json and not decision_made:
-                    buffered_chunks.append(chunk)
-                    for ch in chunk:
-                        if not ch.isspace():
-                            decision_made = True
-                            json_candidate = ch in "{["
-                            break
+                async for chunk in chat_agent.answer_stream(enhanced_question):
+                    if not chunk:
+                        continue
                     
-                    if decision_made and not json_candidate:
-                        for buffered in buffered_chunks:
-                            yield f"data: {json.dumps({'textDelta': buffered}, ensure_ascii=False)}\n\n"
-                        buffered_chunks = []
-                    continue
+                    full_response_text += chunk
+                    
+                    if avoid_json and not decision_made:
+                        buffered_chunks.append(chunk)
+                        for ch in chunk:
+                            if not ch.isspace():
+                                decision_made = True
+                                json_candidate = ch in "{["
+                                break
+                        
+                        if decision_made and not json_candidate:
+                            for buffered in buffered_chunks:
+                                yield f"data: {json.dumps({'textDelta': buffered}, ensure_ascii=False)}\n\n"
+                            buffered_chunks = []
+                        continue
+                    
+                    if avoid_json and json_candidate:
+                        # Пока не стримим JSON-подобный ответ
+                        continue
+                    
+                    yield f"data: {json.dumps({'textDelta': chunk}, ensure_ascii=False)}\n\n"
                 
                 if avoid_json and json_candidate:
-                    # Пока не стримим JSON-подобный ответ
-                    continue
-                
-                yield f"data: {json.dumps({'textDelta': chunk}, ensure_ascii=False)}\n\n"
-            
-            if avoid_json and json_candidate:
-                rewritten = chat_agent.rewrite_json_response(full_response_text, question)
-                if rewritten:
-                    full_response_text = rewritten
-                    yield f"data: {json.dumps({'textDelta': rewritten}, ensure_ascii=False)}\n\n"
-                else:
-                    # Если это не JSON, отдаём оригинал целиком
-                    if full_response_text:
-                        yield f"data: {json.dumps({'textDelta': full_response_text}, ensure_ascii=False)}\n\n"
+                    rewritten = chat_agent.rewrite_json_response(full_response_text, question)
+                    if rewritten:
+                        full_response_text = rewritten
+                        yield f"data: {json.dumps({'textDelta': rewritten}, ensure_ascii=False)}\n\n"
+                    else:
+                        # Если это не JSON, отдаём оригинал целиком
+                        if full_response_text:
+                            yield f"data: {json.dumps({'textDelta': full_response_text}, ensure_ascii=False)}\n\n"
             
             # Проставляем ссылки на документы ГАРАНТ в ответе (если включен legal_research)
             if legal_research and len(full_response_text) < 8000:
@@ -912,7 +942,20 @@ async def stream_chat_response(
             # Используем те же документы, что использовались для RAG контекста
             citations_data = []
             try:
-                if rag_docs and len(rag_docs) > 0:
+                if structured_citations_result:
+                    for citation in structured_citations_result.citations:
+                        citations_data.append({
+                            "source_id": citation.source_id,
+                            "file_name": citation.file_name,
+                            "page": citation.page,
+                            "quote": citation.quote,
+                            "char_start": citation.char_start,
+                            "char_end": citation.char_end,
+                            "context_before": citation.context_before if hasattr(citation, 'context_before') else "",
+                            "context_after": citation.context_after if hasattr(citation, 'context_after') else ""
+                        })
+                    logger.info(f"[Citations] Using structured citations from initial response: {len(citations_data)}")
+                elif rag_docs and len(rag_docs) > 0:
                     logger.info(f"[Citations] Generating structured citations for {len(rag_docs)} documents")
                     
                     # Преобразуем историю в формат для generate_with_structured_citations

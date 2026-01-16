@@ -789,6 +789,13 @@ async def delete_file_from_case(
     Removes file from database, disk, and updates case metadata.
     Only works for files that haven't been processed yet (not in PGVector).
     """
+    # #region agent log
+    try:
+        with open("/Users/semyon_andronov04/Desktop/C ДВ/.cursor/debug.log", "a") as f:
+            f.write("{\"sessionId\":\"debug-session\",\"runId\":\"run1\",\"hypothesisId\":\"H1\",\"location\":\"backend/app/routes/cases.py:delete_file_from_case:entry\",\"message\":\"delete_file_from_case called\",\"data\":{\"caseId\":\"" + str(case_id) + "\",\"fileId\":\"" + str(file_id) + "\"},\"timestamp\":" + str(int(__import__("time").time() * 1000)) + "}\n")
+    except Exception:
+        pass
+    # #endregion agent log
     # Verify case ownership
     case = db.query(Case).filter(
         Case.id == case_id,
@@ -796,6 +803,13 @@ async def delete_file_from_case(
     ).first()
     
     if not case:
+        # #region agent log
+        try:
+            with open("/Users/semyon_andronov04/Desktop/C ДВ/.cursor/debug.log", "a") as f:
+                f.write("{\"sessionId\":\"debug-session\",\"runId\":\"run1\",\"hypothesisId\":\"H1\",\"location\":\"backend/app/routes/cases.py:delete_file_from_case:case_missing\",\"message\":\"case not found\",\"data\":{\"caseId\":\"" + str(case_id) + "\"},\"timestamp\":" + str(int(__import__("time").time() * 1000)) + "}\n")
+        except Exception:
+            pass
+        # #endregion agent log
         raise HTTPException(status_code=404, detail="Дело не найдено")
     
     # Get file
@@ -805,6 +819,13 @@ async def delete_file_from_case(
     ).first()
     
     if not file:
+        # #region agent log
+        try:
+            with open("/Users/semyon_andronov04/Desktop/C ДВ/.cursor/debug.log", "a") as f:
+                f.write("{\"sessionId\":\"debug-session\",\"runId\":\"run1\",\"hypothesisId\":\"H1\",\"location\":\"backend/app/routes/cases.py:delete_file_from_case:file_missing\",\"message\":\"file not found\",\"data\":{\"caseId\":\"" + str(case_id) + "\",\"fileId\":\"" + str(file_id) + "\"},\"timestamp\":" + str(int(__import__("time").time() * 1000)) + "}\n")
+        except Exception:
+            pass
+        # #endregion agent log
         raise HTTPException(status_code=404, detail="Файл не найден")
     
     try:
@@ -824,6 +845,13 @@ async def delete_file_from_case(
                     logger.info(f"Deleted file from disk: {file_full_path}")
                 except Exception as e:
                     logger.warning(f"Failed to delete file from disk {file_full_path}: {e}")
+            # #region agent log
+            try:
+                with open("/Users/semyon_andronov04/Desktop/C ДВ/.cursor/debug.log", "a") as f:
+                    f.write("{\"sessionId\":\"debug-session\",\"runId\":\"run1\",\"hypothesisId\":\"H2\",\"location\":\"backend/app/routes/cases.py:delete_file_from_case:disk_cleanup\",\"message\":\"disk cleanup attempted\",\"data\":{\"filePath\":\"" + str(file.file_path) + "\",\"fileFullPath\":\"" + str(file_full_path) + "\",\"exists\":" + ("true" if os.path.exists(file_full_path) else "false") + "},\"timestamp\":" + str(int(__import__("time").time() * 1000)) + "}\n")
+            except Exception:
+                pass
+            # #endregion agent log
         
         # Delete classification if exists
         from app.models.analysis import DocumentClassification
@@ -843,6 +871,13 @@ async def delete_file_from_case(
         
         db.commit()
         logger.info(f"Successfully deleted file {file_id} from case {case_id}")
+        # #region agent log
+        try:
+            with open("/Users/semyon_andronov04/Desktop/C ДВ/.cursor/debug.log", "a") as f:
+                f.write("{\"sessionId\":\"debug-session\",\"runId\":\"run1\",\"hypothesisId\":\"H1\",\"location\":\"backend/app/routes/cases.py:delete_file_from_case:commit\",\"message\":\"delete committed\",\"data\":{\"caseId\":\"" + str(case_id) + "\",\"fileId\":\"" + str(file_id) + "\",\"remainingFiles\":" + str(len(remaining_files)) + "},\"timestamp\":" + str(int(__import__("time").time() * 1000)) + "}\n")
+        except Exception:
+            pass
+        # #endregion agent log
         
         # Return updated file list
         updated_files = db.query(FileModel).filter(FileModel.case_id == case_id).all()
@@ -863,6 +898,13 @@ async def delete_file_from_case(
     except Exception as e:
         db.rollback()
         logger.error(f"Error deleting file {file_id} from case {case_id}: {e}", exc_info=True)
+        # #region agent log
+        try:
+            with open("/Users/semyon_andronov04/Desktop/C ДВ/.cursor/debug.log", "a") as f:
+                f.write("{\"sessionId\":\"debug-session\",\"runId\":\"run1\",\"hypothesisId\":\"H3\",\"location\":\"backend/app/routes/cases.py:delete_file_from_case:exception\",\"message\":\"delete failed\",\"data\":{\"caseId\":\"" + str(case_id) + "\",\"fileId\":\"" + str(file_id) + "\",\"error\":\"" + str(e).replace(\"\\\"\",\"'\") + "\"},\"timestamp\":" + str(int(__import__("time").time() * 1000)) + "}\n")
+        except Exception:
+            pass
+        # #endregion agent log
         raise HTTPException(
             status_code=500,
             detail=f"Ошибка при удалении файла: {str(e)}"

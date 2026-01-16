@@ -158,7 +158,7 @@ class DocumentLoaderService:
                         text = re.sub(r"\s+\n", "\n", text)
                         text = re.sub(r"[ \t]+", " ", text).strip()
                         if text:
-                            documents = [Document(page_content=text, metadata={"source_file": filename})]
+                        documents = [Document(page_content=text, metadata={"source_file": filename})]
                             logger.info(f"Loaded DOCX {filename} using mammoth: {len(text)} chars")
                     except Exception as e:
                         mammoth_error = e
@@ -184,11 +184,11 @@ class DocumentLoaderService:
                     if mammoth_error:
                         error_msgs.append(f"mammoth: {str(mammoth_error)[:100]}")
                     
-                    raise ValueError(
+                        raise ValueError(
                         f"Не удалось извлечь текст из файла {filename}. "
                         f"Возможно, файл поврежден или имеет нестандартный формат. "
                         f"Ошибки: {'; '.join(error_msgs) if error_msgs else 'неизвестная ошибка'}"
-                    )
+                        )
                 
                 # Add filename to metadata
                 for doc in documents:

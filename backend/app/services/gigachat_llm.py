@@ -194,7 +194,7 @@ class ChatGigaChat(BaseChatModel):
         for attempt in range(max_retries):
             try:
                 # Make API call
-                response = self._client.chat(chat_obj)
+                    response = self._client.chat(chat_obj)
                 
                 # If successful, break out of retry loop
                 break

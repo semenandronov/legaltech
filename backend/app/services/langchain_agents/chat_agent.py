@@ -279,7 +279,7 @@ class ChatAgent:
                     # Ищем последнее AIMessage с непустым контентом
                     # ВАЖНО: НЕ возвращаем HumanMessage - это сообщение пользователя!
                     for last_message in reversed(messages):
-                        if isinstance(last_message, AIMessage):
+                    if isinstance(last_message, AIMessage):
                             # Правильная обработка None content
                             raw_content = getattr(last_message, 'content', None)
                             response = str(raw_content) if raw_content is not None else ""
@@ -291,7 +291,7 @@ class ChatAgent:
                             
                             if response:
                                 logger.info(f"[ChatAgent] Response generated from AIMessage, length: {len(response)} chars")
-                                return response
+                        return response
                             else:
                                 # Если есть tool_calls но нет контента, продолжаем искать
                                 if hasattr(last_message, 'tool_calls') and last_message.tool_calls:
@@ -362,7 +362,7 @@ class ChatAgent:
                     
                     # Формат 1: {"messages": [...]} (прямой)
                     if "messages" in chunk:
-                        messages = chunk.get("messages", [])
+                    messages = chunk.get("messages", [])
                     else:
                         # Формат 2: {"node_name": {"messages": [...]}} (langgraph)
                         for node_name, node_data in chunk.items():
@@ -421,7 +421,7 @@ class ChatAgent:
                                         if content and content not in seen_contents:
                                             logger.debug(f"[ChatAgent] Yielding full content: {len(content)} chars")
                                             seen_contents.add(content)
-                                            yield content
+                                yield content
                                     
                                     last_content = content
             
