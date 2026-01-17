@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from "react"
 import { useParams, useNavigate } from "react-router-dom"
-import { MessageSquare, FileText, Table, FileEdit } from "lucide-react"
+import { MessageSquare, FileText, Table, FileEdit, BookOpen, Workflow } from "lucide-react"
 import UnifiedSidebar from "../components/Layout/UnifiedSidebar"
 import { TabularReviewTable } from "../components/TabularReview/TabularReviewTable"
 import { TabularReviewToolbar } from "../components/TabularReview/TabularReviewToolbar"
@@ -369,6 +369,8 @@ const TabularReviewPage: React.FC = () => {
     { id: 'documents', label: 'Документы', icon: FileText, path: `/cases/${caseId}/documents` },
     { id: 'editor', label: 'Редактор', icon: FileEdit, path: `/cases/${caseId}/editor` },
     { id: 'tabular-review', label: 'Tabular Review', icon: Table, path: `/cases/${caseId}/tabular-review` },
+    { id: 'playbooks', label: 'Playbooks', icon: BookOpen, path: `/cases/${caseId}/playbooks` },
+    { id: 'workflows', label: 'Workflows', icon: Workflow, path: `/cases/${caseId}/workflows` },
   ] : []
 
   if (loading && !tableData) {

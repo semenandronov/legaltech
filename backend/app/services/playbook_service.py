@@ -36,7 +36,7 @@ class PlaybookService:
     def get_playbooks(
         self,
         user_id: str,
-        contract_type: Optional[str] = None,
+        document_type: Optional[str] = None,
         jurisdiction: Optional[str] = None,
         include_system: bool = True,
         include_public: bool = True,
@@ -48,7 +48,7 @@ class PlaybookService:
         
         Args:
             user_id: User ID
-            contract_type: Filter by contract type
+            document_type: Filter by contract type
             jurisdiction: Filter by jurisdiction
             include_system: Include system playbooks
             include_public: Include public playbooks
@@ -70,8 +70,8 @@ class PlaybookService:
         query = query.filter(or_(*visibility_filters))
         
         # Contract type filter
-        if contract_type:
-            query = query.filter(Playbook.contract_type == contract_type)
+        if document_type:
+            query = query.filter(Playbook.document_type == document_type)
         
         # Jurisdiction filter
         if jurisdiction:
@@ -142,7 +142,7 @@ class PlaybookService:
         user_id: str,
         name: str,
         display_name: str,
-        contract_type: str,
+        document_type: str,
         description: Optional[str] = None,
         jurisdiction: Optional[str] = None,
         is_public: bool = False,
@@ -155,7 +155,7 @@ class PlaybookService:
             user_id: User ID
             name: Unique name
             display_name: Display name
-            contract_type: Contract type
+            document_type: Contract type
             description: Description
             jurisdiction: Jurisdiction
             is_public: Public visibility
@@ -177,7 +177,7 @@ class PlaybookService:
             name=name,
             display_name=display_name,
             description=description,
-            contract_type=contract_type,
+            document_type=document_type,
             jurisdiction=jurisdiction,
             is_public=is_public,
             is_system=False,
@@ -228,7 +228,7 @@ class PlaybookService:
         
         # Update allowed fields
         allowed_fields = [
-            "display_name", "description", "contract_type",
+            "display_name", "description", "document_type",
             "jurisdiction", "is_public"
         ]
         
@@ -321,7 +321,7 @@ class PlaybookService:
             name=name,
             display_name=f"{original.display_name} (копия)",
             description=original.description,
-            contract_type=original.contract_type,
+            document_type=original.document_type,
             jurisdiction=original.jurisdiction,
             is_public=False,
             is_system=False,
@@ -683,7 +683,7 @@ class PlaybookService:
     
     # ==================== METADATA ====================
     
-    def get_contract_types(self) -> List[Dict[str, str]]:
+    def get_document_types(self) -> List[Dict[str, str]]:
         """Get available contract types"""
         return CONTRACT_TYPES
     

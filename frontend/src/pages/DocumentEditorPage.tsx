@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
-import { Save, Download, ArrowLeft, MessageSquare, FileText, Table, FileEdit, History, Upload } from 'lucide-react'
+import { Save, Download, ArrowLeft, MessageSquare, FileText, Table, FileEdit, History, Upload, BookOpen, Workflow } from 'lucide-react'
 import { toast } from 'sonner'
 import UnifiedSidebar from '../components/Layout/UnifiedSidebar'
 import { DocumentEditor, DocumentEditorRef } from '../components/Editor/DocumentEditor'
@@ -260,6 +260,8 @@ const DocumentEditorPage = () => {
     { id: 'documents', label: 'Документы', icon: FileText, path: `/cases/${caseId}/documents` },
     { id: 'editor', label: 'Редактор', icon: FileEdit, path: `/cases/${caseId}/editor` },
     { id: 'tabular-review', label: 'Tabular Review', icon: Table, path: `/cases/${caseId}/tabular-review` },
+    { id: 'playbooks', label: 'Playbooks', icon: BookOpen, path: `/cases/${caseId}/playbooks` },
+    { id: 'workflows', label: 'Workflows', icon: Workflow, path: `/cases/${caseId}/workflows` },
   ] : []
 
   // Show loading state

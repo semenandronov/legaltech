@@ -121,7 +121,7 @@ export const createPlaybook = async (data: {
   name: string
   display_name: string
   description?: string
-  contract_type: string
+  document_type: string
   jurisdiction?: string
   is_public?: boolean
   rules?: Omit<PlaybookRule, 'id' | 'playbook_id' | 'created_at'>[]

@@ -21,7 +21,7 @@ def init_system_playbooks(db: Session):
         name="system_nda_standard",
         display_name="Стандартный NDA Playbook",
         description="Набор правил для проверки соглашений о неразглашении",
-        contract_type="nda",
+        document_type="nda",
         jurisdiction="RU",
         is_system=True,
         is_public=True
@@ -91,7 +91,7 @@ def init_system_playbooks(db: Session):
         name="system_service_agreement",
         display_name="Договор оказания услуг",
         description="Набор правил для проверки договоров оказания услуг",
-        contract_type="service_agreement",
+        document_type="service_agreement",
         jurisdiction="RU",
         is_system=True,
         is_public=True

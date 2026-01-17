@@ -643,7 +643,7 @@ export default function PlaybooksPage() {
           name: data.name!,
           display_name: data.display_name!,
           description: data.description,
-          contract_type: data.document_type || 'contract',
+          document_type: data.document_type || 'contract',
           jurisdiction: data.jurisdiction,
           is_public: data.is_public,
           rules: data.rules?.map(r => ({

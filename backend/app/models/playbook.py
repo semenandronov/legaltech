@@ -27,8 +27,8 @@ class Playbook(Base):
     display_name = Column(String(255), nullable=False)
     description = Column(Text, nullable=True)
     
-    # Тип контракта и юрисдикция
-    contract_type = Column(String(100), nullable=False, index=True)  # nda, service_agreement, supply, license, employment, etc.
+    # Тип документа и юрисдикция
+    document_type = Column(String(100), nullable=False, index=True)  # nda, service_agreement, supply, license, employment, etc.
     jurisdiction = Column(String(100), nullable=True)  # RU, EU, US, EAEU, etc.
     
     # Видимость
@@ -61,7 +61,7 @@ class Playbook(Base):
             "name": self.name,
             "display_name": self.display_name,
             "description": self.description,
-            "contract_type": self.contract_type,
+            "document_type": self.document_type,
             "jurisdiction": self.jurisdiction,
             "is_system": self.is_system,
             "is_public": self.is_public,

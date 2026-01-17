@@ -69,7 +69,7 @@ class PlaybookCreate(BaseModel):
     name: str = Field(..., description="Unique identifier name")
     display_name: str = Field(..., description="Display name")
     description: Optional[str] = None
-    contract_type: str = Field(..., description="Type of contract this playbook is for")
+    document_type: str = Field(..., description="Type of document this playbook is for")
     jurisdiction: Optional[str] = None
     is_public: bool = False
     rules: Optional[List[PlaybookRuleCreate]] = None
@@ -79,7 +79,7 @@ class PlaybookUpdate(BaseModel):
     """Request to update a playbook"""
     display_name: Optional[str] = None
     description: Optional[str] = None
-    contract_type: Optional[str] = None
+    document_type: Optional[str] = None
     jurisdiction: Optional[str] = None
     is_public: Optional[bool] = None
 
@@ -98,14 +98,14 @@ class BatchCheckRequest(BaseModel):
 
 # ==================== METADATA ENDPOINTS ====================
 
-@router.get("/metadata/contract-types")
-async def get_contract_types(
+@router.get("/metadata/document-types")
+async def get_document_types(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
-    """Get available contract types"""
+    """Get available document types"""
     service = PlaybookService(db)
-    return service.get_contract_types()
+    return service.get_document_types()
 
 
 @router.get("/metadata/clause-categories")
@@ -152,7 +152,7 @@ async def get_condition_types(
 
 @router.get("/")
 async def list_playbooks(
-    contract_type: Optional[str] = Query(None, description="Filter by contract type"),
+    document_type: Optional[str] = Query(None, description="Filter by document type"),
     jurisdiction: Optional[str] = Query(None, description="Filter by jurisdiction"),
     include_system: bool = Query(True, description="Include system playbooks"),
     include_public: bool = Query(True, description="Include public playbooks"),
@@ -165,7 +165,7 @@ async def list_playbooks(
     service = PlaybookService(db)
     return service.get_playbooks(
         user_id=current_user.id,
-        contract_type=contract_type,
+        document_type=document_type,
         jurisdiction=jurisdiction,
         include_system=include_system,
         include_public=include_public,
@@ -213,7 +213,7 @@ async def create_playbook(
             name=request.name,
             display_name=request.display_name,
             description=request.description,
-            contract_type=request.contract_type,
+            document_type=request.document_type,
             jurisdiction=request.jurisdiction,
             is_public=request.is_public,
             rules=rules_data
@@ -446,9 +446,15 @@ async def batch_check_documents(
         raise HTTPException(status_code=500, detail="Failed to check documents")
 
 
-# ==================== CHECK RESULTS ====================
+# ==================== CHECK RESULTS (MUST BE BEFORE /{playbook_id}) ====================
 
-@router.get("/checks")
+# IMPORTANT: These routes MUST be defined BEFORE the /{playbook_id} route
+# to prevent /checks being interpreted as a playbook_id
+
+checks_router = APIRouter(prefix="/playbooks", tags=["playbooks"])
+
+
+@checks_router.get("/checks")
 async def list_checks(
     playbook_id: Optional[str] = Query(None),
     case_id: Optional[str] = Query(None),
@@ -473,7 +479,7 @@ async def list_checks(
     )
 
 
-@router.get("/checks/{check_id}")
+@checks_router.get("/checks/{check_id}")
 async def get_check(
     check_id: str,
     db: Session = Depends(get_db),
@@ -490,7 +496,7 @@ async def get_check(
     return result
 
 
-@router.get("/checks/{check_id}/redlines")
+@checks_router.get("/checks/{check_id}/redlines")
 async def get_check_redlines(
     check_id: str,
     format: str = Query("json", description="Output format: json, text, html"),
