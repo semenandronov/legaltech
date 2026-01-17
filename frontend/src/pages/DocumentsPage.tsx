@@ -85,11 +85,11 @@ const DocumentsPage = () => {
       setRunningPlaybook(true)
       setShowPlaybookModal(false)
       
-      const result = await playbooksApi.checkDocument({
-        playbook_id: playbookId,
-        document_id: docForPlaybook.id,
-        case_id: caseId
-      })
+      const result = await playbooksApi.checkDocument(
+        playbookId,
+        docForPlaybook.id,
+        caseId
+      )
       
       // Get full check result
       const fullCheck = await playbooksApi.getCheck(result.id)

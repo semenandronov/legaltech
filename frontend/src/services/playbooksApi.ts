@@ -175,12 +175,15 @@ export const deleteRule = async (playbookId: string, ruleId: string): Promise<vo
 }
 
 // Checks
-export const checkDocument = async (data: {
-  playbook_id: string
-  document_id: string
-  case_id?: string
-}): Promise<PlaybookCheck> => {
-  const response = await api.post('/api/playbooks/check', data)
+export const checkDocument = async (
+  playbookId: string,
+  documentId: string,
+  caseId?: string
+): Promise<PlaybookCheck> => {
+  const response = await api.post(`/api/playbooks/${playbookId}/check`, {
+    document_id: documentId,
+    case_id: caseId
+  })
   return response.data
 }
 

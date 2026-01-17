@@ -10,6 +10,7 @@ import { CommentsPanel } from '../components/Editor/CommentsPanel'
 import { TemplateSelector } from '../components/Editor/TemplateSelector'
 import { DocxImporter } from '../components/Editor/DocxImporter'
 import { getDocument, createDocument, updateDocument, exportDocx, exportPdf, listDocuments, Document } from '../services/documentEditorApi'
+import { getPlaybooks, checkDocument as runPlaybookCheck, Playbook } from '../services/playbooksApi'
 import { DocumentsList } from '../components/Editor/DocumentsList'
 import { CreateDocumentScreen } from '../components/Editor/CreateDocumentScreen'
 
@@ -34,6 +35,11 @@ const DocumentEditorPage = () => {
   const [showTemplateSelector, setShowTemplateSelector] = useState(false)
   const [showDocxImporter, setShowDocxImporter] = useState(false)
   const [comments, setComments] = useState<Array<{ id: string; from: number; to: number; text: string; createdAt?: string }>>([])
+  const [showPlaybookModal, setShowPlaybookModal] = useState(false)
+  const [playbooks, setPlaybooks] = useState<Playbook[]>([])
+  const [loadingPlaybooks, setLoadingPlaybooks] = useState(false)
+  const [runningPlaybook, setRunningPlaybook] = useState(false)
+  const [playbookResult, setPlaybookResult] = useState<any>(null)
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false)
@@ -247,6 +253,37 @@ const DocumentEditorPage = () => {
     }
   }
 
+  // Загрузка playbooks при открытии модального окна
+  const handleOpenPlaybookModal = async () => {
+    setShowPlaybookModal(true)
+    setLoadingPlaybooks(true)
+    setPlaybookResult(null)
+    try {
+      const data = await getPlaybooks()
+      setPlaybooks(data)
+    } catch (error: any) {
+      toast.error('Ошибка загрузки playbooks: ' + (error.message || 'Неизвестная ошибка'))
+    } finally {
+      setLoadingPlaybooks(false)
+    }
+  }
+
+  // Запуск проверки документа с playbook
+  const handleRunPlaybook = async (playbookId: string) => {
+    if (!documentId || !caseId) return
+    
+    setRunningPlaybook(true)
+    try {
+      const result = await runPlaybookCheck(playbookId, documentId, caseId)
+      setPlaybookResult(result)
+      toast.success(`Проверка завершена! Соответствие: ${result.compliance_score?.toFixed(1) || 0}%`)
+    } catch (error: any) {
+      toast.error('Ошибка проверки: ' + (error.message || 'Неизвестная ошибка'))
+    } finally {
+      setRunningPlaybook(false)
+    }
+  }
+
   // Load comments when editor is ready
   useEffect(() => {
     if (editorRef.current) {
@@ -395,6 +432,17 @@ const DocumentEditorPage = () => {
             <Download className="w-4 h-4" />
             PDF
           </button>
+          {/* Кнопка Playbooks - проверка документа */}
+          <button
+            onClick={handleOpenPlaybookModal}
+            disabled={!documentId}
+            className="flex items-center gap-2 px-4 py-2 border rounded-lg hover:bg-green-50 hover:border-green-300 disabled:opacity-50 transition-colors"
+            style={{ borderColor: 'var(--color-border)', color: 'var(--color-text-primary)' }}
+            title="Проверить документ с помощью Playbook"
+          >
+            <BookOpen className="w-4 h-4" style={{ color: '#10b981' }} />
+            Playbook
+          </button>
           {/* Кнопка чата - показывается всегда */}
           <button
             onClick={() => setShowChat(!showChat)}
@@ -498,6 +546,140 @@ const DocumentEditorPage = () => {
         onClose={() => setShowDocxImporter(false)}
         onImport={handleDocxImport}
       />
+
+      {/* Playbook Modal */}
+      {showPlaybookModal && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-xl shadow-2xl w-full max-w-2xl max-h-[80vh] overflow-hidden">
+            <div className="flex items-center justify-between p-6 border-b" style={{ borderBottomColor: 'var(--color-border)' }}>
+              <h2 className="text-xl font-semibold" style={{ color: 'var(--color-text-primary)' }}>
+                Проверка документа с Playbook
+              </h2>
+              <button
+                onClick={() => {
+                  setShowPlaybookModal(false)
+                  setPlaybookResult(null)
+                }}
+                className="p-2 hover:bg-gray-100 rounded-lg transition-colors"
+              >
+                ✕
+              </button>
+            </div>
+            
+            <div className="p-6 overflow-y-auto max-h-[60vh]">
+              {loadingPlaybooks ? (
+                <div className="flex items-center justify-center py-8">
+                  <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
+                </div>
+              ) : playbookResult ? (
+                <div className="space-y-4">
+                  <div className="text-center py-4">
+                    <div className={`text-4xl font-bold mb-2 ${
+                      (playbookResult.compliance_score || 0) >= 80 ? 'text-green-600' :
+                      (playbookResult.compliance_score || 0) >= 50 ? 'text-yellow-600' : 'text-red-600'
+                    }`}>
+                      {playbookResult.compliance_score?.toFixed(1) || 0}%
+                    </div>
+                    <div className="text-sm text-gray-500">Соответствие</div>
+                  </div>
+                  
+                  <div className="grid grid-cols-4 gap-4 text-center">
+                    <div className="p-3 bg-green-50 rounded-lg">
+                      <div className="text-xl font-bold text-green-600">{playbookResult.passed_rules || 0}</div>
+                      <div className="text-xs text-gray-500">Passed</div>
+                    </div>
+                    <div className="p-3 bg-red-50 rounded-lg">
+                      <div className="text-xl font-bold text-red-600">{playbookResult.red_line_violations || 0}</div>
+                      <div className="text-xs text-gray-500">Red Line</div>
+                    </div>
+                    <div className="p-3 bg-yellow-50 rounded-lg">
+                      <div className="text-xl font-bold text-yellow-600">{playbookResult.fallback_issues || 0}</div>
+                      <div className="text-xs text-gray-500">Fallback</div>
+                    </div>
+                    <div className="p-3 bg-purple-50 rounded-lg">
+                      <div className="text-xl font-bold text-purple-600">{playbookResult.no_go_violations || 0}</div>
+                      <div className="text-xs text-gray-500">No-Go</div>
+                    </div>
+                  </div>
+                  
+                  {playbookResult.results && playbookResult.results.length > 0 && (
+                    <div className="mt-4">
+                      <h3 className="font-medium mb-2">Детали проверки:</h3>
+                      <div className="space-y-2 max-h-40 overflow-y-auto">
+                        {playbookResult.results.map((r: any, i: number) => (
+                          <div key={i} className={`p-3 rounded-lg text-sm ${
+                            r.status === 'passed' ? 'bg-green-50' :
+                            r.status === 'violation' ? 'bg-red-50' : 'bg-yellow-50'
+                          }`}>
+                            <div className="font-medium">{r.rule_name}</div>
+                            {r.issue_description && (
+                              <div className="text-gray-600 mt-1">{r.issue_description}</div>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                  
+                  <button
+                    onClick={() => setPlaybookResult(null)}
+                    className="w-full mt-4 px-4 py-2 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 transition-colors"
+                  >
+                    Выбрать другой Playbook
+                  </button>
+                </div>
+              ) : playbooks.length === 0 ? (
+                <div className="text-center py-8 text-gray-500">
+                  <BookOpen className="w-12 h-12 mx-auto mb-4 opacity-50" />
+                  <p>Нет доступных Playbooks</p>
+                  <button
+                    onClick={() => navigate(`/cases/${caseId}/playbooks`)}
+                    className="mt-4 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
+                  >
+                    Создать Playbook
+                  </button>
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  <p className="text-sm text-gray-500 mb-4">
+                    Выберите Playbook для проверки документа:
+                  </p>
+                  {playbooks.map((pb) => (
+                    <button
+                      key={pb.id}
+                      onClick={() => handleRunPlaybook(pb.id)}
+                      disabled={runningPlaybook}
+                      className="w-full p-4 border rounded-lg text-left hover:border-blue-300 hover:bg-blue-50 transition-all disabled:opacity-50"
+                      style={{ borderColor: 'var(--color-border)' }}
+                    >
+                      <div className="flex items-center justify-between">
+                        <div>
+                          <div className="font-medium" style={{ color: 'var(--color-text-primary)' }}>
+                            {pb.display_name}
+                          </div>
+                          {pb.description && (
+                            <div className="text-sm text-gray-500 mt-1">{pb.description}</div>
+                          )}
+                          <div className="flex items-center gap-2 mt-2">
+                            <span className="text-xs px-2 py-1 bg-gray-100 rounded">{pb.document_type}</span>
+                            {pb.jurisdiction && (
+                              <span className="text-xs px-2 py-1 bg-gray-100 rounded">{pb.jurisdiction}</span>
+                            )}
+                            <span className="text-xs text-gray-400">{pb.rules_count || 0} правил</span>
+                          </div>
+                        </div>
+                        {runningPlaybook && (
+                          <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-blue-600"></div>
+                        )}
+                      </div>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
