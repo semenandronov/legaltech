@@ -7,7 +7,7 @@
  * - Word Add-In (если есть)
  */
 import { useState, useEffect } from 'react'
-import { useParams, useNavigate } from 'react-router-dom'
+import { useParams } from 'react-router-dom'
 import {
   BookOpen,
   Plus,
@@ -16,7 +16,6 @@ import {
   AlertTriangle,
   CheckCircle,
   XCircle,
-  Clock,
   MoreVertical,
   Copy,
   Trash2,
@@ -26,7 +25,6 @@ import {
   Shield,
   Target,
   Ban,
-  X,
   Save,
   ArrowLeft,
   MessageSquare,
@@ -235,7 +233,7 @@ const PlaybookEditor = ({
     rules: playbook.rules || []
   })
   const [editingRule, setEditingRule] = useState<number | null>(null)
-  const [newRule, setNewRule] = useState(false)
+  const [, setNewRule] = useState(false)
 
   const addRule = () => {
     setForm(prev => ({
@@ -592,7 +590,6 @@ const PlaybookEditor = ({
 // Главная страница
 export default function PlaybooksPage() {
   const { caseId } = useParams<{ caseId: string }>()
-  const navigate = useNavigate()
 
   const [playbooks, setPlaybooks] = useState<Playbook[]>([])
   const [checks, setChecks] = useState<PlaybookCheck[]>([])

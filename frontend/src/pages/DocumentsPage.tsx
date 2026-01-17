@@ -8,7 +8,7 @@ import {
   Drawer,
 } from '@mui/material'
 import { Description as DescriptionIcon, Close as CloseIcon, OpenInNew as OpenInNewIcon } from '@mui/icons-material'
-import { MessageSquare, FileText, Table, Filter, FileEdit, BookOpen, Workflow, Play, CheckCircle, XCircle, AlertTriangle, X, Loader2, ChevronRight } from 'lucide-react'
+import { MessageSquare, FileText, Table, Filter, FileEdit, BookOpen, Workflow, CheckCircle, XCircle, AlertTriangle, X, Loader2, ChevronRight } from 'lucide-react'
 import { toast } from 'sonner'
 import UnifiedSidebar from '../components/Layout/UnifiedSidebar'
 import DocumentViewer from '../components/Documents/DocumentViewer'
@@ -85,10 +85,14 @@ const DocumentsPage = () => {
       setRunningPlaybook(true)
       setShowPlaybookModal(false)
       
-      const result = await playbooksApi.checkDocument(playbookId, docForPlaybook.id, caseId)
+      const result = await playbooksApi.checkDocument({
+        playbook_id: playbookId,
+        document_id: docForPlaybook.id,
+        case_id: caseId
+      })
       
       // Get full check result
-      const fullCheck = await playbooksApi.getCheck(result.check_id)
+      const fullCheck = await playbooksApi.getCheck(result.id)
       setPlaybookResult(fullCheck)
       setShowResultPanel(true)
       
@@ -823,7 +827,7 @@ const DocumentsPage = () => {
                           className="text-xs p-2 rounded"
                           style={{ backgroundColor: 'rgba(34, 197, 94, 0.1)', color: 'var(--color-text-primary, #1f2937)' }}
                         >
-                          {redline.suggested_text.slice(0, 200)}...
+                          {redline.suggested_text?.slice(0, 200)}...
                         </div>
                       </div>
                     </div>

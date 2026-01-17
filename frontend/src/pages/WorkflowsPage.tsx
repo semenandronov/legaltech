@@ -18,18 +18,14 @@ import {
   ChevronRight,
   Plus,
   FolderUp,
-  Upload,
   File,
   FileText,
   X,
-  Settings,
   Zap,
   BarChart3,
   Search,
   Eye,
   Download,
-  Trash2,
-  MoreVertical,
   MessageSquare,
   Table,
   FileEdit,
@@ -37,63 +33,12 @@ import {
   Target,
   Globe,
   Database,
-  Brain,
-  FileSearch,
-  Users
+  FileSearch
 } from 'lucide-react'
 import { toast } from 'sonner'
 import UnifiedSidebar from '../components/Layout/UnifiedSidebar'
 import * as workflowsApi from '../services/workflowsApi'
 import type { WorkflowDefinition, WorkflowExecution, WorkflowEvent } from '../services/workflowsApi'
-
-// Компонент индикатора шага
-const StepIndicator = ({ 
-  status, 
-  label, 
-  time 
-}: { 
-  status: 'pending' | 'running' | 'completed' | 'failed'
-  label: string
-  time?: string
-}) => {
-  const getStatusIcon = () => {
-    switch (status) {
-      case 'completed':
-        return <CheckCircle className="w-4 h-4" style={{ color: '#22c55e' }} />
-      case 'running':
-        return <Loader2 className="w-4 h-4 animate-spin" style={{ color: '#6366f1' }} />
-      case 'failed':
-        return <XCircle className="w-4 h-4" style={{ color: '#ef4444' }} />
-      default:
-        return <div className="w-4 h-4 rounded-full border-2" style={{ borderColor: 'var(--color-text-tertiary)' }} />
-    }
-  }
-
-  return (
-    <div className="flex items-center gap-3">
-      {getStatusIcon()}
-      <div className="flex-1">
-        <span 
-          className="text-sm"
-          style={{ 
-            color: status === 'running' 
-              ? 'var(--color-text-primary)' 
-              : status === 'completed'
-              ? '#22c55e'
-              : 'var(--color-text-secondary)'
-          }}
-        >
-          {label}
-        </span>
-      </div>
-      {time && (
-        <span className="text-xs" style={{ color: 'var(--color-text-tertiary)' }}>
-          {time}
-        </span>
-      )}
-    </div>
-  )
-}
 
 // Иконки для инструментов workflow
 const toolIcons: Record<string, React.ReactNode> = {
@@ -111,12 +56,10 @@ const toolIcons: Record<string, React.ReactNode> = {
 const WorkflowCard = ({
   workflow,
   onRun,
-  onEdit,
   stats
 }: {
   workflow: WorkflowDefinition
   onRun: () => void
-  onEdit?: () => void
   stats?: { runs: number; avgTime: string; lastRun?: string }
 }) => {
   return (
@@ -224,16 +167,13 @@ const RunWorkflowDialog = ({
   onRun: (documents: string[], options: Record<string, any>) => void
 }) => {
   const [uploadedFiles, setUploadedFiles] = useState<File[]>([])
-  const [selectedCaseDocs, setSelectedCaseDocs] = useState<string[]>([])
   const [options, setOptions] = useState({
     detailLevel: 'comprehensive',
     includeWebSearch: true,
     priority: 'normal',
     notifyOnComplete: true
   })
-  const [uploading, setUploading] = useState(false)
   const fileInputRef = useRef<HTMLInputElement>(null)
-  const { caseId } = useParams<{ caseId: string }>()
 
   const handleDrop = (e: React.DragEvent) => {
     e.preventDefault()
@@ -512,14 +452,6 @@ const ExecutionMonitor = ({
 
   const status = getOverallStatus()
   const StatusIcon = status.icon
-
-  // Group events by step
-  const stepEvents = events.reduce((acc, event) => {
-    const step = event.step_name || 'general'
-    if (!acc[step]) acc[step] = []
-    acc[step].push(event)
-    return acc
-  }, {} as Record<string, WorkflowEvent[]>)
 
   return (
     <div

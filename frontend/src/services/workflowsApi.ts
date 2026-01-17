@@ -318,9 +318,9 @@ export const streamExecution = (
   onEvent: (event: WorkflowEvent) => void,
   onError?: (error: Error) => void
 ): (() => void) => {
-  const baseUrl = api.defaults.baseURL || ''
-  const token = localStorage.getItem('token')
-  const url = `${baseUrl}/workflow-agentic/executions/${executionId}/stream`
+  const baseUrl = import.meta.env.VITE_API_URL || ''
+  const token = localStorage.getItem('access_token')
+  const url = `${baseUrl}/api/workflow-agentic/executions/${executionId}/stream`
 
   const eventSource = new EventSource(url, {
     // @ts-ignore - некоторые браузеры поддерживают headers
@@ -386,9 +386,9 @@ export const executeWorkflowWithDocs = async (
 
 // Stream workflow events as async generator
 export async function* streamWorkflowEvents(executionId: string): AsyncGenerator<WorkflowEvent> {
-  const baseUrl = api.defaults.baseURL || ''
+  const baseUrl = import.meta.env.VITE_API_URL || ''
   const token = localStorage.getItem('access_token')
-  const url = `${baseUrl}/workflow-agentic/executions/${executionId}/stream`
+  const url = `${baseUrl}/api/workflow-agentic/executions/${executionId}/stream`
   
   try {
     const response = await fetch(url, {

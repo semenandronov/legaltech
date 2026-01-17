@@ -46,24 +46,32 @@ export interface RuleCheckResult {
   rule_id: string
   rule_name: string
   rule_type: string
-  status: 'passed' | 'failed' | 'warning' | 'skipped'
-  clause_found: boolean
+  status: 'passed' | 'failed' | 'warning' | 'skipped' | 'violation' | 'not_found' | 'error'
+  clause_found?: boolean
   clause_text?: string
   clause_location?: { start: number; end: number }
-  message: string
+  found_text?: string
+  location?: { start?: number; end?: number }
+  message?: string
+  issue_description?: string
   suggestion?: string
+  suggested_fix?: string
   confidence: number
+  reasoning?: string
 }
 
 export interface Redline {
-  id: string
-  type: 'insert' | 'delete' | 'modify' | 'comment'
+  id?: string
+  type?: 'insert' | 'delete' | 'modify' | 'comment' | 'replace' | 'add'
+  change_type?: string
   original_text?: string
   suggested_text?: string
-  reason: string
+  reason?: string
   rule_id?: string
-  location: { start: number; end: number }
-  severity: string
+  rule_name?: string
+  issue_description?: string
+  location?: { start?: number; end?: number }
+  severity?: string
   accepted?: boolean
 }
 
