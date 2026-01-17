@@ -8,11 +8,14 @@ import {
   Drawer,
 } from '@mui/material'
 import { Description as DescriptionIcon, Close as CloseIcon, OpenInNew as OpenInNewIcon } from '@mui/icons-material'
-import { MessageSquare, FileText, Table, Filter, FileEdit } from 'lucide-react'
+import { MessageSquare, FileText, Table, Filter, FileEdit, BookOpen, Workflow, Play, CheckCircle, XCircle, AlertTriangle, X, Loader2, ChevronRight } from 'lucide-react'
+import { toast } from 'sonner'
 import UnifiedSidebar from '../components/Layout/UnifiedSidebar'
 import DocumentViewer from '../components/Documents/DocumentViewer'
 import DocumentFilters, { DocumentFiltersState } from '../components/Documents/DocumentFilters'
 import { DocumentWithMetadata } from '../components/Documents/DocumentsList'
+import * as playbooksApi from '../services/playbooksApi'
+import type { Playbook, PlaybookCheck} from '../services/playbooksApi'
 
 interface DocumentClassification {
   doc_type: string
@@ -51,11 +54,53 @@ const DocumentsPage = () => {
     statuses: []
   })
   
+  // Playbooks state
+  const [playbooks, setPlaybooks] = useState<Playbook[]>([])
+  const [showPlaybookModal, setShowPlaybookModal] = useState(false)
+  const [docForPlaybook, setDocForPlaybook] = useState<DocumentFile | null>(null)
+  const [runningPlaybook, setRunningPlaybook] = useState(false)
+  const [playbookResult, setPlaybookResult] = useState<PlaybookCheck | null>(null)
+  const [showResultPanel, setShowResultPanel] = useState(false)
+  
   useEffect(() => {
     if (caseId) {
       loadDocuments()
+      loadPlaybooks()
     }
   }, [caseId])
+  
+  const loadPlaybooks = async () => {
+    try {
+      const data = await playbooksApi.getPlaybooks()
+      setPlaybooks(data)
+    } catch (error) {
+      console.error('Failed to load playbooks:', error)
+    }
+  }
+  
+  const handleRunPlaybook = async (playbookId: string) => {
+    if (!docForPlaybook || !caseId) return
+    
+    try {
+      setRunningPlaybook(true)
+      setShowPlaybookModal(false)
+      
+      const result = await playbooksApi.checkDocument(playbookId, docForPlaybook.id, caseId)
+      
+      // Get full check result
+      const fullCheck = await playbooksApi.getCheck(result.check_id)
+      setPlaybookResult(fullCheck)
+      setShowResultPanel(true)
+      
+      toast.success('Проверка завершена')
+    } catch (error) {
+      console.error('Playbook check failed:', error)
+      toast.error('Ошибка проверки документа')
+    } finally {
+      setRunningPlaybook(false)
+      setDocForPlaybook(null)
+    }
+  }
   
   const loadDocuments = async () => {
     if (!caseId) return
@@ -168,6 +213,8 @@ const DocumentsPage = () => {
               { id: 'documents', label: 'Документы', icon: FileText, path: `/cases/${caseId}/documents` },
               { id: 'editor', label: 'Редактор', icon: FileEdit, path: `/cases/${caseId}/editor` },
               { id: 'tabular-review', label: 'Tabular Review', icon: Table, path: `/cases/${caseId}/tabular-review` },
+              { id: 'playbooks', label: 'Playbooks', icon: BookOpen, path: `/cases/${caseId}/playbooks` },
+              { id: 'workflows', label: 'Workflows', icon: Workflow, path: `/cases/${caseId}/workflows` },
             ]} 
             title="Legal AI" 
           />
@@ -184,6 +231,8 @@ const DocumentsPage = () => {
     { id: 'documents', label: 'Документы', icon: FileText, path: `/cases/${caseId}/documents` },
     { id: 'editor', label: 'Редактор', icon: FileEdit, path: `/cases/${caseId}/editor` },
     { id: 'tabular-review', label: 'Tabular Review', icon: Table, path: `/cases/${caseId}/tabular-review` },
+    { id: 'playbooks', label: 'Playbooks', icon: BookOpen, path: `/cases/${caseId}/playbooks` },
+    { id: 'workflows', label: 'Workflows', icon: Workflow, path: `/cases/${caseId}/workflows` },
   ]
 
   return (
@@ -357,6 +406,23 @@ const DocumentsPage = () => {
                       {new Date(doc.created_at).toLocaleDateString('ru-RU')}
                     </p>
                   )}
+                  
+                  {/* Playbook Button */}
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      setDocForPlaybook(doc)
+                      setShowPlaybookModal(true)
+                    }}
+                    className="w-full mt-3 flex items-center justify-center gap-2 px-3 py-2 rounded-lg text-sm font-medium transition-colors"
+                    style={{
+                      backgroundColor: 'rgba(99, 102, 241, 0.1)',
+                      color: 'var(--color-accent, #6366f1)',
+                    }}
+                  >
+                    <BookOpen className="w-4 h-4" />
+                    Проверить Playbook
+                  </button>
                 </div>
               </div>
               )
@@ -481,6 +547,293 @@ const DocumentsPage = () => {
           </Box>
         )}
       </Drawer>
+      
+      {/* Playbook Selection Modal */}
+      {showPlaybookModal && docForPlaybook && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
+          <div
+            className="w-full max-w-lg rounded-xl shadow-xl"
+            style={{ backgroundColor: 'var(--color-bg-primary, white)' }}
+          >
+            <div
+              className="flex items-center justify-between p-4 border-b"
+              style={{ borderColor: 'var(--color-border, #e5e7eb)' }}
+            >
+              <div>
+                <h2 className="text-lg font-semibold" style={{ color: 'var(--color-text-primary, #1f2937)' }}>
+                  Выбрать Playbook
+                </h2>
+                <p className="text-sm" style={{ color: 'var(--color-text-secondary, #6b7280)' }}>
+                  {docForPlaybook.filename}
+                </p>
+              </div>
+              <button
+                onClick={() => {
+                  setShowPlaybookModal(false)
+                  setDocForPlaybook(null)
+                }}
+                className="p-2 rounded-lg hover:bg-gray-100"
+                style={{ color: 'var(--color-text-secondary, #6b7280)' }}
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            
+            <div className="p-4 max-h-96 overflow-y-auto space-y-2">
+              {playbooks.map(playbook => (
+                <button
+                  key={playbook.id}
+                  onClick={() => handleRunPlaybook(playbook.id)}
+                  className="w-full flex items-center gap-4 p-4 rounded-lg border text-left transition-colors hover:border-indigo-500"
+                  style={{
+                    backgroundColor: 'var(--color-bg-secondary, #f9fafb)',
+                    borderColor: 'var(--color-border, #e5e7eb)'
+                  }}
+                >
+                  <div
+                    className="w-10 h-10 rounded-lg flex items-center justify-center shrink-0"
+                    style={{ backgroundColor: 'rgba(99, 102, 241, 0.15)' }}
+                  >
+                    <BookOpen className="w-5 h-5" style={{ color: '#6366f1' }} />
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <div className="font-medium" style={{ color: 'var(--color-text-primary, #1f2937)' }}>
+                      {playbook.display_name}
+                    </div>
+                    <div className="text-sm truncate" style={{ color: 'var(--color-text-secondary, #6b7280)' }}>
+                      {playbook.rules_count} правил • {playbook.usage_count} проверок
+                    </div>
+                  </div>
+                  <ChevronRight className="w-5 h-5 shrink-0" style={{ color: 'var(--color-text-tertiary, #9ca3af)' }} />
+                </button>
+              ))}
+              
+              {playbooks.length === 0 && (
+                <p className="text-center py-8" style={{ color: 'var(--color-text-secondary, #6b7280)' }}>
+                  Нет доступных Playbooks
+                </p>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+      
+      {/* Running Playbook Overlay */}
+      {runningPlaybook && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
+          <div
+            className="rounded-xl p-8 flex flex-col items-center"
+            style={{ backgroundColor: 'var(--color-bg-primary, white)' }}
+          >
+            <Loader2 className="w-12 h-12 animate-spin mb-4" style={{ color: '#6366f1' }} />
+            <p className="text-lg font-medium" style={{ color: 'var(--color-text-primary, #1f2937)' }}>
+              Проверка документа...
+            </p>
+            <p className="text-sm" style={{ color: 'var(--color-text-secondary, #6b7280)' }}>
+              Это может занять 1-2 минуты
+            </p>
+          </div>
+        </div>
+      )}
+      
+      {/* Playbook Result Panel */}
+      {showResultPanel && playbookResult && (
+        <div
+          className="fixed right-0 top-0 bottom-0 w-[480px] shadow-xl border-l overflow-hidden flex flex-col z-40"
+          style={{
+            backgroundColor: 'var(--color-bg-primary, white)',
+            borderColor: 'var(--color-border, #e5e7eb)'
+          }}
+        >
+          {/* Header */}
+          <div
+            className="flex items-center justify-between p-4 border-b shrink-0"
+            style={{ borderColor: 'var(--color-border, #e5e7eb)' }}
+          >
+            <div>
+              <h2 className="text-lg font-semibold" style={{ color: 'var(--color-text-primary, #1f2937)' }}>
+                Результат проверки
+              </h2>
+              <p className="text-sm" style={{ color: 'var(--color-text-secondary, #6b7280)' }}>
+                {playbookResult.document_name}
+              </p>
+            </div>
+            <button
+              onClick={() => {
+                setShowResultPanel(false)
+                setPlaybookResult(null)
+              }}
+              className="p-2 rounded-lg hover:bg-gray-100"
+              style={{ color: 'var(--color-text-secondary, #6b7280)' }}
+            >
+              <X className="w-5 h-5" />
+            </button>
+          </div>
+          
+          {/* Stats */}
+          <div className="p-4 grid grid-cols-2 gap-3">
+            <div
+              className="rounded-lg p-3"
+              style={{ backgroundColor: 'var(--color-bg-secondary, #f9fafb)' }}
+            >
+              <div className="text-2xl font-bold" style={{ color: '#6366f1' }}>
+                {playbookResult.compliance_score?.toFixed(0) || 0}%
+              </div>
+              <div className="text-xs" style={{ color: 'var(--color-text-secondary, #6b7280)' }}>
+                Соответствие
+              </div>
+            </div>
+            <div
+              className="rounded-lg p-3 flex items-center"
+              style={{ backgroundColor: 'var(--color-bg-secondary, #f9fafb)' }}
+            >
+              <span
+                className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium"
+                style={{
+                  backgroundColor: playbookResult.overall_status === 'compliant'
+                    ? 'rgba(34, 197, 94, 0.15)'
+                    : playbookResult.overall_status === 'non_compliant'
+                    ? 'rgba(239, 68, 68, 0.15)'
+                    : 'rgba(234, 179, 8, 0.15)',
+                  color: playbookResult.overall_status === 'compliant'
+                    ? '#22c55e'
+                    : playbookResult.overall_status === 'non_compliant'
+                    ? '#ef4444'
+                    : '#eab308'
+                }}
+              >
+                {playbookResult.overall_status === 'compliant' && <CheckCircle className="w-3.5 h-3.5" />}
+                {playbookResult.overall_status === 'non_compliant' && <XCircle className="w-3.5 h-3.5" />}
+                {playbookResult.overall_status === 'needs_review' && <AlertTriangle className="w-3.5 h-3.5" />}
+                {playbooksApi.getStatusLabel(playbookResult.overall_status)}
+              </span>
+            </div>
+          </div>
+          
+          {/* Counters */}
+          <div
+            className="mx-4 p-3 rounded-lg flex items-center justify-around"
+            style={{ backgroundColor: 'var(--color-bg-secondary, #f9fafb)' }}
+          >
+            <div className="text-center">
+              <div className="text-lg font-semibold" style={{ color: '#22c55e' }}>
+                {playbookResult.passed_rules}
+              </div>
+              <div className="text-xs" style={{ color: 'var(--color-text-tertiary, #9ca3af)' }}>Пройдено</div>
+            </div>
+            <div className="text-center">
+              <div className="text-lg font-semibold" style={{ color: '#ef4444' }}>
+                {playbookResult.red_line_violations}
+              </div>
+              <div className="text-xs" style={{ color: 'var(--color-text-tertiary, #9ca3af)' }}>Нарушений</div>
+            </div>
+            <div className="text-center">
+              <div className="text-lg font-semibold" style={{ color: '#eab308' }}>
+                {playbookResult.fallback_issues}
+              </div>
+              <div className="text-xs" style={{ color: 'var(--color-text-tertiary, #9ca3af)' }}>Предупреждений</div>
+            </div>
+          </div>
+          
+          {/* Results */}
+          <div className="flex-1 overflow-y-auto p-4">
+            <h3 className="text-sm font-medium mb-3" style={{ color: 'var(--color-text-primary, #1f2937)' }}>
+              Результаты по правилам
+            </h3>
+            <div className="space-y-2">
+              {playbookResult.results?.map((result, idx) => (
+                <div
+                  key={idx}
+                  className="rounded-lg p-3 border"
+                  style={{
+                    backgroundColor: 'var(--color-bg-secondary, #f9fafb)',
+                    borderColor: result.status === 'violation' ? 'rgba(239, 68, 68, 0.3)' : 'var(--color-border, #e5e7eb)'
+                  }}
+                >
+                  <div className="flex items-start justify-between mb-1">
+                    <span className="text-sm font-medium" style={{ color: 'var(--color-text-primary, #1f2937)' }}>
+                      {result.rule_name}
+                    </span>
+                    <span
+                      className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-medium"
+                      style={{
+                        backgroundColor: result.status === 'passed'
+                          ? 'rgba(34, 197, 94, 0.15)'
+                          : result.status === 'violation'
+                          ? 'rgba(239, 68, 68, 0.15)'
+                          : 'rgba(156, 163, 175, 0.15)',
+                        color: result.status === 'passed'
+                          ? '#22c55e'
+                          : result.status === 'violation'
+                          ? '#ef4444'
+                          : '#9ca3af'
+                      }}
+                    >
+                      {result.status === 'passed' && <CheckCircle className="w-3 h-3" />}
+                      {result.status === 'violation' && <XCircle className="w-3 h-3" />}
+                      {playbooksApi.getStatusLabel(result.status)}
+                    </span>
+                  </div>
+                  {result.issue_description && (
+                    <p className="text-xs" style={{ color: 'var(--color-text-secondary, #6b7280)' }}>
+                      {result.issue_description}
+                    </p>
+                  )}
+                </div>
+              ))}
+            </div>
+            
+            {/* Redlines */}
+            {playbookResult.redlines && playbookResult.redlines.length > 0 && (
+              <>
+                <h3 className="text-sm font-medium mt-6 mb-3" style={{ color: 'var(--color-text-primary, #1f2937)' }}>
+                  Предлагаемые исправления ({playbookResult.redlines.length})
+                </h3>
+                <div className="space-y-3">
+                  {playbookResult.redlines.map((redline, idx) => (
+                    <div
+                      key={idx}
+                      className="rounded-lg p-3 border-l-4"
+                      style={{
+                        backgroundColor: 'var(--color-bg-secondary, #f9fafb)',
+                        borderLeftColor: '#ef4444'
+                      }}
+                    >
+                      <div className="text-sm font-medium mb-2" style={{ color: 'var(--color-text-primary, #1f2937)' }}>
+                        {redline.rule_name}
+                      </div>
+                      {redline.original_text && (
+                        <div className="mb-2">
+                          <div className="text-xs mb-1" style={{ color: 'var(--color-text-tertiary, #9ca3af)' }}>
+                            Исходный текст:
+                          </div>
+                          <div
+                            className="text-xs p-2 rounded line-through"
+                            style={{ backgroundColor: 'rgba(239, 68, 68, 0.1)', color: 'var(--color-text-secondary, #6b7280)' }}
+                          >
+                            {redline.original_text.slice(0, 200)}...
+                          </div>
+                        </div>
+                      )}
+                      <div>
+                        <div className="text-xs mb-1" style={{ color: 'var(--color-text-tertiary, #9ca3af)' }}>
+                          Предлагаемый текст:
+                        </div>
+                        <div
+                          className="text-xs p-2 rounded"
+                          style={{ backgroundColor: 'rgba(34, 197, 94, 0.1)', color: 'var(--color-text-primary, #1f2937)' }}
+                        >
+                          {redline.suggested_text.slice(0, 200)}...
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   )
 }

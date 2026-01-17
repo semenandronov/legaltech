@@ -11,7 +11,7 @@ import logging
 import sys
 from datetime import datetime
 from app.config import config
-from app.routes import upload, chat, auth, cases, dashboard, analysis, reports, settings, websocket, tabular_review, prompts, workflows, folders, review_table, assistant_chat, workflow_execution, plan_execution, metrics, document_editor
+from app.routes import upload, chat, auth, cases, dashboard, analysis, reports, settings, websocket, tabular_review, prompts, workflows, folders, review_table, assistant_chat, workflow_execution, plan_execution, metrics, document_editor, playbooks, workflow_agentic
 from app.utils.database import init_db
 
 # Configure structured logging
@@ -181,6 +181,8 @@ app.include_router(folders.router, prefix="/api", tags=["folders"])
 app.include_router(plan_execution.router, prefix="/api/plan", tags=["plan-execution"])
 app.include_router(metrics.router, prefix="/api/metrics", tags=["metrics"])
 app.include_router(document_editor.router, prefix="/api/documents-editor", tags=["document-editor"])
+app.include_router(playbooks.router, prefix="/api", tags=["playbooks"])
+app.include_router(workflow_agentic.router, prefix="/api", tags=["workflow-agentic"])
 
 
 @app.get("/api/health")

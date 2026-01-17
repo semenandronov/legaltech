@@ -27,6 +27,22 @@ from app.models.workflow_template import WorkflowTemplate
 from app.models.folder import Folder, FileTag, FileTagAssociation
 from app.models.document_editor import Document, DocumentVersion
 from app.models.document_template import DocumentTemplate
+from app.models.playbook import (
+    Playbook,
+    PlaybookRule,
+    PlaybookCheck,
+    CONTRACT_TYPES,
+    CLAUSE_CATEGORIES,
+    JURISDICTIONS,
+)
+from app.models.workflow import (
+    WorkflowDefinition,
+    WorkflowExecution,
+    WorkflowStep,
+    WORKFLOW_CATEGORIES,
+    WORKFLOW_TOOLS,
+    SYSTEM_WORKFLOW_TEMPLATES,
+)
 
 __all__ = [
     # Base
@@ -69,4 +85,18 @@ __all__ = [
     "DocumentVersion",
     # Document templates
     "DocumentTemplate",
+    # Playbooks
+    "Playbook",
+    "PlaybookRule",
+    "PlaybookCheck",
+    "CONTRACT_TYPES",
+    "CLAUSE_CATEGORIES",
+    "JURISDICTIONS",
+    # Workflows
+    "WorkflowDefinition",
+    "WorkflowExecution",
+    "WorkflowStep",
+    "WORKFLOW_CATEGORIES",
+    "WORKFLOW_TOOLS",
+    "SYSTEM_WORKFLOW_TEMPLATES",
 ]
