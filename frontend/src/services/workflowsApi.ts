@@ -173,17 +173,17 @@ export interface WorkflowEvent {
 
 // Metadata
 export const getCategories = async (): Promise<WorkflowCategory[]> => {
-  const response = await api.get('/workflow-agentic/metadata/categories')
+  const response = await api.get('/api/workflow-agentic/metadata/categories')
   return Array.isArray(response.data) ? response.data : []
 }
 
 export const getTools = async (): Promise<WorkflowTool[]> => {
-  const response = await api.get('/workflow-agentic/metadata/tools')
+  const response = await api.get('/api/workflow-agentic/metadata/tools')
   return Array.isArray(response.data) ? response.data : []
 }
 
 export const getSystemTemplates = async (): Promise<any[]> => {
-  const response = await api.get('/workflow-agentic/metadata/system-templates')
+  const response = await api.get('/api/workflow-agentic/metadata/system-templates')
   return Array.isArray(response.data) ? response.data : []
 }
 
@@ -195,7 +195,7 @@ export const getDefinitions = async (params?: {
   limit?: number
   offset?: number
 }): Promise<WorkflowDefinition[]> => {
-  const response = await api.get('/workflow-agentic/definitions', { params })
+  const response = await api.get('/api/workflow-agentic/definitions', { params })
   // Ensure we always return an array
   return Array.isArray(response.data) ? response.data : []
 }
@@ -215,7 +215,7 @@ export const createDefinition = async (data: {
   output_schema?: Record<string, any>
   is_public?: boolean
 }): Promise<WorkflowDefinition> => {
-  const response = await api.post('/workflow-agentic/definitions', data)
+  const response = await api.post('/api/workflow-agentic/definitions', data)
   return response.data
 }
 
@@ -243,7 +243,7 @@ export const createPlan = async (data: {
   is_valid: boolean
   estimated_duration_seconds: number
 }> => {
-  const response = await api.post('/workflow-agentic/plan', data)
+  const response = await api.post('/api/workflow-agentic/plan', data)
   return response.data
 }
 
@@ -259,7 +259,7 @@ export const executeWorkflow = async (data: {
   status: string
   message: string
 }> => {
-  const response = await api.post('/workflow-agentic/execute', data)
+  const response = await api.post('/api/workflow-agentic/execute', data)
   return response.data
 }
 
@@ -269,7 +269,7 @@ export const getExecutions = async (params?: {
   limit?: number
   offset?: number
 }): Promise<WorkflowExecution[]> => {
-  const response = await api.get('/workflow-agentic/executions', { params })
+  const response = await api.get('/api/workflow-agentic/executions', { params })
   // Ensure we always return an array
   return Array.isArray(response.data) ? response.data : []
 }
@@ -365,7 +365,7 @@ export const executeWorkflowWithDocs = async (
     options?: Record<string, any>
   }
 ): Promise<WorkflowExecution> => {
-  const response = await api.post('/workflow-agentic/execute', {
+  const response = await api.post('/api/workflow-agentic/execute', {
     definition_id: definitionId,
     case_id: params.case_id,
     file_ids: params.document_ids,

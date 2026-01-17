@@ -107,7 +107,7 @@ export const getPlaybooks = async (params?: {
   include_system?: boolean
   include_public?: boolean
 }): Promise<Playbook[]> => {
-  const response = await api.get('/playbooks', { params })
+  const response = await api.get('/api/playbooks', { params })
   // Ensure we always return an array
   return Array.isArray(response.data) ? response.data : []
 }
@@ -126,7 +126,7 @@ export const createPlaybook = async (data: {
   is_public?: boolean
   rules?: Omit<PlaybookRule, 'id' | 'playbook_id' | 'created_at'>[]
 }): Promise<Playbook> => {
-  const response = await api.post('/playbooks', data)
+  const response = await api.post('/api/playbooks', data)
   return response.data
 }
 
@@ -180,7 +180,7 @@ export const checkDocument = async (data: {
   document_id: string
   case_id?: string
 }): Promise<PlaybookCheck> => {
-  const response = await api.post('/playbooks/check', data)
+  const response = await api.post('/api/playbooks/check', data)
   return response.data
 }
 
@@ -192,7 +192,7 @@ export const getChecks = async (params?: {
   limit?: number
   offset?: number
 }): Promise<PlaybookCheck[]> => {
-  const response = await api.get('/playbooks/checks', { params })
+  const response = await api.get('/api/playbooks/checks', { params })
   // Ensure we always return an array
   return Array.isArray(response.data) ? response.data : []
 }
