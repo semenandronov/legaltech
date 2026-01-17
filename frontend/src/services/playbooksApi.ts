@@ -108,7 +108,8 @@ export const getPlaybooks = async (params?: {
   include_public?: boolean
 }): Promise<Playbook[]> => {
   const response = await api.get('/playbooks', { params })
-  return response.data
+  // Ensure we always return an array
+  return Array.isArray(response.data) ? response.data : []
 }
 
 export const getPlaybook = async (playbookId: string): Promise<Playbook> => {
@@ -192,7 +193,8 @@ export const getChecks = async (params?: {
   offset?: number
 }): Promise<PlaybookCheck[]> => {
   const response = await api.get('/playbooks/checks', { params })
-  return response.data
+  // Ensure we always return an array
+  return Array.isArray(response.data) ? response.data : []
 }
 
 export const getCheck = async (checkId: string): Promise<PlaybookCheck> => {

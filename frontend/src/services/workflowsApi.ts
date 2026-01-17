@@ -174,17 +174,17 @@ export interface WorkflowEvent {
 // Metadata
 export const getCategories = async (): Promise<WorkflowCategory[]> => {
   const response = await api.get('/workflow-agentic/metadata/categories')
-  return response.data
+  return Array.isArray(response.data) ? response.data : []
 }
 
 export const getTools = async (): Promise<WorkflowTool[]> => {
   const response = await api.get('/workflow-agentic/metadata/tools')
-  return response.data
+  return Array.isArray(response.data) ? response.data : []
 }
 
 export const getSystemTemplates = async (): Promise<any[]> => {
   const response = await api.get('/workflow-agentic/metadata/system-templates')
-  return response.data
+  return Array.isArray(response.data) ? response.data : []
 }
 
 // Definitions CRUD
@@ -196,7 +196,8 @@ export const getDefinitions = async (params?: {
   offset?: number
 }): Promise<WorkflowDefinition[]> => {
   const response = await api.get('/workflow-agentic/definitions', { params })
-  return response.data
+  // Ensure we always return an array
+  return Array.isArray(response.data) ? response.data : []
 }
 
 export const getDefinition = async (definitionId: string): Promise<WorkflowDefinition> => {
@@ -269,7 +270,8 @@ export const getExecutions = async (params?: {
   offset?: number
 }): Promise<WorkflowExecution[]> => {
   const response = await api.get('/workflow-agentic/executions', { params })
-  return response.data
+  // Ensure we always return an array
+  return Array.isArray(response.data) ? response.data : []
 }
 
 export const getExecution = async (executionId: string): Promise<WorkflowExecution> => {
@@ -294,7 +296,7 @@ export const getExecutionResults = async (executionId: string): Promise<{
 
 export const getExecutionSteps = async (executionId: string): Promise<WorkflowExecutionStep[]> => {
   const response = await api.get(`/workflow-agentic/executions/${executionId}/steps`)
-  return response.data
+  return Array.isArray(response.data) ? response.data : []
 }
 
 export const validateExecution = async (executionId: string): Promise<{
