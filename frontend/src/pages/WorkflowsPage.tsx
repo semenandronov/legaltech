@@ -101,7 +101,7 @@ const WorkflowCard = ({
       )}
 
       {/* Tools */}
-      {workflow.config.steps && workflow.config.steps.length > 0 && (
+      {workflow.config?.steps && workflow.config.steps.length > 0 && (
         <div className="flex items-center gap-2 mb-4 flex-wrap">
           {workflow.config.steps.slice(0, 5).map((step, idx) => (
             <div 
