@@ -364,24 +364,67 @@ const MessageContent: React.FC<MessageContentProps> = ({
       parts.push(text.substring(lastIndex))
     }
     
-    // Render with markdown for non-citation parts - inline to preserve citations
+    // Render with markdown for non-citation parts - TRUE INLINE to preserve flow (Harvey/Perplexity style)
+    // Собираем текст обратно с плейсхолдерами для citations
+    const citationPlaceholders: React.ReactElement[] = []
+    let reconstructedText = ''
+    
+    parts.forEach((part, idx) => {
+      if (React.isValidElement(part)) {
+        // Используем уникальный плейсхолдер который не будет в тексте
+        reconstructedText += `⟦CITE_${idx}⟧`
+        citationPlaceholders.push(React.cloneElement(part, { key: `citation-inline-${idx}` }))
+      } else {
+        reconstructedText += part
+      }
+    })
+    
+    // Рендерим весь текст как единый markdown
     return (
-      <div>
-        {parts.map((part, idx) => {
-          if (React.isValidElement(part)) {
-            return part
-          }
-          // Render markdown for text parts with improved components and GFM support for tables
-          return (
-            <ReactMarkdown 
-              key={`text-${idx}`} 
-              components={markdownComponents}
-              remarkPlugins={[remarkGfm]}
-            >
-              {part as string}
-            </ReactMarkdown>
-          )
-        })}
+      <div className="prose-inline-citations">
+        <ReactMarkdown 
+          components={{
+            ...markdownComponents,
+            // Переопределяем p чтобы вставлять citations inline
+            p: ({ children }) => {
+              // Преобразуем children в массив и обрабатываем плейсхолдеры
+              const processChildren = (child: React.ReactNode): React.ReactNode => {
+                if (typeof child === 'string') {
+                  // Разбиваем строку по плейсхолдерам и вставляем компоненты
+                  const parts = child.split(/(⟦CITE_\d+⟧)/g)
+                  return parts.map((part, i) => {
+                    const match = part.match(/⟦CITE_(\d+)⟧/)
+                    if (match) {
+                      const citationIdx = parseInt(match[1], 10)
+                      return citationPlaceholders[citationIdx] || part
+                    }
+                    return part
+                  })
+                }
+                if (Array.isArray(child)) {
+                  return child.map(processChildren)
+                }
+                return child
+              }
+              
+              const processedChildren = React.Children.map(children, processChildren)
+              
+              return (
+                <p style={{ 
+                  margin: '0 0 16px 0', 
+                  lineHeight: 1.75, 
+                  display: 'block',
+                  color: 'inherit'
+                }}>
+                  {processedChildren}
+                </p>
+              )
+            }
+          }}
+          remarkPlugins={[remarkGfm]}
+        >
+          {reconstructedText}
+        </ReactMarkdown>
       </div>
     )
   }

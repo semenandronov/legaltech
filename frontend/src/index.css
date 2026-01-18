@@ -319,3 +319,31 @@
   }
 }
 
+/* Inline Citations - Harvey/Perplexity style */
+.prose-inline-citations {
+  /* Ensure citations flow naturally with text */
+  & p {
+    display: block;
+    margin-bottom: 1rem;
+    line-height: 1.75;
+  }
+  
+  /* Citation badges should be truly inline */
+  & .inline-flex {
+    display: inline-flex;
+    vertical-align: super;
+    margin-left: 1px;
+    margin-right: 2px;
+  }
+}
+
+/* Smooth citation hover animation */
+.citation-badge {
+  transition: all 0.15s ease-out;
+}
+
+.citation-badge:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 2px 8px rgba(59, 130, 246, 0.25);
+}
+

@@ -864,16 +864,31 @@ async def stream_chat_response(
                 structured_citations_result = structured_result
                 full_response_text = structured_result.answer or ""
 
-                # Если модель не поставила [N], добавляем маркеры по абзацам как fallback
+                # Если модель не поставила [N], добавляем маркеры INLINE как fallback (Harvey/Perplexity style)
                 if structured_result.citations and not re.search(r"\[\d+\]", full_response_text):
-                    paragraphs = [p for p in full_response_text.split("\n\n") if p.strip()]
+                    # Разбиваем на предложения, а не абзацы - для inline citations
+                    sentences = re.split(r'(?<=[.!?])\s+', full_response_text.strip())
                     rebuilt = []
-                    for idx, paragraph in enumerate(paragraphs):
-                        if idx < len(structured_result.citations):
-                            rebuilt.append(f"{paragraph} [{idx + 1}]")
+                    citation_idx = 0
+                    
+                    for sentence in sentences:
+                        if not sentence.strip():
+                            continue
+                        
+                        # Добавляем ссылку inline в конец предложения (перед пунктуацией)
+                        if citation_idx < len(structured_result.citations):
+                            sentence_stripped = sentence.rstrip()
+                            if sentence_stripped and sentence_stripped[-1] in '.!?':
+                                punct = sentence_stripped[-1]
+                                rebuilt.append(f"{sentence_stripped[:-1]}[{citation_idx + 1}]{punct}")
+                            else:
+                                rebuilt.append(f"{sentence}[{citation_idx + 1}]")
+                            citation_idx += 1
                         else:
-                            rebuilt.append(paragraph)
-                    full_response_text = "\n\n".join(rebuilt)
+                            rebuilt.append(sentence)
+                    
+                    # Объединяем обратно в связный текст
+                    full_response_text = " ".join(rebuilt)
 
                 # Stream ответ по словам
                 words = full_response_text.split(" ")

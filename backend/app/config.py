@@ -53,9 +53,9 @@ class Config:
     RAG_CITATION_VERIFICATION_IN_PIPELINE: bool = os.getenv("RAG_CITATION_VERIFICATION_IN_PIPELINE", "false").lower() == "true"  # Verify citations with LLM-as-Judge in pipeline
     
     # Citation System Settings (Phase 2, 3, 5)
-    CITATION_FIRST_ENABLED: bool = os.getenv("CITATION_FIRST_ENABLED", "false").lower() == "true"  # Enable citation-first generation
+    CITATION_FIRST_ENABLED: bool = os.getenv("CITATION_FIRST_ENABLED", "true").lower() == "true"  # Enable citation-first generation
     CITATION_VERIFICATION_ENABLED: bool = os.getenv("CITATION_VERIFICATION_ENABLED", "true").lower() == "true"  # Enable extended citation verification
-    CITATION_LLM_JUDGE_ENABLED: bool = os.getenv("CITATION_LLM_JUDGE_ENABLED", "false").lower() == "true"  # Use LLM-as-judge for verification
+    CITATION_LLM_JUDGE_ENABLED: bool = os.getenv("CITATION_LLM_JUDGE_ENABLED", "true").lower() == "true"  # Use LLM-as-judge for verification
     CITATION_MIN_INDEPENDENT_SOURCES: int = int(os.getenv("CITATION_MIN_INDEPENDENT_SOURCES", "1"))  # Minimum independent sources for verified claim
     CITATION_CHAR_OFFSETS_ENABLED: bool = os.getenv("CITATION_CHAR_OFFSETS_ENABLED", "true").lower() == "true"  # Save char offsets for new documents
     
