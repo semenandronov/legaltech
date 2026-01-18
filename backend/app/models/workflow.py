@@ -330,7 +330,7 @@ WORKFLOW_CATEGORIES = [
     {"name": "custom", "display_name": "Custom", "description": "Пользовательский workflow"},
 ]
 
-# Доступные инструменты
+# Доступные инструменты (web_search отключен)
 WORKFLOW_TOOLS = [
     {
         "name": "tabular_review",
@@ -339,70 +339,68 @@ WORKFLOW_TOOLS = [
         "params_schema": {
             "type": "object",
             "properties": {
-                "file_ids": {"type": "array", "items": {"type": "string"}},
-                "questions": {"type": "array", "items": {"type": "string"}}
-            }
-        }
-    },
-    {
-        "name": "web_search",
-        "display_name": "Web Search",
-        "description": "Поиск информации в интернете",
-        "params_schema": {
-            "type": "object",
-            "properties": {
-                "query": {"type": "string"},
-                "num_results": {"type": "integer", "default": 10}
-            }
+                "file_ids": {"type": "array", "items": {"type": "string"}, "description": "ID файлов для анализа"},
+                "questions": {"type": "array", "items": {"type": "string"}, "description": "Вопросы/колонки для извлечения"},
+                "review_name": {"type": "string", "description": "Название таблицы"}
+            },
+            "required": ["questions"]
         }
     },
     {
         "name": "legal_db",
-        "display_name": "Legal Database",
-        "description": "Поиск в юридических базах данных",
+        "display_name": "ГАРАНТ",
+        "description": "Поиск в правовой базе ГАРАНТ (законы, судебная практика)",
         "params_schema": {
             "type": "object",
             "properties": {
-                "query": {"type": "string"},
-                "databases": {"type": "array", "items": {"type": "string"}}
-            }
+                "query": {"type": "string", "description": "Поисковый запрос"},
+                "max_results": {"type": "integer", "default": 10, "description": "Максимум результатов"},
+                "get_full_text": {"type": "boolean", "default": False, "description": "Получить полный текст"},
+                "doc_type": {"type": "string", "enum": ["law", "court_decision", "article", "commentary"]}
+            },
+            "required": ["query"]
         }
     },
     {
         "name": "rag",
         "display_name": "RAG Search",
-        "description": "Семантический поиск по загруженным документам",
+        "description": "Семантический поиск по загруженным документам дела",
         "params_schema": {
             "type": "object",
             "properties": {
-                "query": {"type": "string"},
-                "file_ids": {"type": "array", "items": {"type": "string"}},
-                "top_k": {"type": "integer", "default": 10}
-            }
+                "query": {"type": "string", "description": "Поисковый запрос или вопрос"},
+                "file_ids": {"type": "array", "items": {"type": "string"}, "description": "ID файлов (опционально)"},
+                "top_k": {"type": "integer", "default": 10, "description": "Количество результатов"}
+            },
+            "required": ["query"]
         }
     },
     {
         "name": "playbook_check",
         "display_name": "Playbook Check",
-        "description": "Проверка документа против Playbook",
+        "description": "Проверка документа против правил Playbook",
         "params_schema": {
             "type": "object",
             "properties": {
-                "document_id": {"type": "string"},
-                "playbook_id": {"type": "string"}
-            }
+                "document_id": {"type": "string", "description": "ID документа для проверки"},
+                "playbook_id": {"type": "string", "description": "ID Playbook с правилами"}
+            },
+            "required": ["document_id", "playbook_id"]
         }
     },
     {
         "name": "document_draft",
         "display_name": "Document Draft",
-        "description": "Создание черновика документа",
+        "description": "Создание черновика юридического документа",
         "params_schema": {
             "type": "object",
             "properties": {
-                "template_id": {"type": "string"},
-                "variables": {"type": "object"}
-            }
+                "document_type": {"type": "string", "enum": ["contract", "claim", "letter", "memo", "power_of_attorney", "agreement", "protocol", "act"], "description": "Тип документа"},
+                "variables": {"type": "object", "description": "Данные для заполнения"},
+                "instructions": {"type": "string", "description": "Дополнительные инструкции"},
+                "title": {"type": "string", "description": "Название документа"}
+            },
+            "required": ["document_type"]
         }
     },
     {
@@ -412,20 +410,23 @@ WORKFLOW_TOOLS = [
         "params_schema": {
             "type": "object",
             "properties": {
-                "text": {"type": "string"},
-                "max_length": {"type": "integer"}
+                "text": {"type": "string", "description": "Текст для резюмирования"},
+                "file_id": {"type": "string", "description": "ID файла (альтернатива text)"},
+                "max_length": {"type": "integer", "default": 500, "description": "Максимальная длина резюме"},
+                "style": {"type": "string", "enum": ["brief", "detailed", "bullet_points"], "default": "brief"}
             }
         }
     },
     {
         "name": "extract_entities",
         "display_name": "Extract Entities",
-        "description": "Извлечение именованных сущностей",
+        "description": "Извлечение именованных сущностей из текста",
         "params_schema": {
             "type": "object",
             "properties": {
-                "text": {"type": "string"},
-                "entity_types": {"type": "array", "items": {"type": "string"}}
+                "text": {"type": "string", "description": "Текст для анализа"},
+                "file_id": {"type": "string", "description": "ID файла (альтернатива text)"},
+                "entity_types": {"type": "array", "items": {"type": "string"}, "description": "Типы сущностей: person, organization, date, money, location, contract_term"}
             }
         }
     },

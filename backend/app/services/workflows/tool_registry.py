@@ -77,21 +77,24 @@ class ToolRegistry:
         """Register default tools"""
         from app.services.workflows.tools.tabular_review_tool import TabularReviewTool
         from app.services.workflows.tools.rag_tool import RAGTool
-        from app.services.workflows.tools.web_search_tool import WebSearchTool
         from app.services.workflows.tools.playbook_tool import PlaybookCheckTool
         from app.services.workflows.tools.summarize_tool import SummarizeTool
         from app.services.workflows.tools.extract_entities_tool import ExtractEntitiesTool
         from app.services.workflows.tools.legal_db_tool import LegalDBTool
         from app.services.workflows.tools.document_draft_tool import DocumentDraftTool
         
-        self.register(TabularReviewTool)
-        self.register(RAGTool)
-        self.register(WebSearchTool)
-        self.register(PlaybookCheckTool)
-        self.register(SummarizeTool)
-        self.register(ExtractEntitiesTool)
-        self.register(LegalDBTool)
-        self.register(DocumentDraftTool)
+        # Активные инструменты
+        self.register(TabularReviewTool)      # Табличный анализ документов
+        self.register(RAGTool)                 # Семантический поиск по документам
+        self.register(PlaybookCheckTool)       # Проверка документов по Playbook
+        self.register(SummarizeTool)           # Резюмирование текста
+        self.register(ExtractEntitiesTool)     # Извлечение сущностей
+        self.register(LegalDBTool)             # Поиск в ГАРАНТ
+        self.register(DocumentDraftTool)       # Создание черновиков документов
+        
+        # WebSearchTool отключен - Yandex Search API не настроен
+        # from app.services.workflows.tools.web_search_tool import WebSearchTool
+        # self.register(WebSearchTool)
         
         logger.info(f"ToolRegistry: Registered {len(self._tools)} tools")
     
