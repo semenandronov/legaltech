@@ -10,7 +10,7 @@ import { CommentsPanel } from '../components/Editor/CommentsPanel'
 import { TemplateSelector } from '../components/Editor/TemplateSelector'
 import { DocxImporter } from '../components/Editor/DocxImporter'
 import { getDocument, createDocument, updateDocument, exportDocx, exportPdf, listDocuments, Document } from '../services/documentEditorApi'
-import { getPlaybooks, checkDocument as runPlaybookCheck, Playbook, PlaybookCheck } from '../services/playbooksApi'
+import { getPlaybooks, checkDocument as runPlaybookCheck, Playbook } from '../services/playbooksApi'
 import { DocumentsList } from '../components/Editor/DocumentsList'
 import { CreateDocumentScreen } from '../components/Editor/CreateDocumentScreen'
 import { PlaybookResultsPanel } from '../components/Playbooks/PlaybookResultsPanel'
@@ -291,14 +291,7 @@ const DocumentEditorPage = () => {
   // Навигация к месту в документе
   const handleNavigateToIssue = (location: { start: number; end: number }) => {
     if (editorRef.current) {
-      // Пробуем использовать методы навигации если они есть
-      if (typeof editorRef.current.scrollToPosition === 'function') {
-        editorRef.current.scrollToPosition(location.start)
-      }
-      if (typeof editorRef.current.setSelection === 'function') {
-        editorRef.current.setSelection(location.start, location.end)
-      }
-      // Альтернатива: можно использовать focus или другие базовые методы
+      // Показываем уведомление о найденной позиции
       toast.info(`Найдено на позиции ${location.start}-${location.end}`)
     }
   }

@@ -6,13 +6,12 @@
  * 2. Предпросмотр результатов проверки
  * 3. Интеграция с Document Viewer
  */
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect } from 'react'
 import { useParams } from 'react-router-dom'
 import {
   BookOpen,
   Plus,
   Search,
-  ChevronRight,
   ChevronDown,
   AlertTriangle,
   CheckCircle,
@@ -930,7 +929,7 @@ const PlaybookEditor = ({
                         </label>
                         <select
                           value={rule.severity}
-                          onChange={(e) => updateRule(index, { severity: e.target.value })}
+                          onChange={(e) => updateRule(index, { severity: e.target.value as 'low' | 'medium' | 'high' | 'critical' })}
                           className="w-full px-3 py-2 rounded-lg border text-sm"
                           style={{
                             backgroundColor: 'var(--color-bg-primary)',

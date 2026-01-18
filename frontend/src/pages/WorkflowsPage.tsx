@@ -1065,7 +1065,7 @@ export default function WorkflowsPage() {
     return reasons[tool] || 'Этот инструмент необходим для выполнения задачи'
   }
 
-  const getToolParameters = (tool: string, documents: string[], options: Record<string, any>) => {
+  const getToolParameters = (_tool: string, documents: string[], options: Record<string, any>) => {
     return {
       documents: documents.length,
       detail_level: options.detailLevel || 'comprehensive',
