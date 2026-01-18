@@ -6,7 +6,7 @@
  * и могут занимать от минут до часов.
  */
 import { useState, useEffect, useRef } from 'react'
-import { useParams } from 'react-router-dom'
+import { useParams, useNavigate } from 'react-router-dom'
 import {
   Workflow,
   Play,
@@ -41,6 +41,7 @@ import * as workflowsApi from '../services/workflowsApi'
 import type { WorkflowDefinition, WorkflowExecution, WorkflowEvent } from '../services/workflowsApi'
 import { WorkflowPlanningPhase } from '../components/Workflows/WorkflowPlanningPhase'
 import { WorkflowExecutionPanel } from '../components/Workflows/WorkflowExecutionPanel'
+import { savePendingWorkflowResult, WorkflowResultData } from '../services/workflowResultsService'
 
 // Иконки для инструментов workflow
 const toolIcons: Record<string, React.ReactNode> = {
@@ -903,6 +904,7 @@ const CreateWorkflowDialog = ({
 // Главная страница
 export default function WorkflowsPage() {
   const { caseId } = useParams<{ caseId: string }>()
+  const navigate = useNavigate()
 
   const [workflows, setWorkflows] = useState<WorkflowDefinition[]>([])
   const [executions, setExecutions] = useState<WorkflowExecution[]>([])
@@ -1192,12 +1194,15 @@ export default function WorkflowsPage() {
     }
 
     // Завершение
+    const completedAt = new Date().toISOString()
+    const elapsedTime = '1:45'
+    
     setExecutionDetails((prev: any) => ({
       ...prev,
       status: 'completed',
       progress: 100,
-      completed_at: new Date().toISOString(),
-      elapsed_time: '1:45',
+      completed_at: completedAt,
+      elapsed_time: elapsedTime,
       result_url: '/api/results/example',
       ai_thoughts: [
         ...prev.ai_thoughts,
@@ -1206,7 +1211,49 @@ export default function WorkflowsPage() {
       ]
     }))
 
-    toast.success('Workflow успешно завершён!')
+    // Сохраняем результат для отображения в чате
+    const workflowResult: WorkflowResultData = {
+      execution_id: `exec_${Date.now()}`,
+      workflow_id: pendingWorkflow?.id || '',
+      workflow_name: pendingWorkflow?.display_name || 'Workflow',
+      case_id: caseId || '',
+      status: 'completed',
+      summary: `Workflow "${pendingWorkflow?.display_name}" успешно выполнен. Проанализированы документы и созданы необходимые материалы для дальнейшей работы.`,
+      documents_processed: pendingDocuments.length,
+      elapsed_time: elapsedTime,
+      started_at: new Date(Date.now() - 105000).toISOString(), // ~1:45 назад
+      completed_at: completedAt,
+      artifacts: {
+        reports: [
+          { id: 'report_1', name: 'Итоговый отчёт', type: 'pdf' }
+        ],
+        tables: [
+          { id: 'table_1', name: 'Результаты анализа', review_id: 'review_' + Date.now() }
+        ],
+        documents: pendingDocuments.map((docId, idx) => ({
+          id: docId,
+          name: `Документ ${idx + 1}`
+        })),
+        checks: []
+      },
+      results: {
+        analysis_complete: true,
+        documents_analyzed: pendingDocuments.length
+      },
+      steps_completed: workflowPlan?.steps?.length || 3,
+      total_steps: workflowPlan?.steps?.length || 3
+    }
+    
+    savePendingWorkflowResult(workflowResult)
+
+    toast.success('Workflow успешно завершён! Переход в чат...')
+    
+    // Задержка перед переходом для плавного UX
+    setTimeout(() => {
+      setShowExecutionPanel(false)
+      setExecutionDetails(null)
+      navigate(`/cases/${caseId}/chat`)
+    }, 1500)
   }
 
   // Перегенерация плана
@@ -1472,6 +1519,40 @@ export default function WorkflowsPage() {
                     </div>
                   </div>
                   <div className="flex items-center gap-3">
+                    {exec.status === 'completed' && (
+                      <button
+                        onClick={() => {
+                          // Сохраняем результат и переходим в чат
+                          const result: WorkflowResultData = {
+                            execution_id: exec.id,
+                            workflow_id: exec.workflow_id,
+                            workflow_name: exec.workflow_name || 'Workflow',
+                            case_id: caseId || '',
+                            status: 'completed',
+                            summary: exec.summary || `Результаты выполнения workflow "${exec.workflow_name}"`,
+                            documents_processed: exec.documents_processed || 0,
+                            elapsed_time: exec.elapsed_time || 'н/д',
+                            started_at: exec.started_at,
+                            completed_at: exec.completed_at || new Date().toISOString(),
+                            artifacts: exec.artifacts || { reports: [], tables: [], documents: [], checks: [] },
+                            results: exec.results || {},
+                            steps_completed: exec.total_steps_completed || 0,
+                            total_steps: exec.total_steps_completed || 0
+                          }
+                          savePendingWorkflowResult(result)
+                          navigate(`/cases/${caseId}/chat`)
+                          toast.success('Открываем результаты в чате...')
+                        }}
+                        className="flex items-center gap-1 px-3 py-1.5 rounded-lg text-sm"
+                        style={{
+                          backgroundColor: 'var(--color-accent)',
+                          color: 'white'
+                        }}
+                      >
+                        <MessageSquare className="w-4 h-4" />
+                        Результаты
+                      </button>
+                    )}
                     {exec.result_url && (
                       <a
                         href={exec.result_url}
@@ -1552,7 +1633,36 @@ export default function WorkflowsPage() {
             toast.info('Workflow отменён')
           }}
           onDownloadResult={() => {
-            toast.success('Отчёт скачивается...')
+            // Если есть executionDetails, сохраняем результат и переходим в чат
+            if (executionDetails && caseId) {
+              const result: WorkflowResultData = {
+                execution_id: executionDetails.id || `exec_${Date.now()}`,
+                workflow_id: executionDetails.workflow_id || '',
+                workflow_name: executionDetails.workflow_name || 'Workflow',
+                case_id: caseId,
+                status: executionDetails.status === 'completed' ? 'completed' : 'failed',
+                summary: `Результаты выполнения workflow "${executionDetails.workflow_name}"`,
+                documents_processed: executionDetails.documents_processed || 0,
+                elapsed_time: executionDetails.elapsed_time || 'н/д',
+                started_at: executionDetails.started_at || new Date().toISOString(),
+                completed_at: executionDetails.completed_at || new Date().toISOString(),
+                artifacts: {
+                  reports: [],
+                  tables: [],
+                  documents: [],
+                  checks: []
+                },
+                results: {},
+                steps_completed: executionDetails.total_steps || 0,
+                total_steps: executionDetails.total_steps || 0,
+                error: executionDetails.error
+              }
+              savePendingWorkflowResult(result)
+              setShowExecutionPanel(false)
+              setExecutionDetails(null)
+              navigate(`/cases/${caseId}/chat`)
+              toast.success('Открываем результаты в чате...')
+            }
           }}
         />
       )}

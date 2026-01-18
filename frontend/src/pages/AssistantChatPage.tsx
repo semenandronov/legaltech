@@ -1,11 +1,15 @@
 import { useState, useEffect, useRef } from 'react'
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom'
-import { AssistantUIChat } from '../components/Chat/AssistantUIChat'
+import { AssistantUIChat, AssistantUIChatRef } from '../components/Chat/AssistantUIChat'
 import { ChatHistoryPanel } from '../components/Chat/ChatHistoryPanel'
 import { DocumentsPanel } from '../components/Chat/DocumentsPanel'
 import { History, FileText, MessageSquare } from 'lucide-react'
 import { toast } from 'sonner'
 import { getCase } from '../services/api'
+import { 
+  consumePendingWorkflowResult, 
+  createWorkflowResultChatMessage 
+} from '../services/workflowResultsService'
 
 const AssistantChatPage = () => {
   const { caseId } = useParams<{ caseId: string }>()
@@ -16,7 +20,8 @@ const AssistantChatPage = () => {
   const [selectedQuery, setSelectedQuery] = useState<string>('')
   const [caseInfo, setCaseInfo] = useState<{ title?: string; documentCount?: number } | null>(null)
   const [isLoadingCaseInfo, setIsLoadingCaseInfo] = useState(true)
-  const chatRef = useRef<{ clearMessages: () => void; loadHistory: (sessionId?: string) => Promise<void> } | null>(null)
+  const chatRef = useRef<AssistantUIChatRef | null>(null)
+  const workflowResultProcessed = useRef(false)
 
   // Load case info
   useEffect(() => {
@@ -53,6 +58,40 @@ const AssistantChatPage = () => {
       navigate(`/cases/${caseId}/tabular-review?table=${encodeURIComponent(tableParam)}`, { replace: true })
     }
   }, [searchParams, caseId, navigate])
+
+  // Handle pending workflow result - показать результаты workflow в чате
+  useEffect(() => {
+    // Задержка чтобы chatRef успел инициализироваться
+    const timer = setTimeout(() => {
+      if (workflowResultProcessed.current) return
+      
+      const pendingResult = consumePendingWorkflowResult()
+      if (pendingResult && pendingResult.case_id === caseId && chatRef.current) {
+        workflowResultProcessed.current = true
+        
+        // Очищаем чат и добавляем результат workflow
+        chatRef.current.clearMessages()
+        
+        const message = createWorkflowResultChatMessage(pendingResult)
+        chatRef.current.addMessage(message)
+        
+        // Показываем уведомление
+        if (pendingResult.status === 'completed') {
+          toast.success(`✨ Workflow "${pendingResult.workflow_name}" завершён!`, {
+            description: `Обработано ${pendingResult.documents_processed} документов за ${pendingResult.elapsed_time}`,
+            duration: 5000,
+          })
+        } else {
+          toast.error(`Workflow "${pendingResult.workflow_name}" завершён с ошибкой`, {
+            description: pendingResult.error || 'Неизвестная ошибка',
+            duration: 5000,
+          })
+        }
+      }
+    }, 500) // Небольшая задержка для инициализации
+
+    return () => clearTimeout(timer)
+  }, [caseId])
 
   if (!caseId) {
     return (

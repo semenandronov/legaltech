@@ -503,7 +503,14 @@ const PromptInputWithDrop = ({
   )
 }
 
-export const AssistantUIChat = forwardRef<{ clearMessages: () => void; loadHistory: (sessionId?: string) => Promise<void> }, AssistantUIChatProps>(({ 
+// Тип ref для внешнего доступа к методам чата
+export interface AssistantUIChatRef {
+  clearMessages: () => void
+  addMessage: (message: { id?: string; content: string; role: 'user' | 'assistant'; sources?: any[]; tableCards?: any[]; tableCard?: any; attachments?: any[] }) => void
+  loadHistory: (sessionId?: string) => Promise<void>
+}
+
+export const AssistantUIChat = forwardRef<AssistantUIChatRef, AssistantUIChatProps>(({ 
   caseId, 
   className, 
   initialQuery, 
@@ -1096,10 +1103,23 @@ export const AssistantUIChat = forwardRef<{ clearMessages: () => void; loadHisto
     }
   }, [sendMessage, isLoading, actualCaseId])
 
-  // Expose clearMessages and loadHistory for parent component
+  // Expose clearMessages, loadHistory, and addMessage for parent component
   useImperativeHandle(ref, () => ({
     clearMessages: () => {
       setMessages([])
+    },
+    // Программно добавить сообщение (для workflow результатов и т.д.)
+    addMessage: (message: Partial<Message> & { content: string; role: 'user' | 'assistant' }) => {
+      const newMessage: Message = {
+        id: message.id || `msg-${Date.now()}`,
+        role: message.role,
+        content: message.content,
+        sources: message.sources,
+        tableCards: message.tableCards,
+        tableCard: message.tableCard,
+        attachments: message.attachments,
+      }
+      setMessages((prev) => [...prev, newMessage])
     },
     loadHistory: async (sessionId?: string) => {
       if (!actualCaseId) return
