@@ -81,6 +81,8 @@ class ToolRegistry:
         from app.services.workflows.tools.playbook_tool import PlaybookCheckTool
         from app.services.workflows.tools.summarize_tool import SummarizeTool
         from app.services.workflows.tools.extract_entities_tool import ExtractEntitiesTool
+        from app.services.workflows.tools.legal_db_tool import LegalDBTool
+        from app.services.workflows.tools.document_draft_tool import DocumentDraftTool
         
         self.register(TabularReviewTool)
         self.register(RAGTool)
@@ -88,6 +90,8 @@ class ToolRegistry:
         self.register(PlaybookCheckTool)
         self.register(SummarizeTool)
         self.register(ExtractEntitiesTool)
+        self.register(LegalDBTool)
+        self.register(DocumentDraftTool)
         
         logger.info(f"ToolRegistry: Registered {len(self._tools)} tools")
     
