@@ -54,43 +54,67 @@ class TabularReviewTool(BaseTool):
             questions = params.get("questions", [])
             review_name = params.get("review_name", "Workflow Review")
             
-            # Create review
-            review = await service.create_review(
+            if not case_id:
+                return ToolResult(
+                    success=False,
+                    error="case_id is required for tabular review"
+                )
+            
+            if not user_id:
+                return ToolResult(
+                    success=False,
+                    error="user_id is required for tabular review"
+                )
+            
+            # Create review (synchronous method)
+            review = service.create_tabular_review(
                 case_id=case_id,
                 user_id=user_id,
                 name=review_name,
-                file_ids=file_ids
+                selected_file_ids=file_ids if file_ids else None
             )
             
-            review_id = review.get("id")
+            review_id = review.id
             
-            # Add columns for each question
+            # Add columns for each question (synchronous method)
             column_ids = []
             for question in questions:
-                column = await service.add_column(
-                    review_id=review_id,
+                column = service.add_column(
+                    tabular_review_id=review_id,
                     user_id=user_id,
-                    name=question,
+                    column_label=question,
                     column_type="text",
-                    prompt=f"Извлеки из документа: {question}"
+                    extraction_prompt=f"Извлеки из документа: {question}"
                 )
-                column_ids.append(column.get("id"))
+                column_ids.append(column.id)
             
-            # Populate the table (async population)
-            await service.populate_all_cells(review_id, user_id)
+            # Populate the table - use batch extraction
+            try:
+                service.extract_all_cells_batch(review_id, user_id)
+            except Exception as e:
+                logger.warning(f"Batch extraction failed: {e}, trying individual extraction")
+                # Fallback to individual extraction
+                for column_id in column_ids:
+                    try:
+                        service.extract_column_values(review_id, column_id, user_id)
+                    except Exception as col_e:
+                        logger.warning(f"Column extraction failed: {col_e}")
             
             # Get results
-            results = await service.get_review_data(review_id, user_id)
+            review_data = service.get_tabular_review(review_id, user_id)
+            
+            # Count rows (documents)
+            row_count = len(review_data.selected_file_ids) if review_data.selected_file_ids else 0
             
             return ToolResult(
                 success=True,
                 data={
                     "review_id": review_id,
                     "columns": column_ids,
-                    "row_count": len(results.get("rows", [])),
-                    "results": results
+                    "row_count": row_count,
+                    "review_name": review_name
                 },
-                output_summary=f"Создана таблица с {len(column_ids)} колонками и {len(results.get('rows', []))} строками",
+                output_summary=f"Создана таблица '{review_name}' с {len(column_ids)} колонками и {row_count} строками",
                 artifacts=[{
                     "type": "tabular_review",
                     "id": review_id,

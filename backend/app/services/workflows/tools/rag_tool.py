@@ -41,38 +41,62 @@ class RAGTool(BaseTool):
             case_id: Case ID
         """
         try:
-            rag_service = RAGService(self.db)
+            # RAGService doesn't take db in constructor
+            rag_service = RAGService()
             
             query = params.get("query", "")
             file_ids = params.get("file_ids", [])
             top_k = params.get("top_k", 10)
             case_id = context.get("case_id")
             
-            # Search documents
-            results = await rag_service.search(
-                query=query,
+            if not case_id:
+                return ToolResult(
+                    success=False,
+                    error="case_id is required for RAG search"
+                )
+            
+            # Use retrieve_context method which is synchronous
+            from langchain_core.documents import Document
+            docs = rag_service.retrieve_context(
                 case_id=case_id,
-                file_ids=file_ids if file_ids else None,
-                top_k=top_k
+                query=query,
+                k=top_k,
+                db=self.db
             )
+            
+            # Convert documents to serializable format
+            chunks = []
+            for doc in docs:
+                chunks.append({
+                    "content": doc.page_content,
+                    "metadata": doc.metadata,
+                    "score": doc.metadata.get("score", 0)
+                })
             
             # Get answer if it's a question
             answer = None
             if "?" in query or any(q in query.lower() for q in ["что", "как", "где", "когда", "почему", "кто"]):
-                answer = await rag_service.answer_question(
-                    question=query,
-                    context_chunks=results.get("chunks", [])
-                )
+                try:
+                    # Use generate_answer method
+                    answer = rag_service.generate_answer(
+                        query=query,
+                        context_docs=docs,
+                        case_id=case_id,
+                        db=self.db
+                    )
+                except Exception as e:
+                    logger.warning(f"Failed to generate answer: {e}")
+                    answer = None
             
             return ToolResult(
                 success=True,
                 data={
                     "query": query,
-                    "results": results.get("chunks", [])[:top_k],
+                    "results": chunks[:top_k],
                     "answer": answer,
-                    "total_found": len(results.get("chunks", []))
+                    "total_found": len(chunks)
                 },
-                output_summary=f"Найдено {len(results.get('chunks', []))} релевантных фрагментов" + 
+                output_summary=f"Найдено {len(chunks)} релевантных фрагментов" + 
                               (f". Ответ: {answer[:200]}..." if answer else ""),
                 llm_calls=1 if answer else 0
             )

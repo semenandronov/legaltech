@@ -185,70 +185,83 @@ class LLMSemaphore:
         return False
 
 
+def create_rate_limited_llm_wrapper(
+    llm: Any,
+    rate_limiter: Optional[InMemoryRateLimiter] = None,
+    semaphore: Optional[LLMSemaphore] = None
+) -> Any:
+    """
+    Create a rate-limited wrapper for an LLM that maintains Runnable compatibility.
+    
+    Instead of wrapping the LLM in a separate class, we monkey-patch the
+    invoke/ainvoke methods to add rate limiting while preserving the original
+    class hierarchy (which is required for LangChain's coerce_to_runnable).
+    
+    Args:
+        llm: The underlying LLM instance
+        rate_limiter: Rate limiter for request rate control
+        semaphore: Semaphore for concurrency control
+        
+    Returns:
+        The same LLM instance with rate-limited invoke/ainvoke methods
+    """
+    original_invoke = llm.invoke
+    original_ainvoke = llm.ainvoke
+    
+    def rate_limited_invoke(*args, **kwargs):
+        """Invoke with rate limiting."""
+        if rate_limiter:
+            rate_limiter.acquire()
+        
+        if semaphore:
+            with semaphore:
+                return original_invoke(*args, **kwargs)
+        return original_invoke(*args, **kwargs)
+    
+    async def rate_limited_ainvoke(*args, **kwargs):
+        """Async invoke with rate limiting."""
+        if rate_limiter:
+            rate_limiter.acquire()
+        
+        if semaphore:
+            with semaphore:
+                return await original_ainvoke(*args, **kwargs)
+        return await original_ainvoke(*args, **kwargs)
+    
+    # Monkey-patch the methods
+    llm.invoke = rate_limited_invoke
+    llm.ainvoke = rate_limited_ainvoke
+    
+    # Store original methods for potential restoration
+    llm._original_invoke = original_invoke
+    llm._original_ainvoke = original_ainvoke
+    llm._rate_limiter = rate_limiter
+    llm._semaphore = semaphore
+    
+    return llm
+
+
+# Keep the old class for backwards compatibility, but it now just calls the function
 class RateLimitedLLMWrapper:
     """
-    Wrapper that adds rate limiting to any LLM instance.
+    DEPRECATED: Use create_rate_limited_llm_wrapper() instead.
     
-    Combines rate limiting and semaphore to control both
-    request rate and concurrency.
-    
-    This wrapper is compatible with LangChain's Runnable interface
-    by proxying all attributes and methods to the underlying LLM.
+    This class is kept for backwards compatibility but now returns
+    a monkey-patched LLM instance instead of a wrapper.
     """
     
-    def __init__(
-        self,
+    def __new__(
+        cls,
         llm: Any,
         rate_limiter: Optional[InMemoryRateLimiter] = None,
         semaphore: Optional[LLMSemaphore] = None
     ):
         """
-        Initialize the wrapper.
+        Create a rate-limited LLM by monkey-patching instead of wrapping.
         
-        Args:
-            llm: The underlying LLM instance
-            rate_limiter: Rate limiter for request rate control
-            semaphore: Semaphore for concurrency control
+        This ensures full LangChain Runnable compatibility.
         """
-        # Use object.__setattr__ to avoid triggering __getattr__
-        object.__setattr__(self, '_llm', llm)
-        object.__setattr__(self, '_rate_limiter', rate_limiter)
-        object.__setattr__(self, '_semaphore', semaphore)
-    
-    def _wait_for_rate_limit(self) -> None:
-        """Wait for rate limiter if configured."""
-        if self._rate_limiter:
-            self._rate_limiter.acquire()
-    
-    def invoke(self, *args, **kwargs):
-        """Invoke the LLM with rate limiting."""
-        self._wait_for_rate_limit()
-        
-        if self._semaphore:
-            with self._semaphore:
-                return self._llm.invoke(*args, **kwargs)
-        return self._llm.invoke(*args, **kwargs)
-    
-    async def ainvoke(self, *args, **kwargs):
-        """Async invoke the LLM with rate limiting."""
-        self._wait_for_rate_limit()
-        
-        if self._semaphore:
-            with self._semaphore:
-                return await self._llm.ainvoke(*args, **kwargs)
-        return await self._llm.ainvoke(*args, **kwargs)
-    
-    def __or__(self, other):
-        """Support pipe operator for LangChain chains: llm | parser"""
-        return self._llm.__or__(other)
-    
-    def __ror__(self, other):
-        """Support reverse pipe operator for LangChain chains: prompt | llm"""
-        return self._llm.__ror__(other)
-    
-    def __getattr__(self, name):
-        """Proxy all other attributes to the underlying LLM."""
-        return getattr(self._llm, name)
+        return create_rate_limited_llm_wrapper(llm, rate_limiter, semaphore)
 
 
 # Global instances (singletons)
