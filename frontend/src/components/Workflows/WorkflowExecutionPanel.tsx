@@ -21,7 +21,6 @@ import {
   ChevronDown,
   ChevronRight,
   Download,
-  Eye,
   Zap,
   FileText,
   Table,

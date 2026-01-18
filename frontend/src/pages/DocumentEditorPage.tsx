@@ -291,8 +291,15 @@ const DocumentEditorPage = () => {
   // Навигация к месту в документе
   const handleNavigateToIssue = (location: { start: number; end: number }) => {
     if (editorRef.current) {
-      editorRef.current.scrollToPosition?.(location.start)
-      editorRef.current.setSelection?.(location.start, location.end)
+      // Пробуем использовать методы навигации если они есть
+      if (typeof editorRef.current.scrollToPosition === 'function') {
+        editorRef.current.scrollToPosition(location.start)
+      }
+      if (typeof editorRef.current.setSelection === 'function') {
+        editorRef.current.setSelection(location.start, location.end)
+      }
+      // Альтернатива: можно использовать focus или другие базовые методы
+      toast.info(`Найдено на позиции ${location.start}-${location.end}`)
     }
   }
 
@@ -302,7 +309,7 @@ const DocumentEditorPage = () => {
       const loadedComments = editorRef.current.getComments()
       setComments(loadedComments)
     }
-  }, [content, editorRef.current])
+  }, [content]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const navItems = caseId ? [
     { id: 'chat', label: 'Ассистент', icon: MessageSquare, path: `/cases/${caseId}/chat` },

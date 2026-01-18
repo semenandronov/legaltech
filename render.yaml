@@ -65,5 +65,19 @@ services:
         sync: false
       - key: YANDEX_GPT_MODEL
         value: "yandexgpt-pro/latest"
+      
+      # GigaChat (Сбер) - основная модель для агентов
+      - key: GIGACHAT_CREDENTIALS
+        sync: false
+      - key: GIGACHAT_MODEL
+        value: "GigaChat-Pro"
+      - key: GIGACHAT_VERIFY_SSL
+        value: "false"
+      
+      # Garant API - правовая информационная система
+      - key: GARANT_API_KEY
+        sync: false
+      - key: GARANT_API_URL
+        value: "https://api.garant.ru/v2"
     rootDir: .
     plan: free

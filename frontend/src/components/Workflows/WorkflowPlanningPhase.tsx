@@ -4,7 +4,7 @@
  * Отображает план действий агента, позволяет пользователю
  * одобрить или отклонить план
  */
-import { useState, useEffect } from 'react'
+import { useState } from 'react'
 import {
   X,
   Play,

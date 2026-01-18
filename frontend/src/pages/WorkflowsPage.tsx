@@ -922,6 +922,7 @@ export default function WorkflowsPage() {
   const [workflowPlan, setWorkflowPlan] = useState<any>(null)
   const [pendingDocuments, setPendingDocuments] = useState<string[]>([])
   const [pendingOptions, setPendingOptions] = useState<Record<string, any>>({})
+  const [pendingWorkflow, setPendingWorkflow] = useState<WorkflowDefinition | null>(null)
   
   // Enhanced Execution Panel
   const [showExecutionPanel, setShowExecutionPanel] = useState(false)
@@ -968,6 +969,8 @@ export default function WorkflowsPage() {
     if (!selectedWorkflow || !caseId) return
 
     // Сохраняем параметры для последующего запуска
+    const workflowToRun = selectedWorkflow
+    setPendingWorkflow(workflowToRun)
     setPendingDocuments(documents)
     setPendingOptions(options)
     
@@ -978,7 +981,7 @@ export default function WorkflowsPage() {
 
     try {
       // Генерируем план выполнения (mock для демонстрации)
-      const plan = await generateWorkflowPlan(selectedWorkflow, documents, options)
+      const plan = await generateWorkflowPlan(workflowToRun, documents, options)
       setWorkflowPlan(plan)
     } catch (error) {
       console.error('Failed to generate plan:', error)
@@ -1208,10 +1211,10 @@ export default function WorkflowsPage() {
 
   // Перегенерация плана
   const handleRegeneratePlan = async () => {
-    if (!selectedWorkflow) return
+    if (!pendingWorkflow) return
     setPlanningLoading(true)
     try {
-      const plan = await generateWorkflowPlan(selectedWorkflow, pendingDocuments, pendingOptions)
+      const plan = await generateWorkflowPlan(pendingWorkflow, pendingDocuments, pendingOptions)
       setWorkflowPlan(plan)
     } catch (error) {
       toast.error('Ошибка генерации плана')
@@ -1523,6 +1526,9 @@ export default function WorkflowsPage() {
           onClose={() => {
             setShowPlanningPhase(false)
             setWorkflowPlan(null)
+            setPendingWorkflow(null)
+            setPendingDocuments([])
+            setPendingOptions({})
           }}
         />
       )}
