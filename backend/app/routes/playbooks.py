@@ -96,7 +96,7 @@ class BatchCheckRequest(BaseModel):
     case_id: Optional[str] = None
 
 
-# ==================== METADATA ENDPOINTS ====================
+# ==================== METADATA ENDPOINTS (most specific first) ====================
 
 @router.get("/metadata/document-types")
 async def get_document_types(
@@ -148,6 +148,113 @@ async def get_condition_types(
     return service.get_condition_types()
 
 
+# ==================== CHECK RESULTS (before /{playbook_id} to avoid conflicts) ====================
+
+@router.get("/checks")
+async def list_checks(
+    playbook_id: Optional[str] = Query(None),
+    case_id: Optional[str] = Query(None),
+    document_id: Optional[str] = Query(None),
+    status: Optional[str] = Query(None),
+    limit: int = Query(50, ge=1, le=100),
+    offset: int = Query(0, ge=0),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """List playbook checks"""
+    service = PlaybookService(db)
+    
+    return service.get_checks(
+        user_id=current_user.id,
+        playbook_id=playbook_id,
+        case_id=case_id,
+        document_id=document_id,
+        status=status,
+        limit=limit,
+        offset=offset
+    )
+
+
+@router.get("/checks/{check_id}")
+async def get_check(
+    check_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """Get a specific check with full details"""
+    service = PlaybookService(db)
+    
+    result = service.get_check(check_id, current_user.id)
+    
+    if not result:
+        raise HTTPException(status_code=404, detail="Check not found")
+    
+    return result
+
+
+@router.get("/checks/{check_id}/redlines")
+async def get_check_redlines(
+    check_id: str,
+    format: str = Query("json", description="Output format: json, text, html"),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """Get redlines for a check in various formats"""
+    service = PlaybookService(db)
+    
+    check = service.get_check(check_id, current_user.id)
+    
+    if not check:
+        raise HTTPException(status_code=404, detail="Check not found")
+    
+    redlines_data = check.get("redlines", [])
+    
+    if format == "json":
+        return {"redlines": redlines_data}
+    
+    # Convert to Redline objects for formatting
+    generator = RedlineGenerator()
+    redlines = [
+        Redline(
+            rule_id=r.get("rule_id", ""),
+            rule_name=r.get("rule_name", ""),
+            rule_type=r.get("rule_type", "red_line"),
+            change_type=r.get("change_type", "replace"),
+            original_text=r.get("original_text", ""),
+            suggested_text=r.get("suggested_text", ""),
+            location=r.get("location", {}),
+            issue_description=r.get("issue_description", ""),
+            priority=r.get("priority", "medium"),
+            confidence=r.get("confidence", 0.0),
+            reasoning=r.get("reasoning", "")
+        )
+        for r in redlines_data
+    ]
+    
+    redline_doc = generator.generate_redline_document(
+        document_id=check.get("document_id", ""),
+        document_name=check.get("document_name", "Document"),
+        redlines=redlines
+    )
+    
+    if format == "text":
+        content = generator.format_redlines_as_text(redline_doc)
+        return Response(
+            content=content,
+            media_type="text/plain",
+            headers={"Content-Disposition": f"attachment; filename=redlines_{check_id}.txt"}
+        )
+    elif format == "html":
+        content = generator.format_redlines_as_html(redline_doc)
+        return Response(
+            content=content,
+            media_type="text/html",
+            headers={"Content-Disposition": f"attachment; filename=redlines_{check_id}.html"}
+        )
+    else:
+        return {"redlines": redlines_data}
+
+
 # ==================== PLAYBOOK CRUD ====================
 
 @router.get("/")
@@ -172,22 +279,6 @@ async def list_playbooks(
         limit=limit,
         offset=offset
     )
-
-
-@router.get("/{playbook_id}")
-async def get_playbook(
-    playbook_id: str,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)
-):
-    """Get a specific playbook with all rules"""
-    service = PlaybookService(db)
-    playbook = service.get_playbook(playbook_id, current_user.id)
-    
-    if not playbook:
-        raise HTTPException(status_code=404, detail="Playbook not found")
-    
-    return playbook
 
 
 @router.post("/")
@@ -220,6 +311,24 @@ async def create_playbook(
         )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
+
+
+# ==================== PLAYBOOK BY ID (must be after /checks, /metadata, etc.) ====================
+
+@router.get("/{playbook_id}")
+async def get_playbook(
+    playbook_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """Get a specific playbook with all rules"""
+    service = PlaybookService(db)
+    playbook = service.get_playbook(playbook_id, current_user.id)
+    
+    if not playbook:
+        raise HTTPException(status_code=404, detail="Playbook not found")
+    
+    return playbook
 
 
 @router.put("/{playbook_id}")
@@ -444,117 +553,3 @@ async def batch_check_documents(
     except Exception as e:
         logger.error(f"Error in batch check: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail="Failed to check documents")
-
-
-# ==================== CHECK RESULTS (MUST BE BEFORE /{playbook_id}) ====================
-
-# IMPORTANT: These routes MUST be defined BEFORE the /{playbook_id} route
-# to prevent /checks being interpreted as a playbook_id
-
-checks_router = APIRouter(prefix="/playbooks", tags=["playbooks"])
-
-
-@checks_router.get("/checks")
-async def list_checks(
-    playbook_id: Optional[str] = Query(None),
-    case_id: Optional[str] = Query(None),
-    document_id: Optional[str] = Query(None),
-    status: Optional[str] = Query(None),
-    limit: int = Query(50, ge=1, le=100),
-    offset: int = Query(0, ge=0),
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)
-):
-    """List playbook checks"""
-    service = PlaybookService(db)
-    
-    return service.get_checks(
-        user_id=current_user.id,
-        playbook_id=playbook_id,
-        case_id=case_id,
-        document_id=document_id,
-        status=status,
-        limit=limit,
-        offset=offset
-    )
-
-
-@checks_router.get("/checks/{check_id}")
-async def get_check(
-    check_id: str,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)
-):
-    """Get a specific check with full details"""
-    service = PlaybookService(db)
-    
-    result = service.get_check(check_id, current_user.id)
-    
-    if not result:
-        raise HTTPException(status_code=404, detail="Check not found")
-    
-    return result
-
-
-@checks_router.get("/checks/{check_id}/redlines")
-async def get_check_redlines(
-    check_id: str,
-    format: str = Query("json", description="Output format: json, text, html"),
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)
-):
-    """Get redlines for a check in various formats"""
-    service = PlaybookService(db)
-    
-    check = service.get_check(check_id, current_user.id)
-    
-    if not check:
-        raise HTTPException(status_code=404, detail="Check not found")
-    
-    redlines_data = check.get("redlines", [])
-    
-    if format == "json":
-        return {"redlines": redlines_data}
-    
-    # Convert to Redline objects for formatting
-    generator = RedlineGenerator()
-    redlines = [
-        Redline(
-            rule_id=r.get("rule_id", ""),
-            rule_name=r.get("rule_name", ""),
-            rule_type=r.get("rule_type", "red_line"),
-            change_type=r.get("change_type", "replace"),
-            original_text=r.get("original_text", ""),
-            suggested_text=r.get("suggested_text", ""),
-            location=r.get("location", {}),
-            issue_description=r.get("issue_description", ""),
-            priority=r.get("priority", "medium"),
-            confidence=r.get("confidence", 0.0),
-            reasoning=r.get("reasoning", "")
-        )
-        for r in redlines_data
-    ]
-    
-    redline_doc = generator.generate_redline_document(
-        document_id=check.get("document_id", ""),
-        document_name=check.get("document_name", "Document"),
-        redlines=redlines
-    )
-    
-    if format == "text":
-        content = generator.format_redlines_as_text(redline_doc)
-        return Response(
-            content=content,
-            media_type="text/plain",
-            headers={"Content-Disposition": f"attachment; filename=redlines_{check_id}.txt"}
-        )
-    elif format == "html":
-        content = generator.format_redlines_as_html(redline_doc)
-        return Response(
-            content=content,
-            media_type="text/html",
-            headers={"Content-Disposition": f"attachment; filename=redlines_{check_id}.html"}
-        )
-    else:
-        return {"redlines": redlines_data}
-
