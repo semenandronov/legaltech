@@ -364,67 +364,46 @@ const MessageContent: React.FC<MessageContentProps> = ({
       parts.push(text.substring(lastIndex))
     }
     
-    // Render with markdown for non-citation parts - TRUE INLINE to preserve flow (Harvey/Perplexity style)
-    // Собираем текст обратно с плейсхолдерами для citations
-    const citationPlaceholders: React.ReactElement[] = []
-    let reconstructedText = ''
-    
-    parts.forEach((part, idx) => {
-      if (React.isValidElement(part)) {
-        // Используем уникальный плейсхолдер который не будет в тексте
-        reconstructedText += `⟦CITE_${idx}⟧`
-        citationPlaceholders.push(React.cloneElement(part, { key: `citation-inline-${idx}` }))
-      } else {
-        reconstructedText += part
-      }
-    })
-    
-    // Рендерим весь текст как единый markdown
+    // ПРОСТОЙ И НАДЁЖНЫЙ РЕНДЕРИНГ (Harvey/Perplexity style)
+    // Рендерим части напрямую - текст как span, citations как компоненты
     return (
-      <div className="prose-inline-citations">
-        <ReactMarkdown 
-          components={{
-            ...markdownComponents,
-            // Переопределяем p чтобы вставлять citations inline
-            p: ({ children }) => {
-              // Преобразуем children в массив и обрабатываем плейсхолдеры
-              const processChildren = (child: React.ReactNode): React.ReactNode => {
-                if (typeof child === 'string') {
-                  // Разбиваем строку по плейсхолдерам и вставляем компоненты
-                  const parts = child.split(/(⟦CITE_\d+⟧)/g)
-                  return parts.map((part, partIdx) => {
-                    const match = part.match(/⟦CITE_(\d+)⟧/)
-                    if (match) {
-                      const citationIdx = parseInt(match[1], 10)
-                      return citationPlaceholders[citationIdx] || <span key={`text-${partIdx}`}>{part}</span>
-                    }
-                    return <span key={`text-${partIdx}`}>{part}</span>
-                  })
-                }
-                if (Array.isArray(child)) {
-                  return child.map(processChildren)
-                }
-                return child
-              }
-              
-              const processedChildren = React.Children.map(children, processChildren)
-              
-              return (
-                <p style={{ 
-                  margin: '0 0 16px 0', 
-                  lineHeight: 1.75, 
-                  display: 'block',
-                  color: 'inherit'
-                }}>
-                  {processedChildren}
-                </p>
-              )
-            }
-          }}
-          remarkPlugins={[remarkGfm]}
-        >
-          {reconstructedText}
-        </ReactMarkdown>
+      <div className="prose-inline-citations" style={{ lineHeight: 1.75 }}>
+        {parts.map((part, idx) => {
+          if (React.isValidElement(part)) {
+            // Это citation компонент - рендерим как есть
+            return part
+          }
+          // Это текст - рендерим как span с сохранением пробелов и переносов
+          const textPart = part as string
+          // Разбиваем по абзацам для правильного отображения
+          const paragraphs = textPart.split(/\n\n+/)
+          
+          if (paragraphs.length > 1) {
+            return paragraphs.map((p, pIdx) => (
+              <span key={`text-${idx}-${pIdx}`}>
+                {pIdx > 0 && <><br /><br /></>}
+                {p.split('\n').map((line, lIdx) => (
+                  <span key={`line-${idx}-${pIdx}-${lIdx}`}>
+                    {lIdx > 0 && <br />}
+                    {line}
+                  </span>
+                ))}
+              </span>
+            ))
+          }
+          
+          // Простой текст без абзацев
+          return (
+            <span key={`text-${idx}`}>
+              {textPart.split('\n').map((line, lIdx) => (
+                <span key={`line-${idx}-${lIdx}`}>
+                  {lIdx > 0 && <br />}
+                  {line}
+                </span>
+              ))}
+            </span>
+          )
+        })}
       </div>
     )
   }

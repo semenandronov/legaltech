@@ -1412,38 +1412,51 @@ class RAGService:
             response = llm.invoke(messages)
             answer_text = response.content if hasattr(response, 'content') else str(response)
             
-            logger.info(f"[StructuredCitations] Got answer: {answer_text[:200]}...")
+            logger.info(f"[StructuredCitations] Raw answer: {answer_text[:300]}...")
             
-            # Теперь создаем citations на основе маркеров [N] в ответе
+            # ========== НАДЁЖНЫЙ ПОСТ-ПРОЦЕССИНГ CITATIONS (Harvey/Perplexity style) ==========
             import re
             
-            # Находим все маркеры и нормализуем их (если LLM использовала номера > количества документов)
+            # Шаг 1: Нормализуем ВСЕ форматы ссылок в единый [N]
+            # [1, 2, 3] -> [1][2][3]
+            def expand_multi_citations(match):
+                nums = re.findall(r'\d+', match.group(0))
+                return ''.join(f'[{n}]' for n in nums)
+            
+            answer_text = re.sub(r'\[[\d,\s]+\]', expand_multi_citations, answer_text)
+            
+            # Шаг 2: Убираем пробелы внутри скобок [1 ] -> [1]
+            answer_text = re.sub(r'\[\s*(\d+)\s*\]', r'[\1]', answer_text)
+            
+            # Шаг 3: Убираем дубликаты подряд [1][1] -> [1]
+            answer_text = re.sub(r'(\[\d+\])\1+', r'\1', answer_text)
+            
+            # Шаг 4: Нормализуем номера (если > num_docs, приводим к валидным)
+            def normalize_citation(match):
+                num = int(match.group(1))
+                if num > len(doc_info) or num < 1:
+                    # Приводим к валидному диапазону
+                    if len(doc_info) > 0:
+                        normalized = ((num - 1) % len(doc_info)) + 1
+                        return f'[{normalized}]'
+                    return ''  # Удаляем если нет документов
+                return match.group(0)
+            
+            answer_text = re.sub(r'\[(\d+)\]', normalize_citation, answer_text)
+            
+            # Шаг 5: Убираем ссылки на отдельных строках (переносим к предыдущему предложению)
+            # "\n[1]" или ".\n[1]" -> ".[1]"
+            answer_text = re.sub(r'([.!?])\s*\n\s*(\[\d+\])', r'\1\2', answer_text)
+            answer_text = re.sub(r'\n\s*(\[\d+\])', r'\1', answer_text)
+            
+            # Шаг 6: Убираем лишние переносы строк
+            answer_text = re.sub(r'\n{3,}', '\n\n', answer_text)
+            
+            logger.info(f"[StructuredCitations] Normalized answer: {answer_text[:300]}...")
+            
+            # Собираем уникальные маркеры для создания citations
             citation_markers = re.findall(r'\[(\d+)\]', answer_text)
-            all_markers = sorted(set(int(m) for m in citation_markers))
-            
-            # Создаем маппинг для нормализации: если есть [5][6][7][8], превращаем в [1][2][3][4]
-            marker_mapping = {}
-            valid_markers = []
-            for marker in all_markers:
-                if marker <= len(doc_info):
-                    marker_mapping[marker] = marker
-                    valid_markers.append(marker)
-                else:
-                    # Маппим на циклический индекс (5 -> 1, 6 -> 2, etc.)
-                    normalized = ((marker - 1) % len(doc_info)) + 1 if len(doc_info) > 0 else 1
-                    marker_mapping[marker] = normalized
-                    if normalized not in valid_markers:
-                        valid_markers.append(normalized)
-            
-            # Заменяем маркеры в тексте на нормализованные
-            def replace_marker(match):
-                old_num = int(match.group(1))
-                new_num = marker_mapping.get(old_num, old_num)
-                return f"[{new_num}]"
-            
-            answer_text = re.sub(r'\[(\d+)\]', replace_marker, answer_text)
-            
-            unique_markers = sorted(set(valid_markers))
+            unique_markers = sorted(set(int(m) for m in citation_markers))
             
             citations = []
             for marker in unique_markers:
