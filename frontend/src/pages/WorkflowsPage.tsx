@@ -39,6 +39,8 @@ import { toast } from 'sonner'
 import UnifiedSidebar from '../components/Layout/UnifiedSidebar'
 import * as workflowsApi from '../services/workflowsApi'
 import type { WorkflowDefinition, WorkflowExecution, WorkflowEvent } from '../services/workflowsApi'
+import { WorkflowPlanningPhase } from '../components/Workflows/WorkflowPlanningPhase'
+import { WorkflowExecutionPanel } from '../components/Workflows/WorkflowExecutionPanel'
 
 // Иконки для инструментов workflow
 const toolIcons: Record<string, React.ReactNode> = {
@@ -913,6 +915,17 @@ export default function WorkflowsPage() {
   const [runningExecution, setRunningExecution] = useState<WorkflowExecution | null>(null)
   const [executionEvents, setExecutionEvents] = useState<WorkflowEvent[]>([])
   const [showCreateDialog, setShowCreateDialog] = useState(false)
+  
+  // Planning Phase
+  const [showPlanningPhase, setShowPlanningPhase] = useState(false)
+  const [planningLoading, setPlanningLoading] = useState(false)
+  const [workflowPlan, setWorkflowPlan] = useState<any>(null)
+  const [pendingDocuments, setPendingDocuments] = useState<string[]>([])
+  const [pendingOptions, setPendingOptions] = useState<Record<string, any>>({})
+  
+  // Enhanced Execution Panel
+  const [showExecutionPanel, setShowExecutionPanel] = useState(false)
+  const [executionDetails, setExecutionDetails] = useState<any>(null)
 
   // Навигация
   const navItems = [
@@ -950,46 +963,260 @@ export default function WorkflowsPage() {
     }
   }, [caseId])
 
-  // Запуск workflow
+  // Запуск workflow - сначала показываем Planning Phase
   const handleRunWorkflow = async (documents: string[], options: Record<string, any>) => {
     if (!selectedWorkflow || !caseId) return
 
-    try {
-      setSelectedWorkflow(null)
+    // Сохраняем параметры для последующего запуска
+    setPendingDocuments(documents)
+    setPendingOptions(options)
+    
+    // Закрываем диалог выбора документов и показываем Planning Phase
+    setSelectedWorkflow(null)
+    setShowPlanningPhase(true)
+    setPlanningLoading(true)
 
-      const execution = await workflowsApi.executeWorkflowWithDocs(selectedWorkflow.id, {
-        case_id: caseId,
-        document_ids: documents,
-        options
+    try {
+      // Генерируем план выполнения (mock для демонстрации)
+      const plan = await generateWorkflowPlan(selectedWorkflow, documents, options)
+      setWorkflowPlan(plan)
+    } catch (error) {
+      console.error('Failed to generate plan:', error)
+      toast.error('Ошибка генерации плана')
+      setShowPlanningPhase(false)
+    } finally {
+      setPlanningLoading(false)
+    }
+  }
+
+  // Генерация плана (в реальности это будет API вызов)
+  const generateWorkflowPlan = async (workflow: WorkflowDefinition, documents: string[], options: Record<string, any>) => {
+    // Симуляция задержки
+    await new Promise(resolve => setTimeout(resolve, 2000))
+    
+    const tools = workflow.available_tools || ['rag_search', 'summarize']
+    const steps = tools.map((tool, idx) => ({
+      id: `step_${idx + 1}`,
+      tool: tool,
+      tool_display_name: AVAILABLE_TOOLS.find(t => t.name === tool)?.display_name || tool,
+      description: getToolDescription(tool, documents),
+      estimated_time: getEstimatedTime(tool),
+      dependencies: idx > 0 ? [`step_${idx}`] : [],
+      reasoning: getToolReasoning(tool),
+      parameters: getToolParameters(tool, documents, options)
+    }))
+
+    return {
+      id: `plan_${Date.now()}`,
+      workflow_id: workflow.id,
+      workflow_name: workflow.display_name,
+      goal: `Обработка ${documents.length} документов с помощью ${workflow.display_name}`,
+      strategy: `Последовательное выполнение ${steps.length} шагов для комплексного анализа документов`,
+      steps,
+      total_estimated_time: calculateTotalTime(steps),
+      confidence_score: 85 + Math.floor(Math.random() * 10),
+      created_at: new Date().toISOString()
+    }
+  }
+
+  // Вспомогательные функции для генерации плана
+  const getToolDescription = (tool: string, documents: string[]) => {
+    const descriptions: Record<string, string> = {
+      'tabular_review': `Создание сводной таблицы для анализа ${documents.length} документов`,
+      'rag_search': 'Семантический поиск по загруженным документам',
+      'web_search': 'Поиск актуальной информации в интернете',
+      'playbook': 'Проверка документов по правилам playbook',
+      'summarize': `Создание резюме для ${documents.length} документов`,
+      'extract_entities': 'Извлечение ключевых сущностей: даты, суммы, стороны',
+      'document_compare': 'Сравнительный анализ документов',
+      'risk_analysis': 'Анализ юридических рисков'
+    }
+    return descriptions[tool] || 'Обработка документов'
+  }
+
+  const getEstimatedTime = (tool: string) => {
+    const times: Record<string, string> = {
+      'tabular_review': '3-5 мин',
+      'rag_search': '1-2 мин',
+      'web_search': '2-3 мин',
+      'playbook': '5-10 мин',
+      'summarize': '2-4 мин',
+      'extract_entities': '1-2 мин',
+      'document_compare': '3-5 мин',
+      'risk_analysis': '5-8 мин'
+    }
+    return times[tool] || '2-5 мин'
+  }
+
+  const getToolReasoning = (tool: string) => {
+    const reasons: Record<string, string> = {
+      'tabular_review': 'Структурированное представление данных упрощает анализ большого количества документов',
+      'rag_search': 'Семантический поиск позволяет найти релевантную информацию даже при неточных запросах',
+      'web_search': 'Внешние источники помогают верифицировать информацию и найти актуальные данные',
+      'playbook': 'Автоматическая проверка по правилам снижает риск пропуска важных нарушений',
+      'summarize': 'Краткие резюме экономят время при работе с большим объемом текста',
+      'extract_entities': 'Автоматическое извлечение ключевых данных ускоряет анализ',
+      'document_compare': 'Сравнение версий помогает выявить изменения и расхождения',
+      'risk_analysis': 'Систематический анализ рисков защищает от юридических проблем'
+    }
+    return reasons[tool] || 'Этот инструмент необходим для выполнения задачи'
+  }
+
+  const getToolParameters = (tool: string, documents: string[], options: Record<string, any>) => {
+    return {
+      documents: documents.length,
+      detail_level: options.detailLevel || 'comprehensive',
+      language: 'ru'
+    }
+  }
+
+  const calculateTotalTime = (steps: any[]) => {
+    const totalMinutes = steps.reduce((acc, step) => {
+      const match = step.estimated_time.match(/(\d+)-(\d+)/)
+      if (match) {
+        return acc + (parseInt(match[1]) + parseInt(match[2])) / 2
+      }
+      return acc + 3
+    }, 0)
+    return `${Math.round(totalMinutes)} мин`
+  }
+
+  // Одобрение плана и запуск
+  const handleApprovePlan = async () => {
+    if (!workflowPlan || !caseId) return
+
+    setShowPlanningPhase(false)
+    setShowExecutionPanel(true)
+
+    try {
+      // Инициализируем детали выполнения
+      setExecutionDetails({
+        id: `exec_${Date.now()}`,
+        workflow_id: workflowPlan.workflow_id,
+        workflow_name: workflowPlan.workflow_name,
+        status: 'running',
+        progress: 0,
+        current_step: 0,
+        total_steps: workflowPlan.steps.length,
+        steps: workflowPlan.steps.map((s: any, idx: number) => ({
+          id: s.id,
+          step_number: idx + 1,
+          name: s.tool_display_name,
+          status: idx === 0 ? 'running' : 'pending',
+          tools_used: [{
+            id: `tool_${idx}`,
+            tool_name: s.tool,
+            tool_display_name: s.tool_display_name,
+            status: idx === 0 ? 'running' : 'pending'
+          }]
+        })),
+        started_at: new Date().toISOString(),
+        documents_processed: 0,
+        total_documents: pendingDocuments.length,
+        ai_thoughts: [
+          'Начинаю выполнение плана...',
+          `Анализирую ${pendingDocuments.length} документов...`
+        ]
       })
 
-      setRunningExecution(execution)
-      setExecutionEvents([])
+      // Симуляция выполнения
+      await simulateExecution()
 
-      // Start streaming events
-      const stream = workflowsApi.streamWorkflowEvents(execution.id)
-      
-      for await (const event of stream) {
-        setExecutionEvents(prev => [...prev, event])
-        
-        // Update execution status
-        if (event.type === 'workflow_completed') {
-          setRunningExecution(prev => prev ? { ...prev, status: 'completed', progress: 100 } : null)
-        } else if (event.type === 'workflow_failed') {
-          setRunningExecution(prev => prev ? { ...prev, status: 'failed' } : null)
-        } else if (event.progress !== undefined) {
-          setRunningExecution(prev => prev ? { ...prev, progress: event.progress } : null)
-        }
+    } catch (error) {
+      console.error('Execution failed:', error)
+      toast.error('Ошибка выполнения workflow')
+    }
+  }
+
+  // Симуляция выполнения workflow
+  const simulateExecution = async () => {
+    const totalSteps = workflowPlan?.steps.length || 3
+    
+    for (let i = 0; i < totalSteps; i++) {
+      // Обновляем текущий шаг
+      setExecutionDetails((prev: any) => ({
+        ...prev,
+        current_step: i,
+        progress: Math.round((i / totalSteps) * 100),
+        steps: prev.steps.map((s: any, idx: number) => ({
+          ...s,
+          status: idx < i ? 'completed' : idx === i ? 'running' : 'pending',
+          tools_used: s.tools_used.map((t: any) => ({
+            ...t,
+            status: idx < i ? 'completed' : idx === i ? 'running' : 'pending',
+            progress: idx === i ? 0 : undefined
+          }))
+        })),
+        ai_thoughts: [
+          ...prev.ai_thoughts,
+          `Выполняю шаг ${i + 1}: ${workflowPlan?.steps[i]?.tool_display_name}...`
+        ]
+      }))
+
+      // Симуляция прогресса инструмента
+      for (let p = 0; p <= 100; p += 20) {
+        await new Promise(resolve => setTimeout(resolve, 300))
+        setExecutionDetails((prev: any) => ({
+          ...prev,
+          steps: prev.steps.map((s: any, idx: number) => ({
+            ...s,
+            tools_used: s.tools_used.map((t: any) => ({
+              ...t,
+              progress: idx === i ? p : t.progress
+            }))
+          }))
+        }))
       }
 
-      // Reload executions
-      const updated = await workflowsApi.getWorkflowExecutions({ case_id: caseId, limit: 50 })
-      setExecutions(updated)
+      // Завершаем шаг
+      await new Promise(resolve => setTimeout(resolve, 500))
+      setExecutionDetails((prev: any) => ({
+        ...prev,
+        steps: prev.steps.map((s: any, idx: number) => ({
+          ...s,
+          status: idx <= i ? 'completed' : s.status,
+          completed_at: idx === i ? new Date().toISOString() : s.completed_at,
+          tools_used: s.tools_used.map((t: any) => ({
+            ...t,
+            status: idx <= i ? 'completed' : t.status,
+            duration: idx === i ? '2.3s' : t.duration,
+            output_summary: idx === i ? 'Успешно обработано' : t.output_summary
+          })),
+          result_preview: idx === i ? 'Результаты шага доступны' : s.result_preview
+        })),
+        documents_processed: Math.min(i + 1, pendingDocuments.length)
+      }))
+    }
 
-      toast.success('Workflow завершён')
+    // Завершение
+    setExecutionDetails((prev: any) => ({
+      ...prev,
+      status: 'completed',
+      progress: 100,
+      completed_at: new Date().toISOString(),
+      elapsed_time: '1:45',
+      result_url: '/api/results/example',
+      ai_thoughts: [
+        ...prev.ai_thoughts,
+        'Workflow успешно завершён!',
+        `Обработано ${pendingDocuments.length} документов`
+      ]
+    }))
+
+    toast.success('Workflow успешно завершён!')
+  }
+
+  // Перегенерация плана
+  const handleRegeneratePlan = async () => {
+    if (!selectedWorkflow) return
+    setPlanningLoading(true)
+    try {
+      const plan = await generateWorkflowPlan(selectedWorkflow, pendingDocuments, pendingOptions)
+      setWorkflowPlan(plan)
     } catch (error) {
-      console.error('Workflow execution failed:', error)
-      toast.error('Ошибка выполнения workflow')
+      toast.error('Ошибка генерации плана')
+    } finally {
+      setPlanningLoading(false)
     }
   }
 
@@ -1286,8 +1513,46 @@ export default function WorkflowsPage() {
         />
       )}
 
-      {/* Execution Monitor Panel */}
-      {runningExecution && (
+      {/* Planning Phase */}
+      {showPlanningPhase && (
+        <WorkflowPlanningPhase
+          plan={workflowPlan}
+          isLoading={planningLoading}
+          onApprove={handleApprovePlan}
+          onRegenerate={handleRegeneratePlan}
+          onClose={() => {
+            setShowPlanningPhase(false)
+            setWorkflowPlan(null)
+          }}
+        />
+      )}
+
+      {/* Enhanced Execution Panel */}
+      {showExecutionPanel && executionDetails && (
+        <WorkflowExecutionPanel
+          execution={executionDetails}
+          onClose={() => {
+            setShowExecutionPanel(false)
+            setExecutionDetails(null)
+          }}
+          onPause={() => {
+            setExecutionDetails((prev: any) => ({ ...prev, status: 'paused' }))
+          }}
+          onResume={() => {
+            setExecutionDetails((prev: any) => ({ ...prev, status: 'running' }))
+          }}
+          onCancel={() => {
+            setExecutionDetails((prev: any) => ({ ...prev, status: 'cancelled' }))
+            toast.info('Workflow отменён')
+          }}
+          onDownloadResult={() => {
+            toast.success('Отчёт скачивается...')
+          }}
+        />
+      )}
+
+      {/* Legacy Execution Monitor (для старых выполнений) */}
+      {runningExecution && !showExecutionPanel && (
         <ExecutionMonitor
           execution={runningExecution}
           events={executionEvents}

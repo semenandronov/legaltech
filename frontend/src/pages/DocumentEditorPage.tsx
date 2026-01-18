@@ -10,9 +10,10 @@ import { CommentsPanel } from '../components/Editor/CommentsPanel'
 import { TemplateSelector } from '../components/Editor/TemplateSelector'
 import { DocxImporter } from '../components/Editor/DocxImporter'
 import { getDocument, createDocument, updateDocument, exportDocx, exportPdf, listDocuments, Document } from '../services/documentEditorApi'
-import { getPlaybooks, checkDocument as runPlaybookCheck, Playbook } from '../services/playbooksApi'
+import { getPlaybooks, checkDocument as runPlaybookCheck, Playbook, PlaybookCheck } from '../services/playbooksApi'
 import { DocumentsList } from '../components/Editor/DocumentsList'
 import { CreateDocumentScreen } from '../components/Editor/CreateDocumentScreen'
+import { PlaybookResultsPanel } from '../components/Playbooks/PlaybookResultsPanel'
 
 interface DocumentData {
   id: string
@@ -40,6 +41,7 @@ const DocumentEditorPage = () => {
   const [loadingPlaybooks, setLoadingPlaybooks] = useState(false)
   const [runningPlaybook, setRunningPlaybook] = useState(false)
   const [playbookResult, setPlaybookResult] = useState<any>(null)
+  const [showResultsPanel, setShowResultsPanel] = useState(false)
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false)
@@ -276,11 +278,21 @@ const DocumentEditorPage = () => {
     try {
       const result = await runPlaybookCheck(playbookId, documentId, caseId)
       setPlaybookResult(result)
+      setShowPlaybookModal(false)
+      setShowResultsPanel(true)
       toast.success(`Проверка завершена! Соответствие: ${result.compliance_score?.toFixed(1) || 0}%`)
     } catch (error: any) {
       toast.error('Ошибка проверки: ' + (error.message || 'Неизвестная ошибка'))
     } finally {
       setRunningPlaybook(false)
+    }
+  }
+
+  // Навигация к месту в документе
+  const handleNavigateToIssue = (location: { start: number; end: number }) => {
+    if (editorRef.current) {
+      editorRef.current.scrollToPosition?.(location.start)
+      editorRef.current.setSelection?.(location.start, location.end)
     }
   }
 
@@ -558,7 +570,6 @@ const DocumentEditorPage = () => {
               <button
                 onClick={() => {
                   setShowPlaybookModal(false)
-                  setPlaybookResult(null)
                 }}
                 className="p-2 hover:bg-gray-100 rounded-lg transition-colors"
               >
@@ -570,63 +581,6 @@ const DocumentEditorPage = () => {
               {loadingPlaybooks ? (
                 <div className="flex items-center justify-center py-8">
                   <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
-                </div>
-              ) : playbookResult ? (
-                <div className="space-y-4">
-                  <div className="text-center py-4">
-                    <div className={`text-4xl font-bold mb-2 ${
-                      (playbookResult.compliance_score || 0) >= 80 ? 'text-green-600' :
-                      (playbookResult.compliance_score || 0) >= 50 ? 'text-yellow-600' : 'text-red-600'
-                    }`}>
-                      {playbookResult.compliance_score?.toFixed(1) || 0}%
-                    </div>
-                    <div className="text-sm text-gray-500">Соответствие</div>
-                  </div>
-                  
-                  <div className="grid grid-cols-4 gap-4 text-center">
-                    <div className="p-3 bg-green-50 rounded-lg">
-                      <div className="text-xl font-bold text-green-600">{playbookResult.passed_rules || 0}</div>
-                      <div className="text-xs text-gray-500">Passed</div>
-                    </div>
-                    <div className="p-3 bg-red-50 rounded-lg">
-                      <div className="text-xl font-bold text-red-600">{playbookResult.red_line_violations || 0}</div>
-                      <div className="text-xs text-gray-500">Red Line</div>
-                    </div>
-                    <div className="p-3 bg-yellow-50 rounded-lg">
-                      <div className="text-xl font-bold text-yellow-600">{playbookResult.fallback_issues || 0}</div>
-                      <div className="text-xs text-gray-500">Fallback</div>
-                    </div>
-                    <div className="p-3 bg-purple-50 rounded-lg">
-                      <div className="text-xl font-bold text-purple-600">{playbookResult.no_go_violations || 0}</div>
-                      <div className="text-xs text-gray-500">No-Go</div>
-                    </div>
-                  </div>
-                  
-                  {playbookResult.results && playbookResult.results.length > 0 && (
-                    <div className="mt-4">
-                      <h3 className="font-medium mb-2">Детали проверки:</h3>
-                      <div className="space-y-2 max-h-40 overflow-y-auto">
-                        {playbookResult.results.map((r: any, i: number) => (
-                          <div key={i} className={`p-3 rounded-lg text-sm ${
-                            r.status === 'passed' ? 'bg-green-50' :
-                            r.status === 'violation' ? 'bg-red-50' : 'bg-yellow-50'
-                          }`}>
-                            <div className="font-medium">{r.rule_name}</div>
-                            {r.issue_description && (
-                              <div className="text-gray-600 mt-1">{r.issue_description}</div>
-                            )}
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-                  
-                  <button
-                    onClick={() => setPlaybookResult(null)}
-                    className="w-full mt-4 px-4 py-2 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 transition-colors"
-                  >
-                    Выбрать другой Playbook
-                  </button>
                 </div>
               ) : playbooks.length === 0 ? (
                 <div className="text-center py-8 text-gray-500">
@@ -679,6 +633,37 @@ const DocumentEditorPage = () => {
             </div>
           </div>
         </div>
+      )}
+
+      {/* Playbook Results Panel */}
+      {showResultsPanel && playbookResult && (
+        <PlaybookResultsPanel
+          result={{
+            id: playbookResult.id || 'temp',
+            playbook_id: playbookResult.playbook_id || '',
+            playbook_name: playbookResult.playbook_name || 'Playbook',
+            document_id: documentId || '',
+            compliance_score: playbookResult.compliance_score || 0,
+            total_rules: playbookResult.total_rules || 0,
+            passed_rules: playbookResult.passed_rules || 0,
+            red_line_violations: playbookResult.red_line_violations || 0,
+            no_go_violations: playbookResult.no_go_violations || 0,
+            fallback_issues: playbookResult.fallback_issues || 0,
+            results: playbookResult.results || [],
+            summary: playbookResult.summary,
+            recommendations: playbookResult.recommendations,
+            created_at: playbookResult.created_at || new Date().toISOString()
+          }}
+          onClose={() => {
+            setShowResultsPanel(false)
+            setPlaybookResult(null)
+          }}
+          onNavigateToIssue={handleNavigateToIssue}
+          onRerun={() => {
+            setShowResultsPanel(false)
+            setShowPlaybookModal(true)
+          }}
+        />
       )}
     </div>
   )
