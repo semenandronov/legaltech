@@ -366,17 +366,28 @@ async def adapt_template_node(state: TemplateState, db: Session) -> TemplateStat
             
             llm = create_legal_llm(temperature=0.3)
             case_context = state.get("case_context", "")
+            chat_history = state.get("chat_history", "")
             
             system_prompt = """Ты - опытный юрист, специализирующийся на создании юридических документов.
-Создай документ на основе запроса пользователя и контекста дела.
+Создай документ на основе запроса пользователя, контекста дела и истории переписки.
+Учитывай все уточнения и пожелания из истории переписки.
 Верни документ в формате HTML с правильной структурой."""
             
-            user_prompt = f"""Запрос пользователя: {state['user_query']}
+            # Формируем промпт с историей переписки
+            history_section = ""
+            if chat_history:
+                history_section = f"""
+ИСТОРИЯ ПЕРЕПИСКИ (учитывай уточнения и пожелания):
+{chat_history[:4000]}
+
+"""
+            
+            user_prompt = f"""{history_section}ТЕКУЩИЙ ЗАПРОС: {state['user_query']}
 
 КОНТЕКСТ ДЕЛА (используй для заполнения):
 {case_context[:3000] if case_context else "Контекст дела не предоставлен"}
 
-Создай полный юридический документ в формате HTML."""
+Создай полный юридический документ в формате HTML, учитывая все уточнения из истории переписки."""
             
             messages = [
                 SystemMessage(content=system_prompt),
@@ -401,16 +412,18 @@ async def adapt_template_node(state: TemplateState, db: Session) -> TemplateStat
         logger.info("Using template as-is (no adaptation)")
         return state
     
-    # Адаптация с учетом контекста дела
+    # Адаптация с учетом контекста дела и истории переписки
     try:
         from app.services.llm_factory import create_legal_llm
         from langchain_core.messages import SystemMessage, HumanMessage
         
         llm = create_legal_llm(temperature=0.3)
         case_context = state.get("case_context", "")
+        chat_history = state.get("chat_history", "")
         
         system_prompt = """Ты - опытный юрист, специализирующийся на адаптации юридических документов.
-Адаптируй предоставленный шаблон документа под запрос пользователя и контекст дела.
+Адаптируй предоставленный шаблон документа под запрос пользователя, контекст дела и историю переписки.
+Учитывай все уточнения и пожелания из истории переписки.
 Сохрани структуру и юридическую корректность, но адаптируй содержание под конкретный запрос.
 Замени placeholder'ы данными из контекста дела.
 Если данных нет - оставь понятные [ЗАПОЛНИТЬ: что именно].
@@ -419,9 +432,18 @@ async def adapt_template_node(state: TemplateState, db: Session) -> TemplateStat
         # Ограничиваем размер шаблона для промпта
         template_preview = template_html[:5000] if len(template_html) > 5000 else template_html
         
-        user_prompt = f"""Адаптируй шаблон документа под запрос пользователя и контекст дела.
+        # Формируем секцию с историей переписки
+        history_section = ""
+        if chat_history:
+            history_section = f"""
+ИСТОРИЯ ПЕРЕПИСКИ (учитывай уточнения и пожелания):
+{chat_history[:4000]}
 
-ЗАПРОС: {state['user_query']}
+"""
+        
+        user_prompt = f"""Адаптируй шаблон документа под запрос пользователя, контекст дела и историю переписки.
+{history_section}
+ТЕКУЩИЙ ЗАПРОС: {state['user_query']}
 
 КОНТЕКСТ ДЕЛА (используй для заполнения):
 {case_context[:3000] if case_context else "Контекст дела не предоставлен"}
@@ -431,9 +453,10 @@ async def adapt_template_node(state: TemplateState, db: Session) -> TemplateStat
 
 Требования:
 1. Сохрани структуру шаблона
-2. Замени placeholder'ы данными из контекста дела
-3. Если данных нет - оставь понятные [ЗАПОЛНИТЬ: что именно]
-4. Верни полный адаптированный HTML документ"""
+2. Учитывай все уточнения из истории переписки
+3. Замени placeholder'ы данными из контекста дела
+4. Если данных нет - оставь понятные [ЗАПОЛНИТЬ: что именно]
+5. Верни полный адаптированный HTML документ"""
         
         messages = [
             SystemMessage(content=system_prompt),

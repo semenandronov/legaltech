@@ -364,7 +364,12 @@ async def stream_execution(
     current_user: User = Depends(get_current_user)
 ):
     """Stream execution events via SSE"""
-    execution = db.query(WorkflowExecution).filter(
+    # Use joinedload to eagerly load the definition relationship
+    from sqlalchemy.orm import joinedload
+    
+    execution = db.query(WorkflowExecution).options(
+        joinedload(WorkflowExecution.definition)
+    ).filter(
         WorkflowExecution.id == execution_id,
         WorkflowExecution.user_id == current_user.id
     ).first()
@@ -372,18 +377,23 @@ async def stream_execution(
     if not execution:
         raise HTTPException(status_code=404, detail="Execution not found")
     
+    # Extract data from execution BEFORE the async generator
+    # to avoid DetachedInstanceError
+    execution_status = execution.status
+    execution_progress = execution.progress_percent
+    definition = execution.definition
+    selected_file_ids = execution.selected_file_ids
+    
+    # Get documents while still in session
+    documents = []
+    if selected_file_ids:
+        files = db.query(File).filter(File.id.in_(selected_file_ids)).all()
+        documents = [{"id": f.id, "filename": f.filename, "type": f.file_type} for f in files]
+    
     async def event_generator() -> AsyncIterator[str]:
         """Generate SSE events"""
         # If execution is already planning, start execution
-        if execution.status == "planning":
-            definition = execution.definition
-            
-            # Get documents
-            documents = []
-            if execution.selected_file_ids:
-                files = db.query(File).filter(File.id.in_(execution.selected_file_ids)).all()
-                documents = [{"id": f.id, "filename": f.filename, "type": f.file_type} for f in files]
-            
+        if execution_status == "planning":
             engine = ExecutionEngine(db)
             
             async for event in engine.plan_and_execute(execution, definition, documents):
@@ -391,7 +401,7 @@ async def stream_execution(
                 await asyncio.sleep(0.1)
         else:
             # Already running or completed - just return current status
-            yield f"data: {json.dumps({'event_type': 'status', 'status': execution.status, 'progress': execution.progress_percent}, ensure_ascii=False)}\n\n"
+            yield f"data: {json.dumps({'event_type': 'status', 'status': execution_status, 'progress': execution_progress}, ensure_ascii=False)}\n\n"
     
     return StreamingResponse(
         event_generator(),

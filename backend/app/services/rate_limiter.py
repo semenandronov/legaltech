@@ -191,6 +191,9 @@ class RateLimitedLLMWrapper:
     
     Combines rate limiting and semaphore to control both
     request rate and concurrency.
+    
+    This wrapper is compatible with LangChain's Runnable interface
+    by proxying all attributes and methods to the underlying LLM.
     """
     
     def __init__(
@@ -207,9 +210,10 @@ class RateLimitedLLMWrapper:
             rate_limiter: Rate limiter for request rate control
             semaphore: Semaphore for concurrency control
         """
-        self._llm = llm
-        self._rate_limiter = rate_limiter
-        self._semaphore = semaphore
+        # Use object.__setattr__ to avoid triggering __getattr__
+        object.__setattr__(self, '_llm', llm)
+        object.__setattr__(self, '_rate_limiter', rate_limiter)
+        object.__setattr__(self, '_semaphore', semaphore)
     
     def _wait_for_rate_limit(self) -> None:
         """Wait for rate limiter if configured."""
@@ -224,6 +228,23 @@ class RateLimitedLLMWrapper:
             with self._semaphore:
                 return self._llm.invoke(*args, **kwargs)
         return self._llm.invoke(*args, **kwargs)
+    
+    async def ainvoke(self, *args, **kwargs):
+        """Async invoke the LLM with rate limiting."""
+        self._wait_for_rate_limit()
+        
+        if self._semaphore:
+            with self._semaphore:
+                return await self._llm.ainvoke(*args, **kwargs)
+        return await self._llm.ainvoke(*args, **kwargs)
+    
+    def __or__(self, other):
+        """Support pipe operator for LangChain chains: llm | parser"""
+        return self._llm.__or__(other)
+    
+    def __ror__(self, other):
+        """Support reverse pipe operator for LangChain chains: prompt | llm"""
+        return self._llm.__ror__(other)
     
     def __getattr__(self, name):
         """Proxy all other attributes to the underlying LLM."""

@@ -25,6 +25,9 @@ class TemplateState(TypedDict):
     # Контекст дела
     case_context: Optional[str]  # Извлеченные факты из документов дела
     
+    # История переписки
+    chat_history: Optional[str]  # История сообщений текущей сессии для контекста
+    
     # Финальный шаблон для использования
     final_template: Optional[Dict[str, Any]]  # Шаблон для адаптации
     

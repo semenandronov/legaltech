@@ -431,6 +431,31 @@ async def stream_chat_response(
                 logger.info(f"[Draft Mode] Creating document for case {case_id} based on: {question[:100]}...")
                 logger.info(f"[Draft Mode] Template file ID: {template_file_id}, Template file content length: {len(template_file_content) if template_file_content else 0}")
                 
+                # Загружаем историю переписки для контекста в draft mode
+                draft_chat_history = ""
+                try:
+                    history_query = db.query(ChatMessage).filter(
+                        ChatMessage.case_id == case_id,
+                        ChatMessage.content.isnot(None),
+                        ChatMessage.content != ""
+                    )
+                    if session_id:
+                        history_query = history_query.filter(ChatMessage.session_id == session_id)
+                    
+                    history_messages = history_query.order_by(ChatMessage.created_at.asc()).all()
+                    
+                    if history_messages:
+                        history_parts = []
+                        for msg in history_messages:
+                            if msg.role == "user" and msg.content:
+                                history_parts.append(f"Пользователь: {msg.content}")
+                            elif msg.role == "assistant" and msg.content:
+                                history_parts.append(f"Ассистент: {msg.content}")
+                        draft_chat_history = "\n\n".join(history_parts)
+                        logger.info(f"[Draft Mode] Loaded {len(history_messages)} messages for chat history context")
+                except Exception as history_error:
+                    logger.warning(f"[Draft Mode] Failed to load chat history: {history_error}")
+                
                 # Извлечь название документа из описания
                 try:
                     llm = create_legal_llm(temperature=0.1)
@@ -468,7 +493,8 @@ async def stream_chat_response(
                     "document_title": document_title,
                     "template_file_id": template_file_id,  # ID файла-шаблона от пользователя (из БД)
                     "template_file_content": template_file_content,  # HTML контент локального файла или None
-                    "case_context": None  # Будет заполнено в get_case_context_node
+                    "case_context": None,  # Будет заполнено в get_case_context_node
+                    "chat_history": draft_chat_history if draft_chat_history else None  # История переписки
                 }
                 
                 # Запускаем граф
@@ -629,6 +655,7 @@ async def stream_chat_response(
         loop = asyncio.get_event_loop()
         
         # Загружаем историю сообщений для контекста - ТОЛЬКО из текущей сессии
+        # БЕЗ ЛИМИТА - ИИ должен видеть всю историю переписки
         chat_history = []
         try:
             # Фильтруем по session_id, чтобы ИИ видел только текущий чат, а не все чаты в деле
@@ -642,18 +669,19 @@ async def stream_chat_response(
             if session_id:
                 history_query = history_query.filter(ChatMessage.session_id == session_id)
             
-            history_messages = history_query.order_by(ChatMessage.created_at.desc()).limit(10).all()
+            # Загружаем ВСЮ историю переписки без лимита
+            history_messages = history_query.order_by(ChatMessage.created_at.asc()).all()
             
-            # Формируем историю в формате для промпта (от старых к новым)
+            # Формируем историю в формате для промпта (полные сообщения без обрезки)
             chat_history = []
-            for msg in reversed(history_messages):
+            for msg in history_messages:
                 if msg.role == "user" and msg.content:
                     chat_history.append(f"Пользователь: {msg.content}")
                 elif msg.role == "assistant" and msg.content:
-                    chat_history.append(f"Ассистент: {msg.content[:500]}...")  # Ограничиваем длину
+                    chat_history.append(f"Ассистент: {msg.content}")  # Полное сообщение без обрезки
             
             if chat_history:
-                logger.info(f"Loaded {len(chat_history)} previous messages for context from session {session_id}")
+                logger.info(f"Loaded {len(chat_history)} messages for context from session {session_id}")
             else:
                 logger.info(f"No previous messages found for context in session {session_id}")
         except Exception as history_error:
