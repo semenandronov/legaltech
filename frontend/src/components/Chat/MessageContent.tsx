@@ -392,13 +392,13 @@ const MessageContent: React.FC<MessageContentProps> = ({
                 if (typeof child === 'string') {
                   // Разбиваем строку по плейсхолдерам и вставляем компоненты
                   const parts = child.split(/(⟦CITE_\d+⟧)/g)
-                  return parts.map((part, i) => {
+                  return parts.map((part, partIdx) => {
                     const match = part.match(/⟦CITE_(\d+)⟧/)
                     if (match) {
                       const citationIdx = parseInt(match[1], 10)
-                      return citationPlaceholders[citationIdx] || part
+                      return citationPlaceholders[citationIdx] || <span key={`text-${partIdx}`}>{part}</span>
                     }
-                    return part
+                    return <span key={`text-${partIdx}`}>{part}</span>
                   })
                 }
                 if (Array.isArray(child)) {
