@@ -1020,12 +1020,17 @@ export default function WorkflowsPage() {
         parameters: step.tool_params || {}
       }))
 
+      // Извлекаем goal из goals массива если есть
+      const goalText = planData.goals && planData.goals.length > 0 
+        ? planData.goals.map((g: any) => g.description).join('; ')
+        : `Обработка ${documents.length} документов с помощью ${workflow.display_name}`
+
       return {
-        id: planData.id || `plan_${Date.now()}`,
+        id: `plan_${Date.now()}`,
         workflow_id: workflow.id,
         workflow_name: workflow.display_name,
-        goal: planData.goal || `Обработка ${documents.length} документов с помощью ${workflow.display_name}`,
-        strategy: planData.strategy || `Последовательное выполнение ${steps.length} шагов для комплексного анализа документов`,
+        goal: goalText,
+        strategy: planData.summary || `Последовательное выполнение ${steps.length} шагов для комплексного анализа документов`,
         steps,
         total_estimated_time: planResponse.estimated_duration_seconds 
           ? `${Math.ceil(planResponse.estimated_duration_seconds / 60)} мин`
@@ -1103,14 +1108,6 @@ export default function WorkflowsPage() {
       'risk_analysis': 'Систематический анализ рисков защищает от юридических проблем'
     }
     return reasons[tool] || 'Этот инструмент необходим для выполнения задачи'
-  }
-
-  const getToolParameters = (_tool: string, documents: string[], options: Record<string, any>) => {
-    return {
-      documents: documents.length,
-      detail_level: options.detailLevel || 'comprehensive',
-      language: 'ru'
-    }
   }
 
   const calculateTotalTime = (steps: any[]) => {
@@ -1395,7 +1392,7 @@ export default function WorkflowsPage() {
                 
                 const workflowResult: WorkflowResultData = {
                   execution_id: executionId,
-                  workflow_id: execution.workflow_id || '',
+                  workflow_id: execution.definition_id || '',
                   workflow_name: execution.workflow_name || 'Workflow',
                   case_id: caseId || '',
                   status: 'completed',
@@ -1701,7 +1698,7 @@ export default function WorkflowsPage() {
                           // Сохраняем результат и переходим в чат
                           const result: WorkflowResultData = {
                             execution_id: exec.id,
-                            workflow_id: exec.workflow_id,
+                            workflow_id: exec.definition_id || '',
                             workflow_name: exec.workflow_name || 'Workflow',
                             case_id: caseId || '',
                             status: 'completed',
