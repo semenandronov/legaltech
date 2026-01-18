@@ -1226,6 +1226,7 @@ export const AssistantUIChat = forwardRef<AssistantUIChatRef, AssistantUIChatPro
               key={message.id}
               content={message.content}
               reasoning={message.reasoning}
+              reasoningSteps={message.reasoningSteps}
               toolCalls={message.toolCalls}
               response={message.response}
               sources={message.sources}

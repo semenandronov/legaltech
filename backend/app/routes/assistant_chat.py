@@ -20,6 +20,7 @@ from app.services.external_sources.cache_manager import get_cache_manager
 from app.services.langchain_agents.pipeline_service import PipelineService
 from app.services.langchain_agents.planning_agent import PlanningAgent
 from app.services.langchain_agents.advanced_planning_agent import AdvancedPlanningAgent
+from app.services.thinking_service import get_thinking_service, ThinkingStep
 from app.config import config
 import json
 import logging
@@ -769,6 +770,36 @@ async def stream_chat_response(
         # ChatAgent используется только когда не применяем structured citations
         chat_agent = None
         
+        # === THINKING: Пошаговое мышление перед ответом ===
+        # Всегда выполняем thinking для качественных ответов
+        thinking_context = rag_context or ""
+        if garant_context:
+            thinking_context += f"\n{garant_context}"
+        
+        try:
+            thinking_service = get_thinking_service()
+            logger.info(f"[Thinking] Starting thinking process for: {question[:100]}...")
+            
+            async for step in thinking_service.think(
+                question=question,
+                context=thinking_context,
+                stream_steps=True
+            ):
+                # Стримим каждый шаг мышления в UI
+                thinking_event = {
+                    "type": "reasoning",
+                    "phase": step.phase.value,
+                    "step": step.step_number,
+                    "totalSteps": step.total_steps,
+                    "content": step.content
+                }
+                yield f"data: {json.dumps(thinking_event, ensure_ascii=False)}\n\n"
+                logger.info(f"[Thinking] Streamed step {step.step_number}/{step.total_steps}: {step.phase.value}")
+                
+        except Exception as thinking_error:
+            logger.warning(f"[Thinking] Error during thinking: {thinking_error}, continuing without thinking")
+            # Продолжаем без thinking - не критичная ошибка
+        
         # Добавляем контекст документа редактора и ГАРАНТ в вопрос
         enhanced_question = question
         
@@ -881,7 +912,7 @@ async def stream_chat_response(
                             if sentence_stripped and sentence_stripped[-1] in '.!?':
                                 punct = sentence_stripped[-1]
                                 rebuilt.append(f"{sentence_stripped[:-1]}[{citation_idx + 1}]{punct}")
-                        else:
+                            else:
                                 rebuilt.append(f"{sentence}[{citation_idx + 1}]")
                             citation_idx += 1
                         else:

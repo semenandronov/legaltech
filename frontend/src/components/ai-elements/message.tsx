@@ -4,6 +4,7 @@ import { Reasoning, ReasoningContent, ReasoningTrigger } from "./reasoning"
 import { Tool, ToolInput, ToolOutput } from "./tool"
 import MessageContent from "../Chat/MessageContent"
 import { SourceInfo } from "@/services/api"
+import { ThinkingBlock, ThinkingStep } from "../Chat/ThinkingBlock"
 
 // Animation styles - subtle fade in (Harvey style)
 const fadeIn = "animate-fade-in"
@@ -65,6 +66,7 @@ export const UserMessage = React.memo(function UserMessage({ content, className 
 export interface AssistantMessageProps {
   content?: string
   reasoning?: string
+  reasoningSteps?: ThinkingStep[]  // Пошаговое мышление
   toolCalls?: Array<{
     name: string
     input?: any
@@ -92,6 +94,7 @@ export interface AssistantMessageProps {
 export const AssistantMessage = React.memo(function AssistantMessage({
   content,
   reasoning,
+  reasoningSteps,
   toolCalls,
   response,
   sources,
@@ -131,8 +134,17 @@ export const AssistantMessage = React.memo(function AssistantMessage({
   return (
     <Message role="assistant" className={className}>
       <div className="text-sm leading-relaxed prose prose-sm max-w-none">
-        {/* Reasoning */}
-        {reasoning && (
+        {/* Thinking Steps - пошаговое мышление */}
+        {reasoningSteps && reasoningSteps.length > 0 && (
+          <ThinkingBlock 
+            steps={reasoningSteps} 
+            isStreaming={isStreaming && !content}
+            defaultOpen={true}
+          />
+        )}
+        
+        {/* Legacy Reasoning (для обратной совместимости) */}
+        {reasoning && !reasoningSteps?.length && (
           <div className="mb-4">
             <Reasoning isStreaming={isStreaming}>
               <ReasoningTrigger />
