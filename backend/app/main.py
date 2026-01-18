@@ -176,6 +176,8 @@ app.include_router(tabular_review.router, prefix="/api/tabular-review", tags=["t
 app.include_router(review_table.router, prefix="/api/review-table", tags=["review-table"])
 app.include_router(prompts.router, prefix="/api", tags=["prompts"])
 app.include_router(workflows.router, prefix="/api", tags=["workflows"])
+# IMPORTANT: workflow_agentic MUST be before workflow_execution to prevent /workflow-agentic/* being matched by /{workflow_id}/*
+app.include_router(workflow_agentic.router, prefix="/api", tags=["workflow-agentic"])
 app.include_router(workflow_execution.router, prefix="/api", tags=["workflow-execution"])
 app.include_router(folders.router, prefix="/api", tags=["folders"])
 app.include_router(plan_execution.router, prefix="/api/plan", tags=["plan-execution"])
@@ -183,7 +185,6 @@ app.include_router(metrics.router, prefix="/api/metrics", tags=["metrics"])
 app.include_router(document_editor.router, prefix="/api/documents-editor", tags=["document-editor"])
 # Playbooks router (all endpoints unified in one router with correct ordering)
 app.include_router(playbooks.router, prefix="/api", tags=["playbooks"])
-app.include_router(workflow_agentic.router, prefix="/api", tags=["workflow-agentic"])
 
 
 @app.get("/api/health")
