@@ -994,33 +994,71 @@ export default function WorkflowsPage() {
     }
   }
 
-  // Генерация плана (в реальности это будет API вызов)
-  const generateWorkflowPlan = async (workflow: WorkflowDefinition, documents: string[], options: Record<string, any>) => {
-    // Симуляция задержки
-    await new Promise(resolve => setTimeout(resolve, 2000))
-    
-    const tools = workflow.available_tools || ['rag_search', 'summarize']
-    const steps = tools.map((tool, idx) => ({
-      id: `step_${idx + 1}`,
-      tool: tool,
-      tool_display_name: AVAILABLE_TOOLS.find(t => t.name === tool)?.display_name || tool,
-      description: getToolDescription(tool, documents),
-      estimated_time: getEstimatedTime(tool),
-      dependencies: idx > 0 ? [`step_${idx}`] : [],
-      reasoning: getToolReasoning(tool),
-      parameters: getToolParameters(tool, documents, options)
-    }))
+  // Генерация плана через реальный API
+  const generateWorkflowPlan = async (workflow: WorkflowDefinition, documents: string[], _options: Record<string, any>) => {
+    try {
+      // Вызываем реальный API для генерации плана
+      const planResponse = await workflowsApi.createPlan({
+        definition_id: workflow.id,
+        user_task: `Выполнить workflow "${workflow.display_name}" для анализа ${documents.length} документов`,
+        case_id: caseId || undefined,
+        file_ids: documents
+      })
+      
+      // Преобразуем ответ API в формат для UI
+      const planData = planResponse.plan
+      const steps = (planData.steps || []).map((step: any, idx: number) => ({
+        id: step.id || `step_${idx + 1}`,
+        tool: step.tool_name || step.tool,
+        tool_display_name: AVAILABLE_TOOLS.find(t => t.name === (step.tool_name || step.tool))?.display_name || step.name,
+        description: step.description || getToolDescription(step.tool_name || step.tool, documents),
+        estimated_time: step.estimated_duration_seconds 
+          ? `${Math.ceil(step.estimated_duration_seconds / 60)} мин`
+          : getEstimatedTime(step.tool_name || step.tool),
+        dependencies: step.depends_on || [],
+        reasoning: step.reasoning || getToolReasoning(step.tool_name || step.tool),
+        parameters: step.tool_params || {}
+      }))
 
-    return {
-      id: `plan_${Date.now()}`,
-      workflow_id: workflow.id,
-      workflow_name: workflow.display_name,
-      goal: `Обработка ${documents.length} документов с помощью ${workflow.display_name}`,
-      strategy: `Последовательное выполнение ${steps.length} шагов для комплексного анализа документов`,
-      steps,
-      total_estimated_time: calculateTotalTime(steps),
-      confidence_score: 85 + Math.floor(Math.random() * 10),
-      created_at: new Date().toISOString()
+      return {
+        id: planData.id || `plan_${Date.now()}`,
+        workflow_id: workflow.id,
+        workflow_name: workflow.display_name,
+        goal: planData.goal || `Обработка ${documents.length} документов с помощью ${workflow.display_name}`,
+        strategy: planData.strategy || `Последовательное выполнение ${steps.length} шагов для комплексного анализа документов`,
+        steps,
+        total_estimated_time: planResponse.estimated_duration_seconds 
+          ? `${Math.ceil(planResponse.estimated_duration_seconds / 60)} мин`
+          : calculateTotalTime(steps),
+        confidence_score: planResponse.is_valid ? 90 : 70,
+        created_at: new Date().toISOString()
+      }
+    } catch (error) {
+      console.error('API plan generation failed, using fallback:', error)
+      // Fallback на локальную генерацию если API недоступен
+      const tools = workflow.available_tools || ['rag_search', 'summarize']
+      const steps = tools.map((tool, idx) => ({
+        id: `step_${idx + 1}`,
+        tool: tool,
+        tool_display_name: AVAILABLE_TOOLS.find(t => t.name === tool)?.display_name || tool,
+        description: getToolDescription(tool, documents),
+        estimated_time: getEstimatedTime(tool),
+        dependencies: idx > 0 ? [`step_${idx}`] : [],
+        reasoning: getToolReasoning(tool),
+        parameters: {}
+      }))
+
+      return {
+        id: `plan_${Date.now()}`,
+        workflow_id: workflow.id,
+        workflow_name: workflow.display_name,
+        goal: `Обработка ${documents.length} документов с помощью ${workflow.display_name}`,
+        strategy: `Последовательное выполнение ${steps.length} шагов для комплексного анализа документов`,
+        steps,
+        total_estimated_time: calculateTotalTime(steps),
+        confidence_score: 85,
+        created_at: new Date().toISOString()
+      }
     }
   }
 
@@ -1086,12 +1124,14 @@ export default function WorkflowsPage() {
     return `${Math.round(totalMinutes)} мин`
   }
 
-  // Одобрение плана и запуск
+  // Одобрение плана и запуск через реальный API
   const handleApprovePlan = async () => {
-    if (!workflowPlan || !caseId) return
+    if (!workflowPlan || !caseId || !pendingWorkflow) return
 
     setShowPlanningPhase(false)
     setShowExecutionPanel(true)
+
+    const startTime = Date.now()
 
     try {
       // Инициализируем детали выполнения
@@ -1119,141 +1159,277 @@ export default function WorkflowsPage() {
         documents_processed: 0,
         total_documents: pendingDocuments.length,
         ai_thoughts: [
-          'Начинаю выполнение плана...',
+          'Запускаю workflow через API...',
           `Анализирую ${pendingDocuments.length} документов...`
         ]
       })
 
-      // Симуляция выполнения
-      await simulateExecution()
+      // Запускаем реальное выполнение через API
+      const execution = await workflowsApi.executeWorkflowWithDocs(
+        pendingWorkflow.id,
+        {
+          case_id: caseId,
+          document_ids: pendingDocuments,
+          options: pendingOptions
+        }
+      )
+
+      const executionId = execution.id
+
+      // Обновляем ID выполнения
+      setExecutionDetails((prev: any) => ({
+        ...prev,
+        id: executionId,
+        ai_thoughts: [
+          ...prev.ai_thoughts,
+          `Execution ID: ${executionId}`,
+          'Получаю события выполнения в реальном времени...'
+        ]
+      }))
+
+      // Подписываемся на SSE stream для получения событий в реальном времени
+      await executeWithStream(executionId, startTime)
 
     } catch (error) {
       console.error('Execution failed:', error)
       toast.error('Ошибка выполнения workflow')
+      
+      // Показываем ошибку в UI
+      setExecutionDetails((prev: any) => prev ? ({
+        ...prev,
+        status: 'failed',
+        error: error instanceof Error ? error.message : 'Неизвестная ошибка',
+        ai_thoughts: [
+          ...(prev.ai_thoughts || []),
+          `❌ Ошибка: ${error instanceof Error ? error.message : 'Неизвестная ошибка'}`
+        ]
+      }) : null)
     }
   }
 
-  // Симуляция выполнения workflow
-  const simulateExecution = async () => {
-    const totalSteps = workflowPlan?.steps.length || 3
-    
-    for (let i = 0; i < totalSteps; i++) {
-      // Обновляем текущий шаг
-      setExecutionDetails((prev: any) => ({
-        ...prev,
-        current_step: i,
-        progress: Math.round((i / totalSteps) * 100),
-        steps: prev.steps.map((s: any, idx: number) => ({
-          ...s,
-          status: idx < i ? 'completed' : idx === i ? 'running' : 'pending',
-          tools_used: s.tools_used.map((t: any) => ({
-            ...t,
-            status: idx < i ? 'completed' : idx === i ? 'running' : 'pending',
-            progress: idx === i ? 0 : undefined
-          }))
-        })),
-        ai_thoughts: [
-          ...prev.ai_thoughts,
-          `Выполняю шаг ${i + 1}: ${workflowPlan?.steps[i]?.tool_display_name}...`
-        ]
-      }))
-
-      // Симуляция прогресса инструмента
-      for (let p = 0; p <= 100; p += 20) {
-        await new Promise(resolve => setTimeout(resolve, 300))
-        setExecutionDetails((prev: any) => ({
-          ...prev,
-          steps: prev.steps.map((s: any, idx: number) => ({
-            ...s,
-            tools_used: s.tools_used.map((t: any) => ({
-              ...t,
-              progress: idx === i ? p : t.progress
-            }))
-          }))
-        }))
+  // Выполнение с реальным SSE stream
+  const executeWithStream = async (executionId: string, startTime: number) => {
+    try {
+      // Используем async generator для получения событий
+      for await (const event of workflowsApi.streamWorkflowEvents(executionId)) {
+        handleWorkflowEvent(event, startTime)
+        
+        // Проверяем завершение
+        if (event.type === 'completed' || event.type === 'failed') {
+          break
+        }
       }
-
-      // Завершаем шаг
-      await new Promise(resolve => setTimeout(resolve, 500))
-      setExecutionDetails((prev: any) => ({
-        ...prev,
-        steps: prev.steps.map((s: any, idx: number) => ({
-          ...s,
-          status: idx <= i ? 'completed' : s.status,
-          completed_at: idx === i ? new Date().toISOString() : s.completed_at,
-          tools_used: s.tools_used.map((t: any) => ({
-            ...t,
-            status: idx <= i ? 'completed' : t.status,
-            duration: idx === i ? '2.3s' : t.duration,
-            output_summary: idx === i ? 'Успешно обработано' : t.output_summary
-          })),
-          result_preview: idx === i ? 'Результаты шага доступны' : s.result_preview
-        })),
-        documents_processed: Math.min(i + 1, pendingDocuments.length)
-      }))
+    } catch (error) {
+      console.error('Stream error, falling back to polling:', error)
+      // Fallback на polling если SSE не работает
+      await pollExecutionStatus(executionId, startTime)
     }
+  }
 
-    // Завершение
-    const completedAt = new Date().toISOString()
-    const elapsedTime = '1:45'
+  // Обработка событий workflow
+  const handleWorkflowEvent = (event: workflowsApi.WorkflowEvent, startTime: number) => {
+    const elapsedSeconds = Math.floor((Date.now() - startTime) / 1000)
+    const elapsedTime = `${Math.floor(elapsedSeconds / 60)}:${String(elapsedSeconds % 60).padStart(2, '0')}`
+
+    setExecutionDetails((prev: any) => {
+      if (!prev) return null
+
+      switch (event.type) {
+        case 'started':
+          return {
+            ...prev,
+            status: 'running',
+            ai_thoughts: [...prev.ai_thoughts, event.message || 'Выполнение начато']
+          }
+        
+        case 'step_started':
+          return {
+            ...prev,
+            current_step: prev.steps.findIndex((s: any) => s.id === event.step_id),
+            steps: prev.steps.map((s: any) => ({
+              ...s,
+              status: s.id === event.step_id ? 'running' : s.status,
+              tools_used: s.tools_used.map((t: any) => ({
+                ...t,
+                status: s.id === event.step_id ? 'running' : t.status
+              }))
+            })),
+            ai_thoughts: [...prev.ai_thoughts, event.message || `Выполняю шаг: ${event.step_id}`]
+          }
+        
+        case 'step_completed':
+          const stepIndex = prev.steps.findIndex((s: any) => s.id === event.step_id)
+          return {
+            ...prev,
+            progress: event.progress_percent || Math.round(((stepIndex + 1) / prev.total_steps) * 100),
+            documents_processed: Math.min(stepIndex + 1, prev.total_documents),
+            steps: prev.steps.map((s: any) => ({
+              ...s,
+              status: s.id === event.step_id ? 'completed' : s.status,
+              completed_at: s.id === event.step_id ? new Date().toISOString() : s.completed_at,
+              tools_used: s.tools_used.map((t: any) => ({
+                ...t,
+                status: s.id === event.step_id ? 'completed' : t.status,
+                output_summary: s.id === event.step_id ? (event.data?.output_summary || 'Успешно') : t.output_summary
+              })),
+              result_preview: s.id === event.step_id ? (event.data?.result_preview || 'Результаты доступны') : s.result_preview
+            })),
+            ai_thoughts: [...prev.ai_thoughts, event.message || `✅ Шаг завершён: ${event.step_id}`]
+          }
+        
+        case 'step_failed':
+          return {
+            ...prev,
+            steps: prev.steps.map((s: any) => ({
+              ...s,
+              status: s.id === event.step_id ? 'failed' : s.status,
+              tools_used: s.tools_used.map((t: any) => ({
+                ...t,
+                status: s.id === event.step_id ? 'failed' : t.status,
+                error: s.id === event.step_id ? event.data?.error : t.error
+              }))
+            })),
+            ai_thoughts: [...prev.ai_thoughts, `❌ Ошибка в шаге: ${event.data?.error || event.step_id}`]
+          }
+        
+        case 'completed':
+          // Workflow успешно завершён
+          const completedAt = new Date().toISOString()
+          
+          // Сохраняем результат для чата
+          const workflowResult: WorkflowResultData = {
+            execution_id: prev.id,
+            workflow_id: prev.workflow_id,
+            workflow_name: prev.workflow_name,
+            case_id: caseId || '',
+            status: 'completed',
+            summary: event.data?.summary || `Workflow "${prev.workflow_name}" успешно выполнен.`,
+            documents_processed: prev.total_documents,
+            elapsed_time: elapsedTime,
+            started_at: prev.started_at,
+            completed_at: completedAt,
+            artifacts: event.data?.artifacts || {
+              reports: [],
+              tables: [],
+              documents: pendingDocuments.map((docId, idx) => ({ id: docId, name: `Документ ${idx + 1}` })),
+              checks: []
+            },
+            results: event.data?.results || {},
+            steps_completed: prev.total_steps,
+            total_steps: prev.total_steps
+          }
+          
+          savePendingWorkflowResult(workflowResult)
+          toast.success('Workflow успешно завершён! Переход в чат...')
+          
+          setTimeout(() => {
+            setShowExecutionPanel(false)
+            setExecutionDetails(null)
+            navigate(`/cases/${caseId}/chat`)
+          }, 1500)
+          
+          return {
+            ...prev,
+            status: 'completed',
+            progress: 100,
+            completed_at: completedAt,
+            elapsed_time: elapsedTime,
+            result_url: event.data?.result_url,
+            ai_thoughts: [...prev.ai_thoughts, '✨ Workflow успешно завершён!']
+          }
+        
+        case 'failed':
+          toast.error('Workflow завершился с ошибкой')
+          return {
+            ...prev,
+            status: 'failed',
+            error: event.data?.error || event.message,
+            elapsed_time: elapsedTime,
+            ai_thoughts: [...prev.ai_thoughts, `❌ Workflow завершился с ошибкой: ${event.data?.error || event.message}`]
+          }
+        
+        default:
+          // Другие события (progress updates и т.д.)
+          if (event.progress_percent !== undefined) {
+            return {
+              ...prev,
+              progress: event.progress_percent,
+              elapsed_time: elapsedTime
+            }
+          }
+          return prev
+      }
+    })
+  }
+
+  // Fallback polling если SSE не работает
+  const pollExecutionStatus = async (executionId: string, startTime: number) => {
+    let isCompleted = false
     
-    setExecutionDetails((prev: any) => ({
-      ...prev,
-      status: 'completed',
-      progress: 100,
-      completed_at: completedAt,
-      elapsed_time: elapsedTime,
-      result_url: '/api/results/example',
-      ai_thoughts: [
-        ...prev.ai_thoughts,
-        'Workflow успешно завершён!',
-        `Обработано ${pendingDocuments.length} документов`
-      ]
-    }))
-
-    // Сохраняем результат для отображения в чате
-    const workflowResult: WorkflowResultData = {
-      execution_id: `exec_${Date.now()}`,
-      workflow_id: pendingWorkflow?.id || '',
-      workflow_name: pendingWorkflow?.display_name || 'Workflow',
-      case_id: caseId || '',
-      status: 'completed',
-      summary: `Workflow "${pendingWorkflow?.display_name}" успешно выполнен. Проанализированы документы и созданы необходимые материалы для дальнейшей работы.`,
-      documents_processed: pendingDocuments.length,
-      elapsed_time: elapsedTime,
-      started_at: new Date(Date.now() - 105000).toISOString(), // ~1:45 назад
-      completed_at: completedAt,
-      artifacts: {
-        reports: [
-          { id: 'report_1', name: 'Итоговый отчёт', type: 'pdf' }
-        ],
-        tables: [
-          { id: 'table_1', name: 'Результаты анализа', review_id: 'review_' + Date.now() }
-        ],
-        documents: pendingDocuments.map((docId, idx) => ({
-          id: docId,
-          name: `Документ ${idx + 1}`
-        })),
-        checks: []
-      },
-      results: {
-        analysis_complete: true,
-        documents_analyzed: pendingDocuments.length
-      },
-      steps_completed: workflowPlan?.steps?.length || 3,
-      total_steps: workflowPlan?.steps?.length || 3
+    while (!isCompleted) {
+      try {
+        await new Promise(resolve => setTimeout(resolve, 2000)) // Poll every 2 seconds
+        
+        const executions = await workflowsApi.getExecutions({ case_id: caseId || undefined, limit: 100 })
+        const execution = executions.find(e => e.id === executionId)
+        
+        if (execution) {
+          const elapsedSeconds = Math.floor((Date.now() - startTime) / 1000)
+          const elapsedTime = `${Math.floor(elapsedSeconds / 60)}:${String(elapsedSeconds % 60).padStart(2, '0')}`
+          
+          setExecutionDetails((prev: any) => prev ? ({
+            ...prev,
+            status: execution.status,
+            progress: execution.progress_percent || execution.progress || 0,
+            elapsed_time: elapsedTime,
+            documents_processed: execution.documents_processed || 0
+          }) : null)
+          
+          if (execution.status === 'completed' || execution.status === 'failed') {
+            isCompleted = true
+            
+            if (execution.status === 'completed') {
+              // Получаем полные результаты
+              try {
+                const results = await workflowsApi.getExecutionResults(executionId)
+                
+                const workflowResult: WorkflowResultData = {
+                  execution_id: executionId,
+                  workflow_id: execution.workflow_id || '',
+                  workflow_name: execution.workflow_name || 'Workflow',
+                  case_id: caseId || '',
+                  status: 'completed',
+                  summary: results.summary || `Workflow завершён успешно`,
+                  documents_processed: execution.documents_processed || pendingDocuments.length,
+                  elapsed_time: elapsedTime,
+                  started_at: execution.started_at,
+                  completed_at: execution.completed_at || new Date().toISOString(),
+                  artifacts: results.artifacts || { reports: [], tables: [], documents: [], checks: [] },
+                  results: results.results || {},
+                  steps_completed: execution.total_steps_completed || 0,
+                  total_steps: execution.total_steps_completed || 0
+                }
+                
+                savePendingWorkflowResult(workflowResult)
+              } catch (e) {
+                console.error('Failed to get results:', e)
+              }
+              
+              toast.success('Workflow успешно завершён! Переход в чат...')
+              setTimeout(() => {
+                setShowExecutionPanel(false)
+                setExecutionDetails(null)
+                navigate(`/cases/${caseId}/chat`)
+              }, 1500)
+            } else {
+              toast.error('Workflow завершился с ошибкой')
+            }
+          }
+        }
+      } catch (error) {
+        console.error('Polling error:', error)
+      }
     }
-    
-    savePendingWorkflowResult(workflowResult)
-
-    toast.success('Workflow успешно завершён! Переход в чат...')
-    
-    // Задержка перед переходом для плавного UX
-    setTimeout(() => {
-      setShowExecutionPanel(false)
-      setExecutionDetails(null)
-      navigate(`/cases/${caseId}/chat`)
-    }, 1500)
   }
 
   // Перегенерация плана
