@@ -216,3 +216,4 @@ class EntityExtractorAgent(BaseSubAgent):
             logger.error(f"Failed to load documents: {e}")
             return ""
 
+

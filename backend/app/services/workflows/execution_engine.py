@@ -504,6 +504,141 @@ class ExecutionEngine:
         Yields:
             ExecutionEvents
         """
+        # Выбираем реализацию: LangGraph (предпочтительно) или базовый Supervisor
+        use_langgraph = True  # Можно сделать настраиваемым
+        
+        if use_langgraph:
+            async for event in self._execute_with_langgraph(execution, definition, documents):
+                yield event
+        else:
+            async for event in self._execute_with_basic_supervisor(execution, definition, documents):
+                yield event
+    
+    async def _execute_with_langgraph(
+        self,
+        execution: WorkflowExecution,
+        definition: WorkflowDefinition,
+        documents: List[Dict[str, Any]]
+    ) -> AsyncIterator[ExecutionEvent]:
+        """
+        Execute using LangGraph-based Supervisor.
+        
+        Преимущества:
+        - Многоуровневая обработка ошибок
+        - State-driven error management
+        - Чекпоинты для персистентности
+        - Bounded retries и graceful degradation
+        """
+        try:
+            from app.services.workflows.langgraph_supervisor import LangGraphSupervisor, SupervisorConfig
+            
+            # Конфигурация
+            config = SupervisorConfig(
+                max_retries=3,
+                max_steps=50,
+                enable_checkpoints=True
+            )
+            
+            supervisor = LangGraphSupervisor(self.db, config)
+            
+            # Extract file_ids
+            file_ids = execution.selected_file_ids or []
+            if not file_ids and documents:
+                file_ids = [d.get("id") for d in documents if d.get("id")]
+            
+            # Update execution status
+            execution.status = "executing"
+            execution.started_at = datetime.utcnow()
+            self.db.commit()
+            
+            yield ExecutionEvent(
+                event_type="started",
+                execution_id=execution.id,
+                message="Запуск LangGraph Supervisor..."
+            )
+            
+            # Execute with LangGraph supervisor
+            async for event in supervisor.execute(
+                user_task=execution.user_task,
+                file_ids=file_ids,
+                documents=documents,
+                execution_id=execution.id,
+                thread_id=execution.id  # Используем execution_id как thread_id для чекпоинтов
+            ):
+                event_type = event.get("type", "status")
+                
+                if event_type == "node_completed":
+                    node = event.get("node", "")
+                    data = event.get("data", {})
+                    
+                    yield ExecutionEvent(
+                        event_type="step_completed",
+                        execution_id=execution.id,
+                        step_id=node,
+                        data=data,
+                        message=f"Узел {node} завершён"
+                    )
+                    
+                elif event_type == "completed":
+                    result = event.get("result", {})
+                    
+                    execution.results = result
+                    execution.status = "completed"
+                    execution.completed_at = datetime.utcnow()
+                    execution.progress_percent = 100
+                    self.db.commit()
+                    
+                    yield ExecutionEvent(
+                        event_type="completed",
+                        execution_id=execution.id,
+                        data=result,
+                        message="Workflow успешно завершён",
+                        progress_percent=100
+                    )
+                    
+                elif event_type == "error":
+                    execution.status = "failed"
+                    execution.error_message = event.get("error")
+                    self.db.commit()
+                    
+                    yield ExecutionEvent(
+                        event_type="failed",
+                        execution_id=execution.id,
+                        data={"error": event.get("error")},
+                        message=event.get("message", "")
+                    )
+                    
+                else:
+                    yield ExecutionEvent(
+                        event_type=event_type,
+                        execution_id=execution.id,
+                        data=event,
+                        message=event.get("message", "")
+                    )
+                    
+        except Exception as e:
+            logger.error(f"LangGraph execution failed: {e}", exc_info=True)
+            
+            execution.status = "failed"
+            execution.error_message = str(e)
+            self.db.commit()
+            
+            yield ExecutionEvent(
+                event_type="failed",
+                execution_id=execution.id,
+                data={"error": str(e)},
+                message=f"Ошибка: {str(e)}"
+            )
+    
+    async def _execute_with_basic_supervisor(
+        self,
+        execution: WorkflowExecution,
+        definition: WorkflowDefinition,
+        documents: List[Dict[str, Any]]
+    ) -> AsyncIterator[ExecutionEvent]:
+        """
+        Execute using basic SupervisorAgent (fallback).
+        """
         try:
             from app.services.workflows.supervisor_agent import SupervisorAgent
             

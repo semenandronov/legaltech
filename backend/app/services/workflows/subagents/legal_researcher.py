@@ -106,3 +106,4 @@ class LegalResearcherAgent(BaseSubAgent):
                 error=str(e)
             )
 
+

@@ -154,3 +154,4 @@ class SummarizerAgent(BaseSubAgent):
             logger.error(f"Failed to load documents: {e}")
             return ""
 
+

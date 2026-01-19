@@ -671,3 +671,4 @@ class AgenticPlanner:
             summary=f"План: {agentic_plan.task_type.value}"
         )
 
+
