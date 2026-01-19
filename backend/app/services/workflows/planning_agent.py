@@ -299,12 +299,46 @@ class PlanningAgent:
     ) -> ExecutionPlan:
         """Parse LLM response into ExecutionPlan"""
         try:
-            # Extract JSON from response
-            json_match = re.search(r'\{[\s\S]*\}', response)
-            if not json_match:
-                raise ValueError("No JSON found in response")
+            # Try multiple strategies to extract JSON
+            data = None
             
-            data = json.loads(json_match.group())
+            # Strategy 1: Find JSON block between ```json and ```
+            json_block_match = re.search(r'```json\s*([\s\S]*?)\s*```', response)
+            if json_block_match:
+                try:
+                    data = json.loads(json_block_match.group(1))
+                except json.JSONDecodeError:
+                    pass
+            
+            # Strategy 2: Find outermost { } pair more carefully
+            if data is None:
+                # Find the first { and last }
+                first_brace = response.find('{')
+                last_brace = response.rfind('}')
+                if first_brace != -1 and last_brace != -1 and last_brace > first_brace:
+                    json_str = response[first_brace:last_brace + 1]
+                    try:
+                        data = json.loads(json_str)
+                    except json.JSONDecodeError:
+                        # Try to fix common issues
+                        # Remove trailing commas before } or ]
+                        json_str = re.sub(r',(\s*[}\]])', r'\1', json_str)
+                        # Fix unquoted keys (simple cases)
+                        json_str = re.sub(r'(\{|\,)\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*:', r'\1"\2":', json_str)
+                        try:
+                            data = json.loads(json_str)
+                        except json.JSONDecodeError:
+                            pass
+            
+            # Strategy 3: Original regex approach
+            if data is None:
+                json_match = re.search(r'\{[\s\S]*\}', response)
+                if json_match:
+                    data = json.loads(json_match.group())
+            
+            if data is None:
+                logger.error(f"No valid JSON found in response: {response[:500]}...")
+                raise ValueError("No valid JSON found in response")
             
             # Parse goals
             goals = []
@@ -356,7 +390,31 @@ class PlanningAgent:
             
         except (json.JSONDecodeError, KeyError) as e:
             logger.error(f"Failed to parse plan response: {e}")
-            raise ValueError(f"Failed to parse planning response: {e}")
+            logger.warning("Creating fallback plan with summarize step")
+            
+            # Create a simple fallback plan
+            file_ids = [d.get("id") for d in documents if d.get("id")]
+            return ExecutionPlan(
+                goals=[SubGoal(
+                    id="goal_1",
+                    description="Анализ документов",
+                    priority=1
+                )],
+                steps=[PlanStep(
+                    id="step_1",
+                    name="Суммаризация документов",
+                    description="Создание краткого резюме загруженных документов",
+                    step_type="tool_call",
+                    tool_name="summarize",
+                    tool_params={"file_ids": file_ids, "style": "brief"},
+                    depends_on=[],
+                    expected_output="Краткое резюме документов",
+                    goal_id="goal_1",
+                    estimated_duration_seconds=60
+                )],
+                estimated_total_duration_seconds=60,
+                summary="Fallback план: суммаризация документов"
+            )
     
     async def refine_plan(
         self,
