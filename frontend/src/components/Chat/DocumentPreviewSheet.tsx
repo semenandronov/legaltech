@@ -56,10 +56,10 @@ const DocumentPreviewSheet = ({
   const hasNext = currentIndex < allSources.length - 1
   
   // Преобразуем source в highlights для DocumentHighlighter (для текстовых документов)
-  // Сначала пробуем использовать координаты, если они валидные
+  // Сначала пробуем использовать координаты, если они валидные (char_start может быть 0 для начала документа)
   const coordinateHighlights = useCitationHighlights(
     source && source.char_start !== undefined && source.char_end !== undefined && 
-    source.char_start > 0 && source.char_end > source.char_start ? [source] : []
+    source.char_end > source.char_start && source.char_end > 0 ? [source] : []
   )
   
   // Если координаты невалидные, но есть цитата - ищем её в тексте
@@ -135,6 +135,14 @@ const DocumentPreviewSheet = ({
 
   useEffect(() => {
     if (source && isOpen) {
+      console.log('[DocumentPreview] Opening source:', {
+        file: source.file,
+        page: source.page,
+        char_start: source.char_start,
+        char_end: source.char_end,
+        quote: source.quote?.substring(0, 100),
+        source_id: source.source_id
+      })
       loadDocumentInfo()
     }
   }, [source, isOpen])
@@ -202,8 +210,9 @@ const DocumentPreviewSheet = ({
     source: SourceInfo
   ) => {
     // Проверяем, есть ли координаты или цитата для подсветки
+    // char_start может быть 0 для начала документа - это валидно
     const hasCoordinates = source.char_start !== undefined && source.char_end !== undefined && 
-                           source.char_start > 0 && source.char_end > source.char_start
+                           source.char_end > source.char_start && source.char_end > 0
     const hasQuote = !!source.quote && source.quote.length > 10
     
     console.log('[DocumentPreview] Loading highlight data:', {

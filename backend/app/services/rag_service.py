@@ -1417,6 +1417,50 @@ class RAGService:
             # ========== НАДЁЖНЫЙ ПОСТ-ПРОЦЕССИНГ CITATIONS (Harvey/Perplexity style) ==========
             import re
             
+            # Шаг 0: Конвертируем ГОЛЫЕ числа в конце предложений в [N]
+            # "текст 12." -> "текст [12]."
+            # "текст 1 2." -> "текст [1][2]."
+            # Но НЕ трогаем числа внутри текста (даты, суммы и т.д.)
+            
+            # Паттерн: число(а) перед точкой/запятой в конце предложения или перед следующим предложением
+            # Ловим: "текст 12." или "текст 1 2." или "текст 12 1."
+            def convert_trailing_numbers(text):
+                # Ищем паттерн: пробел + одно или несколько чисел (1-2 цифры) + пунктуация
+                # Не трогаем числа > 20 (скорее всего это не ссылки)
+                result = text
+                
+                # Паттерн для чисел в конце предложения перед точкой
+                # " 12." или " 1 2." -> " [12]." или " [1][2]."
+                def replace_nums_before_punct(match):
+                    nums_str = match.group(1)
+                    punct = match.group(2)
+                    nums = re.findall(r'\d+', nums_str)
+                    # Фильтруем только валидные номера (1-20)
+                    valid_nums = [n for n in nums if 1 <= int(n) <= 20]
+                    if valid_nums:
+                        citations = ''.join(f'[{n}]' for n in valid_nums)
+                        return f' {citations}{punct}'
+                    return match.group(0)
+                
+                # Числа перед точкой/запятой/скобкой
+                result = re.sub(r'\s+((?:\d{1,2}\s*)+)([.,:;!?)])', replace_nums_before_punct, result)
+                
+                # Числа в конце строки
+                def replace_nums_end(match):
+                    nums_str = match.group(1)
+                    nums = re.findall(r'\d+', nums_str)
+                    valid_nums = [n for n in nums if 1 <= int(n) <= 20]
+                    if valid_nums:
+                        citations = ''.join(f'[{n}]' for n in valid_nums)
+                        return f' {citations}'
+                    return match.group(0)
+                
+                result = re.sub(r'\s+((?:\d{1,2}\s*)+)$', replace_nums_end, result, flags=re.MULTILINE)
+                
+                return result
+            
+            answer_text = convert_trailing_numbers(answer_text)
+            
             # Шаг 1: Нормализуем ВСЕ форматы ссылок в единый [N]
             # [1, 2, 3] -> [1][2][3]
             def expand_multi_citations(match):
