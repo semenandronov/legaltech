@@ -88,9 +88,11 @@ class AdvancedRetrieverService:
     def __init__(self, document_processor: DocumentProcessor):
         """Initialize retriever service"""
         self.document_processor = document_processor
-        # Use GigaChat via factory
-        from app.services.llm_factory import create_llm
+        # Use GigaChat via factory with rate limiting for direct calls
+        from app.services.llm_factory import create_llm, create_llm_without_rate_limiting
         self.llm = create_llm(temperature=0.7)
+        # Use LLM without rate limiting for LangChain methods (they need direct Runnable)
+        self.llm_for_langchain = create_llm_without_rate_limiting(temperature=0.7)
     
     def _get_base_documents(self, case_id: str, query: str, k: int = 5, db: Optional[Session] = None) -> List[Document]:
         """
@@ -139,8 +141,9 @@ class AdvancedRetrieverService:
                 base_retriever = self.document_processor.vector_store.get_retriever(case_id, k=k)
                 
                 # Create MultiQueryRetriever with legal prompt
+                # Use llm_for_langchain (without rate limiting wrapper) for LangChain compatibility
                 multi_retriever = MultiQueryRetriever.from_llm(
-                    llm=self.llm,
+                    llm=self.llm_for_langchain,
                     retriever=base_retriever,
                     prompt=LEGAL_MULTI_QUERY_PROMPT
                 )
@@ -225,7 +228,8 @@ class AdvancedRetrieverService:
                 base_retriever = self.document_processor.vector_store.get_retriever(case_id, k=k*2)
                 
                 # Create compressor with GigaChat
-                compressor = LLMChainExtractor.from_llm(self.llm)
+                # Use llm_for_langchain (without rate limiting wrapper) for LangChain compatibility
+                compressor = LLMChainExtractor.from_llm(self.llm_for_langchain)
                 
                 # Create compression retriever
                 compression_retriever = ContextualCompressionRetriever(
@@ -248,7 +252,8 @@ class AdvancedRetrieverService:
         # Apply compression if LLMChainExtractor is available
         if LLMChainExtractor is not None and documents:
             try:
-                compressor = LLMChainExtractor.from_llm(self.llm)
+                # Use llm_for_langchain (without rate limiting wrapper) for LangChain compatibility
+                compressor = LLMChainExtractor.from_llm(self.llm_for_langchain)
                 compressed_docs = compressor.compress_documents(documents, query)
                 logger.info(f"Compressed {len(documents)} to {len(compressed_docs)} documents for case {case_id}")
                 return compressed_docs[:k]
@@ -309,7 +314,8 @@ class AdvancedRetrieverService:
             
             # Apply compression if available
             if documents and LLMChainExtractor is not None:
-                compressor = LLMChainExtractor.from_llm(self.llm)
+                # Use llm_for_langchain (without rate limiting wrapper) for LangChain compatibility
+                compressor = LLMChainExtractor.from_llm(self.llm_for_langchain)
                 try:
                     compressed_docs = compressor.compress_documents(documents, query)
                     logger.info(f"Hybrid retrieval compressed {len(documents)} to {len(compressed_docs)} documents for case {case_id}")

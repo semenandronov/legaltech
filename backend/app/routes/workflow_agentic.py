@@ -263,43 +263,51 @@ async def create_plan(
     current_user: User = Depends(get_current_user)
 ):
     """Create a workflow execution plan without executing"""
-    # Get definition if specified
-    definition = None
-    if request.definition_id:
-        definition = db.query(WorkflowDefinition).filter(
-            WorkflowDefinition.id == request.definition_id
-        ).first()
-    
-    # Get documents
-    documents = []
-    if request.file_ids:
-        files = db.query(File).filter(File.id.in_(request.file_ids)).all()
-        documents = [{"id": f.id, "filename": f.filename, "type": f.file_type} for f in files]
-    elif request.case_id:
-        files = db.query(File).filter(File.case_id == request.case_id).all()
-        documents = [{"id": f.id, "filename": f.filename, "type": f.file_type} for f in files]
-    
-    # Available tools
-    available_tools = definition.available_tools if definition else [t["name"] for t in WORKFLOW_TOOLS]
-    
-    # Create plan
-    planning_agent = PlanningAgent()
-    plan = await planning_agent.create_plan(
-        user_task=request.user_task,
-        available_documents=documents,
-        available_tools=available_tools,
-        workflow_definition=definition
-    )
-    
-    # Validate
-    errors = planning_agent.validate_plan(plan)
-    
-    return {
-        "plan": planning_agent.plan_to_dict(plan),
-        "validation_errors": errors,
-        "is_valid": len(errors) == 0,
-        "estimated_duration_seconds": plan.estimated_total_duration_seconds
-    }
+    try:
+        # Get definition if specified
+        definition = None
+        if request.definition_id:
+            definition = db.query(WorkflowDefinition).filter(
+                WorkflowDefinition.id == request.definition_id
+            ).first()
+        
+        # Get documents
+        documents = []
+        if request.file_ids:
+            files = db.query(File).filter(File.id.in_(request.file_ids)).all()
+            documents = [{"id": f.id, "filename": f.filename, "type": f.file_type} for f in files]
+        elif request.case_id:
+            files = db.query(File).filter(File.case_id == request.case_id).all()
+            documents = [{"id": f.id, "filename": f.filename, "type": f.file_type} for f in files]
+        
+        # Available tools
+        available_tools = definition.available_tools if definition else [t["name"] for t in WORKFLOW_TOOLS]
+        
+        # Create plan
+        planning_agent = PlanningAgent()
+        plan = await planning_agent.create_plan(
+            user_task=request.user_task,
+            available_documents=documents,
+            available_tools=available_tools,
+            workflow_definition=definition
+        )
+        
+        # Validate
+        errors = planning_agent.validate_plan(plan)
+        
+        return {
+            "plan": planning_agent.plan_to_dict(plan),
+            "validation_errors": errors,
+            "is_valid": len(errors) == 0,
+            "estimated_duration_seconds": plan.estimated_total_duration_seconds
+        }
+    except Exception as e:
+        logger = logging.getLogger(__name__)
+        logger.error(f"Error creating workflow plan: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=500,
+            detail=f"Ошибка создания плана workflow: {str(e)}"
+        )
 
 
 # ==================== EXECUTION ====================
