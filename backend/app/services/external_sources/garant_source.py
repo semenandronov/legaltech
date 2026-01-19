@@ -403,8 +403,12 @@ class GarantSource(BaseSource):
         """
         Получить полный текст документа из ГАРАНТ
         
+        Согласно документации API v2.1.0:
+        - URL: POST /v2/export/{format}
+        - Параметры: topic (ID документа), env ("internet")
+        
         Args:
-            doc_id: ID документа (topic)
+            doc_id: ID документа (topic из результатов поиска)
             format: Формат экспорта (html, rtf, pdf, odt)
             
         Returns:
@@ -421,7 +425,7 @@ class GarantSource(BaseSource):
         headers = {
             "Authorization": f"Bearer {self.api_key}",
             "Content-Type": "application/json",
-            "Accept": "application/json" if format == "html" else "application/octet-stream",
+            "Accept": "application/json",
         }
         
         # Согласно документации API v2.1.0
@@ -436,32 +440,20 @@ class GarantSource(BaseSource):
         endpoint = endpoint_map.get(format.lower(), "/export/html")
         full_url = f"{self.api_url}{endpoint}"
         
-        # Пробуем разные форматы topic: сначала как число (если возможно), потом как строку
-        # Согласно документации API v2.1.0, topic может быть числом или строкой
-        try:
-            # Пробуем преобразовать в число, если это возможно
-            doc_id_num = int(doc_id) if isinstance(doc_id, str) and doc_id.isdigit() else doc_id
-            if isinstance(doc_id_num, int):
-                doc_id_for_export = doc_id_num
-            else:
-                doc_id_for_export = str(doc_id).strip()
-        except (ValueError, TypeError):
-            doc_id_for_export = str(doc_id).strip()
+        # Согласно документации API v2.1.0, topic должен быть числом
+        # Пробуем преобразовать в число
+        doc_id_for_export = None
+        original_doc_id = str(doc_id).strip()
         
-        # #region agent log
-        import time
-        import json
-        import os
-        def _safe_debug_log(data: dict) -> None:
-            try:
-                log_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__file__)))), '.cursor', 'debug.log')
-                os.makedirs(os.path.dirname(log_path), exist_ok=True)
-                with open(log_path, 'a', encoding='utf-8') as f:
-                    f.write(json.dumps(data) + '\n')
-            except:
-                pass
-        _safe_debug_log({"sessionId":"debug-session","runId":"run1","hypothesisId":"H7","location":"garant_source.py:461","message":"get_document_full_text endpoint","data":{"api_url":self.api_url,"endpoint":endpoint,"full_url":full_url,"doc_id":doc_id,"doc_id_for_export":doc_id_for_export,"doc_id_for_export_type":type(doc_id_for_export).__name__,"format":format,"request_body":{"topic":doc_id_for_export,"env":"internet"}},"timestamp":int(time.time()*1000)})
-        # #endregion
+        # Извлекаем числовой ID из строки (может быть в формате "12345" или содержать другие символы)
+        import re
+        numeric_match = re.search(r'(\d+)', original_doc_id)
+        if numeric_match:
+            doc_id_for_export = int(numeric_match.group(1))
+        else:
+            doc_id_for_export = original_doc_id
+        
+        logger.info(f"[Garant API] Requesting full text for document topic={doc_id_for_export} (original: {original_doc_id}) in format {format}")
         
         timeout_seconds = GARANT_API_TIMEOUT_EXPORT
         
@@ -473,9 +465,7 @@ class GarantSource(BaseSource):
                     "env": "internet"
                 }
                 
-                logger.info(f"[Garant API] Requesting full text for document {doc_id_for_export} (type: {type(doc_id_for_export).__name__}) in format {format}")
-                logger.info(f"[DEBUG] Export request: endpoint={full_url}, body={request_body}")
-                logger.debug(f"[Garant API] Endpoint: {full_url}, Request body: {request_body}")
+                logger.debug(f"[Garant API] Export request: endpoint={full_url}, body={request_body}")
                 
                 start_time = __import__('time').time()
                 
@@ -500,43 +490,29 @@ class GarantSource(BaseSource):
                                 import base64
                                 content = await response.read()
                                 encoded = base64.b64encode(content).decode('utf-8')
-                                logger.info(f"[Garant API] Successfully got {format} content, size: {len(content)} bytes, encoded: {len(encoded)} chars")
+                                logger.info(f"[Garant API] Successfully got {format} content, size: {len(content)} bytes")
                                 return encoded
                         except Exception as parse_error:
                             logger.error(f"[Garant API] Error parsing response content: {parse_error}", exc_info=True)
                             return None
                     elif response.status == 401:
                         error_text = await response.text()
-                        logger.error(f"[Garant API] Unauthorized (401) - check API key. Response: {error_text[:200]}")
+                        logger.error(f"[Garant API] Unauthorized (401) - check API key")
                         return None
                     elif response.status == 403:
                         error_text = await response.text()
-                        logger.error(f"[Garant API] Forbidden (403) - check permissions or API limits. Response: {error_text[:200]}")
+                        logger.error(f"[Garant API] Forbidden (403) - возможно превышен лимит экспорта (30 документов/месяц)")
                         return None
                     elif response.status == 404:
                         error_text = await response.text()
-                        logger.warning(f"[Garant API] Document not found (404) for doc_id={doc_id_for_export}. Response: {error_text[:500]}")
-                        # #region agent log
-                        import time
-                        import json
-                        import os
-                        def _safe_debug_log(data: dict) -> None:
-                            try:
-                                log_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__file__)))), '.cursor', 'debug.log')
-                                os.makedirs(os.path.dirname(log_path), exist_ok=True)
-                                with open(log_path, 'a', encoding='utf-8') as f:
-                                    f.write(json.dumps(data) + '\n')
-                            except:
-                                pass
-                        _safe_debug_log({"sessionId":"debug-session","runId":"run1","hypothesisId":"H7","location":"garant_source.py:509","message":"404 response details","data":{"doc_id_for_export":doc_id_for_export,"doc_id_for_export_type":type(doc_id_for_export).__name__,"endpoint":endpoint,"full_url":full_url,"request_body":{"topic":doc_id_for_export,"env":"internet"},"response_status":404,"response_text_preview":error_text[:500]},"timestamp":int(time.time()*1000)})
-                        # #endregion
+                        logger.warning(f"[Garant API] Document not found (404) for topic={doc_id_for_export}")
                         return None
                     else:
                         error_text = await response.text()
-                        logger.error(f"[Garant API] Export error: status={response.status}, doc_id={doc_id_for_export}, format={format}, response={error_text[:500]}")
+                        logger.error(f"[Garant API] Export error: status={response.status}, topic={doc_id_for_export}")
                         return None
         except aiohttp.ClientTimeout:
-            logger.error(f"[Garant API] Timeout ({timeout_seconds}s) while getting document {doc_id_for_export} in format {format}")
+            logger.error(f"[Garant API] Timeout ({timeout_seconds}s) while getting document {doc_id_for_export}")
             return None
         except aiohttp.ClientError as e:
             logger.error(f"[Garant API] Client error getting document full text: {e}", exc_info=True)

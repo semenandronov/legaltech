@@ -46,7 +46,7 @@ class ExecutionPlan:
 
 
 # Промпт для планирования
-PLANNING_PROMPT = """Ты - AI-агент для юридического анализа. Твоя задача - создать план выполнения для заданной задачи.
+PLANNING_PROMPT = """Ты - AI-агент для юридического анализа документов. Создай оптимальный план выполнения задачи.
 
 ЗАДАЧА ПОЛЬЗОВАТЕЛЯ:
 {user_task}
@@ -57,56 +57,99 @@ PLANNING_PROMPT = """Ты - AI-агент для юридического ана
 ДОСТУПНЫЕ ИНСТРУМЕНТЫ:
 {available_tools}
 
-ЗАДАЧА:
-1. Определи высокоуровневые цели для выполнения задачи
-2. Разбей каждую цель на конкретные шаги
-3. Для каждого шага определи:
-   - Какой инструмент использовать
-   - Какие параметры передать
-   - От каких других шагов он зависит
-4. Оцени примерное время выполнения
+═══════════════════════════════════════════════════════════════
+КОГДА КАКОЙ ИНСТРУМЕНТ ИСПОЛЬЗОВАТЬ:
+═══════════════════════════════════════════════════════════════
 
-ИНСТРУМЕНТЫ И ИХ ПРИМЕНЕНИЕ:
-- tabular_review: Массовый анализ документов, извлечение данных в таблицу
-- rag: Семантический поиск по документам, ответы на вопросы
-- web_search: Поиск информации в интернете
-- legal_db: Поиск в юридических базах данных
-- playbook_check: Проверка документа на соответствие правилам
-- summarize: Создание резюме
-- extract_entities: Извлечение именованных сущностей (люди, организации, даты)
-- document_draft: Создание черновика документа
+1. **summarize** - ПЕРВЫЙ ШАГ для понимания документов
+   - Используй когда: нужно понять содержание, получить обзор, краткое изложение
+   - Параметры: {{"style": "brief"}} или {{"style": "detailed"}}
+   - Примеры задач: "что в документе", "о чём договор", "краткое содержание"
 
-Верни план в формате JSON:
+2. **extract_entities** - Извлечение структурированных данных
+   - Используй когда: нужны конкретные данные (даты, суммы, стороны, адреса)
+   - Параметры: {{"entity_types": ["person", "organization", "date", "money", "address"]}}
+   - Примеры задач: "кто стороны", "какие даты", "какие суммы"
+
+3. **rag** - Поиск ответов на конкретные вопросы
+   - Используй когда: нужен ответ на конкретный вопрос по документам
+   - Параметры: {{"query": "конкретный вопрос", "top_k": 5}}
+   - Примеры задач: "найди пункт о...", "что говорится о...", "есть ли упоминание..."
+
+4. **playbook_check** - Проверка на соответствие правилам
+   - Используй когда: нужно проверить договор на риски, соответствие стандартам
+   - Параметры: {{"playbook_id": "default"}} или без параметров
+   - Примеры задач: "проверь договор", "найди риски", "соответствует ли стандартам"
+
+5. **tabular_review** - Сравнительный анализ нескольких документов
+   - Используй когда: нужно сравнить документы, создать таблицу данных
+   - Параметры: {{"columns": ["Параметр1", "Параметр2"]}}
+   - Примеры задач: "сравни договоры", "создай таблицу", "извлеки данные в таблицу"
+
+6. **legal_db** - Поиск в правовых базах
+   - Используй когда: нужны ссылки на законы, судебную практику
+   - Параметры: {{"query": "тема поиска"}}
+   - Примеры задач: "какой закон регулирует", "судебная практика по..."
+
+7. **document_draft** - Создание документа
+   - Используй когда: нужно создать новый документ на основе анализа
+   - Параметры: {{"document_type": "тип", "context": "контекст"}}
+   - Примеры задач: "составь ответ", "напиши заключение", "подготовь документ"
+
+═══════════════════════════════════════════════════════════════
+ТИПИЧНЫЕ СЦЕНАРИИ (выбери подходящий):
+═══════════════════════════════════════════════════════════════
+
+СЦЕНАРИЙ A - "Анализ документа" (что в документе, о чём он):
+1. summarize → получить общее понимание
+2. extract_entities → извлечь ключевые данные
+
+СЦЕНАРИЙ B - "Проверка договора на риски":
+1. summarize → понять тип и содержание
+2. playbook_check → проверить на соответствие правилам
+3. extract_entities → извлечь ключевые условия
+
+СЦЕНАРИЙ C - "Ответ на конкретный вопрос":
+1. rag → найти релевантную информацию
+
+СЦЕНАРИЙ D - "Полный анализ договора":
+1. summarize → общее понимание
+2. extract_entities → стороны, даты, суммы (параллельно с п.3)
+3. playbook_check → проверка на риски (параллельно с п.2)
+4. rag → ответы на специфические вопросы (если есть)
+
+СЦЕНАРИЙ E - "Сравнение документов":
+1. tabular_review → сравнительная таблица
+
+═══════════════════════════════════════════════════════════════
+
+Верни план СТРОГО в формате JSON (без markdown, без комментариев):
 {{
     "goals": [
-        {{
-            "id": "goal_1",
-            "description": "Описание цели",
-            "priority": 1
-        }}
+        {{"id": "goal_1", "description": "Описание цели", "priority": 1}}
     ],
     "steps": [
         {{
             "id": "step_1",
             "name": "Название шага",
-            "description": "Подробное описание",
+            "description": "Что делаем и зачем",
             "step_type": "tool_call",
             "tool_name": "имя_инструмента",
             "tool_params": {{}},
             "depends_on": [],
-            "expected_output": "Что ожидаем получить",
+            "expected_output": "Что получим",
             "goal_id": "goal_1",
-            "estimated_duration_seconds": 60
+            "estimated_duration_seconds": 30
         }}
     ],
     "summary": "Краткое описание плана"
 }}
 
-ВАЖНО:
-- Шаги должны быть конкретными и выполнимыми
-- Правильно указывай зависимости между шагами
-- Используй только доступные инструменты
-- Оптимизируй план для параллельного выполнения где возможно"""
+ПРАВИЛА:
+1. Выбери ПОДХОДЯЩИЙ сценарий или создай свой
+2. НЕ используй инструменты, которые не нужны для задачи
+3. Шаги без зависимостей могут выполняться параллельно
+4. Верни ТОЛЬКО JSON, без текста до или после"""
 
 
 class PlanningAgent:
@@ -115,12 +158,19 @@ class PlanningAgent:
     
     Понимает natural language задачу и создаёт план выполнения
     с использованием доступных инструментов.
+    
+    Использует AgenticPlanner для качественного планирования с:
+    - Классификацией типа задачи
+    - Предопределёнными паттернами инструментов
+    - Chain-of-Thought reasoning
     """
     
     def __init__(self):
         """Initialize planning agent"""
         self.llm = None
+        self.agentic_planner = None
         self._init_llm()
+        self._init_agentic_planner()
     
     def _init_llm(self):
         """Initialize LLM"""
@@ -132,6 +182,16 @@ class PlanningAgent:
         except Exception as e:
             logger.warning(f"PlanningAgent: Failed to initialize LLM: {e}")
             self.llm = None
+    
+    def _init_agentic_planner(self):
+        """Initialize AgenticPlanner for better task understanding"""
+        try:
+            from app.services.workflows.agentic_planner import AgenticPlanner
+            self.agentic_planner = AgenticPlanner()
+            logger.info("PlanningAgent: AgenticPlanner initialized")
+        except Exception as e:
+            logger.warning(f"PlanningAgent: Failed to initialize AgenticPlanner: {e}")
+            self.agentic_planner = None
     
     async def create_plan(
         self,
@@ -160,11 +220,84 @@ class PlanningAgent:
                 available_documents
             )
         
-        # Otherwise, generate a new plan using LLM
+        # Use AgenticPlanner for better task understanding (preferred)
+        if self.agentic_planner:
+            try:
+                agentic_plan = await self.agentic_planner.create_plan(
+                    user_task=user_task,
+                    documents=available_documents,
+                    available_tools=available_tools,
+                    workflow_definition=workflow_definition
+                )
+                
+                # Convert to ExecutionPlan
+                return self._convert_agentic_plan(agentic_plan, available_documents)
+                
+            except Exception as e:
+                logger.warning(f"AgenticPlanner failed, falling back to LLM: {e}")
+        
+        # Fallback: generate plan using LLM
         return await self._generate_plan_with_llm(
             user_task,
             available_documents,
             available_tools
+        )
+    
+    def _convert_agentic_plan(
+        self,
+        agentic_plan,
+        documents: List[Dict[str, Any]]
+    ) -> ExecutionPlan:
+        """Convert AgenticPlan to ExecutionPlan"""
+        file_ids = [d.get("id") for d in documents if d.get("id")]
+        
+        goals = [SubGoal(
+            id="goal_1",
+            description=agentic_plan.task_understanding,
+            priority=1
+        )]
+        
+        steps = []
+        for i, ts in enumerate(agentic_plan.tool_selections):
+            # Ensure file_ids are in params for document tools
+            params = ts.params.copy() if ts.params else {}
+            document_tools = ["summarize", "extract_entities", "rag", "playbook_check", "tabular_review"]
+            if ts.tool_name in document_tools and file_ids:
+                if "file_ids" not in params:
+                    params["file_ids"] = file_ids
+            
+            steps.append(PlanStep(
+                id=f"step_{i + 1}",
+                name=ts.tool_name,
+                description=ts.reason,
+                step_type="tool_call",
+                tool_name=ts.tool_name,
+                tool_params=params,
+                depends_on=[],
+                expected_output=ts.expected_output,
+                goal_id="goal_1",
+                estimated_duration_seconds=30
+            ))
+        
+        # Build dependencies from execution_order
+        if agentic_plan.execution_order and len(agentic_plan.execution_order) > 1:
+            step_by_tool = {s.tool_name: s for s in steps}
+            for group_idx, group in enumerate(agentic_plan.execution_order[1:], 1):
+                prev_group = agentic_plan.execution_order[group_idx - 1]
+                for tool_name in group:
+                    if tool_name in step_by_tool:
+                        step_by_tool[tool_name].depends_on = [
+                            step_by_tool[t].id for t in prev_group 
+                            if t in step_by_tool
+                        ]
+        
+        logger.info(f"AgenticPlanner created plan: {agentic_plan.task_type.value} with {len(steps)} steps")
+        
+        return ExecutionPlan(
+            goals=goals,
+            steps=steps,
+            estimated_total_duration_seconds=len(steps) * 30,
+            summary=f"План ({agentic_plan.task_type.value}): {agentic_plan.task_understanding[:100]}"
         )
     
     def _adapt_default_plan(

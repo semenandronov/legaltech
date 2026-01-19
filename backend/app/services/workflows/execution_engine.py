@@ -480,4 +480,148 @@ class ExecutionEngine:
                 data={"error": str(e)},
                 message=f"Ошибка: {str(e)}"
             )
+    
+    async def execute_with_supervisor(
+        self,
+        execution: WorkflowExecution,
+        definition: WorkflowDefinition,
+        documents: List[Dict[str, Any]]
+    ) -> AsyncIterator[ExecutionEvent]:
+        """
+        Execute workflow using SupervisorAgent architecture.
+        
+        Использует паттерн "Субагенты" из LangChain:
+        - Классификация намерения пользователя
+        - Автоматический выбор агентов
+        - Параллельное выполнение
+        - Синтез результатов
+        
+        Args:
+            execution: WorkflowExecution record
+            definition: Workflow definition
+            documents: Available documents
+            
+        Yields:
+            ExecutionEvents
+        """
+        try:
+            from app.services.workflows.supervisor_agent import SupervisorAgent
+            
+            supervisor = SupervisorAgent(self.db)
+            
+            # Extract file_ids
+            file_ids = execution.selected_file_ids or []
+            if not file_ids and documents:
+                file_ids = [d.get("id") for d in documents if d.get("id")]
+            
+            # Update execution status
+            execution.status = "executing"
+            execution.started_at = datetime.utcnow()
+            self.db.commit()
+            
+            yield ExecutionEvent(
+                event_type="started",
+                execution_id=execution.id,
+                message="Запуск Supervisor Agent..."
+            )
+            
+            # Execute with supervisor
+            results = {}
+            async for event in supervisor.execute(
+                user_task=execution.user_task,
+                documents=documents,
+                file_ids=file_ids,
+                workflow_definition=definition
+            ):
+                # Convert supervisor events to ExecutionEvents
+                event_type = event.get("type", "status")
+                
+                if event_type == "intent_classified":
+                    yield ExecutionEvent(
+                        event_type="planning",
+                        execution_id=execution.id,
+                        data={"intent": event.get("intent")},
+                        message=event.get("message", "")
+                    )
+                    
+                elif event_type == "plan_created":
+                    yield ExecutionEvent(
+                        event_type="plan_created",
+                        execution_id=execution.id,
+                        data={"phases": event.get("phases")},
+                        message=event.get("message", "")
+                    )
+                    
+                elif event_type == "phase_started":
+                    yield ExecutionEvent(
+                        event_type="step_started",
+                        execution_id=execution.id,
+                        data={"agents": event.get("agents")},
+                        message=event.get("message", ""),
+                        progress_percent=int((event.get("phase", 1) - 1) * 25)
+                    )
+                    
+                elif event_type == "agent_completed":
+                    results[event.get("agent")] = event
+                    yield ExecutionEvent(
+                        event_type="step_completed",
+                        execution_id=execution.id,
+                        step_id=event.get("agent"),
+                        data={
+                            "success": event.get("success"),
+                            "summary": event.get("summary")
+                        },
+                        message=f"Агент {event.get('agent')} завершён"
+                    )
+                    
+                elif event_type == "completed":
+                    # Store results
+                    execution.results = event.get("result", {})
+                    execution.status = "completed"
+                    execution.completed_at = datetime.utcnow()
+                    execution.progress_percent = 100
+                    self.db.commit()
+                    
+                    yield ExecutionEvent(
+                        event_type="completed",
+                        execution_id=execution.id,
+                        data=event.get("result", {}),
+                        message="Workflow успешно завершён",
+                        progress_percent=100
+                    )
+                    
+                elif event_type == "error":
+                    execution.status = "failed"
+                    execution.error_message = event.get("error")
+                    self.db.commit()
+                    
+                    yield ExecutionEvent(
+                        event_type="failed",
+                        execution_id=execution.id,
+                        data={"error": event.get("error")},
+                        message=event.get("message", "")
+                    )
+                    
+                else:
+                    # Pass through other events
+                    yield ExecutionEvent(
+                        event_type=event_type,
+                        execution_id=execution.id,
+                        data=event,
+                        message=event.get("message", "")
+                    )
+                    
+        except Exception as e:
+            logger.error(f"Supervisor execution failed: {e}", exc_info=True)
+            
+            execution.status = "failed"
+            execution.error_message = str(e)
+            self.db.commit()
+            
+            yield ExecutionEvent(
+                event_type="failed",
+                execution_id=execution.id,
+                data={"error": str(e)},
+                message=f"Ошибка: {str(e)}"
+            )
 

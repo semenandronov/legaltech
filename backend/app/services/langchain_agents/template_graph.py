@@ -289,19 +289,49 @@ async def search_cache_node(state: TemplateState, db: Session) -> TemplateState:
 async def search_garant_node(state: TemplateState, db: Session) -> TemplateState:
     """Узел: поиск шаблона в Гаранте
     
-    ВРЕМЕННО ОТКЛЮЧЕНО: не используем Гарант для составления шаблонов в режиме draft
-    Вместо этого создаем документ через AI без шаблона
+    Ищет шаблон документа в системе Гарант и скачивает его полный текст.
+    Согласно API v2.1.0:
+    - Поиск: POST /v2/search
+    - Экспорт HTML: POST /v2/export/html с параметром topic
     """
     # #region agent log
     import time
-    _safe_debug_log({"sessionId":"debug-session","runId":"run1","hypothesisId":"C","location":"template_graph.py:121","message":"search_garant_node called (DISABLED)","data":{"user_query":state.get("user_query")},"timestamp":int(time.time()*1000)})
+    _safe_debug_log({"sessionId":"debug-session","runId":"run1","hypothesisId":"C","location":"template_graph.py:121","message":"search_garant_node called","data":{"user_query":state.get("user_query")},"timestamp":int(time.time()*1000)})
     # #endregion
     
-    # ВРЕМЕННО ОТКЛЮЧЕНО: пропускаем поиск в Гаранте
-    logger.info("Garant search temporarily disabled - will create document via AI instead")
+    logger.info(f"Searching for template in Garant: {state.get('user_query')}")
     
-    # Не добавляем ошибку, просто возвращаем состояние без garant_template
-    # Это позволит adapt_template_node создать документ через AI без шаблона
+    try:
+        template_service = DocumentTemplateService(db)
+        
+        # Формируем поисковый запрос для шаблонов документов
+        user_query = state.get("user_query", "")
+        
+        # Добавляем ключевые слова для поиска шаблонов/форм
+        search_query = f"образец форма бланк {user_query}"
+        
+        # Ищем в Гаранте
+        garant_result = await template_service.search_in_garant(
+            query=search_query,
+            max_results=30  # Увеличиваем количество результатов для большей вероятности найти доступный документ
+        )
+        
+        if garant_result:
+            state["garant_template"] = garant_result
+            state["template_source"] = "garant"
+            logger.info(f"Found template in Garant: {garant_result.get('title', 'Unknown')}")
+            
+            # #region agent log
+            _safe_debug_log({"sessionId":"debug-session","runId":"run1","hypothesisId":"C","location":"template_graph.py:145","message":"Garant template found","data":{"title":garant_result.get("title"),"doc_id":garant_result.get("doc_id"),"content_length":len(garant_result.get("content",""))},"timestamp":int(time.time()*1000)})
+            # #endregion
+        else:
+            logger.warning(f"No template found in Garant for: {user_query}")
+            # Не добавляем ошибку - LLM создаст документ с нуля
+            
+    except Exception as e:
+        logger.error(f"Error searching in Garant: {e}", exc_info=True)
+        # Не добавляем ошибку - продолжаем без шаблона из Гаранта
+    
     return state
 
 

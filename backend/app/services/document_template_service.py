@@ -160,106 +160,78 @@ class DocumentTemplateService:
     async def search_in_garant(
         self, 
         query: str, 
-        max_results: int = 5
+        max_results: int = 30
     ) -> Optional[Dict[str, Any]]:
         """
-        Поиск шаблона в Гаранте
+        Поиск шаблона документа в Гаранте
+        
+        Согласно документации API v2.1.0:
+        - Поиск: POST /v2/search с параметрами text, isQuery, env, sort, sortOrder, page
+        - Экспорт: POST /v2/export/html с параметрами topic, env
+        - Ограничение: не более 30 экспортов документов в месяц
         
         Args:
-            query: Поисковый запрос
-            max_results: Максимальное количество результатов
+            query: Поисковый запрос (например "договор поставки образец")
+            max_results: Максимальное количество результатов поиска
             
         Returns:
-            Первый найденный шаблон из Гаранта или None
+            Найденный шаблон с полным HTML контентом или None
         """
-        # #region agent log
-        import time
-        _safe_debug_log({"sessionId":"debug-session","runId":"run1","hypothesisId":"A","location":"document_template_service.py:148","message":"search_in_garant called","data":{"query":query,"max_results":max_results},"timestamp":int(time.time()*1000)})
-        # #endregion
+        logger.info(f"[Garant] Searching for template: {query}")
         
         garant_source = self._get_garant_source()
-        
-        # #region agent log
-        import time
-        _safe_debug_log({"sessionId":"debug-session","runId":"run1","hypothesisId":"A","location":"document_template_service.py:152","message":"GarantSource check","data":{"garant_source_available":garant_source is not None,"has_api_key":hasattr(garant_source,'api_key') and garant_source.api_key is not None if garant_source else False},"timestamp":int(time.time()*1000)})
-        # #endregion
         
         if not garant_source:
             logger.warning("GarantSource not available")
             return None
         
         try:
-            # Ищем документы в Гаранте - убираем фильтр doc_type для более широкого поиска
-            # #region agent log
-            import time
-            _safe_debug_log({"sessionId":"debug-session","runId":"run1","hypothesisId":"B","location":"document_template_service.py:160","message":"Calling garant_source.search","data":{"query":query,"max_results":max_results},"timestamp":int(time.time()*1000)})
-            # #endregion
-            
+            # Ищем документы в Гаранте
+            # Используем семантический поиск (isQuery=false) для поиска по смыслу
             results = await garant_source.search(
                 query=query,
                 max_results=max_results,
-                filters=None  # Убираем фильтр doc_type для более широкого поиска
+                filters=None
             )
-            
-            # #region agent log
-            import time
-            _safe_debug_log({"sessionId":"debug-session","runId":"run1","hypothesisId":"C","location":"document_template_service.py:167","message":"Garant search results","data":{"results_count":len(results) if results else 0,"first_result_title":results[0].title if results and len(results) > 0 else None,"first_result_metadata":results[0].metadata if results and len(results) > 0 else None},"timestamp":int(time.time()*1000)})
-            # #endregion
             
             if not results:
                 logger.warning(f"No results from Garant for query: {query}")
                 return None
             
-            # Пробуем получить полный текст для каждого результата, пока не найдем валидный
-            # Увеличиваем количество попыток, так как многие документы могут быть недоступны (404)
-            max_attempts = min(30, len(results))
+            logger.info(f"[Garant] Found {len(results)} results, trying to export...")
+            
+            # Пробуем получить полный текст для каждого результата
+            # Ограничение API: не более 30 экспортов в месяц
+            max_attempts = min(10, len(results))  # Ограничиваем попытки чтобы не тратить лимит
             html_content = None
             result_to_use = None
             doc_id_to_use = None
             
             for i, result in enumerate(results[:max_attempts]):
-                doc_id = result.metadata.get("doc_id") or result.metadata.get("topic")
-                
-                # Log: Trying result
-                logger.debug(f"Trying result {i}: doc_id={doc_id}")
+                # Получаем topic (ID документа) из метаданных
+                doc_id = result.metadata.get("topic") or result.metadata.get("doc_id")
                 
                 if not doc_id:
-                    logger.warning(f"No doc_id in Garant result {i}, metadata keys: {list(result.metadata.keys()) if hasattr(result, 'metadata') else 'no metadata'}")
+                    logger.debug(f"[Garant] Result {i}: no topic/doc_id in metadata")
                     continue
                 
-                # Убеждаемся, что doc_id - строка (API ожидает строку)
                 doc_id = str(doc_id).strip()
+                logger.info(f"[Garant] Trying to export document {i+1}/{max_attempts}: topic={doc_id}, title='{result.title[:50]}...'")
                 
-                # Получаем информацию о документе
-                doc_info = await garant_source.get_document_info(doc_id)
+                # Получаем полный текст документа через API экспорта
+                html_content = await garant_source.get_document_full_text(doc_id, format="html")
                 
-                # Если document_info вернул None, пропускаем этот документ
-                if not doc_info:
-                    logger.warning(f"Document info not available for {doc_id} (attempt {i+1}), trying next...")
-                    continue
-                
-                # Проверяем, есть ли в doc_info другой идентификатор для экспорта
-                export_id = doc_info.get("id") or doc_info.get("docId") or doc_info.get("topic") or doc_id
-                
-                # Получаем полный текст документа
-                html_content = await garant_source.get_document_full_text(export_id, format="html")
-                
-                if html_content:
-                    # Успешно получили контент, используем этот результат
-                    logger.info(f"Successfully retrieved document {doc_id} (attempt {i+1})")
+                if html_content and len(html_content) > 100:
+                    # Успешно получили контент
+                    logger.info(f"[Garant] Successfully exported document topic={doc_id}, content length={len(html_content)}")
                     result_to_use = result
                     doc_id_to_use = doc_id
                     break
                 else:
-                    logger.warning(f"Failed to get full text for document {doc_id} (attempt {i+1}), trying next...")
+                    logger.debug(f"[Garant] Failed to export document topic={doc_id}")
             
             if not html_content or not result_to_use:
-                # Если все попытки не удались
-                logger.error(f"Failed to get full text for any of {max_attempts} results from Garant (total results available: {len(results)})")
-                # #region agent log
-                import time
-                _safe_debug_log({"sessionId":"debug-session","runId":"run1","hypothesisId":"G","location":"document_template_service.py:256","message":"All attempts failed","data":{"max_attempts":max_attempts,"total_results":len(results),"attempted_doc_ids":[r.metadata.get("doc_id") or r.metadata.get("topic") for r in results[:max_attempts]]},"timestamp":int(time.time()*1000)})
-                # #endregion
+                logger.warning(f"[Garant] Failed to export any of {max_attempts} documents")
                 return None
             
             return {
@@ -269,12 +241,9 @@ class DocumentTemplateService:
                 "metadata": result_to_use.metadata if hasattr(result_to_use, 'metadata') else {},
                 "url": result_to_use.url if hasattr(result_to_use, 'url') else None
             }
+            
         except Exception as e:
-            # #region agent log
-            import time
-            _safe_debug_log({"sessionId":"debug-session","runId":"run1","hypothesisId":"F","location":"document_template_service.py:266","message":"Exception in search_in_garant","data":{"error":str(e),"error_type":type(e).__name__},"timestamp":int(time.time()*1000)})
-            # #endregion
-            logger.error(f"Error searching in Garant: {e}", exc_info=True)
+            logger.error(f"[Garant] Error searching: {e}", exc_info=True)
             return None
     
     async def save_template(
@@ -306,6 +275,9 @@ class DocumentTemplateService:
         keywords = self._extract_keywords(query or title, title)
         
         # Создаем шаблон
+        # Шаблоны из Гаранта делаем публичными, чтобы другие пользователи тоже могли их использовать
+        is_public = (source == "garant")
+        
         template = DocumentTemplate(
             title=title,
             content=content,
@@ -313,13 +285,14 @@ class DocumentTemplateService:
             source_doc_id=source_doc_id,
             keywords=keywords,
             user_id=user_id,
-            garant_metadata=garant_metadata or {}
+            garant_metadata=garant_metadata or {},
+            is_public=is_public
         )
         
         self.db.add(template)
         self.db.commit()
         self.db.refresh(template)
         
-        logger.info(f"Saved template: {title} with {len(keywords)} keywords")
+        logger.info(f"Saved template: {title} with {len(keywords)} keywords, is_public={is_public}")
         return template
 
