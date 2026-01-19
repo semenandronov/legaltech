@@ -61,7 +61,8 @@ class RAGTool(BaseTool):
                 case_id=case_id,
                 query=query,
                 k=top_k,
-                db=self.db
+                db=self.db,
+                file_ids=file_ids if file_ids else None  # Filter by selected files
             )
             
             # Convert documents to serializable format

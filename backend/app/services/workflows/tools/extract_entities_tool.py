@@ -67,8 +67,8 @@ class ExtractEntitiesTool(BaseTool):
         """Validate parameters"""
         errors = []
         
-        if not params.get("text") and not params.get("file_id"):
-            errors.append("Требуется text или file_id")
+        if not params.get("text") and not params.get("file_id") and not params.get("file_ids"):
+            errors.append("Требуется text, file_id или file_ids")
         
         return errors
     
@@ -78,7 +78,8 @@ class ExtractEntitiesTool(BaseTool):
         
         Params:
             text: Text to extract entities from
-            file_id: File ID to extract from
+            file_id: Single file ID to extract from
+            file_ids: List of file IDs to extract from (from workflow)
             entity_types: List of entity types to extract (optional)
             
         Context:
@@ -94,8 +95,21 @@ class ExtractEntitiesTool(BaseTool):
             # Get text
             text = params.get("text", "")
             
+            # Load from multiple files if file_ids provided (workflow mode)
+            if not text and params.get("file_ids"):
+                from app.models.case import File
+                file_ids = params.get("file_ids", [])
+                files = self.db.query(File).filter(File.id.in_(file_ids)).all()
+                if files:
+                    text_parts = []
+                    for file in files:
+                        if file.original_text:
+                            text_parts.append(f"[{file.filename}]\n{file.original_text}")
+                    text = "\n\n---\n\n".join(text_parts)
+                    logger.info(f"ExtractEntitiesTool: Loaded text from {len(files)} files")
+            
+            # Load from single file if file_id provided
             if not text and params.get("file_id"):
-                # Load file text
                 from app.models.case import File
                 file = self.db.query(File).filter(File.id == params.get("file_id")).first()
                 if file:

@@ -16,7 +16,7 @@ from app.services.document_processor import DocumentProcessor
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(tags=["workflow-execution"])
+router = APIRouter(prefix="/workflow-execution", tags=["workflow-execution"])
 
 
 class CreateWorkflowFromNLRequest(BaseModel):

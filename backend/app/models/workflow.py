@@ -74,6 +74,31 @@ class WorkflowDefinition(Base):
     
     def to_dict(self, include_details: bool = False):
         """Convert to dictionary for API responses"""
+        # Формируем config для совместимости с фронтендом
+        # Фронтенд ожидает config.steps для отображения шагов workflow
+        steps = []
+        if self.default_plan and isinstance(self.default_plan, dict):
+            plan_steps = self.default_plan.get("steps", [])
+            for step in plan_steps:
+                steps.append({
+                    "id": step.get("id"),
+                    "name": step.get("name"),
+                    "tool": step.get("tool"),
+                    "description": step.get("description", ""),
+                    "depends_on": step.get("depends_on", [])
+                })
+        
+        # Если нет default_plan, создаём steps из available_tools
+        if not steps and self.available_tools:
+            for i, tool in enumerate(self.available_tools):
+                steps.append({
+                    "id": f"step_{i+1}",
+                    "name": tool,
+                    "tool": tool,
+                    "description": "",
+                    "depends_on": []
+                })
+        
         result = {
             "id": self.id,
             "name": self.name,
@@ -88,6 +113,14 @@ class WorkflowDefinition(Base):
             "avg_execution_time": self.avg_execution_time,
             "success_rate": float(self.success_rate) if self.success_rate else None,
             "created_at": self.created_at.isoformat() if self.created_at else None,
+            # Добавляем config для совместимости с фронтендом
+            "config": {
+                "steps": steps,
+                "output_format": None,
+                "require_approval": self.requires_approval
+            },
+            # Оценка времени выполнения
+            "estimated_time": f"~{len(steps) * 2} мин" if steps else "~5 мин"
         }
         
         if include_details:

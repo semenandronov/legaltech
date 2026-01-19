@@ -169,3 +169,53 @@ async def get_current_user_optional(
         return await get_current_user(credentials, db)
     except HTTPException:
         return None
+
+
+async def get_user_from_token(token: str, db: Session) -> Optional[User]:
+    """
+    Get user from JWT token string.
+    
+    Используется для SSE endpoints, где EventSource API не поддерживает
+    кастомные headers и токен передаётся через query параметр.
+    
+    Args:
+        token: JWT token string
+        db: Database session
+        
+    Returns:
+        User object or None if token is invalid
+    """
+    if not token:
+        return None
+    
+    payload = decode_token(token)
+    if payload is None:
+        return None
+    
+    user_id: str = payload.get("sub")
+    if user_id is None:
+        return None
+    
+    # Check if token is in active sessions
+    session = db.query(UserSession).filter(
+        UserSession.token == token,
+        UserSession.is_active == True,
+        UserSession.expires_at > datetime.utcnow()
+    ).first()
+    
+    if not session:
+        return None
+    
+    # Get user
+    user = db.query(User).filter(User.id == user_id).first()
+    if user is None:
+        return None
+    
+    # Check is_active if field exists
+    try:
+        if hasattr(user, 'is_active') and not user.is_active:
+            return None
+    except AttributeError:
+        pass
+    
+    return user

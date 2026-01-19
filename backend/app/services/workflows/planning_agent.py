@@ -202,7 +202,8 @@ class PlanningAgent:
             tool_params = step_data.get("tool_params", {})
             
             # Auto-inject file_ids for document-related tools
-            if tool_name in ["tabular_review", "rag"] and file_ids:
+            document_tools = ["tabular_review", "rag", "summarize", "extract_entities", "playbook_check"]
+            if tool_name in document_tools and file_ids:
                 if "file_ids" not in tool_params:
                     tool_params["file_ids"] = file_ids
             
@@ -321,8 +322,9 @@ class PlanningAgent:
                 tool_params = step_data.get("tool_params", {})
                 tool_name = step_data.get("tool_name")
                 
-                # Auto-inject file_ids
-                if tool_name in ["tabular_review", "rag"] and file_ids:
+                # Auto-inject file_ids for document-related tools
+                document_tools = ["tabular_review", "rag", "summarize", "extract_entities", "playbook_check"]
+                if tool_name in document_tools and file_ids:
                     if "file_ids" not in tool_params:
                         tool_params["file_ids"] = file_ids
                 

@@ -201,7 +201,7 @@ export const getDefinitions = async (params?: {
 }
 
 export const getDefinition = async (definitionId: string): Promise<WorkflowDefinition> => {
-  const response = await api.get(`/workflow-agentic/definitions/${definitionId}`)
+  const response = await api.get(`/api/workflow-agentic/definitions/${definitionId}`)
   return response.data
 }
 
@@ -223,12 +223,12 @@ export const updateDefinition = async (
   definitionId: string,
   data: Partial<WorkflowDefinition>
 ): Promise<WorkflowDefinition> => {
-  const response = await api.put(`/workflow-agentic/definitions/${definitionId}`, data)
+  const response = await api.put(`/api/workflow-agentic/definitions/${definitionId}`, data)
   return response.data
 }
 
 export const deleteDefinition = async (definitionId: string): Promise<void> => {
-  await api.delete(`/workflow-agentic/definitions/${definitionId}`)
+  await api.delete(`/api/workflow-agentic/definitions/${definitionId}`)
 }
 
 // Planning
@@ -275,12 +275,12 @@ export const getExecutions = async (params?: {
 }
 
 export const getExecution = async (executionId: string): Promise<WorkflowExecution> => {
-  const response = await api.get(`/workflow-agentic/executions/${executionId}`)
+  const response = await api.get(`/api/workflow-agentic/executions/${executionId}`)
   return response.data
 }
 
 export const cancelExecution = async (executionId: string): Promise<void> => {
-  await api.post(`/workflow-agentic/executions/${executionId}/cancel`)
+  await api.post(`/api/workflow-agentic/executions/${executionId}/cancel`)
 }
 
 export const getExecutionResults = async (executionId: string): Promise<{
@@ -290,12 +290,12 @@ export const getExecutionResults = async (executionId: string): Promise<{
   summary: string
   completed_at: string
 }> => {
-  const response = await api.get(`/workflow-agentic/executions/${executionId}/results`)
+  const response = await api.get(`/api/workflow-agentic/executions/${executionId}/results`)
   return response.data
 }
 
 export const getExecutionSteps = async (executionId: string): Promise<WorkflowExecutionStep[]> => {
-  const response = await api.get(`/workflow-agentic/executions/${executionId}/steps`)
+  const response = await api.get(`/api/workflow-agentic/executions/${executionId}/steps`)
   return Array.isArray(response.data) ? response.data : []
 }
 
@@ -310,11 +310,13 @@ export const validateExecution = async (executionId: string): Promise<{
   }>
   summary: string
 }> => {
-  const response = await api.post(`/workflow-agentic/executions/${executionId}/validate`)
+  const response = await api.post(`/api/workflow-agentic/executions/${executionId}/validate`)
   return response.data
 }
 
 // SSE Stream for real-time updates
+// ВАЖНО: EventSource API не поддерживает кастомные headers,
+// поэтому токен передаётся через query параметр
 export const streamExecution = (
   executionId: string,
   onEvent: (event: WorkflowEvent) => void,
@@ -322,12 +324,10 @@ export const streamExecution = (
 ): (() => void) => {
   const baseUrl = import.meta.env.VITE_API_URL || ''
   const token = localStorage.getItem('access_token')
-  const url = `${baseUrl}/api/workflow-agentic/executions/${executionId}/stream`
+  // Передаём токен через query параметр, так как EventSource не поддерживает headers
+  const url = `${baseUrl}/api/workflow-agentic/executions/${executionId}/stream${token ? `?token=${encodeURIComponent(token)}` : ''}`
 
-  const eventSource = new EventSource(url, {
-    // @ts-ignore - некоторые браузеры поддерживают headers
-    headers: token ? { Authorization: `Bearer ${token}` } : undefined
-  })
+  const eventSource = new EventSource(url)
 
   eventSource.onmessage = (event) => {
     try {
@@ -390,7 +390,8 @@ export const executeWorkflowWithDocs = async (
 export async function* streamWorkflowEvents(executionId: string): AsyncGenerator<WorkflowEvent> {
   const baseUrl = import.meta.env.VITE_API_URL || ''
   const token = localStorage.getItem('access_token')
-  const url = `${baseUrl}/api/workflow-agentic/executions/${executionId}/stream`
+  // Передаём токен через query параметр для SSE совместимости
+  const url = `${baseUrl}/api/workflow-agentic/executions/${executionId}/stream${token ? `?token=${encodeURIComponent(token)}` : ''}`
   
   try {
     const response = await fetch(url, {

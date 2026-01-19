@@ -73,8 +73,8 @@ class SummarizeTool(BaseTool):
         """Validate parameters"""
         errors = []
         
-        if not params.get("text") and not params.get("file_id") and not params.get("data"):
-            errors.append("Требуется text, file_id или data")
+        if not params.get("text") and not params.get("file_id") and not params.get("file_ids") and not params.get("data"):
+            errors.append("Требуется text, file_id, file_ids или data")
         
         return errors
     
@@ -84,7 +84,8 @@ class SummarizeTool(BaseTool):
         
         Params:
             text: Text to summarize
-            file_id: File ID to load text from
+            file_id: Single file ID to load text from
+            file_ids: List of file IDs to load and summarize (from workflow)
             data: Data object to summarize (will be converted to string)
             max_length: Maximum summary length in words (optional)
             style: Summary style - "brief", "detailed", "bullet_points" (default: "brief")
@@ -104,7 +105,26 @@ class SummarizeTool(BaseTool):
             text = params.get("text", "")
             source = "text"
             
-            # Load from file if file_id provided
+            # Load from multiple files if file_ids provided (workflow mode)
+            if not text and params.get("file_ids"):
+                from app.models.case import File
+                file_ids = params.get("file_ids", [])
+                files = self.db.query(File).filter(File.id.in_(file_ids)).all()
+                if files:
+                    text_parts = []
+                    for file in files:
+                        if file.original_text:
+                            text_parts.append(f"[{file.filename}]\n{file.original_text}")
+                    text = "\n\n---\n\n".join(text_parts)
+                    source = f"files:{len(files)}"
+                    logger.info(f"SummarizeTool: Loaded text from {len(files)} files, total length: {len(text)}")
+                else:
+                    return ToolResult(
+                        success=False,
+                        error=f"Files not found: {file_ids}"
+                    )
+            
+            # Load from single file if file_id provided
             if not text and params.get("file_id"):
                 from app.models.case import File
                 file = self.db.query(File).filter(File.id == params.get("file_id")).first()

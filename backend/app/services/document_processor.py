@@ -87,6 +87,10 @@ class DocumentProcessor:
         doc_id = file_id if file_id else str(uuid.uuid4())
         doc_metadata["doc_id"] = doc_id
         
+        # Store file_id separately for filtering in workflows
+        if file_id:
+            doc_metadata["file_id"] = file_id
+        
         # Use split_documents_with_metadata to get char_start and char_end
         documents = self.text_splitter.split_documents_with_metadata(
             text=text,
@@ -94,9 +98,11 @@ class DocumentProcessor:
             metadata=doc_metadata
         )
         
-        # Ensure all documents have doc_id in metadata
+        # Ensure all documents have doc_id and file_id in metadata
         for doc in documents:
             doc.metadata["doc_id"] = doc_id
+            if file_id:
+                doc.metadata["file_id"] = file_id
             # char_start and char_end are already added by split_documents_with_metadata
         
         return documents

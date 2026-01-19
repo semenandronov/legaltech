@@ -749,6 +749,8 @@ async def add_files_to_case(
         # Get updated file list
         updated_files = db.query(FileModel).filter(FileModel.case_id == case_id).all()
         
+        # Возвращаем только новые файлы для удобства фронтенда
+        new_files = [f for f in updated_files if f.id in new_file_ids]
         return {
             "files": [
                 {
@@ -757,10 +759,11 @@ async def add_files_to_case(
                     "file_type": f.file_type,
                     "created_at": f.created_at.isoformat() if f.created_at else None,
                 }
-                for f in updated_files
+                for f in new_files
             ],
             "total": len(updated_files),
-            "added": len(new_file_ids)
+            "added": len(new_file_ids),
+            "new_file_ids": new_file_ids  # Явно возвращаем ID новых файлов
         }
         
     except HTTPException:

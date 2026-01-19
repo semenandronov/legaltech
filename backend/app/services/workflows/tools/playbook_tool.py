@@ -22,8 +22,8 @@ class PlaybookCheckTool(BaseTool):
         """Validate parameters"""
         errors = []
         
-        if not params.get("document_id") and not params.get("document_ids"):
-            errors.append("Требуется document_id или document_ids")
+        if not params.get("document_id") and not params.get("document_ids") and not params.get("file_ids"):
+            errors.append("Требуется document_id, document_ids или file_ids")
         
         if not params.get("playbook_id"):
             errors.append("Требуется playbook_id")
@@ -37,6 +37,7 @@ class PlaybookCheckTool(BaseTool):
         Params:
             document_id: Single document ID
             document_ids: List of document IDs (for batch)
+            file_ids: List of file IDs (from workflow, alias for document_ids)
             playbook_id: Playbook ID to check against
             
         Context:
@@ -50,8 +51,8 @@ class PlaybookCheckTool(BaseTool):
             case_id = context.get("case_id")
             playbook_id = params.get("playbook_id")
             
-            # Single document or batch
-            document_ids = params.get("document_ids", [])
+            # Single document or batch - support both document_ids and file_ids
+            document_ids = params.get("document_ids", []) or params.get("file_ids", [])
             if params.get("document_id"):
                 document_ids = [params.get("document_id")]
             

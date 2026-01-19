@@ -145,7 +145,8 @@ class RAGService:
         db: Optional[Session] = None,
         use_iterative: bool = False,
         use_hybrid: bool = False,
-        doc_types: Optional[List[str]] = None
+        doc_types: Optional[List[str]] = None,
+        file_ids: Optional[List[str]] = None
     ) -> List[Document]:
         """
         Retrieve relevant context for a query using Yandex Index
@@ -159,6 +160,7 @@ class RAGService:
             use_iterative: Use iterative search (overrides retrieval_strategy if True)
             use_hybrid: Use hybrid search
             doc_types: Optional list of document types to filter by (e.g., ['statement_of_claim', 'contract'])
+            file_ids: Optional list of file IDs to filter by (only search in these specific files)
             
         Returns:
             List of relevant Document objects
@@ -270,6 +272,15 @@ class RAGService:
                 ]
                 valid_docs = filtered[:k] if filtered else valid_docs[:k]
                 logger.info(f"Filtered to {len(valid_docs)} documents of types {doc_types} for case {case_id}")
+            
+            # Filter by file_ids if specified (for workflow file selection)
+            if file_ids:
+                filtered = [
+                    doc for doc in valid_docs
+                    if doc.metadata.get("file_id") in file_ids
+                ]
+                valid_docs = filtered[:k] if filtered else valid_docs[:k]
+                logger.info(f"Filtered to {len(valid_docs)} documents from {len(file_ids)} selected files for case {case_id}")
             
             if not valid_docs:
                 logger.warning(f"No valid documents retrieved for case {case_id} with query: {query[:100]}")

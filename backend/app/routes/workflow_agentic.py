@@ -360,13 +360,34 @@ async def execute_workflow(
 @router.get("/executions/{execution_id}/stream")
 async def stream_execution(
     execution_id: str,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)
+    token: Optional[str] = Query(None, description="JWT token for SSE authentication (EventSource doesn't support headers)"),
+    db: Session = Depends(get_db)
 ):
-    """Stream execution events via SSE"""
-    # Use joinedload to eagerly load the definition relationship
-    from sqlalchemy.orm import joinedload
+    """Stream execution events via SSE
     
+    ВАЖНО: EventSource API не поддерживает кастомные headers,
+    поэтому токен передаётся через query параметр ?token=...
+    
+    Args:
+        execution_id: ID выполнения workflow
+        token: JWT токен для аутентификации (обязателен для SSE)
+        db: Database session
+    """
+    from sqlalchemy.orm import joinedload
+    from app.utils.auth import get_user_from_token
+    
+    # Аутентификация через query параметр (для SSE)
+    if not token:
+        raise HTTPException(
+            status_code=401, 
+            detail="Token required. Pass it via ?token= query parameter for SSE"
+        )
+    
+    current_user = await get_user_from_token(token, db)
+    if not current_user:
+        raise HTTPException(status_code=401, detail="Invalid or expired token")
+    
+    # Use joinedload to eagerly load the definition relationship
     execution = db.query(WorkflowExecution).options(
         joinedload(WorkflowExecution.definition)
     ).filter(

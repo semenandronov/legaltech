@@ -38,6 +38,7 @@ import {
 import { toast } from 'sonner'
 import UnifiedSidebar from '../components/Layout/UnifiedSidebar'
 import * as workflowsApi from '../services/workflowsApi'
+import { getCaseFiles, addFilesToCase } from '../services/api'
 import type { WorkflowDefinition, WorkflowExecution, WorkflowEvent } from '../services/workflowsApi'
 import { WorkflowPlanningPhase } from '../components/Workflows/WorkflowPlanningPhase'
 import { WorkflowExecutionPanel } from '../components/Workflows/WorkflowExecutionPanel'
@@ -162,14 +163,20 @@ const WorkflowCard = ({
 // Диалог запуска workflow
 const RunWorkflowDialog = ({
   workflow,
+  caseId,
   onClose,
   onRun
 }: {
   workflow: WorkflowDefinition
+  caseId: string
   onClose: () => void
   onRun: (documents: string[], options: Record<string, any>) => void
 }) => {
   const [uploadedFiles, setUploadedFiles] = useState<File[]>([])
+  const [existingFiles, setExistingFiles] = useState<Array<{ id: string; filename: string; file_type: string; selected: boolean }>>([])
+  const [loadingFiles, setLoadingFiles] = useState(true)
+  const [uploading, setUploading] = useState(false)
+  const [uploadProgress, setUploadProgress] = useState(0)
   const [options, setOptions] = useState({
     detailLevel: 'comprehensive',
     includeWebSearch: true,
@@ -177,6 +184,22 @@ const RunWorkflowDialog = ({
     notifyOnComplete: true
   })
   const fileInputRef = useRef<HTMLInputElement>(null)
+
+  // Загружаем существующие файлы из Case
+  useEffect(() => {
+    const loadExistingFiles = async () => {
+      try {
+        setLoadingFiles(true)
+        const response = await getCaseFiles(caseId)
+        setExistingFiles(response.files.map(f => ({ ...f, selected: true }))) // По умолчанию все выбраны
+      } catch (error) {
+        console.error('Failed to load case files:', error)
+      } finally {
+        setLoadingFiles(false)
+      }
+    }
+    loadExistingFiles()
+  }, [caseId])
 
   const handleDrop = (e: React.DragEvent) => {
     e.preventDefault()
@@ -193,11 +216,44 @@ const RunWorkflowDialog = ({
     setUploadedFiles(prev => prev.filter((_, i) => i !== index))
   }
 
+  const toggleExistingFile = (fileId: string) => {
+    setExistingFiles(prev => prev.map(f => 
+      f.id === fileId ? { ...f, selected: !f.selected } : f
+    ))
+  }
+
   const handleRun = async () => {
-    // Здесь можно добавить загрузку файлов
-    // Для простоты передаём названия файлов
-    const docIds = uploadedFiles.map(f => f.name)
-    onRun(docIds, options)
+    try {
+      setUploading(true)
+      let newFileIds: string[] = []
+
+      // Загружаем новые файлы на сервер если есть
+      if (uploadedFiles.length > 0) {
+        const response = await addFilesToCase(caseId, uploadedFiles, setUploadProgress)
+        newFileIds = response.files.map(f => f.id)
+      }
+
+      // Собираем ID выбранных существующих файлов
+      const selectedExistingIds = existingFiles
+        .filter(f => f.selected)
+        .map(f => f.id)
+
+      // Объединяем все ID файлов
+      const allFileIds = [...selectedExistingIds, ...newFileIds]
+
+      if (allFileIds.length === 0) {
+        toast.error('Выберите хотя бы один документ')
+        return
+      }
+
+      onRun(allFileIds, options)
+    } catch (error) {
+      console.error('Failed to upload files:', error)
+      toast.error('Ошибка загрузки файлов')
+    } finally {
+      setUploading(false)
+      setUploadProgress(0)
+    }
   }
 
   return (
@@ -238,14 +294,73 @@ const RunWorkflowDialog = ({
 
         {/* Content */}
         <div className="flex-1 overflow-y-auto p-5 space-y-6">
-          {/* Upload Area */}
+          {/* Existing Files from Case */}
           <div>
             <h3 className="text-sm font-medium mb-3" style={{ color: 'var(--color-text-primary)' }}>
-              Документы для обработки
+              Документы из дела
+            </h3>
+            
+            {loadingFiles ? (
+              <div className="flex items-center justify-center py-8">
+                <Loader2 className="w-6 h-6 animate-spin" style={{ color: 'var(--color-accent)' }} />
+                <span className="ml-2 text-sm" style={{ color: 'var(--color-text-secondary)' }}>
+                  Загрузка файлов…
+                </span>
+              </div>
+            ) : existingFiles.length > 0 ? (
+              <div className="space-y-2 max-h-48 overflow-y-auto">
+                {existingFiles.map((file) => (
+                  <label 
+                    key={file.id}
+                    className="flex items-center gap-3 px-3 py-2 rounded-lg cursor-pointer transition-colors hover:bg-bg-hover"
+                    style={{ backgroundColor: file.selected ? 'rgba(99, 102, 241, 0.1)' : 'var(--color-bg-secondary)' }}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={file.selected}
+                      onChange={() => toggleExistingFile(file.id)}
+                      className="w-4 h-4 rounded border-gray-300 text-accent focus:ring-accent"
+                    />
+                    <File className="w-4 h-4" style={{ color: file.selected ? 'var(--color-accent)' : 'var(--color-text-tertiary)' }} />
+                    <span className="text-sm flex-1 truncate" style={{ color: 'var(--color-text-primary)' }}>
+                      {file.filename}
+                    </span>
+                    <span className="text-xs px-2 py-0.5 rounded" style={{ backgroundColor: 'var(--color-bg-tertiary)', color: 'var(--color-text-tertiary)' }}>
+                      {file.file_type.toUpperCase()}
+                    </span>
+                  </label>
+                ))}
+              </div>
+            ) : (
+              <div className="text-center py-4" style={{ color: 'var(--color-text-tertiary)' }}>
+                <p className="text-sm">В деле нет загруженных документов</p>
+              </div>
+            )}
+            
+            {existingFiles.length > 0 && (
+              <div className="flex items-center justify-between mt-2 pt-2 border-t" style={{ borderColor: 'var(--color-border)' }}>
+                <span className="text-xs" style={{ color: 'var(--color-text-tertiary)' }}>
+                  Выбрано: {existingFiles.filter(f => f.selected).length} из {existingFiles.length}
+                </span>
+                <button
+                  onClick={() => setExistingFiles(prev => prev.map(f => ({ ...f, selected: !prev.every(p => p.selected) })))}
+                  className="text-xs hover:underline"
+                  style={{ color: 'var(--color-accent)' }}
+                >
+                  {existingFiles.every(f => f.selected) ? 'Снять все' : 'Выбрать все'}
+                </button>
+              </div>
+            )}
+          </div>
+
+          {/* Upload New Files */}
+          <div>
+            <h3 className="text-sm font-medium mb-3" style={{ color: 'var(--color-text-primary)' }}>
+              Добавить новые документы
             </h3>
             
             <div
-              className="border-2 border-dashed rounded-xl p-8 text-center cursor-pointer transition-colors hover:border-accent/50"
+              className="border-2 border-dashed rounded-xl p-6 text-center cursor-pointer transition-colors hover:border-accent/50"
               style={{ borderColor: 'var(--color-border)' }}
               onDrop={handleDrop}
               onDragOver={(e) => e.preventDefault()}
@@ -257,28 +372,31 @@ const RunWorkflowDialog = ({
                 multiple
                 className="hidden"
                 onChange={handleFileSelect}
-                accept=".pdf,.doc,.docx,.txt,.rtf"
+                accept=".pdf,.doc,.docx,.txt,.rtf,.xlsx"
               />
-              <FolderUp className="w-12 h-12 mx-auto mb-3" style={{ color: 'var(--color-text-tertiary)' }} />
-              <p className="font-medium" style={{ color: 'var(--color-text-primary)' }}>
+              <FolderUp className="w-10 h-10 mx-auto mb-2" style={{ color: 'var(--color-text-tertiary)' }} />
+              <p className="text-sm font-medium" style={{ color: 'var(--color-text-primary)' }}>
                 Перетащите файлы или нажмите для выбора
               </p>
-              <p className="text-sm mt-1" style={{ color: 'var(--color-text-tertiary)' }}>
-                PDF, DOC, DOCX, TXT • до 100 файлов
+              <p className="text-xs mt-1" style={{ color: 'var(--color-text-tertiary)' }}>
+                PDF, DOC, DOCX, TXT, XLSX
               </p>
             </div>
 
-            {/* Uploaded files list */}
+            {/* New files to upload */}
             {uploadedFiles.length > 0 && (
-              <div className="mt-4 space-y-2">
+              <div className="mt-3 space-y-2">
+                <p className="text-xs font-medium" style={{ color: 'var(--color-text-secondary)' }}>
+                  Новые файлы ({uploadedFiles.length}):
+                </p>
                 {uploadedFiles.map((file, idx) => (
                   <div 
                     key={idx}
                     className="flex items-center justify-between px-3 py-2 rounded-lg"
-                    style={{ backgroundColor: 'var(--color-bg-secondary)' }}
+                    style={{ backgroundColor: 'rgba(34, 197, 94, 0.1)' }}
                   >
                     <div className="flex items-center gap-2">
-                      <File className="w-4 h-4" style={{ color: 'var(--color-text-tertiary)' }} />
+                      <Plus className="w-4 h-4" style={{ color: '#22c55e' }} />
                       <span className="text-sm" style={{ color: 'var(--color-text-primary)' }}>
                         {file.name}
                       </span>
@@ -295,6 +413,22 @@ const RunWorkflowDialog = ({
                     </button>
                   </div>
                 ))}
+              </div>
+            )}
+
+            {/* Upload progress */}
+            {uploading && uploadProgress > 0 && (
+              <div className="mt-3">
+                <div className="flex items-center justify-between text-xs mb-1">
+                  <span style={{ color: 'var(--color-text-secondary)' }}>Загрузка файлов…</span>
+                  <span style={{ color: 'var(--color-accent)' }}>{uploadProgress}%</span>
+                </div>
+                <div className="h-1.5 rounded-full overflow-hidden" style={{ backgroundColor: 'var(--color-bg-tertiary)' }}>
+                  <div 
+                    className="h-full rounded-full transition-all duration-300"
+                    style={{ width: `${uploadProgress}%`, backgroundColor: 'var(--color-accent)' }}
+                  />
+                </div>
               </div>
             )}
           </div>
@@ -407,12 +541,16 @@ const RunWorkflowDialog = ({
           style={{ borderColor: 'var(--color-border)' }}
         >
           <div className="text-sm" style={{ color: 'var(--color-text-secondary)' }}>
-            {uploadedFiles.length} файлов выбрано
+            {existingFiles.filter(f => f.selected).length + uploadedFiles.length} документов выбрано
+            {uploadedFiles.length > 0 && (
+              <span style={{ color: '#22c55e' }}> (+{uploadedFiles.length} новых)</span>
+            )}
           </div>
           <div className="flex items-center gap-3">
             <button
               onClick={onClose}
-              className="px-4 py-2 rounded-lg text-sm font-medium"
+              disabled={uploading}
+              className="px-4 py-2 rounded-lg text-sm font-medium disabled:opacity-50"
               style={{ 
                 backgroundColor: 'var(--color-bg-secondary)',
                 color: 'var(--color-text-primary)' 
@@ -422,12 +560,21 @@ const RunWorkflowDialog = ({
             </button>
             <button
               onClick={handleRun}
-              disabled={uploadedFiles.length === 0}
+              disabled={uploading || (existingFiles.filter(f => f.selected).length === 0 && uploadedFiles.length === 0)}
               className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium disabled:opacity-50"
               style={{ backgroundColor: 'var(--color-accent)', color: 'white' }}
             >
-              <Play className="w-4 h-4" />
-              Запустить Workflow
+              {uploading ? (
+                <>
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                  Загрузка…
+                </>
+              ) : (
+                <>
+                  <Play className="w-4 h-4" />
+                  Запустить Workflow
+                </>
+              )}
             </button>
           </div>
         </div>
@@ -1762,9 +1909,10 @@ export default function WorkflowsPage() {
       </div>
 
       {/* Run Workflow Dialog */}
-      {selectedWorkflow && (
+      {selectedWorkflow && caseId && (
         <RunWorkflowDialog
           workflow={selectedWorkflow}
+          caseId={caseId}
           onClose={() => setSelectedWorkflow(null)}
           onRun={handleRunWorkflow}
         />
