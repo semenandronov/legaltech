@@ -404,8 +404,8 @@ class GarantSource(BaseSource):
         Получить полный текст документа из ГАРАНТ
         
         Согласно документации API v2.1.0:
-        - URL: POST /v2/export/{format}
-        - Параметры: topic (ID документа), env ("internet")
+        - URL: GET /v2/export/{format}?topic={topic}&env=internet
+        - Параметры передаются в query string
         
         Args:
             doc_id: ID документа (topic из результатов поиска)
@@ -424,12 +424,11 @@ class GarantSource(BaseSource):
         
         headers = {
             "Authorization": f"Bearer {self.api_key}",
-            "Content-Type": "application/json",
-            "Accept": "application/json",
+            "Accept": "application/json" if format == "html" else "application/octet-stream",
         }
         
         # Согласно документации API v2.1.0
-        # URL для экспорта: /v2/export/{format}
+        # URL для экспорта: GET /v2/export/{format}?topic={topic}&env=internet
         endpoint_map = {
             "html": "/export/html",
             "rtf": "/export/rtf",
@@ -460,18 +459,19 @@ class GarantSource(BaseSource):
         try:
             async with aiohttp.ClientSession() as session:
                 
-                request_body = {
+                # Параметры передаются в query string для GET запроса
+                params = {
                     "topic": doc_id_for_export,
                     "env": "internet"
                 }
                 
-                logger.debug(f"[Garant API] Export request: endpoint={full_url}, body={request_body}")
+                logger.debug(f"[Garant API] Export request: endpoint={full_url}, params={params}")
                 
                 start_time = __import__('time').time()
                 
-                async with session.post(
+                async with session.get(
                     full_url,
-                    json=request_body,
+                    params=params,
                     headers=headers,
                     timeout=aiohttp.ClientTimeout(total=timeout_seconds)
                 ) as response:
