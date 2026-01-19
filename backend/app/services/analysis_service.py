@@ -130,7 +130,8 @@ class AnalysisService:
         from app.services.llm_factory import create_llm
         from langchain_core.prompts import ChatPromptTemplate
         
-        llm = create_llm(temperature=0.7)
+        # Use use_rate_limiting=False for LangChain | operator compatibility
+        llm = create_llm(temperature=0.7, use_rate_limiting=False)
         
         system_prompt = """Ты эксперт по анализу юридических дел.
 Создай краткое резюме дела на основе предоставленной информации."""
@@ -199,7 +200,8 @@ class AnalysisService:
         from app.services.llm_factory import create_llm
         from langchain_core.prompts import ChatPromptTemplate
         
-        llm = create_llm(temperature=0.7)
+        # Use use_rate_limiting=False for LangChain | operator compatibility
+        llm = create_llm(temperature=0.7, use_rate_limiting=False)
         
         system_prompt = """Ты эксперт по анализу юридических рисков.
 Оцени риски дела на основе предоставленной информации.

@@ -21,7 +21,8 @@ class TimelineExtractor:
         """Initialize timeline extractor"""
         self.db = db
         self.rag_service = RAGService()
-        self.llm = create_llm(temperature=0.1)
+        # Use use_rate_limiting=False for LangChain | operator compatibility
+        self.llm = create_llm(temperature=0.1, use_rate_limiting=False)
     
     def extract(self, case_id: str) -> Dict[str, Any]:
         """

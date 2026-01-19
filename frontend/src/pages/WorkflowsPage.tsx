@@ -571,8 +571,8 @@ const RunWorkflowDialog = ({
                 </>
               ) : (
                 <>
-                  <Play className="w-4 h-4" />
-                  Запустить Workflow
+              <Play className="w-4 h-4" />
+              Запустить Workflow
                 </>
               )}
             </button>

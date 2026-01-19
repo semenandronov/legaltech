@@ -29,7 +29,8 @@ class TabularReviewService:
         self.db = db
         # Initialize LLM for extraction
         try:
-            self.llm = create_llm(temperature=0.1)  # Low temperature for deterministic extraction
+            # Use use_rate_limiting=False for LangChain | operator compatibility
+            self.llm = create_llm(temperature=0.1, use_rate_limiting=False)  # Low temperature for deterministic extraction
         except Exception as e:
             self.llm = None
             logger.warning(f"GigaChat not configured: {e}, extraction will not work")

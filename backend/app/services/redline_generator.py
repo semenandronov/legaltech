@@ -97,7 +97,8 @@ class RedlineGenerator:
     def _init_llm(self):
         """Initialize LLM"""
         try:
-            self.llm = create_llm(temperature=0.3)
+            # Use use_rate_limiting=False for LangChain | operator compatibility
+            self.llm = create_llm(temperature=0.3, use_rate_limiting=False)
             logger.info("RedlineGenerator: LLM initialized")
         except Exception as e:
             logger.warning(f"RedlineGenerator: Failed to initialize LLM: {e}")

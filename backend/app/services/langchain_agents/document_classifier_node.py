@@ -73,7 +73,8 @@ def document_classifier_agent_node(
         # Initialize LLM через factory (fallback если Yandex classifier недоступен)
         llm = None
         if not yandex_classifier:
-            llm = create_llm(temperature=0.1)  # Низкая температура для детерминизма
+            # Use use_rate_limiting=False for LangChain | operator compatibility
+            llm = create_llm(temperature=0.1, use_rate_limiting=False)  # Низкая температура для детерминизма
         
         # Get classifier prompt (для LLM fallback)
         from app.services.langchain_agents.prompts import get_agent_prompt

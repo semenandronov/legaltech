@@ -72,7 +72,8 @@ def relationship_agent_node(
             return new_state
         
         # Initialize LLM через factory (GigaChat)
-        llm = create_llm(temperature=0.1)
+        # Use use_rate_limiting=False for LangChain | operator compatibility
+        llm = create_llm(temperature=0.1, use_rate_limiting=False)
         
         # Get relationship extraction prompt
         system_prompt = """Ты эксперт по извлечению связей между сущностями из юридических документов.

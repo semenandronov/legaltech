@@ -33,7 +33,8 @@ class SmartColumnService:
         """Initialize smart column service"""
         self.db = db
         try:
-            self.llm = create_llm(temperature=0.3)  # Slightly higher for more creative responses
+            # Use use_rate_limiting=False for LangChain | operator compatibility
+            self.llm = create_llm(temperature=0.3, use_rate_limiting=False)  # Slightly higher for more creative responses
         except Exception as e:
             self.llm = None
             logger.warning(f"GigaChat not configured: {e}, smart column creation will not work")

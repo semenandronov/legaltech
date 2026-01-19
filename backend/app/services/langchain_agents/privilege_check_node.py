@@ -58,7 +58,8 @@ def privilege_check_agent_node(
             return new_state
         
         # Initialize LLM через factory (GigaChat)
-        llm = create_llm(temperature=0.1)  # Низкая температура для детерминизма
+        # Use use_rate_limiting=False for LangChain | operator compatibility
+        llm = create_llm(temperature=0.1, use_rate_limiting=False)  # Низкая температура для детерминизма
         
         # Get privilege check prompt
         from app.services.langchain_agents.prompts import get_agent_prompt

@@ -32,7 +32,8 @@ class EntityExtractionService:
         """Initialize entity extraction service"""
         self.db = db
         try:
-            self.llm = create_llm(temperature=0.1)
+            # Use use_rate_limiting=False for LangChain | operator compatibility
+            self.llm = create_llm(temperature=0.1, use_rate_limiting=False)
         except Exception as e:
             self.llm = None
             logger.warning(f"GigaChat not configured: {e}, entity extraction will not work")

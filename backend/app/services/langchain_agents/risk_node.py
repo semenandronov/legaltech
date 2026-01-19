@@ -64,7 +64,8 @@ def risk_agent_node(
         logger.debug(f"Risk agent: got {len(tools)} tools with runtime injection")
         
         # Initialize LLM через factory (GigaChat) - temperature=0.0 для детерминизма
-        llm = create_legal_llm()
+        # Use use_rate_limiting=False for LangChain | operator compatibility
+        llm = create_legal_llm(use_rate_limiting=False)
         
         # Initialize Memory Manager for context between requests
         from app.services.langchain_agents.memory_manager import AgentMemoryManager

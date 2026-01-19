@@ -152,7 +152,8 @@ class ClauseExtractor:
     def _init_llm(self):
         """Initialize LLM"""
         try:
-            self.llm = create_llm(temperature=0.1)
+            # Use use_rate_limiting=False for LangChain | operator compatibility
+            self.llm = create_llm(temperature=0.1, use_rate_limiting=False)
             logger.info("ClauseExtractor: LLM initialized")
         except Exception as e:
             logger.warning(f"ClauseExtractor: Failed to initialize LLM: {e}")

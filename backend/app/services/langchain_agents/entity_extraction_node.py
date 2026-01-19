@@ -56,7 +56,8 @@ def entity_extraction_agent_node(
             return new_state
         
         # Initialize LLM через factory (GigaChat) - temperature=0.0 для детерминизма
-        llm = create_legal_llm()
+        # Use use_rate_limiting=False for LangChain | operator compatibility
+        llm = create_legal_llm(use_rate_limiting=False)
         
         # Get entity extraction prompt
         from app.services.langchain_agents.prompts import get_agent_prompt

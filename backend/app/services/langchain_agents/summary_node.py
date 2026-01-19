@@ -59,7 +59,8 @@ def summary_agent_node(
         logger.debug(f"Summary agent: got {len(tools)} tools with runtime injection")
         
         # Initialize LLM через factory (GigaChat)
-        llm = create_llm(temperature=0.3)  # Creative задача, но все еще контролируемая
+        # Use use_rate_limiting=False for LangChain | operator compatibility
+        llm = create_llm(temperature=0.3, use_rate_limiting=False)  # Creative задача, но все еще контролируемая
         
         # Initialize Memory Manager for context between requests
         from app.services.langchain_agents.memory_manager import AgentMemoryManager
