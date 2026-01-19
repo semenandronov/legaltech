@@ -57,7 +57,45 @@ const DocumentPreviewSheet = ({
   const hasNext = currentIndex < allSources.length - 1
   
   // Преобразуем source в highlights для DocumentHighlighter (для текстовых документов)
-  const highlights = useCitationHighlights(source && source.char_start !== undefined && source.char_end !== undefined ? [source] : [])
+  // Сначала пробуем использовать координаты, если они валидные
+  const coordinateHighlights = useCitationHighlights(
+    source && source.char_start !== undefined && source.char_end !== undefined && 
+    source.char_start > 0 && source.char_end > source.char_start ? [source] : []
+  )
+  
+  // Если координаты невалидные, но есть цитата - ищем её в тексте
+  const [quoteBasedHighlights, setQuoteBasedHighlights] = useState<Array<{char_start: number; char_end: number}>>([])
+  
+  useEffect(() => {
+    if (documentText && source?.quote && coordinateHighlights.length === 0) {
+      // Ищем цитату в тексте документа
+      const quoteToFind = source.quote.trim()
+      if (quoteToFind.length > 20) {
+        // Ищем точное совпадение
+        let startIdx = documentText.indexOf(quoteToFind)
+        if (startIdx === -1) {
+          // Пробуем найти первые 50 символов цитаты
+          const shortQuote = quoteToFind.substring(0, 50)
+          startIdx = documentText.indexOf(shortQuote)
+        }
+        if (startIdx !== -1) {
+          console.log('[DocumentPreview] Found quote in text at position:', startIdx)
+          setQuoteBasedHighlights([{
+            char_start: startIdx,
+            char_end: startIdx + Math.min(quoteToFind.length, 500) // Ограничиваем длину подсветки
+          }])
+        } else {
+          console.log('[DocumentPreview] Quote not found in document text')
+          setQuoteBasedHighlights([])
+        }
+      }
+    } else {
+      setQuoteBasedHighlights([])
+    }
+  }, [documentText, source?.quote, coordinateHighlights.length])
+  
+  // Используем координаты если есть, иначе результат поиска по цитате
+  const highlights = coordinateHighlights.length > 0 ? coordinateHighlights : quoteBasedHighlights
 
   useEffect(() => {
     if (source && isOpen) {
@@ -127,37 +165,76 @@ const DocumentPreviewSheet = ({
     fileType: string, 
     source: SourceInfo
   ) => {
-    // Проверяем, есть ли координаты для подсветки
-    const hasCoordinates = source.char_start !== undefined && source.char_end !== undefined
-    const hasQuote = !!source.quote
+    // Проверяем, есть ли координаты или цитата для подсветки
+    const hasCoordinates = source.char_start !== undefined && source.char_end !== undefined && 
+                           source.char_start > 0 && source.char_end > source.char_start
+    const hasQuote = !!source.quote && source.quote.length > 10
+    
+    console.log('[DocumentPreview] Loading highlight data:', {
+      fileType,
+      hasCoordinates,
+      hasQuote,
+      char_start: source.char_start,
+      char_end: source.char_end,
+      quote: source.quote?.substring(0, 50)
+    })
     
     if (!hasCoordinates && !hasQuote) {
-      // Нет данных для подсветки - пропускаем
+      console.log('[DocumentPreview] No highlight data available')
       return
     }
     
     try {
-      // Определяем тип файла
-      const isTextFile = ['txt', 'html', 'md', 'json', 'xml', 'csv'].includes(fileType.toLowerCase())
-      const isDocx = fileType.toLowerCase() === 'docx'
+      const fileTypeLower = fileType.toLowerCase()
+      const isTextFile = ['txt', 'html', 'md', 'json', 'xml', 'csv'].includes(fileTypeLower)
+      const isDocx = fileTypeLower === 'docx'
+      const isPdf = fileTypeLower === 'pdf'
       
-      if (isTextFile && hasCoordinates) {
-        // Текстовые документы - загружаем текст для точной подсветки по координатам
+      // Для DOCX - загружаем HTML версию
+      if (isDocx) {
         try {
-          const textBlob = await getDocumentContent(caseId, fileId)
-          const text = await textBlob.text()
-          setDocumentText(text)
-        } catch (error) {
-          console.warn('Failed to load text content for highlighting:', error)
-        }
-      } else if (isDocx && hasQuote) {
-        // DOCX - загружаем HTML версию для подсветки по тексту
-        try {
+          console.log('[DocumentPreview] Loading DOCX as HTML for highlighting')
           const htmlResponse = await getFileHtml(caseId, fileId, false)
           setDocumentHtml(htmlResponse.html)
+          console.log('[DocumentPreview] DOCX HTML loaded, length:', htmlResponse.html?.length)
         } catch (error) {
           console.warn('Failed to load HTML content for DOCX highlighting:', error)
         }
+        return
+      }
+      
+      // Для текстовых файлов - загружаем текст
+      if (isTextFile) {
+        try {
+          console.log('[DocumentPreview] Loading text file for highlighting')
+          const textBlob = await getDocumentContent(caseId, fileId)
+          const text = await textBlob.text()
+          setDocumentText(text)
+          console.log('[DocumentPreview] Text loaded, length:', text?.length)
+        } catch (error) {
+          console.warn('Failed to load text content for highlighting:', error)
+        }
+        return
+      }
+      
+      // Для PDF - пока только переход на страницу (подсветка требует PDF.js text layer)
+      if (isPdf) {
+        console.log('[DocumentPreview] PDF file - using page navigation only')
+        // PDF подсветка будет добавлена позже через PDF.js findController
+        return
+      }
+      
+      // Для остальных файлов - пробуем загрузить как текст
+      try {
+        console.log('[DocumentPreview] Trying to load unknown file type as text')
+        const textBlob = await getDocumentContent(caseId, fileId)
+        const text = await textBlob.text()
+        if (text && text.length > 0 && !text.includes('\x00')) { // Проверяем что это не бинарный файл
+          setDocumentText(text)
+          console.log('[DocumentPreview] File loaded as text, length:', text?.length)
+        }
+      } catch (error) {
+        console.warn('Failed to load file as text:', error)
       }
     } catch (error) {
       console.warn('Error loading document content for highlighting:', error)
@@ -478,13 +555,20 @@ const DocumentPreviewSheet = ({
               )}
             </Box>
           ) : fileInfo && documentText && ['txt', 'html', 'md', 'json', 'xml', 'csv'].includes(fileInfo.file_type.toLowerCase()) ? (
-            // Текстовые документы - отображаем с подсветкой по координатам
+            // Текстовые документы - отображаем с подсветкой по координатам или по найденной цитате
             <Box sx={{ flex: 1, overflow: 'auto', p: 2 }}>
-              {source.char_start !== undefined && source.char_end !== undefined && highlights.length > 0 ? (
+              {highlights.length > 0 ? (
                 <DocumentHighlighter
                   text={documentText}
                   highlights={highlights}
                   className="whitespace-pre-wrap text-sm"
+                />
+              ) : source.quote ? (
+                // Fallback: подсветка по тексту цитаты через TextHighlighter
+                <TextHighlighter
+                  text={documentText}
+                  highlightText={source.quote}
+                  className="whitespace-pre-wrap text-sm font-mono"
                 />
               ) : (
                 <Box
