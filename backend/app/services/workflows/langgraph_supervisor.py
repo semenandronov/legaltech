@@ -9,7 +9,7 @@ LangGraph-based Supervisor Agent - Качественная многоагент
 5. Human-in-the-Loop через interrupts
 6. Bounded Retries и Graceful Degradation
 """
-from typing import TypedDict, Annotated, List, Dict, Any, Optional, Literal
+from typing import TypedDict, Annotated, List, Dict, Any, Optional, Literal, AsyncIterator
 from dataclasses import dataclass, field
 from enum import Enum
 from datetime import datetime

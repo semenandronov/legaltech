@@ -92,19 +92,23 @@ TOOL_REASONING_PROMPT = """Ты - юридический AI-агент. Выбе
 {tools_description}
 
 ПРАВИЛА ВЫБОРА ИНСТРУМЕНТОВ:
-1. summarize - ВСЕГДА используй первым для понимания документа (если не знаешь содержание)
-2. extract_entities - для извлечения конкретных данных (даты, суммы, стороны)
-3. rag - для ответа на КОНКРЕТНЫЙ вопрос по документам
-4. playbook_check - для проверки на риски и соответствие правилам
-5. tabular_review - для сравнения НЕСКОЛЬКИХ документов
-6. legal_db - для поиска законов и судебной практики
-7. document_draft - для создания нового документа
+1. **ОБЯЗАТЕЛЬНО используй ВСЕ инструменты из списка ДОСТУПНЫЕ ИНСТРУМЕНТЫ** - пользователь специально их выбрал при создании workflow
+2. Если инструмент не подходит для задачи напрямую, найди способ его использовать (например, для дополнительной проверки или анализа)
+3. summarize - ВСЕГДА используй первым для понимания документа (если не знаешь содержание)
+4. extract_entities - для извлечения конкретных данных (даты, суммы, стороны)
+5. rag - для ответа на КОНКРЕТНЫЙ вопрос по документам
+6. playbook_check - для проверки на риски и соответствие правилам
+7. tabular_review - для сравнения НЕСКОЛЬКИХ документов
+8. legal_db - для поиска законов и судебной практики
+9. document_draft - для создания нового документа
 
 ТИПИЧНЫЕ КОМБИНАЦИИ:
 - Анализ документа: summarize → extract_entities
 - Проверка рисков: summarize → playbook_check
 - Ответ на вопрос: rag
 - Полный анализ: summarize → [extract_entities, playbook_check] → rag (если есть вопросы)
+
+ВАЖНО: Если в ДОСТУПНЫЕ ИНСТРУМЕНТЫ есть инструменты, которые не упомянуты в типичных комбинациях, всё равно включи их в план!
 
 Ответь в формате JSON:
 {{
@@ -358,53 +362,121 @@ class AgenticPlanner:
         documents: List[Dict[str, Any]],
         available_tools: List[str]
     ) -> Tuple[List[ToolSelection], List[List[str]], List[str]]:
-        """Выбрать инструменты с обоснованием"""
+        """
+        Выбрать инструменты с обоснованием.
+        
+        ВАЖНО: Использует ВСЕ инструменты из available_tools, которые выбрал пользователь.
+        """
         task_type = task_understanding["task_type"]
+        file_ids = [d.get("id") for d in documents if d.get("id")]
         
         # Используем предопределённые паттерны для надёжности
         patterns = self._get_tool_patterns()
         
+        tool_selections = []
+        used_tools = set()
+        
+        # Шаг 1: Добавляем инструменты из паттерна (если они в available_tools)
         if task_type in patterns:
             pattern = patterns[task_type]
-            tool_selections = []
-            file_ids = [d.get("id") for d in documents if d.get("id")]
             
             for i, tool_info in enumerate(pattern["tools"]):
                 tool_name = tool_info["name"]
-                if tool_name not in available_tools and tool_name in self.tool_descriptions:
-                    continue
+                # Используем только если инструмент в available_tools
+                if tool_name in available_tools:
+                    params = tool_info.get("params", {}).copy()
+                    # Inject file_ids for document tools
+                    if tool_name in ["summarize", "extract_entities", "rag", "playbook_check", "tabular_review"]:
+                        params["file_ids"] = file_ids
+                    
+                    tool_selections.append(ToolSelection(
+                        tool_name=tool_name,
+                        reason=tool_info.get("reason", ""),
+                        params=params,
+                        expected_output=tool_info.get("expected_output", ""),
+                        priority=i + 1
+                    ))
+                    used_tools.add(tool_name)
+        
+        # Шаг 2: Добавляем ВСЕ остальные инструменты из available_tools, которых нет в паттерне
+        priority_offset = len(tool_selections)
+        for tool_name in available_tools:
+            if tool_name not in used_tools:
+                # Создаём обоснование для инструмента
+                tool_desc = self.tool_descriptions.get(tool_name, {})
+                reason = f"Дополнительный анализ с помощью {tool_name}: {tool_desc.get('description', '')}"
                 
-                params = tool_info.get("params", {}).copy()
+                params = {}
                 # Inject file_ids for document tools
                 if tool_name in ["summarize", "extract_entities", "rag", "playbook_check", "tabular_review"]:
                     params["file_ids"] = file_ids
                 
+                # Добавляем стандартные параметры для некоторых инструментов
+                if tool_name == "summarize" and "style" not in params:
+                    params["style"] = "brief"
+                elif tool_name == "extract_entities" and "entity_types" not in params:
+                    params["entity_types"] = ["person", "organization", "date", "money", "address"]
+                elif tool_name == "rag" and "query" not in params:
+                    params["query"] = task_understanding.get("understanding", "")
+                    params["top_k"] = 5
+                
                 tool_selections.append(ToolSelection(
                     tool_name=tool_name,
-                    reason=tool_info.get("reason", ""),
+                    reason=reason,
                     params=params,
-                    expected_output=tool_info.get("expected_output", ""),
-                    priority=i + 1
+                    expected_output=tool_desc.get("output", "Результат анализа"),
+                    priority=priority_offset + 1
                 ))
-            
-            return (
-                tool_selections,
-                pattern.get("execution_order", [[t["name"] for t in pattern["tools"]]]),
-                pattern.get("success_criteria", ["Задача выполнена"])
-            )
+                priority_offset += 1
         
-        # Fallback: summarize
-        file_ids = [d.get("id") for d in documents if d.get("id")]
+        # Если нет инструментов (не должно быть, но на всякий случай)
+        if not tool_selections:
+            if "summarize" in available_tools:
+                tool_selections.append(ToolSelection(
+                    tool_name="summarize",
+                    reason="Базовый анализ документа",
+                    params={"file_ids": file_ids, "style": "brief"},
+                    expected_output="Краткое резюме",
+                    priority=1
+                ))
+            else:
+                # Fallback на первый доступный инструмент
+                if available_tools:
+                    tool_selections.append(ToolSelection(
+                        tool_name=available_tools[0],
+                        reason="Базовый анализ",
+                        params={"file_ids": file_ids} if available_tools[0] in ["summarize", "extract_entities", "rag", "playbook_check", "tabular_review"] else {},
+                        expected_output="Результат анализа",
+                        priority=1
+                    ))
+        
+        # Формируем execution_order: сначала паттерн, потом остальные параллельно
+        execution_order = []
+        if task_type in patterns:
+            pattern = patterns[task_type]
+            # Используем порядок из паттерна для инструментов, которые в нём есть
+            pattern_tools = [t["name"] for t in pattern["tools"] if t["name"] in available_tools]
+            if pattern_tools:
+                execution_order = pattern.get("execution_order", [pattern_tools])
+        else:
+            # Если нет паттерна, группируем по приоритету
+            execution_order = [[t.tool_name] for t in tool_selections]
+        
+        # Добавляем остальные инструменты в последнюю группу (параллельно)
+        remaining_tools = [t.tool_name for t in tool_selections if t.tool_name not in [t for group in execution_order for t in group]]
+        if remaining_tools:
+            if execution_order:
+                execution_order[-1].extend(remaining_tools)
+            else:
+                execution_order = [remaining_tools]
+        
+        success_criteria = patterns.get(task_type, {}).get("success_criteria", ["Задача выполнена"]) if task_type in patterns else ["Задача выполнена"]
+        success_criteria.append(f"Использованы все выбранные инструменты: {', '.join(available_tools)}")
+        
         return (
-            [ToolSelection(
-                tool_name="summarize",
-                reason="Базовый анализ документа",
-                params={"file_ids": file_ids, "style": "brief"},
-                expected_output="Краткое резюме",
-                priority=1
-            )],
-            [["summarize"]],
-            ["Получено резюме документа"]
+            tool_selections,
+            execution_order,
+            success_criteria
         )
     
     def _get_tool_patterns(self) -> Dict[TaskType, Dict[str, Any]]:
