@@ -37,6 +37,7 @@ interface PDFViewerProps {
   caseId: string
   filename: string
   initialPage?: number
+  highlightText?: string // Текст для автоматического поиска и подсветки (для citations)
   onError?: (error: Error) => void
   showTabs?: boolean
   tabs?: Array<{ id: string; label: string; fileId: string }>
@@ -55,6 +56,7 @@ const PDFViewer: React.FC<PDFViewerProps> = ({
   caseId,
   filename: _filename,
   initialPage,
+  highlightText,
   onError,
   showTabs = false,
   tabs = [],
@@ -74,9 +76,12 @@ const PDFViewer: React.FC<PDFViewerProps> = ({
   const [activeTab, setActiveTab] = useState(0)
   const [showAboutPanel, setShowAboutPanel] = useState(showAbout)
   const searchInputRef = useRef<HTMLInputElement>(null)
+  const containerRef = useRef<HTMLDivElement>(null)
+  const [highlightApplied, setHighlightApplied] = useState(false)
 
   useEffect(() => {
     loadPDF()
+    setHighlightApplied(false) // Reset highlight when file changes
     return () => {
       // Cleanup: revoke object URL if it exists
       if (pdfUrl && pdfUrl.startsWith('blob:')) {
@@ -84,6 +89,50 @@ const PDFViewer: React.FC<PDFViewerProps> = ({
       }
     }
   }, [fileId, caseId])
+  
+  // Автоматическая подсветка текста в PDF (для citations)
+  useEffect(() => {
+    if (!highlightText || highlightApplied || !containerRef.current) return
+    
+    // Ждём пока text layer отрендерится
+    const timer = setTimeout(() => {
+      const textLayer = containerRef.current?.querySelector('.react-pdf__Page__textContent')
+      if (!textLayer) {
+        console.log('[PDFViewer] Text layer not found yet, retrying...')
+        return
+      }
+      
+      // Ищем текст в text layer
+      const textSpans = textLayer.querySelectorAll('span')
+      const searchText = highlightText.toLowerCase().substring(0, 50) // Берём первые 50 символов
+      
+      let found = false
+      textSpans.forEach((span) => {
+        const spanText = span.textContent?.toLowerCase() || ''
+        if (spanText.includes(searchText) || searchText.includes(spanText)) {
+          // Подсвечиваем найденный текст
+          (span as HTMLElement).style.backgroundColor = '#fef08a'
+          ;(span as HTMLElement).style.borderRadius = '2px'
+          ;(span as HTMLElement).style.padding = '2px 0'
+          
+          if (!found) {
+            // Скроллим к первому найденному
+            span.scrollIntoView({ behavior: 'smooth', block: 'center' })
+            found = true
+          }
+        }
+      })
+      
+      if (found) {
+        console.log('[PDFViewer] Highlight text found and applied')
+        setHighlightApplied(true)
+      } else {
+        console.log('[PDFViewer] Highlight text not found in current page')
+      }
+    }, 1000) // Даём время на рендер text layer
+    
+    return () => clearTimeout(timer)
+  }, [highlightText, pageNumber, highlightApplied, loading])
 
   const loadPDF = async () => {
     try {
@@ -378,7 +427,10 @@ const PDFViewer: React.FC<PDFViewerProps> = ({
       {/* Content area */}
       <Box sx={{ flex: 1, overflow: 'auto', position: 'relative', display: 'flex' }}>
         {/* PDF Viewer */}
-        <Box sx={{ flex: 1, overflow: 'auto', p: 2, display: 'flex', justifyContent: 'center' }}>
+        <Box 
+          ref={containerRef}
+          sx={{ flex: 1, overflow: 'auto', p: 2, display: 'flex', justifyContent: 'center' }}
+        >
         <Document
           file={pdfUrl}
           onLoadSuccess={onDocumentLoadSuccess}

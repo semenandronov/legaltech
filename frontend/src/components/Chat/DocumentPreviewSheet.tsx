@@ -504,31 +504,13 @@ const DocumentPreviewSheet = ({
           ) : fileInfo && fileInfo.file_type === 'pdf' ? (
             // PDF viewer - like on Documents page, with highlighting support
             <Box sx={{ flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
-              {/* Подсказка для поиска цитаты в PDF */}
-              {source.quote && (
-                <Box
-                  sx={{
-                    p: 1.5,
-                    bgcolor: 'info.light',
-                    color: 'info.contrastText',
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: 1,
-                    fontSize: '0.75rem',
-                  }}
-                >
-                  <SearchIcon fontSize="small" />
-                  <Typography variant="caption">
-                    Используйте поиск (Ctrl+F) для нахождения цитаты в документе
-                  </Typography>
-                </Box>
-              )}
               <Box sx={{ flex: 1, overflow: 'hidden' }}>
                 <PDFViewer
                   fileId={fileInfo.id}
                   caseId={caseId}
                   filename={fileInfo.filename}
                   initialPage={source.page} // Переход на страницу из citation
+                  highlightText={source.quote} // Автоматическая подсветка цитаты
                   showTabs={false}
                   showAbout={false}
                 />
