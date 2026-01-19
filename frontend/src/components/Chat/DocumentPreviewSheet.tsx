@@ -18,7 +18,6 @@ import {
   ChevronLeft as ChevronLeftIcon,
   ChevronRight as ChevronRightIcon,
   OpenInNew as MaximizeIcon,
-  Search as SearchIcon,
 } from '@mui/icons-material'
 import { SourceInfo } from '@/services/api'
 import PDFViewer from '@/components/Documents/PDFViewer'
