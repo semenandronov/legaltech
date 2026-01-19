@@ -912,7 +912,7 @@ async def stream_chat_response(
                             if sentence_stripped and sentence_stripped[-1] in '.!?':
                                 punct = sentence_stripped[-1]
                                 rebuilt.append(f"{sentence_stripped[:-1]}[{citation_idx + 1}]{punct}")
-                        else:
+                            else:
                                 rebuilt.append(f"{sentence}[{citation_idx + 1}]")
                             citation_idx += 1
                         else:
