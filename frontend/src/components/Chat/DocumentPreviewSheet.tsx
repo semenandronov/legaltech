@@ -296,6 +296,51 @@ const DocumentPreviewSheet = ({
               </Stack>
             </Box>
           </Box>
+          
+          {/* Citation Quote Block - Harvey/Perplexity style */}
+          {source.quote && (
+            <Box
+              sx={{
+                mt: 2,
+                p: 2,
+                bgcolor: 'rgba(254, 240, 138, 0.3)', // Light yellow
+                borderLeft: '4px solid #fbbf24', // Yellow accent
+                borderRadius: '0 8px 8px 0',
+              }}
+            >
+              <Typography
+                variant="caption"
+                sx={{
+                  display: 'block',
+                  mb: 0.5,
+                  fontWeight: 600,
+                  color: 'text.secondary',
+                  textTransform: 'uppercase',
+                  letterSpacing: '0.05em',
+                }}
+              >
+                📌 Цитата из документа
+              </Typography>
+              <Typography
+                variant="body2"
+                sx={{
+                  fontStyle: 'italic',
+                  color: 'text.primary',
+                  lineHeight: 1.6,
+                }}
+              >
+                "{source.quote.length > 300 ? source.quote.substring(0, 300) + '...' : source.quote}"
+              </Typography>
+              {source.char_start !== undefined && source.char_end !== undefined && (
+                <Typography
+                  variant="caption"
+                  sx={{ display: 'block', mt: 1, color: 'text.secondary' }}
+                >
+                  Позиция: символы {source.char_start} — {source.char_end}
+                </Typography>
+              )}
+            </Box>
+          )}
 
           {/* Navigation & Actions */}
           <Divider sx={{ my: 1.5 }} />
@@ -380,17 +425,36 @@ const DocumentPreviewSheet = ({
             </Box>
           ) : fileInfo && fileInfo.file_type === 'pdf' ? (
             // PDF viewer - like on Documents page, with highlighting support
-            <Box sx={{ flex: 1, overflow: 'hidden' }}>
-              <PDFViewer
-                fileId={fileInfo.id}
-                caseId={caseId}
-                filename={fileInfo.filename}
-                initialPage={source.page} // Переход на страницу из citation
-                showTabs={false}
-                showAbout={false}
-                // TODO: Добавить searchQuery для подсветки через PDF.js text layer
-                // searchQuery={source.quote}
-              />
+            <Box sx={{ flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
+              {/* Подсказка для поиска цитаты в PDF */}
+              {source.quote && (
+                <Box
+                  sx={{
+                    p: 1.5,
+                    bgcolor: 'info.light',
+                    color: 'info.contrastText',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 1,
+                    fontSize: '0.75rem',
+                  }}
+                >
+                  <SearchIcon fontSize="small" />
+                  <Typography variant="caption">
+                    Используйте поиск (Ctrl+F) для нахождения цитаты в документе
+                  </Typography>
+                </Box>
+              )}
+              <Box sx={{ flex: 1, overflow: 'hidden' }}>
+                <PDFViewer
+                  fileId={fileInfo.id}
+                  caseId={caseId}
+                  filename={fileInfo.filename}
+                  initialPage={source.page} // Переход на страницу из citation
+                  showTabs={false}
+                  showAbout={false}
+                />
+              </Box>
             </Box>
           ) : fileInfo && documentHtml && fileInfo.file_type === 'docx' ? (
             // DOCX - отображаем HTML с подсветкой
