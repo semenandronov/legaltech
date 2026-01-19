@@ -69,19 +69,56 @@ const DocumentPreviewSheet = ({
     if (documentText && source?.quote && coordinateHighlights.length === 0) {
       // Ищем цитату в тексте документа
       const quoteToFind = source.quote.trim()
-      if (quoteToFind.length > 20) {
-        // Ищем точное совпадение
-        let startIdx = documentText.indexOf(quoteToFind)
-        if (startIdx === -1) {
-          // Пробуем найти первые 50 символов цитаты
-          const shortQuote = quoteToFind.substring(0, 50)
-          startIdx = documentText.indexOf(shortQuote)
+      const textLower = documentText.toLowerCase()
+      const quoteLower = quoteToFind.toLowerCase()
+      
+      if (quoteToFind.length > 10) {
+        let startIdx = -1
+        let matchLength = quoteToFind.length
+        
+        // 1. Ищем точное совпадение (case-insensitive)
+        startIdx = textLower.indexOf(quoteLower)
+        
+        // 2. Пробуем найти первые 100 символов
+        if (startIdx === -1 && quoteToFind.length > 100) {
+          const shortQuote = quoteLower.substring(0, 100)
+          startIdx = textLower.indexOf(shortQuote)
+          if (startIdx !== -1) matchLength = 100
         }
+        
+        // 3. Пробуем найти первые 50 символов
+        if (startIdx === -1 && quoteToFind.length > 50) {
+          const shortQuote = quoteLower.substring(0, 50)
+          startIdx = textLower.indexOf(shortQuote)
+          if (startIdx !== -1) matchLength = 50
+        }
+        
+        // 4. Пробуем найти первые 3 слова
+        if (startIdx === -1) {
+          const words = quoteLower.split(/\s+/).slice(0, 3).join(' ')
+          if (words.length > 10) {
+            startIdx = textLower.indexOf(words)
+            if (startIdx !== -1) matchLength = words.length
+          }
+        }
+        
+        // 5. Пробуем найти любое слово длиннее 8 символов
+        if (startIdx === -1) {
+          const longWords = quoteLower.split(/\s+/).filter(w => w.length > 8)
+          for (const word of longWords) {
+            startIdx = textLower.indexOf(word)
+            if (startIdx !== -1) {
+              matchLength = word.length
+              break
+            }
+          }
+        }
+        
         if (startIdx !== -1) {
-          console.log('[DocumentPreview] Found quote in text at position:', startIdx)
+          console.log('[DocumentPreview] Found quote in text at position:', startIdx, 'length:', matchLength)
           setQuoteBasedHighlights([{
             char_start: startIdx,
-            char_end: startIdx + Math.min(quoteToFind.length, 500) // Ограничиваем длину подсветки
+            char_end: startIdx + Math.min(matchLength, 500)
           }])
         } else {
           console.log('[DocumentPreview] Quote not found in document text')
@@ -508,8 +545,8 @@ const DocumentPreviewSheet = ({
                   fileId={fileInfo.id}
                   caseId={caseId}
                   filename={fileInfo.filename}
-                  initialPage={source.page} // Переход на страницу из citation
-                  highlightText={source.quote} // Автоматическая подсветка цитаты
+                  initialPage={source.page || 1} // Переход на страницу из citation
+                  highlightText={source.quote?.substring(0, 100)} // Первые 100 символов для поиска
                   showTabs={false}
                   showAbout={false}
                 />

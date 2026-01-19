@@ -92,44 +92,95 @@ const PDFViewer: React.FC<PDFViewerProps> = ({
   
   // Автоматическая подсветка текста в PDF (для citations)
   useEffect(() => {
-    if (!highlightText || highlightApplied || !containerRef.current) return
+    if (!highlightText || highlightApplied) return
     
-    // Ждём пока text layer отрендерится
-    const timer = setTimeout(() => {
+    let attempts = 0
+    const maxAttempts = 10
+    
+    const tryHighlight = () => {
+      attempts++
       const textLayer = containerRef.current?.querySelector('.react-pdf__Page__textContent')
+      
       if (!textLayer) {
-        console.log('[PDFViewer] Text layer not found yet, retrying...')
+        if (attempts < maxAttempts) {
+          console.log(`[PDFViewer] Text layer not found, attempt ${attempts}/${maxAttempts}`)
+          setTimeout(tryHighlight, 300)
+        }
         return
       }
       
-      // Ищем текст в text layer
-      const textSpans = textLayer.querySelectorAll('span')
-      const searchText = highlightText.toLowerCase().substring(0, 50) // Берём первые 50 символов
+      // Собираем весь текст страницы для поиска
+      const textSpans = Array.from(textLayer.querySelectorAll('span'))
+      const fullPageText = textSpans.map(s => s.textContent || '').join(' ').toLowerCase()
+      
+      // Подготавливаем варианты поиска (от длинного к короткому)
+      const searchVariants = [
+        highlightText.toLowerCase(),
+        highlightText.toLowerCase().substring(0, 100),
+        highlightText.toLowerCase().substring(0, 50),
+        highlightText.toLowerCase().split(' ').slice(0, 5).join(' '), // Первые 5 слов
+        highlightText.toLowerCase().split(' ').slice(0, 3).join(' '), // Первые 3 слова
+      ].filter(s => s.length > 5)
       
       let found = false
-      textSpans.forEach((span) => {
-        const spanText = span.textContent?.toLowerCase() || ''
-        if (spanText.includes(searchText) || searchText.includes(spanText)) {
-          // Подсвечиваем найденный текст
-          (span as HTMLElement).style.backgroundColor = '#fef08a'
-          ;(span as HTMLElement).style.borderRadius = '2px'
-          ;(span as HTMLElement).style.padding = '2px 0'
+      let matchedSpans: Element[] = []
+      
+      // Пробуем найти по каждому варианту
+      for (const searchText of searchVariants) {
+        if (found) break
+        
+        // Проверяем есть ли текст на странице вообще
+        if (!fullPageText.includes(searchText.substring(0, 20))) {
+          continue
+        }
+        
+        // Ищем span'ы которые содержат части искомого текста
+        const searchWords = searchText.split(/\s+/).filter(w => w.length > 2)
+        
+        textSpans.forEach((span) => {
+          const spanText = (span.textContent || '').toLowerCase()
           
-          if (!found) {
-            // Скроллим к первому найденному
-            span.scrollIntoView({ behavior: 'smooth', block: 'center' })
+          // Проверяем совпадение по словам
+          const matchCount = searchWords.filter(word => spanText.includes(word)).length
+          
+          if (matchCount >= Math.min(2, searchWords.length) || 
+              spanText.includes(searchText.substring(0, 15)) ||
+              searchText.includes(spanText) && spanText.length > 10) {
+            matchedSpans.push(span)
             found = true
           }
-        }
-      })
-      
-      if (found) {
-        console.log('[PDFViewer] Highlight text found and applied')
-        setHighlightApplied(true)
-      } else {
-        console.log('[PDFViewer] Highlight text not found in current page')
+        })
       }
-    }, 1000) // Даём время на рендер text layer
+      
+      if (found && matchedSpans.length > 0) {
+        console.log(`[PDFViewer] Found ${matchedSpans.length} matching spans`)
+        
+        // Подсвечиваем найденные span'ы
+        matchedSpans.forEach((span, idx) => {
+          const el = span as HTMLElement
+          el.style.backgroundColor = '#fef08a'
+          el.style.borderRadius = '2px'
+          el.style.boxShadow = '0 0 0 2px #fef08a'
+          
+          // Скроллим к первому
+          if (idx === 0) {
+            setTimeout(() => {
+              el.scrollIntoView({ behavior: 'smooth', block: 'center' })
+            }, 100)
+          }
+        })
+        
+        setHighlightApplied(true)
+      } else if (attempts < maxAttempts) {
+        console.log(`[PDFViewer] Text not found, attempt ${attempts}/${maxAttempts}`)
+        setTimeout(tryHighlight, 300)
+      } else {
+        console.log('[PDFViewer] Highlight text not found after all attempts')
+      }
+    }
+    
+    // Начинаем поиск после небольшой задержки
+    const timer = setTimeout(tryHighlight, 500)
     
     return () => clearTimeout(timer)
   }, [highlightText, pageNumber, highlightApplied, loading])

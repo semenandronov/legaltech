@@ -89,6 +89,7 @@ export const TextHighlighter: React.FC<TextHighlighterProps> = ({
     let currentIndex = searchText.indexOf(highlightLower, lastIndex)
     const isSearch = highlight === searchQuery
 
+    // Сначала пробуем найти полное совпадение
     while (currentIndex !== -1) {
       ranges.push({
         start: currentIndex,
@@ -98,6 +99,36 @@ export const TextHighlighter: React.FC<TextHighlighterProps> = ({
       })
       lastIndex = currentIndex + 1
       currentIndex = searchText.indexOf(highlightLower, lastIndex)
+    }
+    
+    // Если не нашли - пробуем найти первые 50 символов
+    if (ranges.length === 0 && highlight.length > 50) {
+      const shortHighlight = highlightLower.substring(0, 50)
+      currentIndex = searchText.indexOf(shortHighlight)
+      if (currentIndex !== -1) {
+        ranges.push({
+          start: currentIndex,
+          end: currentIndex + 50,
+          text: shortHighlight,
+          isSearch,
+        })
+      }
+    }
+    
+    // Если всё ещё не нашли - пробуем первые 3 слова
+    if (ranges.length === 0 && highlight.length > 20) {
+      const words = highlightLower.split(/\s+/).slice(0, 3).join(' ')
+      if (words.length > 10) {
+        currentIndex = searchText.indexOf(words)
+        if (currentIndex !== -1) {
+          ranges.push({
+            start: currentIndex,
+            end: currentIndex + words.length,
+            text: words,
+            isSearch,
+          })
+        }
+      }
     }
   })
 
