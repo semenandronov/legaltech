@@ -84,25 +84,39 @@ export const TextHighlighter: React.FC<TextHighlighterProps> = ({
   
   allHighlights.forEach((highlight) => {
     const searchText = text.toLowerCase()
-    const highlightLower = highlight.toLowerCase()
-    let lastIndex = 0
-    let currentIndex = searchText.indexOf(highlightLower, lastIndex)
+    // Убираем "..." в конце цитаты если есть
+    const highlightLower = highlight.toLowerCase().replace(/\.{3}$/, '').trim()
     const isSearch = highlight === searchQuery
 
-    // Сначала пробуем найти полное совпадение
-    while (currentIndex !== -1) {
+    // Стратегия 1: Полное совпадение
+    let currentIndex = searchText.indexOf(highlightLower)
+    if (currentIndex !== -1) {
       ranges.push({
         start: currentIndex,
-        end: currentIndex + highlight.length,
-        text: highlight,
+        end: currentIndex + highlightLower.length,
+        text: highlightLower,
         isSearch,
       })
-      lastIndex = currentIndex + 1
-      currentIndex = searchText.indexOf(highlightLower, lastIndex)
+      return // Нашли - выходим
     }
     
-    // Если не нашли - пробуем найти первые 50 символов
-    if (ranges.length === 0 && highlight.length > 50) {
+    // Стратегия 2: Первые 100 символов
+    if (highlightLower.length > 100) {
+      const shortHighlight = highlightLower.substring(0, 100)
+      currentIndex = searchText.indexOf(shortHighlight)
+      if (currentIndex !== -1) {
+        ranges.push({
+          start: currentIndex,
+          end: currentIndex + 100,
+          text: shortHighlight,
+          isSearch,
+        })
+        return
+      }
+    }
+    
+    // Стратегия 3: Первые 50 символов
+    if (highlightLower.length > 50) {
       const shortHighlight = highlightLower.substring(0, 50)
       currentIndex = searchText.indexOf(shortHighlight)
       if (currentIndex !== -1) {
@@ -112,22 +126,43 @@ export const TextHighlighter: React.FC<TextHighlighterProps> = ({
           text: shortHighlight,
           isSearch,
         })
+        return
       }
     }
     
-    // Если всё ещё не нашли - пробуем первые 3 слова
-    if (ranges.length === 0 && highlight.length > 20) {
-      const words = highlightLower.split(/\s+/).slice(0, 3).join(' ')
-      if (words.length > 10) {
-        currentIndex = searchText.indexOf(words)
-        if (currentIndex !== -1) {
-          ranges.push({
-            start: currentIndex,
-            end: currentIndex + words.length,
-            text: words,
-            isSearch,
-          })
-        }
+    // Стратегия 4: Первое предложение
+    const firstSentence = highlightLower.split(/[.!?]/)[0]
+    if (firstSentence && firstSentence.length > 15) {
+      currentIndex = searchText.indexOf(firstSentence)
+      if (currentIndex !== -1) {
+        ranges.push({
+          start: currentIndex,
+          end: currentIndex + firstSentence.length,
+          text: firstSentence,
+          isSearch,
+        })
+        return
+      }
+    }
+    
+    // Стратегия 5: Уникальные длинные слова
+    const uniqueWords = highlightLower
+      .split(/\s+/)
+      .filter(w => w.length > 10 && !['документа', 'документов', 'информации', 'предоставляет'].includes(w))
+    
+    for (const word of uniqueWords) {
+      currentIndex = searchText.indexOf(word)
+      if (currentIndex !== -1) {
+        // Расширяем контекст вокруг слова
+        const contextStart = Math.max(0, currentIndex - 30)
+        const contextEnd = Math.min(text.length, currentIndex + word.length + 100)
+        ranges.push({
+          start: contextStart,
+          end: contextEnd,
+          text: text.substring(contextStart, contextEnd),
+          isSearch,
+        })
+        return
       }
     }
   })

@@ -21,7 +21,7 @@ import {
 } from '@mui/icons-material'
 import { SourceInfo } from '@/services/api'
 import PDFViewer from '@/components/Documents/PDFViewer'
-import { DocumentHighlighter, useCitationHighlights } from '@/components/Documents/DocumentHighlighter'
+import { DocumentHighlighter } from '@/components/Documents/DocumentHighlighter'
 import { TextHighlighter } from '@/components/TabularReview/TextHighlighter'
 import { getFileHtml } from '@/services/fileHtmlApi'
 import { getDocumentContent } from '@/services/api'
@@ -55,83 +55,122 @@ const DocumentPreviewSheet = ({
   const hasPrev = currentIndex > 0
   const hasNext = currentIndex < allSources.length - 1
   
-  // Преобразуем source в highlights для DocumentHighlighter (для текстовых документов)
-  // Сначала пробуем использовать координаты, если они валидные (char_start может быть 0 для начала документа)
-  const coordinateHighlights = useCitationHighlights(
-    source && source.char_start !== undefined && source.char_end !== undefined && 
-    source.char_end > source.char_start && source.char_end > 0 ? [source] : []
-  )
+  // Состояние для найденных позиций цитаты в документе
+  const [foundHighlights, setFoundHighlights] = useState<Array<{char_start: number; char_end: number}>>([])
   
-  // Если координаты невалидные, но есть цитата - ищем её в тексте
-  const [quoteBasedHighlights, setQuoteBasedHighlights] = useState<Array<{char_start: number; char_end: number}>>([])
-  
+  // Ищем цитату в тексте документа - это ГЛАВНЫЙ способ подсветки
+  // Координаты char_start/char_end из бэкенда часто неточные, поэтому всегда ищем по тексту
   useEffect(() => {
-    if (documentText && source?.quote && coordinateHighlights.length === 0) {
-      // Ищем цитату в тексте документа
-      const quoteToFind = source.quote.trim()
-      const textLower = documentText.toLowerCase()
-      const quoteLower = quoteToFind.toLowerCase()
-      
-      if (quoteToFind.length > 10) {
-        let startIdx = -1
-        let matchLength = quoteToFind.length
-        
-        // 1. Ищем точное совпадение (case-insensitive)
-        startIdx = textLower.indexOf(quoteLower)
-        
-        // 2. Пробуем найти первые 100 символов
-        if (startIdx === -1 && quoteToFind.length > 100) {
-          const shortQuote = quoteLower.substring(0, 100)
-          startIdx = textLower.indexOf(shortQuote)
-          if (startIdx !== -1) matchLength = 100
-        }
-        
-        // 3. Пробуем найти первые 50 символов
-        if (startIdx === -1 && quoteToFind.length > 50) {
-          const shortQuote = quoteLower.substring(0, 50)
-          startIdx = textLower.indexOf(shortQuote)
-          if (startIdx !== -1) matchLength = 50
-        }
-        
-        // 4. Пробуем найти первые 3 слова
-        if (startIdx === -1) {
-          const words = quoteLower.split(/\s+/).slice(0, 3).join(' ')
-          if (words.length > 10) {
-            startIdx = textLower.indexOf(words)
-            if (startIdx !== -1) matchLength = words.length
-          }
-        }
-        
-        // 5. Пробуем найти любое слово длиннее 8 символов
-        if (startIdx === -1) {
-          const longWords = quoteLower.split(/\s+/).filter(w => w.length > 8)
-          for (const word of longWords) {
-            startIdx = textLower.indexOf(word)
-            if (startIdx !== -1) {
-              matchLength = word.length
-              break
-            }
-          }
-        }
-        
+    if (!documentText || !source?.quote) {
+      setFoundHighlights([])
+      return
+    }
+    
+    const quoteToFind = source.quote.trim()
+    const textLower = documentText.toLowerCase()
+    const quoteLower = quoteToFind.toLowerCase()
+    
+    if (quoteToFind.length < 10) {
+      setFoundHighlights([])
+      return
+    }
+    
+    console.log('[DocumentPreview] Searching for quote in document...')
+    console.log('[DocumentPreview] Quote length:', quoteToFind.length)
+    console.log('[DocumentPreview] Document length:', documentText.length)
+    
+    let startIdx = -1
+    let matchLength = quoteToFind.length
+    
+    // Стратегия 1: Точное совпадение всей цитаты
+    startIdx = textLower.indexOf(quoteLower)
+    if (startIdx !== -1) {
+      console.log('[DocumentPreview] ✓ Found exact match at:', startIdx)
+    }
+    
+    // Стратегия 2: Первые 150 символов (убираем "..." в конце если есть)
+    if (startIdx === -1 && quoteToFind.length > 150) {
+      const cleanQuote = quoteLower.replace(/\.{3}$/, '').substring(0, 150)
+      startIdx = textLower.indexOf(cleanQuote)
+      if (startIdx !== -1) {
+        matchLength = 150
+        console.log('[DocumentPreview] ✓ Found first 150 chars at:', startIdx)
+      }
+    }
+    
+    // Стратегия 3: Первые 80 символов
+    if (startIdx === -1 && quoteToFind.length > 80) {
+      const shortQuote = quoteLower.replace(/\.{3}$/, '').substring(0, 80)
+      startIdx = textLower.indexOf(shortQuote)
+      if (startIdx !== -1) {
+        matchLength = 80
+        console.log('[DocumentPreview] ✓ Found first 80 chars at:', startIdx)
+      }
+    }
+    
+    // Стратегия 4: Первые 40 символов
+    if (startIdx === -1 && quoteToFind.length > 40) {
+      const shortQuote = quoteLower.replace(/\.{3}$/, '').substring(0, 40)
+      startIdx = textLower.indexOf(shortQuote)
+      if (startIdx !== -1) {
+        matchLength = 40
+        console.log('[DocumentPreview] ✓ Found first 40 chars at:', startIdx)
+      }
+    }
+    
+    // Стратегия 5: Первое предложение (до первой точки)
+    if (startIdx === -1) {
+      const firstSentence = quoteLower.split(/[.!?]/)[0]
+      if (firstSentence && firstSentence.length > 15) {
+        startIdx = textLower.indexOf(firstSentence)
         if (startIdx !== -1) {
-          console.log('[DocumentPreview] Found quote in text at position:', startIdx, 'length:', matchLength)
-          setQuoteBasedHighlights([{
-            char_start: startIdx,
-            char_end: startIdx + Math.min(matchLength, 500)
-          }])
-        } else {
-          console.log('[DocumentPreview] Quote not found in document text')
-          setQuoteBasedHighlights([])
+          matchLength = firstSentence.length
+          console.log('[DocumentPreview] ✓ Found first sentence at:', startIdx)
         }
       }
-    } else {
-      setQuoteBasedHighlights([])
     }
-  }, [documentText, source?.quote, coordinateHighlights.length])
+    
+    // Стратегия 6: Уникальные длинные слова (>10 символов)
+    if (startIdx === -1) {
+      const uniqueWords = quoteLower
+        .split(/\s+/)
+        .filter(w => w.length > 10 && !['документа', 'документов', 'информации', 'предоставляет'].includes(w))
+      
+      for (const word of uniqueWords) {
+        const wordIdx = textLower.indexOf(word)
+        if (wordIdx !== -1) {
+          // Нашли слово - теперь ищем контекст вокруг него
+          // Берём 200 символов вокруг найденного слова
+          const contextStart = Math.max(0, wordIdx - 50)
+          const contextEnd = Math.min(documentText.length, wordIdx + word.length + 150)
+          startIdx = contextStart
+          matchLength = contextEnd - contextStart
+          console.log('[DocumentPreview] ✓ Found by unique word "' + word + '" at:', startIdx)
+          break
+        }
+      }
+    }
+    
+    if (startIdx !== -1) {
+      // Расширяем подсветку до конца предложения если возможно
+      let endIdx = startIdx + matchLength
+      const nextPeriod = documentText.indexOf('.', endIdx)
+      if (nextPeriod !== -1 && nextPeriod - endIdx < 100) {
+        endIdx = nextPeriod + 1
+      }
+      
+      setFoundHighlights([{
+        char_start: startIdx,
+        char_end: Math.min(endIdx, startIdx + 500) // Максимум 500 символов
+      }])
+    } else {
+      console.log('[DocumentPreview] ✗ Quote not found in document')
+      setFoundHighlights([])
+    }
+  }, [documentText, source?.quote])
   
-  // Используем координаты если есть, иначе результат поиска по цитате
-  const highlights = coordinateHighlights.length > 0 ? coordinateHighlights : quoteBasedHighlights
+  // Используем найденные позиции
+  const highlights = foundHighlights
 
   useEffect(() => {
     if (source && isOpen) {
