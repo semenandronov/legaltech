@@ -59,7 +59,8 @@ class ExtractEntitiesTool(BaseTool):
         super().__init__(db)
         self.llm = None
         try:
-            self.llm = create_llm(temperature=0.1)
+            # Use use_rate_limiting=False for LangChain | operator compatibility
+            self.llm = create_llm(temperature=0.1, use_rate_limiting=False)
         except Exception as e:
             logger.warning(f"Failed to initialize LLM: {e}")
     

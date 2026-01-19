@@ -125,8 +125,10 @@ class PlanningAgent:
     def _init_llm(self):
         """Initialize LLM"""
         try:
-            self.llm = create_llm(temperature=0.2)
-            logger.info("PlanningAgent: LLM initialized")
+            # Use create_llm with use_rate_limiting=False for LangChain compatibility
+            # RateLimitedLLMWrapper is not compatible with LangChain's | operator
+            self.llm = create_llm(temperature=0.2, use_rate_limiting=False)
+            logger.info("PlanningAgent: LLM initialized (without rate limiting wrapper)")
         except Exception as e:
             logger.warning(f"PlanningAgent: Failed to initialize LLM: {e}")
             self.llm = None

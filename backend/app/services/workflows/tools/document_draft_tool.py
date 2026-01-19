@@ -105,7 +105,8 @@ class DocumentDraftTool(BaseTool):
         super().__init__(db)
         self.llm = None
         try:
-            self.llm = create_llm(temperature=0.3)
+            # Use use_rate_limiting=False for LangChain | operator compatibility
+            self.llm = create_llm(temperature=0.3, use_rate_limiting=False)
             logger.info("DocumentDraftTool: LLM initialized")
         except Exception as e:
             logger.warning(f"DocumentDraftTool: Failed to initialize LLM: {e}")

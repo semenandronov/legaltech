@@ -77,7 +77,8 @@ class ResultValidator:
     def _init_llm(self):
         """Initialize LLM"""
         try:
-            self.llm = create_llm(temperature=0.1)
+            # Use use_rate_limiting=False for LangChain | operator compatibility
+            self.llm = create_llm(temperature=0.1, use_rate_limiting=False)
             logger.info("ResultValidator: LLM initialized")
         except Exception as e:
             logger.warning(f"ResultValidator: Failed to initialize LLM: {e}")
