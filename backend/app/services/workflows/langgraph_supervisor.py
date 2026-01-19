@@ -107,6 +107,92 @@ class SupervisorConfig:
     context_window_limit: int = 8000  # Лимит токенов контекста
     enable_checkpoints: bool = True   # Включить чекпоинты
     enable_human_in_loop: bool = False # Включить HITL
+    hitl_approval_required: List[str] = None  # Агенты, требующие одобрения
+    # Circuit Breaker settings
+    circuit_breaker_threshold: int = 5  # Порог ошибок для открытия
+    circuit_breaker_timeout: int = 60   # Время восстановления (сек)
+    
+    def __post_init__(self):
+        if self.hitl_approval_required is None:
+            self.hitl_approval_required = ["document_drafter"]  # По умолчанию для создания документов
+
+
+# ═══════════════════════════════════════════════════════════════
+# CIRCUIT BREAKER (Level 3: Application-level protection)
+# ═══════════════════════════════════════════════════════════════
+
+class CircuitBreakerState(Enum):
+    """Состояния Circuit Breaker"""
+    CLOSED = "closed"      # Нормальная работа
+    OPEN = "open"          # Блокировка вызовов
+    HALF_OPEN = "half_open"  # Пробный вызов
+
+
+@dataclass
+class CircuitBreaker:
+    """
+    Circuit Breaker для защиты от каскадных сбоев.
+    
+    Паттерн из White Paper:
+    - Отслеживает частоту сбоев
+    - При превышении порога блокирует вызовы
+    - Периодически пробует восстановить соединение
+    """
+    name: str
+    threshold: int = 5
+    timeout: int = 60
+    
+    state: CircuitBreakerState = CircuitBreakerState.CLOSED
+    failure_count: int = 0
+    last_failure_time: Optional[datetime] = None
+    success_count: int = 0
+    
+    def record_success(self):
+        """Записать успешный вызов"""
+        self.failure_count = 0
+        self.success_count += 1
+        
+        if self.state == CircuitBreakerState.HALF_OPEN:
+            # Успех в half-open -> закрываем
+            self.state = CircuitBreakerState.CLOSED
+            logger.info(f"CircuitBreaker {self.name}: CLOSED (recovered)")
+    
+    def record_failure(self):
+        """Записать неудачный вызов"""
+        self.failure_count += 1
+        self.last_failure_time = datetime.utcnow()
+        
+        if self.failure_count >= self.threshold:
+            self.state = CircuitBreakerState.OPEN
+            logger.warning(f"CircuitBreaker {self.name}: OPEN (threshold {self.threshold} reached)")
+    
+    def can_execute(self) -> bool:
+        """Можно ли выполнить вызов"""
+        if self.state == CircuitBreakerState.CLOSED:
+            return True
+        
+        if self.state == CircuitBreakerState.OPEN:
+            # Проверяем, прошёл ли timeout
+            if self.last_failure_time:
+                elapsed = (datetime.utcnow() - self.last_failure_time).total_seconds()
+                if elapsed >= self.timeout:
+                    self.state = CircuitBreakerState.HALF_OPEN
+                    logger.info(f"CircuitBreaker {self.name}: HALF_OPEN (testing)")
+                    return True
+            return False
+        
+        # HALF_OPEN - разрешаем один пробный вызов
+        return True
+    
+    def get_status(self) -> Dict[str, Any]:
+        """Получить статус circuit breaker"""
+        return {
+            "name": self.name,
+            "state": self.state.value,
+            "failure_count": self.failure_count,
+            "success_count": self.success_count,
+            "last_failure": self.last_failure_time.isoformat() if self.last_failure_time else None
+        }
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -132,8 +218,29 @@ class LangGraphSupervisor:
         self.graph = None
         self.checkpointer = None
         
+        # Circuit Breakers для каждого агента (Level 3: App-level protection)
+        self.circuit_breakers: Dict[str, CircuitBreaker] = {}
+        
         self._init_llm()
+        self._init_circuit_breakers()
         self._build_graph()
+    
+    def _init_circuit_breakers(self):
+        """Инициализировать circuit breakers для агентов"""
+        agent_names = [
+            "summarizer", "entity_extractor", "rag_searcher",
+            "playbook_checker", "tabular_reviewer", "document_drafter",
+            "legal_researcher", "llm"  # Также для LLM
+        ]
+        
+        for name in agent_names:
+            self.circuit_breakers[name] = CircuitBreaker(
+                name=name,
+                threshold=self.config.circuit_breaker_threshold,
+                timeout=self.config.circuit_breaker_timeout
+            )
+        
+        logger.info(f"Initialized {len(self.circuit_breakers)} circuit breakers")
     
     def _init_llm(self):
         """Initialize LLM"""
@@ -155,6 +262,8 @@ class LangGraphSupervisor:
         builder.add_node("synthesize_results", self._node_synthesize_results)
         builder.add_node("handle_error", self._node_handle_error)
         builder.add_node("fallback", self._node_fallback)
+        builder.add_node("human_approval", self._node_human_approval)
+        builder.add_node("compress_context", self._node_compress_context)
         
         # === Определяем рёбра ===
         builder.set_entry_point("classify_intent")
@@ -186,9 +295,24 @@ class LangGraphSupervisor:
             {
                 "continue": "execute_agent",  # Следующий агент
                 "synthesize": "synthesize_results",
-                "error": "handle_error"
+                "error": "handle_error",
+                "human_approval": "human_approval",  # HITL
+                "compress": "compress_context"  # Context management
             }
         )
+        
+        # После human approval
+        builder.add_conditional_edges(
+            "human_approval",
+            self._route_after_human_approval,
+            {
+                "continue": "execute_agent",
+                "wait": END  # Ожидание ответа пользователя
+            }
+        )
+        
+        # После сжатия контекста
+        builder.add_edge("compress_context", "execute_agent")
         
         # Условное ребро после обработки ошибок
         builder.add_conditional_edges(
@@ -392,6 +516,10 @@ class LangGraphSupervisor:
         Узел обработки ошибок (Level 2: Graph-level).
         
         Анализирует ошибку и решает: retry, fallback или abort.
+        Реализует:
+        - Bounded retries с exponential backoff
+        - Severity-based routing
+        - Error classification
         """
         error = state.get("last_error", {})
         error_count = state.get("error_count", 0)
@@ -400,9 +528,10 @@ class LangGraphSupervisor:
         
         # Определяем стратегию на основе severity и количества ошибок
         severity = error.get("severity", "medium")
+        error_type = error.get("type", "")
         
+        # === CRITICAL ERRORS - немедленный abort ===
         if severity == "critical":
-            # Критические ошибки - немедленный abort
             return {
                 "scratchpad": {
                     **state.get("scratchpad", {}),
@@ -411,18 +540,39 @@ class LangGraphSupervisor:
                 }
             }
         
+        # === Классификация ошибок для определения стратегии ===
+        # Некоторые ошибки не стоит повторять
+        non_retriable_errors = ["ValidationError", "AuthenticationError", "NotFoundError"]
+        if error_type in non_retriable_errors:
+            return {
+                "scratchpad": {
+                    **state.get("scratchpad", {}),
+                    "error_decision": "fallback",
+                    "fallback_reason": f"Non-retriable error: {error_type}"
+                }
+            }
+        
+        # === BOUNDED RETRY с exponential backoff ===
         if error_count < self.config.max_retries:
-            # Bounded retry
+            # Exponential backoff: 1s, 2s, 4s, ...
+            backoff_seconds = min(2 ** error_count, 16)  # Max 16 seconds
+            
+            logger.info(f"Retry {error_count + 1}/{self.config.max_retries}, backoff: {backoff_seconds}s")
+            
+            # Ждём перед retry (в реальной системе это было бы через asyncio.sleep)
+            await asyncio.sleep(backoff_seconds)
+            
             return {
                 "scratchpad": {
                     **state.get("scratchpad", {}),
                     "error_decision": "retry",
-                    "retry_count": error_count
+                    "retry_count": error_count,
+                    "backoff_seconds": backoff_seconds
                 },
-                "messages": [AIMessage(content=f"Повторная попытка {error_count}/{self.config.max_retries}")]
+                "messages": [AIMessage(content=f"Повторная попытка {error_count + 1}/{self.config.max_retries} (backoff: {backoff_seconds}s)")]
             }
         
-        # Лимит повторов исчерпан - fallback
+        # === FALLBACK - лимит повторов исчерпан ===
         return {
             "scratchpad": {
                 **state.get("scratchpad", {}),
@@ -458,6 +608,89 @@ class LangGraphSupervisor:
             }
         }
     
+    async def _node_human_approval(self, state: AgentState) -> Dict[str, Any]:
+        """
+        Узел Human-in-the-Loop для получения одобрения.
+        
+        В реальной системе здесь был бы interrupt() из LangGraph.
+        Для нашей реализации - возвращаем флаг ожидания.
+        """
+        scratchpad = state.get("scratchpad", {})
+        pending_agent = scratchpad.get("pending_approval_agent")
+        pending_result = scratchpad.get("pending_approval_result")
+        
+        # Если есть ответ от пользователя (через resume)
+        human_response = scratchpad.get("human_response")
+        
+        if human_response:
+            if human_response.get("approved", False):
+                # Пользователь одобрил - сохраняем результат
+                return {
+                    "agent_results": {pending_agent: pending_result},
+                    "scratchpad": {
+                        **scratchpad,
+                        "pending_approval_agent": None,
+                        "pending_approval_result": None,
+                        "human_response": None,
+                        "current_agent_index": scratchpad.get("current_agent_index", 0) + 1
+                    },
+                    "messages": [AIMessage(content=f"Результат {pending_agent} одобрен пользователем")]
+                }
+            else:
+                # Пользователь отклонил - пропускаем
+                return {
+                    "scratchpad": {
+                        **scratchpad,
+                        "pending_approval_agent": None,
+                        "pending_approval_result": None,
+                        "human_response": None,
+                        "current_agent_index": scratchpad.get("current_agent_index", 0) + 1
+                    },
+                    "messages": [AIMessage(content=f"Результат {pending_agent} отклонён пользователем")]
+                }
+        
+        # Ожидаем ответа от пользователя
+        # В реальной системе здесь был бы interrupt()
+        return {
+            "scratchpad": {
+                **scratchpad,
+                "awaiting_human_approval": True,
+                "approval_request": {
+                    "agent": pending_agent,
+                    "result_preview": str(pending_result)[:500] if pending_result else "",
+                    "message": f"Требуется одобрение результата агента {pending_agent}"
+                }
+            }
+        }
+    
+    async def _node_compress_context(self, state: AgentState) -> Dict[str, Any]:
+        """
+        Узел сжатия контекста.
+        
+        Вызывается когда контекст становится слишком большим.
+        """
+        try:
+            compressed = await self._compress_context(state)
+            
+            return {
+                "context_summary": compressed,
+                "messages": [AIMessage(content="Контекст сжат для оптимизации")],
+                "scratchpad": {
+                    **state.get("scratchpad", {}),
+                    "context_compressed": True,
+                    "compression_timestamp": datetime.utcnow().isoformat()
+                }
+            }
+        except Exception as e:
+            logger.warning(f"Context compression failed: {e}")
+            return {
+                "scratchpad": {
+                    **state.get("scratchpad", {}),
+                    "context_compressed": False,
+                    "compression_error": str(e)
+                }
+            }
+    
     # ═══════════════════════════════════════════════════════════════
     # ROUTING FUNCTIONS (Level 2: Graph-level error handling)
     # ═══════════════════════════════════════════════════════════════
@@ -474,14 +707,43 @@ class LangGraphSupervisor:
             return "error"
         return "execute"
     
-    def _route_after_execute(self, state: AgentState) -> Literal["continue", "synthesize", "error"]:
+    def _route_after_execute(self, state: AgentState) -> Literal["continue", "synthesize", "error", "human_approval", "compress"]:
         """Маршрутизация после выполнения агента"""
         if state.get("last_error"):
             return "error"
         
         scratchpad = state.get("scratchpad", {})
+        
+        # === GUARDRAIL: Проверка max_steps ===
+        step_count = state.get("step_count", 0)
+        max_steps = state.get("max_steps", self.config.max_steps)
+        if step_count >= max_steps:
+            logger.warning(f"Max steps reached: {step_count}/{max_steps}")
+            return "synthesize"  # Завершаем с тем, что есть
+        
+        # === CONTEXT MANAGEMENT: Проверка размера контекста ===
+        messages = state.get("messages", [])
+        if len(messages) > 20 and not scratchpad.get("context_compressed"):
+            return "compress"
+        
+        # === HITL: Проверка необходимости одобрения ===
+        if self.config.enable_human_in_loop:
+            last_agent = scratchpad.get("last_agent")
+            if last_agent in (self.config.hitl_approval_required or []):
+                # Требуется одобрение для этого агента
+                return "human_approval"
+        
         if scratchpad.get("all_agents_completed"):
             return "synthesize"
+        
+        return "continue"
+    
+    def _route_after_human_approval(self, state: AgentState) -> Literal["continue", "wait"]:
+        """Маршрутизация после запроса одобрения"""
+        scratchpad = state.get("scratchpad", {})
+        
+        if scratchpad.get("awaiting_human_approval"):
+            return "wait"  # Ожидаем ответа
         
         return "continue"
     
@@ -585,7 +847,24 @@ class LangGraphSupervisor:
         return plans.get(intent, plans["understand"])
     
     async def _run_subagent(self, agent_name: str, state: AgentState) -> Dict[str, Any]:
-        """Запустить субагента"""
+        """
+        Запустить субагента с Circuit Breaker защитой.
+        
+        Level 3 (App-level) protection:
+        - Проверяет состояние circuit breaker перед вызовом
+        - Записывает успехи/неудачи
+        - Блокирует вызовы при открытом circuit breaker
+        """
+        # === CIRCUIT BREAKER CHECK ===
+        cb = self.circuit_breakers.get(agent_name)
+        if cb and not cb.can_execute():
+            logger.warning(f"Circuit breaker OPEN for {agent_name}, skipping")
+            return {
+                "success": False,
+                "error": f"Circuit breaker open for {agent_name}",
+                "circuit_breaker_status": cb.get_status()
+            }
+        
         try:
             # Импортируем субагентов
             from app.services.workflows.subagents import (
@@ -609,16 +888,25 @@ class LangGraphSupervisor:
             
             agent = agent_class(self.db)
             
-            # Создаём контекст
+            # Создаём контекст с изоляцией (Select Context strategy)
+            selected_context = self._select_context_for_agent(agent_name, state)
+            
             context = ExecutionContext(
-                user_task=state.get("user_task", ""),
-                documents=state.get("documents", []),
-                file_ids=state.get("file_ids", []),
+                user_task=selected_context.get("user_task", ""),
+                documents=selected_context.get("documents", []),
+                file_ids=selected_context.get("file_ids", []),
                 previous_results=state.get("agent_results", {})
             )
             
             # Выполняем
             result = await agent.execute(context, {"file_ids": state.get("file_ids", [])})
+            
+            # === CIRCUIT BREAKER: Record success ===
+            if cb:
+                if result.success:
+                    cb.record_success()
+                else:
+                    cb.record_failure()
             
             return {
                 "success": result.success,
@@ -629,6 +917,11 @@ class LangGraphSupervisor:
             
         except Exception as e:
             logger.error(f"Subagent {agent_name} failed: {e}", exc_info=True)
+            
+            # === CIRCUIT BREAKER: Record failure ===
+            if cb:
+                cb.record_failure()
+            
             raise
     
     async def _synthesize(self, agent_results: Dict[str, Any], user_task: str) -> str:
@@ -662,6 +955,118 @@ class LangGraphSupervisor:
         chain = prompt | self.llm
         response = await chain.ainvoke({"task": user_task, "results": results_text})
         return response.content if hasattr(response, 'content') else str(response)
+    
+    # ═══════════════════════════════════════════════════════════════
+    # CONTEXT MANAGEMENT STRATEGIES
+    # ═══════════════════════════════════════════════════════════════
+    
+    async def _compress_context(self, state: AgentState) -> str:
+        """
+        Стратегия сжатия контекста (Compress Context).
+        
+        Суммаризирует историю сообщений и результаты для экономии токенов.
+        """
+        messages = state.get("messages", [])
+        agent_results = state.get("agent_results", {})
+        
+        if not self.llm or len(messages) < 5:
+            # Не нужно сжимать маленький контекст
+            return ""
+        
+        try:
+            from langchain_core.prompts import ChatPromptTemplate
+            
+            # Собираем контекст для сжатия
+            context_parts = []
+            
+            # Последние сообщения
+            recent_messages = messages[-10:] if len(messages) > 10 else messages
+            for msg in recent_messages:
+                content = msg.content if hasattr(msg, 'content') else str(msg)
+                context_parts.append(content[:500])  # Ограничиваем длину
+            
+            # Результаты агентов
+            for name, result in agent_results.items():
+                if isinstance(result, dict):
+                    summary = result.get("summary", "")[:200]
+                    context_parts.append(f"{name}: {summary}")
+            
+            prompt = ChatPromptTemplate.from_template("""
+Сожми следующий контекст в краткое резюме (максимум 500 символов):
+
+{context}
+
+Сохрани только ключевую информацию.""")
+            
+            chain = prompt | self.llm
+            response = await chain.ainvoke({"context": "\n".join(context_parts)})
+            
+            return response.content if hasattr(response, 'content') else str(response)
+            
+        except Exception as e:
+            logger.warning(f"Context compression failed: {e}")
+            return ""
+    
+    def _select_context_for_agent(
+        self,
+        agent_name: str,
+        state: AgentState
+    ) -> Dict[str, Any]:
+        """
+        Стратегия выбора контекста (Select Context).
+        
+        Выбирает только релевантную информацию для конкретного агента.
+        """
+        # Базовый контекст для всех агентов
+        base_context = {
+            "user_task": state.get("user_task", ""),
+            "file_ids": state.get("file_ids", [])
+        }
+        
+        # Специфичный контекст для разных агентов
+        agent_context_needs = {
+            "summarizer": ["documents"],
+            "entity_extractor": ["documents", "context_summary"],
+            "rag_searcher": ["user_task", "context_summary"],
+            "playbook_checker": ["documents", "agent_results.summarizer"],
+            "tabular_reviewer": ["documents", "file_ids"],
+            "document_drafter": ["agent_results", "context_summary"],
+            "legal_researcher": ["user_task", "context_summary"]
+        }
+        
+        needs = agent_context_needs.get(agent_name, [])
+        
+        for need in needs:
+            if need == "documents":
+                base_context["documents"] = state.get("documents", [])
+            elif need == "context_summary":
+                base_context["context_summary"] = state.get("context_summary", "")
+            elif need.startswith("agent_results"):
+                if "." in need:
+                    # Конкретный результат агента
+                    _, specific_agent = need.split(".", 1)
+                    results = state.get("agent_results", {})
+                    if specific_agent in results:
+                        base_context[f"previous_{specific_agent}"] = results[specific_agent]
+                else:
+                    base_context["agent_results"] = state.get("agent_results", {})
+        
+        return base_context
+    
+    def _write_to_scratchpad(
+        self,
+        state: AgentState,
+        key: str,
+        value: Any
+    ) -> Dict[str, Any]:
+        """
+        Стратегия записи контекста (Write Context).
+        
+        Записывает информацию в scratchpad для использования другими узлами.
+        """
+        scratchpad = state.get("scratchpad", {})
+        scratchpad[key] = value
+        return {"scratchpad": scratchpad}
     
     # ═══════════════════════════════════════════════════════════════
     # PUBLIC API
