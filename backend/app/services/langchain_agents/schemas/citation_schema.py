@@ -28,15 +28,23 @@ class CitationFirstResponse(BaseModel):
 
 
 class EnhancedCitation(BaseModel):
-    """Цитата с точными координатами для подсветки в документе"""
-    source_id: str = Field(..., description="ID документа")
+    """
+    Цитата с точными координатами для подсветки в документе.
+    
+    КЛЮЧЕВОЙ ПРИНЦИП (Harvey/Lexis+ style):
+    - chunk_id: уникальный ID chunk'а из которого взята информация
+    - char_start/char_end: ТОЧНЫЕ координаты в исходном документе
+    - При клике открываем документ по этим координатам - без поиска!
+    """
+    source_id: str = Field(..., description="ID документа (file_id)")
     file_name: str = Field(..., description="Имя файла")
     page: int = Field(1, description="Номер страницы")
-    quote: str = Field(..., description="Точная цитата из документа")
-    char_start: int = Field(..., description="Начальная позиция в документе (символ)")
-    char_end: int = Field(..., description="Конечная позиция в документе (символ)")
+    quote: str = Field(..., description="Текст chunk'а (для превью)")
+    char_start: int = Field(..., description="Начальная позиция chunk'а в документе (символ)")
+    char_end: int = Field(..., description="Конечная позиция chunk'а в документе (символ)")
     context_before: str = Field("", description="Контекст до цитаты (50 символов)")
     context_after: str = Field("", description="Контекст после цитаты (50 символов)")
+    chunk_id: Optional[str] = Field(None, description="Уникальный ID chunk'а для точной навигации")
 
 
 class AnswerWithCitations(BaseModel):

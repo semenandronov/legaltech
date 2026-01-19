@@ -58,9 +58,40 @@ const DocumentPreviewSheet = ({
   // Состояние для найденных позиций цитаты в документе
   const [foundHighlights, setFoundHighlights] = useState<Array<{char_start: number; char_end: number}>>([])
   
-  // Ищем цитату в тексте документа - это ГЛАВНЫЙ способ подсветки
-  // Координаты char_start/char_end из бэкенда часто неточные, поэтому всегда ищем по тексту
+  /**
+   * НОВАЯ ЛОГИКА ПОДСВЕТКИ (Harvey/Lexis+ style):
+   * 
+   * 1. ПРИОРИТЕТ: Используем ТОЧНЫЕ координаты char_start/char_end из chunk
+   *    - Эти координаты сохранены при индексации и ГАРАНТИРОВАННО точные
+   *    - Не нужен поиск по тексту - просто подсвечиваем по координатам
+   * 
+   * 2. FALLBACK: Если координат нет - ищем по тексту quote
+   */
   useEffect(() => {
+    // Приоритет 1: Используем ТОЧНЫЕ координаты из chunk (если есть)
+    const hasExactCoordinates = 
+      source?.char_start !== undefined && 
+      source?.char_end !== undefined && 
+      source.char_start >= 0 && 
+      source.char_end > source.char_start &&
+      source.char_end - source.char_start > 10 // Минимум 10 символов
+
+    if (hasExactCoordinates) {
+      console.log('[DocumentPreview] ✓ Using EXACT chunk coordinates:', {
+        char_start: source!.char_start,
+        char_end: source!.char_end,
+        chunk_id: source!.chunk_id,
+        length: source!.char_end! - source!.char_start!
+      })
+      
+      setFoundHighlights([{
+        char_start: source!.char_start!,
+        char_end: source!.char_end!
+      }])
+      return
+    }
+    
+    // Fallback: Поиск по тексту quote (для старых документов без chunk_id)
     if (!documentText || !source?.quote) {
       setFoundHighlights([])
       return
@@ -68,118 +99,68 @@ const DocumentPreviewSheet = ({
     
     const quoteToFind = source.quote.trim()
     const textLower = documentText.toLowerCase()
-    const quoteLower = quoteToFind.toLowerCase()
+    const quoteLower = quoteToFind.toLowerCase().replace(/\.{3}$/, '') // Убираем "..."
     
     if (quoteToFind.length < 10) {
       setFoundHighlights([])
       return
     }
     
-    console.log('[DocumentPreview] Searching for quote in document...')
+    console.log('[DocumentPreview] Fallback: Searching for quote in document...')
     console.log('[DocumentPreview] Quote length:', quoteToFind.length)
-    console.log('[DocumentPreview] Document length:', documentText.length)
     
     let startIdx = -1
-    let matchLength = quoteToFind.length
+    let matchLength = quoteLower.length
     
-    // Стратегия 1: Точное совпадение всей цитаты
+    // Стратегия 1: Точное совпадение
     startIdx = textLower.indexOf(quoteLower)
     if (startIdx !== -1) {
       console.log('[DocumentPreview] ✓ Found exact match at:', startIdx)
     }
     
-    // Стратегия 2: Первые 150 символов (убираем "..." в конце если есть)
-    if (startIdx === -1 && quoteToFind.length > 150) {
-      const cleanQuote = quoteLower.replace(/\.{3}$/, '').substring(0, 150)
-      startIdx = textLower.indexOf(cleanQuote)
-      if (startIdx !== -1) {
-        matchLength = 150
-        console.log('[DocumentPreview] ✓ Found first 150 chars at:', startIdx)
-      }
-    }
-    
-    // Стратегия 3: Первые 80 символов
-    if (startIdx === -1 && quoteToFind.length > 80) {
-      const shortQuote = quoteLower.replace(/\.{3}$/, '').substring(0, 80)
+    // Стратегия 2: Первые 100 символов
+    if (startIdx === -1 && quoteLower.length > 100) {
+      const shortQuote = quoteLower.substring(0, 100)
       startIdx = textLower.indexOf(shortQuote)
       if (startIdx !== -1) {
-        matchLength = 80
-        console.log('[DocumentPreview] ✓ Found first 80 chars at:', startIdx)
+        matchLength = 100
+        console.log('[DocumentPreview] ✓ Found first 100 chars at:', startIdx)
       }
     }
     
-    // Стратегия 4: Первые 40 символов
-    if (startIdx === -1 && quoteToFind.length > 40) {
-      const shortQuote = quoteLower.replace(/\.{3}$/, '').substring(0, 40)
+    // Стратегия 3: Первые 50 символов
+    if (startIdx === -1 && quoteLower.length > 50) {
+      const shortQuote = quoteLower.substring(0, 50)
       startIdx = textLower.indexOf(shortQuote)
       if (startIdx !== -1) {
-        matchLength = 40
-        console.log('[DocumentPreview] ✓ Found first 40 chars at:', startIdx)
-      }
-    }
-    
-    // Стратегия 5: Первое предложение (до первой точки)
-    if (startIdx === -1) {
-      const firstSentence = quoteLower.split(/[.!?]/)[0]
-      if (firstSentence && firstSentence.length > 15) {
-        startIdx = textLower.indexOf(firstSentence)
-        if (startIdx !== -1) {
-          matchLength = firstSentence.length
-          console.log('[DocumentPreview] ✓ Found first sentence at:', startIdx)
-        }
-      }
-    }
-    
-    // Стратегия 6: Уникальные длинные слова (>10 символов)
-    if (startIdx === -1) {
-      const uniqueWords = quoteLower
-        .split(/\s+/)
-        .filter(w => w.length > 10 && !['документа', 'документов', 'информации', 'предоставляет'].includes(w))
-      
-      for (const word of uniqueWords) {
-        const wordIdx = textLower.indexOf(word)
-        if (wordIdx !== -1) {
-          // Нашли слово - теперь ищем контекст вокруг него
-          // Берём 200 символов вокруг найденного слова
-          const contextStart = Math.max(0, wordIdx - 50)
-          const contextEnd = Math.min(documentText.length, wordIdx + word.length + 150)
-          startIdx = contextStart
-          matchLength = contextEnd - contextStart
-          console.log('[DocumentPreview] ✓ Found by unique word "' + word + '" at:', startIdx)
-          break
-        }
+        matchLength = 50
+        console.log('[DocumentPreview] ✓ Found first 50 chars at:', startIdx)
       }
     }
     
     if (startIdx !== -1) {
-      // Расширяем подсветку до конца предложения если возможно
-      let endIdx = startIdx + matchLength
-      const nextPeriod = documentText.indexOf('.', endIdx)
-      if (nextPeriod !== -1 && nextPeriod - endIdx < 100) {
-        endIdx = nextPeriod + 1
-      }
-      
       setFoundHighlights([{
         char_start: startIdx,
-        char_end: Math.min(endIdx, startIdx + 500) // Максимум 500 символов
+        char_end: startIdx + matchLength
       }])
     } else {
-      console.log('[DocumentPreview] ✗ Quote not found in document')
+      console.log('[DocumentPreview] ✗ Quote not found in document (fallback failed)')
       setFoundHighlights([])
     }
-  }, [documentText, source?.quote])
+  }, [documentText, source?.quote, source?.char_start, source?.char_end, source?.chunk_id])
   
   // Используем найденные позиции
   const highlights = foundHighlights
 
   useEffect(() => {
     if (source && isOpen) {
-      console.log('[DocumentPreview] Opening source:', {
+      console.log('[DocumentPreview] Opening source (Harvey/Lexis+ style):', {
         file: source.file,
         page: source.page,
-        char_start: source.char_start,
-        char_end: source.char_end,
-        quote: source.quote?.substring(0, 100),
+        chunk_id: source.chunk_id,  // Уникальный ID chunk'а
+        char_start: source.char_start,  // ТОЧНЫЕ координаты
+        char_end: source.char_end,      // ТОЧНЫЕ координаты
+        quote_preview: source.quote?.substring(0, 80),
         source_id: source.source_id
       })
       loadDocumentInfo()
@@ -587,6 +568,7 @@ const DocumentPreviewSheet = ({
             </Box>
           ) : fileInfo && fileInfo.file_type === 'pdf' ? (
             // PDF viewer - like on Documents page, with highlighting support
+            // Используем quote из chunk для поиска в PDF (координаты char_start/char_end не работают для PDF)
             <Box sx={{ flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
               <Box sx={{ flex: 1, overflow: 'hidden' }}>
                 <PDFViewer
@@ -594,7 +576,7 @@ const DocumentPreviewSheet = ({
                   caseId={caseId}
                   filename={fileInfo.filename}
                   initialPage={source.page || 1} // Переход на страницу из citation
-                  highlightText={source.quote?.substring(0, 100)} // Первые 100 символов для поиска
+                  highlightText={source.quote?.replace(/\.{3}$/, '').substring(0, 150)} // Убираем "..." и берём первые 150 символов
                   showTabs={false}
                   showAbout={false}
                 />

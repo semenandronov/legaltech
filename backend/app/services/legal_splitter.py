@@ -3,8 +3,31 @@ from typing import List, Optional
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_core.documents import Document
 import logging
+import hashlib
 
 logger = logging.getLogger(__name__)
+
+
+def generate_chunk_id(doc_id: str, chunk_index: int, char_start: int) -> str:
+    """
+    Generate a unique, deterministic chunk_id for reliable citation linking.
+    
+    Format: {doc_id_short}_{chunk_index}_{char_start_hash}
+    Example: "abc123_0_f7d2" for first chunk of document abc123
+    
+    This ID is:
+    - Deterministic: same content always produces same ID
+    - Unique: different chunks have different IDs
+    - Short: suitable for use in prompts and UI
+    """
+    # Create a hash of doc_id + chunk_index + char_start for uniqueness
+    hash_input = f"{doc_id}:{chunk_index}:{char_start}"
+    hash_short = hashlib.md5(hash_input.encode()).hexdigest()[:6]
+    
+    # Use first 8 chars of doc_id for readability
+    doc_id_short = doc_id[:8] if len(doc_id) > 8 else doc_id
+    
+    return f"{doc_id_short}_{chunk_index}_{hash_short}"
 
 
 class LegalTextSplitter(RecursiveCharacterTextSplitter):
@@ -109,8 +132,13 @@ class LegalTextSplitter(RecursiveCharacterTextSplitter):
             char_end = char_start + len(chunk_text)
             previous_end = max(previous_end, char_start)  # Update for next iteration
             
+            # Generate unique chunk_id for reliable citation linking
+            doc_id = base_metadata.get("doc_id", base_metadata.get("source_id", filename))
+            chunk_id = generate_chunk_id(str(doc_id), i, char_start)
+            
             chunk_metadata = {
                 **base_metadata,
+                "chunk_id": chunk_id,  # Unique ID for this chunk - used for citation linking
                 "chunk_index": i,
                 "chunk_start_line": None,  # Line numbers not calculated here
                 "chunk_end_line": None,
@@ -120,7 +148,7 @@ class LegalTextSplitter(RecursiveCharacterTextSplitter):
             
             documents.append(Document(page_content=chunk_text, metadata=chunk_metadata))
         
-        logger.debug(f"Split {len(text)} chars into {len(documents)} chunks for {filename} with char offsets")
+        logger.debug(f"Split {len(text)} chars into {len(documents)} chunks for {filename} with chunk_ids and char offsets")
         return documents
 
 

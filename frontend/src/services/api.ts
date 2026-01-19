@@ -137,13 +137,14 @@ export interface SourceInfo {
   end_line?: number
   text_preview?: string
   similarity_score?: number
-  // Enhanced citation fields for document highlighting
-  char_start?: number  // Start character position in document
-  char_end?: number    // End character position in document
+  // Enhanced citation fields for document highlighting (Harvey/Lexis+ style)
+  char_start?: number  // EXACT start character position in document (from chunk)
+  char_end?: number    // EXACT end character position in document (from chunk)
   context_before?: string  // Context before quote (50 chars)
   context_after?: string   // Context after quote (50 chars)
-  quote?: string       // Exact quote from document
-  source_id?: string   // Document ID for reference
+  quote?: string       // Text from chunk (for preview)
+  source_id?: string   // Document ID (file_id) for reference
+  chunk_id?: string    // Unique chunk ID for precise navigation - KEY for reliable highlighting!
 }
 
 export interface ChatResponse {

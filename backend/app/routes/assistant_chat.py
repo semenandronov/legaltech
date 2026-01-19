@@ -1096,7 +1096,8 @@ async def stream_chat_response(
                                 "char_start": citation.char_start,
                                 "char_end": citation.char_end,
                                 "context_before": citation.context_before if hasattr(citation, 'context_before') else "",
-                                "context_after": citation.context_after if hasattr(citation, 'context_after') else ""
+                                "context_after": citation.context_after if hasattr(citation, 'context_after') else "",
+                                "chunk_id": citation.chunk_id if hasattr(citation, 'chunk_id') else None  # Уникальный ID для точной навигации
                             })
                         
                         logger.info(f"[Citations] Generated {len(citations_data)} structured citations")

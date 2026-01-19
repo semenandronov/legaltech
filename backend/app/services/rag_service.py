@@ -1325,15 +1325,16 @@ class RAGService:
         history: Optional[List[Dict]] = None
     ) -> "AnswerWithCitations":
         """
-        Генерирует ответ со структурированными цитатами.
+        Генерирует ответ со структурированными цитатами (Harvey/Lexis+ style).
         
-        Использует простой подход:
-        1. Запрашивает у GigaChat ответ с маркерами [N] и цитатами
-        2. Сами вычисляем координаты char_start/char_end через поиск текста
+        КЛЮЧЕВОЙ ПРИНЦИП: chunk_id-based citations
+        1. Каждый chunk имеет уникальный chunk_id с точными координатами
+        2. ИИ ссылается на chunk_id, мы заменяем на [N] для красоты
+        3. При клике - открываем документ по СОХРАНЁННЫМ координатам chunk
         
         Args:
             query: Запрос пользователя
-            documents: Список Document объектов с метаданными
+            documents: Список Document объектов с метаданными (включая chunk_id)
             history: Опциональная история чата
             
         Returns:
@@ -1342,209 +1343,209 @@ class RAGService:
         from app.services.langchain_agents.schemas.citation_schema import AnswerWithCitations, EnhancedCitation
         from app.services.llm_factory import create_llm
         from langchain_core.messages import HumanMessage, SystemMessage
+        import re
         
-        # Подготовка контекста - упрощенный формат
+        # ========== ЭТАП 1: Подготовка chunk_id-based контекста ==========
+        # Собираем информацию о каждом chunk с его уникальным ID
+        chunk_map = {}  # chunk_id -> полная информация о chunk
         context_parts = []
-        doc_info = []  # Сохраняем инфо о документах для поиска координат
         
         for i, doc in enumerate(documents):
             content = doc.page_content
             metadata = doc.metadata
+            
+            # Получаем или генерируем chunk_id
+            chunk_id = metadata.get("chunk_id")
+            if not chunk_id:
+                # Fallback: генерируем chunk_id если его нет (для старых документов)
+                from app.services.legal_splitter import generate_chunk_id
+                doc_id = metadata.get("doc_id", metadata.get("source_id", f"doc_{i}"))
+                chunk_index = metadata.get("chunk_index", i)
+                char_start = metadata.get("char_start", 0)
+                chunk_id = generate_chunk_id(str(doc_id), chunk_index, char_start)
+            
             source_file = metadata.get("source_file", f"doc_{i+1}")
             source_page = metadata.get("source_page", 1)
-            doc_id = metadata.get("source_id", metadata.get("doc_id", f"doc_{i+1}"))
+            doc_id = metadata.get("doc_id", metadata.get("source_id", f"doc_{i+1}"))
+            char_start = metadata.get("char_start", 0)
+            char_end = metadata.get("char_end", len(content))
             
-            doc_info.append({
-                "index": i + 1,
-                "source_id": doc_id,
+            # Сохраняем полную информацию о chunk
+            chunk_map[chunk_id] = {
+                "index": i + 1,  # Порядковый номер для отображения [1], [2], etc.
+                "chunk_id": chunk_id,
+                "doc_id": doc_id,
                 "file_name": source_file,
                 "page": source_page,
                 "content": content,
-                "char_start": metadata.get("char_start", 0),
-                "char_end": metadata.get("char_end", len(content))
-            })
+                "char_start": char_start,
+                "char_end": char_end,
+            }
             
-            context_parts.append(f"[Источник {i+1}] {source_file}, стр. {source_page}:\n{content[:2000]}")
+            # Контекст для LLM с chunk_id
+            # Используем короткий формат [CHUNK:xxx] для экономии токенов
+            context_parts.append(
+                f"[CHUNK:{chunk_id}] {source_file}, стр. {source_page}:\n{content[:2000]}"
+            )
         
         context = "\n\n".join(context_parts)
-        num_docs = len(doc_info)
+        num_chunks = len(chunk_map)
+        chunk_ids_list = list(chunk_map.keys())
         
-        # Промпт с четкими инструкциями для inline citations (Harvey/Perplexity style)
+        logger.info(f"[StructuredCitations] Prepared {num_chunks} chunks with IDs: {chunk_ids_list[:5]}...")
+        
+        # ========== ЭТАП 2: Промпт с chunk_id-based citations ==========
         prompt = f"""Ты юридический помощник. Ответь на вопрос, используя информацию из документов.
 
-ИСТОЧНИКИ: {', '.join([f'[{i+1}]' for i in range(min(num_docs, 8))])}
+ВАЖНО - ФОРМАТ ССЫЛОК:
+Каждый документ имеет уникальный ID в формате [CHUNK:xxx]. 
+Ставь ссылки СРАЗУ после фактов, используя ТОЧНЫЙ ID из контекста.
 
-ФОРМАТ ОТВЕТА - КРИТИЧЕСКИ ВАЖНО:
-1. Пиши СВЯЗНЫЙ, ПЛАВНЫЙ текст - НЕ список отдельных фактов
-2. Ссылку [N] ставь СРАЗУ после факта, БЕЗ переноса строки
-3. Ссылка должна быть ЧАСТЬЮ предложения, не на отдельной строке
-4. Объединяй информацию из разных источников в единый нарратив
+ФОРМАТ ОТВЕТА:
+1. Пиши СВЯЗНЫЙ, ПЛАВНЫЙ текст
+2. Ссылку [CHUNK:xxx] ставь СРАЗУ после факта, БЕЗ переноса строки
+3. Используй ТОЧНЫЕ chunk_id из контекста выше
 
 ✅ ПРАВИЛЬНО:
-"Документ описывает систему управления юридическими делами[1], которая включает автоматическую классификацию документов[2] и отслеживание сроков[3]. Пользователи могут работать с хронологией событий[1] и анализировать судебную практику[4]."
+"Договор заключён на 5 лет[CHUNK:{chunk_ids_list[0] if chunk_ids_list else 'abc123'}]. Штраф составляет 0.1%[CHUNK:{chunk_ids_list[1] if len(chunk_ids_list) > 1 else 'def456'}]."
 
 ❌ НЕПРАВИЛЬНО:
-"Система классифицирует документы.
-[1]
-Пользователь просматривает документы.
-[2]"
-
-❌ НЕПРАВИЛЬНО:
-"- Факт 1 [1]
-- Факт 2 [2]
-- Факт 3 [3]"
+"Договор заключён на 5 лет.
+[1]"
 
 ДОКУМЕНТЫ:
 {context}
 
 ВОПРОС: {query}
 
-Дай СВЯЗНЫЙ ответ в виде плавного текста. Ссылки [N] должны быть ВНУТРИ предложений, сразу после соответствующих фактов."""
+Дай СВЯЗНЫЙ ответ. Ссылки [CHUNK:xxx] должны быть ВНУТРИ предложений."""
         
         llm = create_llm()
         try:
-            # Вызываем LLM напрямую без structured output (проще и надежнее)
             messages = [
-                SystemMessage(content="Ты эксперт-юрист. Отвечай связным текстом, интегрируя ссылки на источники прямо в предложения. Никогда не выноси ссылки на отдельные строки."),
+                SystemMessage(content="Ты эксперт-юрист. Отвечай связным текстом, интегрируя ссылки [CHUNK:xxx] прямо в предложения. Используй точные chunk_id из контекста."),
                 HumanMessage(content=prompt)
             ]
             
             response = llm.invoke(messages)
             answer_text = response.content if hasattr(response, 'content') else str(response)
             
-            logger.info(f"[StructuredCitations] Raw answer: {answer_text[:300]}...")
+            logger.info(f"[StructuredCitations] Raw answer with chunk_ids: {answer_text[:300]}...")
             
-            # ========== НАДЁЖНЫЙ ПОСТ-ПРОЦЕССИНГ CITATIONS (Harvey/Perplexity style) ==========
-            import re
+            # ========== ЭТАП 3: Пост-процессинг и маппинг chunk_id -> [N] ==========
             
-            # Шаг 0: Конвертируем ГОЛЫЕ числа в конце предложений в [N]
-            # "текст 12." -> "текст [12]."
-            # "текст 1 2." -> "текст [1][2]."
-            # Но НЕ трогаем числа внутри текста (даты, суммы и т.д.)
+            # Находим все упоминания [CHUNK:xxx] в ответе
+            chunk_refs = re.findall(r'\[CHUNK:([^\]]+)\]', answer_text)
+            unique_chunk_refs = []
+            seen = set()
+            for ref in chunk_refs:
+                if ref not in seen:
+                    unique_chunk_refs.append(ref)
+                    seen.add(ref)
             
-            # Паттерн: число(а) перед точкой/запятой в конце предложения или перед следующим предложением
-            # Ловим: "текст 12." или "текст 1 2." или "текст 12 1."
-            def convert_trailing_numbers(text):
-                # Ищем паттерн: пробел + одно или несколько чисел (1-2 цифры) + пунктуация
-                # Не трогаем числа > 20 (скорее всего это не ссылки)
-                result = text
-                
-                # Паттерн для чисел в конце предложения перед точкой
-                # " 12." или " 1 2." -> " [12]." или " [1][2]."
-                def replace_nums_before_punct(match):
-                    nums_str = match.group(1)
-                    punct = match.group(2)
-                    nums = re.findall(r'\d+', nums_str)
-                    # Фильтруем только валидные номера (1-20)
-                    valid_nums = [n for n in nums if 1 <= int(n) <= 20]
-                    if valid_nums:
-                        citations = ''.join(f'[{n}]' for n in valid_nums)
-                        return f' {citations}{punct}'
-                    return match.group(0)
-                
-                # Числа перед точкой/запятой/скобкой
-                result = re.sub(r'\s+((?:\d{1,2}\s*)+)([.,:;!?)])', replace_nums_before_punct, result)
-                
-                # Числа в конце строки
-                def replace_nums_end(match):
-                    nums_str = match.group(1)
-                    nums = re.findall(r'\d+', nums_str)
-                    valid_nums = [n for n in nums if 1 <= int(n) <= 20]
-                    if valid_nums:
-                        citations = ''.join(f'[{n}]' for n in valid_nums)
-                        return f' {citations}'
-                    return match.group(0)
-                
-                result = re.sub(r'\s+((?:\d{1,2}\s*)+)$', replace_nums_end, result, flags=re.MULTILINE)
-                
-                return result
+            logger.info(f"[StructuredCitations] Found chunk references: {unique_chunk_refs}")
             
-            answer_text = convert_trailing_numbers(answer_text)
-            
-            # Шаг 1: Нормализуем ВСЕ форматы ссылок в единый [N]
-            # [1, 2, 3] -> [1][2][3]
-            def expand_multi_citations(match):
-                nums = re.findall(r'\d+', match.group(0))
-                return ''.join(f'[{n}]' for n in nums)
-            
-            answer_text = re.sub(r'\[[\d,\s]+\]', expand_multi_citations, answer_text)
-            
-            # Шаг 2: Убираем пробелы внутри скобок [1 ] -> [1]
-            answer_text = re.sub(r'\[\s*(\d+)\s*\]', r'[\1]', answer_text)
-            
-            # Шаг 3: Убираем дубликаты подряд [1][1] -> [1]
-            answer_text = re.sub(r'(\[\d+\])\1+', r'\1', answer_text)
-            
-            # Шаг 4: Нормализуем номера (если > num_docs, приводим к валидным)
-            def normalize_citation(match):
-                num = int(match.group(1))
-                if num > len(doc_info) or num < 1:
-                    # Приводим к валидному диапазону
-                    if len(doc_info) > 0:
-                        normalized = ((num - 1) % len(doc_info)) + 1
-                        return f'[{normalized}]'
-                    return ''  # Удаляем если нет документов
-                return match.group(0)
-            
-            answer_text = re.sub(r'\[(\d+)\]', normalize_citation, answer_text)
-            
-            # Шаг 5: Убираем ссылки на отдельных строках (переносим к предыдущему предложению)
-            # "\n[1]" или ".\n[1]" -> ".[1]"
-            answer_text = re.sub(r'([.!?])\s*\n\s*(\[\d+\])', r'\1\2', answer_text)
-            answer_text = re.sub(r'\n\s*(\[\d+\])', r'\1', answer_text)
-            
-            # Шаг 6: Убираем лишние переносы строк
-            answer_text = re.sub(r'\n{3,}', '\n\n', answer_text)
-            
-            logger.info(f"[StructuredCitations] Normalized answer: {answer_text[:300]}...")
-            
-            # Собираем уникальные маркеры для создания citations
-            citation_markers = re.findall(r'\[(\d+)\]', answer_text)
-            unique_markers = sorted(set(int(m) for m in citation_markers))
-            
+            # Создаём маппинг chunk_id -> номер [N]
+            chunk_to_number = {}
             citations = []
-            for marker in unique_markers:
-                if marker <= len(doc_info):
-                    doc = doc_info[marker - 1]
-                    content = doc["content"]
+            
+            for idx, chunk_ref in enumerate(unique_chunk_refs, 1):
+                # Ищем chunk в нашей карте (точное совпадение или частичное)
+                matched_chunk = None
+                for chunk_id, chunk_info in chunk_map.items():
+                    if chunk_ref == chunk_id or chunk_ref in chunk_id or chunk_id in chunk_ref:
+                        matched_chunk = chunk_info
+                        break
+                
+                if matched_chunk:
+                    chunk_to_number[chunk_ref] = idx
+                    content = matched_chunk["content"]
                     
-                    # Используем весь chunk как цитату (это то, что реально использовалось)
-                    # Ограничиваем для отображения, но координаты берем реальные
+                    # Создаём цитату с ТОЧНЫМИ координатами из chunk
                     quote = content[:300].strip()
                     if len(content) > 300:
                         quote += "..."
                     
-                    # Реальные координаты chunk'а в документе
-                    char_start = doc["char_start"]
-                    char_end = doc["char_end"]
-                    
-                    # Если координаты не заданы, используем длину контента
-                    if char_start == 0 and char_end == len(content):
-                        # Координаты по умолчанию - весь chunk
-                        char_end = len(content)
-                    
                     citations.append(EnhancedCitation(
-                        source_id=str(doc["source_id"]),
-                        file_name=doc["file_name"],
-                        page=doc["page"],
+                        source_id=str(matched_chunk["doc_id"]),
+                        file_name=matched_chunk["file_name"],
+                        page=matched_chunk["page"],
                         quote=quote,
-                        char_start=char_start,
-                        char_end=char_end,
-                        context_before=content[:50] if char_start > 0 else "",
-                        context_after=content[-50:] if len(content) > 50 else ""
+                        char_start=matched_chunk["char_start"],  # ТОЧНЫЕ координаты!
+                        char_end=matched_chunk["char_end"],      # ТОЧНЫЕ координаты!
+                        context_before=content[:50] if matched_chunk["char_start"] > 0 else "",
+                        context_after=content[-50:] if len(content) > 50 else "",
+                        chunk_id=matched_chunk["chunk_id"]  # Уникальный ID для навигации
                     ))
+                    
+                    logger.info(f"[StructuredCitations] Mapped {chunk_ref} -> [{idx}], "
+                               f"char_start={matched_chunk['char_start']}, char_end={matched_chunk['char_end']}")
+                else:
+                    # Chunk не найден - используем fallback номер
+                    chunk_to_number[chunk_ref] = idx
+                    logger.warning(f"[StructuredCitations] Chunk {chunk_ref} not found in map, using index {idx}")
             
-            logger.info(f"[StructuredCitations] Created {len(citations)} citations from markers: {unique_markers}")
+            # Заменяем [CHUNK:xxx] на [N] в тексте
+            def replace_chunk_ref(match):
+                chunk_ref = match.group(1)
+                num = chunk_to_number.get(chunk_ref, 1)
+                return f"[{num}]"
+            
+            answer_text = re.sub(r'\[CHUNK:([^\]]+)\]', replace_chunk_ref, answer_text)
+            
+            # ========== ЭТАП 4: Fallback - если LLM не использовал chunk_id ==========
+            # Проверяем, есть ли обычные [N] ссылки (LLM мог проигнорировать инструкции)
+            if not citations and re.search(r'\[\d+\]', answer_text):
+                logger.info("[StructuredCitations] Fallback: LLM used [N] format instead of chunk_id")
+                
+                # Нормализуем обычные ссылки
+                answer_text = re.sub(r'\[[\d,\s]+\]', lambda m: ''.join(f'[{n}]' for n in re.findall(r'\d+', m.group(0))), answer_text)
+                answer_text = re.sub(r'\[\s*(\d+)\s*\]', r'[\1]', answer_text)
+                answer_text = re.sub(r'(\[\d+\])\1+', r'\1', answer_text)
+                
+                # Собираем citations из обычных номеров
+                citation_markers = re.findall(r'\[(\d+)\]', answer_text)
+                unique_markers = sorted(set(int(m) for m in citation_markers))
+                
+                for marker in unique_markers:
+                    if marker <= num_chunks:
+                        chunk_id = chunk_ids_list[marker - 1]
+                        chunk_info = chunk_map[chunk_id]
+                        content = chunk_info["content"]
+                        
+                        quote = content[:300].strip()
+                        if len(content) > 300:
+                            quote += "..."
+                        
+                        citations.append(EnhancedCitation(
+                            source_id=str(chunk_info["doc_id"]),
+                            file_name=chunk_info["file_name"],
+                            page=chunk_info["page"],
+                            quote=quote,
+                            char_start=chunk_info["char_start"],
+                            char_end=chunk_info["char_end"],
+                            context_before=content[:50] if chunk_info["char_start"] > 0 else "",
+                            context_after=content[-50:] if len(content) > 50 else "",
+                            chunk_id=chunk_id  # Уникальный ID для навигации
+                        ))
+            
+            # ========== ЭТАП 5: Финальная очистка ==========
+            # Убираем ссылки на отдельных строках
+            answer_text = re.sub(r'([.!?])\s*\n\s*(\[\d+\])', r'\1\2', answer_text)
+            answer_text = re.sub(r'\n\s*(\[\d+\])', r'\1', answer_text)
+            answer_text = re.sub(r'\n{3,}', '\n\n', answer_text)
+            
+            logger.info(f"[StructuredCitations] Final answer: {answer_text[:300]}...")
+            logger.info(f"[StructuredCitations] Created {len(citations)} citations with precise coordinates")
             
             return AnswerWithCitations(
                 answer=answer_text,
                 citations=citations,
-                confidence=0.8 if citations else 0.5
+                confidence=0.85 if citations else 0.5
             )
             
         except Exception as e:
             logger.error(f"Error in generate_with_structured_citations: {e}", exc_info=True)
-            # Fallback: возвращаем базовый ответ
             return AnswerWithCitations(
                 answer=f"Ошибка генерации ответа: {str(e)}",
                 citations=[],
