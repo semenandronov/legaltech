@@ -298,8 +298,11 @@ class AgenticPlanner:
         Returns:
             AgenticPlan с reasoning chain
         """
+        logger.info(f"AgenticPlanner.create_plan: available_tools={available_tools}, docs={len(documents)}")
+        
         # Если есть default_plan в definition, адаптируем его
         if workflow_definition and workflow_definition.default_plan:
+            logger.info("Using default_plan from workflow_definition")
             return self._adapt_default_plan(
                 workflow_definition.default_plan,
                 user_task,
@@ -459,6 +462,7 @@ class AgenticPlanner:
         
         LLM получает задачу и сам решает, какие параметры нужны для каждого инструмента.
         """
+        logger.info(f"_select_tools_with_llm: available_tools={available_tools}")
         file_ids = [d.get("id") for d in documents if d.get("id")]
         
         # Формируем описание инструментов
@@ -499,28 +503,32 @@ class AgenticPlanner:
                 priority=tool_data.get("priority", i + 1)
             ))
         
+        logger.info(f"LLM returned {len(tool_selections)} tools from response: {[ts.tool_name for ts in tool_selections]}")
+        
         # Проверяем, что все инструменты включены
         used_tools = {ts.tool_name for ts in tool_selections}
-        for tool_name in available_tools:
-            if tool_name not in used_tools:
-                # LLM пропустил инструмент — добавляем с базовыми параметрами
-                params = {}
-                if tool_name in ["summarize", "extract_entities", "rag", "playbook_check", "tabular_review"]:
-                    params["file_ids"] = file_ids
-                
-                tool_selections.append(ToolSelection(
-                    tool_name=tool_name,
-                    reason=f"Дополнительный анализ с помощью {tool_name}",
-                    params=params,
-                    expected_output="Результат анализа",
-                    priority=len(tool_selections) + 1
-                ))
+        missing_tools = [t for t in available_tools if t not in used_tools]
+        logger.info(f"Missing tools to add: {missing_tools}")
+        
+        for tool_name in missing_tools:
+            # LLM пропустил инструмент — добавляем с базовыми параметрами
+            params = {}
+            if tool_name in ["summarize", "extract_entities", "rag", "playbook_check", "tabular_review"]:
+                params["file_ids"] = file_ids
+            
+            tool_selections.append(ToolSelection(
+                tool_name=tool_name,
+                reason=f"Дополнительный анализ с помощью {tool_name}",
+                params=params,
+                expected_output="Результат анализа",
+                priority=len(tool_selections) + 1
+            ))
         
         # Парсим execution order
         parallel_groups = data.get("parallel_groups", [[ts.tool_name for ts in tool_selections]])
         success_criteria = data.get("success_criteria", ["Задача выполнена"])
         
-        logger.info(f"LLM generated plan with {len(tool_selections)} tools")
+        logger.info(f"Final plan with {len(tool_selections)} tools: {[ts.tool_name for ts in tool_selections]}")
         
         return (tool_selections, parallel_groups, success_criteria)
     
