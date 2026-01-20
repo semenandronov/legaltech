@@ -2,7 +2,7 @@
 from typing import List, Dict, Any, Optional, AsyncIterator
 from dataclasses import dataclass, field
 from sqlalchemy.orm import Session
-from app.models.workflow import WorkflowExecution, WorkflowStep, WorkflowDefinition
+from app.models.workflow import WorkflowExecution, WorkflowStep, WorkflowDefinition, WORKFLOW_TOOLS
 from app.services.workflows.planning_agent import ExecutionPlan, PlanStep, PlanningAgent
 from app.services.workflows.tool_registry import ToolRegistry, ToolResult
 from datetime import datetime
@@ -446,10 +446,14 @@ class ExecutionEngine:
                 message="Создание плана выполнения..."
             )
             
+            # Use definition's tools or all tools if empty/not specified
+            available_tools = definition.available_tools if definition.available_tools else [t["name"] for t in WORKFLOW_TOOLS]
+            logger.info(f"Execution planning with available_tools: {available_tools}")
+            
             plan = await self.planning_agent.create_plan(
                 user_task=execution.user_task,
                 available_documents=documents,
-                available_tools=definition.available_tools or [],
+                available_tools=available_tools,
                 workflow_definition=definition
             )
             

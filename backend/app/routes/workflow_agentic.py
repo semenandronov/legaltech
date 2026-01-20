@@ -280,8 +280,14 @@ async def create_plan(
             files = db.query(File).filter(File.case_id == request.case_id).all()
             documents = [{"id": f.id, "filename": f.filename, "type": f.file_type} for f in files]
         
-        # Available tools
-        available_tools = definition.available_tools if definition else [t["name"] for t in WORKFLOW_TOOLS]
+        # Available tools - use definition's tools or all tools if empty/not specified
+        if definition and definition.available_tools:
+            available_tools = definition.available_tools
+        else:
+            available_tools = [t["name"] for t in WORKFLOW_TOOLS]
+        
+        logger = logging.getLogger(__name__)
+        logger.info(f"Planning with available_tools: {available_tools}")
         
         # Create plan
         planning_agent = PlanningAgent()
