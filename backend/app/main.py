@@ -11,17 +11,19 @@ import logging
 import sys
 from datetime import datetime
 from app.config import config
-from app.routes import upload, chat, auth, cases, dashboard, analysis, reports, settings, websocket, tabular_review, prompts, workflows, folders, review_table, assistant_chat, assistant_chat_v2, workflow_execution, plan_execution, metrics, document_editor, playbooks, workflow_agentic
+from app.routes import upload, chat, auth, cases, dashboard, analysis, reports, settings, websocket, tabular_review, prompts, workflows, folders, review_table, assistant_chat, assistant_chat_v2, workflow_execution, plan_execution, metrics, document_editor, playbooks, workflow_agentic, health
 from app.utils.database import init_db
 
+# Core modules
+from app.core.errors import register_exception_handlers
+from app.core.logging import setup_logging, RequestLoggingMiddleware
+from app.core.rate_limiter import RateLimitMiddleware
+
 # Configure structured logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - [%(filename)s:%(lineno)d] - %(message)s',
-    datefmt='%Y-%m-%d %H:%M:%S',
-    handlers=[
-        logging.StreamHandler(sys.stdout)
-    ]
+is_production = os.getenv("ENVIRONMENT", "development") == "production"
+setup_logging(
+    level=os.getenv("LOG_LEVEL", "INFO"),
+    json_format=is_production
 )
 
 logger = logging.getLogger(__name__)
@@ -186,12 +188,11 @@ app.include_router(metrics.router, prefix="/api/metrics", tags=["metrics"])
 app.include_router(document_editor.router, prefix="/api/documents-editor", tags=["document-editor"])
 # Playbooks router (all endpoints unified in one router with correct ordering)
 app.include_router(playbooks.router, prefix="/api", tags=["playbooks"])
+# Health endpoints (includes detailed health checks and metrics)
+app.include_router(health.router, tags=["health"])
 
-
-@app.get("/api/health")
-async def health():
-    """Health check endpoint"""
-    return {"status": "ok"}
+# Register custom exception handlers
+register_exception_handlers(app)
 
 
 # Debug endpoint to check routes

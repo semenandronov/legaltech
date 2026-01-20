@@ -32,6 +32,7 @@ from app.services.chat.orchestrator import ChatOrchestrator, ChatRequest, get_ch
 from app.services.chat.rag_handler import RAGHandler
 from app.services.chat.draft_handler import DraftHandler
 from app.services.chat.editor_handler import EditorHandler
+from app.services.chat.agent_handler import AgentHandler
 from app.services.chat.metrics import ChatMetrics, get_metrics, MetricTimer, Timer
 
 __all__ = [
@@ -59,6 +60,7 @@ __all__ = [
     "RAGHandler",
     "DraftHandler",
     "EditorHandler",
+    "AgentHandler",
     # Metrics
     "ChatMetrics",
     "get_metrics",

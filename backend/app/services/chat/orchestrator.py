@@ -18,6 +18,8 @@ from app.services.chat.history_service import ChatHistoryService
 from app.services.chat.rag_handler import RAGHandler
 from app.services.chat.draft_handler import DraftHandler
 from app.services.chat.editor_handler import EditorHandler
+from app.services.chat.agent_handler import AgentHandler
+from app.services.chat.metrics import get_metrics, MetricTimer
 from app.services.rag_service import RAGService
 from app.services.document_processor import DocumentProcessor
 from app.models.case import Case
@@ -60,7 +62,12 @@ class ChatOrchestrator:
     - DraftHandler: создание документов
     - EditorHandler: редактирование документов
     - RAGHandler: ответы на вопросы
-    - AgentHandler: выполнение сложных задач (TODO)
+    - AgentHandler: выполнение сложных задач
+    
+    Интегрирует:
+    - Метрики производительности
+    - Structured logging
+    - Error handling
     """
     
     def __init__(
@@ -101,6 +108,10 @@ class ChatOrchestrator:
         self.rag_handler = RAGHandler(self.rag_service, db)
         self.draft_handler = DraftHandler(db)
         self.editor_handler = EditorHandler(self.rag_service, db)
+        self.agent_handler = AgentHandler(self.rag_service, db)
+        
+        # Метрики
+        self.metrics = get_metrics()
         
         logger.info("ChatOrchestrator initialized")
     
@@ -114,10 +125,20 @@ class ChatOrchestrator:
         Yields:
             SSE события (строки в формате "data: {...}\n\n")
         """
+        import time
+        import json
+        
+        start_time = time.time()
+        mode = self._determine_mode(request)
+        
         try:
+            # Записываем метрику запроса
+            self.metrics.record_request(mode)
+            
             # Проверяем доступ к делу
             case = self._verify_case_access(request.case_id, request.current_user)
             if not case:
+                self.metrics.record_error(f"{mode}:case_not_found")
                 yield SSESerializer.error("Дело не найдено")
                 return
             
@@ -139,87 +160,10 @@ class ChatOrchestrator:
             full_response = ""
             
             try:
-                if request.draft_mode:
-                    # Draft mode: создание документов
-                    chat_history = self.history_service.get_history_as_text(
-                        request.case_id, session_id
-                    )
-                    
-                    async for event in self.draft_handler.handle(
-                        case_id=request.case_id,
-                        question=request.question,
-                        current_user=request.current_user,
-                        chat_history=chat_history,
-                        template_file_id=request.template_file_id,
-                        template_file_content=request.template_file_content
-                    ):
-                        yield event
-                        # Извлекаем текст для сохранения
-                        if "textDelta" in event:
-                            import json
-                            try:
-                                data = json.loads(event.replace("data: ", "").strip())
-                                if "textDelta" in data:
-                                    full_response += data["textDelta"]
-                            except:
-                                pass
-                
-                elif request.document_context:
-                    # Editor mode: редактирование документов
-                    async for event in self.editor_handler.handle(
-                        case_id=request.case_id,
-                        question=request.question,
-                        current_user=request.current_user,
-                        document_id=request.document_id or "",
-                        document_context=request.document_context,
-                        selected_text=request.selected_text
-                    ):
-                        yield event
-                        if "textDelta" in event:
-                            import json
-                            try:
-                                data = json.loads(event.replace("data: ", "").strip())
-                                if "textDelta" in data:
-                                    full_response += data["textDelta"]
-                            except:
-                                pass
-                
-                else:
-                    # Проверяем наличие документов (для обычного режима)
-                    from app.models.case import File as FileModel
-                    file_count = self.db.query(FileModel).filter(
-                        FileModel.case_id == request.case_id
-                    ).count()
-                    
-                    if file_count == 0:
-                        yield SSESerializer.error(
-                            "В деле нет загруженных документов. Пожалуйста, сначала загрузите документы."
-                        )
-                        return
-                    
-                    # RAG mode: ответы на вопросы
-                    chat_history = self.history_service.get_history_for_context(
-                        request.case_id, session_id
-                    )
-                    
-                    async for event in self.rag_handler.handle(
-                        case_id=request.case_id,
-                        question=request.question,
-                        current_user=request.current_user,
-                        chat_history=chat_history,
-                        legal_research=request.legal_research,
-                        deep_think=request.deep_think,
-                        web_search=request.web_search
-                    ):
-                        yield event
-                        if "textDelta" in event:
-                            import json
-                            try:
-                                data = json.loads(event.replace("data: ", "").strip())
-                                if "textDelta" in data:
-                                    full_response += data["textDelta"]
-                            except:
-                                pass
+                async for event in self._route_to_handler(request, session_id):
+                    yield event
+                    # Извлекаем текст для сохранения
+                    full_response += self._extract_text_from_event(event)
                 
             finally:
                 # Сохраняем ответ в БД
@@ -228,11 +172,118 @@ class ChatOrchestrator:
                         message_id=assistant_placeholder.id,
                         content=full_response
                     )
-                    logger.info(f"[ChatOrchestrator] Response saved, length: {len(full_response)}")
+                
+                # Записываем метрику латентности
+                latency = time.time() - start_time
+                self.metrics.record_latency(mode, latency)
+                logger.info(f"[ChatOrchestrator] {mode} completed in {latency:.2f}s, response length: {len(full_response)}")
                 
         except Exception as e:
-            logger.error(f"[ChatOrchestrator] Error: {e}", exc_info=True)
+            self.metrics.record_error(f"{mode}:exception")
+            logger.error(f"[ChatOrchestrator] Error in {mode}: {e}", exc_info=True)
             yield SSESerializer.error(str(e))
+    
+    def _determine_mode(self, request: ChatRequest) -> str:
+        """Определить режим обработки запроса"""
+        if request.draft_mode:
+            return "draft"
+        elif request.document_context:
+            return "editor"
+        else:
+            return "rag"
+    
+    async def _route_to_handler(
+        self,
+        request: ChatRequest,
+        session_id: str
+    ) -> AsyncGenerator[str, None]:
+        """Маршрутизация к соответствующему handler'у"""
+        
+        if request.draft_mode:
+            # Draft mode: создание документов
+            chat_history = self.history_service.get_history_as_text(
+                request.case_id, session_id
+            )
+            
+            async for event in self.draft_handler.handle(
+                case_id=request.case_id,
+                question=request.question,
+                current_user=request.current_user,
+                chat_history=chat_history,
+                template_file_id=request.template_file_id,
+                template_file_content=request.template_file_content
+            ):
+                yield event
+        
+        elif request.document_context:
+            # Editor mode: редактирование документов
+            async for event in self.editor_handler.handle(
+                case_id=request.case_id,
+                question=request.question,
+                current_user=request.current_user,
+                document_id=request.document_id or "",
+                document_context=request.document_context,
+                selected_text=request.selected_text
+            ):
+                yield event
+        
+        else:
+            # Проверяем наличие документов
+            from app.models.case import File as FileModel
+            file_count = self.db.query(FileModel).filter(
+                FileModel.case_id == request.case_id
+            ).count()
+            
+            if file_count == 0:
+                yield SSESerializer.error(
+                    "В деле нет загруженных документов. Пожалуйста, сначала загрузите документы."
+                )
+                return
+            
+            # Классифицируем запрос
+            classification = await self.classifier.classify(request.question)
+            self.metrics.record_classification(classification.label)
+            
+            if classification.is_task and classification.confidence >= 0.8:
+                # Agent mode: выполнение сложных задач
+                logger.info(f"[ChatOrchestrator] Routing to AgentHandler (confidence: {classification.confidence:.2f})")
+                
+                async for event in self.agent_handler.handle(
+                    case_id=request.case_id,
+                    question=request.question,
+                    current_user=request.current_user,
+                    auto_approve=False  # Требуем подтверждения плана
+                ):
+                    yield event
+            else:
+                # RAG mode: ответы на вопросы
+                chat_history = self.history_service.get_history_for_context(
+                    request.case_id, session_id
+                )
+                
+                async for event in self.rag_handler.handle(
+                    case_id=request.case_id,
+                    question=request.question,
+                    current_user=request.current_user,
+                    chat_history=chat_history,
+                    legal_research=request.legal_research,
+                    deep_think=request.deep_think,
+                    web_search=request.web_search
+                ):
+                    yield event
+    
+    def _extract_text_from_event(self, event: str) -> str:
+        """Извлечь текст из SSE события"""
+        import json
+        
+        if "textDelta" not in event:
+            return ""
+        
+        try:
+            data = json.loads(event.replace("data: ", "").strip())
+            return data.get("textDelta", "")
+        except:
+            return ""
     
     def _verify_case_access(self, case_id: str, user: User) -> Optional[Case]:
         """
