@@ -88,25 +88,24 @@ class TabularReviewTool(BaseTool):
                 )
                 column_ids.append(column.id)
             
-            # Populate the table - use batch extraction (async method)
-            try:
-                import asyncio
-                # run_extraction is async, need to await it
-                extraction_result = await service.run_extraction(review_id, user_id)
-                logger.info(f"Extraction completed: {extraction_result.get('extracted_count', 0)} cells")
-            except Exception as e:
-                logger.warning(f"Batch extraction failed: {e}, trying individual extraction")
-                # Fallback to individual column extraction
-                for column_id in column_ids:
-                    try:
-                        await service.run_column_extraction(review_id, column_id, user_id)
-                    except Exception as col_e:
-                        logger.warning(f"Column extraction failed: {col_e}")
+            # Start extraction in background - don't wait for it to complete
+            # This prevents workflow from hanging on large document sets with rate limiting
+            import asyncio
             
-            # Get results using get_table_data
+            async def run_extraction_background():
+                """Run extraction in background task"""
+                try:
+                    extraction_result = await service.run_extraction(review_id, user_id)
+                    logger.info(f"Background extraction completed: {extraction_result.get('extracted_count', 0)} cells for review {review_id}")
+                except Exception as e:
+                    logger.error(f"Background extraction failed for review {review_id}: {e}")
+            
+            # Schedule background task - don't await it
+            asyncio.create_task(run_extraction_background())
+            logger.info(f"Started background extraction for review {review_id} with {len(column_ids)} columns")
+            
+            # Get current row count from selected files
             review_data = service.get_table_data(review_id, user_id)
-            
-            # Count rows (documents)
             row_count = review_data.get("row_count", 0)
             
             return ToolResult(
@@ -115,13 +114,15 @@ class TabularReviewTool(BaseTool):
                     "review_id": review_id,
                     "columns": column_ids,
                     "row_count": row_count,
-                    "review_name": review_name
+                    "review_name": review_name,
+                    "extraction_status": "in_progress"
                 },
-                output_summary=f"Создана таблица '{review_name}' с {len(column_ids)} колонками и {row_count} строками",
+                output_summary=f"Создана таблица '{review_name}' с {len(column_ids)} колонками для {row_count} документов. Извлечение данных запущено в фоне.",
                 artifacts=[{
                     "type": "tabular_review",
                     "id": review_id,
-                    "name": review_name
+                    "name": review_name,
+                    "note": "Извлечение данных выполняется в фоновом режиме. Откройте таблицу для просмотра результатов."
                 }]
             )
             
