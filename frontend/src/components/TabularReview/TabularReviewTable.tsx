@@ -358,6 +358,60 @@ export const TabularReviewTable = React.memo(({ reviewId, tableData, onTableData
       meta: {
         columnLabel: col.column_label, // Store column label in meta for dropdown
       },
+      // Custom sorting function for date columns and cells with cell_value
+      sortingFn: (rowA, rowB, columnId) => {
+        const cellA: TabularCell | undefined = rowA.getValue(columnId)
+        const cellB: TabularCell | undefined = rowB.getValue(columnId)
+        
+        const valueA = cellA?.cell_value || ""
+        const valueB = cellB?.cell_value || ""
+        
+        // Try to parse as dates if column type is date or column label contains date keywords
+        const isDateColumn = col.column_type === 'date' || 
+          col.column_label.toLowerCase().includes('дат') ||
+          col.column_label.toLowerCase().includes('date') ||
+          col.column_label.toLowerCase().includes('срок')
+        
+        if (isDateColumn) {
+          // Try multiple date formats
+          const parseDate = (str: string): number => {
+            if (!str || str === '-' || str === 'N/A') return 0
+            
+            // Try DD.MM.YYYY format
+            const dotMatch = str.match(/(\d{1,2})\.(\d{1,2})\.(\d{4})/)
+            if (dotMatch) {
+              return new Date(parseInt(dotMatch[3]), parseInt(dotMatch[2]) - 1, parseInt(dotMatch[1])).getTime()
+            }
+            
+            // Try YYYY-MM-DD format
+            const isoMatch = str.match(/(\d{4})-(\d{2})-(\d{2})/)
+            if (isoMatch) {
+              return new Date(parseInt(isoMatch[1]), parseInt(isoMatch[2]) - 1, parseInt(isoMatch[3])).getTime()
+            }
+            
+            // Try to extract any date-like pattern
+            const anyDateMatch = str.match(/(\d{1,2})[\.\/\-](\d{1,2})[\.\/\-](\d{2,4})/)
+            if (anyDateMatch) {
+              const year = anyDateMatch[3].length === 2 ? 2000 + parseInt(anyDateMatch[3]) : parseInt(anyDateMatch[3])
+              return new Date(year, parseInt(anyDateMatch[2]) - 1, parseInt(anyDateMatch[1])).getTime()
+            }
+            
+            // Fallback to Date.parse
+            const parsed = Date.parse(str)
+            return isNaN(parsed) ? 0 : parsed
+          }
+          
+          const dateA = parseDate(valueA)
+          const dateB = parseDate(valueB)
+          
+          if (dateA !== 0 || dateB !== 0) {
+            return dateA - dateB
+          }
+        }
+        
+        // Default string comparison
+        return valueA.localeCompare(valueB, 'ru')
+      },
       header: ({ column }) => {
         const isPinned = column.getIsPinned() === 'left'
         const sortDirection = column.getIsSorted() === false ? null : (column.getIsSorted() === "asc" ? "asc" : "desc")
@@ -972,13 +1026,18 @@ export const TabularReviewTable = React.memo(({ reviewId, tableData, onTableData
           Показано {table.getRowModel().rows.length} из {table.getFilteredRowModel().rows.length} строк
         </Typography>
         <Stack direction="row" spacing={2} alignItems="center">
-          <FormControl size="small" sx={{ minWidth: 120 }}>
+          <FormControl size="small" sx={{ minWidth: 140 }}>
             <InputLabel>Строк на странице</InputLabel>
             <Select
               value={table.getState().pagination.pageSize}
               label="Строк на странице"
               onChange={(e) => {
-                table.setPageSize(Number(e.target.value))
+                const value = e.target.value
+                if (value === 'all') {
+                  table.setPageSize(tableRows.length || 1000)
+                } else {
+                  table.setPageSize(Number(value))
+                }
               }}
             >
               {[10, 25, 50, 100].map((pageSize) => (
@@ -986,16 +1045,19 @@ export const TabularReviewTable = React.memo(({ reviewId, tableData, onTableData
                   {pageSize}
                 </MenuItem>
               ))}
+              <MenuItem value="all">Все</MenuItem>
             </Select>
           </FormControl>
-          <Pagination
-            count={table.getPageCount()}
-            page={table.getState().pagination.pageIndex + 1}
-            onChange={(_, page) => table.setPageIndex(page - 1)}
-            color="primary"
-            showFirstButton
-            showLastButton
-          />
+          {table.getPageCount() > 1 && (
+            <Pagination
+              count={table.getPageCount()}
+              page={table.getState().pagination.pageIndex + 1}
+              onChange={(_, page) => table.setPageIndex(page - 1)}
+              color="primary"
+              showFirstButton
+              showLastButton
+            />
+          )}
         </Stack>
       </Stack>
       

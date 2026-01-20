@@ -187,3 +187,44 @@ export const createWorkflowResultChatMessage = (result: WorkflowResultData) => {
   }
 }
 
+/**
+ * Сохранить результат workflow как сообщение в истории чата на сервере
+ */
+export const saveWorkflowMessageToHistory = async (result: WorkflowResultData): Promise<{ success: boolean; session_id?: string }> => {
+  try {
+    const token = localStorage.getItem('access_token')
+    if (!token) {
+      console.error('No access token found')
+      return { success: false }
+    }
+
+    const { getApiUrl } = await import('./api')
+    
+    const response = await fetch(getApiUrl('/api/assistant/chat/workflow-message'), {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${token}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        case_id: result.case_id,
+        content: formatWorkflowResultMessage(result),
+        workflow_id: result.workflow_id,
+        workflow_name: result.workflow_name,
+        artifacts: result.artifacts,
+      }),
+    })
+
+    if (!response.ok) {
+      console.error('Failed to save workflow message:', response.status)
+      return { success: false }
+    }
+
+    const data = await response.json()
+    return { success: true, session_id: data.session_id }
+  } catch (error) {
+    console.error('Error saving workflow message to history:', error)
+    return { success: false }
+  }
+}
+

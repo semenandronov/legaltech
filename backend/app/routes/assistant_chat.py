@@ -1414,6 +1414,67 @@ async def get_assistant_chat_history(
     }
 
 
+class SaveWorkflowMessageRequest(BaseModel):
+    """Request model for saving workflow result as a chat message"""
+    case_id: str = Field(..., description="Идентификатор дела")
+    content: str = Field(..., description="Содержимое сообщения")
+    workflow_id: Optional[str] = Field(None, description="Идентификатор workflow")
+    workflow_name: Optional[str] = Field(None, description="Название workflow")
+    artifacts: Optional[dict] = Field(None, description="Артефакты workflow (таблицы, документы и т.д.)")
+
+
+@router.post("/api/assistant/chat/workflow-message")
+async def save_workflow_message(
+    request: SaveWorkflowMessageRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """
+    Save workflow result as a chat message in history.
+    
+    This endpoint is called after workflow completion to persist the result
+    in chat history so it appears when user returns to chat.
+    """
+    import uuid
+    
+    # Check if case exists and verify ownership
+    case = db.query(Case).filter(
+        Case.id == request.case_id,
+        Case.user_id == current_user.id
+    ).first()
+    if not case:
+        raise HTTPException(status_code=404, detail="Дело не найдено")
+    
+    try:
+        # Generate new session_id for workflow result
+        session_id = f"workflow-{request.workflow_id or uuid.uuid4()}"
+        
+        # Save assistant message with workflow result
+        message_id = str(uuid.uuid4())
+        chat_message = ChatMessage(
+            id=message_id,
+            case_id=request.case_id,
+            role="assistant",
+            content=request.content,
+            source_references=request.artifacts,  # Store artifacts as source_references
+            session_id=session_id
+        )
+        db.add(chat_message)
+        db.commit()
+        
+        logger.info(f"Workflow message saved to DB with id: {message_id}, session: {session_id}")
+        
+        return {
+            "success": True,
+            "message_id": message_id,
+            "session_id": session_id
+        }
+    except Exception as e:
+        db.rollback()
+        logger.error(f"Error saving workflow message: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Failed to save workflow message")
+
+
 class HumanFeedbackResponseRequest(BaseModel):
     """Request model for submitting human feedback response"""
     request_id: str = Field(..., description="Идентификатор запроса обратной связи")

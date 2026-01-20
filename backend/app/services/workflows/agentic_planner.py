@@ -511,10 +511,8 @@ class AgenticPlanner:
         logger.info(f"Missing tools to add: {missing_tools}")
         
         for tool_name in missing_tools:
-            # LLM пропустил инструмент — добавляем с базовыми параметрами
-            params = {}
-            if tool_name in ["summarize", "extract_entities", "rag", "playbook_check", "tabular_review"]:
-                params["file_ids"] = file_ids
+            # LLM пропустил инструмент — добавляем с параметрами на основе задачи
+            params = self._generate_params_for_tool(tool_name, original_task, file_ids)
             
             tool_selections.append(ToolSelection(
                 tool_name=tool_name,
@@ -532,6 +530,151 @@ class AgenticPlanner:
         
         return (tool_selections, parallel_groups, success_criteria)
     
+    def _generate_params_for_tool(
+        self,
+        tool_name: str,
+        user_task: str,
+        file_ids: List[str]
+    ) -> Dict[str, Any]:
+        """Генерировать параметры для инструмента на основе задачи"""
+        params = {}
+        
+        if tool_name in ["summarize", "extract_entities", "rag", "playbook_check", "tabular_review"]:
+            params["file_ids"] = file_ids
+        
+        user_task_lower = user_task.lower()
+        
+        if tool_name == "summarize":
+            params["style"] = "detailed"
+            params["focus"] = f"Сфокусируйся на: {user_task}"
+            
+        elif tool_name == "extract_entities":
+            # Определяем типы сущностей на основе задачи
+            entity_types = ["person", "organization"]
+            if any(w in user_task_lower for w in ["дат", "когда", "срок", "хронолог", "событ"]):
+                entity_types.append("date")
+            if any(w in user_task_lower for w in ["сумм", "плат", "цен", "денег", "руб", "долл"]):
+                entity_types.append("money")
+            if any(w in user_task_lower for w in ["адрес", "место", "где"]):
+                entity_types.append("address")
+            params["entity_types"] = entity_types
+            
+        elif tool_name == "rag":
+            params["query"] = user_task
+            params["top_k"] = 5
+            
+        elif tool_name == "tabular_review":
+            # Генерируем колонки на основе задачи
+            params["questions"] = self._generate_questions_for_task(user_task)
+            params["review_name"] = self._generate_review_name(user_task)
+            
+        elif tool_name == "playbook_check":
+            params["check_context"] = user_task
+            
+        elif tool_name == "document_draft":
+            params["context"] = user_task
+            params["document_type"] = "legal_document"
+            
+        elif tool_name == "legal_db":
+            params["query"] = user_task
+        
+        return params
+    
+    def _generate_questions_for_task(self, user_task: str) -> List[str]:
+        """Генерировать колонки для таблицы на основе задачи"""
+        user_task_lower = user_task.lower()
+        
+        # Хронология событий
+        if any(w in user_task_lower for w in ["хронолог", "timeline", "событи", "когда", "последовательн"]):
+            return [
+                "Дата события",
+                "Описание события", 
+                "Участники/Стороны",
+                "Источник (документ, страница)"
+            ]
+        
+        # Сравнение договоров
+        if any(w in user_task_lower for w in ["сравн", "различ", "отлич", "соответств"]):
+            return [
+                "Параметр",
+                "Значение в документе",
+                "Комментарий",
+                "Источник"
+            ]
+        
+        # Анализ рисков
+        if any(w in user_task_lower for w in ["риск", "проблем", "нарушен"]):
+            return [
+                "Тип риска",
+                "Описание риска",
+                "Уровень критичности",
+                "Рекомендации"
+            ]
+        
+        # Финансовые данные
+        if any(w in user_task_lower for w in ["сумм", "плат", "цен", "финанс", "денег"]):
+            return [
+                "Описание платежа/суммы",
+                "Сумма",
+                "Срок/Дата",
+                "Условия"
+            ]
+        
+        # Сроки и обязательства
+        if any(w in user_task_lower for w in ["срок", "обязательств", "дедлайн"]):
+            return [
+                "Обязательство",
+                "Срок исполнения",
+                "Ответственная сторона",
+                "Санкции за нарушение"
+            ]
+        
+        # Стороны и контрагенты
+        if any(w in user_task_lower for w in ["сторон", "контрагент", "участник"]):
+            return [
+                "Наименование стороны",
+                "Роль в документе",
+                "Реквизиты",
+                "Контактные данные"
+            ]
+        
+        # Извлечение данных (общее)
+        if any(w in user_task_lower for w in ["извлеч", "найти", "выдели", "определ"]):
+            # Пытаемся понять что именно нужно извлечь
+            return [
+                "Найденная информация",
+                "Контекст",
+                "Страница/Раздел",
+                "Комментарий"
+            ]
+        
+        # Дефолтные колонки для общего анализа
+        return [
+            "Ключевая информация",
+            "Детали",
+            "Источник",
+            "Примечание"
+        ]
+    
+    def _generate_review_name(self, user_task: str) -> str:
+        """Генерировать название таблицы на основе задачи"""
+        user_task_lower = user_task.lower()
+        
+        if any(w in user_task_lower for w in ["хронолог", "событи"]):
+            return "Хронология событий"
+        if any(w in user_task_lower for w in ["сравн", "различ"]):
+            return "Сравнительный анализ"
+        if any(w in user_task_lower for w in ["риск", "проблем"]):
+            return "Анализ рисков"
+        if any(w in user_task_lower for w in ["сумм", "плат", "финанс"]):
+            return "Финансовый анализ"
+        if any(w in user_task_lower for w in ["срок", "обязательств"]):
+            return "Сроки и обязательства"
+        if any(w in user_task_lower for w in ["сторон", "контрагент"]):
+            return "Стороны документа"
+        
+        return "Анализ документов"
+    
     def _select_tools_fallback(
         self,
         task_understanding: Dict[str, Any],
@@ -544,21 +687,7 @@ class AgenticPlanner:
         
         tool_selections = []
         for i, tool_name in enumerate(available_tools):
-            params = {}
-            if tool_name in ["summarize", "extract_entities", "rag", "playbook_check", "tabular_review"]:
-                params["file_ids"] = file_ids
-            
-            # Базовые параметры
-            if tool_name == "summarize":
-                params["style"] = "brief"
-                params["focus"] = f"Задача: {original_task}"
-            elif tool_name == "rag":
-                params["query"] = original_task
-                params["top_k"] = 5
-            elif tool_name == "tabular_review":
-                # Базовые колонки — LLM не доступен
-                params["questions"] = ["Ключевая информация", "Дата", "Участники", "Детали"]
-                params["review_name"] = "Анализ документов"
+            params = self._generate_params_for_tool(tool_name, original_task, file_ids)
             
             tool_selections.append(ToolSelection(
                 tool_name=tool_name,

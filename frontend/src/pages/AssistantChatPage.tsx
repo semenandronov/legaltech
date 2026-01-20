@@ -8,7 +8,8 @@ import { toast } from 'sonner'
 import { getCase } from '../services/api'
 import { 
   consumePendingWorkflowResult, 
-  createWorkflowResultChatMessage 
+  createWorkflowResultChatMessage,
+  saveWorkflowMessageToHistory
 } from '../services/workflowResultsService'
 
 const AssistantChatPage = () => {
@@ -62,7 +63,7 @@ const AssistantChatPage = () => {
   // Handle pending workflow result - показать результаты workflow в чате
   useEffect(() => {
     // Задержка чтобы chatRef успел инициализироваться
-    const timer = setTimeout(() => {
+    const timer = setTimeout(async () => {
       if (workflowResultProcessed.current) return
       
       const pendingResult = consumePendingWorkflowResult()
@@ -74,6 +75,16 @@ const AssistantChatPage = () => {
         
         const message = createWorkflowResultChatMessage(pendingResult)
         chatRef.current.addMessage(message)
+        
+        // Сохраняем сообщение в историю на сервере
+        try {
+          const saveResult = await saveWorkflowMessageToHistory(pendingResult)
+          if (saveResult.success) {
+            console.log('Workflow message saved to history, session:', saveResult.session_id)
+          }
+        } catch (error) {
+          console.error('Failed to save workflow message to history:', error)
+        }
         
         // Показываем уведомление
         if (pendingResult.status === 'completed') {
