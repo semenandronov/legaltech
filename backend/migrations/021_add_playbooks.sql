@@ -7,7 +7,7 @@ CREATE TABLE IF NOT EXISTS playbooks (
     name VARCHAR(255) NOT NULL UNIQUE,
     display_name VARCHAR(255) NOT NULL,
     description TEXT,
-    contract_type VARCHAR(100) NOT NULL,
+    document_type VARCHAR(100) NOT NULL,
     jurisdiction VARCHAR(100),
     is_system BOOLEAN DEFAULT FALSE,
     is_public BOOLEAN DEFAULT FALSE,
@@ -21,7 +21,7 @@ CREATE TABLE IF NOT EXISTS playbooks (
 
 -- Indexes for playbooks
 CREATE INDEX IF NOT EXISTS idx_playbooks_user_id ON playbooks(user_id);
-CREATE INDEX IF NOT EXISTS idx_playbooks_contract_type ON playbooks(contract_type);
+CREATE INDEX IF NOT EXISTS idx_playbooks_document_type ON playbooks(document_type);
 CREATE INDEX IF NOT EXISTS idx_playbooks_is_system ON playbooks(is_system);
 CREATE INDEX IF NOT EXISTS idx_playbooks_is_public ON playbooks(is_public);
 

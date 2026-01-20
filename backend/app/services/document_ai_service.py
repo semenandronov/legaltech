@@ -717,8 +717,12 @@ class DocumentAIService:
         edited_content = None
         suggestions = []
         
+        # Список структурированных изменений для UI
+        structured_edits = []
+        
         if is_edit_request and document_content:
             import re
+            import uuid
             # Новый подход: извлекаем команды НАЙТИ/ЗАМЕНИТЬ и применяем к оригиналу
             edit_blocks = re.findall(r'```edit\s*\n(.*?)\n```', answer, re.DOTALL)
             
@@ -734,6 +738,40 @@ class DocumentAIService:
                     if find_match and replace_match:
                         find_text = find_match.group(1).strip()
                         replace_text = replace_match.group(1).strip()
+                        
+                        # Извлекаем контекст (до 50 символов до и после)
+                        context_before = ""
+                        context_after = ""
+                        find_pos = document_content.find(find_text)
+                        if find_pos != -1:
+                            # Контекст до
+                            start_ctx = max(0, find_pos - 50)
+                            context_before = document_content[start_ctx:find_pos]
+                            # Убираем незавершенные слова в начале
+                            if start_ctx > 0:
+                                space_pos = context_before.find(' ')
+                                if space_pos != -1:
+                                    context_before = context_before[space_pos + 1:]
+                            
+                            # Контекст после
+                            end_pos = find_pos + len(find_text)
+                            end_ctx = min(len(document_content), end_pos + 50)
+                            context_after = document_content[end_pos:end_ctx]
+                            # Убираем незавершенные слова в конце
+                            if end_ctx < len(document_content):
+                                space_pos = context_after.rfind(' ')
+                                if space_pos != -1:
+                                    context_after = context_after[:space_pos]
+                        
+                        # Добавляем структурированное изменение
+                        structured_edits.append({
+                            "id": f"edit-{uuid.uuid4().hex[:8]}",
+                            "original_text": find_text,
+                            "new_text": replace_text,
+                            "context_before": context_before,
+                            "context_after": context_after,
+                            "found_in_document": find_text in modified_content
+                        })
                         
                         if find_text in modified_content:
                             modified_content = modified_content.replace(find_text, replace_text, 1)
@@ -765,10 +803,11 @@ class DocumentAIService:
         result = {
             "answer": answer,
             "citations": [{"file": s.get("file", "Документ дела"), "file_id": s.get("file_id", "")} for s in sources[:3]],
-            "suggestions": suggestions
+            "suggestions": suggestions,
+            "structured_edits": structured_edits
         }
         
-        # Add edited content if found and validated
+        # Add edited content if found and validated (для обратной совместимости)
         if edited_content:
             result["edited_content"] = edited_content
         

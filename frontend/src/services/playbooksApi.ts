@@ -85,13 +85,14 @@ export interface PlaybookCheck {
   user_id: string
   overall_status: 'compliant' | 'non_compliant' | 'needs_review' | 'in_progress' | 'failed'
   compliance_score?: number
+  total_rules?: number
   red_line_violations: number
   fallback_issues: number
   no_go_violations: number
   passed_rules: number
   results: RuleCheckResult[]
   redlines: Redline[]
-  extracted_clauses: any[]
+  extracted_clauses?: any[]
   error_message?: string
   started_at?: string
   completed_at?: string
@@ -113,7 +114,7 @@ export const getPlaybooks = async (params?: {
 }
 
 export const getPlaybook = async (playbookId: string): Promise<Playbook> => {
-  const response = await api.get(`/playbooks/${playbookId}`)
+  const response = await api.get(`/api/playbooks/${playbookId}`)
   return response.data
 }
 
@@ -134,22 +135,88 @@ export const updatePlaybook = async (
   playbookId: string,
   data: Partial<Playbook>
 ): Promise<Playbook> => {
-  const response = await api.put(`/playbooks/${playbookId}`, data)
+  // Update playbook metadata (without rules)
+  const { rules, ...playbookData } = data
+  const response = await api.put(`/api/playbooks/${playbookId}`, playbookData)
   return response.data
 }
 
+/**
+ * Update playbook with full rules synchronization
+ * This will add new rules, update existing ones, and delete removed ones
+ */
+export const updatePlaybookWithRules = async (
+  playbookId: string,
+  data: Partial<Playbook>
+): Promise<Playbook> => {
+  // 1. Update playbook metadata
+  const { rules: newRules, ...playbookData } = data
+  await api.put(`/api/playbooks/${playbookId}`, playbookData)
+  
+  // 2. Get current playbook with rules
+  const currentPlaybook = await getPlaybook(playbookId)
+  const currentRules = currentPlaybook.rules || []
+  
+  // 3. Sync rules
+  if (newRules) {
+    const currentRuleIds = new Set(currentRules.map(r => r.id))
+    const newRuleIds = new Set(newRules.filter(r => !r.id.startsWith('new_')).map(r => r.id))
+    
+    // Delete removed rules
+    for (const rule of currentRules) {
+      if (!newRuleIds.has(rule.id)) {
+        await deleteRule(playbookId, rule.id)
+      }
+    }
+    
+    // Add or update rules
+    for (const rule of newRules) {
+      if (rule.id.startsWith('new_')) {
+        // New rule - add it
+        await addRule(playbookId, {
+          rule_type: rule.rule_type,
+          clause_category: rule.clause_category,
+          rule_name: rule.rule_name,
+          description: rule.description,
+          condition_type: rule.condition_type,
+          condition_config: rule.condition_config,
+          priority: rule.priority,
+          severity: rule.severity,
+          is_active: rule.is_active
+        })
+      } else if (currentRuleIds.has(rule.id)) {
+        // Existing rule - update it
+        await updateRule(playbookId, rule.id, {
+          rule_type: rule.rule_type,
+          clause_category: rule.clause_category,
+          rule_name: rule.rule_name,
+          description: rule.description,
+          condition_type: rule.condition_type,
+          condition_config: rule.condition_config,
+          priority: rule.priority,
+          severity: rule.severity,
+          is_active: rule.is_active
+        })
+      }
+    }
+  }
+  
+  // 4. Return updated playbook
+  return getPlaybook(playbookId)
+}
+
 export const deletePlaybook = async (playbookId: string): Promise<void> => {
-  await api.delete(`/playbooks/${playbookId}`)
+  await api.delete(`/api/playbooks/${playbookId}`)
 }
 
 export const duplicatePlaybook = async (playbookId: string): Promise<Playbook> => {
-  const response = await api.post(`/playbooks/${playbookId}/duplicate`)
+  const response = await api.post(`/api/playbooks/${playbookId}/duplicate`)
   return response.data
 }
 
 // Rules CRUD
 export const getRules = async (playbookId: string): Promise<PlaybookRule[]> => {
-  const response = await api.get(`/playbooks/${playbookId}/rules`)
+  const response = await api.get(`/api/playbooks/${playbookId}/rules`)
   return response.data
 }
 
@@ -157,7 +224,7 @@ export const addRule = async (
   playbookId: string,
   data: Omit<PlaybookRule, 'id' | 'playbook_id' | 'created_at'>
 ): Promise<PlaybookRule> => {
-  const response = await api.post(`/playbooks/${playbookId}/rules`, data)
+  const response = await api.post(`/api/playbooks/${playbookId}/rules`, data)
   return response.data
 }
 
@@ -166,12 +233,35 @@ export const updateRule = async (
   ruleId: string,
   data: Partial<PlaybookRule>
 ): Promise<PlaybookRule> => {
-  const response = await api.put(`/playbooks/${playbookId}/rules/${ruleId}`, data)
+  const response = await api.put(`/api/playbooks/${playbookId}/rules/${ruleId}`, data)
   return response.data
 }
 
 export const deleteRule = async (playbookId: string, ruleId: string): Promise<void> => {
-  await api.delete(`/playbooks/${playbookId}/rules/${ruleId}`)
+  await api.delete(`/api/playbooks/${playbookId}/rules/${ruleId}`)
+}
+
+// Response type for checkDocument (abbreviated response from API)
+export interface CheckDocumentResponse {
+  check_id: string
+  playbook_id: string
+  document_id: string
+  overall_status: string
+  compliance_score: number
+  red_line_violations: number
+  fallback_issues: number
+  no_go_violations: number
+  passed_rules: number
+  results: Array<{
+    rule_id: string
+    rule_name: string
+    rule_type: string
+    status: string
+    issue_description?: string
+    confidence: number
+  }>
+  redlines_count: number
+  processing_time_seconds: number
 }
 
 // Checks
@@ -179,7 +269,7 @@ export const checkDocument = async (
   playbookId: string,
   documentId: string,
   caseId?: string
-): Promise<PlaybookCheck> => {
+): Promise<CheckDocumentResponse> => {
   const response = await api.post(`/api/playbooks/${playbookId}/check`, {
     document_id: documentId,
     case_id: caseId
@@ -201,7 +291,7 @@ export const getChecks = async (params?: {
 }
 
 export const getCheck = async (checkId: string): Promise<PlaybookCheck> => {
-  const response = await api.get(`/playbooks/checks/${checkId}`)
+  const response = await api.get(`/api/playbooks/checks/${checkId}`)
   return response.data
 }
 
@@ -211,7 +301,7 @@ export const getCheckRedlines = async (checkId: string): Promise<{
   original_text: string
   annotated_text: string
 }> => {
-  const response = await api.get(`/playbooks/checks/${checkId}/redlines`)
+  const response = await api.get(`/api/playbooks/checks/${checkId}/redlines`)
   return response.data
 }
 
@@ -220,7 +310,7 @@ export const applyRedline = async (
   redlineId: string,
   accepted: boolean
 ): Promise<void> => {
-  await api.post(`/playbooks/checks/${checkId}/redlines/${redlineId}`, { accepted })
+  await api.post(`/api/playbooks/checks/${checkId}/redlines/${redlineId}`, { accepted })
 }
 
 // Utility functions

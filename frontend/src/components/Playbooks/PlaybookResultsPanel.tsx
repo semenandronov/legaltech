@@ -23,16 +23,26 @@ import {
 interface RuleResult {
   rule_id: string
   rule_name: string
-  rule_type: 'red_line' | 'no_go' | 'fallback' | 'standard'
-  status: 'passed' | 'violation' | 'warning' | 'not_applicable'
+  rule_type: 'red_line' | 'no_go' | 'fallback' | 'standard' | string
+  status: 'passed' | 'violation' | 'warning' | 'not_applicable' | 'not_found' | 'error' | string
   issue_description?: string
   suggestion?: string
-  severity: number
+  suggested_fix?: string  // Backend uses this field
+  severity?: number | string
+  found_text?: string
+  location?: {
+    start?: number
+    end?: number
+    page?: number
+    section?: string
+  }
   document_location?: {
     start: number
     end: number
     text: string
   }
+  confidence?: number
+  reasoning?: string
   citations?: string[]
 }
 
@@ -89,6 +99,8 @@ export const PlaybookResultsPanel = ({
       case 'passed':
         return <CheckCircle className="w-4 h-4 text-green-500" />
       case 'violation':
+      case 'not_found':
+      case 'error':
         return <XCircle className="w-4 h-4 text-red-500" />
       case 'warning':
         return <AlertTriangle className="w-4 h-4 text-yellow-500" />
@@ -133,7 +145,7 @@ export const PlaybookResultsPanel = ({
   const filteredResults = result.results.filter(r => {
     switch (activeFilter) {
       case 'violations':
-        return r.status === 'violation'
+        return r.status === 'violation' || r.status === 'not_found' || r.status === 'error'
       case 'warnings':
         return r.status === 'warning'
       case 'passed':
@@ -143,7 +155,9 @@ export const PlaybookResultsPanel = ({
     }
   })
 
-  const violationsCount = result.results.filter(r => r.status === 'violation').length
+  const violationsCount = result.results.filter(r => 
+    r.status === 'violation' || r.status === 'not_found' || r.status === 'error'
+  ).length
   const warningsCount = result.results.filter(r => r.status === 'warning').length
   const passedCount = result.results.filter(r => r.status === 'passed').length
 
@@ -345,30 +359,33 @@ export const PlaybookResultsPanel = ({
                       </div>
                     )}
 
-                    {rule.suggestion && (
+                    {(rule.suggestion || rule.suggested_fix) && (
                       <div className="p-3 rounded-lg bg-blue-50 border border-blue-100">
                         <h4 className="text-xs font-medium text-blue-700 mb-1">
                           💡 Рекомендация
                         </h4>
                         <p className="text-sm text-blue-800">
-                          {rule.suggestion}
+                          {rule.suggestion || rule.suggested_fix}
                         </p>
                       </div>
                     )}
 
-                    {rule.document_location && (
+                    {(rule.document_location || rule.found_text) && (
                       <div>
                         <h4 className="text-xs font-medium mb-1" style={{ color: 'var(--color-text-secondary)' }}>
                           Найдено в документе
                         </h4>
                         <div className="p-2 rounded-lg bg-gray-50 border border-gray-200">
                           <p className="text-xs font-mono text-gray-600 line-clamp-3">
-                            "...{rule.document_location.text}..."
+                            "...{rule.document_location?.text || rule.found_text}..."
                           </p>
                         </div>
-                        {onNavigateToIssue && (
+                        {onNavigateToIssue && (rule.document_location || rule.location) && (
                           <button
-                            onClick={() => onNavigateToIssue(rule.document_location!)}
+                            onClick={() => onNavigateToIssue(
+                              rule.document_location || 
+                              { start: rule.location?.start || 0, end: rule.location?.end || 0 }
+                            )}
                             className="flex items-center gap-1 mt-2 text-xs text-blue-600 hover:text-blue-700"
                           >
                             <Eye className="w-3 h-3" />

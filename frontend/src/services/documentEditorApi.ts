@@ -20,11 +20,21 @@ export interface AIAssistResponse {
   suggestions: string[]
 }
 
+export interface StructuredEdit {
+  id: string
+  original_text: string
+  new_text: string
+  context_before: string
+  context_after: string
+  found_in_document: boolean
+}
+
 export interface DocumentChatResponse {
   answer: string
   citations: Array<{ file: string; file_id: string }>
   suggestions: string[]
   edited_content?: string
+  structured_edits?: StructuredEdit[]
 }
 
 export interface DocumentVersion {

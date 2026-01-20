@@ -10,7 +10,7 @@ import { CommentsPanel } from '../components/Editor/CommentsPanel'
 import { TemplateSelector } from '../components/Editor/TemplateSelector'
 import { DocxImporter } from '../components/Editor/DocxImporter'
 import { getDocument, createDocument, updateDocument, exportDocx, exportPdf, listDocuments, Document } from '../services/documentEditorApi'
-import { getPlaybooks, checkDocument as runPlaybookCheck, Playbook } from '../services/playbooksApi'
+import { getPlaybooks, checkDocument as runPlaybookCheck, getCheck, Playbook, PlaybookCheck } from '../services/playbooksApi'
 import { DocumentsList } from '../components/Editor/DocumentsList'
 import { CreateDocumentScreen } from '../components/Editor/CreateDocumentScreen'
 import { PlaybookResultsPanel } from '../components/Playbooks/PlaybookResultsPanel'
@@ -218,6 +218,26 @@ const DocumentEditorPage = () => {
     }
   }
 
+  const handleScrollToText = (text: string): boolean => {
+    // Scroll to specific text in the document
+    if (editorRef.current) {
+      return editorRef.current.scrollToText(text)
+    }
+    return false
+  }
+
+  const handleReplaceTextInDocument = (originalText: string, newText: string): boolean => {
+    // Replace specific text in the document
+    if (editorRef.current) {
+      const success = editorRef.current.replaceText(originalText, newText)
+      if (success) {
+        setHasUnsavedChanges(true)
+      }
+      return success
+    }
+    return false
+  }
+
   const handleVersionRestored = (restoredContent: string) => {
     setContent(restoredContent)
     setHasUnsavedChanges(true)
@@ -276,11 +296,13 @@ const DocumentEditorPage = () => {
     
     setRunningPlaybook(true)
     try {
-      const result = await runPlaybookCheck(playbookId, documentId, caseId)
-      setPlaybookResult(result)
+      const checkResponse = await runPlaybookCheck(playbookId, documentId, caseId)
+      // Get full check result using check_id
+      const fullResult = await getCheck(checkResponse.check_id)
+      setPlaybookResult(fullResult)
       setShowPlaybookModal(false)
       setShowResultsPanel(true)
-      toast.success(`Проверка завершена! Соответствие: ${result.compliance_score?.toFixed(1) || 0}%`)
+      toast.success(`Проверка завершена! Соответствие: ${fullResult.compliance_score?.toFixed(1) || 0}%`)
     } catch (error: any) {
       toast.error('Ошибка проверки: ' + (error.message || 'Неизвестная ошибка'))
     } finally {
@@ -290,9 +312,17 @@ const DocumentEditorPage = () => {
 
   // Навигация к месту в документе
   const handleNavigateToIssue = (location: { start: number; end: number }) => {
-    if (editorRef.current) {
-      // Показываем уведомление о найденной позиции
-      toast.info(`Найдено на позиции ${location.start}-${location.end}`)
+    if (editorRef.current && location.start !== undefined && location.end !== undefined) {
+      try {
+        // Выделяем текст и прокручиваем к нему
+        editorRef.current.setSelection(location.start, location.end)
+        toast.info('Перешли к найденному месту в документе')
+      } catch (error) {
+        console.error('Failed to navigate to issue:', error)
+        toast.info(`Найдено на позиции ${location.start}-${location.end}`)
+      }
+    } else {
+      toast.warning('Позиция в документе не определена')
     }
   }
 
@@ -510,6 +540,8 @@ const DocumentEditorPage = () => {
               onApplyEdit={handleApplyEdit}
               onInsertText={handleInsertText}
               onReplaceText={handleReplaceText}
+              onScrollToText={handleScrollToText}
+              onReplaceTextInDocument={handleReplaceTextInDocument}
               onOpenDocumentInEditor={(docId) => {
                 navigate(`/cases/${caseId}/editor/${docId}`, { replace: true })
               }}
@@ -644,7 +676,7 @@ const DocumentEditorPage = () => {
             playbook_name: playbookResult.playbook_name || 'Playbook',
             document_id: documentId || '',
             compliance_score: playbookResult.compliance_score || 0,
-            total_rules: playbookResult.total_rules || 0,
+            total_rules: playbookResult.total_rules || (playbookResult.results?.length || 0),
             passed_rules: playbookResult.passed_rules || 0,
             red_line_violations: playbookResult.red_line_violations || 0,
             no_go_violations: playbookResult.no_go_violations || 0,

@@ -76,9 +76,21 @@ class Playbook(Base):
         }
     
     def increment_usage(self):
-        """Increment usage counter"""
+        """Increment usage counter - NOTE: For thread safety, use atomic SQL UPDATE instead"""
         self.usage_count = (self.usage_count or 0) + 1
         self.last_used_at = datetime.utcnow()
+    
+    @classmethod
+    def increment_usage_atomic(cls, db_session, playbook_id: str):
+        """
+        Atomically increment usage counter to avoid race conditions.
+        Use this method instead of increment_usage() for concurrent access.
+        """
+        from sqlalchemy import text
+        db_session.execute(
+            text("UPDATE playbooks SET usage_count = usage_count + 1, last_used_at = NOW() WHERE id = :id"),
+            {"id": playbook_id}
+        )
 
 
 class PlaybookRule(Base):
@@ -256,15 +268,20 @@ class PlaybookCheck(Base):
     
     def to_dict(self, include_details: bool = True):
         """Convert to dictionary for API responses"""
+        # Calculate total_rules from results
+        total_rules = len(self.results) if self.results else 0
+        
         result = {
             "id": self.id,
             "playbook_id": self.playbook_id,
+            "playbook_name": self.playbook.display_name if self.playbook else None,
             "document_id": self.document_id,
             "document_name": self.document_name,
             "case_id": self.case_id,
             "user_id": self.user_id,
             "overall_status": self.overall_status,
             "compliance_score": float(self.compliance_score) if self.compliance_score else None,
+            "total_rules": total_rules,
             "red_line_violations": self.red_line_violations,
             "fallback_issues": self.fallback_issues,
             "no_go_violations": self.no_go_violations,

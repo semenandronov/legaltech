@@ -79,6 +79,7 @@ const DocumentsPage = () => {
       setPlaybooks(data)
     } catch (error) {
       console.error('Failed to load playbooks:', error)
+      // Не показываем toast, так как playbooks необязательны для работы страницы
     }
   }
   
@@ -95,8 +96,8 @@ const DocumentsPage = () => {
         caseId
       )
       
-      // Get full check result
-      const fullCheck = await playbooksApi.getCheck(result.id)
+      // Get full check result using check_id from the response
+      const fullCheck = await playbooksApi.getCheck(result.check_id)
       setPlaybookResult(fullCheck)
       setShowResultPanel(true)
       

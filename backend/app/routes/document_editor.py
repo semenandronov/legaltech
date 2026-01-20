@@ -726,12 +726,23 @@ class DocumentChatRequest(BaseModel):
     question: str = Field(..., min_length=1, description="User question or instruction")
 
 
+class StructuredEdit(BaseModel):
+    """Model for a single structured edit suggestion"""
+    id: str
+    original_text: str
+    new_text: str
+    context_before: str = ""
+    context_after: str = ""
+    found_in_document: bool = True
+
+
 class DocumentChatResponse(BaseModel):
     """Response model for document chat"""
     answer: str
     citations: List[Dict[str, str]] = []
     suggestions: List[str] = []
     edited_content: Optional[str] = None
+    structured_edits: List[StructuredEdit] = []
 
 
 @router.post("/{document_id}/chat", response_model=DocumentChatResponse)
@@ -790,11 +801,17 @@ async def chat_over_document(
             user_id=current_user.id
         )
         
+        # Преобразуем structured_edits в модели Pydantic
+        structured_edits = [
+            StructuredEdit(**edit) for edit in result.get("structured_edits", [])
+        ]
+        
         response = DocumentChatResponse(
             answer=result.get("answer", ""),
             citations=result.get("citations", []),
             suggestions=result.get("suggestions", []),
-            edited_content=result.get("edited_content")
+            edited_content=result.get("edited_content"),
+            structured_edits=structured_edits
         )
         
         # Если создан новый документ, добавляем его ID в метаданные ответа

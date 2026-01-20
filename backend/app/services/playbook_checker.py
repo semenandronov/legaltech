@@ -154,10 +154,21 @@ class PlaybookChecker:
         if not playbook:
             raise ValueError(f"Playbook {playbook_id} not found")
         
+        # Check playbook access - user must own it, or it must be public/system
+        if not (playbook.user_id == user_id or playbook.is_public or playbook.is_system):
+            raise ValueError(f"Access denied to playbook {playbook_id}")
+        
         # Load document
         file = self.db.query(File).filter(File.id == document_id).first()
         if not file:
             raise ValueError(f"Document {document_id} not found")
+        
+        # Check document access - user must have access to the case
+        if file.case_id:
+            from app.models.case import Case
+            case = self.db.query(Case).filter(Case.id == file.case_id).first()
+            if case and case.user_id != user_id:
+                raise ValueError(f"Access denied to document {document_id}")
         
         document_text = file.original_text or ""
         if not document_text:
@@ -257,8 +268,8 @@ class PlaybookChecker:
             
             self.db.commit()
             
-            # Update playbook usage
-            playbook.increment_usage()
+            # Update playbook usage atomically to avoid race conditions
+            Playbook.increment_usage_atomic(self.db, playbook_id)
             self.db.commit()
             
             logger.info(

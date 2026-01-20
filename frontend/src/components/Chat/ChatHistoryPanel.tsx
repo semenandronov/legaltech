@@ -56,6 +56,7 @@ export const ChatHistoryPanel: React.FC<ChatHistoryPanelProps> = ({
   const [searchQuery, setSearchQuery] = useState('')
   const [showAllProjects, setShowAllProjects] = useState(false)
   const [isLoading, setIsLoading] = useState(false)
+  const [error, setError] = useState<string | null>(null)
   const [anchorEl, setAnchorEl] = useState<null | HTMLElement>(null)
   const [selectedItem, setSelectedItem] = useState<HistoryItem | null>(null)
 
@@ -84,6 +85,7 @@ export const ChatHistoryPanel: React.FC<ChatHistoryPanelProps> = ({
   const loadHistory = async () => {
     if (!currentCaseId) return
     setIsLoading(true)
+    setError(null)
     try {
       // Загружаем сессии для текущего дела
       const sessions = await getChatSessionsForCase(currentCaseId)
@@ -101,7 +103,7 @@ export const ChatHistoryPanel: React.FC<ChatHistoryPanelProps> = ({
             id: `session-${session.session_id}`,
             content: firstUserMessage.content,
             created_at: session.first_message_at || session.last_message_at || '',
-          case_id: currentCaseId,
+            case_id: currentCaseId,
             session_id: session.session_id,
           })
         }
@@ -116,8 +118,10 @@ export const ChatHistoryPanel: React.FC<ChatHistoryPanelProps> = ({
       
       setHistoryItems(historyItemsList)
       setFilteredItems(historyItemsList)
-    } catch (error: any) {
-      console.error('Error loading chat history:', error)
+    } catch (err: any) {
+      console.error('Error loading chat history:', err)
+      setError('Не удалось загрузить историю чата')
+      toast.error('Ошибка загрузки истории')
     } finally {
       setIsLoading(false)
     }
@@ -125,6 +129,7 @@ export const ChatHistoryPanel: React.FC<ChatHistoryPanelProps> = ({
 
   const loadAllProjectsHistory = async () => {
     setIsLoading(true)
+    setError(null)
     try {
       // Загружаем все сессии всех дел пользователя
       const allSessions = await getChatSessions()
@@ -161,8 +166,10 @@ export const ChatHistoryPanel: React.FC<ChatHistoryPanelProps> = ({
       
       setHistoryItems(historyItemsList)
       setFilteredItems(historyItemsList)
-    } catch (error: any) {
-      console.error('Error loading all projects history:', error)
+    } catch (err: any) {
+      console.error('Error loading all projects history:', err)
+      setError('Не удалось загрузить историю всех проектов')
+      toast.error('Ошибка загрузки истории')
     } finally {
       setIsLoading(false)
     }
@@ -200,16 +207,19 @@ export const ChatHistoryPanel: React.FC<ChatHistoryPanelProps> = ({
     const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24))
 
     if (diffMinutes < 60) {
-      if (diffMinutes === 0) return 'just now'
-      return `${diffMinutes} ${diffMinutes === 1 ? 'minute' : 'minutes'} ago`
+      if (diffMinutes === 0) return 'только что'
+      if (diffMinutes === 1) return '1 минуту назад'
+      if (diffMinutes < 5) return `${diffMinutes} минуты назад`
+      return `${diffMinutes} минут назад`
     }
     if (diffHours < 24) {
-      if (diffHours === 1) return 'about 1 hour ago'
-      return `about ${diffHours} hours ago`
+      if (diffHours === 1) return '1 час назад'
+      if (diffHours < 5) return `${diffHours} часа назад`
+      return `${diffHours} часов назад`
     }
-    if (diffDays === 1) return 'about 1 day ago'
-    if (diffDays < 7) return `about ${diffDays} days ago`
-    return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+    if (diffDays === 1) return 'вчера'
+    if (diffDays < 7) return `${diffDays} дней назад`
+    return date.toLocaleDateString('ru-RU', { month: 'short', day: 'numeric' })
   }
 
   return (
@@ -225,8 +235,8 @@ export const ChatHistoryPanel: React.FC<ChatHistoryPanelProps> = ({
         {/* Header */}
         <Box sx={{ p: 2, borderBottom: 1, borderColor: 'divider' }}>
           <Stack direction="row" spacing={1} alignItems="center" justifyContent="space-between">
-            <Typography variant="h6" sx={{ fontWeight: 600 }}>History</Typography>
-            <IconButton size="small" onClick={onClose}>
+            <Typography variant="h6" sx={{ fontWeight: 600 }}>История</Typography>
+            <IconButton size="small" onClick={onClose} aria-label="Закрыть панель истории">
               <CloseIcon />
             </IconButton>
           </Stack>
@@ -237,7 +247,7 @@ export const ChatHistoryPanel: React.FC<ChatHistoryPanelProps> = ({
           <TextField
             fullWidth
             size="small"
-            placeholder="Search"
+            placeholder="Поиск"
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
             InputProps={{
@@ -270,7 +280,7 @@ export const ChatHistoryPanel: React.FC<ChatHistoryPanelProps> = ({
                 onChange={(e) => setShowAllProjects(e.target.checked)}
               />
             }
-            label="Show history from all projects"
+            label="Показать историю всех проектов"
             sx={{ '& .MuiFormControlLabel-label': { fontSize: '0.875rem' } }}
           />
         </Box>
@@ -281,11 +291,23 @@ export const ChatHistoryPanel: React.FC<ChatHistoryPanelProps> = ({
             <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: 200 }}>
               <CircularProgress />
             </Box>
+          ) : error ? (
+            <Box sx={{ p: 4, textAlign: 'center' }}>
+              <Typography variant="body2" color="error" sx={{ mb: 2 }}>
+                {error}
+              </Typography>
+              <button
+                onClick={() => showAllProjects ? loadAllProjectsHistory() : loadHistory()}
+                className="text-sm text-blue-600 hover:underline"
+              >
+                Попробовать снова
+              </button>
+            </Box>
           ) : filteredItems.length === 0 ? (
             <Box sx={{ p: 4, textAlign: 'center' }}>
               <ChatIcon sx={{ fontSize: 48, color: 'text.secondary', mb: 2, opacity: 0.5 }} />
               <Typography variant="body2" color="text.secondary">
-                {searchQuery ? 'No queries found' : 'No chat history'}
+                {searchQuery ? 'Запросы не найдены' : 'История чатов пуста'}
               </Typography>
             </Box>
           ) : (
@@ -357,13 +379,13 @@ export const ChatHistoryPanel: React.FC<ChatHistoryPanelProps> = ({
             }
             handleMenuClose()
           }}>
-            Use this query
+            Использовать запрос
           </MenuItem>
           <MenuItem onClick={() => {
             toast.info("Удаление сообщений из истории будет реализовано позже")
             handleMenuClose()
           }}>
-            Delete
+            Удалить
           </MenuItem>
         </Menu>
       </Box>

@@ -2,18 +2,46 @@
 from fastapi import APIRouter, Depends, HTTPException, Query, BackgroundTasks
 from fastapi.responses import Response
 from sqlalchemy.orm import Session
-from typing import List, Optional
-from pydantic import BaseModel, Field
+from typing import List, Optional, Literal
+from pydantic import BaseModel, Field, field_validator
 from app.services.playbook_service import PlaybookService
 from app.services.playbook_checker import PlaybookChecker
 from app.services.redline_generator import RedlineGenerator, RedlineDocument, Redline
 from app.routes.auth import get_current_user, get_db
 from app.models.user import User
+from enum import Enum
 import logging
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/playbooks", tags=["playbooks"])
+
+
+# ==================== ENUMS ====================
+
+class RuleType(str, Enum):
+    """Valid rule types"""
+    RED_LINE = "red_line"
+    FALLBACK = "fallback"
+    NO_GO = "no_go"
+
+
+class ConditionType(str, Enum):
+    """Valid condition types"""
+    MUST_EXIST = "must_exist"
+    MUST_NOT_EXIST = "must_not_exist"
+    VALUE_CHECK = "value_check"
+    DURATION_CHECK = "duration_check"
+    TEXT_MATCH = "text_match"
+    TEXT_NOT_MATCH = "text_not_match"
+
+
+class Severity(str, Enum):
+    """Valid severity levels"""
+    LOW = "low"
+    MEDIUM = "medium"
+    HIGH = "high"
+    CRITICAL = "critical"
 
 
 # ==================== PYDANTIC MODELS ====================
@@ -32,55 +60,55 @@ class RuleConditionConfig(BaseModel):
 
 class PlaybookRuleCreate(BaseModel):
     """Request to create a playbook rule"""
-    rule_type: str = Field(..., description="red_line, fallback, or no_go")
-    clause_category: str = Field(..., description="Category of clause to check")
-    rule_name: str = Field(..., description="Name of the rule")
-    description: Optional[str] = None
-    condition_type: str = Field(..., description="must_exist, must_not_exist, value_check, duration_check, text_match, text_not_match")
+    rule_type: RuleType = Field(..., description="red_line, fallback, or no_go")
+    clause_category: str = Field(..., description="Category of clause to check", min_length=1, max_length=100)
+    rule_name: str = Field(..., description="Name of the rule", min_length=1, max_length=255)
+    description: Optional[str] = Field(None, max_length=2000)
+    condition_type: ConditionType = Field(..., description="must_exist, must_not_exist, value_check, duration_check, text_match, text_not_match")
     condition_config: Optional[RuleConditionConfig] = None
-    extraction_prompt: Optional[str] = None
-    validation_prompt: Optional[str] = None
-    suggested_clause_template: Optional[str] = None
+    extraction_prompt: Optional[str] = Field(None, max_length=5000)
+    validation_prompt: Optional[str] = Field(None, max_length=5000)
+    suggested_clause_template: Optional[str] = Field(None, max_length=10000)
     fallback_options: Optional[List[dict]] = None
-    priority: int = 0
-    severity: str = "medium"
+    priority: int = Field(0, ge=0, le=100)
+    severity: Severity = Severity.MEDIUM
     is_active: bool = True
 
 
 class PlaybookRuleUpdate(BaseModel):
     """Request to update a playbook rule"""
-    rule_type: Optional[str] = None
-    clause_category: Optional[str] = None
-    rule_name: Optional[str] = None
-    description: Optional[str] = None
-    condition_type: Optional[str] = None
+    rule_type: Optional[RuleType] = None
+    clause_category: Optional[str] = Field(None, min_length=1, max_length=100)
+    rule_name: Optional[str] = Field(None, min_length=1, max_length=255)
+    description: Optional[str] = Field(None, max_length=2000)
+    condition_type: Optional[ConditionType] = None
     condition_config: Optional[RuleConditionConfig] = None
-    extraction_prompt: Optional[str] = None
-    validation_prompt: Optional[str] = None
-    suggested_clause_template: Optional[str] = None
+    extraction_prompt: Optional[str] = Field(None, max_length=5000)
+    validation_prompt: Optional[str] = Field(None, max_length=5000)
+    suggested_clause_template: Optional[str] = Field(None, max_length=10000)
     fallback_options: Optional[List[dict]] = None
-    priority: Optional[int] = None
-    severity: Optional[str] = None
+    priority: Optional[int] = Field(None, ge=0, le=100)
+    severity: Optional[Severity] = None
     is_active: Optional[bool] = None
 
 
 class PlaybookCreate(BaseModel):
     """Request to create a playbook"""
-    name: str = Field(..., description="Unique identifier name")
-    display_name: str = Field(..., description="Display name")
-    description: Optional[str] = None
-    document_type: str = Field(..., description="Type of document this playbook is for")
-    jurisdiction: Optional[str] = None
+    name: str = Field(..., description="Unique identifier name", min_length=1, max_length=255, pattern=r'^[a-z0-9_]+$')
+    display_name: str = Field(..., description="Display name", min_length=1, max_length=255)
+    description: Optional[str] = Field(None, max_length=2000)
+    document_type: str = Field(..., description="Type of document this playbook is for", min_length=1, max_length=100)
+    jurisdiction: Optional[str] = Field(None, max_length=100)
     is_public: bool = False
-    rules: Optional[List[PlaybookRuleCreate]] = None
+    rules: Optional[List[PlaybookRuleCreate]] = Field(None, max_length=100)  # Max 100 rules per playbook
 
 
 class PlaybookUpdate(BaseModel):
     """Request to update a playbook"""
-    display_name: Optional[str] = None
-    description: Optional[str] = None
-    document_type: Optional[str] = None
-    jurisdiction: Optional[str] = None
+    display_name: Optional[str] = Field(None, min_length=1, max_length=255)
+    description: Optional[str] = Field(None, max_length=2000)
+    document_type: Optional[str] = Field(None, min_length=1, max_length=100)
+    jurisdiction: Optional[str] = Field(None, max_length=100)
     is_public: Optional[bool] = None
 
 

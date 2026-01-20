@@ -37,11 +37,23 @@ export const DocumentCard: React.FC<DocumentCardProps> = ({
     : ''
 
   return (
-    <Card className="w-full max-w-2xl border border-[#E5E7EB] hover:border-[#2563EB] transition-colors cursor-pointer" onClick={handleOpen}>
+    <Card 
+      className="w-full max-w-2xl border border-[#E5E7EB] hover:border-[#2563EB] transition-colors cursor-pointer" 
+      onClick={handleOpen}
+      role="button"
+      tabIndex={0}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault()
+          handleOpen()
+        }
+      }}
+      aria-label={`Открыть документ ${title} в редакторе`}
+    >
       <CardHeader className="pb-3">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">
-            <FileText className="w-5 h-5 text-[#2563EB]" />
+            <FileText className="w-5 h-5 text-[#2563EB]" aria-hidden="true" />
             <CardTitle className="text-base font-semibold text-[#1F2937]">
               {title}
             </CardTitle>
@@ -54,8 +66,9 @@ export const DocumentCard: React.FC<DocumentCardProps> = ({
               handleOpen()
             }}
             className="text-[#2563EB] hover:text-[#1D4ED8] hover:bg-[#EFF6FF]"
+            aria-label={`Открыть документ ${title} в редакторе`}
           >
-            <Edit className="w-4 h-4 mr-1" />
+            <Edit className="w-4 h-4 mr-1" aria-hidden="true" />
             Открыть в редакторе
           </Button>
         </div>

@@ -622,7 +622,33 @@ const PlaybookEditor = ({
           </div>
         </div>
         <button
-          onClick={() => onSave(form)}
+          onClick={() => {
+            // Validate required fields
+            if (!form.name || form.name.length < 1) {
+              toast.error('Укажите идентификатор playbook')
+              return
+            }
+            if (!form.display_name || form.display_name.length < 1) {
+              toast.error('Укажите название playbook')
+              return
+            }
+            if (!form.document_type) {
+              toast.error('Выберите тип документа')
+              return
+            }
+            // Validate rules
+            for (const rule of form.rules) {
+              if (!rule.rule_name || rule.rule_name.length < 1) {
+                toast.error('Все правила должны иметь название')
+                return
+              }
+              if (!rule.clause_category || rule.clause_category.length < 1) {
+                toast.error('Все правила должны иметь категорию')
+                return
+              }
+            }
+            onSave(form)
+          }}
           className="flex items-center gap-2 px-5 py-2.5 rounded-lg text-sm font-medium transition-colors"
           style={{ backgroundColor: 'var(--color-accent)', color: 'white' }}
         >
@@ -671,7 +697,13 @@ const PlaybookEditor = ({
                 <input
                   type="text"
                   value={form.name}
-                  onChange={(e) => setForm({ ...form, name: e.target.value.toLowerCase().replace(/\s/g, '_') })}
+                  onChange={(e) => setForm({ 
+                    ...form, 
+                    name: e.target.value
+                      .toLowerCase()
+                      .replace(/\s+/g, '_')
+                      .replace(/[^a-z0-9_]/g, '') // Remove invalid characters
+                  })}
                   placeholder="nda_compliance"
                   className="w-full px-4 py-2.5 rounded-lg border text-sm transition-colors focus:border-accent outline-none"
                   style={{
@@ -680,6 +712,9 @@ const PlaybookEditor = ({
                     color: 'var(--color-text-primary)'
                   }}
                 />
+                <p className="text-xs mt-1" style={{ color: 'var(--color-text-tertiary)' }}>
+                  Только строчные буквы (a-z), цифры и подчёркивания
+                </p>
               </div>
               <div>
                 <label className="block text-sm font-medium mb-2" style={{ color: 'var(--color-text-primary)' }}>
@@ -1125,7 +1160,8 @@ export default function PlaybooksPage() {
         })
         toast.success('Playbook создан успешно!')
       } else {
-        await playbooksApi.updatePlaybook(editingPlaybook!.id!, data)
+        // Use updatePlaybookWithRules to properly sync rules
+        await playbooksApi.updatePlaybookWithRules(editingPlaybook!.id!, data)
         toast.success('Playbook сохранён')
       }
 
@@ -1133,9 +1169,9 @@ export default function PlaybooksPage() {
       setPlaybooks(updated)
       setEditingPlaybook(null)
       setIsNewPlaybook(false)
-    } catch (error) {
+    } catch (error: any) {
       console.error('Save error:', error)
-      toast.error('Ошибка сохранения')
+      toast.error('Ошибка сохранения: ' + (error.message || 'Неизвестная ошибка'))
     }
   }
 

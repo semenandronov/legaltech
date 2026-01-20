@@ -77,10 +77,10 @@ export const DocumentsPanel: React.FC<DocumentsPanelProps> = ({
         <h2 className="text-lg font-semibold text-gray-900">Документы</h2>
         <button
           onClick={onClose}
-          className="p-1.5 hover:bg-gray-100 rounded-lg transition-colors"
-          title="Закрыть"
+          className="p-1.5 hover:bg-gray-100 rounded-lg transition-colors focus:outline-none focus:ring-2 focus:ring-blue-500"
+          aria-label="Закрыть панель документов"
         >
-          <X className="w-5 h-5 text-gray-500" />
+          <X className="w-5 h-5 text-gray-500" aria-hidden="true" />
         </button>
       </div>
 
@@ -113,7 +113,7 @@ export const DocumentsPanel: React.FC<DocumentsPanelProps> = ({
               </p>
             </div>
           ) : (
-            <div className="space-y-1">
+            <div className="space-y-1" role="list" aria-label="Список документов дела">
               {filteredDocuments.map((document) => (
                 <div
                   key={document.id}
@@ -121,8 +121,17 @@ export const DocumentsPanel: React.FC<DocumentsPanelProps> = ({
                   onDragStart={(e) => handleDragStart(e, document)}
                   onDragEnd={handleDragEnd}
                   onClick={() => handleDocumentClick(document)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' || e.key === ' ') {
+                      e.preventDefault()
+                      handleDocumentClick(document)
+                    }
+                  }}
+                  role="listitem"
+                  tabIndex={0}
+                  aria-label={`Документ ${document.filename}, тип: ${document.file_type}. Перетащите в чат для добавления.`}
                   className={`
-                    flex items-center gap-3 p-3 rounded-lg cursor-pointer transition-colors
+                    flex items-center gap-3 p-3 rounded-lg cursor-pointer transition-colors focus:outline-none focus:ring-2 focus:ring-blue-500
                     ${draggedDocument?.id === document.id 
                       ? 'bg-blue-50 border-2 border-blue-300' 
                       : 'hover:bg-gray-50 border border-transparent'
@@ -130,7 +139,7 @@ export const DocumentsPanel: React.FC<DocumentsPanelProps> = ({
                   `}
                 >
                   <div className="flex-shrink-0">
-                    <FileText className="w-5 h-5 text-gray-400" />
+                    <FileText className="w-5 h-5 text-gray-400" aria-hidden="true" />
                   </div>
                   <div className="flex-1 min-w-0">
                     <p className="text-sm font-medium text-gray-900 truncate">
@@ -141,7 +150,7 @@ export const DocumentsPanel: React.FC<DocumentsPanelProps> = ({
                     </p>
                   </div>
                   <div className="flex-shrink-0">
-                    <GripVertical className="w-4 h-4 text-gray-400" />
+                    <GripVertical className="w-4 h-4 text-gray-400" aria-hidden="true" />
                   </div>
                 </div>
               ))}

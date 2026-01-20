@@ -201,7 +201,7 @@ export const PlanApprovalCard: React.FC<PlanApprovalCardProps> = ({
                 </li>
               ))}
               {plan.steps.length > 5 && (
-                <li className="text-gray-500">... и еще {plan.steps.length - 5} шагов</li>
+                <li className="text-gray-500">… и ещё {plan.steps.length - 5} шагов</li>
               )}
             </ol>
           </div>
@@ -265,15 +265,17 @@ export const PlanApprovalCard: React.FC<PlanApprovalCardProps> = ({
             <textarea
               value={modifyText}
               onChange={(e) => setModifyText(e.target.value)}
-              placeholder="Опишите, какие изменения нужно внести в план..."
+              placeholder="Опишите, какие изменения нужно внести в план…"
               className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
               rows={3}
+              aria-label="Изменения к плану"
             />
             <div className="flex gap-2">
               <Button
                 onClick={handleModify}
                 disabled={!modifyText.trim()}
                 className="bg-blue-600 hover:bg-blue-700"
+                aria-label="Отправить изменения к плану"
               >
                 Отправить изменения
               </Button>
@@ -283,6 +285,7 @@ export const PlanApprovalCard: React.FC<PlanApprovalCardProps> = ({
                   setModifyText('')
                 }}
                 variant="outline"
+                aria-label="Отменить изменение плана"
               >
                 Отмена
               </Button>
@@ -294,11 +297,12 @@ export const PlanApprovalCard: React.FC<PlanApprovalCardProps> = ({
               onClick={handleApprove}
               disabled={isApproving || isRejecting}
               className="bg-green-600 hover:bg-green-700"
+              aria-label="Одобрить план и выполнить"
             >
               {isApproving ? (
                 <>
                   <Loader size={16} className="mr-2" />
-                  Одобряю...
+                  Одобряю…
                 </>
               ) : (
                 <>
@@ -311,6 +315,7 @@ export const PlanApprovalCard: React.FC<PlanApprovalCardProps> = ({
               onClick={() => setShowModifyInput(true)}
               disabled={isApproving || isRejecting}
               className="bg-blue-600 hover:bg-blue-700"
+              aria-label="Изменить план"
             >
               <Edit2 className="w-4 h-4 mr-2" />
               Изменить
@@ -319,11 +324,12 @@ export const PlanApprovalCard: React.FC<PlanApprovalCardProps> = ({
               onClick={handleReject}
               disabled={isApproving || isRejecting}
               className="bg-red-600 hover:bg-red-700"
+              aria-label="Отклонить план"
             >
               {isRejecting ? (
                 <>
                   <Loader size={16} className="mr-2" />
-                  Отклоняю...
+                  Отклоняю…
                 </>
               ) : (
                 <>

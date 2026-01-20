@@ -11,16 +11,33 @@ import {
   PromptInputSubmit,
 } from '../ai-elements/prompt-input'
 import { Loader } from '../ai-elements/loader'
-import { chatOverDocument, aiAssist } from '@/services/documentEditorApi'
+import { chatOverDocument, aiAssist, type StructuredEdit } from '@/services/documentEditorApi'
 import { Button } from '@/components/UI/Button'
-import { Check, Wand2, AlertTriangle, FileText, Sparkles } from 'lucide-react'
+import { Check, Wand2, AlertTriangle, FileText, Sparkles, MessageCircleQuestion, Pencil } from 'lucide-react'
 import { toast } from 'sonner'
+import { EditSuggestionsList } from './EditSuggestionCard'
+
+// Ключевые слова для определения типа сообщения
+const EDIT_KEYWORDS = [
+  'изменить', 'редактировать', 'исправить', 'добавить', 'удалить',
+  'переписать', 'улучшить', 'заменить', 'вставить', 'убрать',
+  'поменять', 'обновить', 'дополнить', 'сократить', 'расширить'
+]
+
+type MessageType = 'question' | 'edit'
+
+function detectMessageType(content: string): MessageType {
+  const lowerContent = content.toLowerCase()
+  return EDIT_KEYWORDS.some(keyword => lowerContent.includes(keyword)) ? 'edit' : 'question'
+}
 
 interface Message {
   id: string
   role: 'user' | 'assistant'
   content: string
-  editedContent?: string  // Для применения правок
+  messageType?: MessageType  // Тип сообщения пользователя
+  editedContent?: string  // Для применения правок (обратная совместимость)
+  structuredEdits?: StructuredEdit[]  // Структурированные изменения
   citations?: Array<{ file: string; file_id: string }>
   suggestions?: string[]
 }
@@ -32,6 +49,8 @@ interface DocumentEditorChatProps {
   onApplyEdit?: (editedContent: string) => void
   onInsertText?: (text: string) => void
   onReplaceText?: (text: string) => void
+  onScrollToText?: (text: string) => boolean
+  onReplaceTextInDocument?: (originalText: string, newText: string) => boolean
 }
 
 export const DocumentEditorChat: React.FC<DocumentEditorChatProps> = ({
@@ -41,6 +60,8 @@ export const DocumentEditorChat: React.FC<DocumentEditorChatProps> = ({
   onApplyEdit,
   onInsertText,
   onReplaceText,
+  onScrollToText,
+  onReplaceTextInDocument,
 }) => {
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const [messages, setMessages] = useState<Message[]>([])
@@ -48,6 +69,10 @@ export const DocumentEditorChat: React.FC<DocumentEditorChatProps> = ({
   const [legalResearch, setLegalResearch] = useState(false)
   const [deepThink, setDeepThink] = useState(false)
   const [quickActionLoading, setQuickActionLoading] = useState<string | null>(null)
+  
+  // Состояние для отслеживания примененных/пропущенных изменений
+  const [appliedEdits, setAppliedEdits] = useState<Set<string>>(new Set())
+  const [skippedEdits, setSkippedEdits] = useState<Set<string>>(new Set())
 
   // Auto-scroll to bottom
   useEffect(() => {
@@ -62,11 +87,13 @@ export const DocumentEditorChat: React.FC<DocumentEditorChatProps> = ({
       return
     }
 
-    // Add user message
+    // Add user message with detected type
+    const messageType = detectMessageType(userMessage)
     const userMsg: Message = {
       id: `user-${Date.now()}`,
       role: 'user',
       content: userMessage,
+      messageType,
     }
     setMessages((prev) => [...prev, userMsg])
     setIsLoading(true)
@@ -91,6 +118,7 @@ export const DocumentEditorChat: React.FC<DocumentEditorChatProps> = ({
                 ...msg,
                 content: response.answer,
                 editedContent: response.edited_content,
+                structuredEdits: response.structured_edits,
                 citations: response.citations,
                 suggestions: response.suggestions,
               }
@@ -136,6 +164,67 @@ export const DocumentEditorChat: React.FC<DocumentEditorChatProps> = ({
       toast.success('Изменения применены к документу')
     }
   }, [onApplyEdit])
+  
+  // Обработчик применения одного структурированного изменения
+  const handleApplyStructuredEdit = useCallback((edit: StructuredEdit) => {
+    if (onReplaceTextInDocument) {
+      const success = onReplaceTextInDocument(edit.original_text, edit.new_text)
+      if (success) {
+        setAppliedEdits(prev => new Set(prev).add(edit.id))
+        toast.success('Изменение применено')
+      } else {
+        toast.error('Не удалось применить изменение. Текст не найден в документе.')
+      }
+    }
+  }, [onReplaceTextInDocument])
+  
+  // Обработчик пропуска изменения
+  const handleSkipEdit = useCallback((edit: StructuredEdit) => {
+    setSkippedEdits(prev => new Set(prev).add(edit.id))
+    toast.info('Изменение пропущено')
+  }, [])
+  
+  // Обработчик навигации к тексту в документе
+  const handleNavigateToText = useCallback((text: string) => {
+    if (onScrollToText) {
+      const success = onScrollToText(text)
+      if (!success) {
+        toast.error('Текст не найден в документе')
+      }
+    }
+  }, [onScrollToText])
+  
+  // Применить все изменения
+  const handleApplyAllEdits = useCallback((edits: StructuredEdit[]) => {
+    if (!onReplaceTextInDocument) return
+    
+    let appliedCount = 0
+    edits.forEach(edit => {
+      if (!appliedEdits.has(edit.id) && !skippedEdits.has(edit.id) && edit.found_in_document) {
+        const success = onReplaceTextInDocument(edit.original_text, edit.new_text)
+        if (success) {
+          setAppliedEdits(prev => new Set(prev).add(edit.id))
+          appliedCount++
+        }
+      }
+    })
+    
+    if (appliedCount > 0) {
+      toast.success(`Применено изменений: ${appliedCount}`)
+    }
+  }, [onReplaceTextInDocument, appliedEdits, skippedEdits])
+  
+  // Пропустить все изменения
+  const handleSkipAllEdits = useCallback((edits: StructuredEdit[]) => {
+    const newSkipped = new Set(skippedEdits)
+    edits.forEach(edit => {
+      if (!appliedEdits.has(edit.id) && !skippedEdits.has(edit.id)) {
+        newSkipped.add(edit.id)
+      }
+    })
+    setSkippedEdits(newSkipped)
+    toast.info('Все изменения пропущены')
+  }, [appliedEdits, skippedEdits])
 
   const handleQuickAction = useCallback(async (command: string, label: string) => {
     if (!documentId || quickActionLoading) return
@@ -343,8 +432,31 @@ export const DocumentEditorChat: React.FC<DocumentEditorChatProps> = ({
 
               {messages.map((message) => {
                 if (message.role === 'user') {
+                  const msgType = message.messageType || detectMessageType(message.content)
                   return (
-                    <UserMessage key={message.id} content={message.content} />
+                    <div key={message.id} className="mb-2">
+                      {/* Бейдж типа сообщения */}
+                      <div className="flex justify-end mb-1">
+                        <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium ${
+                          msgType === 'edit' 
+                            ? 'bg-amber-100 text-amber-700' 
+                            : 'bg-blue-100 text-blue-700'
+                        }`}>
+                          {msgType === 'edit' ? (
+                            <>
+                              <Pencil className="w-3 h-3" />
+                              Редактирование
+                            </>
+                          ) : (
+                            <>
+                              <MessageCircleQuestion className="w-3 h-3" />
+                              Вопрос
+                            </>
+                          )}
+                        </span>
+                      </div>
+                      <UserMessage content={message.content} />
+                    </div>
                   )
                 }
 
@@ -358,8 +470,22 @@ export const DocumentEditorChat: React.FC<DocumentEditorChatProps> = ({
                     }))}
                     isStreaming={isLoading && message.id === messages[messages.length - 1]?.id}
                   >
-                    {/* Карточка для применения правок */}
-                    {message.editedContent && (
+                    {/* Карточки структурированных изменений */}
+                    {message.structuredEdits && message.structuredEdits.length > 0 && (
+                      <EditSuggestionsList
+                        edits={message.structuredEdits}
+                        onApply={handleApplyStructuredEdit}
+                        onSkip={handleSkipEdit}
+                        onNavigate={handleNavigateToText}
+                        onApplyAll={() => handleApplyAllEdits(message.structuredEdits!)}
+                        onSkipAll={() => handleSkipAllEdits(message.structuredEdits!)}
+                        appliedIds={appliedEdits}
+                        skippedIds={skippedEdits}
+                      />
+                    )}
+                    
+                    {/* Fallback: старая карточка для применения правок (если нет structured_edits) */}
+                    {message.editedContent && (!message.structuredEdits || message.structuredEdits.length === 0) && (
                       <div className="mt-4 p-4 border rounded-lg" style={{ 
                         borderColor: 'var(--color-border)',
                         backgroundColor: 'var(--color-bg-elevated)'
@@ -386,7 +512,7 @@ export const DocumentEditorChat: React.FC<DocumentEditorChatProps> = ({
                     )}
 
                     {/* Предложения как быстрые действия */}
-                    {message.suggestions && message.suggestions.length > 0 && (
+                    {message.suggestions && message.suggestions.length > 0 && !message.suggestions.includes('Применить изменения') && (
                       <div className="mt-4 p-4 border rounded-lg" style={{ 
                         borderColor: 'var(--color-border)',
                         backgroundColor: 'var(--color-bg-elevated)'
@@ -395,7 +521,7 @@ export const DocumentEditorChat: React.FC<DocumentEditorChatProps> = ({
                           Предложения:
                         </p>
                         <div className="flex flex-wrap gap-2">
-                          {message.suggestions.map((suggestion, idx) => (
+                          {message.suggestions.filter(s => s !== 'Применить изменения').map((suggestion, idx) => (
                             <button
                               key={idx}
                               onClick={() => handleQuickAction(suggestion, suggestion)}

@@ -27,8 +27,24 @@ import { Loader } from '../ai-elements/loader'
 import DocumentPreviewSheet from './DocumentPreviewSheet'
 import { SourceInfo } from '@/services/api'
 import { useOptionalProviderAttachments } from '../ai-elements/prompt-input'
-import { Plus, Check, FileText, X } from 'lucide-react'
+import { Plus, Check, FileText, X, MessageCircleQuestion, Pencil } from 'lucide-react'
 import type { ExtendedFileUIPart } from '../ai-elements/prompt-input'
+import { EditSuggestionsList } from '../Editor/EditSuggestionCard'
+import type { StructuredEdit } from '@/services/documentEditorApi'
+
+// Ключевые слова для определения типа сообщения
+const EDIT_KEYWORDS = [
+  'изменить', 'редактировать', 'исправить', 'добавить', 'удалить',
+  'переписать', 'улучшить', 'заменить', 'вставить', 'убрать',
+  'поменять', 'обновить', 'дополнить', 'сократить', 'расширить'
+]
+
+type MessageType = 'question' | 'edit'
+
+function detectMessageType(content: string): MessageType {
+  const lowerContent = content.toLowerCase()
+  return EDIT_KEYWORDS.some(keyword => lowerContent.includes(keyword)) ? 'edit' : 'question'
+}
 
 interface Message {
   id: string
@@ -125,6 +141,17 @@ interface Message {
   }
   // Редактирование документа
   editedContent?: string  // Для применения правок к документу
+  // Структурированные изменения для редактора
+  structuredEdits?: Array<{
+    id: string
+    original_text: string
+    new_text: string
+    context_before: string
+    context_after: string
+    found_in_document: boolean
+  }>
+  // Тип сообщения пользователя
+  messageType?: 'question' | 'edit'
 }
 
 interface AssistantUIChatProps {
@@ -146,6 +173,8 @@ interface AssistantUIChatProps {
   onInsertText?: (text: string) => void
   onReplaceText?: (text: string) => void
   onOpenDocumentInEditor?: (documentId: string) => void
+  onScrollToText?: (text: string) => boolean
+  onReplaceTextInDocument?: (originalText: string, newText: string) => boolean
 }
 
 // Компонент-обертка для PromptInput с поддержкой drag&drop
@@ -167,49 +196,52 @@ interface PromptInputWithDropProps {
 // Компонент для отображения файла как чипа (chip)
 const FileChip = ({ 
   attachment, 
-  onRemove 
+  onRemove,
+  readonly = false
 }: { 
   attachment: ExtendedFileUIPart; 
   onRemove: () => void;
+  readonly?: boolean;
 }) => {
   const filename = attachment.filename || "Файл";
   const fileSize = attachment.file?.size || 0;
   const sizeInKB = (fileSize / 1024).toFixed(1);
-  const displayFilename = filename.length > 35 ? filename.substring(0, 35) + '...' : filename;
+  const displayFilename = filename.length > 35 ? filename.substring(0, 35) + '…' : filename;
 
   return (
     <div 
-      className="flex items-center gap-3 px-4 py-2.5 rounded-lg border border-gray-200/50 bg-white/80 backdrop-blur-sm shadow-sm hover:shadow-md transition-all"
+      className="flex items-center gap-3 px-4 py-2.5 rounded-lg border border-gray-200/50 bg-white/80 backdrop-blur-sm shadow-sm hover:shadow-md transition-all max-w-md"
       style={{
         background: 'linear-gradient(135deg, rgba(255, 255, 255, 0.9) 0%, rgba(249, 250, 251, 0.9) 100%)',
         boxShadow: '0 1px 3px 0 rgba(0, 0, 0, 0.1), 0 1px 2px 0 rgba(0, 0, 0, 0.06)',
-        width: '60%',
-        maxWidth: '60%',
-        position: 'absolute',
-        left: '610px',
       }}
     >
       <div className="flex-shrink-0">
-        <FileText className="w-5 h-5 text-gray-600" strokeWidth={1.5} />
+        <FileText className="w-5 h-5 text-gray-600" strokeWidth={1.5} aria-hidden="true" />
       </div>
       <div className="flex-1 min-w-0 flex items-center justify-between gap-3">
         <span className="text-sm font-medium text-gray-900 truncate">
           {displayFilename}
         </span>
-        <span className="text-xs text-gray-500 whitespace-nowrap flex-shrink-0">
-          {sizeInKB} KB
-        </span>
+        {fileSize > 0 && (
+          <span className="text-xs text-gray-500 whitespace-nowrap flex-shrink-0">
+            {sizeInKB} KB
+          </span>
+        )}
       </div>
-      <button
-        onClick={(e) => {
-          e.stopPropagation();
-          onRemove();
-        }}
-        className="flex-shrink-0 p-1 rounded-md hover:bg-gray-200/60 transition-colors"
-        aria-label="Удалить файл"
-      >
-        <X className="w-4 h-4 text-gray-500" />
-      </button>
+      {!readonly && (
+        <button
+          type="button"
+          onClick={(e) => {
+            e.stopPropagation();
+            onRemove();
+          }}
+          className="flex-shrink-0 p-1 rounded-md hover:bg-gray-200/60 transition-colors focus:outline-none focus:ring-2 focus:ring-blue-500"
+          aria-label={`Удалить файл ${filename}`}
+        >
+          <X className="w-4 h-4 text-gray-500" aria-hidden="true" />
+        </button>
+      )}
     </div>
   );
 };
@@ -524,7 +556,9 @@ export const AssistantUIChat = forwardRef<AssistantUIChatRef, AssistantUIChatPro
   currentDocumentContent,
   selectedText,
   onApplyEdit,
-  onOpenDocumentInEditor
+  onOpenDocumentInEditor,
+  onScrollToText,
+  onReplaceTextInDocument
 }, ref) => {
   const params = useParams<{ caseId: string }>()
   const actualCaseId = caseId || params.caseId || ''
@@ -540,6 +574,10 @@ export const AssistantUIChat = forwardRef<AssistantUIChatRef, AssistantUIChatPro
   const [previewOpen, setPreviewOpen] = useState(false)
   const [previewSource, setPreviewSource] = useState<SourceInfo | null>(null)
   const [allCurrentSources, setAllCurrentSources] = useState<SourceInfo[]>([])
+  
+  // Состояние для отслеживания примененных/пропущенных изменений
+  const [appliedEdits, setAppliedEdits] = useState<Set<string>>(new Set())
+  const [skippedEdits, setSkippedEdits] = useState<Set<string>>(new Set())
   
   // ВАЖНО: Этот хук вызывается ВНЕ PromptInputProvider, поэтому возвращает null.
   // Используется только для логирования в sendMessage.
@@ -586,12 +624,14 @@ export const AssistantUIChat = forwardRef<AssistantUIChatRef, AssistantUIChatPro
 
     const currentAttachments = filesSnapshot.length > 0 ? [...filesSnapshot] : []
 
-    // Add user message с файлами
+    // Add user message с файлами и типом сообщения
+    const messageType = documentEditorMode ? detectMessageType(userMessage) : undefined
     const userMsg: Message = {
       id: `user-${Date.now()}`,
       role: 'user',
       content: userMessage,
       attachments: currentAttachments.length > 0 ? currentAttachments : undefined,
+      messageType,
     }
     setMessages((prev) => [...prev, userMsg])
     setIsLoading(true)
@@ -913,7 +953,11 @@ export const AssistantUIChat = forwardRef<AssistantUIChatRef, AssistantUIChatPro
                 setMessages((prev) =>
                   prev.map((msg) =>
                     msg.id === assistantMsgId
-                      ? { ...msg, editedContent: data.edited_content }
+                      ? { 
+                          ...msg, 
+                          editedContent: data.edited_content,
+                          structuredEdits: data.structured_edits || msg.structuredEdits
+                        }
                       : msg
                   )
                 )
@@ -923,7 +967,21 @@ export const AssistantUIChat = forwardRef<AssistantUIChatRef, AssistantUIChatPro
                 setMessages((prev) =>
                   prev.map((msg) =>
                     msg.id === assistantMsgId
-                      ? { ...msg, editedContent: data.edited_content }
+                      ? { 
+                          ...msg, 
+                          editedContent: data.edited_content,
+                          structuredEdits: data.structured_edits || msg.structuredEdits
+                        }
+                      : msg
+                  )
+                )
+              }
+              // Обработка structured_edits отдельно (если приходят без edited_content)
+              if (data.structured_edits && data.structured_edits.length > 0) {
+                setMessages((prev) =>
+                  prev.map((msg) =>
+                    msg.id === assistantMsgId
+                      ? { ...msg, structuredEdits: data.structured_edits }
                       : msg
                   )
                 )
@@ -1202,8 +1260,31 @@ export const AssistantUIChat = forwardRef<AssistantUIChatRef, AssistantUIChatPro
         {messages.map((message) => {
           if (message.role === 'user') {
             const hasUserText = message.content?.trim().length > 0
+            const msgType = message.messageType || (documentEditorMode ? detectMessageType(message.content) : undefined)
             return (
-              <div key={message.id}>
+              <div key={message.id} className="mb-2">
+                {/* Бейдж типа сообщения (только в режиме редактора) */}
+                {documentEditorMode && hasUserText && msgType && (
+                  <div className="flex justify-end mb-1">
+                    <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium ${
+                      msgType === 'edit' 
+                        ? 'bg-amber-100 text-amber-700' 
+                        : 'bg-blue-100 text-blue-700'
+                    }`}>
+                      {msgType === 'edit' ? (
+                        <>
+                          <Pencil className="w-3 h-3" />
+                          Редактирование
+                        </>
+                      ) : (
+                        <>
+                          <MessageCircleQuestion className="w-3 h-3" />
+                          Вопрос
+                        </>
+                      )}
+                    </span>
+                  </div>
+                )}
                 {hasUserText && <UserMessage content={message.content} />}
                 {/* Отображаем файлы под сообщением пользователя */}
                 {message.attachments && message.attachments.length > 0 && (
@@ -1212,7 +1293,8 @@ export const AssistantUIChat = forwardRef<AssistantUIChatRef, AssistantUIChatPro
                       <FileChip
                         key={attachment.id}
                         attachment={attachment}
-                        onRemove={() => {}} // В отправленном сообщении нельзя удалять
+                        onRemove={() => {}}
+                        readonly // В отправленном сообщении нельзя удалять
                       />
                     ))}
                   </div>
@@ -1456,8 +1538,50 @@ export const AssistantUIChat = forwardRef<AssistantUIChatRef, AssistantUIChatPro
                   />
                 )
               )}
-              {/* Кнопка "Применить изменения" для edited_content */}
-              {message.editedContent && documentEditorMode && onApplyEdit && (
+              {/* Карточки структурированных изменений */}
+              {message.structuredEdits && message.structuredEdits.length > 0 && documentEditorMode && onReplaceTextInDocument && (
+                <EditSuggestionsList
+                  edits={message.structuredEdits as StructuredEdit[]}
+                  onApply={(edit) => {
+                    const success = onReplaceTextInDocument(edit.original_text, edit.new_text)
+                    if (success) {
+                      setAppliedEdits(prev => new Set(prev).add(edit.id))
+                    }
+                  }}
+                  onSkip={(edit) => {
+                    setSkippedEdits(prev => new Set(prev).add(edit.id))
+                  }}
+                  onNavigate={(text) => {
+                    if (onScrollToText) {
+                      onScrollToText(text)
+                    }
+                  }}
+                  onApplyAll={() => {
+                    message.structuredEdits?.forEach(edit => {
+                      if (!appliedEdits.has(edit.id) && !skippedEdits.has(edit.id) && edit.found_in_document) {
+                        const success = onReplaceTextInDocument(edit.original_text, edit.new_text)
+                        if (success) {
+                          setAppliedEdits(prev => new Set(prev).add(edit.id))
+                        }
+                      }
+                    })
+                  }}
+                  onSkipAll={() => {
+                    const newSkipped = new Set(skippedEdits)
+                    message.structuredEdits?.forEach(edit => {
+                      if (!appliedEdits.has(edit.id) && !skippedEdits.has(edit.id)) {
+                        newSkipped.add(edit.id)
+                      }
+                    })
+                    setSkippedEdits(newSkipped)
+                  }}
+                  appliedIds={appliedEdits}
+                  skippedIds={skippedEdits}
+                />
+              )}
+              
+              {/* Fallback: Кнопка "Применить изменения" для edited_content (если нет structured_edits) */}
+              {message.editedContent && documentEditorMode && onApplyEdit && (!message.structuredEdits || message.structuredEdits.length === 0) && (
                 <div className="mt-4 p-3 border rounded-lg bg-green-50 border-green-200">
                   <div className="flex items-center justify-between">
                     <span className="text-sm text-green-800">

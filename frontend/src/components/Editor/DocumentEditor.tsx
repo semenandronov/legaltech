@@ -31,12 +31,15 @@ export interface DocumentEditorRef {
   replaceSelectedText: (text: string) => void
   getSelectedText: () => string
   getSelectedRange: () => { from: number; to: number } | null
+  setSelection: (from: number, to: number) => void
   addComment: (from: number, to: number, text: string) => void
   removeComment: (id: string) => void
   getComments: () => Array<{ id: string; from: number; to: number; text: string; createdAt?: string }>
   addRisk: (from: number, to: number, level: 'high' | 'medium' | 'low', description: string) => void
   clearRisks: () => void
   getRisks: () => Array<{ id: string; from: number; to: number; level: 'high' | 'medium' | 'low'; description: string }>
+  scrollToText: (text: string) => boolean
+  replaceText: (originalText: string, newText: string) => boolean
 }
 
 export const DocumentEditor = forwardRef<DocumentEditorRef, DocumentEditorProps>(({
@@ -160,6 +163,24 @@ export const DocumentEditor = forwardRef<DocumentEditorRef, DocumentEditorProps>
       }
       return null
     },
+    setSelection: (from: number, to: number) => {
+      if (editor) {
+        try {
+          // Ensure positions are within document bounds
+          const docSize = editor.state.doc.content.size
+          const safeFrom = Math.max(0, Math.min(from, docSize))
+          const safeTo = Math.max(safeFrom, Math.min(to, docSize))
+          
+          editor.chain()
+            .focus()
+            .setTextSelection({ from: safeFrom, to: safeTo })
+            .scrollIntoView()
+            .run()
+        } catch (error) {
+          console.error('Error setting selection:', error)
+        }
+      }
+    },
     addComment: (from: number, to: number, text: string) => {
       if (editor) {
         ;(editor.chain().focus() as any).addComment(from, to, text).run()
@@ -201,6 +222,103 @@ export const DocumentEditor = forwardRef<DocumentEditorRef, DocumentEditorProps>
         }
       }
       return []
+    },
+    scrollToText: (text: string) => {
+      if (!editor || !text) return false
+      
+      // Получаем текстовое содержимое документа
+      const docText = editor.state.doc.textContent
+      const searchText = text.trim()
+      
+      // Ищем позицию текста в документе
+      const index = docText.indexOf(searchText)
+      if (index === -1) {
+        // Пробуем найти частичное совпадение (первые 50 символов)
+        const shortText = searchText.slice(0, 50)
+        const shortIndex = docText.indexOf(shortText)
+        if (shortIndex === -1) return false
+      }
+      
+      // Ищем позицию в ProseMirror документе
+      let foundPos = -1
+      editor.state.doc.descendants((node, pos) => {
+        if (foundPos !== -1) return false
+        if (node.isText && node.text) {
+          const nodeIndex = node.text.indexOf(searchText)
+          if (nodeIndex !== -1) {
+            foundPos = pos + nodeIndex
+            return false
+          }
+          // Частичное совпадение
+          const shortText = searchText.slice(0, Math.min(50, searchText.length))
+          const shortIndex = node.text.indexOf(shortText)
+          if (shortIndex !== -1) {
+            foundPos = pos + shortIndex
+            return false
+          }
+        }
+        return true
+      })
+      
+      if (foundPos === -1) return false
+      
+      // Устанавливаем выделение и скроллим
+      const endPos = Math.min(foundPos + searchText.length, editor.state.doc.content.size)
+      
+      editor.chain()
+        .focus()
+        .setTextSelection({ from: foundPos, to: endPos })
+        .run()
+      
+      // Скроллим к выделенному тексту
+      const { view } = editor
+      const coords = view.coordsAtPos(foundPos)
+      
+      // Находим контейнер редактора и скроллим
+      const editorElement = view.dom.closest('.document-canvas')
+      if (editorElement && coords) {
+        const containerRect = editorElement.getBoundingClientRect()
+        const scrollTop = editorElement.scrollTop + (coords.top - containerRect.top) - containerRect.height / 3
+        editorElement.scrollTo({
+          top: Math.max(0, scrollTop),
+          behavior: 'smooth'
+        })
+      }
+      
+      return true
+    },
+    replaceText: (originalText: string, newText: string) => {
+      if (!editor || !originalText) return false
+      
+      // Ищем позицию текста в ProseMirror документе
+      let foundPos = -1
+      let foundEndPos = -1
+      
+      editor.state.doc.descendants((node, pos) => {
+        if (foundPos !== -1) return false
+        if (node.isText && node.text) {
+          const nodeIndex = node.text.indexOf(originalText)
+          if (nodeIndex !== -1) {
+            foundPos = pos + nodeIndex
+            foundEndPos = foundPos + originalText.length
+            return false
+          }
+        }
+        return true
+      })
+      
+      if (foundPos === -1) return false
+      
+      // Заменяем текст
+      editor.chain()
+        .focus()
+        .setTextSelection({ from: foundPos, to: foundEndPos })
+        .deleteSelection()
+        .insertContent(newText)
+        .run()
+      
+      onChange(editor.getHTML())
+      return true
     }
   }), [editor, onChange])
 

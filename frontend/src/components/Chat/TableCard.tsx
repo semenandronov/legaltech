@@ -57,8 +57,9 @@ export const TableCard: React.FC<TableCardProps> = ({
             size="sm"
             onClick={handleOpen}
             className="text-[#2563EB] hover:text-[#1D4ED8] hover:bg-[#EFF6FF]"
+            aria-label={`Открыть таблицу ${tableData.name}`}
           >
-            <ExternalLink className="w-4 h-4 mr-1" />
+            <ExternalLink className="w-4 h-4 mr-1" aria-hidden="true" />
             Открыть таблицу
           </Button>
         </div>

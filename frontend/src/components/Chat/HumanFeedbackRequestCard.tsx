@@ -111,6 +111,8 @@ export const HumanFeedbackRequestCard: React.FC<HumanFeedbackRequestCardProps> =
                   key={option.id}
                   onClick={() => handleOptionSelect(option.id)}
                   disabled={isSubmitting}
+                  aria-label={`Выбрать: ${option.label}`}
+                  aria-pressed={selectedOption === option.id}
                   className={`w-full text-left px-4 py-2 rounded-lg border-2 transition-colors ${
                     selectedOption === option.id
                       ? 'border-blue-500 bg-blue-50 text-blue-900'
@@ -159,7 +161,7 @@ export const HumanFeedbackRequestCard: React.FC<HumanFeedbackRequestCardProps> =
                     setCustomResponse(e.target.value)
                     setError(null)
                   }}
-                  placeholder={inputSchema.placeholder || 'Введите ответ...'}
+                  placeholder={inputSchema.placeholder || 'Введите ответ…'}
                   rows={4}
                   disabled={isSubmitting}
                 />
@@ -171,7 +173,7 @@ export const HumanFeedbackRequestCard: React.FC<HumanFeedbackRequestCardProps> =
                     setCustomResponse(e.target.value)
                     setError(null)
                   }}
-                  placeholder={inputSchema.placeholder || 'Введите ответ...'}
+                  placeholder={inputSchema.placeholder || 'Введите ответ…'}
                   className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
                   disabled={isSubmitting}
                 />
@@ -188,7 +190,7 @@ export const HumanFeedbackRequestCard: React.FC<HumanFeedbackRequestCardProps> =
                   setCustomResponse(e.target.value)
                   setError(null)
                 }}
-                placeholder="Введите ваш ответ..."
+                placeholder="Введите ваш ответ…"
                 rows={4}
                 disabled={isSubmitting}
               />
@@ -208,11 +210,12 @@ export const HumanFeedbackRequestCard: React.FC<HumanFeedbackRequestCardProps> =
               onClick={handleSubmit}
               disabled={isSubmitting || (!selectedOption && !customResponse.trim())}
               className="bg-blue-600 hover:bg-blue-700"
+              aria-label="Отправить ответ"
             >
               {isSubmitting ? (
                 <>
                   <Loader size={16} className="mr-2" />
-                  Отправка...
+                  Отправка…
                 </>
               ) : (
                 <>

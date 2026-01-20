@@ -51,7 +51,9 @@ export const extractErrorMessage = (error: unknown): string => {
 }
 
 // Create axios instance
-const apiClient = axios.create()
+const apiClient = axios.create({
+  baseURL: BASE_URL || undefined, // Use BASE_URL if set, otherwise undefined (relative paths)
+})
 
 // Request interceptor to add JWT token
 apiClient.interceptors.request.use(
