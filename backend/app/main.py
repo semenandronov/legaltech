@@ -11,7 +11,7 @@ import logging
 import sys
 from datetime import datetime
 from app.config import config
-from app.routes import upload, chat, auth, cases, dashboard, analysis, reports, settings, websocket, tabular_review, prompts, workflows, folders, review_table, assistant_chat, workflow_execution, plan_execution, metrics, document_editor, playbooks, workflow_agentic
+from app.routes import upload, chat, auth, cases, dashboard, analysis, reports, settings, websocket, tabular_review, prompts, workflows, folders, review_table, assistant_chat, assistant_chat_v2, workflow_execution, plan_execution, metrics, document_editor, playbooks, workflow_agentic
 from app.utils.database import init_db
 
 # Configure structured logging
@@ -171,6 +171,7 @@ app.include_router(settings.router, prefix="/api/settings", tags=["settings"])
 app.include_router(upload.router, prefix="/api/upload", tags=["upload"])
 app.include_router(chat.router, prefix="/api/chat", tags=["chat"])
 app.include_router(assistant_chat.router, tags=["assistant-chat"])
+app.include_router(assistant_chat_v2.router, tags=["assistant-chat-v2"])
 app.include_router(websocket.router, tags=["websocket"])
 app.include_router(tabular_review.router, prefix="/api/tabular-review", tags=["tabular-review"])
 app.include_router(review_table.router, prefix="/api/review-table", tags=["review-table"])
