@@ -18,6 +18,7 @@ def create_llm(
     model: Optional[str] = None,
     temperature: float = 0.1,
     use_rate_limiting: bool = True,
+    timeout: float = 120.0,  # Timeout для HTTP запросов (секунды)
     **kwargs
 ) -> Any:
     """
@@ -28,6 +29,7 @@ def create_llm(
         model: Model name (optional)
         temperature: Temperature for generation
         use_rate_limiting: Whether to wrap with rate limiter (default: True)
+        timeout: HTTP request timeout in seconds (default: 120s for complex legal queries)
         **kwargs: Additional arguments
     
     Returns:
@@ -53,6 +55,7 @@ def create_llm(
                 model=model or config.GIGACHAT_MODEL,
                 temperature=temperature,
                 verify_ssl_certs=config.GIGACHAT_VERIFY_SSL,
+                timeout=timeout,
                 **kwargs
             )
             
@@ -202,6 +205,7 @@ def create_legal_llm(
     model: Optional[str] = None,
     use_rate_limiting: bool = True,
     temperature: Optional[float] = None,
+    timeout: float = 180.0,  # Увеличенный timeout для юридических запросов (3 минуты)
     **kwargs
 ) -> Any:
     """
@@ -214,6 +218,7 @@ def create_legal_llm(
         model: Model name (optional, uses default from config)
         use_rate_limiting: Whether to wrap with rate limiter (default: True)
         temperature: Temperature override (default: uses config.LLM_TEMPERATURE_LEGAL)
+        timeout: HTTP request timeout in seconds (default: 180s for complex legal queries)
         **kwargs: Additional arguments passed to create_llm
     
     Returns:
@@ -225,6 +230,7 @@ def create_legal_llm(
         model=model,
         temperature=final_temperature,
         use_rate_limiting=use_rate_limiting,
+        timeout=timeout,
         **kwargs
     )
 

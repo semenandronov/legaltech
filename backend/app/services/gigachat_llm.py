@@ -33,6 +33,7 @@ class ChatGigaChat(BaseChatModel):
     model: str = "GigaChat"
     temperature: float = 0.1
     verify_ssl_certs: bool = False  # Default to False for compatibility with Render/proxy environments
+    timeout: float = 120.0  # Timeout для HTTP запросов (секунды)
     _functions: Optional[List[Dict[str, Any]]] = None
     
     def __init__(
@@ -41,6 +42,7 @@ class ChatGigaChat(BaseChatModel):
         model: Optional[str] = None,
         temperature: float = 0.1,
         verify_ssl_certs: bool = False,  # Default to False for compatibility with Render/proxy environments
+        timeout: float = 120.0,  # Timeout для HTTP запросов (секунды) - увеличен для сложных запросов
         **kwargs
     ):
         """
@@ -53,6 +55,7 @@ class ChatGigaChat(BaseChatModel):
             model: Model name (default: GigaChat)
             temperature: Temperature for generation
             verify_ssl_certs: Verify SSL certificates
+            timeout: HTTP request timeout in seconds (default: 120s for complex legal queries)
         """
         if not GIGACHAT_AVAILABLE:
             raise ImportError(
@@ -74,6 +77,7 @@ class ChatGigaChat(BaseChatModel):
             model=final_model,
             temperature=temperature,
             verify_ssl_certs=verify_ssl_certs,
+            timeout=timeout,
             **kwargs
         )
         
@@ -82,14 +86,15 @@ class ChatGigaChat(BaseChatModel):
         
         # Инициализируем GigaChat SDK
         try:
-            # Логируем настройки SSL для диагностики
-            logger.info(f"Initializing GigaChat with verify_ssl_certs={self.verify_ssl_certs}")
+            # Логируем настройки для диагностики
+            logger.info(f"Initializing GigaChat with verify_ssl_certs={self.verify_ssl_certs}, timeout={self.timeout}s")
             
             self._client = GigaChatSDK(
                 credentials=self.credentials,
-                verify_ssl_certs=self.verify_ssl_certs
+                verify_ssl_certs=self.verify_ssl_certs,
+                timeout=self.timeout  # Передаем timeout в SDK
             )
-            logger.info(f"✅ Initialized ChatGigaChat with model={self.model}, verify_ssl={self.verify_ssl_certs}")
+            logger.info(f"✅ Initialized ChatGigaChat with model={self.model}, verify_ssl={self.verify_ssl_certs}, timeout={self.timeout}s")
         except Exception as e:
             logger.error(f"Failed to initialize GigaChat: {e}", exc_info=True)
             # Если ошибка связана с SSL, предлагаем решение
@@ -387,7 +392,8 @@ class ChatGigaChat(BaseChatModel):
             credentials=self.credentials,
             model=self.model,
             temperature=self.temperature,
-            verify_ssl_certs=self.verify_ssl_certs
+            verify_ssl_certs=self.verify_ssl_certs,
+            timeout=self.timeout
         )
         
         # Сохраняем функции для использования в _generate

@@ -746,20 +746,8 @@ async def stream_chat_response(
                 # Получаем GarantSource напрямую для структурированных результатов
                 garant_source = get_garant_source()
                 if garant_source and garant_source.api_key:
-                    import asyncio
-                    
-                    # Выполняем поиск и получаем структурированные результаты
-                    async def search_garant():
-                        return await garant_source.search(query=question, max_results=10)
-                    
-                    # Безопасный запуск async функции
-                    try:
-                        loop = asyncio.get_running_loop()
-                        garant_results_structured = await search_garant()
-                    except RuntimeError:
-                        loop = asyncio.new_event_loop()
-                        asyncio.set_event_loop(loop)
-                        garant_results_structured = loop.run_until_complete(search_garant())
+                    # Используем await напрямую (мы уже в async функции)
+                    garant_results_structured = await garant_source.search(query=question, max_results=10)
                     
                     if garant_results_structured:
                         # Форматируем результаты для контекста LLM
