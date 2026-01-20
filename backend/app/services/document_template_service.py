@@ -269,8 +269,30 @@ class DocumentTemplateService:
             garant_metadata: Метаданные из Гаранта
             
         Returns:
-            Сохраненный шаблон
+            Сохраненный шаблон (существующий или новый)
         """
+        # Проверяем, есть ли уже такой шаблон в БД (по source_doc_id)
+        # Это предотвращает дублирование шаблонов из Гарант
+        if source_doc_id:
+            existing_template = self.db.query(DocumentTemplate).filter(
+                DocumentTemplate.source == source,
+                DocumentTemplate.source_doc_id == str(source_doc_id)
+            ).first()
+            
+            if existing_template:
+                # Обновляем ключевые слова (добавляем новые из текущего запроса)
+                new_keywords = self._extract_keywords(query or title, title)
+                existing_keywords = set(existing_template.keywords or [])
+                merged_keywords = list(existing_keywords | set(new_keywords))
+                
+                existing_template.keywords = merged_keywords
+                existing_template.usage_count += 1
+                existing_template.last_used_at = datetime.utcnow()
+                self.db.commit()
+                
+                logger.info(f"Template already exists in DB: {existing_template.title} (source_doc_id={source_doc_id}), updated keywords")
+                return existing_template
+        
         # Извлекаем ключевые слова
         keywords = self._extract_keywords(query or title, title)
         
@@ -293,6 +315,6 @@ class DocumentTemplateService:
         self.db.commit()
         self.db.refresh(template)
         
-        logger.info(f"Saved template: {title} with {len(keywords)} keywords, is_public={is_public}")
+        logger.info(f"Saved NEW template: {title} with {len(keywords)} keywords, is_public={is_public}")
         return template
 
