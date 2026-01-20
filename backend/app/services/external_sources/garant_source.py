@@ -403,9 +403,9 @@ class GarantSource(BaseSource):
         """
         Получить полный текст документа из ГАРАНТ
         
-        Согласно документации API v2.1.0:
-        - URL: GET /v2/export/{format}?topic={topic}&env=internet
-        - Параметры передаются в query string
+        Правильный формат API (согласно примеру успешного запроса):
+        - URL: GET /v2/topic/{topic}/html
+        - Ответ: JSON с полем items, внутри объект с полем text (HTML контент)
         
         Args:
             doc_id: ID документа (topic из результатов поиска)
@@ -424,54 +424,35 @@ class GarantSource(BaseSource):
         
         headers = {
             "Authorization": f"Bearer {self.api_key}",
-            "Accept": "application/json" if format == "html" else "application/octet-stream",
+            "Accept": "application/json",
         }
         
-        # Согласно документации API v2.1.0
-        # URL для экспорта: GET /v2/export/{format}?topic={topic}&env=internet
-        endpoint_map = {
-            "html": "/export/html",
-            "rtf": "/export/rtf",
-            "pdf": "/export/pdf",
-            "odt": "/export/odt"
-        }
-        
-        endpoint = endpoint_map.get(format.lower(), "/export/html")
-        full_url = f"{self.api_url}{endpoint}"
-        
-        # Согласно документации API v2.1.0, topic должен быть числом
-        # Пробуем преобразовать в число
-        doc_id_for_export = None
+        # Правильный формат: GET /v2/topic/{topic}/html
+        # topic передаётся в пути URL, а не в query string
         original_doc_id = str(doc_id).strip()
         
-        # Извлекаем числовой ID из строки (может быть в формате "12345" или содержать другие символы)
+        # Извлекаем числовой ID из строки
         import re
         numeric_match = re.search(r'(\d+)', original_doc_id)
         if numeric_match:
-            doc_id_for_export = int(numeric_match.group(1))
+            doc_id_for_export = numeric_match.group(1)  # Оставляем как строку для URL
         else:
             doc_id_for_export = original_doc_id
         
+        # Формируем URL: /v2/topic/{topic}/html
+        full_url = f"{self.api_url}/topic/{doc_id_for_export}/{format.lower()}"
+        
         logger.info(f"[Garant API] Requesting full text for document topic={doc_id_for_export} (original: {original_doc_id}) in format {format}")
+        logger.debug(f"[Garant API] Full URL: {full_url}")
         
         timeout_seconds = GARANT_API_TIMEOUT_EXPORT
         
         try:
             async with aiohttp.ClientSession() as session:
-                
-                # Параметры передаются в query string для GET запроса
-                params = {
-                    "topic": doc_id_for_export,
-                    "env": "internet"
-                }
-                
-                logger.debug(f"[Garant API] Export request: endpoint={full_url}, params={params}")
-                
                 start_time = __import__('time').time()
                 
                 async with session.get(
                     full_url,
-                    params=params,
                     headers=headers,
                     timeout=aiohttp.ClientTimeout(total=timeout_seconds)
                 ) as response:
@@ -482,9 +463,27 @@ class GarantSource(BaseSource):
                     if response.status == 200:
                         try:
                             if format == "html":
-                                content = await response.text()
-                                logger.info(f"[Garant API] Successfully got HTML content, length: {len(content)} chars")
-                                return content
+                                # Ответ приходит в JSON формате: {"items": [{"text": "<html>...</html>"}]}
+                                response_json = await response.json()
+                                
+                                # Извлекаем HTML из items[0].text
+                                if isinstance(response_json, dict) and "items" in response_json:
+                                    items = response_json.get("items", [])
+                                    if items and isinstance(items, list) and len(items) > 0:
+                                        first_item = items[0]
+                                        if isinstance(first_item, dict) and "text" in first_item:
+                                            html_content = first_item["text"]
+                                            logger.info(f"[Garant API] Successfully got HTML content, length: {len(html_content)} chars")
+                                            return html_content
+                                
+                                # Fallback: если структура другая, пробуем найти text в корне
+                                if isinstance(response_json, dict) and "text" in response_json:
+                                    html_content = response_json["text"]
+                                    logger.info(f"[Garant API] Successfully got HTML content (from root text), length: {len(html_content)} chars")
+                                    return html_content
+                                
+                                logger.warning(f"[Garant API] Unexpected response structure: {list(response_json.keys()) if isinstance(response_json, dict) else type(response_json)}")
+                                return None
                             else:
                                 # Для бинарных форматов возвращаем base64
                                 import base64
