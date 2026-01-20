@@ -166,89 +166,83 @@ class AgentHandler:
             SSE события прогресса и результатов
         """
         try:
-            from app.services.langchain_agents.coordinator import AgentCoordinator
+            # Используем упрощённый координатор
+            from app.services.langchain_agents.simplified_coordinator import SimplifiedAgentCoordinator
             
             yield SSESerializer.text_delta("⚙️ **Выполняю план анализа…**\n\n")
             
-            # Создаём координатор
-            coordinator = AgentCoordinator(
-                case_id=case_id,
-                user_id=current_user.id,
+            # Создаём упрощённый координатор
+            coordinator = SimplifiedAgentCoordinator(
+                db=self.db,
                 rag_service=self.rag_service,
-                db=self.db
             )
             
-            # Выполняем анализ
+            # Выполняем анализ через stream
             total_steps = len(plan.steps) if plan.steps else len(plan.analysis_types or [])
             current_step = 0
             
-            async for event in coordinator.execute_analysis_stream(
+            async for event in coordinator.stream_analysis(
+                case_id=case_id,
                 analysis_types=plan.analysis_types or [],
-                goals=plan.goals
             ):
                 event_type = event.get("type")
                 
-                if event_type == "agent_start":
+                if event_type == "start":
+                    # Событие старта анализа
+                    agents = event.get("agents", [])
+                    yield SSESerializer.text_delta(f"🚀 Запускаю анализ: {', '.join(agents)}\n\n")
+                
+                elif event_type == "agent_complete":
                     agent_name = event.get("agent", "unknown")
+                    result_preview = event.get("result_preview", {})
                     current_step += 1
                     progress = current_step / max(total_steps, 1)
                     
                     yield AgentProgressEvent(
                         agent_name=agent_name,
-                        step=f"Выполняется {agent_name}",
+                        step=f"Завершён {agent_name}",
                         progress=progress,
                         message=f"Шаг {current_step} из {total_steps}"
                     ).to_sse()
                     
-                    yield SSESerializer.text_delta(f"📊 Запущен агент: **{agent_name}**\n")
+                    # Форматируем preview
+                    preview_text = result_preview.get("preview", f"Выполнено: {agent_name}")
+                    yield SSESerializer.text_delta(f"✅ **{agent_name}**: {preview_text}\n")
                 
-                elif event_type == "agent_complete":
-                    agent_name = event.get("agent", "unknown")
-                    result = event.get("result", {})
+                elif event_type == "complete":
+                    # Финальное событие
+                    execution_time = event.get("execution_time", 0)
+                    completed_agents = event.get("completed_agents", [])
                     
-                    yield AgentCompleteEvent(
-                        agent_name=agent_name,
-                        result=result,
-                        success=True
-                    ).to_sse()
+                    yield SSESerializer.text_delta(
+                        f"\n\n✅ **Анализ завершён** за {execution_time:.1f}с\n"
+                        f"Выполнено агентов: {len(completed_agents)}\n"
+                    )
                     
-                    # Форматируем результат
-                    summary = self._format_agent_result(agent_name, result)
-                    yield SSESerializer.text_delta(f"\n{summary}\n")
+                    # Получаем финальные результаты
+                    final_state = event.get("final_state", {})
+                    if final_state:
+                        for agent in completed_agents:
+                            result_key = f"{agent}_result"
+                            if agent == "document_classifier":
+                                result_key = "classification_result"
+                            elif agent == "entity_extraction":
+                                result_key = "entities_result"
+                            
+                            result = final_state.get(result_key)
+                            if result:
+                                summary = self._format_agent_result(agent, result)
+                                yield SSESerializer.text_delta(f"\n{summary}\n")
                 
-                elif event_type == "agent_error":
-                    agent_name = event.get("agent", "unknown")
-                    error = event.get("error", "Unknown error")
-                    
-                    yield AgentCompleteEvent(
-                        agent_name=agent_name,
-                        result={"error": error},
-                        success=False
-                    ).to_sse()
-                    
-                    yield SSESerializer.text_delta(f"\n⚠️ Ошибка в агенте {agent_name}: {error}\n")
+                elif event_type == "error":
+                    error_msg = event.get("message", "Unknown error")
+                    yield SSESerializer.error(f"Ошибка: {error_msg}")
                 
-                elif event_type == "human_feedback_request":
-                    request_id = event.get("request_id", str(uuid.uuid4()))
-                    message = event.get("message", "Требуется ваш ввод")
-                    options = event.get("options", [])
-                    
-                    feedback_options = [
-                        FeedbackOption(id=opt.get("id", str(i)), label=opt.get("label", ""))
-                        for i, opt in enumerate(options)
-                    ] if options else None
-                    
-                    yield HumanFeedbackEvent(
-                        request_id=request_id,
-                        message=message,
-                        options=feedback_options,
-                        agent_name=event.get("agent_name")
-                    ).to_sse()
-                
-                elif event_type == "text":
-                    text = event.get("content", "")
-                    if text:
-                        yield SSESerializer.text_delta(text)
+                elif event_type == "token":
+                    # Streaming токенов от LLM
+                    content = event.get("content", "")
+                    if content:
+                        yield SSESerializer.text_delta(content)
             
             yield SSESerializer.text_delta("\n\n✅ **Анализ завершён**\n")
             

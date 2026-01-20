@@ -1,8 +1,22 @@
-"""Planning tools for Planning Agent"""
+"""Planning tools for Planning Agent
+
+Использует определения агентов из core_agents.py — единого источника правды.
+"""
 from typing import Dict, Any, List, Optional, Tuple
 from langchain_core.tools import tool
 import json
 import logging
+
+# Импортируем определения агентов из единого источника
+from app.services.langchain_agents.core_agents import (
+    AGENT_DEFINITIONS,
+    CORE_AGENTS,
+    ALL_AGENTS,
+    DEPENDENCIES,
+    validate_analysis_types as core_validate_analysis_types,
+    get_agents_with_dependencies,
+    get_available_analyses_info,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -19,62 +33,16 @@ def initialize_document_analysis_tools(rag_service, document_processor):
 
 
 # Определение доступных анализов и их зависимостей
-# ВАЖНО: Это единый источник правды для всех агентов в системе
+# ВАЖНО: Теперь используем core_agents.py как единый источник правды
+# Этот словарь сохранён для обратной совместимости
 AVAILABLE_ANALYSES = {
-    "document_classifier": {
-        "name": "document_classifier",
-        "description": "Классификация документов по типам и категориям",
-        "keywords": ["классификация", "типы документов", "категории", "document classifier", "классифицировать документы"],
-        "dependencies": []
-    },
-    "privilege_check": {
-        "name": "privilege_check",
-        "description": "Проверка документов на адвокатскую тайну и привилегии",
-        "keywords": ["привилегии", "адвокатская тайна", "privilege", "конфиденциальность", "проверка привилегий"],
-        "dependencies": []  # Может использовать document_classifier, но не требует обязательно
-    },
-    "entity_extraction": {
-        "name": "entity_extraction",
-        "description": "Извлечение сущностей из документов (люди, организации, суммы, даты, места)",
-        "keywords": ["сущности", "entities", "извлечение сущностей", "люди", "организации", "даты", "суммы"],
-        "dependencies": []
-    },
-    "timeline": {
-        "name": "timeline",
-        "description": "Извлечение хронологии событий из документов (даты, события, временная линия)",
-        "keywords": ["даты", "события", "хронология", "timeline", "timeline событий", "временная линия"],
-        "dependencies": []
-    },
-    "key_facts": {
-        "name": "key_facts",
-        "description": "Извлечение ключевых фактов из документов (стороны, суммы, важные детали)",
-        "keywords": ["факты", "ключевые факты", "key facts", "основные моменты", "важные детали"],
-        "dependencies": []
-    },
-    "discrepancy": {
-        "name": "discrepancy",
-        "description": "Поиск противоречий и несоответствий между документами",
-        "keywords": ["противоречия", "несоответствия", "discrepancy", "расхождения", "конфликты"],
-        "dependencies": []
-    },
-    "risk": {
-        "name": "risk",
-        "description": "Анализ рисков на основе найденных противоречий",
-        "keywords": ["риски", "risk", "анализ рисков", "оценка рисков", "риск-анализ"],
-        "dependencies": ["discrepancy"]  # Требует discrepancy
-    },
-    "summary": {
-        "name": "summary",
-        "description": "Генерация резюме дела на основе ключевых фактов",
-        "keywords": ["резюме", "summary", "краткое содержание", "сводка", "краткое резюме"],
-        "dependencies": ["key_facts"]  # Требует key_facts
-    },
-    "relationship": {
-        "name": "relationship",
-        "description": "Построение графа связей между сущностями (люди, организации, связи)",
-        "keywords": ["связи", "relationship", "граф связей", "взаимосвязи", "сеть связей"],
-        "dependencies": ["entity_extraction"]  # Требует entity_extraction
+    name: {
+        "name": name,
+        "description": defn.description,
+        "keywords": defn.keywords,
+        "dependencies": list(defn.dependencies),
     }
+    for name, defn in AGENT_DEFINITIONS.items()
 }
 
 
@@ -445,12 +413,14 @@ def get_all_agent_types() -> List[str]:
     Returns:
         Список строк с названиями агентов
     """
-    return list(AVAILABLE_ANALYSES.keys())
+    return list(ALL_AGENTS)
 
 
-def validate_analysis_types(analysis_types: List[str]) -> tuple[bool, List[str]]:
+def validate_analysis_types(analysis_types: List[str]) -> Tuple[bool, List[str]]:
     """
     Валидирует список типов анализов.
+    
+    Использует core_agents.py как единый источник правды.
     
     Args:
         analysis_types: Список типов анализов для валидации
@@ -458,9 +428,7 @@ def validate_analysis_types(analysis_types: List[str]) -> tuple[bool, List[str]]
     Returns:
         Tuple (is_valid, invalid_types)
     """
-    valid_types = set(AVAILABLE_ANALYSES.keys())
-    invalid_types = [t for t in analysis_types if t not in valid_types]
-    return len(invalid_types) == 0, invalid_types
+    return core_validate_analysis_types(analysis_types)
 
 
 def get_planning_tools() -> List:

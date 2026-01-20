@@ -224,23 +224,23 @@ const FileChip = ({
           {displayFilename}
         </span>
         {fileSize > 0 && (
-          <span className="text-xs text-gray-500 whitespace-nowrap flex-shrink-0">
-            {sizeInKB} KB
-          </span>
+        <span className="text-xs text-gray-500 whitespace-nowrap flex-shrink-0">
+          {sizeInKB} KB
+        </span>
         )}
       </div>
       {!readonly && (
-        <button
+      <button
           type="button"
-          onClick={(e) => {
-            e.stopPropagation();
-            onRemove();
-          }}
+        onClick={(e) => {
+          e.stopPropagation();
+          onRemove();
+        }}
           className="flex-shrink-0 p-1 rounded-md hover:bg-gray-200/60 transition-colors focus:outline-none focus:ring-2 focus:ring-blue-500"
           aria-label={`Удалить файл ${filename}`}
-        >
+      >
           <X className="w-4 h-4 text-gray-500" aria-hidden="true" />
-        </button>
+      </button>
       )}
     </div>
   );

@@ -103,7 +103,7 @@ export const ChatHistoryPanel: React.FC<ChatHistoryPanelProps> = ({
             id: `session-${session.session_id}`,
             content: firstUserMessage.content,
             created_at: session.first_message_at || session.last_message_at || '',
-            case_id: currentCaseId,
+          case_id: currentCaseId,
             session_id: session.session_id,
           })
         }
