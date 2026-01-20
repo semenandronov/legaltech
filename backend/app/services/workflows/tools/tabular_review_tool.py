@@ -88,23 +88,26 @@ class TabularReviewTool(BaseTool):
                 )
                 column_ids.append(column.id)
             
-            # Populate the table - use batch extraction
+            # Populate the table - use batch extraction (async method)
             try:
-                service.extract_all_cells_batch(review_id, user_id)
+                import asyncio
+                # run_extraction is async, need to await it
+                extraction_result = await service.run_extraction(review_id, user_id)
+                logger.info(f"Extraction completed: {extraction_result.get('extracted_count', 0)} cells")
             except Exception as e:
                 logger.warning(f"Batch extraction failed: {e}, trying individual extraction")
-                # Fallback to individual extraction
+                # Fallback to individual column extraction
                 for column_id in column_ids:
                     try:
-                        service.extract_column_values(review_id, column_id, user_id)
+                        await service.run_column_extraction(review_id, column_id, user_id)
                     except Exception as col_e:
                         logger.warning(f"Column extraction failed: {col_e}")
             
-            # Get results
-            review_data = service.get_tabular_review(review_id, user_id)
+            # Get results using get_table_data
+            review_data = service.get_table_data(review_id, user_id)
             
             # Count rows (documents)
-            row_count = len(review_data.selected_file_ids) if review_data.selected_file_ids else 0
+            row_count = review_data.get("row_count", 0)
             
             return ToolResult(
                 success=True,
