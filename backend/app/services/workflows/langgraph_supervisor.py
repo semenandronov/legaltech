@@ -430,19 +430,24 @@ class LangGraphSupervisor:
             agents_to_run = scratchpad.get("agents_to_run", [])
             current_index = scratchpad.get("current_agent_index", 0)
             
+            logger.info(f"_node_execute_agent: index={current_index}, agents={agents_to_run}")
+            
             if current_index >= len(agents_to_run):
                 # Все агенты выполнены
+                logger.info("_node_execute_agent: all agents completed")
                 return {
                     "scratchpad": {**scratchpad, "all_agents_completed": True}
                 }
             
             agent_name = agents_to_run[current_index]
+            logger.info(f"_node_execute_agent: running agent {agent_name}")
             
             # Выполняем агента
             result = await self._run_subagent(
                 agent_name=agent_name,
                 state=state
             )
+            logger.info(f"_node_execute_agent: agent {agent_name} completed with success={result.get('success')}")
             
             # Обновляем результаты и индекс
             return {
@@ -698,21 +703,30 @@ class LangGraphSupervisor:
     def _route_after_classify(self, state: AgentState) -> Literal["plan", "error"]:
         """Маршрутизация после классификации"""
         if state.get("last_error"):
+            logger.info("Route after classify: error")
             return "error"
+        logger.info("Route after classify: plan")
         return "plan"
     
     def _route_after_plan(self, state: AgentState) -> Literal["execute", "error"]:
         """Маршрутизация после планирования"""
         if state.get("last_error"):
+            logger.info("Route after plan: error")
             return "error"
+        scratchpad = state.get("scratchpad", {})
+        agents = scratchpad.get("agents_to_run", [])
+        logger.info(f"Route after plan: execute, agents_to_run={agents}")
         return "execute"
     
     def _route_after_execute(self, state: AgentState) -> Literal["continue", "synthesize", "error", "human_approval", "compress"]:
         """Маршрутизация после выполнения агента"""
         if state.get("last_error"):
+            logger.info(f"Route after execute: error - {state.get('last_error')}")
             return "error"
         
         scratchpad = state.get("scratchpad", {})
+        current_idx = scratchpad.get("current_agent_index", 0)
+        agents = scratchpad.get("agents_to_run", [])
         
         # === GUARDRAIL: Проверка max_steps ===
         step_count = state.get("step_count", 0)
@@ -724,6 +738,7 @@ class LangGraphSupervisor:
         # === CONTEXT MANAGEMENT: Проверка размера контекста ===
         messages = state.get("messages", [])
         if len(messages) > 20 and not scratchpad.get("context_compressed"):
+            logger.info("Route after execute: compress (context too large)")
             return "compress"
         
         # === HITL: Проверка необходимости одобрения ===
@@ -731,11 +746,14 @@ class LangGraphSupervisor:
             last_agent = scratchpad.get("last_agent")
             if last_agent in (self.config.hitl_approval_required or []):
                 # Требуется одобрение для этого агента
+                logger.info("Route after execute: human_approval")
                 return "human_approval"
         
         if scratchpad.get("all_agents_completed"):
+            logger.info("Route after execute: synthesize (all completed)")
             return "synthesize"
         
+        logger.info(f"Route after execute: continue (agent {current_idx}/{len(agents)})")
         return "continue"
     
     def _route_after_human_approval(self, state: AgentState) -> Literal["continue", "wait"]:

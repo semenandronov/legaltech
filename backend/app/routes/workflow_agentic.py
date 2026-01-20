@@ -431,18 +431,11 @@ async def stream_execution(
         if execution_status == "planning":
             engine = ExecutionEngine(db)
             
-            # Use SupervisorAgent architecture for better task understanding
-            # (паттерн "Субагенты" из LangChain)
-            use_supervisor = True  # Можно сделать настраиваемым
-            
-            if use_supervisor:
-                async for event in engine.execute_with_supervisor(execution, definition, documents):
-                    yield f"data: {json.dumps(event_to_dict(event), ensure_ascii=False)}\n\n"
-                    await asyncio.sleep(0.1)
-            else:
-                async for event in engine.plan_and_execute(execution, definition, documents):
-                    yield f"data: {json.dumps(event_to_dict(event), ensure_ascii=False)}\n\n"
-                    await asyncio.sleep(0.1)
+            # Use plan_and_execute which properly uses PlanningAgent and ToolRegistry
+            # This respects the available_tools from workflow definition
+            async for event in engine.plan_and_execute(execution, definition, documents):
+                yield f"data: {json.dumps(event_to_dict(event), ensure_ascii=False)}\n\n"
+                await asyncio.sleep(0.1)
         else:
             # Already running or completed - just return current status
             yield f"data: {json.dumps({'event_type': 'status', 'status': execution_status, 'progress': execution_progress}, ensure_ascii=False)}\n\n"
