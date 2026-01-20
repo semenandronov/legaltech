@@ -80,11 +80,11 @@ class TabularReviewTool(BaseTool):
             column_ids = []
             for question in questions:
                 column = service.add_column(
-                    tabular_review_id=review_id,
+                    review_id=review_id,
                     user_id=user_id,
                     column_label=question,
                     column_type="text",
-                    extraction_prompt=f"Извлеки из документа: {question}"
+                    prompt=f"Извлеки из документа: {question}"
                 )
                 column_ids.append(column.id)
             
