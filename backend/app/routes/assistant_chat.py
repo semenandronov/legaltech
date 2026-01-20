@@ -1040,7 +1040,7 @@ async def stream_chat_response(
                 json_candidate = False
                 
                 # Добавляем детальное логирование и обработку ошибок
-                import asyncio
+                # asyncio уже импортирован глобально, не нужно импортировать локально
                 chunks_received = 0
                 stream_start_time = asyncio.get_event_loop().time()
                 
