@@ -8,7 +8,8 @@ import {
   Drawer,
 } from '@mui/material'
 import { Description as DescriptionIcon, Close as CloseIcon, OpenInNew as OpenInNewIcon } from '@mui/icons-material'
-import { MessageSquare, FileText, Table, Filter, FileEdit, BookOpen, Workflow, CheckCircle, XCircle, AlertTriangle, X, Loader2, ChevronRight } from 'lucide-react'
+import { MessageSquare, FileText, Table, Filter, FileEdit, BookOpen, Workflow, CheckCircle, XCircle, AlertTriangle, X, Loader2, ChevronRight, Upload } from 'lucide-react'
+import DocumentUploadModal from '../components/Documents/DocumentUploadModal'
 import { toast } from 'sonner'
 import UnifiedSidebar from '../components/Layout/UnifiedSidebar'
 import DocumentViewer from '../components/Documents/DocumentViewer'
@@ -61,6 +62,9 @@ const DocumentsPage = () => {
   const [runningPlaybook, setRunningPlaybook] = useState(false)
   const [playbookResult, setPlaybookResult] = useState<PlaybookCheck | null>(null)
   const [showResultPanel, setShowResultPanel] = useState(false)
+  
+  // Upload modal state
+  const [showUploadModal, setShowUploadModal] = useState(false)
   
   useEffect(() => {
     if (caseId) {
@@ -248,13 +252,25 @@ const DocumentsPage = () => {
             <h1 className="font-display text-h1 text-text-primary">
               Документы ({filteredDocuments.length} / {documents.length})
             </h1>
-            <button
-              onClick={() => setShowFilters(!showFilters)}
-              className="flex items-center gap-2 px-4 py-2 rounded-lg bg-bg-secondary text-text-primary border border-border hover:bg-bg-hover transition-all"
-            >
-              <Filter className="w-4 h-4" />
-              Фильтры
-            </button>
+            <div className="flex items-center gap-3">
+              <button
+                onClick={() => setShowUploadModal(true)}
+                className="flex items-center gap-2 px-4 py-2 rounded-lg text-white font-medium transition-all hover:opacity-90"
+                style={{
+                  background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)'
+                }}
+              >
+                <Upload className="w-4 h-4" />
+                Загрузить
+              </button>
+              <button
+                onClick={() => setShowFilters(!showFilters)}
+                className="flex items-center gap-2 px-4 py-2 rounded-lg bg-bg-secondary text-text-primary border border-border hover:bg-bg-hover transition-all"
+              >
+                <Filter className="w-4 h-4" />
+                Фильтры
+              </button>
+            </div>
           </div>
           
           {showFilters && (
@@ -837,6 +853,16 @@ const DocumentsPage = () => {
             )}
           </div>
         </div>
+      )}
+      
+      {/* Document Upload Modal */}
+      {caseId && (
+        <DocumentUploadModal
+          isOpen={showUploadModal}
+          onClose={() => setShowUploadModal(false)}
+          caseId={caseId}
+          onUploadComplete={loadDocuments}
+        />
       )}
     </div>
   )
