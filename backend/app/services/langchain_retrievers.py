@@ -148,8 +148,12 @@ class AdvancedRetrieverService:
                     prompt=LEGAL_MULTI_QUERY_PROMPT
                 )
                 
-                # Retrieve documents
-                docs = multi_retriever.get_relevant_documents(query)
+                # Retrieve documents (use invoke() for LangChain 0.2+)
+                try:
+                    docs = multi_retriever.invoke(query)
+                except AttributeError:
+                    # Fallback for older LangChain versions
+                    docs = multi_retriever.get_relevant_documents(query)
                 logger.info(f"MultiQueryRetriever: {len(docs)} documents for case {case_id}")
                 return docs
                 
@@ -237,8 +241,12 @@ class AdvancedRetrieverService:
                     base_retriever=base_retriever
                 )
                 
-                # Retrieve and compress documents
-                docs = compression_retriever.get_relevant_documents(query)
+                # Retrieve and compress documents (use invoke() for LangChain 0.2+)
+                try:
+                    docs = compression_retriever.invoke(query)
+                except AttributeError:
+                    # Fallback for older LangChain versions
+                    docs = compression_retriever.get_relevant_documents(query)
                 logger.info(f"CompressionRetriever: {len(docs)} compressed documents for case {case_id}")
                 return docs[:k]
                 

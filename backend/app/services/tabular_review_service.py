@@ -538,6 +538,83 @@ class TabularReviewService:
             "rows": table_rows,
         }
     
+    def _normalize_extraction_result(
+        self,
+        result_dict: Dict[str, Any],
+        column: TabularColumn,
+        file: File
+    ) -> Dict[str, Any]:
+        """
+        Normalize LLM extraction result to match TabularCellExtractionModel schema.
+        
+        GigaChat sometimes returns different field names:
+        - 'answer' instead of 'cell_value'
+        - 'citations' instead of 'source_references'
+        - missing 'reasoning' field
+        
+        This method maps these variations to the expected schema.
+        """
+        normalized = {}
+        
+        # Map cell_value (primary field)
+        if 'cell_value' in result_dict and result_dict['cell_value']:
+            normalized['cell_value'] = result_dict['cell_value']
+        elif 'answer' in result_dict and result_dict['answer']:
+            normalized['cell_value'] = result_dict['answer']
+        elif 'value' in result_dict and result_dict['value']:
+            normalized['cell_value'] = result_dict['value']
+        elif 'result' in result_dict and result_dict['result']:
+            normalized['cell_value'] = result_dict['result']
+        elif 'text' in result_dict and result_dict['text']:
+            normalized['cell_value'] = result_dict['text']
+        else:
+            # Last resort - try to extract any string value
+            for key, val in result_dict.items():
+                if isinstance(val, str) and val and key not in ['reasoning', 'column_type', 'extraction_method']:
+                    normalized['cell_value'] = val
+                    break
+            if 'cell_value' not in normalized:
+                normalized['cell_value'] = "N/A"
+        
+        # Map reasoning
+        if 'reasoning' in result_dict and result_dict['reasoning']:
+            normalized['reasoning'] = result_dict['reasoning']
+        elif 'explanation' in result_dict and result_dict['explanation']:
+            normalized['reasoning'] = result_dict['explanation']
+        elif 'rationale' in result_dict and result_dict['rationale']:
+            normalized['reasoning'] = result_dict['rationale']
+        else:
+            # Generate default reasoning
+            normalized['reasoning'] = f"Извлечено из документа '{file.filename}' для колонки '{column.column_label}'"
+        
+        # Map source_references
+        if 'source_references' in result_dict and result_dict['source_references']:
+            normalized['source_references'] = result_dict['source_references']
+        elif 'citations' in result_dict and result_dict['citations']:
+            normalized['source_references'] = result_dict['citations']
+        elif 'sources' in result_dict and result_dict['sources']:
+            normalized['source_references'] = result_dict['sources']
+        else:
+            normalized['source_references'] = []
+        
+        # Map confidence
+        if 'confidence' in result_dict:
+            try:
+                normalized['confidence'] = float(result_dict['confidence'])
+            except (ValueError, TypeError):
+                normalized['confidence'] = 0.8
+        else:
+            normalized['confidence'] = 0.8
+        
+        # Copy other optional fields if present
+        for field in ['normalized_value', 'verbatim_extract', 'source_page', 'source_section', 
+                      'source_start_line', 'source_end_line', 'extraction_method']:
+            if field in result_dict and result_dict[field] is not None:
+                normalized[field] = result_dict[field]
+        
+        logger.debug(f"Normalized extraction result: {list(result_dict.keys())} -> {list(normalized.keys())}")
+        return normalized
+    
     async def extract_cell_value(
         self,
         file: File,
@@ -718,11 +795,16 @@ class TabularReviewService:
                             result_dict = result.dict()
                         elif hasattr(result, '__dict__'):
                             result_dict = result.__dict__
+                        elif isinstance(result, dict):
+                            result_dict = result
                         else:
                             raise ValueError(f"Cannot extract data from structured LLM result: {type(result)}")
                     else:
                         # Устанавливаем column_type для активации валидации
                         result_dict = result.model_dump()
+                    
+                    # Normalize field names - GigaChat may return different field names
+                    result_dict = self._normalize_extraction_result(result_dict, column, file)
                     
                     # #region agent log
                     import json
@@ -1360,10 +1442,19 @@ class TabularReviewService:
                             method="json_schema"
                         )
                         chain = prompt | structured_llm
-                        result = await chain.ainvoke({})
+                        raw_result = await chain.ainvoke({})
                         
-                        # Add column_type for validation
-                        result.column_type = column.column_type
+                        # Normalize result in case LLM returns different field names
+                        if hasattr(raw_result, 'model_dump'):
+                            result_dict = raw_result.model_dump()
+                        elif isinstance(raw_result, dict):
+                            result_dict = raw_result
+                        else:
+                            result_dict = raw_result.__dict__ if hasattr(raw_result, '__dict__') else {}
+                        
+                        result_dict = self._normalize_extraction_result(result_dict, column, file)
+                        result_dict['column_type'] = column.column_type
+                        result = TabularCellExtractionModel(**result_dict)
                         
                     except Exception as e:
                         logger.warning(f"Structured output failed, using parser: {e}")
@@ -1377,8 +1468,33 @@ class TabularReviewService:
                             self.llm,
                             max_retries=3
                         )
-                        result = parser.parse(response_text)
-                        result.column_type = column.column_type
+                        try:
+                            result = parser.parse(response_text)
+                            result.column_type = column.column_type
+                        except Exception as parse_error:
+                            logger.warning(f"Parser also failed: {parse_error}, using manual extraction")
+                            # Manual JSON extraction as last resort
+                            import json as json_module
+                            import re as re_module
+                            json_match = re_module.search(r'\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\}', response_text, re_module.DOTALL)
+                            if json_match:
+                                try:
+                                    parsed = json_module.loads(json_match.group(0))
+                                    parsed = self._normalize_extraction_result(parsed, column, file)
+                                    parsed['column_type'] = column.column_type
+                                    result = TabularCellExtractionModel(**parsed)
+                                except:
+                                    result = TabularCellExtractionModel(
+                                        cell_value="N/A",
+                                        reasoning=f"Не удалось извлечь данные из документа '{file.filename}'",
+                                        column_type=column.column_type
+                                    )
+                            else:
+                                result = TabularCellExtractionModel(
+                                    cell_value="N/A",
+                                    reasoning=f"Не удалось извлечь данные из документа '{file.filename}'",
+                                    column_type=column.column_type
+                                )
                     
                     # Update source_page from metadata if not set
                     if not result.source_page:
