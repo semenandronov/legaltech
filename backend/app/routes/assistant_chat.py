@@ -357,6 +357,8 @@ async def stream_chat_response(
         JSON strings in assistant-ui format
     """
     try:
+        logger.info(f"[stream_chat_response] START: case_id={case_id}, question_length={len(question)}, legal_research={legal_research}, deep_think={deep_think}, draft_mode={draft_mode}")
+        
         # Verify case ownership
         case = db.query(Case).filter(
             Case.id == case_id,
@@ -364,8 +366,11 @@ async def stream_chat_response(
         ).first()
         
         if not case:
+            logger.warning(f"[stream_chat_response] Case not found: case_id={case_id}, user_id={current_user.id}")
             yield f"data: {json.dumps({'error': 'Дело не найдено'})}\n\n"
             return
+        
+        logger.info(f"[stream_chat_response] Case verified: {case_id}")
         
         # Режим Draft: создание документа через ИИ
         if draft_mode:
@@ -1034,31 +1039,70 @@ async def stream_chat_response(
                 decision_made = False
                 json_candidate = False
                 
-                async for chunk in chat_agent.answer_stream(enhanced_question):
-                    if not chunk:
-                        continue
-                    
-                    full_response_text += chunk
-                    
-                    if avoid_json and not decision_made:
-                        buffered_chunks.append(chunk)
-                        for ch in chunk:
-                            if not ch.isspace():
-                                decision_made = True
-                                json_candidate = ch in "{["
-                                break
+                # Добавляем детальное логирование и обработку ошибок
+                import asyncio
+                chunks_received = 0
+                stream_start_time = asyncio.get_event_loop().time()
+                
+                try:
+                    logger.info(f"[ChatAgent] Starting stream for question: {enhanced_question[:200]}...")
+                    async for chunk in chat_agent.answer_stream(enhanced_question):
+                        chunks_received += 1
+                        elapsed = asyncio.get_event_loop().time() - stream_start_time
                         
-                        if decision_made and not json_candidate:
-                            for buffered in buffered_chunks:
-                                yield f"data: {json.dumps({'textDelta': buffered}, ensure_ascii=False)}\n\n"
-                            buffered_chunks = []
-                        continue
+                        if chunks_received == 1:
+                            logger.info(f"[ChatAgent] First chunk received after {elapsed:.2f}s")
+                        
+                        if not chunk:
+                            logger.debug(f"[ChatAgent] Empty chunk #{chunks_received} received")
+                            continue
+                        
+                        full_response_text += chunk
+                        
+                        if avoid_json and not decision_made:
+                            buffered_chunks.append(chunk)
+                            for ch in chunk:
+                                if not ch.isspace():
+                                    decision_made = True
+                                    json_candidate = ch in "{["
+                                    break
+                            
+                            if decision_made and not json_candidate:
+                                logger.debug(f"[ChatAgent] Not JSON, streaming {len(buffered_chunks)} buffered chunks")
+                                for buffered in buffered_chunks:
+                                    yield f"data: {json.dumps({'textDelta': buffered}, ensure_ascii=False)}\n\n"
+                                buffered_chunks = []
+                            continue
+                        
+                        if avoid_json and json_candidate:
+                            # Пока не стримим JSON-подобный ответ
+                            logger.debug(f"[ChatAgent] JSON candidate detected, buffering")
+                            continue
+                        
+                        yield f"data: {json.dumps({'textDelta': chunk}, ensure_ascii=False)}\n\n"
                     
-                    if avoid_json and json_candidate:
-                        # Пока не стримим JSON-подобный ответ
-                        continue
+                    elapsed_total = asyncio.get_event_loop().time() - stream_start_time
+                    logger.info(f"[ChatAgent] Stream completed: {chunks_received} chunks in {elapsed_total:.2f}s, response length: {len(full_response_text)} chars")
                     
-                    yield f"data: {json.dumps({'textDelta': chunk}, ensure_ascii=False)}\n\n"
+                    # Если не получили ни одного чанка, это проблема
+                    if chunks_received == 0:
+                        logger.error(f"[ChatAgent] No chunks received from stream after {elapsed_total:.2f}s!")
+                        error_msg = "Не удалось получить ответ от ИИ. Попробуйте переформулировать вопрос."
+                        yield f"data: {json.dumps({'textDelta': error_msg}, ensure_ascii=False)}\n\n"
+                        full_response_text = error_msg
+                    
+                except Exception as stream_error:
+                    elapsed = asyncio.get_event_loop().time() - stream_start_time
+                    logger.error(f"[ChatAgent] Error in stream after {elapsed:.2f}s, chunks received: {chunks_received}: {stream_error}", exc_info=True)
+                    if full_response_text:
+                        # Отправляем то что успели получить
+                        logger.info(f"[ChatAgent] Sending partial response: {len(full_response_text)} chars")
+                        yield f"data: {json.dumps({'textDelta': full_response_text}, ensure_ascii=False)}\n\n"
+                    else:
+                        error_msg = f"Ошибка при генерации ответа. Попробуйте переформулировать вопрос."
+                        logger.warning(f"[ChatAgent] No response received, sending error message")
+                        yield f"data: {json.dumps({'textDelta': error_msg}, ensure_ascii=False)}\n\n"
+                        full_response_text = error_msg
                 
                 if avoid_json and json_candidate:
                     rewritten = chat_agent.rewrite_json_response(full_response_text, question)
