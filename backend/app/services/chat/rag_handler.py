@@ -6,6 +6,11 @@ RAG Handler - Обработчик RAG-запросов
 - Генерацию ответов с цитатами
 - Интеграцию с ГАРАНТ
 - Thinking (пошаговое мышление)
+
+Production features:
+- Circuit Breaker для ГАРАНТ
+- Retry для LLM вызовов
+- Graceful degradation
 """
 from typing import AsyncGenerator, List, Dict, Any, Optional
 from sqlalchemy.orm import Session
@@ -21,10 +26,22 @@ from app.services.chat.events import (
     Citation,
     SSESerializer,
 )
+from app.services.chat.metrics import get_metrics, MetricTimer
 from app.services.rag_service import RAGService
 from app.models.user import User
+from app.core.resilience import (
+    CircuitBreakerRegistry,
+    CircuitBreakerError,
+    EXTERNAL_API_CIRCUIT_CONFIG,
+    retry,
+    RetryConfig,
+    with_timeout,
+)
 
 logger = logging.getLogger(__name__)
+
+# Circuit breakers для внешних сервисов
+garant_circuit = CircuitBreakerRegistry.get("garant", EXTERNAL_API_CIRCUIT_CONFIG)
 
 
 class RAGHandler:
@@ -52,6 +69,7 @@ class RAGHandler:
         """
         self.rag_service = rag_service
         self.db = db
+        self.metrics = get_metrics()
     
     async def handle(
         self,
@@ -129,12 +147,18 @@ class RAGHandler:
     
     async def _search_garant(self, question: str) -> tuple[str, List[Dict[str, Any]]]:
         """
-        Поиск в ГАРАНТ
+        Поиск в ГАРАНТ с Circuit Breaker
         
         Returns:
             (garant_context, garant_citations)
         """
         try:
+            # Проверяем Circuit Breaker
+            if not garant_circuit.can_execute():
+                logger.warning("[RAGHandler] ГАРАНТ circuit breaker is OPEN, skipping")
+                self.metrics.record_external_call("garant", success=False, reason="circuit_open")
+                return "", []
+            
             logger.info(f"[RAGHandler] Searching ГАРАНТ for: {question[:100]}…")
             from app.services.langchain_agents.garant_tools import get_garant_source
             
@@ -143,7 +167,11 @@ class RAGHandler:
                 logger.warning("[RAGHandler] ГАРАНТ source not available")
                 return "", []
             
-            results = await garant_source.search(query=question, max_results=10)
+            # Выполняем поиск с Circuit Breaker
+            async with garant_circuit:
+                results = await garant_source.search(query=question, max_results=10)
+            
+            self.metrics.record_external_call("garant", success=True)
             
             if not results:
                 logger.warning("[RAGHandler] ГАРАНТ returned no results")
@@ -203,8 +231,13 @@ class RAGHandler:
             
             return garant_context, citations
             
+        except CircuitBreakerError as e:
+            logger.warning(f"[RAGHandler] ГАРАНТ circuit breaker triggered: {e}")
+            self.metrics.record_external_call("garant", success=False, reason="circuit_breaker")
+            return "", []
         except Exception as e:
             logger.error(f"[RAGHandler] ГАРАНТ search error: {e}", exc_info=True)
+            self.metrics.record_external_call("garant", success=False, reason="error")
             return "", []
     
     async def _run_thinking(

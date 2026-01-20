@@ -84,6 +84,9 @@ class ChatMetrics:
     # Классификация
     classifications: Dict[str, int] = field(default_factory=dict)
     
+    # Внешние сервисы
+    external_calls: Dict[str, Dict[str, int]] = field(default_factory=dict)
+    
     def record_request(self, mode: str) -> None:
         """
         Записать запрос
@@ -140,6 +143,33 @@ class ChatMetrics:
         self.classifications[label] = self.classifications.get(label, 0) + 1
         logger.debug(f"Recorded classification: label={label}")
     
+    def record_external_call(
+        self,
+        service: str,
+        success: bool = True,
+        reason: Optional[str] = None
+    ) -> None:
+        """
+        Записать вызов внешнего сервиса
+        
+        Args:
+            service: Имя сервиса (garant, llm, etc.)
+            success: Успешен ли вызов
+            reason: Причина неудачи (если success=False)
+        """
+        if service not in self.external_calls:
+            self.external_calls[service] = {"success": 0, "failure": 0}
+        
+        if success:
+            self.external_calls[service]["success"] += 1
+        else:
+            self.external_calls[service]["failure"] += 1
+            if reason:
+                key = f"failure:{reason}"
+                self.external_calls[service][key] = self.external_calls[service].get(key, 0) + 1
+        
+        logger.debug(f"Recorded external call: service={service}, success={success}")
+    
     def get_summary(self) -> Dict[str, Any]:
         """
         Получить сводку метрик
@@ -152,7 +182,8 @@ class ChatMetrics:
             "latency": {k: v.to_dict() for k, v in self.latency.items()},
             "errors": self.errors,
             "agent_executions": {k: v.to_dict() for k, v in self.agent_executions.items()},
-            "classifications": self.classifications
+            "classifications": self.classifications,
+            "external_calls": self.external_calls
         }
     
     def reset(self) -> None:
@@ -162,6 +193,7 @@ class ChatMetrics:
         self.errors.clear()
         self.agent_executions.clear()
         self.classifications.clear()
+        self.external_calls.clear()
 
 
 # =============================================================================
