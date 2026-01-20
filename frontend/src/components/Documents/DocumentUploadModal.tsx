@@ -89,7 +89,7 @@ const DocumentUploadModal = ({ isOpen, onClose, caseId, onUploadComplete }: Docu
       await deleteFileFromCase(caseId, fileId)
       setUploadedFiles((prev) => prev.filter((f) => f.id !== fileId))
     } catch (err: any) {
-      setError(err.response?.data?.detail || err.message || 'Ошибка при удалении файла')
+      setError(err.response?.data?.detail || err.message || `Ошибка при удалении файла «${filename}»`)
     } finally {
       setDeletingFileId(null)
     }
