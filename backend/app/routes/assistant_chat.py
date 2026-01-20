@@ -737,19 +737,95 @@ async def stream_chat_response(
         # ВАЖНО: GigaChat SDK не поддерживает functions/tools, поэтому
         # вызываем ГАРАНТ напрямую и добавляем результаты в контекст
         garant_context = ""
+        garant_citations = []  # Сохраняем структурированные результаты для citations
         if legal_research:
             try:
                 logger.info(f"[ГАРАНТ] Legal research enabled, searching in ГАРАНТ for: {question[:100]}...")
-                from app.services.langchain_agents.garant_tools import _garant_search_sync
+                from app.services.langchain_agents.garant_tools import get_garant_source
                 
-                # Выполняем поиск в ГАРАНТ
-                garant_results = _garant_search_sync(query=question, doc_type="all", max_results=5)
-                
-                if garant_results and not garant_results.startswith("Ошибка") and not garant_results.startswith("Не найдено"):
-                    garant_context = f"\n\n=== РЕЗУЛЬТАТЫ ПОИСКА В ГАРАНТ ===\n{garant_results}\n=== КОНЕЦ РЕЗУЛЬТАТОВ ГАРАНТ ===\n"
-                    logger.info(f"[ГАРАНТ] Found results, context length: {len(garant_context)} chars")
+                # Получаем GarantSource напрямую для структурированных результатов
+                garant_source = get_garant_source()
+                if garant_source and garant_source.api_key:
+                    import asyncio
+                    
+                    # Выполняем поиск и получаем структурированные результаты
+                    async def search_garant():
+                        return await garant_source.search(query=question, max_results=10)
+                    
+                    # Безопасный запуск async функции
+                    try:
+                        loop = asyncio.get_running_loop()
+                        garant_results_structured = await search_garant()
+                    except RuntimeError:
+                        loop = asyncio.new_event_loop()
+                        asyncio.set_event_loop(loop)
+                        garant_results_structured = loop.run_until_complete(search_garant())
+                    
+                    if garant_results_structured:
+                        # Форматируем результаты для контекста LLM
+                        formatted_parts = []
+                        for i, result in enumerate(garant_results_structured, 1):
+                            title = result.title or "Без названия"
+                            url = result.url or ""
+                            content = result.content[:1500] if result.content else ""
+                            
+                            # Извлекаем метаданные
+                            metadata = getattr(result, 'metadata', {}) or {}
+                            doc_type_info = metadata.get('doc_type', '')
+                            doc_date = metadata.get('doc_date', '')
+                            doc_number = metadata.get('doc_number', '')
+                            doc_id = metadata.get('doc_id', '') or metadata.get('topic', '')
+                            
+                            formatted_parts.append(f"\n{'='*60}")
+                            formatted_parts.append(f"ДОКУМЕНТ {i} ИЗ ГАРАНТ")
+                            formatted_parts.append(f"{'='*60}")
+                            formatted_parts.append(f"Название: {title}")
+                            
+                            if doc_type_info:
+                                formatted_parts.append(f"Тип: {doc_type_info}")
+                            if doc_date:
+                                formatted_parts.append(f"Дата: {doc_date}")
+                            if doc_number:
+                                formatted_parts.append(f"Номер: {doc_number}")
+                            if url:
+                                formatted_parts.append(f"Ссылка: {url}")
+                            
+                            if content:
+                                formatted_parts.append(f"\nСодержание:\n{content}")
+                                if result.content and len(result.content) > 1500:
+                                    formatted_parts.append(f"\n[... документ обрезан, полный текст доступен по ссылке ...]")
+                            
+                            formatted_parts.append(f"{'='*60}\n")
+                            
+                            # Сохраняем для citations
+                            garant_citations.append({
+                                "source_id": f"garant_{doc_id or i}",
+                                "file_name": title,
+                                "page": None,
+                                "quote": content[:500] if content else title,
+                                "char_start": None,
+                                "char_end": None,
+                                "url": url,
+                                "source_type": "garant",
+                                "doc_type": doc_type_info,
+                                "doc_date": doc_date,
+                                "doc_number": doc_number
+                            })
+                        
+                        garant_context = f"\n\n=== РЕЗУЛЬТАТЫ ПОИСКА В ГАРАНТ ===\n" + "\n".join(formatted_parts) + "\n=== КОНЕЦ РЕЗУЛЬТАТОВ ГАРАНТ ===\n"
+                        logger.info(f"[ГАРАНТ] Found {len(garant_results_structured)} results, context length: {len(garant_context)} chars, citations: {len(garant_citations)}")
+                    else:
+                        logger.warning(f"[ГАРАНТ] No results from structured search")
                 else:
-                    logger.warning(f"[ГАРАНТ] No results or error: {garant_results[:200] if garant_results else 'empty'}")
+                    # Fallback на старый метод если GarantSource недоступен
+                    from app.services.langchain_agents.garant_tools import _garant_search_sync
+                    garant_results = _garant_search_sync(query=question, doc_type="all", max_results=5)
+                    
+                    if garant_results and not garant_results.startswith("Ошибка") and not garant_results.startswith("Не найдено"):
+                        garant_context = f"\n\n=== РЕЗУЛЬТАТЫ ПОИСКА В ГАРАНТ ===\n{garant_results}\n=== КОНЕЦ РЕЗУЛЬТАТОВ ГАРАНТ ===\n"
+                        logger.info(f"[ГАРАНТ] Found results (fallback), context length: {len(garant_context)} chars")
+                    else:
+                        logger.warning(f"[ГАРАНТ] No results or error: {garant_results[:200] if garant_results else 'empty'}")
             except Exception as garant_error:
                 logger.error(f"[ГАРАНТ] Error searching in ГАРАНТ: {garant_error}", exc_info=True)
         
@@ -777,13 +853,16 @@ async def stream_chat_response(
         
         # === THINKING: Пошаговое мышление перед ответом ===
         # Всегда выполняем thinking для качественных ответов
+        # При deep_think=True используется GigaChat Pro с расширенным анализом
         thinking_context = rag_context or ""
         if garant_context:
             thinking_context += f"\n{garant_context}"
         
         try:
-            thinking_service = get_thinking_service()
-            logger.info(f"[Thinking] Starting thinking process for: {question[:100]}...")
+            # Передаем deep_think для выбора режима (GigaChat Pro для глубокого анализа)
+            thinking_service = get_thinking_service(deep_think=deep_think)
+            mode = "DEEP THINK (GigaChat Pro)" if deep_think else "standard"
+            logger.info(f"[Thinking] Starting {mode} thinking process for: {question[:100]}...")
             
             async for step in thinking_service.think(
                 question=question,
@@ -809,32 +888,50 @@ async def stream_chat_response(
         enhanced_question = question
         
         # Добавляем инструкцию для глубокого мышления если включено
+        # ВАЖНО: При deep_think=True уже используется GigaChat Pro в thinking_service
         if deep_think:
             deep_think_instruction = """
 
-=== РЕЖИМ ГЛУБОКОГО МЫШЛЕНИЯ ===
-Для этой задачи включено глубокое размышление. Ты ДОЛЖЕН:
-1. Выполнить многошаговый анализ проблемы
-2. Рассмотреть вопрос с разных сторон и перспектив
-3. Объяснять свой reasoning на каждом этапе
-4. Проверить свои выводы и найти возможные противоречия
-5. Дать развернутый, обоснованный ответ
+=== РЕЖИМ ГЛУБОКОГО МЫШЛЕНИЯ (GigaChat Pro) ===
+Для этой задачи включен режим глубокого анализа. Ты используешь модель GigaChat Pro.
+
+Ты ДОЛЖЕН предоставить всесторонний, детальный ответ:
+
+1. **Правовой анализ**: Укажи применимые нормы права (статьи кодексов, законы)
+2. **Судебная практика**: Приведи релевантные решения судов и позиции ВС РФ
+3. **Анализ рисков**: Оцени возможные риски и последствия
+4. **Контраргументы**: Рассмотри возможные возражения противной стороны
+5. **Рекомендации**: Дай конкретные практические рекомендации
 
 Структурируй свой ответ следующим образом:
-📊 **Анализ вопроса**: что именно спрашивает пользователь
-🔍 **Рассмотрение аспектов**: ключевые факторы для ответа
-💭 **Размышление**: логические выводы из анализа
-✅ **Заключение**: итоговый ответ с обоснованием
+📜 **Правовая база**: применимые нормы и статьи
+🏛️ **Судебная практика**: релевантные решения и прецеденты
+⚖️ **Анализ позиций**: аргументы за и против
+⚠️ **Риски**: возможные проблемы и как их избежать
+✅ **Рекомендации**: конкретные шаги и действия
 === КОНЕЦ ИНСТРУКЦИИ ===
 
 """
             enhanced_question = deep_think_instruction + enhanced_question
-            logger.info(f"[Deep Think] Added deep thinking instructions to question")
+            logger.info(f"[Deep Think] Added deep thinking instructions (GigaChat Pro mode)")
         
         # Добавляем результаты ГАРАНТ если есть
         if garant_context:
-            enhanced_question = f"{enhanced_question}\n\n{garant_context}\n\nИспользуй информацию из ГАРАНТ для ответа на вопрос пользователя. Цитируй источники из ГАРАНТ."
-            logger.info(f"[ChatAgent] Added ГАРАНТ context to question")
+            garant_instructions = """
+
+=== ИНСТРУКЦИИ ПО ИСПОЛЬЗОВАНИЮ РЕЗУЛЬТАТОВ ГАРАНТ ===
+Тебе предоставлены результаты поиска из правовой базы ГАРАНТ. Ты ДОЛЖЕН:
+1. Использовать найденные документы для ответа на вопрос пользователя
+2. Цитировать конкретные статьи, законы и нормативные акты из результатов
+3. Указывать ссылки на документы в формате [Название документа](URL)
+4. Если найдены судебные решения/прецеденты - обязательно упомяни их с датами и номерами
+5. Структурируй ответ: сначала нормы права, затем судебная практика (если есть)
+
+ВАЖНО: Приоритет отдавай информации из ГАРАНТ, а не общим знаниям!
+=== КОНЕЦ ИНСТРУКЦИЙ ===
+"""
+            enhanced_question = f"{enhanced_question}\n\n{garant_context}\n{garant_instructions}"
+            logger.info(f"[ChatAgent] Added ГАРАНТ context and instructions to question")
 
         # Добавляем RAG контекст по документам дела
         if rag_context:
@@ -1003,6 +1100,7 @@ async def stream_chat_response(
             # Для режима редактора документа: применяем команды редактирования
             if document_id and document_context:
                 edited_content = None
+                structured_edits = []  # Список структурированных изменений для UI
                 
                 # Новый подход: извлекаем команды НАЙТИ/ЗАМЕНИТЬ
                 edit_blocks = re.findall(r'```edit\s*\n(.*?)\n```', full_response_text, re.DOTALL)
@@ -1019,7 +1117,41 @@ async def stream_chat_response(
                             find_text = find_match.group(1).strip()
                             replace_text = replace_match.group(1).strip()
                             
-                            if find_text in modified_content:
+                            # Извлекаем контекст (до 50 символов до и после)
+                            context_before = ""
+                            context_after = ""
+                            find_pos = document_context.find(find_text)
+                            found_in_doc = find_pos != -1
+                            
+                            if found_in_doc:
+                                # Контекст до
+                                start_ctx = max(0, find_pos - 50)
+                                context_before = document_context[start_ctx:find_pos]
+                                if start_ctx > 0:
+                                    space_pos = context_before.find(' ')
+                                    if space_pos != -1:
+                                        context_before = context_before[space_pos + 1:]
+                                
+                                # Контекст после
+                                end_pos = find_pos + len(find_text)
+                                end_ctx = min(len(document_context), end_pos + 50)
+                                context_after = document_context[end_pos:end_ctx]
+                                if end_ctx < len(document_context):
+                                    space_pos = context_after.rfind(' ')
+                                    if space_pos != -1:
+                                        context_after = context_after[:space_pos]
+                            
+                            # Добавляем структурированное изменение
+                            structured_edits.append({
+                                "id": f"edit-{uuid.uuid4().hex[:8]}",
+                                "original_text": find_text,
+                                "new_text": replace_text,
+                                "context_before": context_before,
+                                "context_after": context_after,
+                                "found_in_document": found_in_doc
+                            })
+                            
+                            if found_in_doc:
                                 modified_content = modified_content.replace(find_text, replace_text, 1)
                                 changes_applied += 1
                                 logger.info(f"[ChatAgent] Applied edit: '{find_text[:50]}...' -> '{replace_text[:50]}...'")
@@ -1029,9 +1161,9 @@ async def stream_chat_response(
                     if changes_applied > 0:
                         edited_content = modified_content
                         logger.info(f"[ChatAgent] Applied {changes_applied} edits")
-                    else:
-                        warning_msg = "\n\n⚠️ Не удалось найти указанный текст в документе."
-                        yield f"data: {json.dumps({'textDelta': warning_msg}, ensure_ascii=False)}\n\n"
+                    elif structured_edits:
+                        # Есть изменения, но текст не найден - все равно отправляем structured_edits
+                        logger.warning(f"[ChatAgent] {len(structured_edits)} edits proposed but text not found")
                 else:
                     # Fallback: старый подход с полным HTML
                     html_match = re.search(r'```(?:html)?\s*\n(.*?)\n```', full_response_text, re.DOTALL)
@@ -1043,15 +1175,40 @@ async def stream_chat_response(
                             edited_content = extracted_html
                             logger.info(f"[ChatAgent] Using full HTML fallback ({len(extracted_html)} chars)")
                 
-                # Отправляем edited_content если есть
+                # Отправляем structured_edits если есть
+                if structured_edits:
+                    yield f"data: {json.dumps({'structured_edits': structured_edits}, ensure_ascii=False)}\n\n"
+                    logger.info(f"[ChatAgent] Sent {len(structured_edits)} structured_edits")
+                
+                # Отправляем edited_content если есть (для обратной совместимости)
                 if edited_content:
-                    yield f"data: {json.dumps({'type': 'edited_content', 'edited_content': edited_content}, ensure_ascii=False)}\n\n"
+                    yield f"data: {json.dumps({'type': 'edited_content', 'edited_content': edited_content, 'structured_edits': structured_edits}, ensure_ascii=False)}\n\n"
                     logger.info(f"[ChatAgent] Sent edited_content event (length: {len(edited_content)})")
             
             # Получаем структурированные citations для подсветки в документах
             # Используем те же документы, что использовались для RAG контекста
+            # ВАЖНО: Также добавляем citations из ГАРАНТ если legal_research включен
             citations_data = []
             try:
+                # 1. Сначала добавляем citations из ГАРАНТ (если есть)
+                if legal_research and garant_citations:
+                    for gc in garant_citations:
+                        citations_data.append({
+                            "source_id": gc.get("source_id", ""),
+                            "file_name": gc.get("file_name", ""),
+                            "page": gc.get("page"),
+                            "quote": gc.get("quote", ""),
+                            "char_start": gc.get("char_start"),
+                            "char_end": gc.get("char_end"),
+                            "url": gc.get("url", ""),
+                            "source_type": "garant",
+                            "doc_type": gc.get("doc_type", ""),
+                            "doc_date": gc.get("doc_date", ""),
+                            "doc_number": gc.get("doc_number", "")
+                        })
+                    logger.info(f"[Citations] Added {len(garant_citations)} ГАРАНТ citations")
+                
+                # 2. Затем добавляем citations из документов дела (RAG)
                 if structured_citations_result:
                     for citation in structured_citations_result.citations:
                         citations_data.append({
@@ -1062,9 +1219,10 @@ async def stream_chat_response(
                             "char_start": citation.char_start,
                             "char_end": citation.char_end,
                             "context_before": citation.context_before if hasattr(citation, 'context_before') else "",
-                            "context_after": citation.context_after if hasattr(citation, 'context_after') else ""
+                            "context_after": citation.context_after if hasattr(citation, 'context_after') else "",
+                            "source_type": "document"
                         })
-                    logger.info(f"[Citations] Using structured citations from initial response: {len(citations_data)}")
+                    logger.info(f"[Citations] Using structured citations from initial response: {len(structured_citations_result.citations)}")
                 elif rag_docs and len(rag_docs) > 0:
                     logger.info(f"[Citations] Generating structured citations for {len(rag_docs)} documents")
                     
@@ -1102,15 +1260,18 @@ async def stream_chat_response(
                                 "char_end": citation.char_end,
                                 "context_before": citation.context_before if hasattr(citation, 'context_before') else "",
                                 "context_after": citation.context_after if hasattr(citation, 'context_after') else "",
-                                "chunk_id": citation.chunk_id if hasattr(citation, 'chunk_id') else None  # Уникальный ID для точной навигации
+                                "chunk_id": citation.chunk_id if hasattr(citation, 'chunk_id') else None,  # Уникальный ID для точной навигации
+                                "source_type": "document"
                             })
                         
-                        logger.info(f"[Citations] Generated {len(citations_data)} structured citations")
+                        logger.info(f"[Citations] Generated {len(structured_result.citations)} structured citations from RAG")
                     except Exception as citation_error:
                         logger.warning(f"[Citations] Failed to generate structured citations: {citation_error}", exc_info=True)
                         # Продолжаем без citations - не критичная ошибка
-                else:
-                    logger.info("[Citations] No RAG documents available for citations")
+                elif not garant_citations:
+                    logger.info("[Citations] No RAG documents or ГАРАНТ results available for citations")
+                
+                logger.info(f"[Citations] Total citations: {len(citations_data)} (ГАРАНТ: {len(garant_citations) if garant_citations else 0})")
             except Exception as citations_error:
                 logger.warning(f"[Citations] Error processing citations: {citations_error}", exc_info=True)
                 # Продолжаем без citations - не критичная ошибка
