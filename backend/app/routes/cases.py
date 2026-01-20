@@ -1179,6 +1179,122 @@ async def reindex_case_files(
         )
 
 
+@router.post("/reindex-all")
+async def reindex_all_cases(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """
+    Reindex all files for all cases belonging to the current user.
+    
+    This will reindex all files that are not yet in the vector store.
+    """
+    # Get all cases for the current user
+    cases = db.query(Case).filter(Case.user_id == current_user.id).all()
+    
+    if not cases:
+        return {
+            "status": "success",
+            "message": "Нет дел для переиндексации",
+            "cases_processed": 0,
+            "total_files": 0,
+            "total_chunks": 0
+        }
+    
+    logger.info(f"Reindexing all files for {len(cases)} cases (user: {current_user.id})")
+    
+    document_processor = DocumentProcessor()
+    total_files = 0
+    total_chunks = 0
+    cases_processed = 0
+    errors = []
+    
+    for case in cases:
+        try:
+            # Get all files for the case
+            files = db.query(FileModel).filter(FileModel.case_id == case.id).all()
+            
+            if not files:
+                continue
+            
+            all_documents = []
+            
+            # Get classifications for files
+            from app.models.analysis import DocumentClassification
+            file_ids = [f.id for f in files]
+            classifications = db.query(DocumentClassification).filter(
+                DocumentClassification.file_id.in_(file_ids)
+            ).all() if file_ids else []
+            classification_map = {c.file_id: c for c in classifications if c.file_id}
+            
+            for file in files:
+                if not file.original_text:
+                    continue
+                
+                # Build metadata
+                metadata = {
+                    "source": file.filename,
+                    "file_id": file.id,
+                    "file_type": file.file_type or "unknown",
+                }
+                
+                # Add classification metadata if available
+                classification = classification_map.get(file.id)
+                if classification:
+                    metadata["doc_type"] = classification.doc_type or "other"
+                    metadata["is_privileged"] = str(classification.is_privileged) if classification.is_privileged else "false"
+                    metadata["relevance_score"] = classification.relevance_score or 0
+                
+                # Split text into chunks
+                file_documents = document_processor.split_documents(
+                    text=file.original_text,
+                    filename=file.filename,
+                    metadata=metadata,
+                )
+                all_documents.extend(file_documents)
+                total_files += 1
+            
+            if all_documents:
+                document_processor.store_in_vector_db(
+                    case_id=case.id,
+                    documents=all_documents,
+                    db=db,
+                    original_files=None
+                )
+                total_chunks += len(all_documents)
+                
+                # Update case full_text
+                text_parts = []
+                for file in files:
+                    if file.original_text:
+                        text_parts.append(f"[{file.filename}]\n{file.original_text}")
+                
+                if text_parts:
+                    full_text = "\n\n".join(text_parts)
+                    MAX_TEXT_LENGTH = 100 * 1024 * 1024
+                    sanitized_full_text = sanitize_text(full_text)
+                    if len(sanitized_full_text) > MAX_TEXT_LENGTH:
+                        sanitized_full_text = sanitized_full_text[:MAX_TEXT_LENGTH]
+                    case.full_text = sanitized_full_text
+                    db.commit()
+            
+            cases_processed += 1
+            logger.info(f"Reindexed case {case.id}: {len(files)} files, {len(all_documents)} chunks")
+            
+        except Exception as e:
+            logger.error(f"Error reindexing case {case.id}: {e}", exc_info=True)
+            errors.append({"case_id": case.id, "error": str(e)})
+    
+    return {
+        "status": "success" if not errors else "partial",
+        "message": f"Переиндексировано {cases_processed} дел, {total_files} файлов, {total_chunks} чанков",
+        "cases_processed": cases_processed,
+        "total_files": total_files,
+        "total_chunks": total_chunks,
+        "errors": errors if errors else None
+    }
+
+
 @router.post("/{case_id}/process")
 async def process_case_files(
     case_id: str,
