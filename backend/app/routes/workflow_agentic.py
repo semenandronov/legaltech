@@ -453,6 +453,7 @@ async def stream_execution(
 def event_to_dict(event: ExecutionEvent) -> dict:
     """Convert ExecutionEvent to dict"""
     return {
+        "type": event.event_type,  # For frontend compatibility
         "event_type": event.event_type,
         "execution_id": event.execution_id,
         "step_id": event.step_id,

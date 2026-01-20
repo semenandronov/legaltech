@@ -121,6 +121,7 @@ class TabularReviewTool(BaseTool):
                 artifacts=[{
                     "type": "tabular_review",
                     "id": review_id,
+                    "review_id": review_id,  # For frontend compatibility
                     "name": review_name,
                     "note": "Извлечение данных выполняется в фоновом режиме. Откройте таблицу для просмотра результатов."
                 }]
