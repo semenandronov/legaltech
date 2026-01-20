@@ -82,49 +82,103 @@ TASK_UNDERSTANDING_PROMPT = """Ты - юридический AI-агент. Пр
 }}"""
 
 
-TOOL_REASONING_PROMPT = """Ты - юридический AI-агент. Выбери инструменты для выполнения задачи.
+TOOL_REASONING_PROMPT = """Ты - юридический AI-агент планирования. Твоя задача - создать ПОЛНЫЙ план выполнения задачи с КОНКРЕТНЫМИ параметрами для каждого инструмента.
 
-ЗАДАЧА: {task_understanding}
+ЗАДАЧА ПОЛЬЗОВАТЕЛЯ: {user_task}
+ПОНИМАНИЕ ЗАДАЧИ: {task_understanding}
 ТИП ЗАДАЧИ: {task_type}
 КЛЮЧЕВЫЕ АСПЕКТЫ: {key_aspects}
 
 ДОСТУПНЫЕ ИНСТРУМЕНТЫ:
 {tools_description}
 
-ПРАВИЛА ВЫБОРА ИНСТРУМЕНТОВ:
-1. **ОБЯЗАТЕЛЬНО используй ВСЕ инструменты из списка ДОСТУПНЫЕ ИНСТРУМЕНТЫ** - пользователь специально их выбрал при создании workflow
-2. Если инструмент не подходит для задачи напрямую, найди способ его использовать (например, для дополнительной проверки или анализа)
-3. summarize - ВСЕГДА используй первым для понимания документа (если не знаешь содержание)
-4. extract_entities - для извлечения конкретных данных (даты, суммы, стороны)
-5. rag - для ответа на КОНКРЕТНЫЙ вопрос по документам
-6. playbook_check - для проверки на риски и соответствие правилам
-7. tabular_review - для сравнения НЕСКОЛЬКИХ документов
-8. legal_db - для поиска законов и судебной практики
-9. document_draft - для создания нового документа
+ПРАВИЛА:
+1. **ОБЯЗАТЕЛЬНО используй ВСЕ инструменты из списка ДОСТУПНЫЕ ИНСТРУМЕНТЫ**
+2. **Для КАЖДОГО инструмента укажи КОНКРЕТНЫЕ параметры**, которые нужны для выполнения задачи пользователя
 
-ТИПИЧНЫЕ КОМБИНАЦИИ:
-- Анализ документа: summarize → extract_entities
-- Проверка рисков: summarize → playbook_check
-- Ответ на вопрос: rag
-- Полный анализ: summarize → [extract_entities, playbook_check] → rag (если есть вопросы)
-
-ВАЖНО: Если в ДОСТУПНЫЕ ИНСТРУМЕНТЫ есть инструменты, которые не упомянуты в типичных комбинациях, всё равно включи их в план!
+ПАРАМЕТРЫ ИНСТРУМЕНТОВ:
+- **summarize**: 
+  - style: "brief" или "detailed"
+  - focus: на чём сфокусироваться (например: "Сфокусируйся на датах и событиях")
+  
+- **extract_entities**: 
+  - entity_types: ["person", "organization", "date", "money", "address"] - выбери нужные для задачи
+  
+- **rag**: 
+  - query: конкретный вопрос для поиска (сформулируй на основе задачи)
+  - top_k: 5
+  
+- **tabular_review**: 
+  - questions: СПИСОК КОЛОНОК для таблицы (например: ["Дата события", "Описание", "Участники"])
+  - review_name: название таблицы
+  ВАЖНО: Колонки должны соответствовать задаче! Для хронологии - даты и события, для сравнения - параметры сравнения и т.д.
+  
+- **playbook_check**: 
+  - check_context: контекст проверки (что именно проверять)
+  
+- **document_draft**: 
+  - context: что нужно создать
+  - document_type: тип документа
+  
+- **legal_db**: 
+  - query: поисковый запрос для правовых баз
 
 Ответь в формате JSON:
 {{
-    "reasoning": "Почему я выбираю эти инструменты...",
+    "reasoning": "Анализ задачи и обоснование выбора инструментов и их параметров...",
     "tools": [
         {{
-            "tool_name": "имя",
-            "reason": "почему этот инструмент нужен",
-            "params": {{}},
-            "expected_output": "что получим",
+            "tool_name": "имя инструмента",
+            "reason": "почему этот инструмент нужен для задачи",
+            "params": {{
+                "параметр1": "значение1",
+                "параметр2": "значение2"
+            }},
+            "expected_output": "что получим в результате",
             "priority": 1,
             "depends_on": []
         }}
     ],
-    "parallel_groups": [["step1", "step2"], ["step3"]],
-    "success_criteria": ["критерий1", "критерий2"]
+    "parallel_groups": [["tool1", "tool2"], ["tool3"]],
+    "success_criteria": ["критерий успеха 1", "критерий успеха 2"]
+}}
+
+ПРИМЕР для задачи "составить хронологию событий":
+{{
+    "reasoning": "Для хронологии нужно извлечь даты и события, затем структурировать в таблицу",
+    "tools": [
+        {{
+            "tool_name": "summarize",
+            "reason": "Понять общее содержание документа",
+            "params": {{
+                "style": "brief",
+                "focus": "Сфокусируйся на датах, событиях и их последовательности"
+            }},
+            "expected_output": "Обзор документа с акцентом на события",
+            "priority": 1
+        }},
+        {{
+            "tool_name": "extract_entities",
+            "reason": "Извлечь все даты и связанные с ними события",
+            "params": {{
+                "entity_types": ["date", "person", "organization"]
+            }},
+            "expected_output": "Список дат и связанных сущностей",
+            "priority": 2
+        }},
+        {{
+            "tool_name": "tabular_review",
+            "reason": "Структурировать события в хронологическую таблицу",
+            "params": {{
+                "questions": ["Дата события", "Описание события", "Участники", "Источник"],
+                "review_name": "Хронология событий"
+            }},
+            "expected_output": "Таблица с хронологией событий",
+            "priority": 3
+        }}
+    ],
+    "parallel_groups": [["summarize"], ["extract_entities"], ["tabular_review"]],
+    "success_criteria": ["Все события извлечены", "Хронология составлена"]
 }}"""
 
 
@@ -145,6 +199,52 @@ SELF_REFLECTION_PROMPT = """Проверь свой план на ошибки.
     "issues": ["проблема1", "проблема2"],
     "suggestions": ["предложение1"],
     "corrected_plan": null или исправленный план
+}}"""
+
+
+GENERATE_TABULAR_QUESTIONS_PROMPT = """Ты - юридический AI-агент. Определи, какие колонки нужны для таблицы на основе задачи пользователя.
+
+ЗАДАЧА ПОЛЬЗОВАТЕЛЯ: {user_task}
+ПОНИМАНИЕ ЗАДАЧИ: {task_understanding}
+КЛЮЧЕВЫЕ АСПЕКТЫ: {key_aspects}
+
+Проанализируй задачу и определи, какие колонки (вопросы для извлечения данных) нужны для таблицы, чтобы выполнить эту задачу.
+
+ВАЖНО:
+- Колонки должны быть конкретными и измеримыми
+- Колонки должны покрывать все аспекты задачи
+- Обычно нужно 4-6 колонок
+- Названия колонок должны быть понятными и краткими
+
+Примеры:
+- Для хронологии: ["Дата события", "Описание события", "Участники", "Источник"]
+- Для сравнения договоров: ["Стороны", "Предмет", "Сумма", "Сроки", "Особые условия"]
+- Для анализа рисков: ["Тип риска", "Описание", "Уровень", "Рекомендации"]
+
+Ответь ТОЛЬКО в формате JSON (без дополнительного текста):
+{{
+    "questions": ["колонка1", "колонка2", "колонка3", ...],
+    "reasoning": "Почему именно эти колонки нужны для выполнения задачи"
+}}"""
+
+
+GENERATE_TOOL_PARAMS_PROMPT = """Ты - юридический AI-агент. Определи параметры для инструмента на основе задачи пользователя.
+
+ИНСТРУМЕНТ: {tool_name}
+ОПИСАНИЕ ИНСТРУМЕНТА: {tool_description}
+ЗАДАЧА ПОЛЬЗОВАТЕЛЯ: {user_task}
+ПОНИМАНИЕ ЗАДАЧИ: {task_understanding}
+КЛЮЧЕВЫЕ АСПЕКТЫ: {key_aspects}
+
+Определи оптимальные параметры для этого инструмента, чтобы он выполнил задачу пользователя.
+
+Ответь ТОЛЬКО в формате JSON (без дополнительного текста):
+{{
+    "params": {{
+        "параметр1": "значение1",
+        "параметр2": "значение2"
+    }},
+    "reasoning": "Почему именно эти параметры"
 }}"""
 
 
@@ -317,6 +417,7 @@ class AgenticPlanner:
             return {
                 "task_type": task_type,
                 "understanding": data.get("understanding", user_task),
+                "original_task": user_task,  # Сохраняем оригинальную задачу
                 "key_aspects": data.get("key_aspects", []),
                 "required_outputs": data.get("required_outputs", []),
                 "complexity": data.get("complexity", "medium")
@@ -351,6 +452,7 @@ class AgenticPlanner:
         return {
             "task_type": task_type,
             "understanding": user_task,
+            "original_task": user_task,  # Сохраняем оригинальную задачу
             "key_aspects": [],
             "required_outputs": [],
             "complexity": "medium"
@@ -363,321 +465,177 @@ class AgenticPlanner:
         available_tools: List[str]
     ) -> Tuple[List[ToolSelection], List[List[str]], List[str]]:
         """
-        Выбрать инструменты с обоснованием.
+        Выбрать инструменты и сгенерировать параметры через LLM.
         
-        ВАЖНО: 
-        - Использует ВСЕ инструменты из available_tools, которые выбрал пользователь
-        - Передаёт КОНТЕКСТ ЗАДАЧИ в каждый инструмент (не только file_ids!)
+        LLM сам решает:
+        - Какие параметры нужны для каждого инструмента
+        - Какие колонки создать для tabular_review
+        - На чём сфокусироваться в summarize
+        - Какой query использовать для rag
+        
+        НЕ используем жёсткие паттерны — LLM понимает задачу и генерирует план!
         """
-        task_type = task_understanding["task_type"]
-        user_task = task_understanding.get("understanding", "")
-        key_aspects = task_understanding.get("key_aspects", [])
+        file_ids = [d.get("id") for d in documents if d.get("id")]
+        original_task = task_understanding.get("original_task", task_understanding.get("understanding", ""))
+        
+        # Если LLM доступен — используем его для генерации плана с параметрами
+        if self.llm:
+            try:
+                return await self._select_tools_with_llm(
+                    task_understanding, 
+                    documents, 
+                    available_tools,
+                    original_task
+                )
+            except Exception as e:
+                logger.warning(f"LLM tool selection failed: {e}, using fallback")
+        
+        # Fallback: простой план без LLM
+        return self._select_tools_fallback(task_understanding, documents, available_tools)
+    
+    async def _select_tools_with_llm(
+        self,
+        task_understanding: Dict[str, Any],
+        documents: List[Dict[str, Any]],
+        available_tools: List[str],
+        original_task: str
+    ) -> Tuple[List[ToolSelection], List[List[str]], List[str]]:
+        """
+        Использовать LLM для генерации плана с параметрами.
+        
+        LLM получает задачу и сам решает, какие параметры нужны для каждого инструмента.
+        """
         file_ids = [d.get("id") for d in documents if d.get("id")]
         
-        # Используем предопределённые паттерны для надёжности
-        patterns = self._get_tool_patterns()
+        # Формируем описание инструментов
+        tools_desc = self._format_tools_description(available_tools)
         
+        prompt = ChatPromptTemplate.from_template(TOOL_REASONING_PROMPT)
+        chain = prompt | self.llm
+        
+        response = await chain.ainvoke({
+            "user_task": original_task,
+            "task_understanding": task_understanding.get("understanding", original_task),
+            "task_type": task_understanding.get("task_type", "document_analysis"),
+            "key_aspects": ", ".join(task_understanding.get("key_aspects", [])),
+            "tools_description": tools_desc
+        })
+        
+        content = response.content if hasattr(response, 'content') else str(response)
+        data = self._parse_json(content)
+        
+        # Парсим ответ LLM
         tool_selections = []
-        used_tools = set()
-        
-        # Шаг 1: Добавляем инструменты из паттерна (если они в available_tools)
-        if task_type in patterns:
-            pattern = patterns[task_type]
+        for i, tool_data in enumerate(data.get("tools", [])):
+            tool_name = tool_data.get("tool_name")
+            if tool_name not in available_tools:
+                continue
             
-            for i, tool_info in enumerate(pattern["tools"]):
-                tool_name = tool_info["name"]
-                # Используем только если инструмент в available_tools
-                if tool_name in available_tools:
-                    params = tool_info.get("params", {}).copy()
-                    # Inject file_ids for document tools
-                    if tool_name in ["summarize", "extract_entities", "rag", "playbook_check", "tabular_review"]:
-                        params["file_ids"] = file_ids
-                    
-                    # Обогащаем параметры контекстом задачи
-                    params = self._enrich_tool_params(tool_name, params, task_understanding)
-                    
-                    tool_selections.append(ToolSelection(
-                        tool_name=tool_name,
-                        reason=tool_info.get("reason", ""),
-                        params=params,
-                        expected_output=tool_info.get("expected_output", ""),
-                        priority=i + 1
-                    ))
-                    used_tools.add(tool_name)
+            params = tool_data.get("params", {})
+            
+            # Добавляем file_ids для инструментов работы с документами
+            if tool_name in ["summarize", "extract_entities", "rag", "playbook_check", "tabular_review"]:
+                params["file_ids"] = file_ids
+            
+            tool_selections.append(ToolSelection(
+                tool_name=tool_name,
+                reason=tool_data.get("reason", ""),
+                params=params,
+                expected_output=tool_data.get("expected_output", ""),
+                priority=tool_data.get("priority", i + 1)
+            ))
         
-        # Шаг 2: Добавляем ВСЕ остальные инструменты из available_tools, которых нет в паттерне
-        priority_offset = len(tool_selections)
+        # Проверяем, что все инструменты включены
+        used_tools = {ts.tool_name for ts in tool_selections}
         for tool_name in available_tools:
             if tool_name not in used_tools:
-                # Создаём обоснование для инструмента
-                tool_desc = self.tool_descriptions.get(tool_name, {})
-                reason = f"Дополнительный анализ с помощью {tool_name}: {tool_desc.get('description', '')}"
-                
+                # LLM пропустил инструмент — добавляем с базовыми параметрами
                 params = {}
-                # Inject file_ids for document tools
                 if tool_name in ["summarize", "extract_entities", "rag", "playbook_check", "tabular_review"]:
                     params["file_ids"] = file_ids
                 
-                # Обогащаем параметры контекстом задачи
-                params = self._enrich_tool_params(tool_name, params, task_understanding)
-                
                 tool_selections.append(ToolSelection(
                     tool_name=tool_name,
-                    reason=reason,
+                    reason=f"Дополнительный анализ с помощью {tool_name}",
                     params=params,
-                    expected_output=tool_desc.get("output", "Результат анализа"),
-                    priority=priority_offset + 1
+                    expected_output="Результат анализа",
+                    priority=len(tool_selections) + 1
                 ))
-                priority_offset += 1
         
-        # Если нет инструментов (не должно быть, но на всякий случай)
-        if not tool_selections:
-            if "summarize" in available_tools:
-                params = {"file_ids": file_ids, "style": "brief"}
-                params = self._enrich_tool_params("summarize", params, task_understanding)
-                tool_selections.append(ToolSelection(
-                    tool_name="summarize",
-                    reason="Базовый анализ документа",
-                    params=params,
-                    expected_output="Краткое резюме",
-                    priority=1
-                ))
-            else:
-                # Fallback на первый доступный инструмент
-                if available_tools:
-                    params = {"file_ids": file_ids} if available_tools[0] in ["summarize", "extract_entities", "rag", "playbook_check", "tabular_review"] else {}
-                    params = self._enrich_tool_params(available_tools[0], params, task_understanding)
-                    tool_selections.append(ToolSelection(
-                        tool_name=available_tools[0],
-                        reason="Базовый анализ",
-                        params=params,
-                        expected_output="Результат анализа",
-                        priority=1
-                    ))
+        # Парсим execution order
+        parallel_groups = data.get("parallel_groups", [[ts.tool_name for ts in tool_selections]])
+        success_criteria = data.get("success_criteria", ["Задача выполнена"])
         
-        # Формируем execution_order: сначала паттерн, потом остальные параллельно
-        execution_order = []
-        if task_type in patterns:
-            pattern = patterns[task_type]
-            # Используем порядок из паттерна для инструментов, которые в нём есть
-            pattern_tools = [t["name"] for t in pattern["tools"] if t["name"] in available_tools]
-            if pattern_tools:
-                execution_order = pattern.get("execution_order", [pattern_tools])
-        else:
-            # Если нет паттерна, группируем по приоритету
-            execution_order = [[t.tool_name] for t in tool_selections]
+        logger.info(f"LLM generated plan with {len(tool_selections)} tools")
         
-        # Добавляем остальные инструменты в последнюю группу (параллельно)
-        remaining_tools = [t.tool_name for t in tool_selections if t.tool_name not in [t for group in execution_order for t in group]]
-        if remaining_tools:
-            if execution_order:
-                execution_order[-1].extend(remaining_tools)
-            else:
-                execution_order = [remaining_tools]
-        
-        success_criteria = patterns.get(task_type, {}).get("success_criteria", ["Задача выполнена"]) if task_type in patterns else ["Задача выполнена"]
-        success_criteria.append(f"Использованы все выбранные инструменты: {', '.join(available_tools)}")
-        
-        return (
-            tool_selections,
-            execution_order,
-            success_criteria
-        )
+        return (tool_selections, parallel_groups, success_criteria)
     
-    def _enrich_tool_params(
-        self, 
-        tool_name: str, 
-        params: Dict[str, Any], 
-        task_understanding: Dict[str, Any]
-    ) -> Dict[str, Any]:
-        """
-        Обогатить параметры инструмента контекстом задачи.
+    def _select_tools_fallback(
+        self,
+        task_understanding: Dict[str, Any],
+        documents: List[Dict[str, Any]],
+        available_tools: List[str]
+    ) -> Tuple[List[ToolSelection], List[List[str]], List[str]]:
+        """Fallback выбор инструментов без LLM"""
+        file_ids = [d.get("id") for d in documents if d.get("id")]
+        original_task = task_understanding.get("original_task", task_understanding.get("understanding", ""))
         
-        Это КРИТИЧЕСКИ ВАЖНО! Каждый инструмент должен знать:
-        - Что именно хочет пользователь
-        - На чём сфокусироваться
-        - Какие колонки/вопросы создать
-        """
-        user_task = task_understanding.get("understanding", "")
-        key_aspects = task_understanding.get("key_aspects", [])
-        task_type = task_understanding.get("task_type", TaskType.DOCUMENT_ANALYSIS)
-        user_task_lower = user_task.lower()
-        
-        # === TABULAR REVIEW ===
-        if tool_name == "tabular_review":
-            # Генерируем questions на основе задачи
-            if not params.get("questions"):
-                questions = self._generate_tabular_questions(user_task, key_aspects)
-                params["questions"] = questions
-            # Добавляем имя таблицы
-            if not params.get("review_name"):
-                params["review_name"] = self._generate_review_name(user_task)
-        
-        # === SUMMARIZE ===
-        elif tool_name == "summarize":
-            # Добавляем focus на основе задачи
-            if not params.get("focus"):
-                params["focus"] = self._generate_summarize_focus(user_task, key_aspects)
-            # Выбираем стиль на основе задачи
-            if not params.get("style"):
-                if any(w in user_task_lower for w in ["подробн", "детальн", "полн"]):
-                    params["style"] = "detailed"
-                elif any(w in user_task_lower for w in ["список", "пункт", "перечисл"]):
-                    params["style"] = "bullet_points"
-                else:
-                    params["style"] = "brief"
-        
-        # === RAG SEARCH ===
-        elif tool_name == "rag":
-            # Формируем query из задачи пользователя
-            if not params.get("query"):
-                params["query"] = user_task
-            if not params.get("top_k"):
+        tool_selections = []
+        for i, tool_name in enumerate(available_tools):
+            params = {}
+            if tool_name in ["summarize", "extract_entities", "rag", "playbook_check", "tabular_review"]:
+                params["file_ids"] = file_ids
+            
+            # Базовые параметры
+            if tool_name == "summarize":
+                params["style"] = "brief"
+                params["focus"] = f"Задача: {original_task}"
+            elif tool_name == "rag":
+                params["query"] = original_task
                 params["top_k"] = 5
+            elif tool_name == "tabular_review":
+                # Базовые колонки — LLM не доступен
+                params["questions"] = ["Ключевая информация", "Дата", "Участники", "Детали"]
+                params["review_name"] = "Анализ документов"
+            
+            tool_selections.append(ToolSelection(
+                tool_name=tool_name,
+                reason=f"Анализ с помощью {tool_name}",
+                params=params,
+                expected_output="Результат анализа",
+                priority=i + 1
+            ))
         
-        # === EXTRACT ENTITIES ===
-        elif tool_name == "extract_entities":
-            # Определяем типы сущностей на основе задачи
-            if not params.get("entity_types"):
-                params["entity_types"] = self._determine_entity_types(user_task, key_aspects)
+        execution_order = [[ts.tool_name] for ts in tool_selections]
+        success_criteria = ["Задача выполнена"]
         
-        # === PLAYBOOK CHECK ===
-        elif tool_name == "playbook_check":
-            # Добавляем контекст проверки
-            if not params.get("check_context"):
-                params["check_context"] = user_task
-        
-        # === DOCUMENT DRAFT ===
-        elif tool_name == "document_draft":
-            # Передаём контекст для создания документа
-            if not params.get("context"):
-                params["context"] = user_task
-            if not params.get("document_type"):
-                params["document_type"] = self._determine_document_type(user_task)
-        
-        # === LEGAL DB ===
-        elif tool_name == "legal_db":
-            # Формируем запрос для поиска в правовых базах
-            if not params.get("query"):
-                params["query"] = user_task
-        
-        return params
+        return (tool_selections, execution_order, success_criteria)
     
-    def _generate_tabular_questions(self, user_task: str, key_aspects: List[str]) -> List[str]:
-        """
-        Генерировать колонки для Tabular Review на основе задачи.
+    def _format_tools_description(self, available_tools: List[str]) -> str:
+        """Форматировать описание инструментов для промпта"""
+        lines = []
+        for tool_name in available_tools:
+            tool_info = self.tool_descriptions.get(tool_name, {})
+            desc = tool_info.get("description", "")
+            when_to_use = tool_info.get("when_to_use", "")
+            params = tool_info.get("params", {})
+            
+            lines.append(f"- **{tool_name}**: {desc}")
+            if when_to_use:
+                lines.append(f"  Когда использовать: {when_to_use}")
+            if params:
+                lines.append(f"  Параметры: {params}")
         
-        Это ключевая функция! Без правильных колонок таблица бесполезна.
-        """
-        user_task_lower = user_task.lower()
-        
-        # Хронология событий
-        if any(w in user_task_lower for w in ["хронолог", "timeline", "события", "когда", "дат"]):
-            return [
-                "Дата события",
-                "Описание события",
-                "Участники/Стороны",
-                "Источник (документ, страница)"
-            ]
-        
-        # Сравнение договоров
-        if any(w in user_task_lower for w in ["сравн", "различ", "отлич", "общ"]):
-            return [
-                "Стороны договора",
-                "Предмет договора",
-                "Сумма/Цена",
-                "Сроки исполнения",
-                "Ответственность сторон",
-                "Особые условия"
-            ]
-        
-        # Анализ рисков
-        if any(w in user_task_lower for w in ["риск", "проблем", "опасн"]):
-            return [
-                "Тип риска",
-                "Описание риска",
-                "Уровень (высокий/средний/низкий)",
-                "Рекомендации",
-                "Источник"
-            ]
-        
-        # Извлечение данных о сторонах
-        if any(w in user_task_lower for w in ["сторон", "участник", "контрагент"]):
-            return [
-                "Наименование стороны",
-                "ИНН/ОГРН",
-                "Адрес",
-                "Представитель",
-                "Роль в договоре"
-            ]
-        
-        # Финансовые данные
-        if any(w in user_task_lower for w in ["сумм", "плат", "цен", "стоимост", "финанс"]):
-            return [
-                "Описание платежа",
-                "Сумма",
-                "Срок оплаты",
-                "Условия",
-                "Источник"
-            ]
-        
-        # Сроки и обязательства
-        if any(w in user_task_lower for w in ["срок", "обязательств", "исполнен"]):
-            return [
-                "Обязательство",
-                "Ответственная сторона",
-                "Срок исполнения",
-                "Санкции за нарушение",
-                "Статус"
-            ]
-        
-        # Ключевые условия договора (по умолчанию)
-        if key_aspects:
-            # Используем key_aspects как колонки
-            return key_aspects[:6]  # Максимум 6 колонок
-        
-        # Fallback - базовые колонки для анализа документов
-        return [
-            "Ключевая информация",
-            "Дата",
-            "Участники",
-            "Важные условия"
-        ]
+        return "\n".join(lines)
     
-    def _generate_review_name(self, user_task: str) -> str:
-        """Генерировать название таблицы на основе задачи"""
-        user_task_lower = user_task.lower()
-        
-        if "хронолог" in user_task_lower:
-            return "Хронология событий"
-        elif "сравн" in user_task_lower:
-            return "Сравнительный анализ"
-        elif "риск" in user_task_lower:
-            return "Анализ рисков"
-        elif "сторон" in user_task_lower:
-            return "Информация о сторонах"
-        elif "финанс" in user_task_lower or "сумм" in user_task_lower:
-            return "Финансовый анализ"
-        elif "срок" in user_task_lower:
-            return "Сроки и обязательства"
-        else:
-            return "Анализ документов"
+    # Старые методы _enrich_tool_params, _generate_tabular_questions_llm и т.д. удалены
+    # Теперь LLM сам генерирует все параметры в _select_tools_with_llm
     
     def _generate_summarize_focus(self, user_task: str, key_aspects: List[str]) -> str:
-        """Генерировать focus для summarize на основе задачи"""
+        """Генерировать focus для summarize на основе задачи (legacy, для совместимости)"""
         if key_aspects:
             return f"Сфокусируйся на: {', '.join(key_aspects)}"
-        
-        user_task_lower = user_task.lower()
-        
-        if "риск" in user_task_lower:
-            return "Сфокусируйся на потенциальных рисках и проблемных местах"
-        elif "сторон" in user_task_lower:
-            return "Сфокусируйся на информации о сторонах договора"
-        elif "финанс" in user_task_lower or "сумм" in user_task_lower:
-            return "Сфокусируйся на финансовых условиях и суммах"
-        elif "срок" in user_task_lower:
-            return "Сфокусируйся на сроках и обязательствах"
+        return f"Задача: {user_task}"
         elif "хронолог" in user_task_lower:
             return "Сфокусируйся на датах и последовательности событий"
         else:
