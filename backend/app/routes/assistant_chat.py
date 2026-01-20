@@ -473,25 +473,10 @@ async def stream_chat_response(
                     logger.warning(f"[Draft Mode] Error generating title: {title_error}")
                     document_title = "Новый документ"
                 
-                # Определяем, нужна ли адаптация шаблона под данные дела
-                # Если пользователь просит "шаблон", "форму", "бланк" - возвращаем пустой шаблон
-                # Если просит "создать", "составить", "написать" - заполняем данными из дела
-                question_lower = question.lower()
-                template_keywords = ["шаблон", "форма", "бланк", "образец", "пустой", "пустую", "незаполненн"]
-                fill_keywords = ["создай", "создать", "составь", "составить", "напиши", "написать", "заполни", "заполнить", "подготовь", "подготовить"]
-                
-                # По умолчанию НЕ адаптируем (возвращаем шаблон как есть)
+                # В Draft режиме ВСЕГДА возвращаем пустой шаблон без автозаполнения
+                # Пользователь может редактировать и просить ИИ заполнить документ уже в текстовом редакторе
                 should_adapt = False
-                
-                # Если есть ключевые слова заполнения - адаптируем
-                if any(kw in question_lower for kw in fill_keywords):
-                    should_adapt = True
-                    logger.info(f"[Draft Mode] Will adapt template (fill keywords found in: {question[:50]}...)")
-                
-                # Но если явно просят шаблон/форму - НЕ адаптируем
-                if any(kw in question_lower for kw in template_keywords):
-                    should_adapt = False
-                    logger.info(f"[Draft Mode] Will NOT adapt template (template keywords found in: {question[:50]}...)")
+                logger.info(f"[Draft Mode] Will return empty template (no auto-fill in draft mode)")
                 
                 # Создаем граф для работы с шаблонами
                 graph = create_template_graph(db)
