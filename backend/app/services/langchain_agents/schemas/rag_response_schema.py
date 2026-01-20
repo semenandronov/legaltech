@@ -3,7 +3,7 @@
 This module provides Pydantic schemas for structured RAG responses that
 enforce mandatory citations for all factual claims.
 """
-from pydantic import BaseModel, Field, validator
+from pydantic import BaseModel, Field, field_validator
 from typing import List, Optional
 from app.services.langchain_agents.schemas.base_schema import Confidence
 import logging
@@ -20,7 +20,8 @@ class RAGCitation(BaseModel):
     char_end: Optional[int] = Field(None, description="Character end offset")
     quote: str = Field(..., min_length=10, description="Verbatim quote from source (MUST match exactly)")
     
-    @validator('quote')
+    @field_validator('quote')
+    @classmethod
     def quote_not_empty(cls, v):
         if not v or len(v.strip()) < 10:
             raise ValueError("Quote must be at least 10 characters and non-empty")
@@ -58,7 +59,8 @@ class LegalRAGResponse(BaseModel):
         description="Overall confidence in the answer"
     )
     
-    @validator('claims')
+    @field_validator('claims')
+    @classmethod
     def claims_not_empty(cls, v):
         if not v:
             raise ValueError("Answer must contain at least one claim with citations")

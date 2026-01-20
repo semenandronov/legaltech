@@ -4,7 +4,7 @@ Schema for timeline extraction agent outputs.
 Supports events, milestones, deadlines, and temporal relationships.
 """
 from typing import Optional, List, Dict, Any
-from pydantic import BaseModel, Field, validator
+from pydantic import BaseModel, Field, field_validator
 from enum import Enum
 from datetime import date, datetime
 from .base_schema import BaseAgentOutput, SourceReference, Confidence
@@ -77,7 +77,8 @@ class TimelineEvent(BaseModel):
         extra = "allow"
         use_enum_values = True
     
-    @validator('date', 'date_range_start', 'date_range_end', pre=True)
+    @field_validator('date', 'date_range_start', 'date_range_end', mode='before')
+    @classmethod
     def parse_date(cls, v):
         """Parse and validate date strings."""
         if v is None:

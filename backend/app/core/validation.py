@@ -7,7 +7,7 @@ Input Validation - Валидация входных данных
 - Проверки безопасности
 """
 from typing import Optional, List, Dict, Any
-from pydantic import BaseModel, Field, validator, root_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 import re
 import logging
 
@@ -44,7 +44,8 @@ class MessageInput(BaseModel):
     role: str = Field(..., pattern=r'^(user|assistant|system)$')
     content: str = Field(..., min_length=1, max_length=MAX_QUESTION_LENGTH)
     
-    @validator('content')
+    @field_validator('content')
+    @classmethod
     def sanitize_content(cls, v):
         """Санитизировать контент"""
         return sanitize_input(v)
@@ -73,7 +74,8 @@ class ChatRequestInput(BaseModel):
     # Прикреплённые файлы
     attached_file_ids: Optional[List[str]] = Field(None, max_items=MAX_ATTACHED_FILES)
     
-    @validator('case_id')
+    @field_validator('case_id')
+    @classmethod
     def validate_case_id(cls, v):
         """Валидировать case_id"""
         # Должен быть UUID или alphanumeric
@@ -81,21 +83,24 @@ class ChatRequestInput(BaseModel):
             raise ValueError('Invalid case_id format')
         return v
     
-    @validator('document_context')
+    @field_validator('document_context')
+    @classmethod
     def sanitize_document_context(cls, v):
         """Санитизировать контекст документа"""
         if v:
             return sanitize_html(v)
         return v
     
-    @validator('template_file_content')
+    @field_validator('template_file_content')
+    @classmethod
     def sanitize_template_content(cls, v):
         """Санитизировать контент шаблона"""
         if v:
             return sanitize_html(v)
         return v
     
-    @root_validator
+    @model_validator(mode='before')
+    @classmethod
     def validate_request(cls, values):
         """Валидировать запрос целиком"""
         messages = values.get('messages', [])

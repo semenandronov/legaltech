@@ -4,7 +4,7 @@ Schema for entity extraction agent outputs.
 Supports persons, organizations, documents, dates, amounts, etc.
 """
 from typing import Optional, List, Dict, Any
-from pydantic import BaseModel, Field, validator
+from pydantic import BaseModel, Field, field_validator
 from enum import Enum
 from .base_schema import BaseAgentOutput, SourceReference, Confidence
 
@@ -70,7 +70,8 @@ class Entity(BaseModel):
         extra = "allow"
         use_enum_values = True
     
-    @validator('value')
+    @field_validator('value')
+    @classmethod
     def clean_value(cls, v):
         """Clean the value string."""
         if v:
