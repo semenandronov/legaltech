@@ -499,10 +499,9 @@ async def add_files_to_case(
     current_user: User = Depends(get_current_user)
 ):
     """
-    Add files to an existing case without processing them in PGVector
+    Add files to an existing case and index them in PGVector for RAG
     
-    Files are saved to database and classified, but not indexed in vector store.
-    Processing should be done separately via POST /api/cases/{case_id}/process
+    Files are saved to database, classified, and indexed in vector store.
     """
     if not files:
         raise HTTPException(status_code=400, detail="Не загружено ни одного файла")
@@ -745,6 +744,83 @@ async def add_files_to_case(
         case.file_names = [f.filename for f in existing_files]
         db.commit()
         logger.info(f"Successfully added {len(new_file_ids)} files to case {case_id}")
+        
+        # Index new files in PGVector for RAG
+        new_files_for_indexing = db.query(FileModel).filter(FileModel.id.in_(new_file_ids)).all()
+        if new_files_for_indexing:
+            try:
+                logger.info(f"Indexing {len(new_files_for_indexing)} new files in PGVector for case {case_id}")
+                
+                document_processor = DocumentProcessor()
+                all_documents = []
+                
+                # Get classifications for new files
+                from app.models.analysis import DocumentClassification
+                classifications = db.query(DocumentClassification).filter(
+                    DocumentClassification.file_id.in_(new_file_ids)
+                ).all()
+                classification_map = {c.file_id: c for c in classifications if c.file_id}
+                
+                for file in new_files_for_indexing:
+                    if not file.original_text:
+                        continue
+                    
+                    # Build metadata
+                    metadata = {
+                        "source": file.filename,
+                        "file_id": file.id,
+                        "file_type": file.file_type or "unknown",
+                    }
+                    
+                    # Add classification metadata if available
+                    classification = classification_map.get(file.id)
+                    if classification:
+                        metadata["doc_type"] = classification.doc_type or "other"
+                        metadata["is_privileged"] = str(classification.is_privileged) if classification.is_privileged else "false"
+                        metadata["relevance_score"] = classification.relevance_score or 0
+                    
+                    # Split text into chunks
+                    file_documents = document_processor.split_documents(
+                        text=file.original_text,
+                        filename=file.filename,
+                        metadata=metadata,
+                    )
+                    all_documents.extend(file_documents)
+                
+                if all_documents:
+                    logger.info(
+                        f"Storing {len(all_documents)} document chunks in PGVector for case {case_id}",
+                        extra={"case_id": case_id, "num_chunks": len(all_documents)}
+                    )
+                    
+                    collection_name = document_processor.store_in_vector_db(
+                        case_id=case_id,
+                        documents=all_documents,
+                        db=db,
+                        original_files=None
+                    )
+                    
+                    logger.info(f"Successfully indexed {len(all_documents)} document chunks in PGVector collection '{collection_name}' for case {case_id}")
+                
+                # Update case full_text with new files
+                text_parts = []
+                for file in existing_files:
+                    if file.original_text:
+                        text_parts.append(f"[{file.filename}]\n{file.original_text}")
+                
+                if text_parts:
+                    full_text = "\n\n".join(text_parts)
+                    MAX_TEXT_LENGTH = 100 * 1024 * 1024  # 100 MB limit
+                    sanitized_full_text = sanitize_text(full_text)
+                    if len(sanitized_full_text) > MAX_TEXT_LENGTH:
+                        sanitized_full_text = sanitized_full_text[:MAX_TEXT_LENGTH]
+                    case.full_text = sanitized_full_text
+                    db.commit()
+                    logger.info(f"Updated case {case_id} full_text with all files")
+                    
+            except Exception as index_error:
+                logger.error(f"Error indexing files in PGVector for case {case_id}: {index_error}", exc_info=True)
+                # Don't fail the request, files are already saved
         
         # Get updated file list
         updated_files = db.query(FileModel).filter(FileModel.case_id == case_id).all()
