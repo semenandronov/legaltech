@@ -636,10 +636,6 @@ class AgenticPlanner:
         if key_aspects:
             return f"Сфокусируйся на: {', '.join(key_aspects)}"
         return f"Задача: {user_task}"
-        elif "хронолог" in user_task_lower:
-            return "Сфокусируйся на датах и последовательности событий"
-        else:
-            return f"Задача пользователя: {user_task}"
     
     def _determine_entity_types(self, user_task: str, key_aspects: List[str]) -> List[str]:
         """Определить типы сущностей для извлечения на основе задачи"""
