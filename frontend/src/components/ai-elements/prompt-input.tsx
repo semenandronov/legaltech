@@ -717,9 +717,6 @@ export const PromptInput = ({
 
   const handleSubmit: FormEventHandler<HTMLFormElement> = (event) => {
     event.preventDefault();
-    // #region agent log
-    fetch('http://127.0.0.1:7242/ingest/2db1e09b-2b5d-4ee0-85d8-a551f942254c',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'prompt-input.tsx:handleSubmit:entry',message:'submit start',data:{usingProvider,filesCount:files.length},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'H1'})}).catch(()=>{});
-    // #endregion agent log
 
     const form = event.currentTarget;
     const text = usingProvider
@@ -728,9 +725,6 @@ export const PromptInput = ({
           const formData = new FormData(form);
           return (formData.get("message") as string) || "";
         })();
-    // #region agent log
-    fetch('http://127.0.0.1:7242/ingest/2db1e09b-2b5d-4ee0-85d8-a551f942254c',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'prompt-input.tsx:handleSubmit:text',message:'captured text',data:{textLength:text.length},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'H1'})}).catch(()=>{});
-    // #endregion agent log
 
     // Reset form/input immediately after capturing text to avoid race condition
     // where user input during async blob conversion would be lost
@@ -760,9 +754,6 @@ export const PromptInput = ({
       .then((convertedFiles: FileUIPart[]) => {
         try {
           const result = onSubmit({ text, files: convertedFiles }, event);
-          // #region agent log
-          fetch('http://127.0.0.1:7242/ingest/2db1e09b-2b5d-4ee0-85d8-a551f942254c',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'prompt-input.tsx:handleSubmit:onSubmitReturn',message:'onSubmit returned',data:{isPromise:result instanceof Promise,usingProvider},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'H1'})}).catch(()=>{});
-          // #endregion agent log
 
           // Handle both sync and async onSubmit
           if (result instanceof Promise) {
@@ -772,15 +763,9 @@ export const PromptInput = ({
                 if (usingProvider) {
                   controller.textInput.clear();
                 }
-                // #region agent log
-                fetch('http://127.0.0.1:7242/ingest/2db1e09b-2b5d-4ee0-85d8-a551f942254c',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'prompt-input.tsx:handleSubmit:promiseResolved',message:'cleared after async',data:{usingProvider},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'H1'})}).catch(()=>{});
-                // #endregion agent log
               })
               .catch(() => {
                 // Don't clear on error - user may want to retry
-                // #region agent log
-                fetch('http://127.0.0.1:7242/ingest/2db1e09b-2b5d-4ee0-85d8-a551f942254c',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'prompt-input.tsx:handleSubmit:promiseRejected',message:'onSubmit promise rejected',data:{},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'H3'})}).catch(()=>{});
-                // #endregion agent log
               });
           } else {
             // Sync function completed without throwing, clear attachments
@@ -788,22 +773,13 @@ export const PromptInput = ({
             if (usingProvider) {
               controller.textInput.clear();
             }
-            // #region agent log
-            fetch('http://127.0.0.1:7242/ingest/2db1e09b-2b5d-4ee0-85d8-a551f942254c',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'prompt-input.tsx:handleSubmit:syncClear',message:'cleared after sync',data:{usingProvider},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'H1'})}).catch(()=>{});
-            // #endregion agent log
           }
         } catch {
           // Don't clear on error - user may want to retry
-          // #region agent log
-          fetch('http://127.0.0.1:7242/ingest/2db1e09b-2b5d-4ee0-85d8-a551f942254c',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'prompt-input.tsx:handleSubmit:onSubmitThrow',message:'onSubmit threw',data:{},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'H3'})}).catch(()=>{});
-          // #endregion agent log
         }
       })
       .catch(() => {
         // Don't clear on error - user may want to retry
-        // #region agent log
-        fetch('http://127.0.0.1:7242/ingest/2db1e09b-2b5d-4ee0-85d8-a551f942254c',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'prompt-input.tsx:handleSubmit:conversionFail',message:'attachment conversion failed',data:{},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'H3'})}).catch(()=>{});
-        // #endregion agent log
       });
   };
 
