@@ -335,13 +335,16 @@ class PlanningAgent:
             tool_name = step_data.get("tool")
             
             # Build tool params based on tool type
-            tool_params = step_data.get("tool_params", {})
+            tool_params = step_data.get("tool_params", {}).copy()
             
             # Auto-inject file_ids for document-related tools
             document_tools = ["tabular_review", "rag", "summarize", "extract_entities", "playbook_check"]
             if tool_name in document_tools and file_ids:
                 if "file_ids" not in tool_params:
                     tool_params["file_ids"] = file_ids
+            
+            # ВАЖНО: Обогащаем параметры контекстом задачи пользователя
+            tool_params = self._enrich_tool_params_with_task(tool_name, tool_params, user_task)
             
             step = PlanStep(
                 id=step_id,
@@ -394,8 +397,8 @@ class PlanningAgent:
             "available_tools": tools_info
         })
         
-        # Parse response
-        return self._parse_plan_response(response.content, documents)
+        # Parse response - передаём user_task для обогащения параметров
+        return self._parse_plan_response(response.content, documents, user_task)
     
     def _format_documents_info(self, documents: List[Dict[str, Any]]) -> str:
         """Format documents for the prompt"""
@@ -429,7 +432,8 @@ class PlanningAgent:
     def _parse_plan_response(
         self,
         response: str,
-        documents: List[Dict[str, Any]]
+        documents: List[Dict[str, Any]],
+        user_task: str = ""
     ) -> ExecutionPlan:
         """Parse LLM response into ExecutionPlan"""
         try:
@@ -498,6 +502,9 @@ class PlanningAgent:
                     if "file_ids" not in tool_params:
                         tool_params["file_ids"] = file_ids
                 
+                # ВАЖНО: Обогащаем параметры контекстом задачи
+                tool_params = self._enrich_tool_params_with_task(tool_name, tool_params, user_task)
+                
                 step = PlanStep(
                     id=step_data.get("id", f"step_{i + 1}"),
                     name=step_data.get("name", f"Step {i + 1}"),
@@ -528,6 +535,9 @@ class PlanningAgent:
             
             # Create a simple fallback plan
             file_ids = [d.get("id") for d in documents if d.get("id")]
+            fallback_params = {"file_ids": file_ids, "style": "brief"}
+            fallback_params = self._enrich_tool_params_with_task("summarize", fallback_params, user_task)
+            
             return ExecutionPlan(
                 goals=[SubGoal(
                     id="goal_1",
@@ -540,7 +550,7 @@ class PlanningAgent:
                     description="Создание краткого резюме загруженных документов",
                     step_type="tool_call",
                     tool_name="summarize",
-                    tool_params={"file_ids": file_ids, "style": "brief"},
+                    tool_params=fallback_params,
                     depends_on=[],
                     expected_output="Краткое резюме документов",
                     goal_id="goal_1",
@@ -549,6 +559,154 @@ class PlanningAgent:
                 estimated_total_duration_seconds=60,
                 summary="Fallback план: суммаризация документов"
             )
+    
+    def _enrich_tool_params_with_task(
+        self,
+        tool_name: str,
+        params: Dict[str, Any],
+        user_task: str
+    ) -> Dict[str, Any]:
+        """
+        Обогатить параметры инструмента контекстом задачи пользователя.
+        
+        Это КРИТИЧЕСКИ ВАЖНО для правильной работы инструментов!
+        """
+        if not user_task:
+            return params
+        
+        user_task_lower = user_task.lower()
+        
+        # === TABULAR REVIEW ===
+        if tool_name == "tabular_review":
+            if not params.get("questions"):
+                params["questions"] = self._generate_questions_for_task(user_task)
+            if not params.get("review_name"):
+                params["review_name"] = self._generate_review_name_for_task(user_task)
+        
+        # === SUMMARIZE ===
+        elif tool_name == "summarize":
+            if not params.get("focus"):
+                params["focus"] = f"Задача пользователя: {user_task}"
+            if not params.get("style"):
+                if any(w in user_task_lower for w in ["подробн", "детальн", "полн"]):
+                    params["style"] = "detailed"
+                elif any(w in user_task_lower for w in ["список", "пункт"]):
+                    params["style"] = "bullet_points"
+                else:
+                    params["style"] = "brief"
+        
+        # === RAG SEARCH ===
+        elif tool_name == "rag":
+            if not params.get("query"):
+                params["query"] = user_task
+            if not params.get("top_k"):
+                params["top_k"] = 5
+        
+        # === EXTRACT ENTITIES ===
+        elif tool_name == "extract_entities":
+            if not params.get("entity_types"):
+                entity_types = ["person", "organization"]
+                if any(w in user_task_lower for w in ["дат", "когда", "срок", "хронолог"]):
+                    entity_types.append("date")
+                if any(w in user_task_lower for w in ["сумм", "цен", "стоимост", "плат"]):
+                    entity_types.append("money")
+                if any(w in user_task_lower for w in ["адрес", "место"]):
+                    entity_types.append("address")
+                if len(entity_types) == 2:  # Только базовые
+                    entity_types.extend(["date", "money", "address"])
+                params["entity_types"] = entity_types
+        
+        # === PLAYBOOK CHECK ===
+        elif tool_name == "playbook_check":
+            if not params.get("check_context"):
+                params["check_context"] = user_task
+        
+        # === DOCUMENT DRAFT ===
+        elif tool_name == "document_draft":
+            if not params.get("context"):
+                params["context"] = user_task
+        
+        # === LEGAL DB ===
+        elif tool_name == "legal_db":
+            if not params.get("query"):
+                params["query"] = user_task
+        
+        return params
+    
+    def _generate_questions_for_task(self, user_task: str) -> List[str]:
+        """Генерировать колонки для Tabular Review на основе задачи"""
+        user_task_lower = user_task.lower()
+        
+        # Хронология событий
+        if any(w in user_task_lower for w in ["хронолог", "timeline", "события", "когда"]):
+            return [
+                "Дата события",
+                "Описание события",
+                "Участники/Стороны",
+                "Источник (документ, страница)"
+            ]
+        
+        # Сравнение договоров
+        if any(w in user_task_lower for w in ["сравн", "различ", "отлич"]):
+            return [
+                "Стороны договора",
+                "Предмет договора",
+                "Сумма/Цена",
+                "Сроки исполнения",
+                "Особые условия"
+            ]
+        
+        # Анализ рисков
+        if any(w in user_task_lower for w in ["риск", "проблем"]):
+            return [
+                "Тип риска",
+                "Описание риска",
+                "Уровень",
+                "Рекомендации"
+            ]
+        
+        # Финансовые данные
+        if any(w in user_task_lower for w in ["сумм", "плат", "цен", "финанс"]):
+            return [
+                "Описание платежа",
+                "Сумма",
+                "Срок оплаты",
+                "Условия"
+            ]
+        
+        # Сроки и обязательства
+        if any(w in user_task_lower for w in ["срок", "обязательств"]):
+            return [
+                "Обязательство",
+                "Ответственная сторона",
+                "Срок исполнения",
+                "Санкции"
+            ]
+        
+        # Fallback - базовые колонки
+        return [
+            "Ключевая информация",
+            "Дата",
+            "Участники",
+            "Важные условия"
+        ]
+    
+    def _generate_review_name_for_task(self, user_task: str) -> str:
+        """Генерировать название таблицы на основе задачи"""
+        user_task_lower = user_task.lower()
+        
+        if "хронолог" in user_task_lower:
+            return "Хронология событий"
+        elif "сравн" in user_task_lower:
+            return "Сравнительный анализ"
+        elif "риск" in user_task_lower:
+            return "Анализ рисков"
+        elif "финанс" in user_task_lower or "сумм" in user_task_lower:
+            return "Финансовый анализ"
+        elif "срок" in user_task_lower:
+            return "Сроки и обязательства"
+        else:
+            return "Анализ документов"
     
     async def refine_plan(
         self,
