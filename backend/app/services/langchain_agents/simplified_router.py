@@ -319,3 +319,4 @@ def get_simplified_router() -> SimplifiedRouter:
         _router_instance = SimplifiedRouter()
     return _router_instance
 
+
