@@ -2,10 +2,15 @@
 Chat Orchestrator - Главный оркестратор чат-запросов
 
 Единая точка входа для обработки всех типов запросов:
-- RAG (простые вопросы)
-- Agent (сложные задачи)
+- ReActChatAgent (адаптивный агент для всех вопросов) - НОВОЕ!
 - Draft (создание документов)
 - Editor (редактирование документов)
+
+Изменения v2.0:
+- Убран жёсткий классификатор task/question
+- Все вопросы (кроме draft/editor) идут в ReActChatAgent
+- Агент сам решает, какие инструменты использовать
+- Поддержка обзора ВСЕХ документов через Map-Reduce
 """
 from typing import AsyncGenerator, Optional, List, Dict, Any
 from dataclasses import dataclass
@@ -15,10 +20,9 @@ import logging
 from app.services.chat.events import SSESerializer, SSEEvent
 from app.services.chat.classifier import RequestClassifier, ClassificationResult
 from app.services.chat.history_service import ChatHistoryService
-from app.services.chat.rag_handler import RAGHandler
+from app.services.chat.react_chat_agent import ReActChatAgent
 from app.services.chat.draft_handler import DraftHandler
 from app.services.chat.editor_handler import EditorHandler
-from app.services.chat.agent_handler import AgentHandler
 from app.services.chat.metrics import get_metrics, MetricTimer
 from app.services.rag_service import RAGService
 from app.services.document_processor import DocumentProcessor
@@ -56,13 +60,17 @@ class ChatRequest:
 
 class ChatOrchestrator:
     """
-    Главный оркестратор чат-запросов.
+    Главный оркестратор чат-запросов v2.0.
     
-    Определяет тип запроса и делегирует обработку соответствующему handler'у:
-    - DraftHandler: создание документов
-    - EditorHandler: редактирование документов
-    - RAGHandler: ответы на вопросы
-    - AgentHandler: выполнение сложных задач
+    Маршрутизация:
+    - DraftHandler: создание документов (draft_mode=True)
+    - EditorHandler: редактирование документов (document_context!=None)
+    - ReActChatAgent: ВСЕ остальные запросы (адаптивный агент)
+    
+    ReActChatAgent сам решает:
+    - Какие инструменты использовать
+    - Сколько документов нужно (k=5 или k=100)
+    - Нужен ли Map-Reduce для обзора всех документов
     
     Интегрирует:
     - Метрики производительности
@@ -84,36 +92,39 @@ class ChatOrchestrator:
             db: SQLAlchemy сессия
             rag_service: RAG сервис (создаётся если не передан)
             document_processor: Document processor (создаётся если не передан)
-            classifier: Классификатор запросов (создаётся если не передан)
+            classifier: Классификатор запросов (для обратной совместимости)
         """
         self.db = db
         self.rag_service = rag_service or RAGService()
         self.document_processor = document_processor or DocumentProcessor()
         
-        # Инициализируем классификатор
+        # Классификатор сохраняем для обратной совместимости
+        # но теперь он используется только для метрик
         if classifier:
             self.classifier = classifier
         else:
-            from app.services.llm_factory import create_llm
-            from app.services.external_sources.cache_manager import get_cache_manager
-            
-            llm = create_llm(temperature=0.0, max_tokens=500)
-            cache = get_cache_manager()
-            self.classifier = RequestClassifier(llm=llm, cache=cache)
+            try:
+                from app.services.llm_factory import create_llm
+                from app.services.external_sources.cache_manager import get_cache_manager
+                
+                llm = create_llm(temperature=0.0, max_tokens=500)
+                cache = get_cache_manager()
+                self.classifier = RequestClassifier(llm=llm, cache=cache)
+            except Exception as e:
+                logger.warning(f"[ChatOrchestrator] Classifier init failed: {e}, will skip classification")
+                self.classifier = None
         
         # Инициализируем сервисы
         self.history_service = ChatHistoryService(db)
         
-        # Инициализируем handlers
-        self.rag_handler = RAGHandler(self.rag_service, db)
+        # Инициализируем handlers (только draft и editor)
         self.draft_handler = DraftHandler(db)
         self.editor_handler = EditorHandler(self.rag_service, db)
-        self.agent_handler = AgentHandler(self.rag_service, db)
         
         # Метрики
         self.metrics = get_metrics()
         
-        logger.info("ChatOrchestrator initialized")
+        logger.info("ChatOrchestrator v2.0 initialized (ReActChatAgent enabled)")
     
     async def process_request(self, request: ChatRequest) -> AsyncGenerator[str, None]:
         """
@@ -190,14 +201,19 @@ class ChatOrchestrator:
         elif request.document_context:
             return "editor"
         else:
-            return "rag"
+            return "react_agent"  # Теперь всегда ReActChatAgent
     
     async def _route_to_handler(
         self,
         request: ChatRequest,
         session_id: str
     ) -> AsyncGenerator[str, None]:
-        """Маршрутизация к соответствующему handler'у"""
+        """
+        Маршрутизация к соответствующему handler'у
+        
+        v2.0: Все обычные запросы идут в ReActChatAgent,
+        который сам решает, какие инструменты использовать.
+        """
         
         if request.draft_mode:
             # Draft mode: создание документов
@@ -228,6 +244,9 @@ class ChatOrchestrator:
                 yield event
         
         else:
+            # ReActChatAgent mode: адаптивный агент для ВСЕХ вопросов
+            # Агент сам решает, какие инструменты использовать
+            
             # Проверяем наличие документов
             from app.models.case import File as FileModel
             file_count = self.db.query(FileModel).filter(
@@ -240,37 +259,42 @@ class ChatOrchestrator:
                 )
                 return
             
-            # Классифицируем запрос
-            classification = await self.classifier.classify(request.question)
-            self.metrics.record_classification(classification.label)
+            # Классифицируем запрос для метрик (опционально)
+            if self.classifier:
+                try:
+                    classification = await self.classifier.classify(request.question)
+                    self.metrics.record_classification(classification.label)
+                    logger.info(f"[ChatOrchestrator] Classification: {classification.label} ({classification.confidence:.2f})")
+                except Exception as e:
+                    logger.warning(f"[ChatOrchestrator] Classification failed: {e}")
             
-            if classification.is_task and classification.confidence >= 0.8:
-                # Agent mode: выполнение сложных задач
-                logger.info(f"[ChatOrchestrator] Routing to AgentHandler (confidence: {classification.confidence:.2f})")
-                
-                async for event in self.agent_handler.handle(
-                    case_id=request.case_id,
-                    question=request.question,
-                    current_user=request.current_user,
-                    auto_approve=False  # Требуем подтверждения плана
-                ):
-                    yield event
-            else:
-                # RAG mode: ответы на вопросы
-                chat_history = self.history_service.get_history_for_context(
-                    request.case_id, session_id
-                )
-                
-                async for event in self.rag_handler.handle(
-                    case_id=request.case_id,
-                    question=request.question,
-                    current_user=request.current_user,
-                    chat_history=chat_history,
-                    legal_research=request.legal_research,
-                    deep_think=request.deep_think,
-                    web_search=request.web_search
-                ):
-                    yield event
+            # Получаем историю чата
+            chat_history = self.history_service.get_history_for_context(
+                request.case_id, session_id
+            )
+            
+            # Создаём ReActChatAgent с пользовательскими переключателями
+            logger.info(
+                f"[ChatOrchestrator] Routing to ReActChatAgent "
+                f"(legal_research={request.legal_research}, "
+                f"deep_think={request.deep_think}, "
+                f"web_search={request.web_search})"
+            )
+            
+            react_agent = ReActChatAgent(
+                case_id=request.case_id,
+                db=self.db,
+                rag_service=self.rag_service,
+                current_user=request.current_user,
+                legal_research=request.legal_research,
+                deep_think=request.deep_think,
+                web_search=request.web_search,
+                chat_history=chat_history
+            )
+            
+            # Запускаем агента
+            async for event in react_agent.handle(request.question):
+                yield event
     
     def _extract_text_from_event(self, event: str) -> str:
         """Извлечь текст из SSE события"""
