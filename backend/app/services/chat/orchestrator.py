@@ -2,15 +2,15 @@
 Chat Orchestrator - Главный оркестратор чат-запросов
 
 Единая точка входа для обработки всех типов запросов:
-- AutonomousChatAgent (автономный агент с динамическим планированием) - НОВОЕ v3.0!
+- SimpleReActAgent (классический ReAct с 12 инструментами) - НОВОЕ v4.0!
 - Draft (создание документов)
 - Editor (редактирование документов)
 
-Изменения v3.0:
-- Заменён ReActChatAgent на AutonomousChatAgent
-- Агент теперь САМИ планирует под задачу (не выбирает из готовых инструментов)
-- 4 фазы: UNDERSTANDING → PLANNING → EXECUTION → SYNTHESIS
-- Может решить ЛЮБУЮ задачу, создавая кастомный план
+Изменения v4.0:
+- Заменён AutonomousChatAgent (Plan-and-Execute) на SimpleReActAgent (ReAct)
+- Агент НЕ планирует заранее - думает и действует итеративно
+- 12 универсальных инструментов, агент САМ выбирает какие использовать
+- Классический ReAct цикл: Think → Act → Observe → Repeat
 """
 from typing import AsyncGenerator, Optional, List, Dict, Any
 from dataclasses import dataclass
@@ -20,7 +20,7 @@ import logging
 from app.services.chat.events import SSESerializer, SSEEvent
 from app.services.chat.classifier import RequestClassifier, ClassificationResult
 from app.services.chat.history_service import ChatHistoryService
-from app.services.chat.autonomous_agent import AutonomousChatAgent
+from app.services.chat.simple_react_agent import SimpleReActAgent
 from app.services.chat.draft_handler import DraftHandler
 from app.services.chat.editor_handler import EditorHandler
 from app.services.chat.metrics import get_metrics, MetricTimer
@@ -60,18 +60,18 @@ class ChatRequest:
 
 class ChatOrchestrator:
     """
-    Главный оркестратор чат-запросов v3.0.
+    Главный оркестратор чат-запросов v4.0.
     
     Маршрутизация:
     - DraftHandler: создание документов (draft_mode=True)
     - EditorHandler: редактирование документов (document_context!=None)
-    - AutonomousChatAgent: ВСЕ остальные запросы (автономный агент)
+    - SimpleReActAgent: ВСЕ остальные запросы (классический ReAct)
     
-    AutonomousChatAgent:
-    - НЕ ограничен фиксированными инструментами
-    - Сам анализирует задачу и создаёт план
-    - Выполняет план динамически
-    - Может решить ЛЮБУЮ задачу
+    SimpleReActAgent:
+    - 12 универсальных инструментов
+    - Агент САМ выбирает какие инструменты использовать
+    - Think → Act → Observe → Repeat
+    - НЕ планирует заранее, решает на ходу
     
     Интегрирует:
     - Метрики производительности
@@ -124,7 +124,7 @@ class ChatOrchestrator:
         # Метрики
         self.metrics = get_metrics()
         
-        logger.info("ChatOrchestrator v3.0 initialized (AutonomousChatAgent enabled)")
+        logger.info("ChatOrchestrator v4.0 initialized (SimpleReActAgent enabled)")
     
     async def process_request(self, request: ChatRequest) -> AsyncGenerator[str, None]:
         """
@@ -201,7 +201,7 @@ class ChatOrchestrator:
         elif request.document_context:
             return "editor"
         else:
-            return "autonomous_agent"  # v3.0: AutonomousChatAgent
+            return "react_agent"  # v4.0: SimpleReActAgent
     
     async def _route_to_handler(
         self,
@@ -211,8 +211,8 @@ class ChatOrchestrator:
         """
         Маршрутизация к соответствующему handler'у
         
-        v3.0: Все обычные запросы идут в AutonomousChatAgent,
-        который сам планирует и выполняет задачу.
+        v4.0: Все обычные запросы идут в SimpleReActAgent,
+        который сам выбирает инструменты и действует итеративно.
         """
         
         if request.draft_mode:
@@ -244,8 +244,8 @@ class ChatOrchestrator:
                 yield event
         
         else:
-            # AutonomousChatAgent mode: автономный агент с динамическим планированием
-            # Агент сам анализирует задачу, создаёт план и выполняет его
+            # SimpleReActAgent mode: классический ReAct с 12 инструментами
+            # Агент сам выбирает инструменты и действует итеративно
             
             # Проверяем наличие документов
             from app.models.case import File as FileModel
@@ -273,15 +273,15 @@ class ChatOrchestrator:
                 request.case_id, session_id
             )
             
-            # Создаём AutonomousChatAgent с пользовательскими переключателями
+            # Создаём SimpleReActAgent с пользовательскими переключателями
             logger.info(
-                f"[ChatOrchestrator] Routing to AutonomousChatAgent "
+                f"[ChatOrchestrator] Routing to SimpleReActAgent "
                 f"(legal_research={request.legal_research}, "
                 f"deep_think={request.deep_think}, "
                 f"web_search={request.web_search})"
             )
             
-            autonomous_agent = AutonomousChatAgent(
+            react_agent = SimpleReActAgent(
                 case_id=request.case_id,
                 db=self.db,
                 rag_service=self.rag_service,
@@ -293,7 +293,7 @@ class ChatOrchestrator:
             )
             
             # Запускаем агента
-            async for event in autonomous_agent.handle(request.question):
+            async for event in react_agent.handle(request.question):
                 yield event
     
     def _extract_text_from_event(self, event: str) -> str:

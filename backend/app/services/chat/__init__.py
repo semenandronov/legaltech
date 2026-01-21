@@ -1,25 +1,25 @@
 """
 Chat module - модуль обработки чат-запросов
 
-v3.0: Автономная архитектура с AutonomousChatAgent
+v4.0: Классический ReAct с 12 универсальными инструментами
 
 Содержит:
 - ChatOrchestrator: главный оркестратор запросов
-- AutonomousChatAgent: автономный агент с динамическим планированием - НОВОЕ v3.0!
-- ReActChatAgent: адаптивный агент с фиксированными инструментами (legacy)
+- SimpleReActAgent: классический ReAct агент с 12 инструментами - НОВОЕ v4.0!
+- universal_tools: 12 универсальных инструментов для агента
 - RequestClassifier: классификация запросов (для метрик)
 - DraftHandler: создание документов
 - EditorHandler: редактирование документов
 - ChatHistoryService: управление историей чата
-- chat_tools: инструменты для ReActChatAgent
 - SSE события и сериализатор
 - Метрики
 
-Ключевое отличие v3.0:
-- AutonomousChatAgent НЕ ограничен фиксированными инструментами
-- Сам анализирует задачу и создаёт КАСТОМНЫЙ план
-- 4 фазы: UNDERSTANDING → PLANNING → EXECUTION → SYNTHESIS
-- Может решить ЛЮБУЮ задачу
+Ключевое отличие v4.0:
+- SimpleReActAgent использует классический ReAct цикл
+- 12 универсальных инструментов (документы, законы, генерация, playbook, вспомогательные)
+- Агент САМ выбирает какие инструменты использовать
+- Think → Act → Observe → Repeat
+- НЕ планирует заранее, решает на ходу
 """
 
 from app.services.chat.events import (
@@ -38,7 +38,8 @@ from app.services.chat.events import (
 from app.services.chat.classifier import RequestClassifier, ClassificationResult
 from app.services.chat.history_service import ChatHistoryService
 from app.services.chat.orchestrator import ChatOrchestrator, ChatRequest, get_chat_orchestrator
-from app.services.chat.autonomous_agent import AutonomousChatAgent
+from app.services.chat.simple_react_agent import SimpleReActAgent
+from app.services.chat.universal_tools import get_universal_tools
 from app.services.chat.draft_handler import DraftHandler
 from app.services.chat.editor_handler import EditorHandler
 from app.services.chat.metrics import ChatMetrics, get_metrics, MetricTimer, Timer
@@ -70,8 +71,9 @@ __all__ = [
     "ChatOrchestrator",
     "ChatRequest",
     "get_chat_orchestrator",
-    # Autonomous Agent (NEW v3.0)
-    "AutonomousChatAgent",
+    # ReAct Agent (NEW v4.0)
+    "SimpleReActAgent",
+    "get_universal_tools",
     # Handlers
     "DraftHandler",
     "EditorHandler",
@@ -86,4 +88,3 @@ __all__ = [
     "MetricTimer",
     "Timer",
 ]
-
