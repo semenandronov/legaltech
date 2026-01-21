@@ -283,42 +283,50 @@ class AutonomousChatAgent:
         Один RAG-запрос + один LLM-вызов.
         Без полного планирования.
         """
-        from langchain_core.messages import HumanMessage, SystemMessage
-        
-        yield SSESerializer.reasoning(
-            phase="fast_path",
-            step=1,
-            total_steps=2,
-            content="Ищу информацию..."
-        )
-        
-        # Поиск в документах
-        documents = self.rag_service.retrieve_context(
-            case_id=self.case_id,
-            query=question,
-            k=15,
-            retrieval_strategy="multi_query",
-            db=self.db
-        )
-        
-        if not documents:
-            yield SSESerializer.text_delta(
-                "К сожалению, не удалось найти релевантную информацию в документах дела."
+        try:
+            from langchain_core.messages import HumanMessage, SystemMessage
+            
+            yield SSESerializer.reasoning(
+                phase="fast_path",
+                step=1,
+                total_steps=2,
+                content="Ищу информацию..."
             )
-            return
-        
-        context = self.rag_service.format_sources_for_prompt(documents, max_context_chars=6000)
-        sources = list(set(d.metadata.get("source", "unknown") for d in documents))
-        
-        yield SSESerializer.reasoning(
-            phase="fast_path",
-            step=2,
-            total_steps=2,
-            content="Формирую ответ..."
-        )
-        
-        # Генерация ответа
-        prompt = f"""Ответь на вопрос пользователя на основе контекста из документов.
+            
+            # Поиск в документах
+            try:
+                documents = self.rag_service.retrieve_context(
+                    case_id=self.case_id,
+                    query=question,
+                    k=15,
+                    retrieval_strategy="multi_query",
+                    db=self.db
+                )
+            except Exception as e:
+                logger.error(f"[AutonomousAgent] RAG retrieval error: {e}")
+                yield SSESerializer.text_delta(
+                    "Произошла ошибка при поиске в документах. Пожалуйста, попробуйте переформулировать вопрос."
+                )
+                return
+            
+            if not documents:
+                yield SSESerializer.text_delta(
+                    "К сожалению, не удалось найти релевантную информацию в документах дела."
+                )
+                return
+            
+            context = self.rag_service.format_sources_for_prompt(documents, max_context_chars=6000)
+            sources = list(set(d.metadata.get("source", "unknown") for d in documents))
+            
+            yield SSESerializer.reasoning(
+                phase="fast_path",
+                step=2,
+                total_steps=2,
+                content="Формирую ответ..."
+            )
+            
+            # Генерация ответа
+            prompt = f"""Ответь на вопрос пользователя на основе контекста из документов.
 
 ВОПРОС: {question}
 
@@ -333,20 +341,31 @@ class AutonomousChatAgent:
 
 ОТВЕТ:"""
 
-        response = self.llm.invoke([
-            SystemMessage(content="Ты юридический ассистент. Отвечай точно и по существу."),
-            HumanMessage(content=prompt)
-        ])
-        
-        answer = response.content if hasattr(response, 'content') else str(response)
-        
-        # Добавляем источники
-        if sources:
-            answer += f"\n\n---\n📚 *Источники: {', '.join(sources[:5])}*"
-        
-        yield SSESerializer.text_delta(answer)
-        
-        logger.info(f"[AutonomousAgent] Completed successfully (FAST PATH)")
+            try:
+                response = self.llm.invoke([
+                    SystemMessage(content="Ты юридический ассистент. Отвечай точно и по существу."),
+                    HumanMessage(content=prompt)
+                ])
+            except Exception as e:
+                logger.error(f"[AutonomousAgent] LLM invocation error: {e}")
+                yield SSESerializer.text_delta(
+                    "Произошла ошибка при генерации ответа. Пожалуйста, попробуйте позже."
+                )
+                return
+            
+            answer = response.content if hasattr(response, 'content') else str(response)
+            
+            # Добавляем источники
+            if sources:
+                answer += f"\n\n---\n📚 *Источники: {', '.join(sources[:5])}*"
+            
+            yield SSESerializer.text_delta(answer)
+            
+            logger.info(f"[AutonomousAgent] Completed successfully (FAST PATH)")
+            
+        except Exception as e:
+            logger.error(f"[AutonomousAgent] Fast path error: {e}", exc_info=True)
+            yield SSESerializer.error(f"Произошла ошибка при обработке запроса: {str(e)}")
     
     # =========================================================================
     # ФАЗА 1: ПОНИМАНИЕ
