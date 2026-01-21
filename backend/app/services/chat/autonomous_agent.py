@@ -133,31 +133,16 @@ class AutonomousChatAgent:
         """
         Обработать запрос пользователя
         
-        Адаптивная обработка:
-        - ПРОСТЫЕ вопросы → быстрый путь (1 LLM вызов)
-        - СЛОЖНЫЕ задачи → полное планирование (4 фазы)
+        ВСЕГДА использует FULL PATH (4 фазы планирования):
+        1. UNDERSTANDING — глубокое понимание запроса
+        2. PLANNING — создание кастомного плана под задачу
+        3. EXECUTION — динамическое выполнение шагов
+        4. SYNTHESIS — синтез ответа из результатов
         
-        Фазы (для сложных задач):
-        1. UNDERSTANDING — понимание запроса
-        2. PLANNING — создание плана
-        3. EXECUTION — выполнение шагов
-        4. SYNTHESIS — синтез ответа
+        Агент САМ планирует под каждую задачу, не ограничен фиксированными инструментами.
         """
         try:
             logger.info(f"[AutonomousAgent] Processing: {question[:100]}...")
-            
-            # ===== БЫСТРАЯ ОЦЕНКА СЛОЖНОСТИ =====
-            is_simple = self._quick_complexity_check(question)
-            
-            if is_simple:
-                # БЫСТРЫЙ ПУТЬ для простых вопросов
-                logger.info("[AutonomousAgent] Using FAST PATH for simple question")
-                async for event in self._fast_path(question):
-                    yield event
-                return
-            
-            # ===== ПОЛНЫЙ ПУТЬ для сложных задач =====
-            logger.info("[AutonomousAgent] Using FULL PATH for complex task")
             
             # ===== ФАЗА 1: ПОНИМАНИЕ =====
             yield SSESerializer.reasoning(
@@ -175,13 +160,6 @@ class AutonomousChatAgent:
                 total_steps=4,
                 content=f"Понял задачу: {understanding['summary']}"
             )
-            
-            # Проверяем, может ли задача быть решена быстрым путём
-            if understanding.get("complexity") == "simple":
-                logger.info("[AutonomousAgent] Switching to FAST PATH after understanding")
-                async for event in self._fast_path(question):
-                    yield event
-                return
             
             # ===== ФАЗА 2: ПЛАНИРОВАНИЕ =====
             yield SSESerializer.reasoning(
@@ -229,143 +207,6 @@ class AutonomousChatAgent:
         except Exception as e:
             logger.error(f"[AutonomousAgent] Error: {e}", exc_info=True)
             yield SSESerializer.error(f"Ошибка обработки: {str(e)}")
-    
-    def _quick_complexity_check(self, question: str) -> bool:
-        """
-        Быстрая проверка сложности без LLM.
-        
-        Простые вопросы:
-        - Короткие (< 50 символов)
-        - Начинаются с "что", "кто", "когда", "где", "какой"
-        - Не содержат слов-маркеров сложных задач
-        
-        Returns:
-            True если вопрос простой
-        """
-        question_lower = question.lower().strip()
-        
-        # Маркеры СЛОЖНЫХ задач — требуют полного планирования
-        complex_markers = [
-            "сравни", "проанализируй", "найди противоречия", "оцени риски",
-            "составь", "подготовь", "разработай", "создай план",
-            "все документы", "каждый документ", "по всем", "полный анализ",
-            "хронология", "timeline", "последовательность событий",
-            "аргументы", "позиция", "стратегия", "рекомендации",
-            "сильные и слабые", "плюсы и минусы", "за и против"
-        ]
-        
-        for marker in complex_markers:
-            if marker in question_lower:
-                return False  # Сложная задача
-        
-        # Маркеры ПРОСТЫХ вопросов
-        simple_patterns = [
-            "что такое", "кто такой", "когда", "где", "какой", "какая",
-            "сколько", "есть ли", "был ли", "является ли",
-            "что написано", "что сказано", "что указано"
-        ]
-        
-        for pattern in simple_patterns:
-            if question_lower.startswith(pattern):
-                return True  # Простой вопрос
-        
-        # Короткие вопросы обычно простые
-        if len(question) < 60:
-            return True
-        
-        # По умолчанию — сложная задача (лучше переоценить)
-        return False
-    
-    async def _fast_path(self, question: str) -> AsyncGenerator[str, None]:
-        """
-        Быстрый путь для простых вопросов.
-        
-        Один RAG-запрос + один LLM-вызов.
-        Без полного планирования.
-        """
-        try:
-            from langchain_core.messages import HumanMessage, SystemMessage
-            
-            yield SSESerializer.reasoning(
-                phase="fast_path",
-                step=1,
-                total_steps=2,
-                content="Ищу информацию..."
-            )
-            
-            # Поиск в документах
-            try:
-                documents = self.rag_service.retrieve_context(
-                    case_id=self.case_id,
-                    query=question,
-                    k=15,
-                    retrieval_strategy="multi_query",
-                    db=self.db
-                )
-            except Exception as e:
-                logger.error(f"[AutonomousAgent] RAG retrieval error: {e}")
-                yield SSESerializer.text_delta(
-                    "Произошла ошибка при поиске в документах. Пожалуйста, попробуйте переформулировать вопрос."
-                )
-                return
-            
-            if not documents:
-                yield SSESerializer.text_delta(
-                    "К сожалению, не удалось найти релевантную информацию в документах дела."
-                )
-                return
-            
-            context = self.rag_service.format_sources_for_prompt(documents, max_context_chars=6000)
-            sources = list(set(d.metadata.get("source", "unknown") for d in documents))
-            
-            yield SSESerializer.reasoning(
-                phase="fast_path",
-                step=2,
-                total_steps=2,
-                content="Формирую ответ..."
-            )
-            
-            # Генерация ответа
-            prompt = f"""Ответь на вопрос пользователя на основе контекста из документов.
-
-ВОПРОС: {question}
-
-КОНТЕКСТ ИЗ ДОКУМЕНТОВ:
-{context}
-
-ПРАВИЛА:
-1. Отвечай ТОЛЬКО на основе предоставленного контекста
-2. Если информации недостаточно — скажи об этом
-3. Указывай источники
-4. Используй Markdown для форматирования
-
-ОТВЕТ:"""
-
-            try:
-                response = self.llm.invoke([
-                    SystemMessage(content="Ты юридический ассистент. Отвечай точно и по существу."),
-                    HumanMessage(content=prompt)
-                ])
-            except Exception as e:
-                logger.error(f"[AutonomousAgent] LLM invocation error: {e}")
-                yield SSESerializer.text_delta(
-                    "Произошла ошибка при генерации ответа. Пожалуйста, попробуйте позже."
-                )
-                return
-            
-            answer = response.content if hasattr(response, 'content') else str(response)
-            
-            # Добавляем источники
-            if sources:
-                answer += f"\n\n---\n📚 *Источники: {', '.join(sources[:5])}*"
-            
-            yield SSESerializer.text_delta(answer)
-            
-            logger.info(f"[AutonomousAgent] Completed successfully (FAST PATH)")
-            
-        except Exception as e:
-            logger.error(f"[AutonomousAgent] Fast path error: {e}", exc_info=True)
-            yield SSESerializer.error(f"Произошла ошибка при обработке запроса: {str(e)}")
     
     # =========================================================================
     # ФАЗА 1: ПОНИМАНИЕ
