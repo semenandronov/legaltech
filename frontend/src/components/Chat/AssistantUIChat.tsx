@@ -735,7 +735,7 @@ export const AssistantUIChat = forwardRef<AssistantUIChatRef, AssistantUIChatPro
         }
       }
 
-      const response = await fetch(getApiUrl('/api/assistant/chat'), {
+      const response = await fetch(getApiUrl('/api/v2/assistant/chat'), {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',

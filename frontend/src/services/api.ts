@@ -242,8 +242,8 @@ export const sendMessage = async (
 
 export const fetchHistory = async (caseId: string, sessionId?: string): Promise<HistoryMessage[]> => {
   const url = sessionId 
-    ? getApiUrl(`/api/assistant/chat/${caseId}/history?session_id=${sessionId}`)
-    : getApiUrl(`/api/assistant/chat/${caseId}/history`)
+    ? getApiUrl(`/api/v2/assistant/chat/${caseId}/history?session_id=${sessionId}`)
+    : getApiUrl(`/api/v2/assistant/chat/${caseId}/history`)
   const response = await apiClient.get(url)
   return response.data.messages || []
 }
@@ -256,7 +256,7 @@ export const getChatSessionsForCase = async (caseId: string): Promise<Array<{
   last_message_at: string | null
   message_count: number
 }>> => {
-  const response = await apiClient.get(getApiUrl(`/api/assistant/chat/${caseId}/sessions`))
+  const response = await apiClient.get(getApiUrl(`/api/v2/assistant/chat/${caseId}/sessions`))
   return response.data.sessions || []
 }
 

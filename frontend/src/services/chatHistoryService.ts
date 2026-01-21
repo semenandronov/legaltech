@@ -25,8 +25,8 @@ export async function loadChatHistory(caseId: string, sessionId?: string): Promi
   try {
     const token = localStorage.getItem('access_token')
     const url = sessionId 
-      ? getApiUrl(`/api/assistant/chat/${caseId}/history?session_id=${sessionId}`)
-      : getApiUrl(`/api/assistant/chat/${caseId}/history`)
+      ? getApiUrl(`/api/v2/assistant/chat/${caseId}/history?session_id=${sessionId}`)
+      : getApiUrl(`/api/v2/assistant/chat/${caseId}/history`)
     const response = await fetch(url, {
       method: 'GET',
       headers: {
