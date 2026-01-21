@@ -293,7 +293,7 @@ class AutonomousChatAgent:
             
             # Информация о деле
             case = self.db.query(Case).filter(Case.id == self.case_id).first()
-            case_info = f"Дело: {case.name if case else 'Неизвестно'}\n"
+            case_info = f"Дело: {case.title if case and case.title else 'Без названия'}\n"
             
             # Список файлов
             files = self.db.query(FileModel).filter(
@@ -397,9 +397,35 @@ class AutonomousChatAgent:
             # Создаём объекты шагов
             steps = []
             for step_data in plan_data.get("steps", []):
+                # Нормализуем step_type: приводим к нижнему регистру и заменяем подчёркивания
+                step_type_str = str(step_data.get("step_type", "custom")).lower().replace("_", "_")
+                
+                # Маппинг возможных вариантов от LLM
+                step_type_mapping = {
+                    "summarize": "summarize",
+                    "search": "search",
+                    "extract": "extract",
+                    "analyze": "analyze",
+                    "compare": "compare",
+                    "generate": "generate",
+                    "legal_research": "legal_research",
+                    "legalresearch": "legal_research",
+                    "web_search": "web_search",
+                    "websearch": "web_search",
+                    "custom": "custom"
+                }
+                
+                normalized_type = step_type_mapping.get(step_type_str, "custom")
+                
+                try:
+                    step_type = StepType(normalized_type)
+                except ValueError:
+                    logger.warning(f"[AutonomousAgent] Unknown step_type '{step_type_str}', using CUSTOM")
+                    step_type = StepType.CUSTOM
+                
                 step = PlanStep(
                     step_id=step_data.get("step_id", len(steps) + 1),
-                    step_type=StepType(step_data.get("step_type", "custom")),
+                    step_type=step_type,
                     description=step_data.get("description", ""),
                     instruction=step_data.get("instruction", ""),
                     query=step_data.get("query"),
