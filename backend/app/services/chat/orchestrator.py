@@ -2,15 +2,15 @@
 Chat Orchestrator - Главный оркестратор чат-запросов
 
 Единая точка входа для обработки всех типов запросов:
-- ReActChatAgent (адаптивный агент для всех вопросов) - НОВОЕ!
+- AutonomousChatAgent (автономный агент с динамическим планированием) - НОВОЕ v3.0!
 - Draft (создание документов)
 - Editor (редактирование документов)
 
-Изменения v2.0:
-- Убран жёсткий классификатор task/question
-- Все вопросы (кроме draft/editor) идут в ReActChatAgent
-- Агент сам решает, какие инструменты использовать
-- Поддержка обзора ВСЕХ документов через Map-Reduce
+Изменения v3.0:
+- Заменён ReActChatAgent на AutonomousChatAgent
+- Агент теперь САМИ планирует под задачу (не выбирает из готовых инструментов)
+- 4 фазы: UNDERSTANDING → PLANNING → EXECUTION → SYNTHESIS
+- Может решить ЛЮБУЮ задачу, создавая кастомный план
 """
 from typing import AsyncGenerator, Optional, List, Dict, Any
 from dataclasses import dataclass
@@ -20,7 +20,7 @@ import logging
 from app.services.chat.events import SSESerializer, SSEEvent
 from app.services.chat.classifier import RequestClassifier, ClassificationResult
 from app.services.chat.history_service import ChatHistoryService
-from app.services.chat.react_chat_agent import ReActChatAgent
+from app.services.chat.autonomous_agent import AutonomousChatAgent
 from app.services.chat.draft_handler import DraftHandler
 from app.services.chat.editor_handler import EditorHandler
 from app.services.chat.metrics import get_metrics, MetricTimer
@@ -60,17 +60,18 @@ class ChatRequest:
 
 class ChatOrchestrator:
     """
-    Главный оркестратор чат-запросов v2.0.
+    Главный оркестратор чат-запросов v3.0.
     
     Маршрутизация:
     - DraftHandler: создание документов (draft_mode=True)
     - EditorHandler: редактирование документов (document_context!=None)
-    - ReActChatAgent: ВСЕ остальные запросы (адаптивный агент)
+    - AutonomousChatAgent: ВСЕ остальные запросы (автономный агент)
     
-    ReActChatAgent сам решает:
-    - Какие инструменты использовать
-    - Сколько документов нужно (k=5 или k=100)
-    - Нужен ли Map-Reduce для обзора всех документов
+    AutonomousChatAgent:
+    - НЕ ограничен фиксированными инструментами
+    - Сам анализирует задачу и создаёт план
+    - Выполняет план динамически
+    - Может решить ЛЮБУЮ задачу
     
     Интегрирует:
     - Метрики производительности
@@ -92,14 +93,13 @@ class ChatOrchestrator:
             db: SQLAlchemy сессия
             rag_service: RAG сервис (создаётся если не передан)
             document_processor: Document processor (создаётся если не передан)
-            classifier: Классификатор запросов (для обратной совместимости)
+            classifier: Классификатор запросов (для метрик)
         """
         self.db = db
         self.rag_service = rag_service or RAGService()
         self.document_processor = document_processor or DocumentProcessor()
         
-        # Классификатор сохраняем для обратной совместимости
-        # но теперь он используется только для метрик
+        # Классификатор используется только для метрик
         if classifier:
             self.classifier = classifier
         else:
@@ -124,7 +124,7 @@ class ChatOrchestrator:
         # Метрики
         self.metrics = get_metrics()
         
-        logger.info("ChatOrchestrator v2.0 initialized (ReActChatAgent enabled)")
+        logger.info("ChatOrchestrator v3.0 initialized (AutonomousChatAgent enabled)")
     
     async def process_request(self, request: ChatRequest) -> AsyncGenerator[str, None]:
         """
@@ -201,7 +201,7 @@ class ChatOrchestrator:
         elif request.document_context:
             return "editor"
         else:
-            return "react_agent"  # Теперь всегда ReActChatAgent
+            return "autonomous_agent"  # v3.0: AutonomousChatAgent
     
     async def _route_to_handler(
         self,
@@ -211,8 +211,8 @@ class ChatOrchestrator:
         """
         Маршрутизация к соответствующему handler'у
         
-        v2.0: Все обычные запросы идут в ReActChatAgent,
-        который сам решает, какие инструменты использовать.
+        v3.0: Все обычные запросы идут в AutonomousChatAgent,
+        который сам планирует и выполняет задачу.
         """
         
         if request.draft_mode:
@@ -244,8 +244,8 @@ class ChatOrchestrator:
                 yield event
         
         else:
-            # ReActChatAgent mode: адаптивный агент для ВСЕХ вопросов
-            # Агент сам решает, какие инструменты использовать
+            # AutonomousChatAgent mode: автономный агент с динамическим планированием
+            # Агент сам анализирует задачу, создаёт план и выполняет его
             
             # Проверяем наличие документов
             from app.models.case import File as FileModel
@@ -273,15 +273,15 @@ class ChatOrchestrator:
                 request.case_id, session_id
             )
             
-            # Создаём ReActChatAgent с пользовательскими переключателями
+            # Создаём AutonomousChatAgent с пользовательскими переключателями
             logger.info(
-                f"[ChatOrchestrator] Routing to ReActChatAgent "
+                f"[ChatOrchestrator] Routing to AutonomousChatAgent "
                 f"(legal_research={request.legal_research}, "
                 f"deep_think={request.deep_think}, "
                 f"web_search={request.web_search})"
             )
             
-            react_agent = ReActChatAgent(
+            autonomous_agent = AutonomousChatAgent(
                 case_id=request.case_id,
                 db=self.db,
                 rag_service=self.rag_service,
@@ -293,7 +293,7 @@ class ChatOrchestrator:
             )
             
             # Запускаем агента
-            async for event in react_agent.handle(request.question):
+            async for event in autonomous_agent.handle(request.question):
                 yield event
     
     def _extract_text_from_event(self, event: str) -> str:
@@ -354,5 +354,4 @@ def get_chat_orchestrator(db: Session) -> ChatOrchestrator:
         ChatOrchestrator instance
     """
     return ChatOrchestrator(db=db)
-
 
