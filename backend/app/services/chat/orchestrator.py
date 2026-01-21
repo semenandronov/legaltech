@@ -268,17 +268,18 @@ class ChatOrchestrator:
                 except Exception as e:
                     logger.warning(f"[ChatOrchestrator] Classification failed: {e}")
             
-            # Получаем историю чата
+            # Получаем ПОЛНУЮ историю чата текущей сессии
             chat_history = self.history_service.get_history_for_context(
                 request.case_id, session_id
             )
             
-            # Создаём SimpleReActAgent с пользовательскими переключателями
+            # Создаём SimpleReActAgent с пользовательскими переключателями и session_id
             logger.info(
                 f"[ChatOrchestrator] Routing to SimpleReActAgent "
                 f"(legal_research={request.legal_research}, "
                 f"deep_think={request.deep_think}, "
-                f"web_search={request.web_search})"
+                f"web_search={request.web_search}, "
+                f"history_messages={len(chat_history)})"
             )
             
             react_agent = SimpleReActAgent(
@@ -289,7 +290,8 @@ class ChatOrchestrator:
                 legal_research=request.legal_research,
                 deep_think=request.deep_think,
                 web_search=request.web_search,
-                chat_history=chat_history
+                chat_history=chat_history,
+                session_id=session_id  # Передаём session_id для уникального thread_id
             )
             
             # Запускаем агента

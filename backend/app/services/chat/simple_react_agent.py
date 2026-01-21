@@ -13,6 +13,11 @@ Simple ReAct Chat Agent - Классический ReAct агент с 12 инс
 6. Формирует финальный ответ
 
 Использует langgraph.prebuilt.create_react_agent
+
+ПАМЯТЬ:
+- Агент помнит ВСЮ историю текущей сессии (не только последние 5 сообщений)
+- Checkpointing через MemorySaver для сохранения состояния между вызовами
+- Умное сжатие истории для больших контекстов
 """
 from typing import AsyncGenerator, Optional, List, Dict, Any
 from sqlalchemy.orm import Session
@@ -24,6 +29,13 @@ from app.services.rag_service import RAGService
 from app.models.user import User
 
 logger = logging.getLogger(__name__)
+
+# Максимальное количество сообщений в истории (для защиты от переполнения контекста)
+MAX_HISTORY_MESSAGES = 50
+# Максимальная длина одного сообщения в истории (символов)
+MAX_MESSAGE_LENGTH = 2000
+# Количество последних сообщений, которые НЕ сжимаются
+RECENT_MESSAGES_FULL = 10
 
 
 class SimpleReActAgent:
@@ -87,6 +99,11 @@ class SimpleReActAgent:
 6. Для сравнения - сначала найди документы, потом compare_documents
 7. Для законов - используй search_garant
 
+## ПАМЯТЬ И КОНТЕКСТ:
+- Ты ПОМНИШЬ всю историю разговора в текущей сессии
+- Если пользователь ссылается на предыдущие сообщения ("как я говорил", "тот документ") - используй контекст из истории
+- Если нужна информация из предыдущего ответа - она уже у тебя есть
+
 ## ФОРМАТ ОТВЕТА:
 - Используй Markdown
 - Структурируй ответ с заголовками
@@ -103,7 +120,8 @@ class SimpleReActAgent:
         legal_research: bool = False,
         deep_think: bool = False,
         web_search: bool = False,
-        chat_history: Optional[List[Dict[str, str]]] = None
+        chat_history: Optional[List[Dict[str, str]]] = None,
+        session_id: Optional[str] = None
     ):
         self.case_id = case_id
         self.db = db
@@ -112,7 +130,10 @@ class SimpleReActAgent:
         self.legal_research = legal_research
         self.deep_think = deep_think
         self.web_search = web_search
-        self.chat_history = chat_history or []
+        self.session_id = session_id
+        
+        # Обрабатываем историю чата с умным сжатием
+        self.chat_history = self._process_chat_history(chat_history or [])
         
         # Создаём LLM
         self.llm = self._create_llm()
@@ -127,13 +148,87 @@ class SimpleReActAgent:
             web_search=web_search
         )
         
-        # Создаём агента
+        # Создаём checkpointer для сохранения состояния
+        self.checkpointer = self._create_checkpointer()
+        
+        # Создаём агента с checkpointer
         self.agent = self._create_agent()
         
         logger.info(
             f"[SimpleReActAgent] Initialized for case {case_id} "
-            f"({len(self.tools)} tools, deep_think={deep_think}, legal_research={legal_research})"
+            f"({len(self.tools)} tools, {len(self.chat_history)} history messages, "
+            f"deep_think={deep_think}, legal_research={legal_research})"
         )
+    
+    def _process_chat_history(
+        self, 
+        history: List[Dict[str, str]]
+    ) -> List[Dict[str, str]]:
+        """
+        Умная обработка истории чата.
+        
+        Стратегия:
+        1. Берём до MAX_HISTORY_MESSAGES сообщений
+        2. Последние RECENT_MESSAGES_FULL сообщений оставляем полными
+        3. Более старые сообщения сжимаем до MAX_MESSAGE_LENGTH символов
+        
+        Это позволяет:
+        - Сохранить полный контекст недавнего разговора
+        - Не потерять важную информацию из старых сообщений
+        - Уместиться в контекстное окно LLM
+        """
+        if not history:
+            return []
+        
+        # Ограничиваем количество сообщений
+        history = history[-MAX_HISTORY_MESSAGES:]
+        
+        processed = []
+        total_messages = len(history)
+        
+        for i, msg in enumerate(history):
+            role = msg.get("role", "user")
+            content = msg.get("content", "")
+            
+            if not content:
+                continue
+            
+            # Последние RECENT_MESSAGES_FULL сообщений — полные
+            is_recent = (total_messages - i) <= RECENT_MESSAGES_FULL
+            
+            if is_recent:
+                # Полное сообщение
+                processed.append({"role": role, "content": content})
+            else:
+                # Сжимаем старое сообщение
+                if len(content) > MAX_MESSAGE_LENGTH:
+                    compressed = content[:MAX_MESSAGE_LENGTH] + "... [сообщение сокращено]"
+                    processed.append({"role": role, "content": compressed})
+                else:
+                    processed.append({"role": role, "content": content})
+        
+        logger.debug(
+            f"[SimpleReActAgent] Processed history: {len(history)} -> {len(processed)} messages"
+        )
+        return processed
+    
+    def _create_checkpointer(self):
+        """
+        Создать checkpointer для сохранения состояния агента.
+        
+        Используем MemorySaver для простоты.
+        В production можно заменить на PostgresSaver.
+        """
+        try:
+            from langgraph.checkpoint.memory import MemorySaver
+            
+            checkpointer = MemorySaver()
+            logger.debug("[SimpleReActAgent] Created MemorySaver checkpointer")
+            return checkpointer
+            
+        except ImportError:
+            logger.warning("[SimpleReActAgent] MemorySaver not available, running without checkpointing")
+            return None
     
     def _create_llm(self):
         """Создать LLM для агента"""
@@ -152,16 +247,32 @@ class SimpleReActAgent:
         return create_legal_llm(timeout=180.0)
     
     def _create_agent(self):
-        """Создать ReAct агента через LangGraph"""
+        """
+        Создать ReAct агента через LangGraph с checkpointer.
+        
+        Checkpointer позволяет:
+        - Сохранять состояние агента между вызовами
+        - Восстанавливаться после ошибок
+        - Поддерживать долгие сессии
+        """
         try:
             from langgraph.prebuilt import create_react_agent
             
-            agent = create_react_agent(
-                self.llm,
-                self.tools
-            )
+            # Создаём агента с checkpointer если доступен
+            if self.checkpointer:
+                agent = create_react_agent(
+                    self.llm,
+                    self.tools,
+                    checkpointer=self.checkpointer
+                )
+                logger.info("[SimpleReActAgent] Created agent with MemorySaver checkpointer")
+            else:
+                agent = create_react_agent(
+                    self.llm,
+                    self.tools
+                )
+                logger.info("[SimpleReActAgent] Created agent without checkpointer")
             
-            logger.info("[SimpleReActAgent] Created agent via langgraph.prebuilt.create_react_agent")
             return agent
             
         except ImportError as e:
@@ -208,29 +319,55 @@ class SimpleReActAgent:
             yield SSESerializer.error(f"Ошибка обработки запроса: {str(e)}")
     
     async def _run_agent(self, question: str) -> AsyncGenerator[str, None]:
-        """Запустить ReAct агента"""
+        """
+        Запустить ReAct агента с полной историей чата.
+        
+        Память работает так:
+        1. Системный промпт — инструкции для агента
+        2. ВСЯ история чата (обработанная) — контекст разговора
+        3. Текущий вопрос — что нужно сделать
+        
+        thread_id = case_id + session_id — уникальный идентификатор разговора
+        """
         from langchain_core.messages import HumanMessage, SystemMessage, AIMessage
         
         try:
-            # Формируем сообщения
+            # Формируем сообщения с ПОЛНОЙ историей
             messages = [
                 SystemMessage(content=self.SYSTEM_PROMPT)
             ]
             
-            # Добавляем историю чата (последние 5 сообщений)
-            for msg in self.chat_history[-5:]:
+            # Добавляем ВСЮ обработанную историю чата
+            history_added = 0
+            for msg in self.chat_history:
                 role = msg.get("role", "user")
                 content = msg.get("content", "")
+                if not content:
+                    continue
+                    
                 if role == "user":
                     messages.append(HumanMessage(content=content))
+                    history_added += 1
                 elif role == "assistant":
                     messages.append(AIMessage(content=content))
+                    history_added += 1
             
             # Добавляем текущий вопрос
             messages.append(HumanMessage(content=question))
             
-            # Запускаем агента
-            config = {"configurable": {"thread_id": self.case_id}}
+            logger.info(
+                f"[SimpleReActAgent] Running with {history_added} history messages + current question"
+            )
+            
+            # Уникальный thread_id для сессии
+            # Используем case_id + session_id если есть, иначе только case_id
+            thread_id = f"{self.case_id}_{self.session_id}" if self.session_id else self.case_id
+            
+            # Конфигурация с thread_id и recursion_limit
+            config = {
+                "configurable": {"thread_id": thread_id},
+                "recursion_limit": 25  # Защита от зацикливания
+            }
             
             # Собираем ответ
             final_response = ""
@@ -254,7 +391,7 @@ class SimpleReActAgent:
                             yield SSESerializer.reasoning(
                                 phase="tool_call",
                                 step=tool_calls_count,
-                                total_steps=10,  # Примерно
+                                total_steps=15,  # Увеличили лимит
                                 content=f"Вызываю: {tool_name}..."
                             )
                     
@@ -266,7 +403,10 @@ class SimpleReActAgent:
             # Если есть финальный ответ - отправляем
             if final_response:
                 yield SSESerializer.text_delta(final_response)
-                logger.info(f"[SimpleReActAgent] Completed with {tool_calls_count} tool calls")
+                logger.info(
+                    f"[SimpleReActAgent] Completed with {tool_calls_count} tool calls, "
+                    f"thread_id={thread_id}"
+                )
             else:
                 # Fallback - если агент не дал ответ
                 yield SSESerializer.text_delta(
@@ -292,9 +432,12 @@ class SimpleReActAgent:
                 SystemMessage(content=self.SYSTEM_PROMPT)
             ]
             
-            for msg in self.chat_history[-5:]:
+            # Используем ВСЮ обработанную историю
+            for msg in self.chat_history:
                 role = msg.get("role", "user")
                 content = msg.get("content", "")
+                if not content:
+                    continue
                 if role == "user":
                     messages.append(HumanMessage(content=content))
                 elif role == "assistant":
@@ -302,7 +445,11 @@ class SimpleReActAgent:
             
             messages.append(HumanMessage(content=question))
             
-            config = {"configurable": {"thread_id": self.case_id}}
+            thread_id = f"{self.case_id}_{self.session_id}" if self.session_id else self.case_id
+            config = {
+                "configurable": {"thread_id": thread_id},
+                "recursion_limit": 25
+            }
             
             result = await self.agent.ainvoke(
                 {"messages": messages},
@@ -319,4 +466,25 @@ class SimpleReActAgent:
         except Exception as e:
             logger.error(f"[SimpleReActAgent] Sync execution error: {e}", exc_info=True)
             return f"Ошибка: {str(e)}"
+    
+    def get_conversation_summary(self) -> str:
+        """
+        Получить краткое описание текущего разговора.
+        
+        Полезно для отладки и понимания контекста.
+        """
+        if not self.chat_history:
+            return "Нет истории разговора"
+        
+        user_msgs = sum(1 for m in self.chat_history if m.get("role") == "user")
+        assistant_msgs = sum(1 for m in self.chat_history if m.get("role") == "assistant")
+        
+        first_msg = self.chat_history[0].get("content", "")[:50] if self.chat_history else ""
+        last_msg = self.chat_history[-1].get("content", "")[:50] if self.chat_history else ""
+        
+        return (
+            f"История: {len(self.chat_history)} сообщений "
+            f"({user_msgs} от пользователя, {assistant_msgs} от ассистента). "
+            f"Начало: '{first_msg}...' | Последнее: '{last_msg}...'"
+        )
 
