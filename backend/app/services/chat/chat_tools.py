@@ -122,15 +122,10 @@ def list_case_files() -> str:
         result_lines = [f"📁 **В деле {len(files)} документов:**\n"]
         
         for i, f in enumerate(files, 1):
-            file_type = f.doc_type or "unknown"
-            file_size = f.file_size or 0
-            size_str = f"{file_size / 1024:.1f} KB" if file_size < 1024*1024 else f"{file_size / (1024*1024):.1f} MB"
-            
+            file_type = f.file_type or "unknown"
+            # file_size и page_count могут отсутствовать в модели
             result_lines.append(f"{i}. **{f.filename}**")
             result_lines.append(f"   - Тип: {file_type}")
-            result_lines.append(f"   - Размер: {size_str}")
-            if f.page_count:
-                result_lines.append(f"   - Страниц: {f.page_count}")
         
         logger.info(f"[ChatTools] list_case_files: {len(files)} файлов")
         return "\n".join(result_lines)
@@ -193,7 +188,7 @@ def get_file_summary(filename: str) -> str:
         content = "\n".join([d.page_content for d in file_docs[:10]])
         
         result = f"📄 **{file.filename}**\n"
-        result += f"Тип: {file.doc_type or 'не определён'}\n\n"
+        result += f"Тип: {file.file_type or 'не определён'}\n\n"
         result += f"**Содержание:**\n{content[:3000]}"
         
         if len(content) > 3000:
@@ -276,7 +271,7 @@ def summarize_all_documents() -> str:
                 if not content.strip():
                     file_summaries.append({
                         "filename": file.filename,
-                        "doc_type": file.doc_type or "unknown",
+                        "file_type": file.file_type or "unknown",
                         "summary": "Содержимое не извлечено"
                     })
                     continue
@@ -285,7 +280,7 @@ def summarize_all_documents() -> str:
                 summary_prompt = f"""Кратко опиши содержание документа (2-3 предложения):
 
 Документ: {file.filename}
-Тип: {file.doc_type or 'не определён'}
+Тип: {file.file_type or 'не определён'}
 
 Содержание:
 {content}
@@ -301,7 +296,7 @@ def summarize_all_documents() -> str:
                 
                 file_summaries.append({
                     "filename": file.filename,
-                    "doc_type": file.doc_type or "unknown",
+                    "file_type": file.file_type or "unknown",
                     "summary": summary_text.strip()
                 })
                 
@@ -309,13 +304,13 @@ def summarize_all_documents() -> str:
                 logger.warning(f"[ChatTools] Ошибка суммаризации {file.filename}: {e}")
                 file_summaries.append({
                     "filename": file.filename,
-                    "doc_type": file.doc_type or "unknown",
+                    "file_type": file.file_type or "unknown",
                     "summary": f"Ошибка обработки: {str(e)[:50]}"
                 })
         
         # 3. REDUCE: Объединяем в общий обзор
         summaries_text = "\n\n".join([
-            f"**{s['filename']}** ({s['doc_type']}): {s['summary']}"
+            f"**{s['filename']}** ({s['file_type']}): {s['summary']}"
             for s in file_summaries
         ])
         
