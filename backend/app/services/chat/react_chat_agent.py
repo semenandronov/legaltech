@@ -177,18 +177,19 @@ class ReActChatAgent:
             )
             
             # Пробуем создать агента через langgraph
+            # Системный промпт добавляется в _run_agent, поэтому здесь просто создаём агента
             try:
                 from langgraph.prebuilt import create_react_agent
                 
                 agent = create_react_agent(
                     self.llm,
-                    self.tools,
-                    messages_modifier=system_prompt
+                    self.tools
                 )
                 logger.info("[ReActChatAgent] Created agent via langgraph.prebuilt.create_react_agent")
                 return agent
                 
-            except ImportError:
+            except (ImportError, TypeError) as e:
+                logger.warning(f"[ReActChatAgent] LangGraph create_react_agent failed: {e}, trying fallback")
                 # Fallback на agent_factory
                 from app.services.langchain_agents.agent_factory import create_legal_agent
                 
@@ -275,10 +276,29 @@ class ReActChatAgent:
     async def _run_agent(self, question: str) -> AsyncGenerator[str, None]:
         """Запустить ReAct агента"""
         try:
-            from langchain_core.messages import HumanMessage, AIMessage
+            from langchain_core.messages import HumanMessage, AIMessage, SystemMessage
+            
+            # Формируем системный промпт
+            optional_tools_text = ""
+            if self.legal_research:
+                optional_tools_text += """
+9. **search_garant(query)** - Поиск в базе ГАРАНТ
+   - Используй для вопросов о законах, статьях кодексов, судебной практике
+
+10. **get_garant_full_text(doc_id)** - Полный текст документа из ГАРАНТ
+"""
+            if self.web_search:
+                optional_tools_text += """
+11. **web_research_tool(query)** - Поиск в интернете
+   - Используй для актуальной информации, которой нет в документах
+"""
+            
+            system_prompt = self.SYSTEM_PROMPT.format(
+                optional_tools=optional_tools_text if optional_tools_text else "Дополнительные инструменты не включены."
+            )
             
             # Формируем входные данные
-            messages = []
+            messages = [SystemMessage(content=system_prompt)]
             
             # Добавляем историю чата (последние 10 сообщений)
             for msg in self.chat_history[-10:]:
