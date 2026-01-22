@@ -1,89 +1,81 @@
 """
-Simple ReAct Chat Agent - Классический ReAct агент с 12 инструментами
+Simple ReAct Agent v5.0 - Полностью переписанный агент без LangGraph.
 
-Ключевой принцип: ОДИН агент с фиксированным набором инструментов.
-Агент САМ решает, какие инструменты вызвать на основе вопроса.
+Проблема с LangGraph + GigaChat: GigaChat игнорирует результаты инструментов.
+Решение: Ручной ReAct цикл с явным контролем результатов.
 
-НЕ планирует заранее - думает и действует итеративно:
-1. Получает вопрос
-2. Думает: какой инструмент нужен?
-3. Вызывает инструмент
-4. Наблюдает результат
-5. Повторяет 2-4 пока не готов ответить
-6. Формирует финальный ответ
+Архитектура:
+1. LLM получает вопрос + описание инструментов
+2. LLM решает какой инструмент вызвать (или отвечает напрямую)
+3. Мы вызываем инструмент и получаем результат
+4. LLM формирует финальный ответ НА ОСНОВЕ результата инструмента
 
-Использует langgraph.prebuilt.create_react_agent
-
-ПАМЯТЬ:
-- Агент помнит ВСЮ историю текущей сессии (не только последние 5 сообщений)
-- Checkpointing через MemorySaver для сохранения состояния между вызовами
-- Умное сжатие истории для больших контекстов
+Это гарантирует, что ответ будет основан на реальных данных из документов.
 """
-from typing import AsyncGenerator, Optional, List, Dict, Any
-from sqlalchemy.orm import Session
-import logging
 
-from app.services.chat.events import SSESerializer
-from app.services.chat.universal_tools import get_universal_tools
-from app.services.rag_service import RAGService
+import logging
+import json
+import re
+from typing import List, Dict, Any, Optional, AsyncGenerator
+from sqlalchemy.orm import Session
+from langchain_core.messages import HumanMessage, AIMessage, SystemMessage
+from langchain_core.tools import BaseTool
+
 from app.models.user import User
+from app.services.rag_service import RAGService
+from app.services.chat.events import SSESerializer
 
 logger = logging.getLogger(__name__)
-
-# Максимальное количество сообщений в истории (для защиты от переполнения контекста)
-MAX_HISTORY_MESSAGES = 50
-# Максимальная длина одного сообщения в истории (символов)
-MAX_MESSAGE_LENGTH = 2000
-# Количество последних сообщений, которые НЕ сжимаются
-RECENT_MESSAGES_FULL = 10
 
 
 class SimpleReActAgent:
     """
-    Простой ReAct агент с 12 универсальными инструментами.
+    Простой ReAct агент с ручным контролем цикла.
     
-    Агент НЕ планирует заранее - он думает и действует итеративно.
-    Сам решает, какие инструменты вызвать и в каком порядке.
+    Гарантирует использование реальных данных из инструментов.
     """
     
-    # Системный промпт для агента
-    SYSTEM_PROMPT = """Ты - юридический AI-ассистент. Работаешь с документами дела.
+    # Системный промпт для выбора инструмента
+    TOOL_SELECTION_PROMPT = """Ты - юридический AI-ассистент. Работаешь с документами дела.
 
-ТВОЯ ЗАДАЧА: Отвечать на вопросы пользователя, используя данные из документов.
+ДОСТУПНЫЕ ИНСТРУМЕНТЫ:
+{tools_description}
 
-ВЫБОР ИНСТРУМЕНТА:
-- search_in_documents - для поиска конкретной информации (даты, суммы, условия)
-- analyze_all_documents - для полного обзора ВСЕХ документов или когда документов много
-- get_document - для получения полного текста одного документа
-- extract_structured_data - для извлечения всех дат/сумм/имён
+ТВОЯ ЗАДАЧА: Выбрать ОДИН инструмент для ответа на вопрос пользователя.
 
-КОГДА ИСПОЛЬЗОВАТЬ analyze_all_documents:
-- "О чём все документы?" / "Расскажи о деле"
-- Когда нужен комплексный анализ
-- Когда документов больше 10
-
-ФОРМАТ ОТВЕТА:
-- Пиши ТОЛЬКО финальный ответ для пользователя
-- НЕ описывай свои действия
-- Отвечай как юрист-консультант: кратко, по существу
+ФОРМАТ ОТВЕТА (строго JSON):
+{{"tool": "название_инструмента", "args": {{"arg1": "value1"}}}}
 
 ПРИМЕРЫ:
+- Вопрос "О чём документ?" → {{"tool": "search_in_documents", "args": {{"query": "суть содержание предмет", "k": 30}}}}
+- Вопрос "Какая сумма?" → {{"tool": "search_in_documents", "args": {{"query": "сумма цена стоимость", "k": 30}}}}
+- Вопрос "Покажи договор.pdf" → {{"tool": "get_document", "args": {{"filename": "договор.pdf"}}}}
+- Вопрос "Сколько будет 100*5?" → {{"tool": "calculate", "args": {{"expression": "100*5"}}}}
 
-Вопрос: "О чем документы?"
-→ Вызови: analyze_all_documents("о чём документы", "summarize")
-→ Ответ: "В деле содержатся: трудовой договор между ООО «Ромашка» и Ивановым И.И., акт приёма-передачи от 15.03.2024... [источники]"
+ВАЖНО:
+- Отвечай ТОЛЬКО JSON, без пояснений
+- Используй search_in_documents для большинства вопросов о содержании
+- Используй get_document только если нужен полный текст конкретного файла"""
 
-Вопрос: "Какая сумма в договоре?"
-→ Вызови: search_in_documents("сумма договор цена")
-→ Ответ: "Согласно п. 3.1 договора, сумма составляет 1 500 000 руб. [Договор поставки №123]"
+    # Промпт для формирования финального ответа
+    ANSWER_PROMPT = """Ты - юридический AI-ассистент. На основе полученных данных ответь на вопрос пользователя.
 
-ЗАПРЕЩЕНО:
-❌ "Шаг 1...", "Вызов инструмента...", "Поиск в документах..."
-❌ Выдуманные данные: "Дело № ХХХХ", "сторона A"
+ВОПРОС ПОЛЬЗОВАТЕЛЯ:
+{question}
 
-ОБЯЗАТЕЛЬНО:
-✅ Использовать РЕАЛЬНЫЕ данные из инструментов
-✅ Указывать источник: [Название документа]"""
+ДАННЫЕ ИЗ ДОКУМЕНТОВ:
+{tool_result}
+
+ИНСТРУКЦИИ:
+1. Используй ТОЛЬКО данные выше - не придумывай ничего
+2. Отвечай кратко и по существу
+3. Указывай источники в квадратных скобках: [Название документа]
+4. Если данных недостаточно - так и скажи
+
+ФОРМАТ ОТВЕТА:
+- Пиши как профессиональный юрист
+- Не пиши "На основе данных...", "Согласно информации..." - сразу к сути
+- Используй конкретные факты: даты, суммы, имена из документов"""
 
     def __init__(
         self,
@@ -91,214 +83,109 @@ class SimpleReActAgent:
         db: Session,
         rag_service: RAGService,
         current_user: Optional[User] = None,
-        # Пользовательские переключатели
         legal_research: bool = False,
         deep_think: bool = False,
         web_search: bool = False,
-        chat_history: Optional[List[Dict[str, str]]] = None,
+        chat_history: Optional[List[Dict]] = None,
         session_id: Optional[str] = None
     ):
+        """Инициализация агента."""
         self.case_id = case_id
         self.db = db
         self.rag_service = rag_service
         self.current_user = current_user
+        self.user_id = str(current_user.id) if current_user else None
+        self.session_id = session_id
+        
+        # Опции
         self.legal_research = legal_research
         self.deep_think = deep_think
         self.web_search = web_search
-        self.session_id = session_id
         
-        # Обрабатываем историю чата с умным сжатием
-        self.chat_history = self._process_chat_history(chat_history or [])
+        # История чата
+        self.chat_history = self._process_history(chat_history or [])
         
         # Создаём LLM
         self.llm = self._create_llm()
         
-        # Получаем инструменты
-        self.tools = get_universal_tools(
-            db=db,
-            rag_service=rag_service,
-            case_id=case_id,
-            user_id=current_user.id if current_user else None,
-            legal_research=legal_research,
-            web_search=web_search
-        )
-        
-        # Создаём checkpointer для сохранения состояния
-        self.checkpointer = self._create_checkpointer()
-        
-        # Флаг для ручного добавления системного промпта (если LangGraph не поддерживает prompt)
-        self._needs_manual_system_prompt = False
-        
-        # Создаём агента с checkpointer
-        self.agent = self._create_agent()
+        # Инициализируем инструменты
+        self.tools = self._create_tools()
+        self.tools_map = {t.name: t for t in self.tools}
         
         logger.info(
             f"[SimpleReActAgent] Initialized for case {case_id} "
-            f"({len(self.tools)} tools, {len(self.chat_history)} history messages, "
-            f"deep_think={deep_think}, legal_research={legal_research})"
+            f"({len(self.tools)} tools, {len(self.chat_history)} history messages)"
         )
     
-    def _process_chat_history(
-        self, 
-        history: List[Dict[str, str]]
-    ) -> List[Dict[str, str]]:
-        """
-        Умная обработка истории чата.
-        
-        Стратегия:
-        1. Берём до MAX_HISTORY_MESSAGES сообщений
-        2. Последние RECENT_MESSAGES_FULL сообщений оставляем полными
-        3. Более старые сообщения сжимаем до MAX_MESSAGE_LENGTH символов
-        
-        Это позволяет:
-        - Сохранить полный контекст недавнего разговора
-        - Не потерять важную информацию из старых сообщений
-        - Уместиться в контекстное окно LLM
-        """
+    def _process_history(self, history: List[Dict]) -> List[Dict]:
+        """Обработка истории чата - оставляем последние сообщения."""
         if not history:
             return []
         
-        # Ограничиваем количество сообщений
-        history = history[-MAX_HISTORY_MESSAGES:]
+        # Берём последние 10 сообщений
+        recent = history[-10:]
         
+        # Обрезаем слишком длинные сообщения
         processed = []
-        total_messages = len(history)
-        
-        for i, msg in enumerate(history):
-            role = msg.get("role", "user")
+        for msg in recent:
             content = msg.get("content", "")
-            
-            if not content:
-                continue
-            
-            # Последние RECENT_MESSAGES_FULL сообщений — полные
-            is_recent = (total_messages - i) <= RECENT_MESSAGES_FULL
-            
-            if is_recent:
-                # Полное сообщение
-                processed.append({"role": role, "content": content})
-            else:
-                # Сжимаем старое сообщение
-                if len(content) > MAX_MESSAGE_LENGTH:
-                    compressed = content[:MAX_MESSAGE_LENGTH] + "... [сообщение сокращено]"
-                    processed.append({"role": role, "content": compressed})
-                else:
-                    processed.append({"role": role, "content": content})
+            if len(content) > 2000:
+                content = content[:2000] + "..."
+            processed.append({
+                "role": msg.get("role", "user"),
+                "content": content
+            })
         
-        logger.debug(
-            f"[SimpleReActAgent] Processed history: {len(history)} -> {len(processed)} messages"
-        )
         return processed
     
-    def _create_checkpointer(self):
-        """
-        Создать checkpointer для сохранения состояния агента.
-        
-        Используем MemorySaver для простоты.
-        В production можно заменить на PostgresSaver.
-        """
-        try:
-            from langgraph.checkpoint.memory import MemorySaver
-            
-            checkpointer = MemorySaver()
-            logger.debug("[SimpleReActAgent] Created MemorySaver checkpointer")
-            return checkpointer
-            
-        except ImportError:
-            logger.warning("[SimpleReActAgent] MemorySaver not available, running without checkpointing")
-            return None
-    
     def _create_llm(self):
-        """Создать LLM для агента"""
+        """Создать LLM."""
         from app.services.llm_factory import create_legal_llm
-        
-        # Используем более мощную модель для deep_think
-        if self.deep_think:
-            try:
-                return create_legal_llm(
-                    model_name="GigaChat-Pro",
-                    timeout=180.0
-                )
-            except Exception as e:
-                logger.warning(f"[SimpleReActAgent] Failed to create GigaChat-Pro: {e}, using default")
-        
         return create_legal_llm(timeout=180.0)
     
-    def _create_agent(self):
-        """
-        Создать ReAct агента через LangGraph с checkpointer.
+    def _create_tools(self) -> List[BaseTool]:
+        """Создать инструменты."""
+        from app.services.chat.universal_tools import (
+            get_universal_tools,
+            initialize_universal_tools
+        )
         
-        Checkpointer позволяет:
-        - Сохранять состояние агента между вызовами
-        - Восстанавливаться после ошибок
-        - Поддерживать долгие сессии
+        initialize_universal_tools(
+            db=self.db,
+            rag_service=self.rag_service,
+            case_id=self.case_id,
+            user_id=self.user_id
+        )
         
-        ВАЖНО: Системный промпт передаётся через параметр `prompt`.
-        В новых версиях LangGraph `state_modifier` был удалён.
-        """
-        try:
-            from langgraph.prebuilt import create_react_agent
-            
-            # Создаём агента с системным промптом через prompt
-            # В новых версиях LangGraph используется prompt вместо state_modifier
-            if self.checkpointer:
-                agent = create_react_agent(
-                    self.llm,
-                    self.tools,
-                    prompt=self.SYSTEM_PROMPT,
-                    checkpointer=self.checkpointer
-                )
-                logger.info("[SimpleReActAgent] Created agent with prompt and MemorySaver checkpointer")
-            else:
-                agent = create_react_agent(
-                    self.llm,
-                    self.tools,
-                    prompt=self.SYSTEM_PROMPT
-                )
-                logger.info("[SimpleReActAgent] Created agent with prompt (no checkpointer)")
-            
-            return agent
-            
-        except ImportError as e:
-            logger.error(f"[SimpleReActAgent] LangGraph not available: {e}")
-            raise RuntimeError("LangGraph not installed. Install with: pip install langgraph")
-        except TypeError as e:
-            # Fallback для старых версий LangGraph без параметра prompt
-            logger.warning(f"[SimpleReActAgent] prompt parameter not supported, using messages approach: {e}")
-            return self._create_agent_fallback()
-        except Exception as e:
-            logger.error(f"[SimpleReActAgent] Failed to create agent: {e}", exc_info=True)
-            raise
+        return get_universal_tools(
+            db=self.db,
+            rag_service=self.rag_service,
+            case_id=self.case_id,
+            user_id=self.user_id,
+            legal_research=self.legal_research,
+            web_search=self.web_search
+        )
     
-    def _create_agent_fallback(self):
-        """
-        Fallback создание агента для версий LangGraph без параметра prompt.
-        Системный промпт будет добавляться вручную в messages.
-        """
-        try:
-            from langgraph.prebuilt import create_react_agent
+    def _get_tools_description(self) -> str:
+        """Получить описание инструментов для промпта."""
+        descriptions = []
+        for tool in self.tools:
+            # Получаем описание и аргументы
+            desc = tool.description or "Нет описания"
+            # Берём только первые 200 символов описания
+            short_desc = desc[:200] + "..." if len(desc) > 200 else desc
             
-            if self.checkpointer:
-                agent = create_react_agent(
-                    self.llm,
-                    self.tools,
-                    checkpointer=self.checkpointer
-                )
-                logger.info("[SimpleReActAgent] Created agent with fallback (no prompt param), using checkpointer")
-            else:
-                agent = create_react_agent(
-                    self.llm,
-                    self.tools
-                )
-                logger.info("[SimpleReActAgent] Created agent with fallback (no prompt param)")
+            # Получаем схему аргументов
+            args_schema = ""
+            if hasattr(tool, 'args_schema') and tool.args_schema:
+                schema = tool.args_schema.schema() if hasattr(tool.args_schema, 'schema') else {}
+                props = schema.get('properties', {})
+                args_list = [f"{k}: {v.get('type', 'any')}" for k, v in props.items()]
+                args_schema = f"({', '.join(args_list)})" if args_list else "()"
             
-            # Помечаем, что нужно добавлять системный промпт вручную
-            self._needs_manual_system_prompt = True
-            return agent
-            
-        except Exception as e:
-            logger.error(f"[SimpleReActAgent] Fallback agent creation failed: {e}", exc_info=True)
-            raise
+            descriptions.append(f"- {tool.name}{args_schema}: {short_desc}")
+        
+        return "\n".join(descriptions)
     
     async def handle(
         self,
@@ -308,294 +195,266 @@ class SimpleReActAgent:
         """
         Обработать вопрос пользователя.
         
-        Агент сам решает какие инструменты использовать.
-        
-        Args:
-            question: Вопрос пользователя
-            stream: Стримить ответ (по умолчанию True)
-            
         Yields:
             SSE события
         """
         try:
             logger.info(f"[SimpleReActAgent] Processing: {question[:100]}...")
             
-            # Отправляем статус начала
             yield SSESerializer.reasoning(
                 phase="thinking",
                 step=1,
-                total_steps=1,
-                content="Анализирую вопрос и выбираю инструменты..."
+                total_steps=3,
+                content="Анализирую вопрос..."
             )
             
-            # Запускаем агента
-            async for event in self._run_agent(question):
-                yield event
+            # Шаг 1: Выбираем инструмент
+            tool_choice = await self._select_tool(question)
+            
+            if tool_choice is None:
+                # LLM решил ответить напрямую без инструмента
+                yield SSESerializer.reasoning(
+                    phase="answering",
+                    step=2,
+                    total_steps=3,
+                    content="Формирую ответ..."
+                )
                 
+                response = await self._direct_answer(question)
+                yield SSESerializer.text_delta(response)
+                return
+            
+            tool_name = tool_choice.get("tool")
+            tool_args = tool_choice.get("args", {})
+            
+            logger.info(f"[SimpleReActAgent] Selected tool: {tool_name}, args: {tool_args}")
+            
+            yield SSESerializer.reasoning(
+                phase="tool_call",
+                step=2,
+                total_steps=3,
+                content=f"Использую инструмент: {tool_name}..."
+            )
+            
+            # Шаг 2: Вызываем инструмент
+            tool_result = await self._call_tool(tool_name, tool_args)
+            
+            if not tool_result or len(str(tool_result)) < 20:
+                # Инструмент не вернул данных
+                yield SSESerializer.text_delta(
+                    "К сожалению, не удалось найти информацию по вашему запросу. "
+                    "Попробуйте переформулировать вопрос или загрузить документы."
+                )
+                return
+            
+            logger.info(f"[SimpleReActAgent] Tool result length: {len(str(tool_result))}")
+            
+            yield SSESerializer.reasoning(
+                phase="answering",
+                step=3,
+                total_steps=3,
+                content="Формирую ответ на основе найденных данных..."
+            )
+            
+            # Шаг 3: Формируем ответ на основе результата
+            final_response = await self._generate_answer(question, tool_result)
+            
+            yield SSESerializer.text_delta(final_response)
+            
+            logger.info(
+                f"[SimpleReActAgent] Completed. Tool: {tool_name}, "
+                f"Result length: {len(str(tool_result))}, "
+                f"Response length: {len(final_response)}"
+            )
+            
         except Exception as e:
             logger.error(f"[SimpleReActAgent] Error: {e}", exc_info=True)
             yield SSESerializer.error(f"Ошибка обработки запроса: {str(e)}")
     
-    async def _run_agent(self, question: str) -> AsyncGenerator[str, None]:
+    async def _select_tool(self, question: str) -> Optional[Dict]:
         """
-        Запустить ReAct агента с полной историей чата.
-        
-        Память работает так:
-        1. Системный промпт — передаётся через prompt в _create_agent (или вручную если fallback)
-        2. ВСЯ история чата (обработанная) — контекст разговора
-        3. Текущий вопрос — что нужно сделать
-        
-        thread_id = case_id + session_id — уникальный идентификатор разговора
-        """
-        from langchain_core.messages import HumanMessage, AIMessage, SystemMessage
-        
-        try:
-            messages = []
-            
-            # Если нужно добавить системный промпт вручную (fallback режим)
-            if self._needs_manual_system_prompt:
-                messages.append(SystemMessage(content=self.SYSTEM_PROMPT))
-                logger.debug("[SimpleReActAgent] Added system prompt manually (fallback mode)")
-            
-            # Добавляем ВСЮ обработанную историю чата
-            history_added = 0
-            for msg in self.chat_history:
-                role = msg.get("role", "user")
-                content = msg.get("content", "")
-                if not content:
-                    continue
-                    
-                if role == "user":
-                    messages.append(HumanMessage(content=content))
-                    history_added += 1
-                elif role == "assistant":
-                    messages.append(AIMessage(content=content))
-                    history_added += 1
-            
-            # Добавляем текущий вопрос
-            messages.append(HumanMessage(content=question))
-            
-            logger.info(
-                f"[SimpleReActAgent] Running with {history_added} history messages + current question"
-            )
-            logger.debug(
-                f"[SimpleReActAgent] Question: {question[:100]}..., "
-                f"Total messages: {len(messages)}, "
-                f"Tools available: {len(self.tools)}"
-            )
-            
-            # Уникальный thread_id для сессии
-            # Используем case_id + session_id если есть, иначе только case_id
-            thread_id = f"{self.case_id}_{self.session_id}" if self.session_id else self.case_id
-            
-            # Конфигурация с thread_id и recursion_limit
-            config = {
-                "configurable": {"thread_id": thread_id},
-                "recursion_limit": 25  # Защита от зацикливания
-            }
-            
-            # Собираем ответ
-            final_response = ""
-            tool_calls_count = 0
-            all_messages = []
-            event_count = 0
-            
-            # Используем stream для получения промежуточных результатов
-            async for event in self.agent.astream(
-                {"messages": messages},
-                config=config,
-                stream_mode="values"
-            ):
-                event_count += 1
-                logger.debug(f"[SimpleReActAgent] Event #{event_count}: keys={list(event.keys())}")
-                
-                # Получаем последнее сообщение
-                if "messages" in event:
-                    all_messages = event["messages"]
-                    last_message = all_messages[-1]
-                    logger.debug(
-                        f"[SimpleReActAgent] Last message type: {type(last_message).__name__}, "
-                        f"has tool_calls: {hasattr(last_message, 'tool_calls') and bool(last_message.tool_calls)}, "
-                        f"content length: {len(getattr(last_message, 'content', '') or '')}"
-                    )
-                    
-                    # Если это AI message с tool_calls - показываем что агент думает
-                    if hasattr(last_message, 'tool_calls') and last_message.tool_calls:
-                        tool_calls_count += len(last_message.tool_calls)
-                        for tc in last_message.tool_calls:
-                            tool_name = tc.get("name", "unknown") if isinstance(tc, dict) else getattr(tc, 'name', 'unknown')
-                            yield SSESerializer.reasoning(
-                                phase="tool_call",
-                                step=tool_calls_count,
-                                total_steps=15,  # Увеличили лимит
-                                content=f"Вызываю: {tool_name}..."
-                            )
-                    
-                    # Если это финальный ответ AI (без tool_calls)
-                    elif hasattr(last_message, 'content') and last_message.content:
-                        # Проверяем, что это действительно финальный ответ (не промежуточный)
-                        has_tool_calls = (
-                            hasattr(last_message, 'tool_calls') and 
-                            last_message.tool_calls and 
-                            len(last_message.tool_calls) > 0
-                        )
-                        if not has_tool_calls:
-                            final_response = last_message.content
-            
-            # Если есть финальный ответ - отправляем
-            if final_response and len(final_response.strip()) > 10:
-                yield SSESerializer.text_delta(final_response)
-                logger.info(
-                    f"[SimpleReActAgent] Completed with {tool_calls_count} tool calls, "
-                    f"response length: {len(final_response)}, thread_id={thread_id}"
-                )
-            elif tool_calls_count == 0 and len(final_response.strip()) <= 10:
-                # Fallback: если агент не вызвал инструменты и дал короткий ответ,
-                # это может означать что GigaChat не поддерживает function calling
-                # Попробуем вызвать инструмент вручную для вопроса о документах
-                logger.warning(
-                    f"[SimpleReActAgent] Agent returned short response ({len(final_response)} chars) "
-                    f"without tool calls. Attempting manual tool call fallback."
-                )
-                
-                # Для вопросов о документах вызываем search_in_documents вручную
-                if any(keyword in question.lower() for keyword in ['документ', 'о чем', 'что в', 'расскажи']):
-                    yield SSESerializer.reasoning(
-                        phase="tool_call",
-                        step=1,
-                        total_steps=5,
-                        content="Вызываю: search_in_documents..."
-                    )
-                    
-                    # Вызываем инструмент вручную
-                    search_tool = next((t for t in self.tools if t.name == "search_in_documents"), None)
-                    if search_tool:
-                        try:
-                            # Формируем поисковый запрос из вопроса
-                            search_query = question
-                            if "о чем" in question.lower():
-                                search_query = "суть дело предмет содержание"
-                            
-                            tool_result = await search_tool.ainvoke({"query": search_query, "k": 50})
-                            
-                            # Формируем финальный ответ на основе результатов
-                            if tool_result and len(tool_result) > 50:
-                                # Используем LLM для формирования ответа на основе результатов
-                                from langchain_core.messages import HumanMessage
-                                followup_prompt = f"""На основе найденной информации ответь на вопрос пользователя.
-
-Вопрос: {question}
-
-Найденная информация:
-{tool_result[:5000]}
-
-Сформируй краткий, но информативный ответ на основе найденной информации."""
-                                
-                                followup_response = await self.llm.ainvoke([HumanMessage(content=followup_prompt)])
-                                if hasattr(followup_response, 'content') and followup_response.content:
-                                    final_response = followup_response.content
-                                    yield SSESerializer.text_delta(final_response)
-                                    logger.info(f"[SimpleReActAgent] Fallback completed, response length: {len(final_response)}")
-                                else:
-                                    yield SSESerializer.text_delta(tool_result[:2000])
-                            else:
-                                yield SSESerializer.text_delta(
-                                    "Не удалось найти информацию в документах. Попробуйте переформулировать вопрос."
-                                )
-                        except Exception as e:
-                            logger.error(f"[SimpleReActAgent] Fallback tool call failed: {e}", exc_info=True)
-                            yield SSESerializer.text_delta(
-                                "К сожалению, произошла ошибка при поиске информации. Попробуйте переформулировать вопрос."
-                            )
-                    else:
-                        yield SSESerializer.text_delta(
-                            "К сожалению, не удалось получить ответ. Попробуйте переформулировать вопрос."
-                        )
-                else:
-                    yield SSESerializer.text_delta(
-                        "К сожалению, не удалось получить ответ. Попробуйте переформулировать вопрос."
-                    )
-                logger.warning("[SimpleReActAgent] Used fallback response")
-            else:
-                # Fallback - если агент не дал ответ
-                yield SSESerializer.text_delta(
-                    "К сожалению, не удалось получить ответ. Попробуйте переформулировать вопрос."
-                )
-                logger.warning(f"[SimpleReActAgent] No final response from agent, final_response length: {len(final_response)}")
-                
-        except Exception as e:
-            logger.error(f"[SimpleReActAgent] Agent execution error: {e}", exc_info=True)
-            yield SSESerializer.error(f"Ошибка выполнения: {str(e)}")
-    
-    async def _run_agent_sync(self, question: str) -> str:
-        """
-        Синхронный запуск агента (для случаев когда нужен только результат).
+        Выбрать инструмент для ответа на вопрос.
         
         Returns:
-            Ответ агента
+            {"tool": "name", "args": {...}} или None если ответ напрямую
         """
-        from langchain_core.messages import HumanMessage, AIMessage, SystemMessage
+        tools_desc = self._get_tools_description()
+        
+        prompt = self.TOOL_SELECTION_PROMPT.format(tools_description=tools_desc)
+        
+        messages = [
+            SystemMessage(content=prompt),
+            HumanMessage(content=f"Вопрос пользователя: {question}")
+        ]
         
         try:
-            messages = []
+            response = await self.llm.ainvoke(messages)
+            content = response.content if hasattr(response, 'content') else str(response)
             
-            # Если нужно добавить системный промпт вручную (fallback режим)
-            if self._needs_manual_system_prompt:
-                messages.append(SystemMessage(content=self.SYSTEM_PROMPT))
+            logger.debug(f"[SimpleReActAgent] Tool selection response: {content[:200]}")
             
-            # Используем ВСЮ обработанную историю
-            for msg in self.chat_history:
-                role = msg.get("role", "user")
-                content = msg.get("content", "")
-                if not content:
-                    continue
-                if role == "user":
-                    messages.append(HumanMessage(content=content))
-                elif role == "assistant":
-                    messages.append(AIMessage(content=content))
+            # Парсим JSON из ответа
+            tool_choice = self._parse_tool_choice(content)
             
-            messages.append(HumanMessage(content=question))
+            if tool_choice and tool_choice.get("tool") in self.tools_map:
+                return tool_choice
             
-            thread_id = f"{self.case_id}_{self.session_id}" if self.session_id else self.case_id
-            config = {
-                "configurable": {"thread_id": thread_id},
-                "recursion_limit": 25
+            # Если не удалось распарсить - используем search_in_documents по умолчанию
+            logger.warning(
+                f"[SimpleReActAgent] Could not parse tool choice, using default. "
+                f"Response: {content[:100]}"
+            )
+            return {
+                "tool": "search_in_documents",
+                "args": {"query": question, "k": 30}
             }
             
-            result = await self.agent.ainvoke(
-                {"messages": messages},
-                config=config
-            )
-            
-            if "messages" in result:
-                last_message = result["messages"][-1]
-                if hasattr(last_message, 'content'):
-                    return last_message.content
-            
-            return "Не удалось получить ответ."
+        except Exception as e:
+            logger.error(f"[SimpleReActAgent] Tool selection error: {e}")
+            # Fallback на search_in_documents
+            return {
+                "tool": "search_in_documents",
+                "args": {"query": question, "k": 30}
+            }
+    
+    def _parse_tool_choice(self, content: str) -> Optional[Dict]:
+        """Извлечь JSON с выбором инструмента из ответа LLM."""
+        # Пробуем найти JSON в ответе
+        json_patterns = [
+            r'\{[^{}]*"tool"[^{}]*\}',  # Простой JSON
+            r'```json\s*(\{.*?\})\s*```',  # JSON в блоке кода
+            r'```\s*(\{.*?\})\s*```',  # JSON в блоке кода без указания языка
+        ]
+        
+        for pattern in json_patterns:
+            match = re.search(pattern, content, re.DOTALL)
+            if match:
+                try:
+                    json_str = match.group(1) if match.lastindex else match.group(0)
+                    return json.loads(json_str)
+                except json.JSONDecodeError:
+                    continue
+        
+        # Пробуем распарсить весь контент как JSON
+        try:
+            return json.loads(content.strip())
+        except json.JSONDecodeError:
+            pass
+        
+        return None
+    
+    async def _call_tool(self, tool_name: str, tool_args: Dict) -> str:
+        """Вызвать инструмент и получить результат."""
+        tool = self.tools_map.get(tool_name)
+        
+        if not tool:
+            logger.error(f"[SimpleReActAgent] Tool not found: {tool_name}")
+            return ""
+        
+        try:
+            # Вызываем инструмент
+            result = await tool.ainvoke(tool_args)
+            return str(result) if result else ""
             
         except Exception as e:
-            logger.error(f"[SimpleReActAgent] Sync execution error: {e}", exc_info=True)
-            return f"Ошибка: {str(e)}"
+            logger.error(f"[SimpleReActAgent] Tool call error: {e}", exc_info=True)
+            return f"Ошибка вызова инструмента: {str(e)}"
     
-    def get_conversation_summary(self) -> str:
+    async def _generate_answer(self, question: str, tool_result: str) -> str:
         """
-        Получить краткое описание текущего разговора.
+        Сгенерировать финальный ответ на основе результата инструмента.
         
-        Полезно для отладки и понимания контекста.
+        Это ключевой метод - он гарантирует, что LLM использует реальные данные.
         """
-        if not self.chat_history:
-            return "Нет истории разговора"
+        # Обрезаем результат если слишком длинный
+        max_result_length = 8000
+        if len(tool_result) > max_result_length:
+            tool_result = tool_result[:max_result_length] + "\n\n[... результат обрезан ...]"
         
-        user_msgs = sum(1 for m in self.chat_history if m.get("role") == "user")
-        assistant_msgs = sum(1 for m in self.chat_history if m.get("role") == "assistant")
-        
-        first_msg = self.chat_history[0].get("content", "")[:50] if self.chat_history else ""
-        last_msg = self.chat_history[-1].get("content", "")[:50] if self.chat_history else ""
-        
-        return (
-            f"История: {len(self.chat_history)} сообщений "
-            f"({user_msgs} от пользователя, {assistant_msgs} от ассистента). "
-            f"Начало: '{first_msg}...' | Последнее: '{last_msg}...'"
+        prompt = self.ANSWER_PROMPT.format(
+            question=question,
+            tool_result=tool_result
         )
-
+        
+        messages = [
+            SystemMessage(content=prompt)
+        ]
+        
+        # Добавляем историю чата для контекста
+        for msg in self.chat_history[-4:]:  # Последние 4 сообщения
+            role = msg.get("role", "user")
+            content = msg.get("content", "")
+            if content:
+                if role == "user":
+                    messages.append(HumanMessage(content=content))
+                else:
+                    messages.append(AIMessage(content=content))
+        
+        # Добавляем текущий вопрос
+        messages.append(HumanMessage(content=f"Сформируй ответ на вопрос: {question}"))
+        
+        try:
+            response = await self.llm.ainvoke(messages)
+            content = response.content if hasattr(response, 'content') else str(response)
+            
+            # Проверяем что ответ не пустой и не слишком короткий
+            if not content or len(content.strip()) < 20:
+                logger.warning(f"[SimpleReActAgent] Empty or short answer: {content}")
+                # Возвращаем результат инструмента напрямую
+                return f"Найденная информация:\n\n{tool_result[:3000]}"
+            
+            return content
+            
+        except Exception as e:
+            logger.error(f"[SimpleReActAgent] Answer generation error: {e}")
+            # Возвращаем результат инструмента напрямую
+            return f"Найденная информация:\n\n{tool_result[:3000]}"
+    
+    async def _direct_answer(self, question: str) -> str:
+        """Ответить напрямую без инструмента (для простых вопросов)."""
+        messages = [
+            SystemMessage(content="Ты - юридический AI-ассистент. Отвечай кратко и по существу."),
+            HumanMessage(content=question)
+        ]
+        
+        try:
+            response = await self.llm.ainvoke(messages)
+            return response.content if hasattr(response, 'content') else str(response)
+        except Exception as e:
+            logger.error(f"[SimpleReActAgent] Direct answer error: {e}")
+            return "Извините, произошла ошибка при обработке вашего запроса."
+    
+    # === Синхронные методы для совместимости ===
+    
+    def handle_sync(self, question: str) -> str:
+        """Синхронная обработка вопроса."""
+        import asyncio
+        
+        async def collect_response():
+            response_parts = []
+            async for event in self.handle(question, stream=False):
+                # Извлекаем текст из SSE события
+                if '"type":"text_delta"' in event or '"type":"answer"' in event:
+                    try:
+                        # Парсим SSE событие
+                        for line in event.split('\n'):
+                            if line.startswith('data:'):
+                                data = json.loads(line[5:].strip())
+                                if data.get('type') in ['text_delta', 'answer']:
+                                    response_parts.append(data.get('content', ''))
+                    except:
+                        pass
+            return ''.join(response_parts)
+        
+        try:
+            loop = asyncio.get_event_loop()
+            if loop.is_running():
+                # Если уже в async контексте
+                import concurrent.futures
+                with concurrent.futures.ThreadPoolExecutor() as executor:
+                    future = executor.submit(asyncio.run, collect_response())
+                    return future.result()
+            else:
+                return loop.run_until_complete(collect_response())
+        except RuntimeError:
+            return asyncio.run(collect_response())
