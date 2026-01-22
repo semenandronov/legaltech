@@ -262,16 +262,16 @@ class ChatOrchestrator:
             # Классифицируем запрос для метрик (опционально)
             if self.classifier:
                 try:
-            classification = await self.classifier.classify(request.question)
-            self.metrics.record_classification(classification.label)
+                    classification = await self.classifier.classify(request.question)
+                    self.metrics.record_classification(classification.label)
                     logger.info(f"[ChatOrchestrator] Classification: {classification.label} ({classification.confidence:.2f})")
                 except Exception as e:
                     logger.warning(f"[ChatOrchestrator] Classification failed: {e}")
             
             # Получаем ПОЛНУЮ историю чата текущей сессии
-                chat_history = self.history_service.get_history_for_context(
-                    request.case_id, session_id
-                )
+            chat_history = self.history_service.get_history_for_context(
+                request.case_id, session_id
+            )
                 
             # Создаём SimpleReActAgent с пользовательскими переключателями и session_id
             logger.info(
