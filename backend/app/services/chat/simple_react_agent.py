@@ -266,43 +266,27 @@ class SimpleReActAgent:
         - Восстанавливаться после ошибок
         - Поддерживать долгие сессии
         
-        ВАЖНО: Системный промпт передаётся через state_modifier,
-        а не через messages при вызове агента!
+        ВАЖНО: Системный промпт передаётся через messages при вызове агента,
+        а не через state_modifier (как было раньше и работало).
         """
         try:
             from langgraph.prebuilt import create_react_agent
-            from langchain_core.messages import SystemMessage
             
-            # state_modifier добавляет системный промпт к сообщениям
-            def state_modifier(state):
-                """Добавить системный промпт в начало сообщений"""
-                messages = state.get("messages", [])
-                # Проверяем, есть ли уже системное сообщение
-                has_system = any(
-                    isinstance(m, SystemMessage) or 
-                    (hasattr(m, 'type') and m.type == 'system')
-                    for m in messages
-                )
-                if not has_system:
-                    return [SystemMessage(content=self.SYSTEM_PROMPT)] + list(messages)
-                return messages
-            
-            # Создаём агента с state_modifier и checkpointer
+            # Создаём агента с checkpointer если доступен
+            # НЕ используем state_modifier - системный промпт добавляется в messages
             if self.checkpointer:
                 agent = create_react_agent(
                     self.llm,
                     self.tools,
-                    state_modifier=state_modifier,
                     checkpointer=self.checkpointer
                 )
-                logger.info("[SimpleReActAgent] Created agent with state_modifier and MemorySaver checkpointer")
+                logger.info("[SimpleReActAgent] Created agent with MemorySaver checkpointer")
             else:
                 agent = create_react_agent(
                     self.llm,
-                    self.tools,
-                    state_modifier=state_modifier
+                    self.tools
                 )
-                logger.info("[SimpleReActAgent] Created agent with state_modifier (no checkpointer)")
+                logger.info("[SimpleReActAgent] Created agent without checkpointer")
             
             return agent
             
@@ -354,18 +338,20 @@ class SimpleReActAgent:
         Запустить ReAct агента с полной историей чата.
         
         Память работает так:
-        1. Системный промпт — добавляется через state_modifier в _create_agent
+        1. Системный промпт — инструкции для агента
         2. ВСЯ история чата (обработанная) — контекст разговора
         3. Текущий вопрос — что нужно сделать
         
         thread_id = case_id + session_id — уникальный идентификатор разговора
         """
-        from langchain_core.messages import HumanMessage, AIMessage
+        from langchain_core.messages import HumanMessage, SystemMessage, AIMessage
         
         try:
-            # Формируем сообщения БЕЗ системного промпта
-            # (он добавляется через state_modifier в _create_agent)
-            messages = []
+            # Формируем сообщения с ПОЛНОЙ историей
+            # Системный промпт добавляется в начало (как было раньше и работало)
+            messages = [
+                SystemMessage(content=self.SYSTEM_PROMPT)
+            ]
             
             # Добавляем ВСЮ обработанную историю чата
             history_added = 0
@@ -544,11 +530,12 @@ class SimpleReActAgent:
         Returns:
             Ответ агента
         """
-        from langchain_core.messages import HumanMessage, AIMessage
+        from langchain_core.messages import HumanMessage, SystemMessage, AIMessage
         
         try:
-            # Системный промпт добавляется через state_modifier
-            messages = []
+            messages = [
+                SystemMessage(content=self.SYSTEM_PROMPT)
+            ]
             
             # Используем ВСЮ обработанную историю
             for msg in self.chat_history:
