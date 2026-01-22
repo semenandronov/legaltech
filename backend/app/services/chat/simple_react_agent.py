@@ -162,6 +162,9 @@ class SimpleReActAgent:
         # Создаём checkpointer для сохранения состояния
         self.checkpointer = self._create_checkpointer()
         
+        # Флаг для ручного добавления системного промпта (если LangGraph не поддерживает prompt)
+        self._needs_manual_system_prompt = False
+        
         # Создаём агента с checkpointer
         self.agent = self._create_agent()
         
@@ -266,37 +269,71 @@ class SimpleReActAgent:
         - Восстанавливаться после ошибок
         - Поддерживать долгие сессии
         
-        ВАЖНО: Системный промпт передаётся через state_modifier как СТРОКА.
-        Это правильный способ для LangGraph create_react_agent.
+        ВАЖНО: Системный промпт передаётся через параметр `prompt`.
+        В новых версиях LangGraph `state_modifier` был удалён.
         """
         try:
             from langgraph.prebuilt import create_react_agent
             
-            # Создаём агента с системным промптом через state_modifier
-            # state_modifier принимает строку - системный промпт
+            # Создаём агента с системным промптом через prompt
+            # В новых версиях LangGraph используется prompt вместо state_modifier
             if self.checkpointer:
                 agent = create_react_agent(
                     self.llm,
                     self.tools,
-                    state_modifier=self.SYSTEM_PROMPT,
+                    prompt=self.SYSTEM_PROMPT,
                     checkpointer=self.checkpointer
                 )
-                logger.info("[SimpleReActAgent] Created agent with state_modifier and MemorySaver checkpointer")
+                logger.info("[SimpleReActAgent] Created agent with prompt and MemorySaver checkpointer")
             else:
                 agent = create_react_agent(
                     self.llm,
                     self.tools,
-                    state_modifier=self.SYSTEM_PROMPT
+                    prompt=self.SYSTEM_PROMPT
                 )
-                logger.info("[SimpleReActAgent] Created agent with state_modifier (no checkpointer)")
+                logger.info("[SimpleReActAgent] Created agent with prompt (no checkpointer)")
             
             return agent
             
         except ImportError as e:
             logger.error(f"[SimpleReActAgent] LangGraph not available: {e}")
             raise RuntimeError("LangGraph not installed. Install with: pip install langgraph")
+        except TypeError as e:
+            # Fallback для старых версий LangGraph без параметра prompt
+            logger.warning(f"[SimpleReActAgent] prompt parameter not supported, using messages approach: {e}")
+            return self._create_agent_fallback()
         except Exception as e:
             logger.error(f"[SimpleReActAgent] Failed to create agent: {e}", exc_info=True)
+            raise
+    
+    def _create_agent_fallback(self):
+        """
+        Fallback создание агента для версий LangGraph без параметра prompt.
+        Системный промпт будет добавляться вручную в messages.
+        """
+        try:
+            from langgraph.prebuilt import create_react_agent
+            
+            if self.checkpointer:
+                agent = create_react_agent(
+                    self.llm,
+                    self.tools,
+                    checkpointer=self.checkpointer
+                )
+                logger.info("[SimpleReActAgent] Created agent with fallback (no prompt param), using checkpointer")
+            else:
+                agent = create_react_agent(
+                    self.llm,
+                    self.tools
+                )
+                logger.info("[SimpleReActAgent] Created agent with fallback (no prompt param)")
+            
+            # Помечаем, что нужно добавлять системный промпт вручную
+            self._needs_manual_system_prompt = True
+            return agent
+            
+        except Exception as e:
+            logger.error(f"[SimpleReActAgent] Fallback agent creation failed: {e}", exc_info=True)
             raise
     
     async def handle(
@@ -340,18 +377,21 @@ class SimpleReActAgent:
         Запустить ReAct агента с полной историей чата.
         
         Память работает так:
-        1. Системный промпт — передаётся через state_modifier в _create_agent
+        1. Системный промпт — передаётся через prompt в _create_agent (или вручную если fallback)
         2. ВСЯ история чата (обработанная) — контекст разговора
         3. Текущий вопрос — что нужно сделать
         
         thread_id = case_id + session_id — уникальный идентификатор разговора
         """
-        from langchain_core.messages import HumanMessage, AIMessage
+        from langchain_core.messages import HumanMessage, AIMessage, SystemMessage
         
         try:
-            # Формируем сообщения БЕЗ системного промпта
-            # (он передаётся через state_modifier в _create_agent)
             messages = []
+            
+            # Если нужно добавить системный промпт вручную (fallback режим)
+            if self._needs_manual_system_prompt:
+                messages.append(SystemMessage(content=self.SYSTEM_PROMPT))
+                logger.debug("[SimpleReActAgent] Added system prompt manually (fallback mode)")
             
             # Добавляем ВСЮ обработанную историю чата
             history_added = 0
@@ -530,11 +570,14 @@ class SimpleReActAgent:
         Returns:
             Ответ агента
         """
-        from langchain_core.messages import HumanMessage, AIMessage
+        from langchain_core.messages import HumanMessage, AIMessage, SystemMessage
         
         try:
-            # Системный промпт передаётся через state_modifier в _create_agent
             messages = []
+            
+            # Если нужно добавить системный промпт вручную (fallback режим)
+            if self._needs_manual_system_prompt:
+                messages.append(SystemMessage(content=self.SYSTEM_PROMPT))
             
             # Используем ВСЮ обработанную историю
             for msg in self.chat_history:
