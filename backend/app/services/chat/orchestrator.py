@@ -104,12 +104,12 @@ class ChatOrchestrator:
             self.classifier = classifier
         else:
             try:
-                from app.services.llm_factory import create_llm
-                from app.services.external_sources.cache_manager import get_cache_manager
-                
-                llm = create_llm(temperature=0.0, max_tokens=500)
-                cache = get_cache_manager()
-                self.classifier = RequestClassifier(llm=llm, cache=cache)
+            from app.services.llm_factory import create_llm
+            from app.services.external_sources.cache_manager import get_cache_manager
+            
+            llm = create_llm(temperature=0.0, max_tokens=500)
+            cache = get_cache_manager()
+            self.classifier = RequestClassifier(llm=llm, cache=cache)
             except Exception as e:
                 logger.warning(f"[ChatOrchestrator] Classifier init failed: {e}, will skip classification")
                 self.classifier = None
@@ -262,17 +262,17 @@ class ChatOrchestrator:
             # Классифицируем запрос для метрик (опционально)
             if self.classifier:
                 try:
-                    classification = await self.classifier.classify(request.question)
-                    self.metrics.record_classification(classification.label)
+            classification = await self.classifier.classify(request.question)
+            self.metrics.record_classification(classification.label)
                     logger.info(f"[ChatOrchestrator] Classification: {classification.label} ({classification.confidence:.2f})")
                 except Exception as e:
                     logger.warning(f"[ChatOrchestrator] Classification failed: {e}")
             
             # Получаем ПОЛНУЮ историю чата текущей сессии
-            chat_history = self.history_service.get_history_for_context(
-                request.case_id, session_id
-            )
-            
+                chat_history = self.history_service.get_history_for_context(
+                    request.case_id, session_id
+                )
+                
             # Создаём SimpleReActAgent с пользовательскими переключателями и session_id
             logger.info(
                 f"[ChatOrchestrator] Routing to SimpleReActAgent "
@@ -283,12 +283,12 @@ class ChatOrchestrator:
             )
             
             react_agent = SimpleReActAgent(
-                case_id=request.case_id,
+                    case_id=request.case_id,
                 db=self.db,
                 rag_service=self.rag_service,
-                current_user=request.current_user,
-                legal_research=request.legal_research,
-                deep_think=request.deep_think,
+                    current_user=request.current_user,
+                    legal_research=request.legal_research,
+                    deep_think=request.deep_think,
                 web_search=request.web_search,
                 chat_history=chat_history,
                 session_id=session_id  # Передаём session_id для уникального thread_id
@@ -296,7 +296,7 @@ class ChatOrchestrator:
             
             # Запускаем агента
             async for event in react_agent.handle(request.question):
-                yield event
+                    yield event
     
     def _extract_text_from_event(self, event: str) -> str:
         """Извлечь текст из SSE события"""

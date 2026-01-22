@@ -265,24 +265,44 @@ class SimpleReActAgent:
         - Сохранять состояние агента между вызовами
         - Восстанавливаться после ошибок
         - Поддерживать долгие сессии
+        
+        ВАЖНО: Системный промпт передаётся через state_modifier,
+        а не через messages при вызове агента!
         """
         try:
             from langgraph.prebuilt import create_react_agent
+            from langchain_core.messages import SystemMessage
             
-            # Создаём агента с checkpointer если доступен
+            # state_modifier добавляет системный промпт к сообщениям
+            def state_modifier(state):
+                """Добавить системный промпт в начало сообщений"""
+                messages = state.get("messages", [])
+                # Проверяем, есть ли уже системное сообщение
+                has_system = any(
+                    isinstance(m, SystemMessage) or 
+                    (hasattr(m, 'type') and m.type == 'system')
+                    for m in messages
+                )
+                if not has_system:
+                    return [SystemMessage(content=self.SYSTEM_PROMPT)] + list(messages)
+                return messages
+            
+            # Создаём агента с state_modifier и checkpointer
             if self.checkpointer:
                 agent = create_react_agent(
                     self.llm,
                     self.tools,
+                    state_modifier=state_modifier,
                     checkpointer=self.checkpointer
                 )
-                logger.info("[SimpleReActAgent] Created agent with MemorySaver checkpointer")
+                logger.info("[SimpleReActAgent] Created agent with state_modifier and MemorySaver checkpointer")
             else:
                 agent = create_react_agent(
                     self.llm,
-                    self.tools
+                    self.tools,
+                    state_modifier=state_modifier
                 )
-                logger.info("[SimpleReActAgent] Created agent without checkpointer")
+                logger.info("[SimpleReActAgent] Created agent with state_modifier (no checkpointer)")
             
             return agent
             
@@ -334,19 +354,18 @@ class SimpleReActAgent:
         Запустить ReAct агента с полной историей чата.
         
         Память работает так:
-        1. Системный промпт — инструкции для агента
+        1. Системный промпт — добавляется через state_modifier в _create_agent
         2. ВСЯ история чата (обработанная) — контекст разговора
         3. Текущий вопрос — что нужно сделать
         
         thread_id = case_id + session_id — уникальный идентификатор разговора
         """
-        from langchain_core.messages import HumanMessage, SystemMessage, AIMessage
+        from langchain_core.messages import HumanMessage, AIMessage
         
         try:
-            # Формируем сообщения с ПОЛНОЙ историей
-            messages = [
-                SystemMessage(content=self.SYSTEM_PROMPT)
-            ]
+            # Формируем сообщения БЕЗ системного промпта
+            # (он добавляется через state_modifier в _create_agent)
+            messages = []
             
             # Добавляем ВСЮ обработанную историю чата
             history_added = 0
@@ -369,6 +388,11 @@ class SimpleReActAgent:
             logger.info(
                 f"[SimpleReActAgent] Running with {history_added} history messages + current question"
             )
+            logger.debug(
+                f"[SimpleReActAgent] Question: {question[:100]}..., "
+                f"Total messages: {len(messages)}, "
+                f"Tools available: {len(self.tools)}"
+            )
             
             # Уникальный thread_id для сессии
             # Используем case_id + session_id если есть, иначе только case_id
@@ -383,6 +407,8 @@ class SimpleReActAgent:
             # Собираем ответ
             final_response = ""
             tool_calls_count = 0
+            all_messages = []
+            event_count = 0
             
             # Используем stream для получения промежуточных результатов
             async for event in self.agent.astream(
@@ -390,15 +416,24 @@ class SimpleReActAgent:
                 config=config,
                 stream_mode="values"
             ):
+                event_count += 1
+                logger.debug(f"[SimpleReActAgent] Event #{event_count}: keys={list(event.keys())}")
+                
                 # Получаем последнее сообщение
                 if "messages" in event:
-                    last_message = event["messages"][-1]
+                    all_messages = event["messages"]
+                    last_message = all_messages[-1]
+                    logger.debug(
+                        f"[SimpleReActAgent] Last message type: {type(last_message).__name__}, "
+                        f"has tool_calls: {hasattr(last_message, 'tool_calls') and bool(last_message.tool_calls)}, "
+                        f"content length: {len(getattr(last_message, 'content', '') or '')}"
+                    )
                     
                     # Если это AI message с tool_calls - показываем что агент думает
                     if hasattr(last_message, 'tool_calls') and last_message.tool_calls:
                         tool_calls_count += len(last_message.tool_calls)
                         for tc in last_message.tool_calls:
-                            tool_name = tc.get("name", "unknown")
+                            tool_name = tc.get("name", "unknown") if isinstance(tc, dict) else getattr(tc, 'name', 'unknown')
                             yield SSESerializer.reasoning(
                                 phase="tool_call",
                                 step=tool_calls_count,
@@ -408,22 +443,95 @@ class SimpleReActAgent:
                     
                     # Если это финальный ответ AI (без tool_calls)
                     elif hasattr(last_message, 'content') and last_message.content:
-                        if not hasattr(last_message, 'tool_calls') or not last_message.tool_calls:
+                        # Проверяем, что это действительно финальный ответ (не промежуточный)
+                        has_tool_calls = (
+                            hasattr(last_message, 'tool_calls') and 
+                            last_message.tool_calls and 
+                            len(last_message.tool_calls) > 0
+                        )
+                        if not has_tool_calls:
                             final_response = last_message.content
             
             # Если есть финальный ответ - отправляем
-            if final_response:
+            if final_response and len(final_response.strip()) > 10:
                 yield SSESerializer.text_delta(final_response)
                 logger.info(
                     f"[SimpleReActAgent] Completed with {tool_calls_count} tool calls, "
-                    f"thread_id={thread_id}"
+                    f"response length: {len(final_response)}, thread_id={thread_id}"
                 )
+            elif tool_calls_count == 0 and len(final_response.strip()) <= 10:
+                # Fallback: если агент не вызвал инструменты и дал короткий ответ,
+                # это может означать что GigaChat не поддерживает function calling
+                # Попробуем вызвать инструмент вручную для вопроса о документах
+                logger.warning(
+                    f"[SimpleReActAgent] Agent returned short response ({len(final_response)} chars) "
+                    f"without tool calls. Attempting manual tool call fallback."
+                )
+                
+                # Для вопросов о документах вызываем search_in_documents вручную
+                if any(keyword in question.lower() for keyword in ['документ', 'о чем', 'что в', 'расскажи']):
+                    yield SSESerializer.reasoning(
+                        phase="tool_call",
+                        step=1,
+                        total_steps=5,
+                        content="Вызываю: search_in_documents..."
+                    )
+                    
+                    # Вызываем инструмент вручную
+                    search_tool = next((t for t in self.tools if t.name == "search_in_documents"), None)
+                    if search_tool:
+                        try:
+                            # Формируем поисковый запрос из вопроса
+                            search_query = question
+                            if "о чем" in question.lower():
+                                search_query = "суть дело предмет содержание"
+                            
+                            tool_result = await search_tool.ainvoke({"query": search_query, "k": 50})
+                            
+                            # Формируем финальный ответ на основе результатов
+                            if tool_result and len(tool_result) > 50:
+                                # Используем LLM для формирования ответа на основе результатов
+                                from langchain_core.messages import HumanMessage
+                                followup_prompt = f"""На основе найденной информации ответь на вопрос пользователя.
+
+Вопрос: {question}
+
+Найденная информация:
+{tool_result[:5000]}
+
+Сформируй краткий, но информативный ответ на основе найденной информации."""
+                                
+                                followup_response = await self.llm.ainvoke([HumanMessage(content=followup_prompt)])
+                                if hasattr(followup_response, 'content') and followup_response.content:
+                                    final_response = followup_response.content
+                                    yield SSESerializer.text_delta(final_response)
+                                    logger.info(f"[SimpleReActAgent] Fallback completed, response length: {len(final_response)}")
+                                else:
+                                    yield SSESerializer.text_delta(tool_result[:2000])
+                            else:
+                                yield SSESerializer.text_delta(
+                                    "Не удалось найти информацию в документах. Попробуйте переформулировать вопрос."
+                                )
+                        except Exception as e:
+                            logger.error(f"[SimpleReActAgent] Fallback tool call failed: {e}", exc_info=True)
+                            yield SSESerializer.text_delta(
+                                "К сожалению, произошла ошибка при поиске информации. Попробуйте переформулировать вопрос."
+                            )
+                    else:
+                        yield SSESerializer.text_delta(
+                            "К сожалению, не удалось получить ответ. Попробуйте переформулировать вопрос."
+                        )
+                else:
+                    yield SSESerializer.text_delta(
+                        "К сожалению, не удалось получить ответ. Попробуйте переформулировать вопрос."
+                    )
+                logger.warning("[SimpleReActAgent] Used fallback response")
             else:
                 # Fallback - если агент не дал ответ
                 yield SSESerializer.text_delta(
                     "К сожалению, не удалось получить ответ. Попробуйте переформулировать вопрос."
                 )
-                logger.warning("[SimpleReActAgent] No final response from agent")
+                logger.warning(f"[SimpleReActAgent] No final response from agent, final_response length: {len(final_response)}")
                 
         except Exception as e:
             logger.error(f"[SimpleReActAgent] Agent execution error: {e}", exc_info=True)
@@ -436,12 +544,11 @@ class SimpleReActAgent:
         Returns:
             Ответ агента
         """
-        from langchain_core.messages import HumanMessage, SystemMessage, AIMessage
+        from langchain_core.messages import HumanMessage, AIMessage
         
         try:
-            messages = [
-                SystemMessage(content=self.SYSTEM_PROMPT)
-            ]
+            # Системный промпт добавляется через state_modifier
+            messages = []
             
             # Используем ВСЮ обработанную историю
             for msg in self.chat_history:

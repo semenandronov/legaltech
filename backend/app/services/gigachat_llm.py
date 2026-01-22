@@ -249,14 +249,33 @@ class ChatGigaChat(BaseChatModel):
                 raw_content = getattr(message, 'content', None)
                 content = str(raw_content) if raw_content is not None else ""
                 
-                # Логируем для диагностики
-                logger.debug(f"[GigaChat] Response content: {content[:200] if content else '(empty)'}")
+                # Детальное логирование для диагностики
+                logger.info(f"[GigaChat] Response content length: {len(content)}, preview: {content[:100] if content else '(empty)'}")
                 
-                # Проверяем, есть ли function calls
+                # Логируем все атрибуты message для диагностики
+                message_attrs = [attr for attr in dir(message) if not attr.startswith('_')]
+                logger.debug(f"[GigaChat] Message attributes: {message_attrs}")
+                
+                # Проверяем, есть ли function calls (разные варианты атрибутов)
                 function_calls = None
+                
+                # Вариант 1: function_calls
                 if hasattr(message, 'function_calls') and message.function_calls:
                     function_calls = message.function_calls
-                    logger.info(f"[GigaChat] Response has {len(function_calls)} function calls")
+                    logger.info(f"[GigaChat] Response has {len(function_calls)} function_calls")
+                
+                # Вариант 2: function_call (единственный)
+                elif hasattr(message, 'function_call') and message.function_call:
+                    function_calls = [message.function_call]
+                    logger.info(f"[GigaChat] Response has single function_call")
+                
+                # Вариант 3: tool_calls (новый формат)
+                elif hasattr(message, 'tool_calls') and message.tool_calls:
+                    function_calls = message.tool_calls
+                    logger.info(f"[GigaChat] Response has {len(function_calls)} tool_calls")
+                
+                if not function_calls:
+                    logger.warning(f"[GigaChat] No function calls in response. Functions were provided: {bool(self._functions)}")
                 
                 # Создаем LangChain message
                 ai_message = AIMessage(content=content)
