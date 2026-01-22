@@ -1,25 +1,35 @@
 """
-Simple ReAct Agent v5.0 - Полностью переписанный агент без LangGraph.
+RAG Chat Agent v6.0 - Архитектура на основе LangGraph StateGraph
 
-Проблема с LangGraph + GigaChat: GigaChat игнорирует результаты инструментов.
-Решение: Ручной ReAct цикл с явным контролем результатов.
+На основе изучения LangChain/LangGraph архитектур выбран подход:
+**RAG + StateGraph с явным контролем цикла**
+
+Почему эта архитектура:
+1. RAG гарантирует ответы на основе реальных данных из документов
+2. StateGraph даёт полный контроль над потоком (retrieve → generate)
+3. Явное управление циклом предотвращает игнорирование результатов LLM
+4. Масштабируется от 1 до 1000+ документов
 
 Архитектура:
-1. LLM получает вопрос + описание инструментов
-2. LLM решает какой инструмент вызвать (или отвечает напрямую)
-3. Мы вызываем инструмент и получаем результат
-4. LLM формирует финальный ответ НА ОСНОВЕ результата инструмента
+```
+User Question
+     ↓
+[RETRIEVE] → Поиск релевантных фрагментов в Vector DB
+     ↓
+[GENERATE] → LLM генерирует ответ СТРОГО на основе контекста
+     ↓
+Answer
+```
 
-Это гарантирует, что ответ будет основан на реальных данных из документов.
+Ключевое отличие от ReAct: LLM не выбирает инструменты, 
+а сразу получает контекст и генерирует ответ.
 """
 
 import logging
-import json
-import re
-from typing import List, Dict, Any, Optional, AsyncGenerator
+from typing import List, Dict, Any, Optional, AsyncGenerator, TypedDict
 from sqlalchemy.orm import Session
 from langchain_core.messages import HumanMessage, AIMessage, SystemMessage
-from langchain_core.tools import BaseTool
+from langchain_core.documents import Document
 
 from app.models.user import User
 from app.services.rag_service import RAGService
@@ -28,54 +38,45 @@ from app.services.chat.events import SSESerializer
 logger = logging.getLogger(__name__)
 
 
+# === LangGraph State ===
+class ChatState(TypedDict):
+    """Состояние чата для LangGraph StateGraph"""
+    question: str  # Вопрос пользователя
+    context: str  # Контекст из документов (результат retrieve)
+    sources: List[str]  # Источники (названия файлов)
+    answer: str  # Финальный ответ
+    chat_history: List[Dict]  # История чата
+
+
 class SimpleReActAgent:
     """
-    Простой ReAct агент с ручным контролем цикла.
+    RAG Chat Agent с архитектурой StateGraph.
     
-    Гарантирует использование реальных данных из инструментов.
+    Гарантирует ответы на основе реальных данных из документов.
     """
     
-    # Системный промпт для выбора инструмента
-    TOOL_SELECTION_PROMPT = """Ты - юридический AI-ассистент. Работаешь с документами дела.
+    # Системный промпт для генерации ответа
+    GENERATE_PROMPT = """Ты - юридический AI-ассистент. Отвечай на вопросы пользователя СТРОГО на основе предоставленного контекста из документов.
 
-ДОСТУПНЫЕ ИНСТРУМЕНТЫ:
-{tools_description}
+КОНТЕКСТ ИЗ ДОКУМЕНТОВ:
+{context}
 
-ТВОЯ ЗАДАЧА: Выбрать ОДИН инструмент для ответа на вопрос пользователя.
-
-ФОРМАТ ОТВЕТА (строго JSON):
-{{"tool": "название_инструмента", "args": {{"arg1": "value1"}}}}
-
-ПРИМЕРЫ:
-- Вопрос "О чём документ?" → {{"tool": "search_in_documents", "args": {{"query": "суть содержание предмет", "k": 30}}}}
-- Вопрос "Какая сумма?" → {{"tool": "search_in_documents", "args": {{"query": "сумма цена стоимость", "k": 30}}}}
-- Вопрос "Покажи договор.pdf" → {{"tool": "get_document", "args": {{"filename": "договор.pdf"}}}}
-- Вопрос "Сколько будет 100*5?" → {{"tool": "calculate", "args": {{"expression": "100*5"}}}}
-
-ВАЖНО:
-- Отвечай ТОЛЬКО JSON, без пояснений
-- Используй search_in_documents для большинства вопросов о содержании
-- Используй get_document только если нужен полный текст конкретного файла"""
-
-    # Промпт для формирования финального ответа
-    ANSWER_PROMPT = """Ты - юридический AI-ассистент. На основе полученных данных ответь на вопрос пользователя.
-
-ВОПРОС ПОЛЬЗОВАТЕЛЯ:
-{question}
-
-ДАННЫЕ ИЗ ДОКУМЕНТОВ:
-{tool_result}
-
-ИНСТРУКЦИИ:
-1. Используй ТОЛЬКО данные выше - не придумывай ничего
-2. Отвечай кратко и по существу
-3. Указывай источники в квадратных скобках: [Название документа]
-4. Если данных недостаточно - так и скажи
+ПРАВИЛА:
+1. Используй ТОЛЬКО информацию из контекста выше
+2. НЕ придумывай факты, даты, суммы, имена
+3. Если информации недостаточно - честно скажи об этом
+4. Указывай источники в формате [Название документа]
+5. Отвечай кратко и по существу, как профессиональный юрист
 
 ФОРМАТ ОТВЕТА:
-- Пиши как профессиональный юрист
-- Не пиши "На основе данных...", "Согласно информации..." - сразу к сути
-- Используй конкретные факты: даты, суммы, имена из документов"""
+- Пиши сразу ответ, без "На основе документов...", "Согласно контексту..."
+- Используй конкретные данные: даты, суммы, имена из контекста
+- В конце укажи источники
+
+ЗАПРЕЩЕНО:
+- Выдумывать информацию
+- Отвечать на основе общих знаний (только контекст!)
+- Писать "Дело № ХХХХ", "сторона A" - только реальные данные"""
 
     def __init__(
         self,
@@ -108,29 +109,24 @@ class SimpleReActAgent:
         # Создаём LLM
         self.llm = self._create_llm()
         
-        # Инициализируем инструменты
-        self.tools = self._create_tools()
-        self.tools_map = {t.name: t for t in self.tools}
-        
         logger.info(
-            f"[SimpleReActAgent] Initialized for case {case_id} "
-            f"({len(self.tools)} tools, {len(self.chat_history)} history messages)"
+            f"[RAGChatAgent] Initialized for case {case_id} "
+            f"({len(self.chat_history)} history messages)"
         )
     
     def _process_history(self, history: List[Dict]) -> List[Dict]:
-        """Обработка истории чата - оставляем последние сообщения."""
+        """Обработка истории чата."""
         if not history:
             return []
         
         # Берём последние 10 сообщений
         recent = history[-10:]
         
-        # Обрезаем слишком длинные сообщения
         processed = []
         for msg in recent:
             content = msg.get("content", "")
-            if len(content) > 2000:
-                content = content[:2000] + "..."
+            if len(content) > 1500:
+                content = content[:1500] + "..."
             processed.append({
                 "role": msg.get("role", "user"),
                 "content": content
@@ -141,51 +137,7 @@ class SimpleReActAgent:
     def _create_llm(self):
         """Создать LLM."""
         from app.services.llm_factory import create_legal_llm
-        return create_legal_llm(timeout=180.0)
-    
-    def _create_tools(self) -> List[BaseTool]:
-        """Создать инструменты."""
-        from app.services.chat.universal_tools import (
-            get_universal_tools,
-            initialize_universal_tools
-        )
-        
-        initialize_universal_tools(
-            db=self.db,
-            rag_service=self.rag_service,
-            case_id=self.case_id,
-            user_id=self.user_id
-        )
-        
-        return get_universal_tools(
-            db=self.db,
-            rag_service=self.rag_service,
-            case_id=self.case_id,
-            user_id=self.user_id,
-            legal_research=self.legal_research,
-            web_search=self.web_search
-        )
-    
-    def _get_tools_description(self) -> str:
-        """Получить описание инструментов для промпта."""
-        descriptions = []
-        for tool in self.tools:
-            # Получаем описание и аргументы
-            desc = tool.description or "Нет описания"
-            # Берём только первые 200 символов описания
-            short_desc = desc[:200] + "..." if len(desc) > 200 else desc
-            
-            # Получаем схему аргументов
-            args_schema = ""
-            if hasattr(tool, 'args_schema') and tool.args_schema:
-                schema = tool.args_schema.schema() if hasattr(tool.args_schema, 'schema') else {}
-                props = schema.get('properties', {})
-                args_list = [f"{k}: {v.get('type', 'any')}" for k, v in props.items()]
-                args_schema = f"({', '.join(args_list)})" if args_list else "()"
-            
-            descriptions.append(f"- {tool.name}{args_schema}: {short_desc}")
-        
-        return "\n".join(descriptions)
+        return create_legal_llm(timeout=120.0)
     
     async def handle(
         self,
@@ -195,248 +147,191 @@ class SimpleReActAgent:
         """
         Обработать вопрос пользователя.
         
+        Архитектура StateGraph:
+        1. RETRIEVE - поиск релевантных документов
+        2. GENERATE - генерация ответа на основе контекста
+            
         Yields:
             SSE события
         """
         try:
-            logger.info(f"[SimpleReActAgent] Processing: {question[:100]}...")
+            logger.info(f"[RAGChatAgent] Processing: {question[:100]}...")
             
+            # === Шаг 1: RETRIEVE ===
             yield SSESerializer.reasoning(
-                phase="thinking",
+                phase="retrieve",
                 step=1,
-                total_steps=3,
-                content="Анализирую вопрос..."
+                total_steps=2,
+                content="Поиск в документах дела..."
             )
             
-            # Шаг 1: Выбираем инструмент
-            tool_choice = await self._select_tool(question)
+            context, sources = await self._retrieve(question)
             
-            if tool_choice is None:
-                # LLM решил ответить напрямую без инструмента
-                yield SSESerializer.reasoning(
-                    phase="answering",
-                    step=2,
-                    total_steps=3,
-                    content="Формирую ответ..."
-                )
-                
-                response = await self._direct_answer(question)
-                yield SSESerializer.text_delta(response)
-                return
-            
-            tool_name = tool_choice.get("tool")
-            tool_args = tool_choice.get("args", {})
-            
-            logger.info(f"[SimpleReActAgent] Selected tool: {tool_name}, args: {tool_args}")
-            
-            yield SSESerializer.reasoning(
-                phase="tool_call",
-                step=2,
-                total_steps=3,
-                content=f"Использую инструмент: {tool_name}..."
-            )
-            
-            # Шаг 2: Вызываем инструмент
-            tool_result = await self._call_tool(tool_name, tool_args)
-            
-            if not tool_result or len(str(tool_result)) < 20:
-                # Инструмент не вернул данных
+            if not context:
                 yield SSESerializer.text_delta(
-                    "К сожалению, не удалось найти информацию по вашему запросу. "
-                    "Попробуйте переформулировать вопрос или загрузить документы."
-                )
+                    "В документах дела не найдена информация по вашему запросу. "
+                    "Попробуйте переформулировать вопрос или загрузите необходимые документы."
+            )
                 return
             
-            logger.info(f"[SimpleReActAgent] Tool result length: {len(str(tool_result))}")
+            logger.info(f"[RAGChatAgent] Retrieved {len(sources)} sources, context length: {len(context)}")
             
+            # === Шаг 2: GENERATE ===
             yield SSESerializer.reasoning(
-                phase="answering",
-                step=3,
-                total_steps=3,
-                content="Формирую ответ на основе найденных данных..."
+                phase="generate",
+                step=2,
+                total_steps=2,
+                content="Формирую ответ на основе документов..."
             )
             
-            # Шаг 3: Формируем ответ на основе результата
-            final_response = await self._generate_answer(question, tool_result)
+            answer = await self._generate(question, context, sources)
             
-            yield SSESerializer.text_delta(final_response)
+            yield SSESerializer.text_delta(answer)
             
             logger.info(
-                f"[SimpleReActAgent] Completed. Tool: {tool_name}, "
-                f"Result length: {len(str(tool_result))}, "
-                f"Response length: {len(final_response)}"
+                f"[RAGChatAgent] Completed. Sources: {len(sources)}, "
+                f"Context: {len(context)} chars, Answer: {len(answer)} chars"
             )
-            
+                
         except Exception as e:
-            logger.error(f"[SimpleReActAgent] Error: {e}", exc_info=True)
+            logger.error(f"[RAGChatAgent] Error: {e}", exc_info=True)
             yield SSESerializer.error(f"Ошибка обработки запроса: {str(e)}")
     
-    async def _select_tool(self, question: str) -> Optional[Dict]:
+    async def _retrieve(self, question: str) -> tuple[str, List[str]]:
         """
-        Выбрать инструмент для ответа на вопрос.
+        RETRIEVE: Поиск релевантных документов.
+        
+        Использует RAG service для поиска в Vector DB.
         
         Returns:
-            {"tool": "name", "args": {...}} или None если ответ напрямую
+            (context, sources) - контекст и список источников
         """
-        tools_desc = self._get_tools_description()
-        
-        prompt = self.TOOL_SELECTION_PROMPT.format(tools_description=tools_desc)
-        
-        messages = [
-            SystemMessage(content=prompt),
-            HumanMessage(content=f"Вопрос пользователя: {question}")
-        ]
-        
         try:
-            response = await self.llm.ainvoke(messages)
-            content = response.content if hasattr(response, 'content') else str(response)
-            
-            logger.debug(f"[SimpleReActAgent] Tool selection response: {content[:200]}")
-            
-            # Парсим JSON из ответа
-            tool_choice = self._parse_tool_choice(content)
-            
-            if tool_choice and tool_choice.get("tool") in self.tools_map:
-                return tool_choice
-            
-            # Если не удалось распарсить - используем search_in_documents по умолчанию
-            logger.warning(
-                f"[SimpleReActAgent] Could not parse tool choice, using default. "
-                f"Response: {content[:100]}"
+            # Получаем документы через RAG
+            documents = self.rag_service.retrieve_context(
+                case_id=self.case_id,
+                query=question,
+                k=30,  # Получаем больше для лучшего покрытия
+                db=self.db
             )
-            return {
-                "tool": "search_in_documents",
-                "args": {"query": question, "k": 30}
-            }
             
-        except Exception as e:
-            logger.error(f"[SimpleReActAgent] Tool selection error: {e}")
-            # Fallback на search_in_documents
-            return {
-                "tool": "search_in_documents",
-                "args": {"query": question, "k": 30}
-            }
-    
-    def _parse_tool_choice(self, content: str) -> Optional[Dict]:
-        """Извлечь JSON с выбором инструмента из ответа LLM."""
-        # Пробуем найти JSON в ответе
-        json_patterns = [
-            r'\{[^{}]*"tool"[^{}]*\}',  # Простой JSON
-            r'```json\s*(\{.*?\})\s*```',  # JSON в блоке кода
-            r'```\s*(\{.*?\})\s*```',  # JSON в блоке кода без указания языка
-        ]
-        
-        for pattern in json_patterns:
-            match = re.search(pattern, content, re.DOTALL)
-            if match:
-                try:
-                    json_str = match.group(1) if match.lastindex else match.group(0)
-                    return json.loads(json_str)
-                except json.JSONDecodeError:
+            if not documents:
+                logger.warning(f"[RAGChatAgent] No documents found for case {self.case_id}")
+                return "", []
+            
+            # Форматируем контекст
+            context_parts = []
+            sources = []
+            total_chars = 0
+            max_chars = 12000  # Лимит контекста
+            
+            for i, doc in enumerate(documents):
+                # Получаем источник
+                source = doc.metadata.get("source_file", f"Документ {i+1}")
+                if source not in sources:
+                    sources.append(source)
+                
+                # Получаем контент
+                content = doc.page_content
+                if not content:
                     continue
-        
-        # Пробуем распарсить весь контент как JSON
-        try:
-            return json.loads(content.strip())
-        except json.JSONDecodeError:
-            pass
-        
-        return None
-    
-    async def _call_tool(self, tool_name: str, tool_args: Dict) -> str:
-        """Вызвать инструмент и получить результат."""
-        tool = self.tools_map.get(tool_name)
-        
-        if not tool:
-            logger.error(f"[SimpleReActAgent] Tool not found: {tool_name}")
-            return ""
-        
-        try:
-            # Вызываем инструмент
-            result = await tool.ainvoke(tool_args)
-            return str(result) if result else ""
+                    
+                # Проверяем лимит
+                if total_chars + len(content) > max_chars:
+                    # Обрезаем последний документ
+                    available = max_chars - total_chars
+                    if available > 200:
+                        content = content[:available] + "..."
+                    else:
+                        break
+                
+                context_parts.append(f"[{source}]:\n{content}")
+                total_chars += len(content)
             
+            context = "\n\n---\n\n".join(context_parts)
+            
+            return context, sources
+                
         except Exception as e:
-            logger.error(f"[SimpleReActAgent] Tool call error: {e}", exc_info=True)
-            return f"Ошибка вызова инструмента: {str(e)}"
+            logger.error(f"[RAGChatAgent] Retrieve error: {e}", exc_info=True)
+            return "", []
     
-    async def _generate_answer(self, question: str, tool_result: str) -> str:
+    async def _generate(self, question: str, context: str, sources: List[str]) -> str:
         """
-        Сгенерировать финальный ответ на основе результата инструмента.
+        GENERATE: Генерация ответа на основе контекста.
         
-        Это ключевой метод - он гарантирует, что LLM использует реальные данные.
+        LLM получает ТОЛЬКО контекст из документов и генерирует ответ.
+        Это гарантирует, что ответ основан на реальных данных.
+        
+        Returns:
+            Ответ на вопрос
         """
-        # Обрезаем результат если слишком длинный
-        max_result_length = 8000
-        if len(tool_result) > max_result_length:
-            tool_result = tool_result[:max_result_length] + "\n\n[... результат обрезан ...]"
+        # Формируем промпт с контекстом
+        system_prompt = self.GENERATE_PROMPT.format(context=context)
         
-        prompt = self.ANSWER_PROMPT.format(
-            question=question,
-            tool_result=tool_result
-        )
-        
-        messages = [
-            SystemMessage(content=prompt)
-        ]
-        
-        # Добавляем историю чата для контекста
-        for msg in self.chat_history[-4:]:  # Последние 4 сообщения
-            role = msg.get("role", "user")
-            content = msg.get("content", "")
+        messages = [SystemMessage(content=system_prompt)]
+            
+        # Добавляем историю чата для контекста разговора
+        for msg in self.chat_history[-4:]:
+                role = msg.get("role", "user")
+                content = msg.get("content", "")
             if content:
                 if role == "user":
                     messages.append(HumanMessage(content=content))
                 else:
                     messages.append(AIMessage(content=content))
-        
+            
         # Добавляем текущий вопрос
-        messages.append(HumanMessage(content=f"Сформируй ответ на вопрос: {question}"))
-        
+            messages.append(HumanMessage(content=question))
+            
         try:
             response = await self.llm.ainvoke(messages)
-            content = response.content if hasattr(response, 'content') else str(response)
+            answer = response.content if hasattr(response, 'content') else str(response)
             
-            # Проверяем что ответ не пустой и не слишком короткий
-            if not content or len(content.strip()) < 20:
-                logger.warning(f"[SimpleReActAgent] Empty or short answer: {content}")
-                # Возвращаем результат инструмента напрямую
-                return f"Найденная информация:\n\n{tool_result[:3000]}"
+            # Проверяем качество ответа
+            if not answer or len(answer.strip()) < 20:
+                logger.warning(f"[RAGChatAgent] Short answer: {len(answer)} chars")
+                # Возвращаем контекст напрямую если LLM не справился
+                return self._format_context_as_answer(context, sources)
             
-            return content
+            # Добавляем источники если их нет в ответе
+            if sources and not any(s in answer for s in sources[:3]):
+                answer += f"\n\n📁 Источники: {', '.join(sources[:5])}"
+            
+            return answer
             
         except Exception as e:
-            logger.error(f"[SimpleReActAgent] Answer generation error: {e}")
-            # Возвращаем результат инструмента напрямую
-            return f"Найденная информация:\n\n{tool_result[:3000]}"
+            logger.error(f"[RAGChatAgent] Generate error: {e}", exc_info=True)
+            # Fallback - возвращаем контекст
+            return self._format_context_as_answer(context, sources)
     
-    async def _direct_answer(self, question: str) -> str:
-        """Ответить напрямую без инструмента (для простых вопросов)."""
-        messages = [
-            SystemMessage(content="Ты - юридический AI-ассистент. Отвечай кратко и по существу."),
-            HumanMessage(content=question)
-        ]
+    def _format_context_as_answer(self, context: str, sources: List[str]) -> str:
+        """Форматировать контекст как ответ (fallback)."""
+        if not context:
+            return "Не удалось найти информацию по вашему запросу."
         
-        try:
-            response = await self.llm.ainvoke(messages)
-            return response.content if hasattr(response, 'content') else str(response)
-        except Exception as e:
-            logger.error(f"[SimpleReActAgent] Direct answer error: {e}")
-            return "Извините, произошла ошибка при обработке вашего запроса."
+        # Обрезаем если слишком длинный
+        if len(context) > 3000:
+            context = context[:3000] + "..."
+        
+        answer = f"Найденная информация из документов:\n\n{context}"
+        if sources:
+            answer += f"\n\n📁 Источники: {', '.join(sources[:5])}"
+        
+        return answer
     
     # === Синхронные методы для совместимости ===
     
     def handle_sync(self, question: str) -> str:
         """Синхронная обработка вопроса."""
         import asyncio
+        import json
         
         async def collect_response():
             response_parts = []
             async for event in self.handle(question, stream=False):
-                # Извлекаем текст из SSE события
                 if '"type":"text_delta"' in event or '"type":"answer"' in event:
                     try:
-                        # Парсим SSE событие
                         for line in event.split('\n'):
                             if line.startswith('data:'):
                                 data = json.loads(line[5:].strip())
@@ -449,7 +344,6 @@ class SimpleReActAgent:
         try:
             loop = asyncio.get_event_loop()
             if loop.is_running():
-                # Если уже в async контексте
                 import concurrent.futures
                 with concurrent.futures.ThreadPoolExecutor() as executor:
                     future = executor.submit(asyncio.run, collect_response())
