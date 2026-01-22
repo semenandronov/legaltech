@@ -266,27 +266,29 @@ class SimpleReActAgent:
         - Восстанавливаться после ошибок
         - Поддерживать долгие сессии
         
-        ВАЖНО: Системный промпт передаётся через messages при вызове агента,
-        а не через state_modifier (как было раньше и работало).
+        ВАЖНО: Системный промпт передаётся через state_modifier как СТРОКА.
+        Это правильный способ для LangGraph create_react_agent.
         """
         try:
             from langgraph.prebuilt import create_react_agent
             
-            # Создаём агента с checkpointer если доступен
-            # НЕ используем state_modifier - системный промпт добавляется в messages
+            # Создаём агента с системным промптом через state_modifier
+            # state_modifier принимает строку - системный промпт
             if self.checkpointer:
                 agent = create_react_agent(
                     self.llm,
                     self.tools,
+                    state_modifier=self.SYSTEM_PROMPT,
                     checkpointer=self.checkpointer
                 )
-                logger.info("[SimpleReActAgent] Created agent with MemorySaver checkpointer")
+                logger.info("[SimpleReActAgent] Created agent with state_modifier and MemorySaver checkpointer")
             else:
                 agent = create_react_agent(
                     self.llm,
-                    self.tools
+                    self.tools,
+                    state_modifier=self.SYSTEM_PROMPT
                 )
-                logger.info("[SimpleReActAgent] Created agent without checkpointer")
+                logger.info("[SimpleReActAgent] Created agent with state_modifier (no checkpointer)")
             
             return agent
             
@@ -338,20 +340,18 @@ class SimpleReActAgent:
         Запустить ReAct агента с полной историей чата.
         
         Память работает так:
-        1. Системный промпт — инструкции для агента
+        1. Системный промпт — передаётся через state_modifier в _create_agent
         2. ВСЯ история чата (обработанная) — контекст разговора
         3. Текущий вопрос — что нужно сделать
         
         thread_id = case_id + session_id — уникальный идентификатор разговора
         """
-        from langchain_core.messages import HumanMessage, SystemMessage, AIMessage
+        from langchain_core.messages import HumanMessage, AIMessage
         
         try:
-            # Формируем сообщения с ПОЛНОЙ историей
-            # Системный промпт добавляется в начало (как было раньше и работало)
-            messages = [
-                SystemMessage(content=self.SYSTEM_PROMPT)
-            ]
+            # Формируем сообщения БЕЗ системного промпта
+            # (он передаётся через state_modifier в _create_agent)
+            messages = []
             
             # Добавляем ВСЮ обработанную историю чата
             history_added = 0
@@ -530,12 +530,11 @@ class SimpleReActAgent:
         Returns:
             Ответ агента
         """
-        from langchain_core.messages import HumanMessage, SystemMessage, AIMessage
+        from langchain_core.messages import HumanMessage, AIMessage
         
         try:
-            messages = [
-                SystemMessage(content=self.SYSTEM_PROMPT)
-            ]
+            # Системный промпт передаётся через state_modifier в _create_agent
+            messages = []
             
             # Используем ВСЮ обработанную историю
             for msg in self.chat_history:
