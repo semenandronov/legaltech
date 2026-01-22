@@ -199,6 +199,99 @@ def search_in_documents(query: str, k: int = 20) -> str:
 
 
 @tool
+def analyze_all_documents(question: str, task_type: str = "answer") -> str:
+    """
+    Глубокий анализ ВСЕХ документов дела с использованием Map-Reduce.
+    
+    КОГДА ИСПОЛЬЗОВАТЬ:
+    - Вопрос требует анализа ВСЕХ документов ("о чём все документы?")
+    - Нужен полный обзор дела
+    - Много документов (>10) и нужен комплексный ответ
+    - Сравнение или извлечение из множества документов
+    
+    НЕ ИСПОЛЬЗОВАТЬ:
+    - Для простых вопросов (используй search_in_documents)
+    - Когда нужен конкретный фрагмент
+    
+    Args:
+        question: Вопрос или задача для анализа
+        task_type: Тип задачи:
+            - "answer" - ответить на вопрос по всем документам
+            - "summarize" - сделать обзор всех документов
+            - "extract" - извлечь факты из всех документов
+    
+    Returns:
+        Комплексный ответ на основе анализа всех документов
+    """
+    global _rag_service, _case_id, _db
+    
+    if not _rag_service or not _case_id:
+        return "Ошибка: сервис не инициализирован"
+    
+    try:
+        import asyncio
+        from app.services.map_reduce_service import MapReduceService
+        from app.models.case import File as FileModel
+        from langchain_core.documents import Document
+        
+        # Получаем все документы дела
+        files = _db.query(FileModel).filter(
+            FileModel.case_id == _case_id
+        ).all()
+        
+        if not files:
+            return "В деле нет загруженных документов."
+        
+        # Собираем документы для обработки
+        documents = []
+        for f in files:
+            if f.original_text:
+                documents.append(Document(
+                    page_content=f.original_text,
+                    metadata={"source_file": f.filename, "file_id": str(f.id)}
+                ))
+        
+        if not documents:
+            return "Документы найдены, но текст не извлечён."
+        
+        logger.info(f"[UniversalTools] analyze_all_documents: {len(documents)} документов для анализа")
+        
+        # Запускаем Map-Reduce
+        service = MapReduceService()
+        
+        # Запускаем асинхронно
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        try:
+            result = loop.run_until_complete(
+                service.process(documents, question, task_type)
+            )
+        finally:
+            loop.close()
+        
+        # Форматируем ответ
+        sources_str = ", ".join(result.sources[:5])
+        if len(result.sources) > 5:
+            sources_str += f" и ещё {len(result.sources) - 5}"
+        
+        response = f"{result.answer}\n\n"
+        response += f"📊 Проанализировано {result.documents_processed} документов "
+        response += f"(стратегия: {result.strategy_used.value})\n"
+        response += f"📁 Источники: {sources_str}"
+        
+        logger.info(
+            f"[UniversalTools] analyze_all_documents: завершено, "
+            f"стратегия={result.strategy_used.value}, документов={result.documents_processed}"
+        )
+        
+        return response
+        
+    except Exception as e:
+        logger.error(f"[UniversalTools] analyze_all_documents error: {e}", exc_info=True)
+        return f"Ошибка анализа документов: {str(e)}"
+
+
+@tool
 def extract_structured_data(entity_types: str = "dates,amounts,persons,organizations") -> str:
     """
     Извлечь структурированные данные из документов дела.
@@ -905,6 +998,7 @@ def get_universal_tools(
         # Блок 1: Документы
         get_document,
         search_in_documents,
+        analyze_all_documents,  # Map-Reduce для глубокого анализа
         extract_structured_data,
         compare_documents,
         
