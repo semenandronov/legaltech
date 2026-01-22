@@ -104,12 +104,12 @@ class ChatOrchestrator:
             self.classifier = classifier
         else:
             try:
-            from app.services.llm_factory import create_llm
-            from app.services.external_sources.cache_manager import get_cache_manager
-            
-            llm = create_llm(temperature=0.0, max_tokens=500)
-            cache = get_cache_manager()
-            self.classifier = RequestClassifier(llm=llm, cache=cache)
+                from app.services.llm_factory import create_llm
+                from app.services.external_sources.cache_manager import get_cache_manager
+                
+                llm = create_llm(temperature=0.0, max_tokens=500)
+                cache = get_cache_manager()
+                self.classifier = RequestClassifier(llm=llm, cache=cache)
             except Exception as e:
                 logger.warning(f"[ChatOrchestrator] Classifier init failed: {e}, will skip classification")
                 self.classifier = None
