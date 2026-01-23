@@ -58,6 +58,12 @@ from app.services.langchain_agents.nodes import (
     summary_chain_node,
 )
 
+# Legacy для обратной совместимости
+from app.services.langchain_agents.legacy_stubs import (
+    AgentCoordinator,
+    AnalysisState,
+)
+
 __all__ = [
     # Агенты
     "ChatReActAgent",
@@ -84,4 +90,8 @@ __all__ = [
     "discrepancy_risk_node",
     "create_summary_chain",
     "summary_chain_node",
+    
+    # Legacy для обратной совместимости
+    "AgentCoordinator",
+    "AnalysisState",
 ]
