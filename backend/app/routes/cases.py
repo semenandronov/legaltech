@@ -382,7 +382,7 @@ async def get_workflow_templates(
         raise HTTPException(status_code=404, detail="Дело не найдено")
     
     try:
-        from app.services.langchain_agents.workflow_templates import list_workflow_templates
+        from app.services.langchain_agents.legacy_stubs import list_workflow_templates
         
         templates = list_workflow_templates()
         return [template.dict() for template in templates]

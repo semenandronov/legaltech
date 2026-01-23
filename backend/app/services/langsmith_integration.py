@@ -130,15 +130,15 @@ def trace_agent(
     agent_name: str,
     agent_role: Optional[str] = None
 ) -> Callable:
-        """
+    """
     Decorator for tracing agent execution.
     
     Adds agent-specific metadata to traces.
-        
-        Args:
+    
+    Args:
         agent_name: Name of the agent
         agent_role: Role of the agent in the system
-        
+    
     Returns:
         Decorated function with agent tracing
     """
@@ -223,15 +223,15 @@ def trace_tool(
 
 
 def add_run_metadata(metadata: Dict[str, Any]) -> bool:
-        """
+    """
     Add metadata to the current run.
-        
-        Args:
+    
+    Args:
         metadata: Metadata to add
-        
+    
     Returns:
         True if successful, False otherwise
-        """
+    """
     if not LANGSMITH_ENABLED:
         return False
     
@@ -265,7 +265,7 @@ def add_run_tags(tags: List[str]) -> bool:
         if run_tree:
             run_tree.tags = list(set(run_tree.tags or []) | set(tags))
             return True
-        except Exception as e:
+    except Exception as e:
         logger.debug(f"Could not add run tags: {e}")
     
     return False
@@ -392,11 +392,11 @@ REASONING: [обоснование]"""
             score_match = re.search(r'SCORE:\s*(\d+)', content)
             score = int(score_match.group(1)) / 10.0 if score_match else None
             
-                return {
+            return {
                 "score": score,
                 "reasoning": content,
                 "evaluator": "groundedness"
-                }
+            }
             
         except Exception as e:
             logger.error(f"Groundedness evaluation error: {e}")

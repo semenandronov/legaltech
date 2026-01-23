@@ -165,7 +165,7 @@ class EditorHandler:
         Генерация ответа через ChatAgent
         """
         try:
-            from app.services.langchain_agents.chat_agent import ChatAgent
+            from app.services.langchain_agents.legacy_stubs import ChatAgent
             
             chat_agent = ChatAgent(
                 case_id="",

@@ -466,7 +466,7 @@ async def classify_documents(
         raise HTTPException(status_code=404, detail="Дело не найдено")
     
     # Run classification using agent system
-    from app.services.langchain_agents.coordinator import AgentCoordinator
+    from app.services.langchain_agents.legacy_stubs import AgentCoordinator
     from app.services.rag_service import RAGService
     from app.services.document_processor import DocumentProcessor
     
@@ -476,7 +476,7 @@ async def classify_documents(
         coordinator = AgentCoordinator(db, rag_service, document_processor)
         
         # Create state for classification
-        from app.services.langchain_agents.state import AnalysisState
+        from app.services.langchain_agents.legacy_stubs import AnalysisState
         state: AnalysisState = {
             "case_id": case_id,
             "messages": [],
@@ -494,7 +494,7 @@ async def classify_documents(
         }
         
         # Run classifier node
-        from app.services.langchain_agents.document_classifier_node import document_classifier_agent_node
+        from app.services.langchain_agents.legacy_stubs import document_classifier_agent_node
         result_state = document_classifier_agent_node(state, db, rag_service, document_processor, request.file_id)
         
         return {
@@ -571,7 +571,7 @@ async def extract_entities(
         raise HTTPException(status_code=404, detail="Дело не найдено")
     
     # Run entity extraction using agent system
-    from app.services.langchain_agents.coordinator import AgentCoordinator
+    from app.services.langchain_agents.legacy_stubs import AgentCoordinator
     from app.services.rag_service import RAGService
     from app.services.document_processor import DocumentProcessor
     
@@ -580,7 +580,7 @@ async def extract_entities(
         document_processor = DocumentProcessor()
         
         # Create state for entity extraction
-        from app.services.langchain_agents.state import AnalysisState
+        from app.services.langchain_agents.legacy_stubs import AnalysisState
         state: AnalysisState = {
             "case_id": case_id,
             "messages": [],
@@ -598,7 +598,7 @@ async def extract_entities(
         }
         
         # Run entity extraction node
-        from app.services.langchain_agents.entity_extraction_node import entity_extraction_agent_node
+        from app.services.langchain_agents.legacy_stubs import entity_extraction_agent_node
         result_state = entity_extraction_agent_node(state, db, rag_service, document_processor, request.file_id)
         
         return {
@@ -705,7 +705,7 @@ async def check_privilege(
         raise HTTPException(status_code=404, detail="Файл не найден")
     
     # Run privilege check using agent system
-    from app.services.langchain_agents.coordinator import AgentCoordinator
+    from app.services.langchain_agents.legacy_stubs import AgentCoordinator
     from app.services.rag_service import RAGService
     from app.services.document_processor import DocumentProcessor
     
@@ -714,7 +714,7 @@ async def check_privilege(
         document_processor = DocumentProcessor()
         
         # Create state for privilege check
-        from app.services.langchain_agents.state import AnalysisState
+        from app.services.langchain_agents.legacy_stubs import AnalysisState
         state: AnalysisState = {
             "case_id": case_id,
             "messages": [],
@@ -732,7 +732,7 @@ async def check_privilege(
         }
         
         # Run privilege check node
-        from app.services.langchain_agents.privilege_check_node import privilege_check_agent_node
+        from app.services.langchain_agents.legacy_stubs import privilege_check_agent_node
         result_state = privilege_check_agent_node(state, db, rag_service, document_processor, request.file_id)
         
         privilege_result = result_state.get("privilege_result")
@@ -1382,7 +1382,7 @@ async def get_cost_statistics(
         raise HTTPException(status_code=404, detail="Дело не найдено")
     
     try:
-        from app.services.langchain_agents.metrics_collector import MetricsCollector
+        from app.services.langchain_agents.legacy_stubs import MetricsCollector
         
         metrics_collector = MetricsCollector(db)
         cost_stats = metrics_collector.get_cost_statistics(case_id)

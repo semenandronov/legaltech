@@ -183,7 +183,7 @@ class RequestClassifier:
         
         # Получаем список доступных агентов
         try:
-            from app.services.langchain_agents.planning_tools import AVAILABLE_ANALYSES
+            from app.services.langchain_agents.legacy_stubs import AVAILABLE_ANALYSES
             agents_list = []
             for agent_name, agent_info in AVAILABLE_ANALYSES.items():
                 description = agent_info["description"]

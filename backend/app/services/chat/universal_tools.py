@@ -489,7 +489,7 @@ def search_garant(query: str, doc_type: str = "all", max_results: int = 10) -> s
         Найденные нормы права с цитатами и ссылками
     """
     try:
-        from app.services.langchain_agents.garant_tools import search_garant as _search_garant
+        from app.services.langchain_agents.utils import search_garant as _search_garant
         
         logger.info(f"[UniversalTools] search_garant: {query[:50]}... (type={doc_type})")
         result = _search_garant.invoke({
@@ -524,7 +524,7 @@ def get_law_article(article_ref: str) -> str:
         Полный текст статьи с комментариями
     """
     try:
-        from app.services.langchain_agents.garant_tools import get_garant_full_text
+        from app.services.langchain_agents.utils import get_garant_full_text_tool as get_garant_full_text
         
         logger.info(f"[UniversalTools] get_law_article: {article_ref}")
         result = get_garant_full_text.invoke({"doc_id": article_ref})

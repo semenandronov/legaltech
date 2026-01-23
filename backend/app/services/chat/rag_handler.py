@@ -160,7 +160,7 @@ class RAGHandler:
                 return "", []
             
             logger.info(f"[RAGHandler] Searching ГАРАНТ for: {question[:100]}…")
-            from app.services.langchain_agents.garant_tools import get_garant_source
+            from app.services.langchain_agents.utils import get_garant_source
             
             garant_source = get_garant_source()
             if not garant_source or not garant_source.api_key:
@@ -389,7 +389,7 @@ class RAGHandler:
             SSE события
         """
         try:
-            from app.services.langchain_agents.chat_agent import ChatAgent
+            from app.services.langchain_agents.legacy_stubs import ChatAgent
             
             # Формируем enhanced question
             enhanced_question = question

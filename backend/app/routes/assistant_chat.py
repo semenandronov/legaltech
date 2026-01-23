@@ -17,9 +17,8 @@ from app.services.llm_factory import create_llm, create_legal_llm
 from app.services.external_sources.web_research_service import get_web_research_service
 from app.services.external_sources.source_router import get_source_router, initialize_source_router
 from app.services.external_sources.cache_manager import get_cache_manager
-from app.services.langchain_agents.pipeline_service import PipelineService
-from app.services.langchain_agents.planning_agent import PlanningAgent
-from app.services.langchain_agents.advanced_planning_agent import AdvancedPlanningAgent
+from app.services.langchain_agents.legacy_stubs import PipelineService, PlanningAgent, AdvancedPlanningAgent
+from app.services.langchain_agents.chat_graph_service import ChatGraphService, get_chat_graph_service
 from app.services.thinking_service import get_thinking_service, ThinkingStep
 from app.config import config
 import json
@@ -155,7 +154,7 @@ async def classify_request(question: str, llm) -> bool:
     from langchain_core.messages import SystemMessage, HumanMessage, AIMessage
     
     # Получаем список доступных агентов для промпта
-    from app.services.langchain_agents.planning_tools import AVAILABLE_ANALYSES
+    from app.services.langchain_agents.legacy_stubs import AVAILABLE_ANALYSES
     
     agents_list = []
     for agent_name, agent_info in AVAILABLE_ANALYSES.items():
@@ -428,8 +427,7 @@ async def stream_chat_response(
                 logger.warning(f"[Draft Mode] Error saving messages to DB: {save_error}")
             
             try:
-                from app.services.langchain_agents.template_graph import create_template_graph
-                from app.services.langchain_agents.template_state import TemplateState
+                from app.services.langchain_agents.legacy_stubs import create_template_graph, TemplateState
                 from app.services.document_editor_service import DocumentEditorService
                 from app.services.llm_factory import create_legal_llm
                 from langchain_core.messages import HumanMessage
@@ -746,7 +744,7 @@ async def stream_chat_response(
         if legal_research:
             try:
                 logger.info(f"[ГАРАНТ] Legal research enabled, searching in ГАРАНТ for: {question[:100]}...")
-                from app.services.langchain_agents.garant_tools import get_garant_source
+                from app.services.langchain_agents.legacy_stubs import get_garant_source
                 
                 # Получаем GarantSource напрямую для структурированных результатов
                 garant_source = get_garant_source()
@@ -811,7 +809,7 @@ async def stream_chat_response(
                         logger.warning(f"[ГАРАНТ] No results from structured search")
                 else:
                     # Fallback на старый метод если GarantSource недоступен
-                    from app.services.langchain_agents.garant_tools import _garant_search_sync
+                    from app.services.langchain_agents.legacy_stubs import _garant_search_sync
                     garant_results = _garant_search_sync(query=question, doc_type="all", max_results=5)
                     
                     if garant_results and not garant_results.startswith("Ошибка") and not garant_results.startswith("Не найдено"):
@@ -1023,7 +1021,7 @@ async def stream_chat_response(
                     yield f"data: {json.dumps({'textDelta': chunk}, ensure_ascii=False)}\n\n"
             else:
                 # Импортируем ChatAgent только если нужен обычный режим
-                from app.services.langchain_agents.chat_agent import ChatAgent
+                from app.services.langchain_agents.legacy_stubs import ChatAgent
                 logger.info(f"[ChatAgent] Initializing ChatAgent for question: {question[:100]}... (legal_research={legal_research})")
                 chat_agent = ChatAgent(
                     case_id=case_id,
@@ -1442,24 +1440,20 @@ async def assistant_chat(
         
         question = last_message.get("content", "")
         
-        # Use direct RAG stream_chat_response - no agents, simple question answering
+        # Use ChatGraphService for streaming responses
+        chat_service = get_chat_graph_service(db, rag_service, document_processor)
+        
         return StreamingResponse(
-            stream_chat_response(
+            chat_service.stream_response(
                 case_id=case_id,
                 question=question,
-                db=db,
-                current_user=current_user,
-                background_tasks=background_tasks,
-                web_search=web_search,
-                legal_research=legal_research,
+                user=current_user,
                 deep_think=deep_think,
+                legal_research=legal_research,
                 draft_mode=draft_mode,
                 document_context=document_context,
                 document_id=document_id,
-                selected_text=selected_text,
-                template_file_id=template_file_id,
-                template_file_content=template_file_content,
-                attached_file_ids=attached_file_ids
+                selected_text=selected_text
             ),
             media_type="text/event-stream",
             headers={
@@ -1688,7 +1682,7 @@ async def submit_human_feedback(
     (e.g., approval requests, clarification questions, etc.)
     """
     try:
-        from app.services.langchain_agents.human_feedback import get_feedback_service
+        from app.services.langchain_agents.legacy_stubs import get_feedback_service
         
         # Get feedback service
         feedback_service = get_feedback_service(db)
@@ -1709,7 +1703,7 @@ async def submit_human_feedback(
         
         # Log feedback submission
         if request.case_id:
-            from app.services.langchain_agents.audit_logger import get_audit_logger
+            from app.services.langchain_agents.legacy_stubs import get_audit_logger
             audit_logger = get_audit_logger()
             audit_logger.log_human_feedback(
                 request_id=request.request_id,
@@ -1758,7 +1752,7 @@ async def resume_graph_execution(
     и возобновляет выполнение графа через Command(resume=...)
     """
     try:
-        from app.services.langchain_agents.coordinator import AgentCoordinator
+        from app.services.langchain_agents.legacy_stubs import AgentCoordinator
         from app.services.rag_service import RAGService
         from app.services.document_processor import DocumentProcessor
         

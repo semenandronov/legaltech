@@ -283,7 +283,7 @@ async def chat(
             )
             
             # Проверяем валидность плана
-            from app.services.langchain_agents.planning_validator import PlanningValidator
+            from app.services.langchain_agents.legacy_stubs import PlanningValidator
             validator = PlanningValidator()
             validation_result = validator.validate_plan(plan, request.case_id)
             

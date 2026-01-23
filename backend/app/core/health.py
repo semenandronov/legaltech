@@ -233,7 +233,7 @@ class HealthChecker:
         """Проверить ГАРАНТ API"""
         start = time.time()
         try:
-            from app.services.langchain_agents.garant_tools import get_garant_source
+            from app.services.langchain_agents.utils import get_garant_source
             
             garant = get_garant_source()
             

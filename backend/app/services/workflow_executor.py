@@ -4,9 +4,14 @@ from sqlalchemy.orm import Session
 from app.models.workflow_template import WorkflowTemplate
 from app.services.rag_service import RAGService
 from app.services.document_processor import DocumentProcessor
-from app.services.langchain_agents.graph import create_analysis_graph
-from app.services.langchain_agents.state import AnalysisState, create_initial_state
-from app.services.langchain_agents.workflow_graph_builder import WorkflowGraphBuilder
+from app.services.langchain_agents.legacy_stubs import AnalysisState
+# Deprecated imports removed - use new architecture
+# from app.services.langchain_agents.graph import create_analysis_graph
+# from app.services.langchain_agents.workflow_graph_builder import WorkflowGraphBuilder
+
+def create_initial_state(case_id: str, **kwargs) -> AnalysisState:
+    """Create initial state for analysis."""
+    return AnalysisState(case_id=case_id, **kwargs)
 import logging
 import json
 

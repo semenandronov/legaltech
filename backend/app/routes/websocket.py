@@ -1,6 +1,6 @@
 """WebSocket routes for streaming analysis"""
 from fastapi import WebSocket, WebSocketDisconnect, APIRouter, Depends, Query
-from app.services.langchain_agents.coordinator import AgentCoordinator
+from app.services.langchain_agents.legacy_stubs import AgentCoordinator
 from app.services.rag_service import RAGService
 from app.services.document_processor import DocumentProcessor
 from app.services.tabular_review_service import TabularReviewService
@@ -78,7 +78,7 @@ async def stream_analysis(
         }
         
         # Initialize state
-        from app.services.langchain_agents.state import AnalysisState
+        from app.services.langchain_agents.legacy_stubs import AnalysisState
         initial_state: AnalysisState = {
             "case_id": case_id,
             "messages": [],

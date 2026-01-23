@@ -1852,8 +1852,7 @@ async def create_from_description(
         # Импортируем сервисы здесь, чтобы избежать циклических импортов
         from app.services.rag_service import RAGService
         from app.services.document_processor import DocumentProcessor
-        from app.services.langchain_agents.advanced_planning_agent import AdvancedPlanningAgent
-        from app.services.langchain_agents.deliver_node import deliver_node
+        from app.services.langchain_agents.legacy_stubs import AdvancedPlanningAgent, deliver_node
         from app.models.tabular_review import TabularReview
 
         rag_service = RAGService()

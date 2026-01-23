@@ -112,7 +112,7 @@ class AgentHandler:
             PlanInfo или None
         """
         try:
-            from app.services.langchain_agents.advanced_planning_agent import AdvancedPlanningAgent
+            from app.services.langchain_agents.legacy_stubs import AdvancedPlanningAgent
             
             planning_agent = AdvancedPlanningAgent(
                 case_id=case_id,

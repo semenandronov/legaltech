@@ -7,7 +7,7 @@ from app.utils.auth import get_current_user
 from app.models.user import User
 from app.models.analysis import AnalysisPlan
 from app.services.analysis_service import AnalysisService
-from app.services.langchain_agents import AgentCoordinator
+from app.services.langchain_agents.legacy_stubs import AgentCoordinator
 from app.services.rag_service import RAGService
 from app.services.document_processor import DocumentProcessor
 from typing import AsyncGenerator
@@ -105,13 +105,8 @@ async def stream_plan_execution(
                                         }
                                         
                                         # Send table_created event
-                                        yield f"data: {json.dumps({
-                                            'type': 'table_created',
-                                            'table_id': table_id,
-                                            'case_id': plan.case_id,
-                                            'analysis_type': table_key,
-                                            'table_data': preview_data
-                                        }, ensure_ascii=False)}\n\n"
+                                        event_data = {'type': 'table_created', 'table_id': table_id, 'case_id': plan.case_id, 'analysis_type': table_key, 'table_data': preview_data}
+                                        yield f"data: {json.dumps(event_data, ensure_ascii=False)}\n\n"
                                         last_table_ids.add(table_id)
                                         logger.info(f"[PlanExecutionStream] Sent table_created event for {table_key}: {table_id}")
                 except Exception as table_error:
@@ -163,13 +158,8 @@ async def stream_plan_execution(
                                             }
                                             
                                             # Send table_created event
-                                            yield f"data: {json.dumps({
-                                                'type': 'table_created',
-                                                'table_id': table_id,
-                                                'case_id': plan.case_id,
-                                                'analysis_type': table_key,
-                                                'table_data': preview_data
-                                            }, ensure_ascii=False)}\n\n"
+                                            event_data = {'type': 'table_created', 'table_id': table_id, 'case_id': plan.case_id, 'analysis_type': table_key, 'table_data': preview_data}
+                                            yield f"data: {json.dumps(event_data, ensure_ascii=False)}\n\n"
                                             last_table_ids.add(table_id)
                                             logger.info(f"[PlanExecutionStream] Sent final table_created event for {table_key}: {table_id}")
                     except Exception as table_error:

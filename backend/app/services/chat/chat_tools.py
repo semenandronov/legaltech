@@ -649,7 +649,7 @@ def build_timeline() -> str:
 def get_garant_tools():
     """Получить инструменты GARANT (если legal_research=True)"""
     try:
-        from app.services.langchain_agents.garant_tools import search_garant, get_garant_full_text
+        from app.services.langchain_agents.utils import search_garant, get_garant_full_text_tool as get_garant_full_text
         return [search_garant, get_garant_full_text]
     except ImportError:
         logger.warning("[ChatTools] GARANT tools not available")

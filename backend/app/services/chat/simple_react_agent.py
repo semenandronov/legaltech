@@ -270,19 +270,19 @@ class SimpleReActAgent:
         system_prompt = self.GENERATE_PROMPT.format(context=context)
         
         messages = [SystemMessage(content=system_prompt)]
-            
+        
         # Добавляем историю чата для контекста разговора
         for msg in self.chat_history[-4:]:
-                role = msg.get("role", "user")
-                content = msg.get("content", "")
+            role = msg.get("role", "user")
+            content = msg.get("content", "")
             if content:
                 if role == "user":
                     messages.append(HumanMessage(content=content))
                 else:
                     messages.append(AIMessage(content=content))
-            
+        
         # Добавляем текущий вопрос
-            messages.append(HumanMessage(content=question))
+        messages.append(HumanMessage(content=question))
             
         try:
             response = await self.llm.ainvoke(messages)

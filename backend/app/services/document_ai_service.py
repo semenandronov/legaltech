@@ -83,8 +83,7 @@ class DocumentAIService:
             Dictionary with generated contract text
         """
         try:
-            from app.services.langchain_agents.template_graph import create_template_graph
-            from app.services.langchain_agents.template_state import TemplateState
+            from app.services.langchain_agents.legacy_stubs import create_template_graph, TemplateState
             from app.services.document_editor_service import DocumentEditorService
             
             # Создаем граф для работы с шаблонами
@@ -569,8 +568,7 @@ class DocumentAIService:
         # Если это запрос на создание документа из шаблона
         if is_create_request:
             try:
-                from app.services.langchain_agents.template_graph import create_template_graph
-                from app.services.langchain_agents.template_state import TemplateState
+                from app.services.langchain_agents.legacy_stubs import create_template_graph, TemplateState
                 from app.services.document_editor_service import DocumentEditorService
                 
                 # Создаем граф для работы с шаблонами

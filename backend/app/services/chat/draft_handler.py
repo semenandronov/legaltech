@@ -69,8 +69,7 @@ class DraftHandler:
             document_title = await self._extract_document_title(question)
             
             # Создаём и запускаем template graph
-            from app.services.langchain_agents.template_graph import create_template_graph
-            from app.services.langchain_agents.template_state import TemplateState
+            from app.services.langchain_agents.legacy_stubs import create_template_graph, TemplateState
             
             graph = create_template_graph(self.db)
             
