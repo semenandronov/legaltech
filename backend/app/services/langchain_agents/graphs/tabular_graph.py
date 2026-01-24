@@ -1,15 +1,44 @@
 """
 TabularGraph - LangGraph граф для страницы Tabular Review.
 
-Граф определяет flow для TabularReviewPage:
-1. Валидация колонок и файлов
-2. Map: параллельное извлечение из документов
-3. Reduce: объединение результатов
-4. HITL через interrupt() для ячеек с низкой уверенностью
-5. Сохранение результатов
+# РОЛЬ
+Граф для извлечения структурированных данных из документов в табличную форму
+с поддержкой Human-in-the-Loop для ячеек с низкой уверенностью.
 
-Архитектура:
-START -> validate -> map_extract -> reduce_merge -> check_confidence -> [clarify_interrupt | save] -> END
+# ПАТТЕРН: Map-Reduce
+- Map: Параллельное извлечение данных из каждого документа
+- Reduce: Объединение и валидация результатов
+- HITL: Запрос уточнений для ячеек с confidence < threshold
+
+# АРХИТЕКТУРА ГРАФА
+```
+START
+  ↓
+validate (проверка колонок и файлов)
+  ↓
+map_extract (параллельное извлечение)
+  ↓
+reduce_merge (объединение результатов)
+  ↓
+check_confidence (проверка уверенности)
+  ↓
+  ├── confidence >= threshold → save → END
+  │
+  └── confidence < threshold → clarify_interrupt (HITL)
+                                    ↓
+                               [user response]
+                                    ↓
+                                  save → END
+```
+
+# КОГДА ИСПОЛЬЗОВАТЬ
+- Извлечение данных из множества документов в таблицу
+- Нужна оценка уверенности для каждой ячейки
+- Важен контроль качества через HITL
+
+# КОГДА НЕ ИСПОЛЬЗОВАТЬ
+- Простой поиск информации → используй ChatGraph
+- Один документ, один вопрос → используй rag_search
 """
 from typing import TypedDict, Literal, Optional, List, Dict, Any, Annotated
 from langgraph.graph import StateGraph, END, START

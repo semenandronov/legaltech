@@ -1,10 +1,32 @@
 """
 ChatGraphService - сервис для интеграции ChatGraph в API endpoints.
 
-Предоставляет унифицированный интерфейс для:
-- Streaming ответов через ChatGraph
-- Обработку разных режимов (normal, deep_think, garant, draft)
-- Форматирование событий для assistant-ui
+# РОЛЬ
+Сервис-адаптер между API endpoints и ChatGraph.
+Обеспечивает унифицированный интерфейс для работы с чатом.
+
+# ФУНКЦИИ
+- Streaming ответов через ChatGraph с форматированием для assistant-ui
+- Маршрутизация по режимам (normal, deep_think, garant, draft)
+- Сохранение истории сообщений в БД
+- Кэширование экземпляра графа
+
+# КОГДА ИСПОЛЬЗОВАТЬ
+- Обработка запросов на /api/assistant-chat
+- Streaming ответов в реальном времени
+- Интеграция с assistant-ui frontend
+
+# ПАТТЕРН ИСПОЛЬЗОВАНИЯ
+```python
+service = get_chat_graph_service(db, rag_service)
+async for event in service.stream_response(
+    case_id="...",
+    question="...",
+    user=current_user,
+    deep_think=True
+):
+    yield event
+```
 """
 from typing import AsyncGenerator, Optional, List, Dict, Any, Literal
 from sqlalchemy.orm import Session
