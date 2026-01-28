@@ -9,14 +9,15 @@ nixPkgs = ["python312", "nodejs-20_x"]
 cmds = [
   "pip install --upgrade pip",
   "pip install -r backend/requirements.txt",
-  "cd frontend && npm install --legacy-peer-deps"
+  "npm install --legacy-peer-deps --prefix frontend"
 ]
 
 [phases.build]
 cmds = [
-  "cd frontend && npm run type-check && npm run build"
+  "npm run type-check --prefix frontend",
+  "npm run build --prefix frontend"
 ]
 
 [start]
-cmd = "cd backend && uvicorn app.main:app --host 0.0.0.0 --port $PORT"
+cmd = "bash -c 'cd backend && uvicorn app.main:app --host 0.0.0.0 --port $PORT'"
 
