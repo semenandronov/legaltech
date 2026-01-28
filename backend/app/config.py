@@ -52,6 +52,42 @@ class Config:
                 pass  # Logger may not be configured yet
             raise ValueError("DATABASE_URL не установлена. Установите переменную окружения DATABASE_URL в настройках приложения.")
         
+        # Try to extract connection string from psql command if present
+        import re
+        if db_url.strip().startswith("psql"):
+            # Try to extract postgresql:// URL from psql command
+            # Pattern: psql 'postgresql://...' or psql "postgresql://..."
+            match = re.search(r"['\"](postgresql://[^'\"]+)['\"]", db_url)
+            if match:
+                extracted_url = match.group(1)
+                warning_msg = (
+                    f"\n⚠️  Обнаружена команда psql в DATABASE_URL. Извлечена строка подключения.\n"
+                    f"Рекомендуется использовать только строку подключения без команды psql.\n"
+                    f"Используется: {extracted_url[:50]}...\n"
+                )
+                print(warning_msg, file=sys.stderr)
+                try:
+                    logger.warning(warning_msg)
+                except:
+                    pass
+                db_url = extracted_url
+            else:
+                # Try to find postgresql:// anywhere in the string
+                match = re.search(r"(postgresql://[^\s'\"]+)", db_url)
+                if match:
+                    extracted_url = match.group(1)
+                    warning_msg = (
+                        f"\n⚠️  Обнаружена команда psql в DATABASE_URL. Извлечена строка подключения.\n"
+                        f"Рекомендуется использовать только строку подключения без команды psql.\n"
+                        f"Используется: {extracted_url[:50]}...\n"
+                    )
+                    print(warning_msg, file=sys.stderr)
+                    try:
+                        logger.warning(warning_msg)
+                    except:
+                        pass
+                    db_url = extracted_url
+        
         # Validate DATABASE_URL format (must start with postgresql:// or postgres://)
         if not (db_url.startswith("postgresql://") or db_url.startswith("postgres://")):
             error_msg = (
@@ -64,18 +100,21 @@ class Config:
                 "ПРИМЕРЫ:\n"
                 "postgresql://myuser:mypassword@db.example.com:5432/mydatabase\n"
                 "postgresql://user:pass@localhost:5432/dbname\n\n"
-                "ВНИМАНИЕ: Убедитесь, что вы не перепутали DATABASE_URL с другими переменными:\n"
-                "- DATABASE_URL - строка подключения к PostgreSQL\n"
-                "- YANDEX_API_KEY - API ключ Yandex Cloud\n"
-                "- GIGACHAT_CREDENTIALS - учетные данные GigaChat\n"
-                "- И т.д.\n\n"
+                "ВНИМАНИЕ:\n"
+                "- Если вы скопировали команду psql, используйте только строку подключения внутри кавычек\n"
+                "- Убедитесь, что вы не перепутали DATABASE_URL с другими переменными:\n"
+                "  - DATABASE_URL - строка подключения к PostgreSQL\n"
+                "  - YANDEX_API_KEY - API ключ Yandex Cloud\n"
+                "  - GIGACHAT_CREDENTIALS - учетные данные GigaChat\n\n"
                 "РЕШЕНИЕ:\n"
                 "1. Откройте панель Timeweb Cloud\n"
                 "2. Перейдите в App Platform -> Ваше приложение\n"
                 "3. Откройте раздел 'Переменные окружения'\n"
                 "4. Найдите переменную DATABASE_URL\n"
-                "5. Убедитесь, что значение начинается с 'postgresql://'\n"
-                "6. Если это не так, получите правильную строку подключения из настроек базы данных PostgreSQL\n"
+                "5. Если значение содержит команду 'psql', извлеките только строку подключения:\n"
+                "   Было: psql 'postgresql://user:pass@host:port/db'\n"
+                "   Должно быть: postgresql://user:pass@host:port/db\n"
+                "6. Убедитесь, что значение начинается с 'postgresql://'\n"
                 "="*80 + "\n"
             )
             print(error_msg, file=sys.stderr)
@@ -84,6 +123,10 @@ class Config:
             except:
                 pass
             raise ValueError(f"Неверный формат DATABASE_URL. Ожидается строка вида 'postgresql://user:password@host:port/database', получено: {db_url[:100]}...")
+        
+        # Update DATABASE_URL if it was extracted from psql command
+        if db_url != os.getenv("DATABASE_URL", Config._default_db_url):
+            Config.DATABASE_URL = db_url
         
         # Check for localhost in production
         is_production = os.getenv("ENVIRONMENT", "").lower() == "production" or os.getenv("PORT") is not None
