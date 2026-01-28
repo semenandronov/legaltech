@@ -31,10 +31,48 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
-# Initialize services
-rag_service = RAGService()
-document_processor = DocumentProcessor()
-memory_service = MemoryService()
+# Lazy initialization for services (to allow app startup without Yandex credentials)
+_rag_service = None
+_document_processor = None
+_memory_service = None
+
+
+def get_rag_service() -> RAGService:
+    """Get or initialize RAG service (lazy initialization)"""
+    global _rag_service
+    if _rag_service is None:
+        try:
+            _rag_service = RAGService()
+        except Exception as e:
+            logger.error(f"Failed to initialize RAG service: {e}")
+            raise HTTPException(
+                status_code=503,
+                detail=f"RAG service недоступен: {str(e)}. Убедитесь, что YANDEX_API_KEY или YANDEX_IAM_TOKEN настроены."
+            )
+    return _rag_service
+
+
+def get_document_processor() -> DocumentProcessor:
+    """Get or initialize document processor (lazy initialization)"""
+    global _document_processor
+    if _document_processor is None:
+        try:
+            _document_processor = DocumentProcessor()
+        except Exception as e:
+            logger.error(f"Failed to initialize document processor: {e}")
+            raise HTTPException(
+                status_code=503,
+                detail=f"Document processor недоступен: {str(e)}. Убедитесь, что YANDEX_API_KEY или YANDEX_IAM_TOKEN настроены."
+            )
+    return _document_processor
+
+
+def get_memory_service() -> MemoryService:
+    """Get or initialize memory service (lazy initialization)"""
+    global _memory_service
+    if _memory_service is None:
+        _memory_service = MemoryService()
+    return _memory_service
 
 # Initialize classification cache
 _classification_cache = None
@@ -825,6 +863,7 @@ async def stream_chat_response(
         rag_docs = []  # Инициализируем для использования в citations
         try:
             # Берем релевантный контекст по вопросу
+            rag_service = get_rag_service()  # Lazy initialization
             rag_docs = rag_service.retrieve_context(
                 case_id=case_id,
                 query=question,
@@ -971,6 +1010,7 @@ async def stream_chat_response(
             # Если нет режима редактора и нет спец. режимов — используем структурированные citations
             use_structured_citations = not document_context and not selected_text and not legal_research
             if use_structured_citations and rag_docs:
+                rag_service = get_rag_service()  # Lazy initialization
                 structured_result = rag_service.generate_with_structured_citations(
                     query=question,
                     documents=rag_docs,
@@ -1023,6 +1063,7 @@ async def stream_chat_response(
                 # Импортируем ChatAgent только если нужен обычный режим
                 from app.services.langchain_agents.legacy_stubs import ChatAgent
                 logger.info(f"[ChatAgent] Initializing ChatAgent for question: {question[:100]}... (legal_research={legal_research})")
+                rag_service = get_rag_service()  # Lazy initialization
                 chat_agent = ChatAgent(
                     case_id=case_id,
                     rag_service=rag_service,
@@ -1116,6 +1157,7 @@ async def stream_chat_response(
             if legal_research and len(full_response_text) < 8000:
                 try:
                     from app.services.external_sources.source_router import initialize_source_router
+                    rag_service = get_rag_service()  # Lazy initialization
                     source_router = initialize_source_router(rag_service=rag_service, register_official_sources=True)
                     garant_source = source_router._sources.get("garant") if source_router else None
                     if garant_source:
@@ -1273,6 +1315,7 @@ async def stream_chat_response(
                     
                     # Генерируем структурированные citations
                     try:
+                        rag_service = get_rag_service()  # Lazy initialization
                         structured_result = rag_service.generate_with_structured_citations(
                             query=question,
                             documents=rag_docs,
@@ -1441,6 +1484,8 @@ async def assistant_chat(
         question = last_message.get("content", "")
         
         # Use ChatGraphService for streaming responses
+        rag_service = get_rag_service()  # Lazy initialization
+        document_processor = get_document_processor()  # Lazy initialization
         chat_service = get_chat_graph_service(db, rag_service, document_processor)
         
         return StreamingResponse(
@@ -1769,8 +1814,8 @@ async def resume_graph_execution(
             )
         
         # Создаем coordinator для resume
-        rag_service = RAGService()
-        document_processor = DocumentProcessor()
+        rag_service = get_rag_service()  # Lazy initialization
+        document_processor = get_document_processor()  # Lazy initialization
         coordinator = AgentCoordinator(db, rag_service, document_processor)
         
         # Создаем step_callback для streaming (если нужен)

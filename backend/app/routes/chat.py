@@ -24,10 +24,48 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
-# Initialize RAG service and document processor
-rag_service = RAGService()
-document_processor = DocumentProcessor()
-memory_service = MemoryService()
+# Lazy initialization for services (to allow app startup without Yandex credentials)
+_rag_service = None
+_document_processor = None
+_memory_service = None
+
+
+def get_rag_service() -> RAGService:
+    """Get or initialize RAG service (lazy initialization)"""
+    global _rag_service
+    if _rag_service is None:
+        try:
+            _rag_service = RAGService()
+        except Exception as e:
+            logger.error(f"Failed to initialize RAG service: {e}")
+            raise HTTPException(
+                status_code=503,
+                detail=f"RAG service недоступен: {str(e)}. Убедитесь, что YANDEX_API_KEY или YANDEX_IAM_TOKEN настроены."
+            )
+    return _rag_service
+
+
+def get_document_processor() -> DocumentProcessor:
+    """Get or initialize document processor (lazy initialization)"""
+    global _document_processor
+    if _document_processor is None:
+        try:
+            _document_processor = DocumentProcessor()
+        except Exception as e:
+            logger.error(f"Failed to initialize document processor: {e}")
+            raise HTTPException(
+                status_code=503,
+                detail=f"Document processor недоступен: {str(e)}. Убедитесь, что YANDEX_API_KEY или YANDEX_IAM_TOKEN настроены."
+            )
+    return _document_processor
+
+
+def get_memory_service() -> MemoryService:
+    """Get or initialize memory service (lazy initialization)"""
+    global _memory_service
+    if _memory_service is None:
+        _memory_service = MemoryService()
+    return _memory_service
 
 
 class ChatRequest(BaseModel):
@@ -550,7 +588,7 @@ async def chat(
     # Load history into memory (optional - don't fail if memory is not available)
     if chat_history:
         try:
-            memory_service.load_history_into_memory(
+            get_memory_service().load_history_into_memory(
                 request.case_id,
                 chat_history,
                 memory_type="summary"
@@ -578,6 +616,7 @@ async def chat(
         from app.config import config
         use_citation_first = config.CITATION_FIRST_ENABLED
         
+        rag_service = get_rag_service()  # Lazy initialization
         if config.RAG_USE_STRUCTURED_OUTPUT:
             # Use structured output with mandatory citations
             structured_response, sources = rag_service.generate_with_sources_structured(
@@ -602,7 +641,7 @@ async def chat(
         
         # Save context to memory (optional - don't fail if memory is not available)
         try:
-            memory_service.save_context(
+            get_memory_service().save_context(
                 request.case_id,
                 request.question,
                 answer,
