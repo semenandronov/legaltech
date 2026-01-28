@@ -13,10 +13,70 @@ class Config:
     """Application configuration"""
     
     # Database
+    _default_db_url = "postgresql://user:password@localhost:5432/legal_ai_vault"
     DATABASE_URL: str = os.getenv(
         "DATABASE_URL", 
-        "postgresql://user:password@localhost:5432/legal_ai_vault"
+        _default_db_url
     )
+    
+    # Validate DATABASE_URL on initialization
+    @staticmethod
+    def _validate_database_url():
+        """Validate that DATABASE_URL is set and not using default value"""
+        db_url = os.getenv("DATABASE_URL", Config._default_db_url)
+        
+        # Always print to stderr for visibility (works even if logger not configured)
+        import sys
+        
+        if db_url == Config._default_db_url:
+            error_msg = (
+                "\n" + "="*80 + "\n"
+                "❌ КРИТИЧЕСКАЯ ОШИБКА: DATABASE_URL не установлена!\n"
+                "="*80 + "\n"
+                "Приложение пытается использовать значение по умолчанию: localhost:5432\n"
+                "Это не будет работать в облачном окружении (Timeweb App Platform).\n\n"
+                "РЕШЕНИЕ:\n"
+                "1. Откройте панель Timeweb Cloud\n"
+                "2. Перейдите в App Platform -> Ваше приложение\n"
+                "3. Откройте раздел 'Переменные окружения'\n"
+                "4. Добавьте переменную:\n"
+                "   Имя: DATABASE_URL\n"
+                "   Значение: postgresql://user:password@host:port/database\n"
+                "5. Сохраните изменения (приложение перезапустится автоматически)\n"
+                "="*80 + "\n"
+            )
+            print(error_msg, file=sys.stderr)
+            try:
+                logger.error(error_msg)
+            except:
+                pass  # Logger may not be configured yet
+            raise ValueError("DATABASE_URL не установлена. Установите переменную окружения DATABASE_URL в настройках приложения.")
+        
+        # Check for localhost in production
+        is_production = os.getenv("ENVIRONMENT", "").lower() == "production" or os.getenv("PORT") is not None
+        if is_production and ("localhost" in db_url or "127.0.0.1" in db_url):
+            warning_msg = (
+                f"\n⚠️  ПРЕДУПРЕЖДЕНИЕ: DATABASE_URL содержит localhost/127.0.0.1\n"
+                f"Это может не работать в облачном окружении.\n"
+                f"URL (без пароля): {db_url.split('@')[0] if '@' in db_url else db_url[:50]}@***\n"
+            )
+            print(warning_msg, file=sys.stderr)
+            try:
+                logger.warning(warning_msg)
+            except:
+                pass
+        
+        # Log success (mask password)
+        url_parts = db_url.split("@")
+        if len(url_parts) > 1:
+            success_msg = f"✅ DATABASE_URL установлена: {url_parts[0]}@***"
+        else:
+            success_msg = f"✅ DATABASE_URL установлена: {db_url[:50]}..."
+        print(success_msg, file=sys.stderr)
+        try:
+            logger.info(success_msg)
+        except:
+            pass
     
     # Vector Store: Only pgvector is supported
     # VECTOR_STORE_TYPE removed - using pgvector only
@@ -150,3 +210,12 @@ class Config:
 
 # Create config instance
 config = Config()
+
+# Validate DATABASE_URL on module import
+try:
+    Config._validate_database_url()
+except ValueError as e:
+    # In production, we want to fail fast if DATABASE_URL is not set
+    import sys
+    print(str(e), file=sys.stderr)
+    sys.exit(1)
