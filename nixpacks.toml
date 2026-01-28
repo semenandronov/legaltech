@@ -19,5 +19,5 @@ cmds = [
 ]
 
 [start]
-cmd = "bash -c 'if [ -d backend ]; then cd backend && uvicorn app.main:app --host 0.0.0.0 --port $PORT; else export PYTHONPATH=\"$PWD:$PYTHONPATH\" && uvicorn backend.app.main:app --host 0.0.0.0 --port $PORT; fi'"
+cmd = "bash -c 'for dir in /app/backend /app ./backend backend; do if [ -d \"$dir\" ] && [ -f \"$dir/app/main.py\" ]; then cd \"$dir\" && exec uvicorn app.main:app --host 0.0.0.0 --port $PORT; fi; done; echo \"Error: backend directory not found\" && exit 1'"
 
