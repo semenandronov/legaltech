@@ -20,10 +20,49 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
-# Initialize services
-rag_service = RAGService()
-document_processor = DocumentProcessor()
-iterative_rag = IterativeRAGService(rag_service)
+# Lazy initialization for services (to allow app startup without Yandex credentials)
+_rag_service = None
+_document_processor = None
+_iterative_rag = None
+
+
+def get_rag_service() -> RAGService:
+    """Get or initialize RAG service (lazy initialization)"""
+    global _rag_service
+    if _rag_service is None:
+        try:
+            _rag_service = RAGService()
+        except Exception as e:
+            logger.error(f"Failed to initialize RAG service: {e}")
+            raise HTTPException(
+                status_code=503,
+                detail=f"RAG service недоступен: {str(e)}. Убедитесь, что YANDEX_API_KEY или YANDEX_IAM_TOKEN настроены."
+            )
+    return _rag_service
+
+
+def get_document_processor() -> DocumentProcessor:
+    """Get or initialize document processor (lazy initialization)"""
+    global _document_processor
+    if _document_processor is None:
+        try:
+            _document_processor = DocumentProcessor()
+        except Exception as e:
+            logger.error(f"Failed to initialize document processor: {e}")
+            raise HTTPException(
+                status_code=503,
+                detail=f"Document processor недоступен: {str(e)}. Убедитесь, что YANDEX_API_KEY или YANDEX_IAM_TOKEN настроены."
+            )
+    return _document_processor
+
+
+def get_iterative_rag() -> IterativeRAGService:
+    """Get or initialize iterative RAG service (lazy initialization)"""
+    global _iterative_rag
+    if _iterative_rag is None:
+        rag_service = get_rag_service()
+        _iterative_rag = IterativeRAGService(rag_service)
+    return _iterative_rag
 
 
 class ReviewTableColumn(BaseModel):
@@ -216,6 +255,10 @@ async def review_table_query(
             f"Review Table Query: case {request.case_id}, "
             f"{len(files)} files, {len(request.columns)} columns"
         )
+        
+        # Get services (lazy initialization)
+        rag_service = get_rag_service()
+        iterative_rag = get_iterative_rag()
         
         # Create tasks for parallel processing
         tasks = []
