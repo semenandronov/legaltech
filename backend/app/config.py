@@ -52,6 +52,39 @@ class Config:
                 pass  # Logger may not be configured yet
             raise ValueError("DATABASE_URL не установлена. Установите переменную окружения DATABASE_URL в настройках приложения.")
         
+        # Validate DATABASE_URL format (must start with postgresql:// or postgres://)
+        if not (db_url.startswith("postgresql://") or db_url.startswith("postgres://")):
+            error_msg = (
+                "\n" + "="*80 + "\n"
+                "❌ КРИТИЧЕСКАЯ ОШИБКА: Неверный формат DATABASE_URL!\n"
+                "="*80 + "\n"
+                f"Текущее значение: {db_url[:100]}...\n\n"
+                "DATABASE_URL должна быть строкой подключения к PostgreSQL в формате:\n"
+                "postgresql://user:password@host:port/database\n\n"
+                "ПРИМЕРЫ:\n"
+                "postgresql://myuser:mypassword@db.example.com:5432/mydatabase\n"
+                "postgresql://user:pass@localhost:5432/dbname\n\n"
+                "ВНИМАНИЕ: Убедитесь, что вы не перепутали DATABASE_URL с другими переменными:\n"
+                "- DATABASE_URL - строка подключения к PostgreSQL\n"
+                "- YANDEX_API_KEY - API ключ Yandex Cloud\n"
+                "- GIGACHAT_CREDENTIALS - учетные данные GigaChat\n"
+                "- И т.д.\n\n"
+                "РЕШЕНИЕ:\n"
+                "1. Откройте панель Timeweb Cloud\n"
+                "2. Перейдите в App Platform -> Ваше приложение\n"
+                "3. Откройте раздел 'Переменные окружения'\n"
+                "4. Найдите переменную DATABASE_URL\n"
+                "5. Убедитесь, что значение начинается с 'postgresql://'\n"
+                "6. Если это не так, получите правильную строку подключения из настроек базы данных PostgreSQL\n"
+                "="*80 + "\n"
+            )
+            print(error_msg, file=sys.stderr)
+            try:
+                logger.error(error_msg)
+            except:
+                pass
+            raise ValueError(f"Неверный формат DATABASE_URL. Ожидается строка вида 'postgresql://user:password@host:port/database', получено: {db_url[:100]}...")
+        
         # Check for localhost in production
         is_production = os.getenv("ENVIRONMENT", "").lower() == "production" or os.getenv("PORT") is not None
         if is_production and ("localhost" in db_url or "127.0.0.1" in db_url):
