@@ -1,0 +1,22 @@
+[providers]
+python = "3.12"
+node = "20"
+
+[phases.setup]
+nixPkgs = ["python312", "nodejs-20_x"]
+
+[phases.install]
+cmds = [
+  "pip install --upgrade pip",
+  "pip install -r backend/requirements.txt",
+  "cd frontend && npm install --legacy-peer-deps"
+]
+
+[phases.build]
+cmds = [
+  "cd frontend && npm run type-check && npm run build"
+]
+
+[start]
+cmd = "cd backend && uvicorn app.main:app --host 0.0.0.0 --port $PORT"
+
