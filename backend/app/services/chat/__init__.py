@@ -1,12 +1,12 @@
 """
 Chat module - модуль обработки чат-запросов
 
-v4.0: Классический ReAct с 12 универсальными инструментами
+v5.0: ReActChatAgent с 11+ универсальными инструментами
 
 Содержит:
 - ChatOrchestrator: главный оркестратор запросов
-- SimpleReActAgent: классический ReAct агент с 12 инструментами - НОВОЕ v4.0!
-- universal_tools: 12 универсальных инструментов для агента
+- ReActChatAgent: ReAct агент с 11+ инструментами
+- universal_tools: универсальные инструменты для агента
 - RequestClassifier: классификация запросов (для метрик)
 - DraftHandler: создание документов
 - EditorHandler: редактирование документов
@@ -14,12 +14,13 @@ v4.0: Классический ReAct с 12 универсальными инст
 - SSE события и сериализатор
 - Метрики
 
-Ключевое отличие v4.0:
-- SimpleReActAgent использует классический ReAct цикл
-- 12 универсальных инструментов (документы, законы, генерация, playbook, вспомогательные)
+Ключевые возможности v5.0:
+- ReActChatAgent использует классический ReAct цикл
+- 11+ универсальных инструментов (документы, ГАРАНТ, генерация, playbook, расчёты)
 - Агент САМ выбирает какие инструменты использовать
 - Think → Act → Observe → Repeat
-- НЕ планирует заранее, решает на ходу
+- Интеграция с ГАРАНТ (когда legal_research=True)
+- Интеграция с ThinkingService (когда deep_think=True)
 """
 
 from app.services.chat.events import (
@@ -38,7 +39,7 @@ from app.services.chat.events import (
 from app.services.chat.classifier import RequestClassifier, ClassificationResult
 from app.services.chat.history_service import ChatHistoryService
 from app.services.chat.orchestrator import ChatOrchestrator, ChatRequest, get_chat_orchestrator
-from app.services.chat.simple_react_agent import SimpleReActAgent
+from app.services.chat.react_chat_agent import ReActChatAgent
 from app.services.chat.universal_tools import get_universal_tools
 from app.services.chat.draft_handler import DraftHandler
 from app.services.chat.editor_handler import EditorHandler
@@ -47,7 +48,6 @@ from app.services.chat.metrics import ChatMetrics, get_metrics, MetricTimer, Tim
 # Legacy imports (для обратной совместимости)
 from app.services.chat.rag_handler import RAGHandler
 from app.services.chat.agent_handler import AgentHandler
-from app.services.chat.react_chat_agent import ReActChatAgent
 from app.services.chat.chat_tools import get_chat_tools
 
 __all__ = [
@@ -71,8 +71,8 @@ __all__ = [
     "ChatOrchestrator",
     "ChatRequest",
     "get_chat_orchestrator",
-    # ReAct Agent (NEW v4.0)
-    "SimpleReActAgent",
+    # ReAct Agent (v5.0)
+    "ReActChatAgent",
     "get_universal_tools",
     # Handlers
     "DraftHandler",
@@ -80,7 +80,6 @@ __all__ = [
     # Legacy (for backwards compatibility)
     "RAGHandler",
     "AgentHandler",
-    "ReActChatAgent",
     "get_chat_tools",
     # Metrics
     "ChatMetrics",

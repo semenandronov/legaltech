@@ -488,22 +488,86 @@ def search_garant(query: str, doc_type: str = "all", max_results: int = 10) -> s
     Returns:
         Найденные нормы права с цитатами и ссылками
     """
+    import asyncio
+    
     try:
-        from app.services.langchain_agents.utils import search_garant as _search_garant
+        from app.services.external_sources.garant_source import GarantSource
         
         logger.info(f"[UniversalTools] search_garant: {query[:50]}... (type={doc_type})")
-        result = _search_garant.invoke({
-            "query": query,
-            "doc_type": doc_type,
-            "max_results": min(20, max(1, max_results))
-        })
         
-        return result
+        garant_source = GarantSource()
+        if not garant_source.api_key:
+            return "⚠️ ГАРАНТ API не настроен. Обратитесь к администратору."
         
-    except ImportError:
-        return "⚠️ Поиск в ГАРАНТ недоступен. Функция не подключена."
+        # Подготавливаем фильтры
+        filters = {}
+        if doc_type and doc_type != "all":
+            filters["doc_type"] = doc_type
+        
+        # Выполняем асинхронный поиск
+        async def do_search():
+            return await garant_source.search(
+                query=query,
+                max_results=min(20, max(1, max_results)),
+                filters=filters if filters else None,
+                get_full_text=True  # Получаем полный текст
+            )
+        
+        # Запускаем асинхронно
+        try:
+            loop = asyncio.get_event_loop()
+            if loop.is_running():
+                # Если уже в async контексте
+                import concurrent.futures
+                with concurrent.futures.ThreadPoolExecutor() as executor:
+                    future = executor.submit(asyncio.run, do_search())
+                    results = future.result(timeout=30)
+            else:
+                results = loop.run_until_complete(do_search())
+        except RuntimeError:
+            results = asyncio.run(do_search())
+        
+        if not results:
+            return f"По запросу '{query}' ничего не найдено в ГАРАНТ."
+        
+        # Форматируем результаты
+        formatted_parts = []
+        for i, result in enumerate(results, 1):
+            title = result.title or "Без названия"
+            content = result.content[:2000] if result.content else ""
+            url = result.url or ""
+            
+            # Извлекаем метаданные
+            metadata = result.metadata or {}
+            doc_type_str = metadata.get('doc_type', '')
+            doc_date = metadata.get('doc_date', '')
+            doc_number = metadata.get('doc_number', '')
+            
+            part = f"**[{i}] {title}**"
+            if doc_type_str:
+                part += f" ({doc_type_str})"
+            if doc_date:
+                part += f" от {doc_date}"
+            if doc_number:
+                part += f" № {doc_number}"
+            if url:
+                part += f"\n🔗 {url}"
+            if content:
+                part += f"\n\n{content}"
+            
+            formatted_parts.append(part)
+        
+        result_text = f"📜 **Найдено в ГАРАНТ: {len(results)} документов**\n\n"
+        result_text += "\n\n---\n\n".join(formatted_parts)
+        
+        logger.info(f"[UniversalTools] search_garant: found {len(results)} results")
+        return result_text
+        
+    except ImportError as e:
+        logger.error(f"[UniversalTools] search_garant import error: {e}")
+        return "⚠️ Поиск в ГАРАНТ недоступен. Модуль не установлен."
     except Exception as e:
-        logger.error(f"[UniversalTools] search_garant error: {e}")
+        logger.error(f"[UniversalTools] search_garant error: {e}", exc_info=True)
         return f"Ошибка поиска в ГАРАНТ: {str(e)}"
 
 
@@ -523,18 +587,61 @@ def get_law_article(article_ref: str) -> str:
     Returns:
         Полный текст статьи с комментариями
     """
+    import asyncio
+    
     try:
-        from app.services.langchain_agents.utils import get_garant_full_text_tool as get_garant_full_text
+        from app.services.external_sources.garant_source import GarantSource
         
         logger.info(f"[UniversalTools] get_law_article: {article_ref}")
-        result = get_garant_full_text.invoke({"doc_id": article_ref})
         
-        return result
+        garant_source = GarantSource()
+        if not garant_source.api_key:
+            return "⚠️ ГАРАНТ API не настроен. Обратитесь к администратору."
         
-    except ImportError:
+        # Ищем статью по запросу
+        async def do_search():
+            return await garant_source.search(
+                query=article_ref,
+                max_results=3,
+                get_full_text=True
+            )
+        
+        # Запускаем асинхронно
+        try:
+            loop = asyncio.get_event_loop()
+            if loop.is_running():
+                import concurrent.futures
+                with concurrent.futures.ThreadPoolExecutor() as executor:
+                    future = executor.submit(asyncio.run, do_search())
+                    results = future.result(timeout=30)
+            else:
+                results = loop.run_until_complete(do_search())
+        except RuntimeError:
+            results = asyncio.run(do_search())
+        
+        if not results:
+            return f"Статья '{article_ref}' не найдена в ГАРАНТ."
+        
+        # Берём первый (наиболее релевантный) результат
+        result = results[0]
+        
+        title = result.title or article_ref
+        content = result.content or "Текст не найден"
+        url = result.url or ""
+        
+        response = f"📜 **{title}**\n\n"
+        if url:
+            response += f"🔗 Источник: {url}\n\n"
+        response += content
+        
+        logger.info(f"[UniversalTools] get_law_article: found '{title}'")
+        return response
+        
+    except ImportError as e:
+        logger.error(f"[UniversalTools] get_law_article import error: {e}")
         return "⚠️ Получение статей из ГАРАНТ недоступно."
     except Exception as e:
-        logger.error(f"[UniversalTools] get_law_article error: {e}")
+        logger.error(f"[UniversalTools] get_law_article error: {e}", exc_info=True)
         return f"Ошибка получения статьи: {str(e)}"
 
 

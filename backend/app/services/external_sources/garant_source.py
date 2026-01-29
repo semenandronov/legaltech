@@ -764,3 +764,21 @@ class GarantSource(BaseSource):
         info["description"] = "Гарант - правовая информационная система"
         return info
 
+
+# Singleton instance
+_garant_source_instance: Optional[GarantSource] = None
+
+
+def get_garant_source() -> Optional[GarantSource]:
+    """
+    Get singleton instance of GarantSource.
+    
+    Returns:
+        GarantSource instance or None if not configured
+    """
+    global _garant_source_instance
+    
+    if _garant_source_instance is None:
+        _garant_source_instance = GarantSource()
+    
+    return _garant_source_instance

@@ -214,6 +214,77 @@ class TableCreatedEvent(BaseModel):
         return f"data: {json.dumps({'type': 'table_created', 'table_id': self.table_id, 'table_name': self.table_name, 'case_id': self.case_id, 'preview': self.preview}, ensure_ascii=False)}\n\n"
 
 
+class AgentStepEvent(BaseModel):
+    """
+    Событие шага агента (для Reflection, Citation Verification и т.д.)
+    
+    NEW v3.0: Используется для передачи метаданных о проверках
+    """
+    type: Literal["agent_step"] = "agent_step"
+    step_type: str = Field(..., description="Тип шага: reflection_result, citation_verification, confidence_score")
+    content: str = Field(..., description="JSON-контент шага")
+    
+    def to_sse(self) -> str:
+        return f"data: {json.dumps({'type': 'agent_step', 'step_type': self.step_type, 'content': self.content}, ensure_ascii=False)}\n\n"
+
+
+class ConfidenceScoreEvent(BaseModel):
+    """
+    Событие с оценкой уверенности в ответе
+    
+    NEW v3.0: Показывает насколько агент уверен в своём ответе
+    """
+    type: Literal["confidence_score"] = "confidence_score"
+    score: float = Field(..., ge=0.0, le=1.0, description="Оценка уверенности (0-1)")
+    level: Literal["very_low", "low", "medium", "high"] = Field(..., description="Уровень уверенности")
+    details: Optional[Dict[str, Any]] = Field(None, description="Детали оценки")
+    
+    def to_sse(self) -> str:
+        data = {
+            'type': 'confidence_score',
+            'score': self.score,
+            'level': self.level
+        }
+        if self.details:
+            data['details'] = self.details
+        return f"data: {json.dumps(data, ensure_ascii=False)}\n\n"
+
+
+class CitationVerificationEvent(BaseModel):
+    """
+    Событие с результатами проверки цитат
+    
+    NEW v3.0: Показывает какие цитаты подтверждены в ГАРАНТ
+    """
+    type: Literal["citation_verification"] = "citation_verification"
+    total_citations: int = Field(..., description="Всего цитат")
+    verified_count: int = Field(..., description="Подтверждённых")
+    not_found_count: int = Field(..., description="Не найденных")
+    overall_confidence: float = Field(..., ge=0.0, le=1.0, description="Общая уверенность в цитатах")
+    citations: Optional[List[Dict[str, Any]]] = Field(None, description="Список цитат с результатами")
+    
+    def to_sse(self) -> str:
+        return f"data: {json.dumps({'type': 'citation_verification', 'total_citations': self.total_citations, 'verified_count': self.verified_count, 'not_found_count': self.not_found_count, 'overall_confidence': self.overall_confidence, 'citations': self.citations}, ensure_ascii=False)}\n\n"
+
+
+class ReflectionResultEvent(BaseModel):
+    """
+    Событие с результатами рефлексии (самопроверки)
+    
+    NEW v3.0: Показывает результат самопроверки ответа
+    """
+    type: Literal["reflection_result"] = "reflection_result"
+    is_valid: bool = Field(..., description="Ответ валиден?")
+    confidence_score: float = Field(..., ge=0.0, le=1.0, description="Оценка уверенности")
+    confidence_level: Literal["very_low", "low", "medium", "high"] = Field(..., description="Уровень уверенности")
+    issues_count: int = Field(0, description="Количество проблем")
+    has_improvement: bool = Field(False, description="Есть улучшенный ответ?")
+    critique: Optional[str] = Field(None, description="Критика ответа")
+    
+    def to_sse(self) -> str:
+        return f"data: {json.dumps({'type': 'reflection_result', 'is_valid': self.is_valid, 'confidence_score': self.confidence_score, 'confidence_level': self.confidence_level, 'issues_count': self.issues_count, 'has_improvement': self.has_improvement, 'critique': self.critique}, ensure_ascii=False)}\n\n"
+
+
 # =============================================================================
 # Union Type для всех событий
 # =============================================================================
@@ -231,6 +302,11 @@ SSEEvent = Union[
     AgentProgressEvent,
     AgentCompleteEvent,
     TableCreatedEvent,
+    # NEW v3.0: События для Reflection и Citation Verification
+    AgentStepEvent,
+    ConfidenceScoreEvent,
+    CitationVerificationEvent,
+    ReflectionResultEvent,
 ]
 
 
@@ -292,5 +368,51 @@ class SSESerializer:
         """Быстрый метод для structured_edits из dict"""
         edit_objects = [StructuredEdit(**e) for e in edits]
         return StructuredEditsEvent(edits=edit_objects).to_sse()
+    
+    @staticmethod
+    def agent_step(step_type: str, content: str) -> str:
+        """Быстрый метод для agent_step (Reflection, Citation Verification)"""
+        return AgentStepEvent(step_type=step_type, content=content).to_sse()
+    
+    @staticmethod
+    def confidence_score(score: float, level: str, details: Optional[Dict[str, Any]] = None) -> str:
+        """Быстрый метод для confidence_score"""
+        return ConfidenceScoreEvent(score=score, level=level, details=details).to_sse()
+    
+    @staticmethod
+    def citation_verification(
+        total: int,
+        verified: int,
+        not_found: int,
+        confidence: float,
+        citations: Optional[List[Dict[str, Any]]] = None
+    ) -> str:
+        """Быстрый метод для citation_verification"""
+        return CitationVerificationEvent(
+            total_citations=total,
+            verified_count=verified,
+            not_found_count=not_found,
+            overall_confidence=confidence,
+            citations=citations
+        ).to_sse()
+    
+    @staticmethod
+    def reflection_result(
+        is_valid: bool,
+        confidence_score: float,
+        confidence_level: str,
+        issues_count: int = 0,
+        has_improvement: bool = False,
+        critique: Optional[str] = None
+    ) -> str:
+        """Быстрый метод для reflection_result"""
+        return ReflectionResultEvent(
+            is_valid=is_valid,
+            confidence_score=confidence_score,
+            confidence_level=confidence_level,
+            issues_count=issues_count,
+            has_improvement=has_improvement,
+            critique=critique
+        ).to_sse()
 
 

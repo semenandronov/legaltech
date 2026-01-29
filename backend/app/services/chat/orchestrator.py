@@ -1,15 +1,16 @@
 """
-Chat Orchestrator - Главный оркестратор чат-запросов
+Chat Orchestrator v5.0 - Главный оркестратор чат-запросов
 
 Единая точка входа для обработки всех типов запросов:
-- SimpleReActAgent (классический ReAct с 12 инструментами) - НОВОЕ v4.0!
-- Draft (создание документов)
-- Editor (редактирование документов)
+- ReActChatAgent: классический ReAct с 11+ инструментами (универсальный режим)
+- DraftHandler: создание документов (draft_mode=True)
+- EditorHandler: редактирование документов (document_context!=None)
 
-Изменения v4.0:
-- Заменён AutonomousChatAgent (Plan-and-Execute) на SimpleReActAgent (ReAct)
-- Агент НЕ планирует заранее - думает и действует итеративно
-- 12 универсальных инструментов, агент САМ выбирает какие использовать
+Изменения v5.0:
+- Используется ReActChatAgent с universal_tools (11+ инструментов)
+- Агент САМ выбирает какие инструменты использовать
+- Интеграция с ГАРАНТ через инструменты (когда legal_research=True)
+- Интеграция с ThinkingService (когда deep_think=True)
 - Классический ReAct цикл: Think → Act → Observe → Repeat
 """
 from typing import AsyncGenerator, Optional, List, Dict, Any
@@ -20,7 +21,7 @@ import logging
 from app.services.chat.events import SSESerializer, SSEEvent
 from app.services.chat.classifier import RequestClassifier, ClassificationResult
 from app.services.chat.history_service import ChatHistoryService
-from app.services.chat.simple_react_agent import SimpleReActAgent
+from app.services.chat.react_chat_agent import ReActChatAgent
 from app.services.chat.draft_handler import DraftHandler
 from app.services.chat.editor_handler import EditorHandler
 from app.services.chat.metrics import get_metrics, MetricTimer
@@ -39,11 +40,11 @@ class ChatRequest:
     question: str
     current_user: User
     
-    # Режимы
+    # Режимы (взаимоисключающие в UI)
     web_search: bool = False
-    legal_research: bool = False
-    deep_think: bool = False
-    draft_mode: bool = False
+    legal_research: bool = False  # ГАРАНТ
+    deep_think: bool = False      # GigaChat Pro + Thinking
+    draft_mode: bool = False      # Создание документов
     
     # Контекст редактора
     document_context: Optional[str] = None
@@ -60,23 +61,20 @@ class ChatRequest:
 
 class ChatOrchestrator:
     """
-    Главный оркестратор чат-запросов v4.0.
+    Главный оркестратор чат-запросов v5.0.
     
     Маршрутизация:
     - DraftHandler: создание документов (draft_mode=True)
     - EditorHandler: редактирование документов (document_context!=None)
-    - SimpleReActAgent: ВСЕ остальные запросы (классический ReAct)
+    - ReActChatAgent: ВСЕ остальные запросы (ReAct с 11+ инструментами)
     
-    SimpleReActAgent:
-    - 12 универсальных инструментов
-    - Агент САМ выбирает какие инструменты использовать
-    - Think → Act → Observe → Repeat
-    - НЕ планирует заранее, решает на ходу
-    
-    Интегрирует:
-    - Метрики производительности
-    - Structured logging
-    - Error handling
+    ReActChatAgent умеет:
+    - Работать с документами дела (search, analyze, compare)
+    - Искать в ГАРАНТ (когда legal_research=True)
+    - Глубоко анализировать (когда deep_think=True)
+    - Создавать черновики документов
+    - Проверять по Playbooks
+    - Выполнять расчёты
     """
     
     def __init__(
@@ -124,7 +122,7 @@ class ChatOrchestrator:
         # Метрики
         self.metrics = get_metrics()
         
-        logger.info("ChatOrchestrator v4.0 initialized (SimpleReActAgent enabled)")
+        logger.info("ChatOrchestrator v5.0 initialized (ReActChatAgent with universal_tools)")
     
     async def process_request(self, request: ChatRequest) -> AsyncGenerator[str, None]:
         """
@@ -200,8 +198,12 @@ class ChatOrchestrator:
             return "draft"
         elif request.document_context:
             return "editor"
+        elif request.deep_think:
+            return "react_agent_deep"
+        elif request.legal_research:
+            return "react_agent_garant"
         else:
-            return "react_agent"  # v4.0: SimpleReActAgent
+            return "react_agent"
     
     async def _route_to_handler(
         self,
@@ -211,7 +213,7 @@ class ChatOrchestrator:
         """
         Маршрутизация к соответствующему handler'у
         
-        v4.0: Все обычные запросы идут в SimpleReActAgent,
+        v5.0: Все обычные запросы идут в ReActChatAgent,
         который сам выбирает инструменты и действует итеративно.
         """
         
@@ -244,7 +246,7 @@ class ChatOrchestrator:
                 yield event
         
         else:
-            # SimpleReActAgent mode: классический ReAct с 12 инструментами
+            # ReActChatAgent mode: универсальный ReAct с 11+ инструментами
             # Агент сам выбирает инструменты и действует итеративно
             
             # Проверяем наличие документов
@@ -272,23 +274,33 @@ class ChatOrchestrator:
             chat_history = self.history_service.get_history_for_context(
                 request.case_id, session_id
             )
+            
+            # Логируем режим
+            mode_info = []
+            if request.legal_research:
+                mode_info.append("ГАРАНТ")
+            if request.deep_think:
+                mode_info.append("Deep Think")
+            if request.web_search:
+                mode_info.append("Web Search")
+            
+            mode_str = ", ".join(mode_info) if mode_info else "базовый"
                 
-            # Создаём RAG Chat Agent (архитектура retrieve → generate)
             logger.info(
-                f"[ChatOrchestrator] Routing to RAG Chat Agent "
-                f"(legal_research={request.legal_research}, "
-                f"deep_think={request.deep_think}, "
-                f"web_search={request.web_search}, "
-                f"history_messages={len(chat_history)})"
+                f"[ChatOrchestrator] Routing to ReActChatAgent "
+                f"(mode={mode_str}, "
+                f"history_messages={len(chat_history)}, "
+                f"files={file_count})"
             )
             
-            react_agent = SimpleReActAgent(
-                    case_id=request.case_id,
+            # Создаём ReActChatAgent
+            react_agent = ReActChatAgent(
+                case_id=request.case_id,
                 db=self.db,
                 rag_service=self.rag_service,
-                    current_user=request.current_user,
-                    legal_research=request.legal_research,
-                    deep_think=request.deep_think,
+                current_user=request.current_user,
+                legal_research=request.legal_research,
+                deep_think=request.deep_think,
                 web_search=request.web_search,
                 chat_history=chat_history,
                 session_id=session_id
@@ -296,7 +308,7 @@ class ChatOrchestrator:
             
             # Запускаем агента
             async for event in react_agent.handle(request.question):
-                    yield event
+                yield event
     
     def _extract_text_from_event(self, event: str) -> str:
         """Извлечь текст из SSE события"""
@@ -356,4 +368,3 @@ def get_chat_orchestrator(db: Session) -> ChatOrchestrator:
         ChatOrchestrator instance
     """
     return ChatOrchestrator(db=db)
-

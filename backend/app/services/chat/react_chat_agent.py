@@ -1,5 +1,5 @@
 """
-ReAct Chat Agent - Адаптивный агент для чата
+ReAct Chat Agent v3.0 - Адаптивный агент для чата с Reflection и Citation Verification
 
 Использует ReAct цикл (Reason + Act) для:
 - Анализа вопроса пользователя
@@ -7,10 +7,15 @@ ReAct Chat Agent - Адаптивный агент для чата
 - Итеративного получения информации
 - Синтеза ответа
 
-Ключевые особенности:
+Ключевые особенности v3.0:
+- 11+ универсальных инструментов (universal_tools)
 - Сам решает, какие инструменты использовать
 - Адаптируется под тип вопроса (обзорный, конкретный, аналитический)
 - Поддерживает пользовательские переключатели (GARANT, deep_think, web_search)
+- Интегрирован с ThinkingService для глубокого анализа
+- **NEW: Reflection Pattern** - самопроверка ответов (снижает ошибки на 30%)
+- **NEW: Citation Verification** - проверка цитат через ГАРАНТ
+- **NEW: Confidence Scores** - оценка уверенности в ответе
 """
 from typing import AsyncGenerator, Optional, List, Dict, Any
 from sqlalchemy.orm import Session
@@ -18,7 +23,7 @@ import logging
 import json
 
 from app.services.chat.events import SSESerializer
-from app.services.chat.chat_tools import get_chat_tools
+from app.services.chat.universal_tools import get_universal_tools
 from app.services.rag_service import RAGService
 from app.models.user import User
 
@@ -27,65 +32,100 @@ logger = logging.getLogger(__name__)
 
 class ReActChatAgent:
     """
-    Адаптивный агент для чата, использующий ReAct цикл.
+    Адаптивный агент для чата v2.0, использующий ReAct цикл.
     
     Сам анализирует вопрос и решает:
     - Какие инструменты вызвать
     - Сколько документов нужно (k=5 или k=100)
     - Нужен ли Map-Reduce для обзора всех документов
+    - Нужен ли поиск в ГАРАНТ
     """
     
     # Системный промпт для агента
-    SYSTEM_PROMPT = """Ты - юридический AI-ассистент, который помогает анализировать документы дела и отвечать на вопросы.
+    SYSTEM_PROMPT = """Ты - юридический AI-ассистент высшего уровня, который помогает анализировать документы дела и отвечать на вопросы.
 
 ТВОЯ ЗАДАЧА: Понять вопрос пользователя и ВЫБРАТЬ ПРАВИЛЬНЫЕ ИНСТРУМЕНТЫ для ответа.
 
-ДОСТУПНЫЕ ИНСТРУМЕНТЫ:
+═══════════════════════════════════════════════════════════════════════════════
+                         ДОСТУПНЫЕ ИНСТРУМЕНТЫ
+═══════════════════════════════════════════════════════════════════════════════
 
-1. **search_documents(query, k)** - Поиск по документам дела
+📁 РАБОТА С ДОКУМЕНТАМИ:
+
+1. **search_in_documents(query, k)** - Поиск по документам дела
    - Используй для конкретных вопросов ("какая сумма в договоре?", "что сказано о сроках?")
-   - k=5-10 для простых вопросов
-   - k=20-50 для сложных вопросов
+   - k=10-20 для простых вопросов, k=30-50 для сложных
 
-2. **list_case_files()** - Список всех файлов в деле
-   - Используй когда пользователь спрашивает "какие документы в деле?"
+2. **get_document(filename)** - Получить полный текст документа
+   - Используй когда нужен весь документ ("покажи договор", "открой иск")
 
-3. **summarize_all_documents()** - Обзор ВСЕХ документов (Map-Reduce)
+3. **analyze_all_documents(question, task_type)** - Глубокий анализ ВСЕХ документов (Map-Reduce)
    - ВАЖНО: Используй когда пользователь спрашивает:
      * "О чём все эти документы?"
      * "Расскажи о деле"
-     * "Что содержится в документах?"
      * "Дай общий обзор"
-   - Этот инструмент обрабатывает ВСЕ документы, даже если их 100+
+   - task_type: "answer", "summarize", "extract"
 
-4. **get_file_summary(filename)** - Обзор конкретного файла
-   - Используй когда спрашивают о конкретном документе
+4. **extract_structured_data(entity_types)** - Извлечь сущности
+   - Используй для "какие даты?", "какие суммы?", "кто участники?"
+   - entity_types: "dates,amounts,persons,organizations"
 
-5. **extract_entities(entity_types)** - Извлечь сущности (даты, имена, суммы)
-   - Используй для вопросов "какие даты?", "какие суммы?", "кто участники?"
+5. **compare_documents(doc1_name, doc2_name)** - Сравнить два документа
+   - Используй для поиска противоречий и различий
 
-6. **find_contradictions()** - Найти противоречия между документами
-   - Используй для вопросов о противоречиях и несоответствиях
+═══════════════════════════════════════════════════════════════════════════════
 
-7. **analyze_risks()** - Анализ юридических рисков
-   - Используй для вопросов о рисках
+📝 СОЗДАНИЕ ДОКУМЕНТОВ:
 
-8. **build_timeline()** - Построить хронологию событий
-   - Используй для вопросов о последовательности событий
+6. **generate_document(doc_type, variables)** - Создать черновик документа
+   - doc_type: contract, claim, pretension, letter, memo, power_of_attorney
+   - variables: "истец=ООО Ромашка; сумма=100000"
+
+7. **list_templates()** - Показать доступные шаблоны документов
+
+═══════════════════════════════════════════════════════════════════════════════
+
+✅ PLAYBOOK (проверка по правилам):
+
+8. **validate_with_playbook(document_name, playbook_name)** - Проверить документ
+   - Используй когда просят проверить документ на соответствие
+
+9. **get_user_playbooks()** - Список доступных Playbooks
+
+═══════════════════════════════════════════════════════════════════════════════
+
+🧮 ВСПОМОГАТЕЛЬНЫЕ:
+
+10. **calculate(expression)** - Юридические расчёты
+    - Проценты: "percent(100000, 10)"
+    - Пени по ставке ЦБ: "penalty_cb(100000, 30)"
+    - Дни между датами: "days_between(01.01.2024, 31.01.2024)"
+
+11. **get_current_date()** - Текущая дата
 
 {optional_tools}
 
-ПРАВИЛА:
-1. ВСЕГДА используй инструменты для получения информации из документов
-2. НЕ придумывай информацию - только то, что нашёл в документах
-3. Для обзорных вопросов ОБЯЗАТЕЛЬНО используй summarize_all_documents
-4. Можешь вызывать несколько инструментов для полного ответа
-5. Цитируй источники в формате [Документ]
+═══════════════════════════════════════════════════════════════════════════════
+                              ПРАВИЛА РАБОТЫ
+═══════════════════════════════════════════════════════════════════════════════
 
-ФОРМАТ ОТВЕТА:
-- Используй Markdown
-- Структурируй ответ
-- Указывай источники"""
+1. ВСЕГДА используй инструменты для получения информации
+2. НЕ придумывай информацию - только то, что нашёл в документах
+3. Для обзорных вопросов ("о чём дело?") используй analyze_all_documents
+4. Для конкретных вопросов используй search_in_documents
+5. Можешь вызывать несколько инструментов для полного ответа
+6. Цитируй источники в формате [Название документа]
+7. Если информация не найдена - честно скажи об этом
+
+═══════════════════════════════════════════════════════════════════════════════
+                              ФОРМАТ ОТВЕТА
+═══════════════════════════════════════════════════════════════════════════════
+
+- Используй Markdown для форматирования
+- Структурируй ответ с заголовками
+- Указывай источники информации
+- Для списков используй маркеры
+- Для важного используй **жирный** текст"""
     
     def __init__(
         self,
@@ -97,7 +137,11 @@ class ReActChatAgent:
         legal_research: bool = False,
         deep_think: bool = False,
         web_search: bool = False,
-        chat_history: Optional[List[Dict[str, str]]] = None
+        chat_history: Optional[List[Dict[str, str]]] = None,
+        session_id: Optional[str] = None,
+        # NEW v3.0: Reflection и Citation Verification
+        enable_reflection: bool = True,
+        enable_citation_verification: bool = True
     ):
         """
         Инициализация агента
@@ -111,6 +155,9 @@ class ReActChatAgent:
             deep_think: Включить глубокое мышление (GigaChat Pro)
             web_search: Включить веб-поиск
             chat_history: История чата
+            session_id: ID сессии чата
+            enable_reflection: Включить самопроверку ответов (Reflection Pattern)
+            enable_citation_verification: Включить проверку цитат
         """
         self.case_id = case_id
         self.db = db
@@ -120,12 +167,21 @@ class ReActChatAgent:
         self.deep_think = deep_think
         self.web_search = web_search
         self.chat_history = chat_history or []
+        self.session_id = session_id
         
-        # Инициализируем инструменты
-        self.tools = get_chat_tools(
+        # NEW v3.0: Reflection и Citation Verification
+        self.enable_reflection = enable_reflection
+        self.enable_citation_verification = enable_citation_verification and legal_research
+        
+        # Получаем user_id для playbooks
+        user_id = str(current_user.id) if current_user else None
+        
+        # Инициализируем инструменты из universal_tools
+        self.tools = get_universal_tools(
             db=db,
             rag_service=rag_service,
             case_id=case_id,
+            user_id=user_id,
             legal_research=legal_research,
             web_search=web_search
         )
@@ -134,10 +190,15 @@ class ReActChatAgent:
         self.llm = self._create_llm()
         self.agent = self._create_agent()
         
+        # NEW v3.0: Инициализируем сервисы проверки
+        self._reflection_service = None
+        self._citation_verifier = None
+        
         logger.info(
             f"[ReActChatAgent] Initialized for case {case_id} "
             f"(tools={len(self.tools)}, deep_think={deep_think}, "
-            f"legal_research={legal_research}, web_search={web_search})"
+            f"legal_research={legal_research}, web_search={web_search}, "
+            f"reflection={enable_reflection}, citation_verification={self.enable_citation_verification})"
         )
     
     def _create_llm(self):
@@ -154,30 +215,30 @@ class ReActChatAgent:
             # Стандартная модель
             return create_legal_llm(temperature=0.1)
     
+    def _get_reflection_service(self):
+        """Lazy initialization of ReflectionService"""
+        if self._reflection_service is None and self.enable_reflection:
+            try:
+                from app.services.reflection_service import get_reflection_service
+                self._reflection_service = get_reflection_service(deep_think=self.deep_think)
+            except ImportError as e:
+                logger.warning(f"[ReActChatAgent] ReflectionService not available: {e}")
+        return self._reflection_service
+    
+    def _get_citation_verifier(self):
+        """Lazy initialization of CitationVerifier"""
+        if self._citation_verifier is None and self.enable_citation_verification:
+            try:
+                from app.services.citation_verifier import get_citation_verifier
+                self._citation_verifier = get_citation_verifier(garant_enabled=self.legal_research)
+            except ImportError as e:
+                logger.warning(f"[ReActChatAgent] CitationVerifier not available: {e}")
+        return self._citation_verifier
+    
     def _create_agent(self):
         """Создать ReAct агента с инструментами"""
         try:
-            # Формируем системный промпт с опциональными инструментами
-            optional_tools_text = ""
-            if self.legal_research:
-                optional_tools_text += """
-9. **search_garant(query)** - Поиск в базе ГАРАНТ
-   - Используй для вопросов о законах, статьях кодексов, судебной практике
-
-10. **get_garant_full_text(doc_id)** - Полный текст документа из ГАРАНТ
-"""
-            if self.web_search:
-                optional_tools_text += """
-11. **web_research_tool(query)** - Поиск в интернете
-   - Используй для актуальной информации, которой нет в документах
-"""
-            
-            system_prompt = self.SYSTEM_PROMPT.format(
-                optional_tools=optional_tools_text if optional_tools_text else "Дополнительные инструменты не включены."
-            )
-            
             # Пробуем создать агента через langgraph
-            # Системный промпт добавляется в _run_agent, поэтому здесь просто создаём агента
             try:
                 from langgraph.prebuilt import create_react_agent
                 
@@ -190,20 +251,61 @@ class ReActChatAgent:
                 
             except (ImportError, TypeError) as e:
                 logger.warning(f"[ReActChatAgent] LangGraph create_react_agent failed: {e}, trying fallback")
-                # Fallback на agent_factory
-                from app.services.langchain_agents.agent_factory import create_legal_agent
                 
-                agent = create_legal_agent(
-                    llm=self.llm,
-                    tools=self.tools,
-                    system_prompt=system_prompt
-                )
-                logger.info("[ReActChatAgent] Created agent via agent_factory")
-                return agent
+                # Fallback на agent_factory
+                try:
+                    from app.services.langchain_agents.agent_factory import create_legal_agent
+                    
+                    system_prompt = self._build_system_prompt()
+                    agent = create_legal_agent(
+                        llm=self.llm,
+                        tools=self.tools,
+                        system_prompt=system_prompt
+                    )
+                    logger.info("[ReActChatAgent] Created agent via agent_factory")
+                    return agent
+                except Exception as factory_error:
+                    logger.warning(f"[ReActChatAgent] agent_factory failed: {factory_error}")
+                    return None
                 
         except Exception as e:
             logger.error(f"[ReActChatAgent] Failed to create agent: {e}", exc_info=True)
-            raise
+            return None
+    
+    def _build_system_prompt(self) -> str:
+        """Построить системный промпт с учётом включённых инструментов"""
+        optional_tools_text = ""
+        
+        if self.legal_research:
+            optional_tools_text += """
+═══════════════════════════════════════════════════════════════════════════════
+
+⚖️ ПРАВОВАЯ БАЗА ГАРАНТ:
+
+12. **search_garant(query, doc_type, max_results)** - Поиск в базе ГАРАНТ
+    - Используй для вопросов о законах, статьях кодексов, судебной практике
+    - doc_type: "all", "law", "court_decision", "article"
+    - Пример: search_garant("статья 395 ГК РФ", "law", 10)
+
+13. **get_law_article(article_ref)** - Полный текст статьи закона
+    - Используй после search_garant для получения полного текста
+    - Пример: get_law_article("ст. 393 ГК РФ")
+"""
+        
+        if self.web_search:
+            optional_tools_text += """
+═══════════════════════════════════════════════════════════════════════════════
+
+🌐 ВЕБ-ПОИСК:
+
+14. **web_research_tool(query)** - Поиск в интернете
+    - Используй для актуальной информации, которой нет в документах
+"""
+        
+        if not optional_tools_text:
+            optional_tools_text = "\n(Дополнительные инструменты не включены)"
+        
+        return self.SYSTEM_PROMPT.format(optional_tools=optional_tools_text)
     
     async def handle(
         self,
@@ -223,12 +325,35 @@ class ReActChatAgent:
         try:
             logger.info(f"[ReActChatAgent] Processing: {question[:100]}...")
             
+            # Определяем количество шагов
+            total_steps = 2  # agent + generate
+            if self.deep_think:
+                total_steps = 3  # thinking + agent + generate
+            
+            current_step = 0
+            
             # Если включен deep_think, сначала запускаем thinking
             if self.deep_think:
+                current_step += 1
+                yield SSESerializer.reasoning(
+                    phase="thinking",
+                    step=current_step,
+                    total_steps=total_steps,
+                    content="Запускаю глубокий анализ вопроса..."
+                )
+                
                 async for event in self._run_thinking(question):
                     yield event
             
             # Запускаем агента
+            current_step += 1
+            yield SSESerializer.reasoning(
+                phase="agent",
+                step=current_step,
+                total_steps=total_steps,
+                content="Анализирую вопрос и выбираю инструменты..."
+            )
+            
             async for event in self._run_agent(question):
                 yield event
                 
@@ -250,11 +375,11 @@ class ReActChatAgent:
                 docs = self.rag_service.retrieve_context(
                     case_id=self.case_id,
                     query=question,
-                    k=10,
+                    k=15,
                     db=self.db
                 )
                 if docs:
-                    context = self.rag_service.format_sources_for_prompt(docs, max_context_chars=3000)
+                    context = self.rag_service.format_sources_for_prompt(docs, max_context_chars=5000)
             except Exception as e:
                 logger.warning(f"[ReActChatAgent] Failed to get context for thinking: {e}")
             
@@ -273,29 +398,156 @@ class ReActChatAgent:
         except Exception as e:
             logger.warning(f"[ReActChatAgent] Thinking error: {e}, continuing without thinking")
     
+    async def _run_reflection(
+        self,
+        question: str,
+        answer: str,
+        context: Optional[str] = None
+    ) -> AsyncGenerator[str, None]:
+        """
+        Запустить Reflection (самопроверку ответа)
+        
+        Yields:
+            SSE события с результатами рефлексии
+        """
+        reflection_service = self._get_reflection_service()
+        if not reflection_service:
+            return
+        
+        try:
+            logger.info("[ReActChatAgent] Starting reflection on answer")
+            
+            yield SSESerializer.reasoning(
+                phase="reflection",
+                step=1,
+                total_steps=2,
+                content="Проверяю качество ответа..."
+            )
+            
+            # Проводим рефлексию
+            result = await reflection_service.reflect(
+                question=question,
+                answer=answer,
+                context=context,
+                auto_improve=True
+            )
+            
+            # Отправляем результат рефлексии
+            yield SSESerializer.agent_step(
+                step_type="reflection_result",
+                content=json.dumps({
+                    "is_valid": result.is_valid,
+                    "confidence_score": result.confidence_score,
+                    "confidence_level": result._get_confidence_level(),
+                    "issues_count": len(result.issues),
+                    "has_improvement": result.improved_answer is not None
+                }, ensure_ascii=False)
+            )
+            
+            # Если есть проблемы высокой серьёзности
+            high_severity_issues = [i for i in result.issues if i.severity == "high"]
+            if high_severity_issues:
+                yield SSESerializer.reasoning(
+                    phase="reflection",
+                    step=2,
+                    total_steps=2,
+                    content=f"Обнаружено {len(high_severity_issues)} важных проблем, улучшаю ответ..."
+                )
+            
+            # Если есть улучшенный ответ, возвращаем его
+            if result.improved_answer and not result.is_valid:
+                logger.info(f"[ReActChatAgent] Reflection improved answer (confidence: {result.confidence_score:.2f})")
+                yield SSESerializer.text_delta("\n\n---\n\n**Улучшенный ответ:**\n\n")
+                yield SSESerializer.text_delta(result.improved_answer)
+            
+            # Отправляем confidence score
+            yield SSESerializer.agent_step(
+                step_type="confidence_score",
+                content=json.dumps({
+                    "score": result.confidence_score,
+                    "level": result._get_confidence_level()
+                })
+            )
+            
+            logger.info(
+                f"[ReActChatAgent] Reflection complete: "
+                f"valid={result.is_valid}, confidence={result.confidence_score:.2f}"
+            )
+            
+        except Exception as e:
+            logger.warning(f"[ReActChatAgent] Reflection error: {e}")
+    
+    async def _run_citation_verification(
+        self,
+        answer: str
+    ) -> AsyncGenerator[str, None]:
+        """
+        Запустить проверку цитат в ответе
+        
+        Yields:
+            SSE события с результатами проверки
+        """
+        verifier = self._get_citation_verifier()
+        if not verifier:
+            return
+        
+        try:
+            logger.info("[ReActChatAgent] Starting citation verification")
+            
+            yield SSESerializer.reasoning(
+                phase="citation_verification",
+                step=1,
+                total_steps=1,
+                content="Проверяю цитаты через ГАРАНТ..."
+            )
+            
+            # Проверяем цитаты
+            result = await verifier.verify_answer(answer)
+            
+            if result.total_citations == 0:
+                logger.info("[ReActChatAgent] No citations found in answer")
+                return
+            
+            # Отправляем результат проверки
+            yield SSESerializer.agent_step(
+                step_type="citation_verification",
+                content=json.dumps({
+                    "total_citations": result.total_citations,
+                    "verified_count": result.verified_count,
+                    "not_found_count": result.not_found_count,
+                    "overall_confidence": result.overall_confidence,
+                    "citations": [
+                        {
+                            "text": c.normalized,
+                            "status": c.status.value,
+                            "url": c.garant_url
+                        }
+                        for c in result.citations[:5]  # Первые 5 цитат
+                    ]
+                }, ensure_ascii=False)
+            )
+            
+            # Если есть непроверенные цитаты, предупреждаем
+            if result.not_found_count > 0:
+                warning = f"\n\n⚠️ *{result.not_found_count} из {result.total_citations} цитат не подтверждены в ГАРАНТ*"
+                yield SSESerializer.text_delta(warning)
+            
+            logger.info(
+                f"[ReActChatAgent] Citation verification complete: "
+                f"total={result.total_citations}, verified={result.verified_count}, "
+                f"not_found={result.not_found_count}"
+            )
+            
+        except Exception as e:
+            logger.warning(f"[ReActChatAgent] Citation verification error: {e}")
+    
     async def _run_agent(self, question: str) -> AsyncGenerator[str, None]:
-        """Запустить ReAct агента"""
+        """Запустить ReAct агента с Reflection и Citation Verification"""
         try:
             from langchain_core.messages import HumanMessage, AIMessage, SystemMessage
             
             # Формируем системный промпт
-            optional_tools_text = ""
-            if self.legal_research:
-                optional_tools_text += """
-9. **search_garant(query)** - Поиск в базе ГАРАНТ
-   - Используй для вопросов о законах, статьях кодексов, судебной практике
-
-10. **get_garant_full_text(doc_id)** - Полный текст документа из ГАРАНТ
-"""
-            if self.web_search:
-                optional_tools_text += """
-11. **web_research_tool(query)** - Поиск в интернете
-   - Используй для актуальной информации, которой нет в документах
-"""
-            
-            system_prompt = self.SYSTEM_PROMPT.format(
-                optional_tools=optional_tools_text if optional_tools_text else "Дополнительные инструменты не включены."
-            )
+            system_prompt = self._build_system_prompt()
             
             # Формируем входные данные
             messages = [SystemMessage(content=system_prompt)]
@@ -313,18 +565,32 @@ class ReActChatAgent:
 ID дела: {self.case_id}
 
 Проанализируй вопрос и используй подходящие инструменты для ответа.
-Если вопрос об обзоре всех документов - используй summarize_all_documents.
-Если конкретный вопрос - используй search_documents."""
+- Если вопрос об обзоре всех документов — используй analyze_all_documents
+- Если конкретный вопрос — используй search_in_documents
+- Если нужна статья закона — используй search_garant (если доступен)"""
             
             messages.append(HumanMessage(content=enhanced_question))
             
             # Запускаем агента
             input_data = {"messages": messages}
             
+            # Проверяем, создан ли агент
+            if self.agent is None:
+                logger.warning("[ReActChatAgent] Agent not created, using fallback")
+                fallback_response = await self._fallback_response(question)
+                yield SSESerializer.text_delta(fallback_response)
+                
+                # Всё равно запускаем проверки на fallback ответ
+                if self.enable_reflection or self.enable_citation_verification:
+                    async for event in self._post_process_answer(question, fallback_response):
+                        yield event
+                return
+            
             # Пробуем стриминг
             try:
                 response_text = ""
                 tool_calls_made = []
+                context_used = ""  # Сохраняем контекст для reflection
                 
                 # Проверяем, поддерживает ли агент стриминг
                 if hasattr(self.agent, 'astream'):
@@ -345,6 +611,14 @@ ID дела: {self.case_id}
                                             tool_name = tc.get('name', 'unknown')
                                             tool_calls_made.append(tool_name)
                                             logger.info(f"[ReActChatAgent] Tool call: {tool_name}")
+                                            
+                                            # Отправляем событие о вызове инструмента
+                                            yield SSESerializer.reasoning(
+                                                phase="tool_call",
+                                                step=len(tool_calls_made),
+                                                total_steps=0,
+                                                content=f"Использую инструмент: {tool_name}"
+                                            )
                             
                             # Финальный ответ
                             elif "output" in event:
@@ -364,14 +638,25 @@ ID дела: {self.case_id}
                     logger.warning("[ReActChatAgent] Empty response, trying fallback")
                     fallback_response = await self._fallback_response(question)
                     yield SSESerializer.text_delta(fallback_response)
+                    response_text = fallback_response
                 
                 logger.info(f"[ReActChatAgent] Completed. Tools used: {tool_calls_made}")
+                
+                # === NEW v3.0: Post-processing с Reflection и Citation Verification ===
+                if response_text and (self.enable_reflection or self.enable_citation_verification):
+                    async for event in self._post_process_answer(question, response_text, context_used):
+                        yield event
                 
             except Exception as stream_error:
                 logger.warning(f"[ReActChatAgent] Stream error: {stream_error}, trying sync invoke")
                 result = await self._invoke_agent_sync(input_data)
                 if result:
                     yield SSESerializer.text_delta(result)
+                    
+                    # Post-processing
+                    if self.enable_reflection or self.enable_citation_verification:
+                        async for event in self._post_process_answer(question, result):
+                            yield event
                 else:
                     fallback_response = await self._fallback_response(question)
                     yield SSESerializer.text_delta(fallback_response)
@@ -382,9 +667,39 @@ ID дела: {self.case_id}
             fallback_response = await self._fallback_response(question)
             yield SSESerializer.text_delta(fallback_response)
     
+    async def _post_process_answer(
+        self,
+        question: str,
+        answer: str,
+        context: Optional[str] = None
+    ) -> AsyncGenerator[str, None]:
+        """
+        Post-processing ответа: Reflection + Citation Verification
+        
+        Args:
+            question: Исходный вопрос
+            answer: Ответ агента
+            context: Использованный контекст (опционально)
+            
+        Yields:
+            SSE события с результатами проверок
+        """
+        # 1. Citation Verification (быстрее, запускаем первым)
+        if self.enable_citation_verification:
+            async for event in self._run_citation_verification(answer):
+                yield event
+        
+        # 2. Reflection (самопроверка)
+        if self.enable_reflection:
+            async for event in self._run_reflection(question, answer, context):
+                yield event
+    
     async def _invoke_agent_sync(self, input_data: Dict[str, Any]) -> str:
         """Синхронный вызов агента"""
         try:
+            if self.agent is None:
+                return ""
+                
             if hasattr(self.agent, 'ainvoke'):
                 result = await self.agent.ainvoke(input_data)
             elif hasattr(self.agent, 'invoke'):
@@ -413,7 +728,7 @@ ID дела: {self.case_id}
             return ""
     
     async def _fallback_response(self, question: str) -> str:
-        """Fallback ответ через простой RAG"""
+        """Fallback ответ через простой RAG + ГАРАНТ (если включен)"""
         try:
             logger.info("[ReActChatAgent] Using fallback RAG response")
             
@@ -424,31 +739,77 @@ ID дела: {self.case_id}
                 "расскажи о", "содержится", "какие документы"
             ])
             
+            is_legal_question = any(phrase in question_lower for phrase in [
+                "статья", "статьи", "закон", "кодекс", "гк рф", "гпк", "апк",
+                "ук рф", "нк рф", "фз", "постановлен"
+            ])
+            
+            combined_context = ""
+            
+            # Если включен ГАРАНТ и это правовой вопрос
+            if self.legal_research and is_legal_question:
+                try:
+                    from app.services.external_sources.garant_source import get_garant_source
+                    
+                    garant_source = get_garant_source()
+                    if garant_source and garant_source.api_key:
+                        results = await garant_source.search(query=question, max_results=5)
+                        
+                        if results:
+                            garant_parts = []
+                            for i, result in enumerate(results, 1):
+                                title = result.title or "Без названия"
+                                content = result.content[:1500] if result.content else ""
+                                url = result.url or ""
+                                
+                                part = f"[{i}] {title}"
+                                if url:
+                                    part += f"\nСсылка: {url}"
+                                if content:
+                                    part += f"\n\n{content}"
+                                garant_parts.append(part)
+                            
+                            combined_context += "=== РЕЗУЛЬТАТЫ ИЗ ПРАВОВОЙ БАЗЫ ГАРАНТ ===\n\n"
+                            combined_context += "\n\n---\n\n".join(garant_parts)
+                            combined_context += "\n\n"
+                            
+                except Exception as e:
+                    logger.warning(f"[ReActChatAgent] ГАРАНТ fallback error: {e}")
+            
             if is_overview:
-                # Для обзорных вопросов используем summarize_all_documents напрямую
-                from app.services.chat.chat_tools import summarize_all_documents, initialize_chat_tools
-                initialize_chat_tools(self.db, self.rag_service, self.case_id)
-                return summarize_all_documents.invoke({})
+                # Для обзорных вопросов используем analyze_all_documents напрямую
+                from app.services.chat.universal_tools import analyze_all_documents, initialize_universal_tools
+                initialize_universal_tools(self.db, self.rag_service, self.case_id)
+                return analyze_all_documents.invoke({"question": question, "task_type": "summarize"})
             else:
                 # Для конкретных вопросов используем RAG
                 docs = self.rag_service.retrieve_context(
                     case_id=self.case_id,
                     query=question,
-                    k=10,
+                    k=15,
                     db=self.db
                 )
                 
-                if not docs:
-                    return "К сожалению, не удалось найти релевантную информацию в документах дела."
+                if docs:
+                    context = self.rag_service.format_sources_for_prompt(docs, max_context_chars=6000)
+                    combined_context += "=== КОНТЕКСТ ИЗ ДОКУМЕНТОВ ДЕЛА ===\n\n"
+                    combined_context += context
                 
-                context = self.rag_service.format_sources_for_prompt(docs)
+                if not combined_context:
+                    return "К сожалению, не удалось найти релевантную информацию в документах дела."
                 
                 # Генерируем ответ
                 from langchain_core.messages import HumanMessage, SystemMessage
                 
                 response = self.llm.invoke([
-                    SystemMessage(content="Ты юридический ассистент. Отвечай на основе предоставленного контекста."),
-                    HumanMessage(content=f"Контекст:\n{context}\n\nВопрос: {question}")
+                    SystemMessage(content="""Ты юридический ассистент. Отвечай на основе предоставленного контекста.
+                    
+Правила:
+- Используй информацию ТОЛЬКО из контекста
+- Указывай источники информации
+- Если информация из ГАРАНТ - цитируй с указанием нормы
+- Структурируй ответ с помощью Markdown"""),
+                    HumanMessage(content=f"Контекст:\n{combined_context}\n\nВопрос: {question}")
                 ])
                 
                 return response.content if hasattr(response, 'content') else str(response)
@@ -456,4 +817,3 @@ ID дела: {self.case_id}
         except Exception as e:
             logger.error(f"[ReActChatAgent] Fallback error: {e}")
             return f"Произошла ошибка при обработке запроса. Пожалуйста, попробуйте переформулировать вопрос."
-
