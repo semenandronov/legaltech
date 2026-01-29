@@ -569,7 +569,7 @@ export const AssistantUIChat = forwardRef<AssistantUIChatRef, AssistantUIChatPro
   onOpenDocumentInEditor,
   onScrollToText,
   onReplaceTextInDocument,
-  onSetRisks
+  onSetRisks: _onSetRisks
 }, ref) => {
   const params = useParams<{ caseId: string }>()
   const actualCaseId = caseId || params.caseId || ''

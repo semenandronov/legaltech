@@ -3,7 +3,7 @@ import { Extension } from '@tiptap/core'
 import { ReactRenderer } from '@tiptap/react'
 import Suggestion from '@tiptap/suggestion'
 import tippy, { Instance as TippyInstance } from 'tippy.js'
-import { FileText, List, Table, Sparkles, AlertTriangle, Wand2, Quote, Strikethrough, Code, Loader2 } from 'lucide-react'
+import { FileText, List, Table, Sparkles, AlertTriangle, Wand2, Quote, Strikethrough, Code } from 'lucide-react'
 import { aiAssist, RiskItem } from '../../services/documentEditorApi'
 import { toast } from 'sonner'
 
@@ -124,7 +124,7 @@ const SlashCommands = Extension.create<SlashCommandsOptions>({
 
 export const getSuggestionItems = ({ 
   query, 
-  caseId, 
+  caseId: _caseId, 
   documentId,
   onInsertText,
   onSetRisks 

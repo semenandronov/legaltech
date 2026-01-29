@@ -1,5 +1,5 @@
 import { useEditor, EditorContent } from '@tiptap/react'
-import { useEffect, useImperativeHandle, forwardRef, useState, useCallback, useMemo } from 'react'
+import { useEffect, useImperativeHandle, forwardRef, useState } from 'react'
 import { useDebouncedCallback } from 'use-debounce'
 import StarterKit from '@tiptap/starter-kit'
 import Placeholder from '@tiptap/extension-placeholder'
@@ -116,7 +116,7 @@ export const DocumentEditor = forwardRef<DocumentEditorRef, DocumentEditorProps>
       }),
       AIKeyboardShortcuts.configure({
         documentId,
-        onImproveText: (text) => {
+        onImproveText: () => {
           onChange(editor?.getHTML() || '')
         },
         onSetRisks: (risks) => {
@@ -464,7 +464,7 @@ export const DocumentEditor = forwardRef<DocumentEditorRef, DocumentEditorProps>
                   <SelectionMenu 
                     editor={editor}
                     documentId={documentId}
-                    onReplaceSelection={(text) => {
+                    onReplaceSelection={() => {
                       onChange(editor.getHTML())
                     }}
                     onSetRisks={(risks) => {
