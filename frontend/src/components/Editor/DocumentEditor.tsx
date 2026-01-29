@@ -1,5 +1,6 @@
 import { useEditor, EditorContent } from '@tiptap/react'
-import { useEffect, useImperativeHandle, forwardRef, useState } from 'react'
+import { useEffect, useImperativeHandle, forwardRef, useState, useCallback, useMemo } from 'react'
+import { useDebouncedCallback } from 'use-debounce'
 import StarterKit from '@tiptap/starter-kit'
 import Placeholder from '@tiptap/extension-placeholder'
 import Link from '@tiptap/extension-link'
@@ -14,6 +15,8 @@ import { SlashCommands } from './SlashCommands'
 import { TrackChanges } from './extensions/TrackChanges'
 import { Comment } from './extensions/Comment'
 import { RiskHighlight } from './extensions/RiskHighlight'
+import { AIKeyboardShortcuts } from './extensions/AIKeyboardShortcuts'
+import { SelectionMenu } from './SelectionMenu'
 import { Ruler } from './Ruler'
 import './Editor.css'
 
@@ -22,6 +25,7 @@ interface DocumentEditorProps {
   onChange: (content: string) => void
   onSelectionChange: (text: string) => void
   caseId?: string
+  documentId?: string
   onInsertText?: (text: string) => void
 }
 
@@ -36,6 +40,7 @@ export interface DocumentEditorRef {
   removeComment: (id: string) => void
   getComments: () => Array<{ id: string; from: number; to: number; text: string; createdAt?: string }>
   addRisk: (from: number, to: number, level: 'high' | 'medium' | 'low', description: string) => void
+  setRisks: (risks: Array<{ id: string; from: number; to: number; level: 'high' | 'medium' | 'low'; description: string }>) => void
   clearRisks: () => void
   getRisks: () => Array<{ id: string; from: number; to: number; level: 'high' | 'medium' | 'low'; description: string }>
   scrollToText: (text: string) => boolean
@@ -47,9 +52,20 @@ export const DocumentEditor = forwardRef<DocumentEditorRef, DocumentEditorProps>
   onChange,
   onSelectionChange,
   caseId,
+  documentId,
   onInsertText
 }, ref) => {
   const [zoom] = useState(100)
+  const [trackChangesEnabled, setTrackChangesEnabled] = useState(false)
+  const [hasRisks, setHasRisks] = useState(false)
+  
+  // Debounced onChange to prevent excessive re-renders during typing
+  const debouncedOnChange = useDebouncedCallback(
+    (html: string) => {
+      onChange(html)
+    },
+    300 // 300ms debounce
+  )
   
   const editor = useEditor({
     extensions: [
@@ -80,7 +96,14 @@ export const DocumentEditor = forwardRef<DocumentEditorRef, DocumentEditorProps>
       Highlight.configure({
         multicolor: true,
       }),
-      SlashCommands.configure({ caseId, onInsertText }),
+      SlashCommands.configure({ 
+        caseId, 
+        documentId,
+        onInsertText,
+        onSetRisks: (risks) => {
+          setHasRisks(risks.length > 0)
+        }
+      }),
       TrackChanges.configure({
         enabled: false,
         pendingChanges: [],
@@ -91,6 +114,15 @@ export const DocumentEditor = forwardRef<DocumentEditorRef, DocumentEditorProps>
       RiskHighlight.configure({
         risks: [],
       }),
+      AIKeyboardShortcuts.configure({
+        documentId,
+        onImproveText: (text) => {
+          onChange(editor?.getHTML() || '')
+        },
+        onSetRisks: (risks) => {
+          setHasRisks(risks.length > 0)
+        }
+      }),
     ],
     content,
     editorProps: {
@@ -100,7 +132,7 @@ export const DocumentEditor = forwardRef<DocumentEditorRef, DocumentEditorProps>
     },
     onUpdate: ({ editor }) => {
       const html = editor.getHTML()
-      onChange(html)
+      debouncedOnChange(html)
     },
     onSelectionUpdate: ({ editor }) => {
       const { from, to } = editor.state.selection
@@ -205,12 +237,21 @@ export const DocumentEditor = forwardRef<DocumentEditorRef, DocumentEditorProps>
     addRisk: (from: number, to: number, level: 'high' | 'medium' | 'low', description: string) => {
       if (editor) {
         ;(editor.chain().focus() as any).addRisk(from, to, level, description).run()
+        setHasRisks(true)
+        onChange(editor.getHTML())
+      }
+    },
+    setRisks: (risks: Array<{ id: string; from: number; to: number; level: 'high' | 'medium' | 'low'; description: string }>) => {
+      if (editor) {
+        ;(editor.chain().focus() as any).setRisks(risks).run()
+        setHasRisks(risks.length > 0)
         onChange(editor.getHTML())
       }
     },
     clearRisks: () => {
       if (editor) {
         ;(editor.chain().focus() as any).clearRisks().run()
+        setHasRisks(false)
         onChange(editor.getHTML())
       }
     },
@@ -309,6 +350,17 @@ export const DocumentEditor = forwardRef<DocumentEditorRef, DocumentEditorProps>
       
       if (foundPos === -1) return false
       
+      // If track changes is enabled, add as pending change
+      if (trackChangesEnabled) {
+        ;(editor.chain().focus() as any).addPendingChange({
+          id: `change-${Date.now()}`,
+          from: foundPos,
+          to: foundPos + newText.length,
+          type: 'insertion' as const,
+          content: newText,
+        }).run()
+      }
+      
       // Заменяем текст
       editor.chain()
         .focus()
@@ -320,7 +372,7 @@ export const DocumentEditor = forwardRef<DocumentEditorRef, DocumentEditorProps>
       onChange(editor.getHTML())
       return true
     }
-  }), [editor, onChange])
+  }), [editor, onChange, trackChangesEnabled])
 
   if (!editor) {
     return (
@@ -341,9 +393,31 @@ export const DocumentEditor = forwardRef<DocumentEditorRef, DocumentEditorProps>
   const scaledHeight = (pageHeight * zoom) / 100
   const scaledMargin = (margin * zoom) / 100
 
+  // Handle track changes toggle
+  const handleTrackChangesToggle = (enabled: boolean) => {
+    setTrackChangesEnabled(enabled)
+    if (editor) {
+      ;(editor.chain().focus() as any).setTrackChangesEnabled(enabled).run()
+    }
+  }
+
+  // Handle clear risks
+  const handleClearRisks = () => {
+    if (editor) {
+      ;(editor.chain().focus() as any).clearRisks().run()
+      setHasRisks(false)
+    }
+  }
+
   return (
     <div className="flex-1 flex flex-col overflow-hidden">
-      <EditorToolbar editor={editor} />
+      <EditorToolbar 
+        editor={editor}
+        trackChangesEnabled={trackChangesEnabled}
+        onTrackChangesToggle={handleTrackChangesToggle}
+        hasRisks={hasRisks}
+        onClearRisks={handleClearRisks}
+      />
       <div 
         className="flex-1 overflow-auto document-canvas"
         style={{ backgroundColor: '#f1f3f4' }}
@@ -386,6 +460,18 @@ export const DocumentEditor = forwardRef<DocumentEditorRef, DocumentEditorProps>
                   }}
                 >
                   <EditorContent editor={editor} />
+                  {/* Selection bubble menu for AI actions */}
+                  <SelectionMenu 
+                    editor={editor}
+                    documentId={documentId}
+                    onReplaceSelection={(text) => {
+                      onChange(editor.getHTML())
+                    }}
+                    onSetRisks={(risks) => {
+                      ;(editor.chain().focus() as any).setRisks(risks).run()
+                      setHasRisks(risks.length > 0)
+                    }}
+                  />
                 </div>
               </div>
             </div>

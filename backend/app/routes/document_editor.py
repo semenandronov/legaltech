@@ -71,10 +71,29 @@ class DocumentResponse(BaseModel):
     updated_at: str
 
 
+class RiskItem(BaseModel):
+    """Model for a single risk item"""
+    id: str
+    quote: str
+    from_pos: int = 0  # renamed from 'from' to avoid Python keyword
+    to_pos: int = 0    # renamed from 'to' to avoid Python keyword
+    level: str = "medium"
+    description: str = ""
+
+    class Config:
+        # Allow using 'from' and 'to' in serialization
+        fields = {
+            'from_pos': {'alias': 'from'},
+            'to_pos': {'alias': 'to'}
+        }
+        populate_by_name = True
+
+
 class AIAssistResponse(BaseModel):
     """Response model for AI assistance"""
     result: str
     suggestions: List[str] = []
+    risks: List[RiskItem] = []
 
 
 @router.post("/create", response_model=DocumentResponse)
@@ -480,9 +499,23 @@ async def ai_assist(
                 prompt=request.prompt
             )
         
+        # Convert risks to RiskItem format
+        raw_risks = result.get("risks", [])
+        risks = []
+        for r in raw_risks:
+            risks.append(RiskItem(
+                id=r.get("id", ""),
+                quote=r.get("quote", ""),
+                from_pos=r.get("from", 0),
+                to_pos=r.get("to", 0),
+                level=r.get("level", "medium"),
+                description=r.get("description", "")
+            ))
+        
         return AIAssistResponse(
             result=result.get("result", ""),
-            suggestions=result.get("suggestions", [])
+            suggestions=result.get("suggestions", []),
+            risks=risks
         )
     except HTTPException:
         raise
@@ -724,6 +757,8 @@ async def restore_version(
 class DocumentChatRequest(BaseModel):
     """Request model for document chat"""
     question: str = Field(..., min_length=1, description="User question or instruction")
+    deep_think: bool = Field(False, description="Enable deep thinking mode for complex questions")
+    legal_research: bool = Field(False, description="Enable legal research mode")
 
 
 class StructuredEdit(BaseModel):
@@ -798,7 +833,9 @@ async def chat_over_document(
             document_content=document_content,
             case_id=case_id or (document.case_id if document else None),
             question=request.question,
-            user_id=current_user.id
+            user_id=current_user.id,
+            deep_think=request.deep_think,
+            legal_research=request.legal_research
         )
         
         # Преобразуем structured_edits в модели Pydantic

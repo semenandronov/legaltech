@@ -154,6 +154,15 @@ interface Message {
   messageType?: 'question' | 'edit'
 }
 
+interface RiskItem {
+  id: string
+  quote: string
+  from: number
+  to: number
+  level: 'high' | 'medium' | 'low'
+  description: string
+}
+
 interface AssistantUIChatProps {
   caseId?: string
   className?: string
@@ -175,6 +184,7 @@ interface AssistantUIChatProps {
   onOpenDocumentInEditor?: (documentId: string) => void
   onScrollToText?: (text: string) => boolean
   onReplaceTextInDocument?: (originalText: string, newText: string) => boolean
+  onSetRisks?: (risks: RiskItem[]) => void
 }
 
 // Компонент-обертка для PromptInput с поддержкой drag&drop
@@ -558,7 +568,8 @@ export const AssistantUIChat = forwardRef<AssistantUIChatRef, AssistantUIChatPro
   onApplyEdit,
   onOpenDocumentInEditor,
   onScrollToText,
-  onReplaceTextInDocument
+  onReplaceTextInDocument,
+  onSetRisks
 }, ref) => {
   const params = useParams<{ caseId: string }>()
   const actualCaseId = caseId || params.caseId || ''

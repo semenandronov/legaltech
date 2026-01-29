@@ -218,12 +218,13 @@ class DocumentAIService:
             case_id: Case identifier for context
             
         Returns:
-            Dictionary with risk analysis and suggestions
+            Dictionary with risk analysis, suggestions, and structured risks for highlighting
         """
         if not text:
             return {
                 "result": "Нет текста для проверки",
-                "suggestions": []
+                "suggestions": [],
+                "risks": []
             }
         
         # Get context from case documents for comparison
@@ -243,10 +244,25 @@ class DocumentAIService:
         except Exception as e:
             logger.warning(f"Could not retrieve context: {e}")
         
-        # Create LLM prompt
+        # Create LLM prompt with structured output for risk positions
         system_prompt = """Ты - опытный юрист-аналитик, специализирующийся на выявлении юридических рисков.
-Проанализируй предоставленный текст на предмет потенциальных юридических рисков, противоречий и проблемных формулировок.
-Укажи конкретные места и предложи улучшения."""
+Проанализируй предоставленный текст на предмет потенциальных юридических рисков.
+
+ФОРМАТ ОТВЕТА:
+1. Сначала дай общий анализ рисков
+2. Затем выведи JSON-блок со структурированными рисками:
+
+```risks
+[
+  {"quote": "точная цитата проблемного фрагмента", "level": "high|medium|low", "description": "краткое описание риска"},
+  ...
+]
+```
+
+УРОВНИ РИСКОВ:
+- high: критические юридические риски (недействительность, ответственность)
+- medium: потенциальные проблемы (неоднозначные формулировки)
+- low: рекомендации по улучшению"""
         
         context_for_comparison = f'Контекст дела для сравнения:\n{context}' if context else ''
         user_prompt = f"""Проанализируй следующий текст на юридические риски:
@@ -255,13 +271,7 @@ class DocumentAIService:
 
 {context_for_comparison}
 
-Найди:
-1. Потенциальные юридические риски
-2. Противоречия и неясности
-3. Проблемные формулировки
-4. Отсутствующие важные пункты
-
-Предложи конкретные улучшения для каждого найденного риска."""
+Найди риски и выведи их в указанном формате."""
         
         # Generate risk analysis
         llm = create_legal_llm(temperature=0.1)  # Low temperature for accuracy
@@ -273,13 +283,41 @@ class DocumentAIService:
         response = llm.invoke(messages)
         result = response.content if hasattr(response, 'content') else str(response)
         
+        # Parse structured risks from response
+        risks = []
+        import json
+        import uuid
+        
+        # Extract risks JSON block
+        risks_match = re.search(r'```risks\s*\n(.*?)\n```', result, re.DOTALL)
+        if risks_match:
+            try:
+                risks_data = json.loads(risks_match.group(1))
+                for risk_item in risks_data:
+                    quote = risk_item.get("quote", "")
+                    if quote and quote in text:
+                        # Find position in text
+                        start_pos = text.find(quote)
+                        if start_pos != -1:
+                            risks.append({
+                                "id": f"risk-{uuid.uuid4().hex[:8]}",
+                                "quote": quote,
+                                "from": start_pos,
+                                "to": start_pos + len(quote),
+                                "level": risk_item.get("level", "medium"),
+                                "description": risk_item.get("description", "")
+                            })
+            except json.JSONDecodeError as e:
+                logger.warning(f"Could not parse risks JSON: {e}")
+        
         return {
             "result": result,
             "suggestions": [
                 "Исправить найденные риски",
                 "Улучшить формулировки",
                 "Добавить защитные пункты"
-            ]
+            ],
+            "risks": risks
         }
     
     def improve_text(
@@ -541,7 +579,9 @@ class DocumentAIService:
         document_content: str,
         case_id: str,
         question: str,
-        user_id: Optional[str] = None
+        user_id: Optional[str] = None,
+        deep_think: bool = False,
+        legal_research: bool = False
     ) -> Dict[str, Any]:
         """
         Chat over document - ask questions and get AI to edit the document
@@ -552,6 +592,8 @@ class DocumentAIService:
             case_id: Case identifier for context
             question: User question/instruction
             user_id: User identifier (optional, for template caching)
+            deep_think: Enable deep thinking mode for complex questions
+            legal_research: Enable legal research mode
             
         Returns:
             Dictionary with answer and suggested edits

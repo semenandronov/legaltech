@@ -12,14 +12,29 @@ import {
   Heading3,
   Strikethrough,
   Code,
-  Quote
+  Quote,
+  GitCompareArrows,
+  Check,
+  X,
+  AlertTriangle,
+  Trash2
 } from 'lucide-react'
 
 interface EditorToolbarProps {
   editor: Editor | null
+  trackChangesEnabled?: boolean
+  onTrackChangesToggle?: (enabled: boolean) => void
+  hasRisks?: boolean
+  onClearRisks?: () => void
 }
 
-export const EditorToolbar = ({ editor }: EditorToolbarProps) => {
+export const EditorToolbar = ({ 
+  editor,
+  trackChangesEnabled = false,
+  onTrackChangesToggle,
+  hasRisks = false,
+  onClearRisks
+}: EditorToolbarProps) => {
   if (!editor) {
     return null
   }
@@ -162,11 +177,83 @@ export const EditorToolbar = ({ editor }: EditorToolbarProps) => {
         }}
         className="p-2 rounded hover:bg-gray-100 text-gray-700 transition-colors"
         title="Вставить таблицу"
+        aria-label="Вставить таблицу"
       >
-        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 10h18M3 14h18m-9-4v8m-7 0h14a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z" />
         </svg>
       </button>
+
+      {/* Spacer to push Track Changes and Risks to the right */}
+      <div className="flex-1"></div>
+
+      {/* Risks indicator and clear button */}
+      {hasRisks && onClearRisks && (
+        <>
+          <div className="flex items-center gap-1 px-2 py-1 bg-amber-50 border border-amber-200 rounded text-amber-700 text-xs">
+            <AlertTriangle className="w-3 h-3" aria-hidden="true" />
+            <span>Риски подсвечены</span>
+          </div>
+          <button
+            onClick={onClearRisks}
+            className="p-2 rounded hover:bg-amber-100 text-amber-600 transition-colors"
+            title="Очистить подсветку рисков"
+            aria-label="Очистить подсветку рисков"
+          >
+            <Trash2 className="w-4 h-4" />
+          </button>
+          <div className="w-px h-6 bg-gray-300 mx-1"></div>
+        </>
+      )}
+
+      {/* Track Changes toggle */}
+      {onTrackChangesToggle && (
+        <div className="flex items-center gap-1">
+          <button
+            onClick={() => onTrackChangesToggle(!trackChangesEnabled)}
+            className={`flex items-center gap-1.5 px-3 py-1.5 rounded text-sm transition-colors ${
+              trackChangesEnabled
+                ? 'bg-blue-100 text-blue-700 border border-blue-300'
+                : 'hover:bg-gray-100 text-gray-600 border border-transparent'
+            }`}
+            title={trackChangesEnabled ? "Выключить отслеживание изменений" : "Включить отслеживание изменений"}
+            aria-label={trackChangesEnabled ? "Выключить отслеживание изменений" : "Включить отслеживание изменений"}
+            aria-pressed={trackChangesEnabled}
+          >
+            <GitCompareArrows className="w-4 h-4" aria-hidden="true" />
+            <span className="hidden sm:inline">Track Changes</span>
+          </button>
+          
+          {/* Accept/Reject buttons when Track Changes is enabled */}
+          {trackChangesEnabled && (
+            <>
+              <button
+                onClick={() => {
+                  // Accept all changes - clear pending changes
+                  ;(editor.chain().focus() as any).clearPendingChanges().run()
+                }}
+                className="p-1.5 rounded hover:bg-green-100 text-green-600 transition-colors"
+                title="Принять все изменения"
+                aria-label="Принять все изменения"
+              >
+                <Check className="w-4 h-4" />
+              </button>
+              <button
+                onClick={() => {
+                  // Reject all changes - revert and clear pending changes
+                  editor.chain().focus().undo().run()
+                  ;(editor.chain().focus() as any).clearPendingChanges().run()
+                }}
+                className="p-1.5 rounded hover:bg-red-100 text-red-600 transition-colors"
+                title="Отклонить все изменения"
+                aria-label="Отклонить все изменения"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </>
+          )}
+        </div>
+      )}
     </div>
   )
 }

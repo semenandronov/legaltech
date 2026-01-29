@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { Sparkles, FileText, AlertTriangle, Wand2, Loader2 } from 'lucide-react'
 import { toast } from 'sonner'
-import { aiAssist } from '../../services/documentEditorApi'
+import { aiAssist, RiskItem } from '../../services/documentEditorApi'
 
 interface AIAssistantSidebarProps {
   caseId?: string
@@ -9,13 +9,15 @@ interface AIAssistantSidebarProps {
   selectedText: string
   onInsertText: (text: string) => void
   onReplaceText?: (text: string) => void
+  onSetRisks?: (risks: RiskItem[]) => void
 }
 
 export const AIAssistantSidebar = ({
   documentId,
   selectedText,
   onInsertText,
-  onReplaceText
+  onReplaceText,
+  onSetRisks
 }: AIAssistantSidebarProps) => {
   const [prompt, setPrompt] = useState('')
   const [loading, setLoading] = useState(false)
@@ -33,16 +35,31 @@ export const AIAssistantSidebar = ({
     try {
       const result = await aiAssist(documentId, command, selectedText, customPrompt || prompt)
       
+      // Handle risks highlighting for check_risks command
+      if (command === 'check_risks' && result.risks && result.risks.length > 0 && onSetRisks) {
+        // Transform risks to editor format
+        const editorRisks = result.risks.map(risk => ({
+          ...risk,
+          level: risk.level as 'high' | 'medium' | 'low'
+        }))
+        onSetRisks(editorRisks)
+        toast.success(`Найдено ${result.risks.length} риск(ов). Риски подсвечены в документе.`)
+      }
+      
       if (result.result) {
-        // If text is selected, replace it; otherwise insert
-        if (selectedText && onReplaceText) {
+        // For check_risks, show result as info, don't insert
+        if (command === 'check_risks') {
+          toast.info('Анализ рисков выполнен')
+          // Result is displayed in chat or sidebar, not inserted
+        } else if (selectedText && onReplaceText) {
+          // If text is selected, replace it; otherwise insert
           onReplaceText(result.result)
           toast.success('Текст заменен')
         } else {
-        onInsertText(result.result)
-        toast.success('Текст добавлен в документ')
+          onInsertText(result.result)
+          toast.success('Текст добавлен в документ')
         }
-      } else {
+      } else if (command !== 'check_risks') {
         toast.error('Не удалось получить результат от AI')
       }
     } catch (error: any) {

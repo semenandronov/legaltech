@@ -2,13 +2,8 @@ import { useState, useEffect, useRef, useCallback } from 'react'
 import { logger } from '@/lib/logger'
 import { Conversation, ConversationContent } from '../ai-elements/conversation'
 import { UserMessage, AssistantMessage } from '../ai-elements/message'
-import { SettingsPanel } from '../Chat/SettingsPanel'
 import {
   PromptInputProvider,
-  PromptInput,
-  PromptInputBody,
-  PromptInputTextarea,
-  PromptInputSubmit,
 } from '../ai-elements/prompt-input'
 import { Loader } from '../ai-elements/loader'
 import { chatOverDocument, aiAssist, type StructuredEdit } from '@/services/documentEditorApi'
@@ -16,6 +11,7 @@ import { Button } from '@/components/UI/Button'
 import { Check, Wand2, AlertTriangle, FileText, Sparkles, MessageCircleQuestion, Pencil } from 'lucide-react'
 import { toast } from 'sonner'
 import { EditSuggestionsList } from './EditSuggestionCard'
+import { EditorPromptInput } from './EditorPromptInput'
 
 // Ключевые слова для определения типа сообщения
 const EDIT_KEYWORDS = [
@@ -108,7 +104,10 @@ export const DocumentEditorChat: React.FC<DocumentEditorChatProps> = ({
     setMessages((prev) => [...prev, assistantMsg])
 
     try {
-      const response = await chatOverDocument(documentId, userMessage.trim())
+      const response = await chatOverDocument(documentId, userMessage.trim(), {
+        deepThink,
+        legalResearch,
+      })
       
       // Update assistant message with response
       setMessages((prev) =>
@@ -139,7 +138,7 @@ export const DocumentEditorChat: React.FC<DocumentEditorChatProps> = ({
     } finally {
       setIsLoading(false)
     }
-  }, [documentId, isLoading])
+  }, [documentId, isLoading, deepThink, legalResearch])
 
   const handlePromptSubmit = useCallback(async (message: { text: string; files: any[] }, _event: React.FormEvent<HTMLFormElement>) => {
     const text = message.text?.trim()
@@ -567,57 +566,15 @@ export const DocumentEditorChat: React.FC<DocumentEditorChatProps> = ({
               borderTopColor: 'var(--color-border)'
             }}
           >
-            <div 
-              className="w-full max-w-4xl mx-auto space-y-4"
-              style={{ padding: 'var(--space-4) var(--space-6)' }}
-            >
-              <PromptInput
-                onSubmit={(message, event) => handlePromptSubmit(message, event)}
-                className="w-full [&_form_input-group]:border [&_form_input-group]:border-border [&_form_input-group]:rounded-lg [&_form_input-group]:bg-bg-elevated [&_form_input-group]:focus-within:border-border-strong [&_form_input-group]:transition-all [&_form_input-group]:hover:border-border-strong"
-                style={{
-                  '--input-border': 'var(--color-border)',
-                  '--input-bg': 'var(--color-bg-elevated)',
-                  '--input-focus-border': 'var(--color-border-strong)',
-                } as React.CSSProperties}
-              >
-                <PromptInputBody>
-                  <div className="flex items-end gap-2 w-full">
-                    <div className="flex-1 relative">
-                      <PromptInputTextarea 
-                        placeholder="Задайте вопрос о документе..."
-                        className="w-full min-h-[120px] max-h-[300px] text-base py-4 px-4 resize-none focus:outline-none leading-relaxed overflow-y-auto"
-                        style={{
-                          color: 'var(--color-text-primary)',
-                          backgroundColor: 'transparent',
-                          padding: 'var(--space-4)',
-                        }}
-                      />
-                    </div>
-                  </div>
-                  <PromptInputSubmit 
-                    variant="default"
-                    className="rounded-md h-10 w-10 p-0 flex items-center justify-center shrink-0 transition-all duration-150 disabled:opacity-50 disabled:cursor-not-allowed"
-                    style={{
-                      backgroundColor: 'var(--color-accent)',
-                      color: 'var(--color-bg-primary)',
-                    }}
-                    disabled={isLoading || !documentId}
-                    status={isLoading ? "submitted" : undefined}
-                    aria-label="Отправить сообщение"
-                  />
-                </PromptInputBody>
-              </PromptInput>
-
-              {/* Компактная панель настроек */}
-              <SettingsPanel
-                webSearch={false}
+            <div style={{ padding: 'var(--space-4) var(--space-6)' }}>
+              <EditorPromptInput
+                onSubmit={handlePromptSubmit}
+                isLoading={isLoading}
+                documentId={documentId}
                 deepThink={deepThink}
                 legalResearch={legalResearch}
-                draftMode={false}
-                onWebSearchChange={() => {}}
                 onDeepThinkChange={setDeepThink}
                 onLegalResearchChange={setLegalResearch}
-                onDraftModeChange={() => {}}
               />
             </div>
           </div>
@@ -628,63 +585,15 @@ export const DocumentEditorChat: React.FC<DocumentEditorChatProps> = ({
               padding: 'var(--space-8) var(--space-6) var(--space-4)'
             }}
           >
-            <div 
-              className="w-full max-w-4xl mx-auto"
-              style={{ 
-                display: 'flex', 
-                flexDirection: 'column', 
-                gap: 'var(--space-4)' 
-              }}
-            >
-              <PromptInput
-                onSubmit={(message, event) => handlePromptSubmit(message, event)}
-                className="w-full [&_form_input-group]:border [&_form_input-group]:border-border [&_form_input-group]:rounded-lg [&_form_input-group]:bg-bg-elevated [&_form_input-group]:focus-within:border-border-strong [&_form_input-group]:transition-all [&_form_input-group]:hover:border-border-strong"
-                style={{
-                  '--input-border': 'var(--color-border)',
-                  '--input-bg': 'var(--color-bg-elevated)',
-                  '--input-focus-border': 'var(--color-border-strong)',
-                } as React.CSSProperties}
-              >
-                <PromptInputBody>
-                  <div className="flex items-end gap-2 w-full">
-                    <div className="flex-1 relative">
-                      <PromptInputTextarea 
-                        placeholder="Задайте вопрос о документе..."
-                        className="w-full min-h-[120px] max-h-[300px] text-base py-4 px-4 resize-none focus:outline-none leading-relaxed overflow-y-auto"
-                        style={{
-                          color: 'var(--color-text-primary)',
-                          backgroundColor: 'transparent',
-                          padding: 'var(--space-4)',
-                        }}
-                      />
-                    </div>
-                  </div>
-                  <PromptInputSubmit 
-                    variant="default"
-                    className="rounded-md h-10 w-10 p-0 flex items-center justify-center shrink-0 transition-all duration-150 disabled:opacity-50 disabled:cursor-not-allowed"
-                    style={{
-                      backgroundColor: 'var(--color-accent)',
-                      color: 'var(--color-bg-primary)',
-                    }}
-                    disabled={isLoading || !documentId}
-                    status={isLoading ? "submitted" : undefined}
-                    aria-label="Отправить сообщение"
-                  />
-                </PromptInputBody>
-              </PromptInput>
-
-              {/* Компактная панель настроек */}
-              <SettingsPanel
-                webSearch={false}
-                deepThink={deepThink}
-                legalResearch={legalResearch}
-                draftMode={false}
-                onWebSearchChange={() => {}}
-                onDeepThinkChange={setDeepThink}
-                onLegalResearchChange={setLegalResearch}
-                onDraftModeChange={() => {}}
-              />
-            </div>
+            <EditorPromptInput
+              onSubmit={handlePromptSubmit}
+              isLoading={isLoading}
+              documentId={documentId}
+              deepThink={deepThink}
+              legalResearch={legalResearch}
+              onDeepThinkChange={setDeepThink}
+              onLegalResearchChange={setLegalResearch}
+            />
           </div>
         )}
       </div>

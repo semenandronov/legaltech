@@ -275,6 +275,12 @@ const DocumentEditorPage = () => {
     }
   }
 
+  const handleSetRisks = (risks: Array<{ id: string; quote: string; from: number; to: number; level: 'high' | 'medium' | 'low'; description: string }>) => {
+    if (editorRef.current) {
+      editorRef.current.setRisks(risks)
+    }
+  }
+
   // Загрузка playbooks при открытии модального окна
   const handleOpenPlaybookModal = async () => {
     setShowPlaybookModal(true)
@@ -523,6 +529,7 @@ const DocumentEditorPage = () => {
             onChange={handleContentChange}
             onSelectionChange={setSelectedText}
             caseId={caseId}
+            documentId={documentId}
             onInsertText={handleInsertText}
           />
         </div>
@@ -542,6 +549,7 @@ const DocumentEditorPage = () => {
               onReplaceText={handleReplaceText}
               onScrollToText={handleScrollToText}
               onReplaceTextInDocument={handleReplaceTextInDocument}
+              onSetRisks={handleSetRisks}
               onOpenDocumentInEditor={(docId) => {
                 navigate(`/cases/${caseId}/editor/${docId}`, { replace: true })
               }}

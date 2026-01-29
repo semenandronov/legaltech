@@ -15,9 +15,19 @@ export interface Document {
   updated_at: string
 }
 
+export interface RiskItem {
+  id: string
+  quote: string
+  from: number
+  to: number
+  level: 'high' | 'medium' | 'low'
+  description: string
+}
+
 export interface AIAssistResponse {
   result: string
   suggestions: string[]
+  risks?: RiskItem[]
 }
 
 export interface StructuredEdit {
@@ -213,13 +223,19 @@ export async function exportPdf(documentId: string): Promise<void> {
  */
 export async function chatOverDocument(
   documentId: string,
-  question: string
+  question: string,
+  options?: {
+    deepThink?: boolean
+    legalResearch?: boolean
+  }
 ): Promise<DocumentChatResponse> {
   try {
     const response = await apiClient.post<DocumentChatResponse>(
       `${BASE_URL}/api/documents-editor/${documentId}/chat`,
       {
         question,
+        deep_think: options?.deepThink ?? false,
+        legal_research: options?.legalResearch ?? false,
       }
     )
     return response.data

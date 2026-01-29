@@ -3,11 +3,15 @@ import { Extension } from '@tiptap/core'
 import { ReactRenderer } from '@tiptap/react'
 import Suggestion from '@tiptap/suggestion'
 import tippy, { Instance as TippyInstance } from 'tippy.js'
-import { FileText, List, Table, Sparkles, AlertTriangle, Wand2, Quote, Strikethrough, Code } from 'lucide-react'
+import { FileText, List, Table, Sparkles, AlertTriangle, Wand2, Quote, Strikethrough, Code, Loader2 } from 'lucide-react'
+import { aiAssist, RiskItem } from '../../services/documentEditorApi'
+import { toast } from 'sonner'
 
 interface SlashCommandsOptions {
   caseId?: string
+  documentId?: string
   onInsertText?: (text: string) => void
+  onSetRisks?: (risks: RiskItem[]) => void
 }
 
 const SlashCommands = Extension.create<SlashCommandsOptions>({
@@ -17,7 +21,9 @@ const SlashCommands = Extension.create<SlashCommandsOptions>({
     return {
       ...this.parent?.(),
       caseId: undefined,
+      documentId: undefined,
       onInsertText: undefined,
+      onSetRisks: undefined,
     }
   },
 
@@ -34,7 +40,9 @@ const SlashCommands = Extension.create<SlashCommandsOptions>({
           return getSuggestionItems({
             query,
             caseId: options.caseId,
+            documentId: options.documentId,
             onInsertText: options.onInsertText,
+            onSetRisks: options.onSetRisks,
           })
         },
         render: () => {
@@ -46,7 +54,9 @@ const SlashCommands = Extension.create<SlashCommandsOptions>({
               const items = getSuggestionItems({
                 query: props.query,
                 caseId: options.caseId,
+                documentId: options.documentId,
                 onInsertText: options.onInsertText,
+                onSetRisks: options.onSetRisks,
               })
 
               component = new ReactRenderer(CommandList, {
@@ -73,7 +83,9 @@ const SlashCommands = Extension.create<SlashCommandsOptions>({
               const items = getSuggestionItems({
                 query: props.query,
                 caseId: options.caseId,
+                documentId: options.documentId,
                 onInsertText: options.onInsertText,
+                onSetRisks: options.onSetRisks,
               })
 
               component.updateProps({ items, command: props.command })
@@ -110,7 +122,19 @@ const SlashCommands = Extension.create<SlashCommandsOptions>({
   },
 })
 
-export const getSuggestionItems = ({ query, caseId, onInsertText }: { query: string; caseId?: string; onInsertText?: (text: string) => void }) => {
+export const getSuggestionItems = ({ 
+  query, 
+  caseId, 
+  documentId,
+  onInsertText,
+  onSetRisks 
+}: { 
+  query: string
+  caseId?: string
+  documentId?: string
+  onInsertText?: (text: string) => void
+  onSetRisks?: (risks: RiskItem[]) => void
+}) => {
   const items = [
     {
       title: 'Заголовок 1',
@@ -231,8 +255,8 @@ export const getSuggestionItems = ({ query, caseId, onInsertText }: { query: str
     },
   ]
 
-  // AI commands
-  if (caseId) {
+  // AI commands - only show if we have documentId (saved document)
+  if (documentId) {
     items.push(
       {
         title: 'Создать договор',
@@ -240,9 +264,20 @@ export const getSuggestionItems = ({ query, caseId, onInsertText }: { query: str
         icon: Sparkles,
         command: async ({ editor, range }: any) => {
           editor.chain().focus().deleteRange(range).run()
-          // This will trigger AI sidebar action
-          if (onInsertText) {
-            onInsertText('Создание договора...')
+          
+          // Show loading toast
+          const loadingToast = toast.loading('Создание договора…')
+          
+          try {
+            const result = await aiAssist(documentId, 'create_contract', '', '')
+            if (result.result && onInsertText) {
+              onInsertText(result.result)
+              toast.success('Договор создан', { id: loadingToast })
+            } else {
+              toast.error('Не удалось создать договор', { id: loadingToast })
+            }
+          } catch (error: any) {
+            toast.error(error.message || 'Ошибка AI', { id: loadingToast })
           }
         },
       },
@@ -251,20 +286,58 @@ export const getSuggestionItems = ({ query, caseId, onInsertText }: { query: str
         description: 'Проверить текст на юридические риски',
         icon: AlertTriangle,
         command: async ({ editor, range }: any) => {
+          // Get document content for risk checking
+          const docContent = editor.getText()
+          
           editor.chain().focus().deleteRange(range).run()
-          if (onInsertText) {
-            onInsertText('Проверка рисков...')
+          
+          const loadingToast = toast.loading('Проверка рисков…')
+          
+          try {
+            const result = await aiAssist(documentId, 'check_risks', docContent, '')
+            
+            // Set risks in editor if any found
+            if (result.risks && result.risks.length > 0 && onSetRisks) {
+              onSetRisks(result.risks)
+              toast.success(`Найдено ${result.risks.length} риск(ов). Риски подсвечены.`, { id: loadingToast })
+            } else {
+              toast.success('Рисков не обнаружено', { id: loadingToast })
+            }
+          } catch (error: any) {
+            toast.error(error.message || 'Ошибка AI', { id: loadingToast })
           }
         },
       },
       {
         title: 'Улучшить текст',
-        description: 'Улучшить текст с помощью AI',
+        description: 'Улучшить выделенный текст с помощью AI',
         icon: Wand2,
         command: async ({ editor, range }: any) => {
+          // Get selected text or document content
+          const { from, to } = editor.state.selection
+          const selectedText = from !== to 
+            ? editor.state.doc.textBetween(from, to)
+            : editor.getText()
+          
           editor.chain().focus().deleteRange(range).run()
-          if (onInsertText) {
-            onInsertText('Улучшение текста...')
+          
+          if (!selectedText) {
+            toast.error('Нет текста для улучшения')
+            return
+          }
+          
+          const loadingToast = toast.loading('Улучшение текста…')
+          
+          try {
+            const result = await aiAssist(documentId, 'improve', selectedText, '')
+            if (result.result && onInsertText) {
+              onInsertText(result.result)
+              toast.success('Текст улучшен', { id: loadingToast })
+            } else {
+              toast.error('Не удалось улучшить текст', { id: loadingToast })
+            }
+          } catch (error: any) {
+            toast.error(error.message || 'Ошибка AI', { id: loadingToast })
           }
         },
       }
