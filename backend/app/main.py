@@ -10,6 +10,11 @@ import os
 import logging
 import sys
 from datetime import datetime
+
+# Version info for deployment tracking
+APP_VERSION = "6.0.0"
+APP_BUILD_DATE = "2026-01-29"
+APP_COMMIT = "039f731"  # feat: Add Reflection Pattern and Citation Verification
 from app.config import config
 from app.routes import upload, chat, auth, cases, dashboard, analysis, reports, settings, websocket, tabular_review, prompts, workflows, folders, review_table, assistant_chat, assistant_chat_v2, workflow_execution, plan_execution, metrics, document_editor, playbooks, workflow_agentic, health
 from app.utils.database import init_db
@@ -278,6 +283,25 @@ else:
                 "chat": "/api/chat"
             }
         }
+
+
+# Version endpoint for deployment tracking
+@app.get("/api/version")
+async def get_version():
+    """Get current application version and build info"""
+    return {
+        "version": APP_VERSION,
+        "commit": APP_COMMIT,
+        "build_date": APP_BUILD_DATE,
+        "chat_orchestrator": "v5.0 (ReActChatAgent)",
+        "features": [
+            "ReAct Agent with 11+ tools",
+            "ГАРАНТ integration",
+            "Deep Think (7 phases)",
+            "Reflection Pattern",
+            "Citation Verification"
+        ]
+    }
 
 
 if __name__ == "__main__":
