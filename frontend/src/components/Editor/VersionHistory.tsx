@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, useCallback } from 'react'
 import { History, RotateCcw, Eye } from 'lucide-react'
 import { Button } from '@/components/UI/Button'
 import { Card, CardContent } from '@/components/UI/Card'
@@ -30,13 +30,7 @@ export const VersionHistory: React.FC<VersionHistoryProps> = ({
   const [showPreview, setShowPreview] = useState(false)
   const [restoring, setRestoring] = useState<string | null>(null)
 
-  useEffect(() => {
-    if (isOpen && documentId) {
-      loadVersions()
-    }
-  }, [isOpen, documentId])
-
-  const loadVersions = async () => {
+  const loadVersions = useCallback(async () => {
     try {
       setLoading(true)
       const data = await listDocumentVersions(documentId)
@@ -47,7 +41,13 @@ export const VersionHistory: React.FC<VersionHistoryProps> = ({
     } finally {
       setLoading(false)
     }
-  }
+  }, [documentId])
+
+  useEffect(() => {
+    if (isOpen && documentId) {
+      loadVersions()
+    }
+  }, [isOpen, documentId, loadVersions])
 
   const handlePreview = async (version: number) => {
     try {

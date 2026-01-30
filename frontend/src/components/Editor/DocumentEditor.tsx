@@ -1,5 +1,5 @@
 import { useEditor, EditorContent } from '@tiptap/react'
-import { useEffect, useImperativeHandle, forwardRef, useState } from 'react'
+import { useEffect, useImperativeHandle, forwardRef, useState, useCallback } from 'react'
 import { useDebouncedCallback } from 'use-debounce'
 import StarterKit from '@tiptap/starter-kit'
 import Placeholder from '@tiptap/extension-placeholder'
@@ -18,6 +18,8 @@ import { RiskHighlight } from './extensions/RiskHighlight'
 import { AIKeyboardShortcuts } from './extensions/AIKeyboardShortcuts'
 import { SelectionMenu } from './SelectionMenu'
 import { Ruler } from './Ruler'
+import { FindReplace } from './FindReplace'
+import { ClauseLibrary } from './ClauseLibrary'
 import './Editor.css'
 
 interface DocumentEditorProps {
@@ -55,9 +57,27 @@ export const DocumentEditor = forwardRef<DocumentEditorRef, DocumentEditorProps>
   documentId,
   onInsertText
 }, ref) => {
-  const [zoom] = useState(100)
+  // Zoom level for document scaling (could be made configurable via props in future)
+  const zoom = 100
   const [trackChangesEnabled, setTrackChangesEnabled] = useState(false)
   const [hasRisks, setHasRisks] = useState(false)
+  const [showFindReplace, setShowFindReplace] = useState(false)
+  const [showClauseLibrary, setShowClauseLibrary] = useState(false)
+
+  // Memoized callbacks for keyboard shortcuts
+  const handleOpenFindReplace = useCallback(() => {
+    setShowFindReplace(true)
+  }, [])
+
+  const handleOpenClauseLibrary = useCallback(() => {
+    setShowClauseLibrary(true)
+  }, [])
+
+  const handleInsertClause = useCallback((clauseContent: string) => {
+    if (onInsertText) {
+      onInsertText(clauseContent)
+    }
+  }, [onInsertText])
   
   // Debounced onChange to prevent excessive re-renders during typing
   const debouncedOnChange = useDebouncedCallback(
@@ -121,7 +141,9 @@ export const DocumentEditor = forwardRef<DocumentEditorRef, DocumentEditorProps>
         },
         onSetRisks: (risks) => {
           setHasRisks(risks.length > 0)
-        }
+        },
+        onOpenFindReplace: handleOpenFindReplace,
+        onOpenClauseLibrary: handleOpenClauseLibrary,
       }),
     ],
     content,
@@ -215,13 +237,13 @@ export const DocumentEditor = forwardRef<DocumentEditorRef, DocumentEditorProps>
     },
     addComment: (from: number, to: number, text: string) => {
       if (editor) {
-        ;(editor.chain().focus() as any).addComment(from, to, text).run()
+        editor.chain().focus().addComment(from, to, text).run()
         onChange(editor.getHTML())
       }
     },
     removeComment: (id: string) => {
       if (editor) {
-        ;(editor.chain().focus() as any).removeComment(id).run()
+        editor.chain().focus().removeComment(id).run()
         onChange(editor.getHTML())
       }
     },
@@ -236,21 +258,21 @@ export const DocumentEditor = forwardRef<DocumentEditorRef, DocumentEditorProps>
     },
     addRisk: (from: number, to: number, level: 'high' | 'medium' | 'low', description: string) => {
       if (editor) {
-        ;(editor.chain().focus() as any).addRisk(from, to, level, description).run()
+        editor.chain().focus().addRisk(from, to, level, description).run()
         setHasRisks(true)
         onChange(editor.getHTML())
       }
     },
     setRisks: (risks: Array<{ id: string; from: number; to: number; level: 'high' | 'medium' | 'low'; description: string }>) => {
       if (editor) {
-        ;(editor.chain().focus() as any).setRisks(risks).run()
+        editor.chain().focus().setRisks(risks).run()
         setHasRisks(risks.length > 0)
         onChange(editor.getHTML())
       }
     },
     clearRisks: () => {
       if (editor) {
-        ;(editor.chain().focus() as any).clearRisks().run()
+        editor.chain().focus().clearRisks().run()
         setHasRisks(false)
         onChange(editor.getHTML())
       }
@@ -352,7 +374,7 @@ export const DocumentEditor = forwardRef<DocumentEditorRef, DocumentEditorProps>
       
       // If track changes is enabled, add as pending change
       if (trackChangesEnabled) {
-        ;(editor.chain().focus() as any).addPendingChange({
+        editor.chain().focus().addPendingChange({
           id: `change-${Date.now()}`,
           from: foundPos,
           to: foundPos + newText.length,
@@ -397,14 +419,14 @@ export const DocumentEditor = forwardRef<DocumentEditorRef, DocumentEditorProps>
   const handleTrackChangesToggle = (enabled: boolean) => {
     setTrackChangesEnabled(enabled)
     if (editor) {
-      ;(editor.chain().focus() as any).setTrackChangesEnabled(enabled).run()
+      editor.chain().focus().setTrackChangesEnabled(enabled).run()
     }
   }
 
   // Handle clear risks
   const handleClearRisks = () => {
     if (editor) {
-      ;(editor.chain().focus() as any).clearRisks().run()
+      editor.chain().focus().clearRisks().run()
       setHasRisks(false)
     }
   }
@@ -417,6 +439,8 @@ export const DocumentEditor = forwardRef<DocumentEditorRef, DocumentEditorProps>
         onTrackChangesToggle={handleTrackChangesToggle}
         hasRisks={hasRisks}
         onClearRisks={handleClearRisks}
+        onOpenFindReplace={handleOpenFindReplace}
+        onOpenClauseLibrary={handleOpenClauseLibrary}
       />
       <div 
         className="flex-1 overflow-auto document-canvas"
@@ -468,9 +492,15 @@ export const DocumentEditor = forwardRef<DocumentEditorRef, DocumentEditorProps>
                       onChange(editor.getHTML())
                     }}
                     onSetRisks={(risks) => {
-                      ;(editor.chain().focus() as any).setRisks(risks).run()
+                      editor.chain().focus().setRisks(risks).run()
                       setHasRisks(risks.length > 0)
                     }}
+                  />
+                  {/* Find and Replace panel */}
+                  <FindReplace
+                    editor={editor}
+                    isOpen={showFindReplace}
+                    onClose={() => setShowFindReplace(false)}
                   />
                 </div>
               </div>
@@ -478,6 +508,14 @@ export const DocumentEditor = forwardRef<DocumentEditorRef, DocumentEditorProps>
           </div>
         </div>
       </div>
+      
+      {/* Clause Library modal */}
+      <ClauseLibrary
+        isOpen={showClauseLibrary}
+        onClose={() => setShowClauseLibrary(false)}
+        onInsertClause={handleInsertClause}
+        caseId={caseId}
+      />
     </div>
   )
 })

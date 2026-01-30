@@ -3,14 +3,27 @@ import { Plugin, PluginKey } from '@tiptap/pm/state'
 import { Decoration, DecorationSet } from '@tiptap/pm/view'
 import { Transaction } from '@tiptap/pm/state'
 
+export interface RiskItem {
+  id: string
+  from: number
+  to: number
+  level: 'high' | 'medium' | 'low'
+  description: string
+}
+
 export interface RiskHighlightOptions {
-  risks: Array<{
-    id: string
-    from: number
-    to: number
-    level: 'high' | 'medium' | 'low'
-    description: string
-  }>
+  risks: RiskItem[]
+}
+
+declare module '@tiptap/core' {
+  interface Commands<ReturnType> {
+    riskHighlight: {
+      addRisk: (from: number, to: number, level: 'high' | 'medium' | 'low', description: string, id?: string) => ReturnType
+      removeRisk: (id: string) => ReturnType
+      clearRisks: () => ReturnType
+      setRisks: (risks: RiskItem[]) => ReturnType
+    }
+  }
 }
 
 export const RiskHighlight = Extension.create<RiskHighlightOptions>({
@@ -109,14 +122,14 @@ export const RiskHighlight = Extension.create<RiskHighlightOptions>({
         }
         return true
       },
-      setRisks: (risks: RiskHighlightOptions['risks']) => ({ tr, dispatch }: { tr: Transaction; dispatch?: (tr: Transaction) => void }) => {
+      setRisks: (risks: RiskItem[]) => ({ tr, dispatch }: { tr: Transaction; dispatch?: (tr: Transaction) => void }) => {
         if (dispatch) {
           this.options.risks = risks
           dispatch(tr)
         }
         return true
       },
-    } as any
+    }
   },
 })
 

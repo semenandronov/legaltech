@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef, useCallback } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { Save, Download, ArrowLeft, MessageSquare, FileText, Table, FileEdit, History, Upload, BookOpen, Workflow } from 'lucide-react'
 import { toast } from 'sonner'
@@ -49,6 +49,22 @@ const DocumentEditorPage = () => {
   const [loadingDocuments, setLoadingDocuments] = useState(false)
   const saveTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const editorRef = useRef<DocumentEditorRef>(null)
+
+  // Warn user about unsaved changes before leaving
+  useEffect(() => {
+    const handleBeforeUnload = (e: BeforeUnloadEvent) => {
+      if (hasUnsavedChanges) {
+        e.preventDefault()
+        e.returnValue = 'У вас есть несохранённые изменения. Вы уверены, что хотите уйти?'
+        return e.returnValue
+      }
+    }
+    
+    window.addEventListener('beforeunload', handleBeforeUnload)
+    return () => {
+      window.removeEventListener('beforeunload', handleBeforeUnload)
+    }
+  }, [hasUnsavedChanges])
 
   // Load documents list if documentId is not provided
   useEffect(() => {
@@ -111,26 +127,7 @@ const DocumentEditorPage = () => {
     }
   }
 
-  // Auto-save with debounce
-  useEffect(() => {
-    if (!documentId || !hasUnsavedChanges) return
-
-    if (saveTimeoutRef.current) {
-      clearTimeout(saveTimeoutRef.current)
-    }
-
-    saveTimeoutRef.current = setTimeout(() => {
-      handleSave(false) // Silent save
-    }, 2000) // Auto-save after 2 seconds of inactivity
-
-    return () => {
-      if (saveTimeoutRef.current) {
-        clearTimeout(saveTimeoutRef.current)
-      }
-    }
-  }, [content, documentId, hasUnsavedChanges])
-
-  const handleSave = async (showToast: boolean = true) => {
+  const handleSave = useCallback(async (showToast: boolean = true) => {
     if (!caseId) return
 
     try {
@@ -158,7 +155,26 @@ const DocumentEditorPage = () => {
     } finally {
       setSaving(false)
     }
-  }
+  }, [caseId, documentId, document, content, title, navigate])
+
+  // Auto-save with debounce
+  useEffect(() => {
+    if (!documentId || !hasUnsavedChanges) return
+
+    if (saveTimeoutRef.current) {
+      clearTimeout(saveTimeoutRef.current)
+    }
+
+    saveTimeoutRef.current = setTimeout(() => {
+      handleSave(false) // Silent save
+    }, 2000) // Auto-save after 2 seconds of inactivity
+
+    return () => {
+      if (saveTimeoutRef.current) {
+        clearTimeout(saveTimeoutRef.current)
+      }
+    }
+  }, [content, documentId, hasUnsavedChanges, handleSave])
 
   const handleExportDocx = async () => {
     if (!documentId) {

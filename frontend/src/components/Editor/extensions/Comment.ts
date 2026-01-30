@@ -3,15 +3,27 @@ import { Plugin, PluginKey } from '@tiptap/pm/state'
 import { Decoration, DecorationSet } from '@tiptap/pm/view'
 import { Transaction } from '@tiptap/pm/state'
 
+export interface CommentItem {
+  id: string
+  from: number
+  to: number
+  text: string
+  author?: string
+  createdAt?: string
+}
+
 export interface CommentOptions {
-  comments: Array<{
-    id: string
-    from: number
-    to: number
-    text: string
-    author?: string
-    createdAt?: string
-  }>
+  comments: CommentItem[]
+}
+
+declare module '@tiptap/core' {
+  interface Commands<ReturnType> {
+    comment: {
+      addComment: (from: number, to: number, text: string, id?: string) => ReturnType
+      removeComment: (id: string) => ReturnType
+      setComments: (comments: CommentItem[]) => ReturnType
+    }
+  }
 }
 
 export const Comment = Extension.create<CommentOptions>({
@@ -92,14 +104,14 @@ export const Comment = Extension.create<CommentOptions>({
         }
         return true
       },
-      setComments: (comments: CommentOptions['comments']) => ({ tr, dispatch }: { tr: Transaction; dispatch?: (tr: Transaction) => void }) => {
+      setComments: (comments: CommentItem[]) => ({ tr, dispatch }: { tr: Transaction; dispatch?: (tr: Transaction) => void }) => {
         if (dispatch) {
           this.options.comments = comments
           dispatch(tr)
         }
         return true
       },
-    } as any
+    }
   },
 })
 

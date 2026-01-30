@@ -3,15 +3,27 @@ import { Plugin, PluginKey } from '@tiptap/pm/state'
 import { Decoration, DecorationSet } from '@tiptap/pm/view'
 import { Transaction } from '@tiptap/pm/state'
 
+export interface PendingChange {
+  id: string
+  from: number
+  to: number
+  type: 'insertion' | 'deletion'
+  content?: string
+}
+
 export interface TrackChangesOptions {
   enabled: boolean
-  pendingChanges?: Array<{
-    id: string
-    from: number
-    to: number
-    type: 'insertion' | 'deletion'
-    content?: string
-  }>
+  pendingChanges?: PendingChange[]
+}
+
+declare module '@tiptap/core' {
+  interface Commands<ReturnType> {
+    trackChanges: {
+      setTrackChangesEnabled: (enabled: boolean) => ReturnType
+      addPendingChange: (change: PendingChange) => ReturnType
+      clearPendingChanges: () => ReturnType
+    }
+  }
 }
 
 export const TrackChanges = Extension.create<TrackChangesOptions>({
@@ -89,7 +101,7 @@ export const TrackChanges = Extension.create<TrackChangesOptions>({
         }
         return true
       },
-      addPendingChange: (change: NonNullable<TrackChangesOptions['pendingChanges']>[0]) => ({ tr, dispatch }: { tr: Transaction; dispatch?: (tr: Transaction) => void }) => {
+      addPendingChange: (change: PendingChange) => ({ tr, dispatch }: { tr: Transaction; dispatch?: (tr: Transaction) => void }) => {
         if (dispatch) {
           if (!this.options.pendingChanges) {
             this.options.pendingChanges = []
@@ -106,7 +118,7 @@ export const TrackChanges = Extension.create<TrackChangesOptions>({
         }
         return true
       },
-    } as any
+    }
   },
 })
 

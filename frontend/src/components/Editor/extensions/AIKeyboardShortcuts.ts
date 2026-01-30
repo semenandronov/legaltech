@@ -6,6 +6,8 @@ export interface AIKeyboardShortcutsOptions {
   documentId?: string
   onImproveText?: (text: string) => void
   onSetRisks?: (risks: RiskItem[]) => void
+  onOpenFindReplace?: () => void
+  onOpenClauseLibrary?: () => void
 }
 
 declare module '@tiptap/core' {
@@ -14,6 +16,8 @@ declare module '@tiptap/core' {
       improveSelectedText: () => ReturnType
       checkSelectedTextRisks: () => ReturnType
       simplifySelectedText: () => ReturnType
+      openFindReplace: () => ReturnType
+      openClauseLibrary: () => ReturnType
     }
   }
 }
@@ -26,6 +30,8 @@ export const AIKeyboardShortcuts = Extension.create<AIKeyboardShortcutsOptions>(
       documentId: undefined,
       onImproveText: undefined,
       onSetRisks: undefined,
+      onOpenFindReplace: undefined,
+      onOpenClauseLibrary: undefined,
     }
   },
 
@@ -155,6 +161,22 @@ export const AIKeyboardShortcuts = Extension.create<AIKeyboardShortcutsOptions>(
         simplify()
         return true
       },
+
+      openFindReplace: () => () => {
+        const { onOpenFindReplace } = this.options
+        if (onOpenFindReplace) {
+          onOpenFindReplace()
+        }
+        return true
+      },
+
+      openClauseLibrary: () => () => {
+        const { onOpenClauseLibrary } = this.options
+        if (onOpenClauseLibrary) {
+          onOpenClauseLibrary()
+        }
+        return true
+      },
     }
   },
 
@@ -168,6 +190,12 @@ export const AIKeyboardShortcuts = Extension.create<AIKeyboardShortcutsOptions>(
       
       // Cmd/Ctrl + Shift + S — Simplify selected text
       'Mod-Shift-s': () => this.editor.commands.simplifySelectedText(),
+      
+      // Cmd/Ctrl + F — Find and Replace
+      'Mod-f': () => this.editor.commands.openFindReplace(),
+      
+      // Cmd/Ctrl + Shift + L — Clause Library
+      'Mod-Shift-l': () => this.editor.commands.openClauseLibrary(),
     }
   },
 })

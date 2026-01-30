@@ -17,7 +17,9 @@ import {
   Check,
   X,
   AlertTriangle,
-  Trash2
+  Trash2,
+  Search,
+  Library
 } from 'lucide-react'
 
 interface EditorToolbarProps {
@@ -26,6 +28,8 @@ interface EditorToolbarProps {
   onTrackChangesToggle?: (enabled: boolean) => void
   hasRisks?: boolean
   onClearRisks?: () => void
+  onOpenFindReplace?: () => void
+  onOpenClauseLibrary?: () => void
 }
 
 export const EditorToolbar = ({ 
@@ -33,7 +37,9 @@ export const EditorToolbar = ({
   trackChangesEnabled = false,
   onTrackChangesToggle,
   hasRisks = false,
-  onClearRisks
+  onClearRisks,
+  onOpenFindReplace,
+  onOpenClauseLibrary
 }: EditorToolbarProps) => {
   if (!editor) {
     return null
@@ -49,20 +55,22 @@ export const EditorToolbar = ({
     onClick: () => void
     isActive?: boolean
     disabled?: boolean
-    icon: any
+    icon: React.ComponentType<{ className?: string }>
     title: string
   }) => (
     <button
       onClick={onClick}
       disabled={disabled}
       title={title}
-      className={`p-2 rounded transition-colors ${
+      aria-label={title}
+      aria-pressed={isActive}
+      className={`p-2 rounded transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-1 ${
         isActive
           ? 'bg-blue-100 text-blue-700'
           : 'hover:bg-gray-100 text-gray-700'
       } disabled:opacity-50 disabled:cursor-not-allowed`}
     >
-      <Icon className="w-4 h-4" />
+      <Icon className="w-4 h-4" aria-hidden="true" />
     </button>
   )
 
@@ -175,7 +183,7 @@ export const EditorToolbar = ({
         onClick={() => {
           editor.chain().focus().insertTable({ rows: 3, cols: 3, withHeaderRow: true }).run()
         }}
-        className="p-2 rounded hover:bg-gray-100 text-gray-700 transition-colors"
+        className="p-2 rounded hover:bg-gray-100 text-gray-700 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
         title="Вставить таблицу"
         aria-label="Вставить таблицу"
       >
@@ -183,6 +191,32 @@ export const EditorToolbar = ({
           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 10h18M3 14h18m-9-4v8m-7 0h14a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z" />
         </svg>
       </button>
+
+      <div className="w-px h-6 bg-gray-300 mx-1"></div>
+
+      {/* Find & Replace */}
+      {onOpenFindReplace && (
+        <button
+          onClick={onOpenFindReplace}
+          className="p-2 rounded hover:bg-gray-100 text-gray-700 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
+          title="Поиск и замена (Ctrl+F)"
+          aria-label="Поиск и замена"
+        >
+          <Search className="w-4 h-4" aria-hidden="true" />
+        </button>
+      )}
+
+      {/* Clause Library */}
+      {onOpenClauseLibrary && (
+        <button
+          onClick={onOpenClauseLibrary}
+          className="p-2 rounded hover:bg-gray-100 text-gray-700 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
+          title="Библиотека клауз (Ctrl+Shift+L)"
+          aria-label="Библиотека клауз"
+        >
+          <Library className="w-4 h-4" aria-hidden="true" />
+        </button>
+      )}
 
       {/* Spacer to push Track Changes and Risks to the right */}
       <div className="flex-1"></div>
@@ -230,25 +264,25 @@ export const EditorToolbar = ({
               <button
                 onClick={() => {
                   // Accept all changes - clear pending changes
-                  ;(editor.chain().focus() as any).clearPendingChanges().run()
+                  editor.chain().focus().clearPendingChanges().run()
                 }}
-                className="p-1.5 rounded hover:bg-green-100 text-green-600 transition-colors"
+                className="p-1.5 rounded hover:bg-green-100 text-green-600 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-green-500"
                 title="Принять все изменения"
                 aria-label="Принять все изменения"
               >
-                <Check className="w-4 h-4" />
+                <Check className="w-4 h-4" aria-hidden="true" />
               </button>
               <button
                 onClick={() => {
                   // Reject all changes - revert and clear pending changes
                   editor.chain().focus().undo().run()
-                  ;(editor.chain().focus() as any).clearPendingChanges().run()
+                  editor.chain().focus().clearPendingChanges().run()
                 }}
-                className="p-1.5 rounded hover:bg-red-100 text-red-600 transition-colors"
+                className="p-1.5 rounded hover:bg-red-100 text-red-600 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-500"
                 title="Отклонить все изменения"
                 aria-label="Отклонить все изменения"
               >
-                <X className="w-4 h-4" />
+                <X className="w-4 h-4" aria-hidden="true" />
               </button>
             </>
           )}

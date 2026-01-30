@@ -1,4 +1,4 @@
-import { useMemo } from 'react'
+import { useMemo, memo } from 'react'
 
 interface RulerProps {
   length: number
@@ -6,7 +6,7 @@ interface RulerProps {
   zoom?: number
 }
 
-export const Ruler = ({ length, orientation, zoom = 100 }: RulerProps) => {
+export const Ruler = memo(({ length, orientation, zoom = 100 }: RulerProps) => {
   const pixelsPerInch = 96 * (zoom / 100)
   
   const marks = useMemo(() => {
@@ -83,5 +83,7 @@ export const Ruler = ({ length, orientation, zoom = 100 }: RulerProps) => {
       })}
     </div>
   )
-}
+})
+
+Ruler.displayName = 'Ruler'
 
