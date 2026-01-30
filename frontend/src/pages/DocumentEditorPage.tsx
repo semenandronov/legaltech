@@ -523,7 +523,7 @@ const DocumentEditorPage = () => {
       {/* Main content area */}
       <div className="flex-1 overflow-hidden flex">
         {/* Editor */}
-        <div className={`flex-1 flex flex-col transition-all duration-300 ${showChat ? 'mr-80' : ''}`}>
+        <div className="flex-1 flex flex-col transition-all duration-300">
           <DocumentEditor
             ref={editorRef}
             content={content}
