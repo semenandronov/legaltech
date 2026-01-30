@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
-import { Save, Download, ArrowLeft, MessageSquare, FileText, Table, FileEdit, History, Upload, BookOpen, Workflow } from 'lucide-react'
+import { Save, Download, ArrowLeft, MessageSquare, FileText, Table, FileEdit, History, BookOpen, Workflow } from 'lucide-react'
 import { toast } from 'sonner'
 import UnifiedSidebar from '../components/Layout/UnifiedSidebar'
 import { DocumentEditor, DocumentEditorRef } from '../components/Editor/DocumentEditor'
@@ -466,27 +466,15 @@ const DocumentEditorPage = () => {
             <Save className="w-4 h-4" />
             Сохранить
           </button>
-          <div className="relative flex gap-2">
-            <button
-              onClick={() => setShowDocxImporter(true)}
-              disabled={saving}
-              className="flex items-center gap-2 px-4 py-2 border rounded-lg hover:bg-gray-50 disabled:opacity-50 transition-colors"
-              style={{ borderColor: 'var(--color-border)' }}
-              title="Импорт DOCX"
-            >
-              <Upload className="w-4 h-4" />
-              Импорт
-            </button>
-            <button
-              onClick={handleExportDocx}
-              disabled={!documentId || saving}
-              className="flex items-center gap-2 px-4 py-2 border rounded-lg hover:bg-gray-50 disabled:opacity-50 transition-colors"
-              style={{ borderColor: 'var(--color-border)' }}
-            >
-              <Download className="w-4 h-4" />
-              DOCX
-            </button>
-          </div>
+          <button
+            onClick={handleExportDocx}
+            disabled={!documentId || saving}
+            className="flex items-center gap-2 px-4 py-2 border rounded-lg hover:bg-gray-50 disabled:opacity-50 transition-colors"
+            style={{ borderColor: 'var(--color-border)' }}
+          >
+            <Download className="w-4 h-4" />
+            DOCX
+          </button>
           <button
             onClick={handleExportPdf}
             disabled={!documentId || saving}
@@ -502,7 +490,6 @@ const DocumentEditorPage = () => {
             disabled={!documentId}
             className="flex items-center gap-2 px-4 py-2 border rounded-lg hover:bg-green-50 hover:border-green-300 disabled:opacity-50 transition-colors"
             style={{ borderColor: 'var(--color-border)', color: 'var(--color-text-primary)' }}
-            title="Проверить документ с помощью Playbook"
           >
             <BookOpen className="w-4 h-4" style={{ color: '#10b981' }} />
             Playbook
@@ -516,7 +503,6 @@ const DocumentEditorPage = () => {
                 : 'border hover:bg-gray-50'
             }`}
             style={{ borderColor: showChat ? 'transparent' : 'var(--color-border)' }}
-            title="Чат с ИИ"
           >
             <MessageSquare className="w-4 h-4" />
             Чат с ИИ
@@ -526,7 +512,6 @@ const DocumentEditorPage = () => {
               onClick={() => setShowVersionHistory(true)}
               className="flex items-center gap-2 px-4 py-2 border rounded-lg hover:bg-gray-50 transition-colors"
               style={{ borderColor: 'var(--color-border)' }}
-              title="История версий"
             >
               <History className="w-4 h-4" />
               Версии
@@ -538,7 +523,7 @@ const DocumentEditorPage = () => {
       {/* Main content area */}
       <div className="flex-1 overflow-hidden flex">
         {/* Editor */}
-        <div className={`flex-1 flex flex-col transition-all duration-300 ${showChat ? 'mr-96' : ''}`}>
+        <div className={`flex-1 flex flex-col transition-all duration-300 ${showChat ? 'mr-80' : ''}`}>
           <DocumentEditor
             ref={editorRef}
             content={content}
@@ -552,7 +537,7 @@ const DocumentEditorPage = () => {
 
         {/* Chat справа */}
         {showChat && caseId && (
-          <div className="w-96 border-l border-border shrink-0 bg-bg-elevated flex flex-col">
+          <div className="w-80 border-l border-border shrink-0 bg-bg-elevated flex flex-col">
             <AssistantUIChat
               caseId={caseId}
               className="h-full"

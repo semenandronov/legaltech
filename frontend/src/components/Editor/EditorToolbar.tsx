@@ -61,7 +61,6 @@ export const EditorToolbar = ({
     <button
       onClick={onClick}
       disabled={disabled}
-      title={title}
       aria-label={title}
       aria-pressed={isActive}
       className={`p-2 rounded transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-1 ${
@@ -184,7 +183,6 @@ export const EditorToolbar = ({
           editor.chain().focus().insertTable({ rows: 3, cols: 3, withHeaderRow: true }).run()
         }}
         className="p-2 rounded hover:bg-gray-100 text-gray-700 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
-        title="Вставить таблицу"
         aria-label="Вставить таблицу"
       >
         <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
@@ -199,7 +197,6 @@ export const EditorToolbar = ({
         <button
           onClick={onOpenFindReplace}
           className="p-2 rounded hover:bg-gray-100 text-gray-700 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
-          title="Поиск и замена (Ctrl+F)"
           aria-label="Поиск и замена"
         >
           <Search className="w-4 h-4" aria-hidden="true" />
@@ -211,7 +208,6 @@ export const EditorToolbar = ({
         <button
           onClick={onOpenClauseLibrary}
           className="p-2 rounded hover:bg-gray-100 text-gray-700 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
-          title="Библиотека клауз (Ctrl+Shift+L)"
           aria-label="Библиотека клауз"
         >
           <Library className="w-4 h-4" aria-hidden="true" />
@@ -231,7 +227,6 @@ export const EditorToolbar = ({
           <button
             onClick={onClearRisks}
             className="p-2 rounded hover:bg-amber-100 text-amber-600 transition-colors"
-            title="Очистить подсветку рисков"
             aria-label="Очистить подсветку рисков"
           >
             <Trash2 className="w-4 h-4" />
@@ -250,7 +245,6 @@ export const EditorToolbar = ({
                 ? 'bg-blue-100 text-blue-700 border border-blue-300'
                 : 'hover:bg-gray-100 text-gray-600 border border-transparent'
             }`}
-            title={trackChangesEnabled ? "Выключить отслеживание изменений" : "Включить отслеживание изменений"}
             aria-label={trackChangesEnabled ? "Выключить отслеживание изменений" : "Включить отслеживание изменений"}
             aria-pressed={trackChangesEnabled}
           >
@@ -267,7 +261,6 @@ export const EditorToolbar = ({
                   editor.chain().focus().clearPendingChanges().run()
                 }}
                 className="p-1.5 rounded hover:bg-green-100 text-green-600 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-green-500"
-                title="Принять все изменения"
                 aria-label="Принять все изменения"
               >
                 <Check className="w-4 h-4" aria-hidden="true" />
@@ -279,7 +272,6 @@ export const EditorToolbar = ({
                   editor.chain().focus().clearPendingChanges().run()
                 }}
                 className="p-1.5 rounded hover:bg-red-100 text-red-600 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-500"
-                title="Отклонить все изменения"
                 aria-label="Отклонить все изменения"
               >
                 <X className="w-4 h-4" aria-hidden="true" />
