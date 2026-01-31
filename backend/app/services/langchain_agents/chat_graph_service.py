@@ -288,6 +288,13 @@ class ChatGraphService:
             if existing_state and existing_state.values:
                 # Продолжаем диалог - используем существующее состояние
                 current_state = dict(existing_state.values)
+                # Инициализируем поля HITL если их нет (для совместимости со старыми checkpoint)
+                if "draft_plan" not in current_state:
+                    current_state["draft_plan"] = None
+                if "draft_approved" not in current_state:
+                    current_state["draft_approved"] = False
+                if "waiting_for_approval" not in current_state:
+                    current_state["waiting_for_approval"] = False
                 # Добавляем новое сообщение пользователя
                 current_messages = current_state.get("messages", [])
                 current_messages.append(HumanMessage(content=question))
@@ -307,6 +314,11 @@ class ChatGraphService:
                 current_state["rag_context"] = None
                 current_state["garant_context"] = None
                 current_state["thinking_steps"] = None
+                # Сбрасываем HITL флаги для нового запроса (кроме draft mode)
+                if mode != "draft":
+                    current_state["draft_plan"] = None
+                    current_state["draft_approved"] = False
+                    current_state["waiting_for_approval"] = False
                 initial_state = current_state
                 logger.info(f"[ChatGraphService] Continuing dialog from checkpoint, thread_id: {thread_id}")
             else:
@@ -505,6 +517,13 @@ class ChatGraphService:
             if existing_state and existing_state.values:
                 # Продолжаем диалог - используем существующее состояние
                 current_state = dict(existing_state.values)
+                # Инициализируем поля HITL если их нет (для совместимости со старыми checkpoint)
+                if "draft_plan" not in current_state:
+                    current_state["draft_plan"] = None
+                if "draft_approved" not in current_state:
+                    current_state["draft_approved"] = False
+                if "waiting_for_approval" not in current_state:
+                    current_state["waiting_for_approval"] = False
                 # Добавляем новое сообщение пользователя
                 current_messages = current_state.get("messages", [])
                 current_messages.append(HumanMessage(content=question))
@@ -524,6 +543,11 @@ class ChatGraphService:
                 current_state["rag_context"] = None
                 current_state["garant_context"] = None
                 current_state["thinking_steps"] = None
+                # Сбрасываем HITL флаги для нового запроса (кроме draft mode)
+                if mode != "draft":
+                    current_state["draft_plan"] = None
+                    current_state["draft_approved"] = False
+                    current_state["waiting_for_approval"] = False
                 initial_state = current_state
                 logger.info(f"[ChatGraphService] Continuing dialog from checkpoint (token stream), thread_id: {thread_id}")
             else:
@@ -663,6 +687,13 @@ class ChatGraphService:
             if existing_state and existing_state.values:
                 # Продолжаем диалог - используем существующее состояние
                 current_state = dict(existing_state.values)
+                # Инициализируем поля HITL если их нет (для совместимости со старыми checkpoint)
+                if "draft_plan" not in current_state:
+                    current_state["draft_plan"] = None
+                if "draft_approved" not in current_state:
+                    current_state["draft_approved"] = False
+                if "waiting_for_approval" not in current_state:
+                    current_state["waiting_for_approval"] = False
                 # Добавляем новое сообщение пользователя
                 current_messages = current_state.get("messages", [])
                 current_messages.append(HumanMessage(content=question))
@@ -682,6 +713,11 @@ class ChatGraphService:
                 current_state["rag_context"] = None
                 current_state["garant_context"] = None
                 current_state["thinking_steps"] = None
+                # Сбрасываем HITL флаги для нового запроса (кроме draft mode)
+                if mode != "draft":
+                    current_state["draft_plan"] = None
+                    current_state["draft_approved"] = False
+                    current_state["waiting_for_approval"] = False
                 initial_state = current_state
                 logger.info(f"[ChatGraphService] Continuing dialog from checkpoint (stream_with_mode), thread_id: {thread_id}")
             else:

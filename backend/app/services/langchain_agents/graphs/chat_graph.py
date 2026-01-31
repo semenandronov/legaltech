@@ -193,6 +193,9 @@ def create_initial_chat_state(
         response=None,
         citations=None,
         document_created=None,
+        draft_plan=None,  # HITL для draft mode
+        draft_approved=False,  # HITL для draft mode
+        waiting_for_approval=False,  # HITL для draft mode
         messages=messages,
         errors=None
     )
