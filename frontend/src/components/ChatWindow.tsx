@@ -38,7 +38,7 @@ import {
 import { FormControlLabel, Switch, Stepper, Step, StepLabel } from '@mui/material'
 import './ChatWindow.css'
 import './Chat/Chat.css'
-import { fetchHistory, sendMessage, SourceInfo, HistoryMessage, classifyDocuments, extractEntities, getTimeline, getAnalysisReport } from '../services/api'
+import { fetchHistory, sendMessage, SourceInfo, HistoryMessage } from '../services/api'
 import { useWebSocketChat } from '../hooks/useWebSocketChat'
 import ConfidenceBadge from './Common/ConfidenceBadge'
 import MessageContent from './Chat/MessageContent'

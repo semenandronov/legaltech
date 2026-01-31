@@ -1455,7 +1455,7 @@ export const AssistantUIChat = forwardRef<AssistantUIChatRef, AssistantUIChatPro
                     questions={message.feedbackRequest.questions || []}
                     context={message.feedbackRequest.context || {}}
                     availableDocTypes={message.feedbackRequest.availableDocTypes || []}
-                    onSubmit={async (answer: { doc_types?: string[], columns_clarification?: string }) => {
+                    onSubmit={async (_answer: { doc_types?: string[], columns_clarification?: string }) => {
                       // REMOVED: API endpoint /api/assistant/chat/resume не работает (использует заглушки)
                       logger.error('Resume endpoint is not available - feature disabled')
                       throw new Error('Функция возобновления выполнения временно недоступна')
@@ -1469,7 +1469,7 @@ export const AssistantUIChat = forwardRef<AssistantUIChatRef, AssistantUIChatPro
                       typeof opt === 'string' ? { id: opt, label: opt } : opt
                     )}
                     agentName={message.feedbackRequest.agentName}
-                    onResponse={async (response: string) => {
+                    onResponse={async (_response: string) => {
                       // REMOVED: API endpoint /api/assistant/chat/human-feedback не работает (использует заглушки)
                       logger.error('Human feedback endpoint is not available - feature disabled')
                       throw new Error('Функция обратной связи временно недоступна')

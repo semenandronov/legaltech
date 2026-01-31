@@ -278,20 +278,20 @@ async def manage_memory_node(state: ChatGraphState) -> ChatGraphState:
         
         # Шаг 3: Если trim_messages не помог (нет ID), используем MessageManager для summary
         if len(messages) >= SUMMARIZE_THRESHOLD:
-            llm = create_legal_llm(use_rate_limiting=False)
-            manager = MessageManager(
-                llm=llm,
-                max_messages=MAX_MESSAGES,
-                max_tokens=MAX_TOKENS,
-                summarize_threshold=SUMMARIZE_THRESHOLD,
-                keep_last_n=KEEP_LAST_N
-            )
-            
-            result = await manager.process_messages(messages)
-            
-            if result["trimmed"]:
-                if result["summary"]:
-                    new_state["message_summary"] = result["summary"]
+        llm = create_legal_llm(use_rate_limiting=False)
+        manager = MessageManager(
+            llm=llm,
+            max_messages=MAX_MESSAGES,
+            max_tokens=MAX_TOKENS,
+            summarize_threshold=SUMMARIZE_THRESHOLD,
+            keep_last_n=KEEP_LAST_N
+        )
+        
+        result = await manager.process_messages(messages)
+        
+        if result["trimmed"]:
+            if result["summary"]:
+                new_state["message_summary"] = result["summary"]
                     summary_msg = SystemMessage(content=f"[Краткое содержание предыдущего диалога: {result['summary']}]")
                     new_state["messages"] = [summary_msg] + result["messages"]
                 else:

@@ -339,18 +339,18 @@ class ChatGraphService:
         except Exception as e:
             # Если не удалось загрузить состояние, создаём новое
             logger.warning(f"[ChatGraphService] Failed to load state from checkpoint: {e}, creating new state")
-            initial_state = create_initial_chat_state(
-                case_id=case_id,
-                user_id=str(user.id),
-                question=question,
-                mode=mode,
-                enable_garant=legal_research or mode == "garant",
-                enable_citations=True,
-                document_context=document_context,
-                document_id=document_id,
-                selected_text=selected_text,
-                existing_messages=existing_messages
-            )
+        initial_state = create_initial_chat_state(
+            case_id=case_id,
+            user_id=str(user.id),
+            question=question,
+            mode=mode,
+            enable_garant=legal_research or mode == "garant",
+            enable_citations=True,
+            document_context=document_context,
+            document_id=document_id,
+            selected_text=selected_text,
+            existing_messages=existing_messages
+        )
         
         full_response = ""
         citations = []
@@ -568,18 +568,18 @@ class ChatGraphService:
         except Exception as e:
             # Если не удалось загрузить состояние, создаём новое
             logger.warning(f"[ChatGraphService] Failed to load state from checkpoint (token stream): {e}, creating new state")
-            initial_state = create_initial_chat_state(
-                case_id=case_id,
-                user_id=str(user.id),
-                question=question,
-                mode=mode,
-                enable_garant=legal_research or mode == "garant",
-                enable_citations=True,
-                document_context=document_context,
-                document_id=document_id,
-                selected_text=selected_text,
-                existing_messages=existing_messages
-            )
+        initial_state = create_initial_chat_state(
+            case_id=case_id,
+            user_id=str(user.id),
+            question=question,
+            mode=mode,
+            enable_garant=legal_research or mode == "garant",
+            enable_citations=True,
+            document_context=document_context,
+            document_id=document_id,
+            selected_text=selected_text,
+            existing_messages=existing_messages
+        )
         
         full_response = ""
         citations = []
@@ -738,18 +738,18 @@ class ChatGraphService:
         except Exception as e:
             # Если не удалось загрузить состояние, создаём новое
             logger.warning(f"[ChatGraphService] Failed to load state from checkpoint (stream_with_mode): {e}, creating new state")
-            initial_state = create_initial_chat_state(
-                case_id=case_id,
-                user_id=str(user.id),
-                question=question,
-                mode=mode,
-                enable_garant=kwargs.get("legal_research", False) or mode == "garant",
-                enable_citations=True,
-                document_context=kwargs.get("document_context"),
-                document_id=kwargs.get("document_id"),
-                selected_text=kwargs.get("selected_text"),
-                existing_messages=kwargs.get("existing_messages")
-            )
+        initial_state = create_initial_chat_state(
+            case_id=case_id,
+            user_id=str(user.id),
+            question=question,
+            mode=mode,
+            enable_garant=kwargs.get("legal_research", False) or mode == "garant",
+            enable_citations=True,
+            document_context=kwargs.get("document_context"),
+            document_id=kwargs.get("document_id"),
+            selected_text=kwargs.get("selected_text"),
+            existing_messages=kwargs.get("existing_messages")
+        )
         
         full_response = ""
         citations = []
