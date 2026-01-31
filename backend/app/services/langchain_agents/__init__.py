@@ -120,8 +120,8 @@ from app.services.langchain_agents.utils.breakpoints import (
     NodeInterrupt,
 )
 from app.services.langchain_agents.utils.state_editing import (
-    update_graph_state,
-    edit_message_in_state,
+    update_state,
+    edit_message,
 )
 
 # Memory
@@ -214,8 +214,8 @@ __all__ = [
     "NodeInterrupt",
     
     # Utils - State Editing
-    "update_graph_state",
-    "edit_message_in_state",
+    "update_state",
+    "edit_message",
     
     # Memory
     "UserProfile",
