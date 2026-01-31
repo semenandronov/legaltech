@@ -415,9 +415,27 @@ def init_db():
     # #region agent log
     import json
     from datetime import datetime
+    import sys
+    
+    def _debug_log(location, message, data, hypothesis_id="B", run_id="startup"):
+        """Write debug log to stderr (Docker captures) and /tmp/debug.log"""
+        log_entry = json.dumps({
+            "sessionId": "debug-session",
+            "runId": run_id,
+            "hypothesisId": hypothesis_id,
+            "location": location,
+            "message": message,
+            "data": data,
+            "timestamp": int(datetime.now().timestamp() * 1000)
+        })
+        try:
+            print(f"[DEBUG] {log_entry}", file=sys.stderr, flush=True)
+            with open('/tmp/debug.log', 'a') as f:
+                f.write(log_entry + '\n')
+        except: pass
+    
     try:
-        with open('/Users/semyon_andronov04/Desktop/C ДВ/.cursor/debug.log', 'a') as f:
-            f.write(json.dumps({"sessionId":"debug-session","runId":"startup","hypothesisId":"B","location":"database.py:413","message":"init_db called","data":{"step":"init_db_start","db_url_present":bool(config.DATABASE_URL)},"timestamp":int(datetime.now().timestamp()*1000)})+'\n')
+        _debug_log("database.py:413", "init_db called", {"step": "init_db_start", "db_url_present": bool(config.DATABASE_URL)})
     except: pass
     # #endregion
     # Import all models to ensure they are registered with Base
@@ -456,8 +474,7 @@ def init_db():
     # Create all tables
     # #region agent log
     try:
-        with open('/Users/semyon_andronov04/Desktop/C ДВ/.cursor/debug.log', 'a') as f:
-            f.write(json.dumps({"sessionId":"debug-session","runId":"startup","hypothesisId":"B","location":"database.py:449","message":"Before create_all","data":{"step":"before_create_all"},"timestamp":int(datetime.now().timestamp()*1000)})+'\n')
+        _debug_log("database.py:449", "Before create_all", {"step": "before_create_all"})
     except: pass
     # #endregion
     try:
@@ -465,40 +482,35 @@ def init_db():
         logger.info("✅ All database tables created")
         # #region agent log
         try:
-            with open('/Users/semyon_andronov04/Desktop/C ДВ/.cursor/debug.log', 'a') as f:
-                f.write(json.dumps({"sessionId":"debug-session","runId":"startup","hypothesisId":"B","location":"database.py:451","message":"create_all succeeded","data":{"step":"create_all_success"},"timestamp":int(datetime.now().timestamp()*1000)})+'\n')
+            _debug_log("database.py:451", "create_all succeeded", {"step": "create_all_success"})
         except: pass
         # #endregion
     except Exception as e:
         # #region agent log
         try:
             import traceback
-            with open('/Users/semyon_andronov04/Desktop/C ДВ/.cursor/debug.log', 'a') as f:
-                f.write(json.dumps({"sessionId":"debug-session","runId":"startup","hypothesisId":"B","location":"database.py:451","message":"create_all failed","data":{"step":"create_all_error","error":str(e),"error_type":type(e).__name__,"traceback":traceback.format_exc()},"timestamp":int(datetime.now().timestamp()*1000)})+'\n')
+            _debug_log("database.py:451", "create_all failed", {"step": "create_all_error", "error": str(e), "error_type": type(e).__name__, "traceback": traceback.format_exc()})
         except: pass
         # #endregion
         raise
     
     # #region agent log
     try:
-        with open('/Users/semyon_andronov04/Desktop/C ДВ/.cursor/debug.log', 'a') as f:
-            f.write(json.dumps({"sessionId":"debug-session","runId":"startup","hypothesisId":"B","location":"database.py:453","message":"Before ensure_schema","data":{"step":"before_ensure_schema"},"timestamp":int(datetime.now().timestamp()*1000)})+'\n')
+        _debug_log("database.py:453", "Before ensure_schema", {"step": "before_ensure_schema"})
     except: pass
     # #endregion
     try:
         ensure_schema()
         # #region agent log
         try:
-            with open('/Users/semyon_andronov04/Desktop/C ДВ/.cursor/debug.log', 'a') as f:
-                f.write(json.dumps({"sessionId":"debug-session","runId":"startup","hypothesisId":"B","location":"database.py:453","message":"ensure_schema succeeded","data":{"step":"ensure_schema_success"},"timestamp":int(datetime.now().timestamp()*1000)})+'\n')
+            _debug_log("database.py:453", "ensure_schema succeeded", {"step": "ensure_schema_success"})
         except: pass
         # #endregion
     except Exception as e:
         # #region agent log
         try:
             import traceback
-            with open('/Users/semyon_andronov04/Desktop/C ДВ/.cursor/debug.log', 'a') as f:
-                f.write(json.dumps({"sessionId":"debug-session","runId":"startup","hypothesisId":"B","location":"database.py:453","message":"ensure_schema failed","data":{"step":"ensure_schema_error","error":str(e),"error_type":type(e).__name__,"traceback":traceback.format_exc()},"timestamp":int(datetime.now().timestamp()*1000)})+'\n')
+            _debug_log("database.py:453", "ensure_schema failed", {"step": "ensure_schema_error", "error": str(e), "error_type": type(e).__name__, "traceback": traceback.format_exc()})
         except: pass
         # #endregion
         raise

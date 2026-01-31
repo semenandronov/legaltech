@@ -14,9 +14,27 @@ import json
 import traceback
 
 # #region agent log
+def _debug_log(location, message, data, hypothesis_id="A", run_id="startup"):
+    """Write debug log to stderr (Docker captures) and /tmp/debug.log"""
+    log_entry = json.dumps({
+        "sessionId": "debug-session",
+        "runId": run_id,
+        "hypothesisId": hypothesis_id,
+        "location": location,
+        "message": message,
+        "data": data,
+        "timestamp": int(datetime.now().timestamp() * 1000)
+    })
+    try:
+        # Write to stderr (Docker captures this)
+        print(f"[DEBUG] {log_entry}", file=sys.stderr, flush=True)
+        # Also write to container path
+        with open('/tmp/debug.log', 'a') as f:
+            f.write(log_entry + '\n')
+    except: pass
+
 try:
-    with open('/Users/semyon_andronov04/Desktop/C ДВ/.cursor/debug.log', 'a') as f:
-        f.write(json.dumps({"sessionId":"debug-session","runId":"startup","hypothesisId":"A","location":"main.py:1","message":"Module import started","data":{"step":"import_start"},"timestamp":int(datetime.now().timestamp()*1000)})+'\n')
+    _debug_log("main.py:1", "Module import started", {"step": "import_start"})
 except: pass
 # #endregion
 
@@ -27,8 +45,7 @@ APP_COMMIT = "039f731"  # feat: Add Reflection Pattern and Citation Verification
 
 # #region agent log
 try:
-    with open('/Users/semyon_andronov04/Desktop/C ДВ/.cursor/debug.log', 'a') as f:
-        f.write(json.dumps({"sessionId":"debug-session","runId":"startup","hypothesisId":"A","location":"main.py:18","message":"Before config import","data":{"step":"before_config"},"timestamp":int(datetime.now().timestamp()*1000)})+'\n')
+    _debug_log("main.py:18", "Before config import", {"step": "before_config"})
 except: pass
 # #endregion
 
@@ -36,15 +53,13 @@ try:
     from app.config import config
     # #region agent log
     try:
-        with open('/Users/semyon_andronov04/Desktop/C ДВ/.cursor/debug.log', 'a') as f:
-            f.write(json.dumps({"sessionId":"debug-session","runId":"startup","hypothesisId":"A","location":"main.py:21","message":"Config imported successfully","data":{"step":"config_imported","has_db_url":bool(os.getenv("DATABASE_URL"))},"timestamp":int(datetime.now().timestamp()*1000)})+'\n')
+        _debug_log("main.py:21", "Config imported successfully", {"step": "config_imported", "has_db_url": bool(os.getenv("DATABASE_URL"))})
     except: pass
     # #endregion
 except Exception as e:
     # #region agent log
     try:
-        with open('/Users/semyon_andronov04/Desktop/C ДВ/.cursor/debug.log', 'a') as f:
-            f.write(json.dumps({"sessionId":"debug-session","runId":"startup","hypothesisId":"A","location":"main.py:21","message":"Config import failed","data":{"step":"config_import_error","error":str(e),"traceback":traceback.format_exc()},"timestamp":int(datetime.now().timestamp()*1000)})+'\n')
+        _debug_log("main.py:21", "Config import failed", {"step": "config_import_error", "error": str(e), "error_type": type(e).__name__}, hypothesis_id="A")
     except: pass
     # #endregion
     raise
@@ -69,8 +84,7 @@ logger = logging.getLogger(__name__)
 logger.info("Initializing database...")
 # #region agent log
 try:
-    with open('/Users/semyon_andronov04/Desktop/C ДВ/.cursor/debug.log', 'a') as f:
-        f.write(json.dumps({"sessionId":"debug-session","runId":"startup","hypothesisId":"B","location":"main.py:36","message":"Before init_db","data":{"step":"before_init_db","db_url_present":bool(os.getenv("DATABASE_URL"))},"timestamp":int(datetime.now().timestamp()*1000)})+'\n')
+    _debug_log("main.py:36", "Before init_db", {"step": "before_init_db", "db_url_present": bool(os.getenv("DATABASE_URL"))}, hypothesis_id="B")
 except: pass
 # #endregion
 try:
@@ -78,24 +92,21 @@ try:
     logger.info("Database initialized successfully")
     # #region agent log
     try:
-        with open('/Users/semyon_andronov04/Desktop/C ДВ/.cursor/debug.log', 'a') as f:
-            f.write(json.dumps({"sessionId":"debug-session","runId":"startup","hypothesisId":"B","location":"main.py:40","message":"init_db succeeded","data":{"step":"init_db_success"},"timestamp":int(datetime.now().timestamp()*1000)})+'\n')
+        _debug_log("main.py:40", "init_db succeeded", {"step": "init_db_success"}, hypothesis_id="B")
     except: pass
     # #endregion
 except Exception as e:
     logger.error(f"Failed to initialize database: {e}", exc_info=True)
     # #region agent log
     try:
-        with open('/Users/semyon_andronov04/Desktop/C ДВ/.cursor/debug.log', 'a') as f:
-            f.write(json.dumps({"sessionId":"debug-session","runId":"startup","hypothesisId":"B","location":"main.py:43","message":"init_db failed","data":{"step":"init_db_error","error":str(e),"error_type":type(e).__name__,"traceback":traceback.format_exc()},"timestamp":int(datetime.now().timestamp()*1000)})+'\n')
+        _debug_log("main.py:43", "init_db failed", {"step": "init_db_error", "error": str(e), "error_type": type(e).__name__, "traceback": traceback.format_exc()}, hypothesis_id="B")
     except: pass
     # #endregion
     raise
 
 # #region agent log
 try:
-    with open('/Users/semyon_andronov04/Desktop/C ДВ/.cursor/debug.log', 'a') as f:
-        f.write(json.dumps({"sessionId":"debug-session","runId":"startup","hypothesisId":"C","location":"main.py:45","message":"Before FastAPI app creation","data":{"step":"before_app_creation"},"timestamp":int(datetime.now().timestamp()*1000)})+'\n')
+    _debug_log("main.py:45", "Before FastAPI app creation", {"step": "before_app_creation"}, hypothesis_id="C")
 except: pass
 # #endregion
 
@@ -106,8 +117,7 @@ app = FastAPI(
 
 # #region agent log
 try:
-    with open('/Users/semyon_andronov04/Desktop/C ДВ/.cursor/debug.log', 'a') as f:
-        f.write(json.dumps({"sessionId":"debug-session","runId":"startup","hypothesisId":"C","location":"main.py:49","message":"FastAPI app created","data":{"step":"app_created"},"timestamp":int(datetime.now().timestamp()*1000)})+'\n')
+    _debug_log("main.py:49", "FastAPI app created", {"step": "app_created"}, hypothesis_id="C")
 except: pass
 # #endregion
 
@@ -374,11 +384,9 @@ if __name__ == "__main__":
     # #region agent log
     try:
         port = int(os.getenv("PORT", 8000))
-        with open('/Users/semyon_andronov04/Desktop/C ДВ/.cursor/debug.log', 'a') as f:
-            f.write(json.dumps({"sessionId":"debug-session","runId":"startup","hypothesisId":"D","location":"main.py:307","message":"Starting uvicorn","data":{"step":"uvicorn_start","port":port,"port_env":os.getenv("PORT")},"timestamp":int(datetime.now().timestamp()*1000)})+'\n')
+        _debug_log("main.py:307", "Starting uvicorn", {"step": "uvicorn_start", "port": port, "port_env": os.getenv("PORT")}, hypothesis_id="D")
     except Exception as e:
-        with open('/Users/semyon_andronov04/Desktop/C ДВ/.cursor/debug.log', 'a') as f:
-            f.write(json.dumps({"sessionId":"debug-session","runId":"startup","hypothesisId":"D","location":"main.py:307","message":"Port setup error","data":{"step":"port_error","error":str(e)},"timestamp":int(datetime.now().timestamp()*1000)})+'\n')
+        _debug_log("main.py:307", "Port setup error", {"step": "port_error", "error": str(e)}, hypothesis_id="D")
         port = 8000
     # #endregion
     uvicorn.run(app, host="0.0.0.0", port=port, reload=False)

@@ -291,25 +291,40 @@ config = Config()
 # #region agent log
 import json
 from datetime import datetime
+import sys
+
+def _debug_log(location, message, data, hypothesis_id="A", run_id="startup"):
+    """Write debug log to stderr (Docker captures) and /tmp/debug.log"""
+    log_entry = json.dumps({
+        "sessionId": "debug-session",
+        "runId": run_id,
+        "hypothesisId": hypothesis_id,
+        "location": location,
+        "message": message,
+        "data": data,
+        "timestamp": int(datetime.now().timestamp() * 1000)
+    })
+    try:
+        print(f"[DEBUG] {log_entry}", file=sys.stderr, flush=True)
+        with open('/tmp/debug.log', 'a') as f:
+            f.write(log_entry + '\n')
+    except: pass
+
 try:
-    with open('/Users/semyon_andronov04/Desktop/C ДВ/.cursor/debug.log', 'a') as f:
-        f.write(json.dumps({"sessionId":"debug-session","runId":"startup","hypothesisId":"A","location":"config.py:290","message":"Before DATABASE_URL validation","data":{"step":"before_validation","db_url_set":bool(os.getenv("DATABASE_URL")),"db_url_preview":os.getenv("DATABASE_URL","")[:50] if os.getenv("DATABASE_URL") else "NOT_SET"},"timestamp":int(datetime.now().timestamp()*1000)})+'\n')
+    _debug_log("config.py:290", "Before DATABASE_URL validation", {"step": "before_validation", "db_url_set": bool(os.getenv("DATABASE_URL")), "db_url_preview": os.getenv("DATABASE_URL", "")[:50] if os.getenv("DATABASE_URL") else "NOT_SET"})
 except: pass
 # #endregion
 try:
     Config._validate_database_url()
     # #region agent log
     try:
-        with open('/Users/semyon_andronov04/Desktop/C ДВ/.cursor/debug.log', 'a') as f:
-            f.write(json.dumps({"sessionId":"debug-session","runId":"startup","hypothesisId":"A","location":"config.py:293","message":"DATABASE_URL validation succeeded","data":{"step":"validation_success"},"timestamp":int(datetime.now().timestamp()*1000)})+'\n')
+        _debug_log("config.py:293", "DATABASE_URL validation succeeded", {"step": "validation_success"})
     except: pass
     # #endregion
 except ValueError as e:
     # #region agent log
     try:
-        import traceback
-        with open('/Users/semyon_andronov04/Desktop/C ДВ/.cursor/debug.log', 'a') as f:
-            f.write(json.dumps({"sessionId":"debug-session","runId":"startup","hypothesisId":"A","location":"config.py:296","message":"DATABASE_URL validation failed","data":{"step":"validation_failed","error":str(e),"error_type":type(e).__name__},"timestamp":int(datetime.now().timestamp()*1000)})+'\n')
+        _debug_log("config.py:296", "DATABASE_URL validation failed", {"step": "validation_failed", "error": str(e), "error_type": type(e).__name__})
     except: pass
     # #endregion
     # In production, we want to fail fast if DATABASE_URL is not set
