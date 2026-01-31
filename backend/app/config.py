@@ -340,5 +340,11 @@ except ValueError as e:
     # #endregion
     # In production, we want to fail fast if DATABASE_URL is not set
     import sys
-    print(str(e), file=sys.stderr)
+    # Print error message multiple times to ensure it's visible
+    error_msg = f"\n{'='*80}\n❌ DATABASE_URL VALIDATION FAILED\n{'='*80}\n{str(e)}\n{'='*80}\n"
+    for _ in range(3):  # Print 3 times to ensure visibility
+        print(error_msg, file=sys.stderr, flush=True)
+    # Also print to stdout (some platforms capture stdout)
+    for _ in range(3):
+        print(error_msg, file=sys.stdout, flush=True)
     sys.exit(1)

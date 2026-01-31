@@ -13,12 +13,17 @@ try:
         "data": {"step": "very_early_start"},
         "timestamp": int(datetime.now().timestamp() * 1000)
     })
-    print(f"[DEBUG] {log_entry}", file=sys.stderr, flush=True)
+    # Print to both stderr and stdout, multiple times for visibility
+    for stream in [sys.stderr, sys.stdout]:
+        for _ in range(2):
+            print(f"[DEBUG] {log_entry}", file=stream, flush=True)
     with open('/tmp/debug.log', 'a') as f:
         f.write(log_entry + '\n')
 except Exception as e:
     try:
-        print(f"[DEBUG] EARLY LOG FAILED: {e}", file=sys.stderr, flush=True)
+        for stream in [sys.stderr, sys.stdout]:
+            for _ in range(2):
+                print(f"[DEBUG] EARLY LOG FAILED: {e}", file=stream, flush=True)
     except: pass
 # #endregion
 
