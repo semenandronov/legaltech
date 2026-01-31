@@ -1456,45 +1456,9 @@ export const AssistantUIChat = forwardRef<AssistantUIChatRef, AssistantUIChatPro
                     context={message.feedbackRequest.context || {}}
                     availableDocTypes={message.feedbackRequest.availableDocTypes || []}
                     onSubmit={async (answer: { doc_types?: string[], columns_clarification?: string }) => {
-                      try {
-                        const token = localStorage.getItem('access_token')
-                        const response_data = await fetch(getApiUrl('/api/assistant/chat/resume'), {
-                          method: 'POST',
-                          headers: {
-                            'Content-Type': 'application/json',
-                            'Authorization': `Bearer ${token}`,
-                          },
-                          body: JSON.stringify({
-                            thread_id: message.feedbackRequest?.threadId,
-                            case_id: actualCaseId,
-                            answer: answer,
-                          }),
-                        })
-
-                        if (!response_data.ok) {
-                          const errorData = await response_data.json().catch(() => ({}))
-                          throw new Error(errorData.detail || 'Ошибка при возобновлении выполнения')
-                        }
-
-                        const result = await response_data.json()
-                        logger.info('Graph execution resumed:', result)
-
-                        // Clear feedback request from message
-                        setMessages((prev) =>
-                          prev.map((msg) =>
-                            msg.id === message.id
-                              ? {
-                                  ...msg,
-                                  feedbackRequest: undefined,
-                                  content: msg.content + `\n\n**Ваш ответ:** ${JSON.stringify(answer)}\n\nПродолжаю выполнение...\n\n`,
-                                }
-                              : msg
-                          )
-                        )
-                      } catch (error) {
-                        logger.error('Error resuming graph execution:', error)
-                        throw error
-                      }
+                      // REMOVED: API endpoint /api/assistant/chat/resume не работает (использует заглушки)
+                      logger.error('Resume endpoint is not available - feature disabled')
+                      throw new Error('Функция возобновления выполнения временно недоступна')
                     }}
                   />
                 ) : (
@@ -1506,45 +1470,9 @@ export const AssistantUIChat = forwardRef<AssistantUIChatRef, AssistantUIChatPro
                     )}
                     agentName={message.feedbackRequest.agentName}
                     onResponse={async (response: string) => {
-                      try {
-                        const token = localStorage.getItem('access_token')
-                        const response_data = await fetch(getApiUrl('/api/assistant/chat/human-feedback'), {
-                          method: 'POST',
-                          headers: {
-                            'Content-Type': 'application/json',
-                            'Authorization': `Bearer ${token}`,
-                          },
-                          body: JSON.stringify({
-                            request_id: message.feedbackRequest?.requestId,
-                            response: response,
-                            case_id: actualCaseId,
-                          }),
-                        })
-
-                        if (!response_data.ok) {
-                          const errorData = await response_data.json().catch(() => ({}))
-                          throw new Error(errorData.detail || 'Ошибка при отправке ответа')
-                        }
-
-                        const result = await response_data.json()
-                        logger.info('Human feedback response submitted:', result)
-
-                        // Clear feedback request from message
-                        setMessages((prev) =>
-                          prev.map((msg) =>
-                            msg.id === message.id
-                              ? {
-                                  ...msg,
-                                  feedbackRequest: undefined,
-                                  content: msg.content + `\n\n**Ваш ответ:** ${response}\n\n`,
-                                }
-                              : msg
-                          )
-                        )
-                      } catch (error) {
-                        logger.error('Error submitting human feedback response:', error)
-                        throw error // Re-throw to let HumanFeedbackRequestCard handle it
-                      }
+                      // REMOVED: API endpoint /api/assistant/chat/human-feedback не работает (использует заглушки)
+                      logger.error('Human feedback endpoint is not available - feature disabled')
+                      throw new Error('Функция обратной связи временно недоступна')
                     }}
                   />
                 )

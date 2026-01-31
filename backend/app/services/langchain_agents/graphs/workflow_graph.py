@@ -49,15 +49,21 @@ generate_plan (генерация плана шагов)
 """
 from typing import TypedDict, Literal, Optional, List, Dict, Any, Annotated
 from langgraph.graph import StateGraph, END, START
+from langgraph.graph.message import add_messages
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.types import Send
 from langchain_core.messages import BaseMessage, HumanMessage, AIMessage
 from app.services.llm_factory import create_llm
 from app.services.rag_service import RAGService
 from app.utils.checkpointer_setup import get_checkpointer_instance
+from app.services.langchain_agents.store_integration import get_store_instance
+from app.services.langchain_agents.utils.reducers import (
+    merge_dicts_reducer,
+    append_unique_reducer,
+    append_errors_reducer,
+)
 from sqlalchemy.orm import Session
 import logging
-import operator
 import json
 
 logger = logging.getLogger(__name__)
@@ -65,8 +71,45 @@ logger = logging.getLogger(__name__)
 
 # ============== State Definition ==============
 
+# Input Schema - только входные данные
+class WorkflowGraphInputState(TypedDict):
+    """
+    Входное состояние графа Workflow.
+    
+    Содержит только данные, необходимые для начала обработки.
+    """
+    workflow_id: str
+    case_id: str
+    user_id: str
+    workflow_definition: Dict[str, Any]
+    require_approval: bool
+    max_parallel_steps: int
+    auto_adapt: bool
+
+
+# Output Schema - только результаты
+class WorkflowGraphOutputState(TypedDict):
+    """
+    Выходное состояние графа Workflow.
+    
+    Содержит только финальные результаты.
+    """
+    final_result: Optional[Dict[str, Any]]
+    execution_stats: Optional[Dict[str, Any]]
+    step_errors: List[Dict[str, Any]]
+    current_phase: str
+
+
+# Full State - полное внутреннее состояние
 class WorkflowGraphState(TypedDict):
-    """Состояние графа Workflow."""
+    """
+    Состояние графа Workflow.
+    
+    Использует кастомные редьюсеры для:
+    - messages: стандартный operator.add для конкатенации
+    - step_results: merge_dicts_reducer для объединения результатов шагов
+    - step_errors: append_unique_reducer для накопления ошибок без дубликатов
+    """
     # Входные данные
     workflow_id: str
     case_id: str
@@ -85,8 +128,8 @@ class WorkflowGraphState(TypedDict):
     
     # Выполнение
     current_level: int
-    step_results: Dict[str, Any]
-    step_errors: List[Dict[str, Any]]
+    step_results: Annotated[Dict[str, Any], merge_dicts_reducer]
+    step_errors: Annotated[List[Dict[str, Any]], append_unique_reducer]
     
     # Мониторинг
     execution_stats: Optional[Dict[str, Any]]
@@ -95,7 +138,7 @@ class WorkflowGraphState(TypedDict):
     final_result: Optional[Dict[str, Any]]
     
     # Метаданные
-    messages: Annotated[List[BaseMessage], operator.add]
+    messages: Annotated[List[BaseMessage], add_messages]  # add_messages поддерживает RemoveMessage и перезапись по ID
     current_phase: str
 
 
@@ -321,9 +364,132 @@ def apply_approval_node(state: WorkflowGraphState) -> WorkflowGraphState:
     return new_state
 
 
+def dispatch_parallel_steps_node(state: WorkflowGraphState) -> List[Send]:
+    """
+    Узел диспетчеризации параллельных шагов через Send API.
+    
+    Создаёт Send для каждого шага текущего уровня, что позволяет
+    выполнять независимые шаги параллельно.
+    """
+    current_level = state.get("current_level", 0)
+    plan = state.get("plan", {})
+    levels = plan.get("levels", [])
+    
+    if current_level >= len(levels):
+        logger.info("[WorkflowGraph] All levels completed, no steps to dispatch")
+        return []
+    
+    level_data = levels[current_level]
+    steps = level_data.get("steps", [])
+    
+    logger.info(f"[WorkflowGraph] Dispatching {len(steps)} steps via Send API for level {current_level}")
+    
+    # Создаём Send для каждого шага
+    sends = []
+    for step_data in steps:
+        if step_data.get("status") == "skipped":
+            continue
+        
+        sends.append(
+            Send(
+                "execute_single_step",
+                {
+                    "step_data": step_data,
+                    "workflow_id": state["workflow_id"],
+                    "case_id": state["case_id"],
+                    "user_id": state["user_id"],
+                    "workflow_definition": state["workflow_definition"],
+                    "step_results": state.get("step_results", {}),
+                    "max_parallel_steps": state.get("max_parallel_steps", 3),
+                    "auto_adapt": state.get("auto_adapt", True),
+                }
+            )
+        )
+    
+    return sends
+
+
+def execute_single_step_node(
+    state: Dict[str, Any],
+    db: Session = None,
+    rag_service: RAGService = None
+) -> Dict[str, Any]:
+    """
+    Узел выполнения одного шага workflow.
+    
+    Вызывается параллельно для каждого шага через Send API.
+    """
+    step_data = state.get("step_data", {})
+    step_id = step_data.get("id")
+    
+    logger.info(f"[WorkflowGraph] Executing step {step_id}: {step_data.get('name')}")
+    
+    try:
+        from app.services.langchain_agents.agents.workflow_orchestrator_agent import (
+            WorkflowOrchestratorAgent,
+            WorkflowOrchestratorConfig,
+            WorkflowStep
+        )
+        
+        config = WorkflowOrchestratorConfig(
+            workflow_id=state["workflow_id"],
+            case_id=state["case_id"],
+            user_id=state["user_id"],
+            workflow_definition=state["workflow_definition"],
+            max_parallel_steps=state.get("max_parallel_steps", 3),
+            require_plan_approval=False,
+            auto_adapt=state.get("auto_adapt", True)
+        )
+        
+        orchestrator = WorkflowOrchestratorAgent(config, db, rag_service)
+        orchestrator.results = state.get("step_results", {})
+        
+        step = WorkflowStep(
+            id=step_data["id"],
+            name=step_data["name"],
+            description=step_data.get("description", ""),
+            step_type=step_data.get("type", "custom"),
+            dependencies=step_data.get("dependencies", []),
+            config=step_data.get("config", {})
+        )
+        
+        import asyncio
+        
+        async def do_execute():
+            return await orchestrator.execute_step(step)
+        
+        try:
+            loop = asyncio.get_event_loop()
+            if loop.is_running():
+                import concurrent.futures
+                with concurrent.futures.ThreadPoolExecutor() as executor:
+                    future = executor.submit(asyncio.run, do_execute())
+                    result = future.result(timeout=120)
+            else:
+                result = loop.run_until_complete(do_execute())
+        except RuntimeError:
+            result = asyncio.run(do_execute())
+        
+        return {
+            "step_results": {step_id: result},
+            "step_errors": [],
+            "current_phase": f"step_{step_id}_complete"
+        }
+        
+    except Exception as e:
+        logger.error(f"[WorkflowGraph] Step {step_id} error: {e}", exc_info=True)
+        return {
+            "step_results": {},
+            "step_errors": [{"step_id": step_id, "error": str(e)}],
+            "current_phase": f"step_{step_id}_error"
+        }
+
+
 def execute_level_node(state: WorkflowGraphState, db: Session = None, rag_service: RAGService = None) -> WorkflowGraphState:
     """
-    Узел выполнения одного уровня шагов.
+    Узел выполнения одного уровня шагов (fallback без Send API).
+    
+    Используется когда Send API недоступен или для простых workflow.
     """
     current_level = state.get("current_level", 0)
     plan = state.get("plan", {})
@@ -338,7 +504,7 @@ def execute_level_node(state: WorkflowGraphState, db: Session = None, rag_servic
     level_data = levels[current_level]
     steps = level_data.get("steps", [])
     
-    logger.info(f"[WorkflowGraph] Executing level {current_level}: {[s['name'] for s in steps]}")
+    logger.info(f"[WorkflowGraph] Executing level {current_level}: {[s['name'] for s in steps]} (sequential mode)")
     
     new_state = dict(state)
     new_state["current_phase"] = f"execute_level_{current_level}"
@@ -420,6 +586,35 @@ def execute_level_node(state: WorkflowGraphState, db: Session = None, rag_servic
     )]
     
     logger.info(f"[WorkflowGraph] Level {current_level} complete: {completed_count} steps, {error_count} errors")
+    return new_state
+
+
+def collect_level_results_node(state: WorkflowGraphState) -> WorkflowGraphState:
+    """
+    Узел сбора результатов уровня после параллельного выполнения.
+    
+    Агрегирует результаты от всех Send и обновляет current_level.
+    """
+    logger.info("[WorkflowGraph] Collecting level results")
+    
+    new_state = dict(state)
+    
+    # Результаты уже агрегированы через reducers
+    step_results = state.get("step_results", {})
+    step_errors = state.get("step_errors", [])
+    current_level = state.get("current_level", 0)
+    
+    # Увеличиваем уровень
+    new_state["current_level"] = current_level + 1
+    
+    completed_count = len(step_results)
+    error_count = len(step_errors)
+    
+    new_state["messages"] = [AIMessage(
+        content=f"📍 Уровень {current_level}: {completed_count} выполнено, {error_count} ошибок"
+    )]
+    
+    logger.info(f"[WorkflowGraph] Level {current_level} results collected: {completed_count} steps, {error_count} errors")
     return new_state
 
 
@@ -550,7 +745,10 @@ def end_node(state: WorkflowGraphState) -> WorkflowGraphState:
 def create_workflow_graph(
     db: Session = None,
     rag_service: RAGService = None,
-    use_checkpointing: bool = True
+    use_checkpointing: bool = True,
+    use_send_api: bool = True,
+    interrupt_before: List[str] = None,
+    interrupt_after: List[str] = None
 ):
     """
     Создать LangGraph граф для Workflows.
@@ -559,11 +757,39 @@ def create_workflow_graph(
         db: Database session
         rag_service: RAG service
         use_checkpointing: Использовать checkpointing (важно для HITL)
+        use_send_api: Использовать Send API для параллельного выполнения шагов
+        interrupt_before: Узлы для прерывания перед выполнением
+        interrupt_after: Узлы для прерывания после выполнения
     
     Returns:
         Compiled LangGraph
+    
+    # АРХИТЕКТУРА ГРАФА (с Send API)
+    ```
+    START
+      ↓
+    analyze
+      ↓
+    generate_plan
+      ↓
+      ├── require_approval=True → approval_interrupt → apply_approval
+      │                                                    ↓
+      └── require_approval=False ──────────────────────────┘
+                                                           ↓
+                                                 dispatch_parallel_steps
+                                                           ↓
+                                                 [Send] execute_single_step (параллельно)
+                                                           ↓
+                                                 collect_level_results
+                                                           ↓
+                                                 (loop или monitor)
+                                                           ↓
+                                                       synthesize
+                                                           ↓
+                                                          END
+    ```
     """
-    logger.info("[WorkflowGraph] Creating workflow graph")
+    logger.info(f"[WorkflowGraph] Creating workflow graph (use_send_api={use_send_api})")
     
     # Создаём граф
     graph = StateGraph(WorkflowGraphState)
@@ -578,6 +804,9 @@ def create_workflow_graph(
     def execute_level_wrapper(state):
         return execute_level_node(state, db, rag_service)
     
+    def execute_single_step_wrapper(state):
+        return execute_single_step_node(state, db, rag_service)
+    
     def synthesize_wrapper(state):
         return synthesize_node(state, db)
     
@@ -586,7 +815,16 @@ def create_workflow_graph(
     graph.add_node("generate_plan", generate_plan_wrapper)
     graph.add_node("approval_interrupt", approval_interrupt_node)
     graph.add_node("apply_approval", apply_approval_node)
-    graph.add_node("execute_level", execute_level_wrapper)
+    
+    if use_send_api:
+        # Send API: параллельное выполнение шагов
+        graph.add_node("dispatch_parallel_steps", dispatch_parallel_steps_node)
+        graph.add_node("execute_single_step", execute_single_step_wrapper)
+        graph.add_node("collect_level_results", collect_level_results_node)
+    else:
+        # Fallback: последовательное выполнение
+        graph.add_node("execute_level", execute_level_wrapper)
+    
     graph.add_node("monitor", monitor_node)
     graph.add_node("synthesize", synthesize_wrapper)
     graph.add_node("end_node", end_node)
@@ -595,55 +833,130 @@ def create_workflow_graph(
     graph.add_edge(START, "analyze")
     graph.add_edge("analyze", "generate_plan")
     
-    # После генерации плана
-    graph.add_conditional_edges(
-        "generate_plan",
-        route_after_plan,
-        {
-            "approval_interrupt": "approval_interrupt",
-            "execute_level": "execute_level"
-        }
-    )
+    # Routing function для выбора между Send API и fallback
+    def route_after_plan_wrapper(state):
+        if state.get("require_approval", True):
+            return "approval_interrupt"
+        else:
+            return "dispatch_parallel_steps" if use_send_api else "execute_level"
     
-    # После interrupt (resume) -> apply_approval
-    graph.add_edge("approval_interrupt", "apply_approval")
+    def route_after_approval_wrapper(state):
+        if state.get("plan_approved", False):
+            return "dispatch_parallel_steps" if use_send_api else "execute_level"
+        else:
+            return "end_node"
     
-    # После применения одобрения
-    graph.add_conditional_edges(
-        "apply_approval",
-        route_after_approval,
-        {
-            "execute_level": "execute_level",
-            "end_node": "end_node"
-        }
-    )
-    
-    # После выполнения уровня
-    graph.add_conditional_edges(
-        "execute_level",
-        route_after_execute,
-        {
-            "execute_level": "execute_level",
-            "monitor": "monitor"
-        }
-    )
+    if use_send_api:
+        # Send API routing
+        graph.add_conditional_edges(
+            "generate_plan",
+            route_after_plan_wrapper,
+            {
+                "approval_interrupt": "approval_interrupt",
+                "dispatch_parallel_steps": "dispatch_parallel_steps"
+            }
+        )
+        
+        graph.add_edge("approval_interrupt", "apply_approval")
+        
+        graph.add_conditional_edges(
+            "apply_approval",
+            route_after_approval_wrapper,
+            {
+                "dispatch_parallel_steps": "dispatch_parallel_steps",
+                "end_node": "end_node"
+            }
+        )
+        
+        # dispatch_parallel_steps возвращает List[Send]
+        # execute_single_step результаты собираются через reducer
+        graph.add_edge("execute_single_step", "collect_level_results")
+        
+        # После сбора результатов - проверяем, есть ли ещё уровни
+        def route_after_collect(state):
+            current_level = state.get("current_level", 0)
+            plan = state.get("plan", {})
+            levels = plan.get("levels", [])
+            
+            if current_level < len(levels):
+                return "dispatch_parallel_steps"  # Следующий уровень
+            else:
+                return "monitor"  # Все уровни выполнены
+        
+        graph.add_conditional_edges(
+            "collect_level_results",
+            route_after_collect,
+            {
+                "dispatch_parallel_steps": "dispatch_parallel_steps",
+                "monitor": "monitor"
+            }
+        )
+    else:
+        # Fallback routing (последовательное выполнение)
+        graph.add_conditional_edges(
+            "generate_plan",
+            route_after_plan_wrapper,
+            {
+                "approval_interrupt": "approval_interrupt",
+                "execute_level": "execute_level"
+            }
+        )
+        
+        graph.add_edge("approval_interrupt", "apply_approval")
+        
+        graph.add_conditional_edges(
+            "apply_approval",
+            route_after_approval_wrapper,
+            {
+                "execute_level": "execute_level",
+                "end_node": "end_node"
+            }
+        )
+        
+        graph.add_conditional_edges(
+            "execute_level",
+            route_after_execute,
+            {
+                "execute_level": "execute_level",
+                "monitor": "monitor"
+            }
+        )
     
     # Финальные рёбра
     graph.add_edge("monitor", "synthesize")
     graph.add_edge("synthesize", "end_node")
     graph.add_edge("end_node", END)
     
-    # Компилируем граф
+    # Compile kwargs с input/output schemas и breakpoints
+    compile_kwargs = {
+        "input": WorkflowGraphInputState,
+        "output": WorkflowGraphOutputState,
+    }
+    
+    # Добавляем breakpoints если указаны
+    if interrupt_before:
+        compile_kwargs["interrupt_before"] = interrupt_before
+        logger.info(f"[WorkflowGraph] interrupt_before: {interrupt_before}")
+    if interrupt_after:
+        compile_kwargs["interrupt_after"] = interrupt_after
+        logger.info(f"[WorkflowGraph] interrupt_after: {interrupt_after}")
+    
+    # Получаем Store для долгосрочной памяти
+    store = get_store_instance()
+    if store:
+        compile_kwargs["store"] = store
+        logger.info("[WorkflowGraph] Store integrated for long-term memory")
+    
     if use_checkpointing:
         try:
             checkpointer = get_checkpointer_instance()
-            compiled = graph.compile(checkpointer=checkpointer)
-            logger.info("[WorkflowGraph] Compiled with PostgresSaver checkpointer")
+            compiled = graph.compile(checkpointer=checkpointer, **compile_kwargs)
+            logger.info("[WorkflowGraph] Compiled with PostgresSaver checkpointer, Store and input/output schemas")
         except Exception as e:
             logger.warning(f"[WorkflowGraph] Failed to get PostgresSaver, using MemorySaver: {e}")
-            compiled = graph.compile(checkpointer=MemorySaver())
+            compiled = graph.compile(checkpointer=MemorySaver(), **compile_kwargs)
     else:
-        compiled = graph.compile(checkpointer=MemorySaver())
+        compiled = graph.compile(checkpointer=MemorySaver(), **compile_kwargs)
     
     logger.info("[WorkflowGraph] Graph created successfully")
     return compiled

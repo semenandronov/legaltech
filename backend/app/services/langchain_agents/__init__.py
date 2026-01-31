@@ -13,9 +13,36 @@ graphs/ — LangGraph графы для страниц
   - TabularGraph: Граф для TabularReviewPage (HITL через interrupt)
   - WorkflowGraph: Граф для WorkflowsPage (параллельное выполнение)
 
+graphs/subgraphs/ — Sub-graphs для модульности
+  - file_extraction: Извлечение из одного файла
+  - rag_retrieval: RAG поиск
+  - garant_retrieval: Поиск в ГАРАНТ
+  - thinking: Пошаговое мышление
+
 nodes/ — Узлы (простые функции без циклов)
   - discrepancy_risk_node: Объединённый узел противоречий + рисков
   - summary_chain: Упрощённый summary как chain
+
+utils/ — Утилиты для графов
+  - reducers: Кастомные reducers для state
+  - message_utils: Фильтрация и обрезка сообщений
+  - streaming: Утилиты для стриминга
+  - time_travel: Отладка и replay
+  - breakpoints: Конфигурация breakpoints
+  - state_editing: Редактирование состояния
+
+memory/ — Долгосрочная память
+  - schemas: Pydantic схемы для профилей и памяти
+  - store: MemoryStore для персистентности
+  - updaters: LLM-based обновление памяти
+  - trustcall: Извлечение и валидация JSON
+
+assistants/ — Преднастроенные assistants
+  - legal-assistant: Общий юридический ассистент
+  - deep-analyst: Глубокий анализ
+  - document-drafter: Составление документов
+  - tabular-extractor: Извлечение в таблицы
+  - workflow-orchestrator: Оркестратор workflows
 
 *_graph_service.py — Сервисы для интеграции графов в API
 """
@@ -64,6 +91,70 @@ from app.services.langchain_agents.legacy_stubs import (
     AnalysisState,
 )
 
+# Utils
+from app.services.langchain_agents.utils.reducers import (
+    merge_dicts_reducer,
+    append_unique_reducer,
+    sort_by_confidence_reducer,
+    merge_citations_reducer,
+    append_errors_reducer,
+)
+from app.services.langchain_agents.utils.message_utils import (
+    filter_messages_by_count,
+    trim_messages_by_tokens,
+    summarize_old_messages,
+)
+from app.services.langchain_agents.utils.streaming import (
+    StreamingEvent,
+    format_sse,
+    stream_graph_events,
+    stream_token_events,
+)
+from app.services.langchain_agents.utils.time_travel import (
+    get_state_history,
+    replay_from_checkpoint,
+    fork_checkpoint,
+)
+from app.services.langchain_agents.utils.breakpoints import (
+    BreakpointConfig,
+    NodeInterrupt,
+)
+from app.services.langchain_agents.utils.state_editing import (
+    update_graph_state,
+    edit_message_in_state,
+)
+
+# Memory
+from app.services.langchain_agents.memory import (
+    UserProfile,
+    CaseMemory,
+    QueryRecord,
+    Insight,
+    MemoryStore,
+    get_memory_store,
+    update_user_profile,
+    update_case_memory,
+    extract_insights,
+    TrustcallExtractor,
+    extract_and_validate,
+    update_with_patch,
+)
+
+# Assistants
+from app.services.langchain_agents.assistants import (
+    AssistantConfig,
+    get_assistant,
+    list_assistants,
+)
+
+# Subgraphs
+from app.services.langchain_agents.graphs.subgraphs import (
+    create_rag_retrieval_subgraph,
+    create_garant_retrieval_subgraph,
+    create_thinking_subgraph,
+    create_file_extraction_subgraph,
+)
+
 __all__ = [
     # Агенты
     "ChatReActAgent",
@@ -94,4 +185,60 @@ __all__ = [
     # Legacy для обратной совместимости
     "AgentCoordinator",
     "AnalysisState",
+    
+    # Utils - Reducers
+    "merge_dicts_reducer",
+    "append_unique_reducer",
+    "sort_by_confidence_reducer",
+    "merge_citations_reducer",
+    "append_errors_reducer",
+    
+    # Utils - Message
+    "filter_messages_by_count",
+    "trim_messages_by_tokens",
+    "summarize_old_messages",
+    
+    # Utils - Streaming
+    "StreamingEvent",
+    "format_sse",
+    "stream_graph_events",
+    "stream_token_events",
+    
+    # Utils - Time Travel
+    "get_state_history",
+    "replay_from_checkpoint",
+    "fork_checkpoint",
+    
+    # Utils - Breakpoints
+    "BreakpointConfig",
+    "NodeInterrupt",
+    
+    # Utils - State Editing
+    "update_graph_state",
+    "edit_message_in_state",
+    
+    # Memory
+    "UserProfile",
+    "CaseMemory",
+    "QueryRecord",
+    "Insight",
+    "MemoryStore",
+    "get_memory_store",
+    "update_user_profile",
+    "update_case_memory",
+    "extract_insights",
+    "TrustcallExtractor",
+    "extract_and_validate",
+    "update_with_patch",
+    
+    # Assistants
+    "AssistantConfig",
+    "get_assistant",
+    "list_assistants",
+    
+    # Subgraphs
+    "create_rag_retrieval_subgraph",
+    "create_garant_retrieval_subgraph",
+    "create_thinking_subgraph",
+    "create_file_extraction_subgraph",
 ]

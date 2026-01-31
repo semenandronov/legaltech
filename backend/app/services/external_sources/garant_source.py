@@ -277,20 +277,6 @@ class GarantSource(BaseSource):
         # Логируем первые несколько результатов для отладки
         if items:
             first_item = items[0]
-            # #region agent log
-            import time
-            import json
-            import os
-            def _safe_debug_log(data: dict) -> None:
-                try:
-                    log_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__file__)))), '.cursor', 'debug.log')
-                    os.makedirs(os.path.dirname(log_path), exist_ok=True)
-                    with open(log_path, 'a', encoding='utf-8') as f:
-                        f.write(json.dumps(data) + '\n')
-                except:
-                    pass
-            # #endregion
-            _safe_debug_log({"sessionId":"debug-session","runId":"run1","hypothesisId":"A","location":"garant_source.py:289","message":"First search result structure","data":{"all_keys":list(first_item.keys()),"topic":first_item.get('topic'),"id":first_item.get('id'),"docId":first_item.get('docId'),"documentId":first_item.get('documentId'),"title":first_item.get('title'),"type":first_item.get('type'),"full_item":first_item},"timestamp":int(time.time()*1000)})
             logger.info(f"First result sample: title='{first_item.get('title', 'N/A')[:100]}', type='{first_item.get('type', 'N/A')}', doc_id='{first_item.get('topic', 'N/A')}'")
         
         for item in items:
@@ -544,28 +530,10 @@ class GarantSource(BaseSource):
             "Accept": "application/json",
         }
         
-        # #region agent log
-        import time
-        import json
-        import os
-        def _safe_debug_log(data: dict) -> None:
-            try:
-                log_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__file__)))), '.cursor', 'debug.log')
-                os.makedirs(os.path.dirname(log_path), exist_ok=True)
-                with open(log_path, 'a', encoding='utf-8') as f:
-                    f.write(json.dumps(data) + '\n')
-            except:
-                pass
-        # #endregion
-        
         # Проверяем, нужно ли использовать /v2/ prefix
         # Согласно документации API v2.1.0, endpoint должен быть /v2/document/info
         # Но api_url уже содержит /v2, поэтому используем /document/info
         full_url = f"{self.api_url}/document/info"
-        
-        # #region agent log
-        _safe_debug_log({"sessionId":"debug-session","runId":"run1","hypothesisId":"H1","location":"garant_source.py:527","message":"get_document_info endpoint","data":{"api_url":self.api_url,"full_url":full_url,"doc_id":doc_id},"timestamp":int(time.time()*1000)})
-        # #endregion
         timeout_seconds = GARANT_API_TIMEOUT_INFO
         
         try:
@@ -594,20 +562,6 @@ class GarantSource(BaseSource):
                         try:
                             data = await response.json()
                             logger.info(f"[Garant API] Successfully got document info, keys: {list(data.keys()) if isinstance(data, dict) else 'N/A'}")
-                            # #region agent log
-                            import time
-                            import json
-                            import os
-                            def _safe_debug_log(data: dict) -> None:
-                                try:
-                                    log_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__file__)))), '.cursor', 'debug.log')
-                                    os.makedirs(os.path.dirname(log_path), exist_ok=True)
-                                    with open(log_path, 'a', encoding='utf-8') as f:
-                                        f.write(json.dumps(data) + '\n')
-                                except:
-                                    pass
-                            _safe_debug_log({"sessionId":"debug-session","runId":"run1","hypothesisId":"H8","location":"garant_source.py:620","message":"get_document_info full response","data":{"doc_id":doc_id,"doc_info_full":data if isinstance(data, dict) else str(data)[:500]},"timestamp":int(time.time()*1000)})
-                            # #endregion
                             return data
                         except Exception as parse_error:
                             logger.error(f"[Garant API] Error parsing JSON response: {parse_error}", exc_info=True)

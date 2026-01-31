@@ -12,6 +12,7 @@ from app.services.iterative_rag_service import IterativeRAGService
 from app.services.document_processor import DocumentProcessor
 from app.services.llm_factory import create_llm
 from langchain_core.messages import HumanMessage, SystemMessage
+from app.core.container import get_rag_service, get_document_processor
 import logging
 import asyncio
 from datetime import datetime
@@ -20,40 +21,8 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
-# Lazy initialization for services (to allow app startup without Yandex credentials)
-_rag_service = None
-_document_processor = None
+# Lazy initialization for iterative RAG (specific to this module)
 _iterative_rag = None
-
-
-def get_rag_service() -> RAGService:
-    """Get or initialize RAG service (lazy initialization)"""
-    global _rag_service
-    if _rag_service is None:
-        try:
-            _rag_service = RAGService()
-        except Exception as e:
-            logger.error(f"Failed to initialize RAG service: {e}")
-            raise HTTPException(
-                status_code=503,
-                detail=f"RAG service недоступен: {str(e)}. Убедитесь, что YANDEX_API_KEY или YANDEX_IAM_TOKEN настроены."
-            )
-    return _rag_service
-
-
-def get_document_processor() -> DocumentProcessor:
-    """Get or initialize document processor (lazy initialization)"""
-    global _document_processor
-    if _document_processor is None:
-        try:
-            _document_processor = DocumentProcessor()
-        except Exception as e:
-            logger.error(f"Failed to initialize document processor: {e}")
-            raise HTTPException(
-                status_code=503,
-                detail=f"Document processor недоступен: {str(e)}. Убедитесь, что YANDEX_API_KEY или YANDEX_IAM_TOKEN настроены."
-            )
-    return _document_processor
 
 
 def get_iterative_rag() -> IterativeRAGService:

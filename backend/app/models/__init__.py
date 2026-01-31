@@ -43,6 +43,7 @@ from app.models.workflow import (
     WORKFLOW_TOOLS,
     SYSTEM_WORKFLOW_TEMPLATES,
 )
+from app.models.langgraph_store import LangGraphStoreEntry
 
 __all__ = [
     # Base
@@ -99,4 +100,6 @@ __all__ = [
     "WORKFLOW_CATEGORIES",
     "WORKFLOW_TOOLS",
     "SYSTEM_WORKFLOW_TEMPLATES",
+    # LangGraph Store
+    "LangGraphStoreEntry",
 ]

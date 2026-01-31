@@ -123,6 +123,19 @@ class Container:
         
         return self._llm
     
+    @property
+    def memory_service(self):
+        """Получить Memory Service (singleton)"""
+        if "memory_service" in self._overrides:
+            return self._overrides["memory_service"]
+        
+        if not hasattr(self, '_memory_service') or self._memory_service is None:
+            from app.services.langchain_memory import MemoryService
+            self._memory_service = MemoryService()
+            logger.info("MemoryService initialized")
+        
+        return self._memory_service
+    
     # =========================================================================
     # Factory методы (создают новый instance)
     # =========================================================================
@@ -232,6 +245,11 @@ def get_rag_service():
 def get_document_processor():
     """Получить Document Processor"""
     return get_container().document_processor
+
+
+def get_memory_service():
+    """Получить Memory Service"""
+    return get_container().memory_service
 
 
 def get_classifier():

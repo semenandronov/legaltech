@@ -30,13 +30,23 @@ async for event in service.stream_response(
 """
 from typing import AsyncGenerator, Optional, List, Dict, Any, Literal
 from sqlalchemy.orm import Session
-from langchain_core.messages import AIMessage
+from langchain_core.messages import AIMessage, BaseMessage, HumanMessage
+from langgraph.types import Command
 from app.services.rag_service import RAGService
 from app.services.document_processor import DocumentProcessor
 from app.services.langchain_agents.graphs.chat_graph import (
     create_chat_graph,
     create_initial_chat_state,
     ChatGraphState
+)
+from app.services.langchain_agents.utils.streaming import (
+    StreamMode,
+    StreamEvent,
+    stream_graph_with_mode,
+    stream_tokens,
+    format_sse_event,
+    create_text_delta_event,
+    create_finish_event,
 )
 from app.models.user import User
 from app.models.case import Case, ChatMessage
@@ -135,6 +145,27 @@ class ChatGraphService:
             logger.warning(f"[ChatGraphService] Error getting session: {e}")
             return str(uuid.uuid4())
     
+    def _get_or_create_thread_id(self, case_id: str, session_id: str) -> str:
+        """
+        Получить или создать thread_id для checkpointing.
+        
+        Использует session_id как thread_id для переиспользования состояния между запросами.
+        Это позволяет LangGraph продолжать диалог, загружая предыдущее состояние из checkpoint.
+        
+        Args:
+            case_id: ID дела
+            session_id: ID сессии чата
+            
+        Returns:
+            thread_id для использования в config LangGraph
+        """
+        # Используем session_id как thread_id для переиспользования состояния
+        # Формат: case_id_session_id для уникальности
+        thread_id = f"{case_id}_{session_id}"
+        
+        logger.debug(f"[ChatGraphService] Using thread_id: {thread_id} (from session_id: {session_id})")
+        return thread_id
+    
     def _save_user_message(
         self,
         case_id: str,
@@ -195,7 +226,10 @@ class ChatGraphService:
         draft_mode: bool = False,
         document_context: str = None,
         document_id: str = None,
-        selected_text: str = None
+        selected_text: str = None,
+        stream_mode: str = "updates",
+        enable_token_streaming: bool = False,
+        existing_messages: List[BaseMessage] = None
     ) -> AsyncGenerator[str, None]:
         """
         Streaming ответ через ChatGraph.
@@ -210,6 +244,9 @@ class ChatGraphService:
             document_context: Контекст документа (для редактора)
             document_id: ID документа (для редактора)
             selected_text: Выделенный текст (для редактора)
+            stream_mode: Режим streaming ("values", "updates", "messages")
+            enable_token_streaming: Включить streaming токенов через astream_events
+            existing_messages: Существующие сообщения для продолжения диалога
         
         Yields:
             JSON строки в формате assistant-ui SSE
@@ -235,28 +272,73 @@ class ChatGraphService:
         # Определяем режим
         mode = self._determine_mode(deep_think, legal_research, draft_mode)
         
-        # Создаём начальное состояние
-        initial_state = create_initial_chat_state(
-            case_id=case_id,
-            user_id=str(user.id),
-            question=question,
-            mode=mode,
-            enable_garant=legal_research or mode == "garant",
-            enable_citations=True,
-            document_context=document_context,
-            document_id=document_id,
-            selected_text=selected_text
-        )
-        
         # Получаем граф
         graph = self._get_or_create_graph()
         
-        # Генерируем thread_id для checkpointing
-        thread_id = f"{case_id}_{session_id}_{datetime.utcnow().timestamp()}"
+        # Получаем или создаём thread_id для checkpointing (переиспользуем session_id)
+        thread_id = self._get_or_create_thread_id(case_id, session_id)
         config = {
             "configurable": {"thread_id": thread_id},
             "recursion_limit": 25
         }
+        
+        # Загружаем существующее состояние из checkpoint для продолжения диалога
+        try:
+            existing_state = await graph.aget_state(config)
+            if existing_state and existing_state.values:
+                # Продолжаем диалог - используем существующее состояние
+                current_state = dict(existing_state.values)
+                # Добавляем новое сообщение пользователя
+                current_messages = current_state.get("messages", [])
+                current_messages.append(HumanMessage(content=question))
+                current_state["messages"] = current_messages
+                # Обновляем вопрос и режим для текущего запроса
+                current_state["question"] = question
+                current_state["mode"] = mode
+                current_state["enable_garant"] = legal_research or mode == "garant"
+                if document_context:
+                    current_state["document_context"] = document_context
+                if document_id:
+                    current_state["document_id"] = document_id
+                if selected_text:
+                    current_state["selected_text"] = selected_text
+                # Очищаем предыдущий ответ для нового запроса
+                current_state["response"] = None
+                current_state["rag_context"] = None
+                current_state["garant_context"] = None
+                current_state["thinking_steps"] = None
+                initial_state = current_state
+                logger.info(f"[ChatGraphService] Continuing dialog from checkpoint, thread_id: {thread_id}")
+            else:
+                # Новый диалог - создаём начальное состояние
+                initial_state = create_initial_chat_state(
+                    case_id=case_id,
+                    user_id=str(user.id),
+                    question=question,
+                    mode=mode,
+                    enable_garant=legal_research or mode == "garant",
+                    enable_citations=True,
+                    document_context=document_context,
+                    document_id=document_id,
+                    selected_text=selected_text,
+                    existing_messages=existing_messages
+                )
+                logger.info(f"[ChatGraphService] Starting new dialog, thread_id: {thread_id}")
+        except Exception as e:
+            # Если не удалось загрузить состояние, создаём новое
+            logger.warning(f"[ChatGraphService] Failed to load state from checkpoint: {e}, creating new state")
+            initial_state = create_initial_chat_state(
+                case_id=case_id,
+                user_id=str(user.id),
+                question=question,
+                mode=mode,
+                enable_garant=legal_research or mode == "garant",
+                enable_citations=True,
+                document_context=document_context,
+                document_id=document_id,
+                selected_text=selected_text,
+                existing_messages=existing_messages
+            )
         
         full_response = ""
         citations = []
@@ -351,6 +433,411 @@ class ChatGraphService:
             
             # Сохраняем ошибку как ответ
             self._save_assistant_message(case_id, error_msg, session_id)
+    
+    async def stream_response_with_tokens(
+        self,
+        case_id: str,
+        question: str,
+        user: User,
+        deep_think: bool = False,
+        legal_research: bool = False,
+        draft_mode: bool = False,
+        document_context: str = None,
+        document_id: str = None,
+        selected_text: str = None,
+        existing_messages: List[BaseMessage] = None
+    ) -> AsyncGenerator[str, None]:
+        """
+        Streaming ответ с токенами через astream_events.
+        
+        Обеспечивает real-time streaming токенов по мере их генерации LLM.
+        Используется для улучшенного UX когда важна скорость отображения.
+        
+        Args:
+            case_id: ID дела
+            question: Вопрос пользователя
+            user: Текущий пользователь
+            deep_think: Режим глубокого мышления
+            legal_research: Режим поиска в ГАРАНТ
+            draft_mode: Режим создания документа
+            document_context: Контекст документа
+            document_id: ID документа
+            selected_text: Выделенный текст
+            existing_messages: Существующие сообщения
+        
+        Yields:
+            JSON строки в формате assistant-ui SSE с токенами
+        """
+        logger.info(f"[ChatGraphService] Starting token stream for case {case_id}")
+        
+        # Проверяем доступ к делу
+        case = self.db.query(Case).filter(
+            Case.id == case_id,
+            Case.user_id == user.id
+        ).first()
+        
+        if not case:
+            yield create_finish_event("error", "Дело не найдено")
+            return
+        
+        # Получаем session_id
+        session_id = self._get_or_create_session(case_id)
+        
+        # Сохраняем сообщение пользователя
+        self._save_user_message(case_id, question, session_id)
+        
+        # Определяем режим
+        mode = self._determine_mode(deep_think, legal_research, draft_mode)
+        
+        # Получаем граф
+        graph = self._get_or_create_graph()
+        
+        # Получаем или создаём thread_id для checkpointing (переиспользуем session_id)
+        thread_id = self._get_or_create_thread_id(case_id, session_id)
+        config = {
+            "configurable": {"thread_id": thread_id},
+            "recursion_limit": 25
+        }
+        
+        # Загружаем существующее состояние из checkpoint для продолжения диалога
+        try:
+            existing_state = await graph.aget_state(config)
+            if existing_state and existing_state.values:
+                # Продолжаем диалог - используем существующее состояние
+                current_state = dict(existing_state.values)
+                # Добавляем новое сообщение пользователя
+                current_messages = current_state.get("messages", [])
+                current_messages.append(HumanMessage(content=question))
+                current_state["messages"] = current_messages
+                # Обновляем вопрос и режим для текущего запроса
+                current_state["question"] = question
+                current_state["mode"] = mode
+                current_state["enable_garant"] = legal_research or mode == "garant"
+                if document_context:
+                    current_state["document_context"] = document_context
+                if document_id:
+                    current_state["document_id"] = document_id
+                if selected_text:
+                    current_state["selected_text"] = selected_text
+                # Очищаем предыдущий ответ для нового запроса
+                current_state["response"] = None
+                current_state["rag_context"] = None
+                current_state["garant_context"] = None
+                current_state["thinking_steps"] = None
+                initial_state = current_state
+                logger.info(f"[ChatGraphService] Continuing dialog from checkpoint (token stream), thread_id: {thread_id}")
+            else:
+                # Новый диалог - создаём начальное состояние
+                initial_state = create_initial_chat_state(
+                    case_id=case_id,
+                    user_id=str(user.id),
+                    question=question,
+                    mode=mode,
+                    enable_garant=legal_research or mode == "garant",
+                    enable_citations=True,
+                    document_context=document_context,
+                    document_id=document_id,
+                    selected_text=selected_text,
+                    existing_messages=existing_messages
+                )
+                logger.info(f"[ChatGraphService] Starting new dialog (token stream), thread_id: {thread_id}")
+        except Exception as e:
+            # Если не удалось загрузить состояние, создаём новое
+            logger.warning(f"[ChatGraphService] Failed to load state from checkpoint (token stream): {e}, creating new state")
+            initial_state = create_initial_chat_state(
+                case_id=case_id,
+                user_id=str(user.id),
+                question=question,
+                mode=mode,
+                enable_garant=legal_research or mode == "garant",
+                enable_citations=True,
+                document_context=document_context,
+                document_id=document_id,
+                selected_text=selected_text,
+                existing_messages=existing_messages
+            )
+        
+        full_response = ""
+        citations = []
+        
+        try:
+            # Streaming токенов через astream_events
+            async for event in stream_tokens(graph, initial_state, config):
+                if event.type == "token" and event.token:
+                    full_response += event.token
+                    yield create_text_delta_event(event.token)
+                
+                elif event.type == "complete":
+                    break
+                
+                elif event.type == "error":
+                    error = event.data.get("error", "Unknown error") if event.data else "Unknown error"
+                    yield create_finish_event("error", error)
+                    return
+            
+            # Если ответ пустой, пробуем получить из состояния
+            if not full_response:
+                # Fallback: получаем финальное состояние
+                final_state = await graph.aget_state(config)
+                if final_state and final_state.values:
+                    full_response = final_state.values.get("response", "")
+                    citations = final_state.values.get("citations", [])
+                    
+                    if full_response:
+                        yield create_text_delta_event(full_response)
+            
+            if not full_response:
+                full_response = "Не удалось получить ответ. Попробуйте переформулировать вопрос."
+                yield create_text_delta_event(full_response)
+            
+            # Отправляем citations
+            if citations:
+                yield f"data: {json.dumps({'type': 'citations', 'citations': citations})}\n\n"
+            
+            # Сохраняем ответ
+            self._save_assistant_message(case_id, full_response, session_id, citations)
+            
+            yield create_finish_event("stop")
+            
+            logger.info(f"[ChatGraphService] Token stream completed: {len(full_response)} chars")
+            
+        except Exception as e:
+            logger.error(f"[ChatGraphService] Token stream error: {e}", exc_info=True)
+            error_msg = f"Ошибка: {str(e)}"
+            yield create_text_delta_event(error_msg)
+            yield create_finish_event("error", str(e))
+            self._save_assistant_message(case_id, error_msg, session_id)
+    
+    async def stream_with_mode(
+        self,
+        case_id: str,
+        question: str,
+        user: User,
+        stream_mode: StreamMode = StreamMode.UPDATES,
+        **kwargs
+    ) -> AsyncGenerator[str, None]:
+        """
+        Streaming с указанным режимом.
+        
+        Args:
+            case_id: ID дела
+            question: Вопрос пользователя
+            user: Текущий пользователь
+            stream_mode: Режим streaming
+            **kwargs: Дополнительные параметры
+        
+        Yields:
+            JSON строки в формате SSE
+        """
+        logger.info(f"[ChatGraphService] Starting stream with mode {stream_mode} for case {case_id}")
+        
+        # Проверяем доступ
+        case = self.db.query(Case).filter(
+            Case.id == case_id,
+            Case.user_id == user.id
+        ).first()
+        
+        if not case:
+            yield format_sse_event(StreamEvent(type="error", data={"error": "Дело не найдено"}))
+            return
+        
+        # Получаем session_id
+        session_id = self._get_or_create_session(case_id)
+        self._save_user_message(case_id, question, session_id)
+        
+        # Определяем режим
+        mode = self._determine_mode(
+            kwargs.get("deep_think", False),
+            kwargs.get("legal_research", False),
+            kwargs.get("draft_mode", False)
+        )
+        
+        graph = self._get_or_create_graph()
+        # Получаем или создаём thread_id для checkpointing (переиспользуем session_id)
+        thread_id = self._get_or_create_thread_id(case_id, session_id)
+        config = {"configurable": {"thread_id": thread_id}, "recursion_limit": 25}
+        
+        # Загружаем существующее состояние из checkpoint для продолжения диалога
+        try:
+            existing_state = await graph.aget_state(config)
+            if existing_state and existing_state.values:
+                # Продолжаем диалог - используем существующее состояние
+                current_state = dict(existing_state.values)
+                # Добавляем новое сообщение пользователя
+                current_messages = current_state.get("messages", [])
+                current_messages.append(HumanMessage(content=question))
+                current_state["messages"] = current_messages
+                # Обновляем вопрос и режим для текущего запроса
+                current_state["question"] = question
+                current_state["mode"] = mode
+                current_state["enable_garant"] = kwargs.get("legal_research", False) or mode == "garant"
+                if kwargs.get("document_context"):
+                    current_state["document_context"] = kwargs.get("document_context")
+                if kwargs.get("document_id"):
+                    current_state["document_id"] = kwargs.get("document_id")
+                if kwargs.get("selected_text"):
+                    current_state["selected_text"] = kwargs.get("selected_text")
+                # Очищаем предыдущий ответ для нового запроса
+                current_state["response"] = None
+                current_state["rag_context"] = None
+                current_state["garant_context"] = None
+                current_state["thinking_steps"] = None
+                initial_state = current_state
+                logger.info(f"[ChatGraphService] Continuing dialog from checkpoint (stream_with_mode), thread_id: {thread_id}")
+            else:
+                # Новый диалог - создаём начальное состояние
+                initial_state = create_initial_chat_state(
+                    case_id=case_id,
+                    user_id=str(user.id),
+                    question=question,
+                    mode=mode,
+                    enable_garant=kwargs.get("legal_research", False) or mode == "garant",
+                    enable_citations=True,
+                    document_context=kwargs.get("document_context"),
+                    document_id=kwargs.get("document_id"),
+                    selected_text=kwargs.get("selected_text"),
+                    existing_messages=kwargs.get("existing_messages")
+                )
+                logger.info(f"[ChatGraphService] Starting new dialog (stream_with_mode), thread_id: {thread_id}")
+        except Exception as e:
+            # Если не удалось загрузить состояние, создаём новое
+            logger.warning(f"[ChatGraphService] Failed to load state from checkpoint (stream_with_mode): {e}, creating new state")
+            initial_state = create_initial_chat_state(
+                case_id=case_id,
+                user_id=str(user.id),
+                question=question,
+                mode=mode,
+                enable_garant=kwargs.get("legal_research", False) or mode == "garant",
+                enable_citations=True,
+                document_context=kwargs.get("document_context"),
+                document_id=kwargs.get("document_id"),
+                selected_text=kwargs.get("selected_text"),
+                existing_messages=kwargs.get("existing_messages")
+            )
+        
+        full_response = ""
+        citations = []
+        
+        try:
+            async for event in stream_graph_with_mode(graph, initial_state, config, stream_mode):
+                yield format_sse_event(event)
+                
+                # Собираем ответ для сохранения
+                if event.type == "response" and event.message:
+                    full_response = event.message
+                elif event.type == "message" and event.message:
+                    full_response = event.message
+                elif event.type == "citations" and event.data:
+                    citations = event.data.get("citations", [])
+            
+            # Сохраняем ответ
+            if full_response:
+                self._save_assistant_message(case_id, full_response, session_id, citations)
+            
+        except Exception as e:
+            logger.error(f"[ChatGraphService] Stream error: {e}", exc_info=True)
+            yield format_sse_event(StreamEvent(type="error", data={"error": str(e)}))
+    
+    async def resume_draft(
+        self,
+        case_id: str,
+        thread_id: str,
+        approved: bool = True,
+        user: User = None
+    ) -> AsyncGenerator[str, None]:
+        """
+        Возобновить выполнение draft после подтверждения/отмены пользователем.
+        
+        Используется для HITL - когда граф прерывается перед созданием документа,
+        пользователь может подтвердить или отменить операцию.
+        
+        Args:
+            case_id: ID дела
+            thread_id: ID потока (из предыдущего запроса)
+            approved: Подтверждено ли создание документа
+            user: Текущий пользователь (для проверки доступа)
+        
+        Yields:
+            JSON строки в формате assistant-ui SSE
+        """
+        logger.info(f"[ChatGraphService] Resuming draft for thread {thread_id}, approved: {approved}")
+        
+        # Проверяем доступ к делу
+        if user:
+            case = self.db.query(Case).filter(
+                Case.id == case_id,
+                Case.user_id == user.id
+            ).first()
+            if not case:
+                yield f"data: {json.dumps({'error': 'Дело не найдено'})}\n\n"
+                return
+        
+        # Получаем граф
+        graph = self._get_or_create_graph()
+        
+        config = {
+            "configurable": {"thread_id": thread_id},
+            "recursion_limit": 25
+        }
+        
+        try:
+            # Обновляем состояние: устанавливаем draft_approved
+            from app.services.langchain_agents.utils.state_editing import update_state
+            await update_state(graph, thread_id, {"draft_approved": approved})
+            
+            # Создаём Command для resume
+            resume_command = Command(resume={"draft_approved": approved})
+            
+            # Продолжаем выполнение
+            full_response = ""
+            citations = []
+            document_created = None
+            
+            async for chunk in graph.astream(resume_command, config=config):
+                if isinstance(chunk, dict):
+                    for node_name, node_data in chunk.items():
+                        if not isinstance(node_data, dict):
+                            continue
+                        
+                        # Обрабатываем response
+                        response = node_data.get("response")
+                        if response:
+                            if response != full_response:
+                                if full_response and response.startswith(full_response):
+                                    delta = response[len(full_response):]
+                                else:
+                                    delta = response
+                                
+                                if delta:
+                                    yield f"data: {json.dumps({'type': 'text-delta', 'textDelta': delta})}\n\n"
+                                
+                                full_response = response
+                        
+                        # Обрабатываем document_created
+                        doc_created = node_data.get("document_created")
+                        if doc_created:
+                            document_created = doc_created
+                            yield f"data: {json.dumps({'type': 'document-card', 'data': doc_created})}\n\n"
+                        
+                        # Обрабатываем citations
+                        node_citations = node_data.get("citations")
+                        if node_citations:
+                            citations = node_citations
+            
+            # Отправляем citations если есть
+            if citations:
+                yield f"data: {json.dumps({'type': 'citations', 'citations': citations})}\n\n"
+            
+            # Отправляем финальное событие
+            yield f"data: {json.dumps({'type': 'finish', 'finishReason': 'stop'})}\n\n"
+            
+            logger.info(f"[ChatGraphService] Draft resume completed: {len(full_response)} chars")
+            
+        except Exception as e:
+            logger.error(f"[ChatGraphService] Draft resume error: {e}", exc_info=True)
+            error_msg = f"Ошибка при возобновлении: {str(e)}"
+            yield f"data: {json.dumps({'type': 'text-delta', 'textDelta': error_msg})}\n\n"
+            yield f"data: {json.dumps({'type': 'finish', 'finishReason': 'error', 'error': str(e)})}\n\n"
 
 
 # Глобальный экземпляр для переиспользования

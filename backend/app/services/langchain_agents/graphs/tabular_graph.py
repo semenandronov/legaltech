@@ -42,22 +42,72 @@ check_confidence (проверка уверенности)
 """
 from typing import TypedDict, Literal, Optional, List, Dict, Any, Annotated
 from langgraph.graph import StateGraph, END, START
+from langgraph.graph.message import add_messages
 from langgraph.checkpoint.memory import MemorySaver
+from langgraph.types import Send
 from langchain_core.messages import BaseMessage, HumanMessage, AIMessage
 from app.services.llm_factory import create_llm
 from app.services.rag_service import RAGService
 from app.utils.checkpointer_setup import get_checkpointer_instance
+from app.services.langchain_agents.store_integration import get_store_instance
+from app.services.langchain_agents.utils.reducers import (
+    append_unique_reducer,
+    sort_by_confidence_reducer,
+    append_errors_reducer,
+)
+from app.services.langchain_agents.graphs.subgraphs.file_extraction import (
+    create_file_extraction_subgraph,
+    FileExtractionState,
+    create_initial_file_extraction_state,
+)
 from sqlalchemy.orm import Session
 import logging
-import operator
 
 logger = logging.getLogger(__name__)
 
 
 # ============== State Definition ==============
 
+# Input Schema - только входные данные
+class TabularGraphInputState(TypedDict):
+    """
+    Входное состояние графа Tabular Review.
+    
+    Содержит только данные, необходимые для начала обработки.
+    """
+    review_id: str
+    case_id: str
+    user_id: str
+    columns: List[Dict[str, Any]]
+    file_ids: List[str]
+    confidence_threshold: float
+    enable_hitl: bool
+
+
+# Output Schema - только результаты
+class TabularGraphOutputState(TypedDict):
+    """
+    Выходное состояние графа Tabular Review.
+    
+    Содержит только финальные результаты.
+    """
+    saved_count: Optional[int]
+    merged_results: Optional[List[Dict[str, Any]]]
+    errors: Optional[List[str]]
+    current_phase: str
+
+
+# Full State - полное внутреннее состояние
 class TabularGraphState(TypedDict):
-    """Состояние графа Tabular Review."""
+    """
+    Состояние графа Tabular Review.
+    
+    Использует кастомные редьюсеры для:
+    - messages: стандартный operator.add для конкатенации
+    - extraction_results: append_unique_reducer для объединения без дубликатов
+    - merged_results: sort_by_confidence_reducer для сортировки по уверенности
+    - errors: append_errors_reducer для накопления ошибок
+    """
     # Входные данные
     review_id: str
     case_id: str
@@ -73,8 +123,8 @@ class TabularGraphState(TypedDict):
     
     # Промежуточные результаты
     validation_result: Optional[Dict[str, Any]]
-    extraction_results: Optional[List[Dict[str, Any]]]  # Результаты Map
-    merged_results: Optional[List[Dict[str, Any]]]  # Результаты Reduce
+    extraction_results: Annotated[Optional[List[Dict[str, Any]]], append_unique_reducer]  # Результаты Map
+    merged_results: Annotated[Optional[List[Dict[str, Any]]], sort_by_confidence_reducer]  # Результаты Reduce
     
     # HITL
     clarification_requests: Optional[List[Dict[str, Any]]]
@@ -82,10 +132,10 @@ class TabularGraphState(TypedDict):
     
     # Результат
     saved_count: Optional[int]
-    errors: Optional[List[str]]
+    errors: Annotated[Optional[List[str]], append_errors_reducer]
     
     # Метаданные
-    messages: Annotated[List[BaseMessage], operator.add]
+    messages: Annotated[List[BaseMessage], add_messages]  # add_messages поддерживает RemoveMessage и перезапись по ID
     current_phase: str
 
 
@@ -178,13 +228,90 @@ def validate_node(state: TabularGraphState, db: Session = None) -> TabularGraphS
     return new_state
 
 
+def map_dispatch_node(state: TabularGraphState) -> List[Send]:
+    """
+    Узел диспетчеризации Map - создаёт Send для каждого файла.
+    
+    Использует Send API для параллельной обработки файлов.
+    Каждый файл обрабатывается независимо в extract_single_file узле.
+    """
+    file_ids = state.get("file_ids", [])
+    
+    logger.info(f"[TabularGraph] Dispatching extraction for {len(file_ids)} files via Send API")
+    
+    # Создаём Send для каждого файла
+    sends = []
+    for file_id in file_ids:
+        sends.append(
+            Send(
+                "extract_single_file",
+                {
+                    "file_id": file_id,
+                    "case_id": state["case_id"],
+                    "user_id": state["user_id"],
+                    "columns": state["columns"],
+                    "confidence_threshold": state.get("confidence_threshold", 0.8),
+                }
+            )
+        )
+    
+    return sends
+
+
+def extract_single_file_node(state: Dict[str, Any], db: Session = None) -> Dict[str, Any]:
+    """
+    Узел извлечения из одного файла.
+    
+    Вызывается параллельно для каждого файла через Send API.
+    Использует sub-graph для изоляции.
+    """
+    file_id = state.get("file_id")
+    logger.info(f"[TabularGraph] Extracting from file {file_id}")
+    
+    try:
+        # Создаём sub-graph
+        subgraph = create_file_extraction_subgraph(db)
+        
+        # Создаём состояние для sub-graph
+        subgraph_state = create_initial_file_extraction_state(
+            file_id=file_id,
+            case_id=state["case_id"],
+            user_id=state["user_id"],
+            columns=state["columns"],
+            confidence_threshold=state.get("confidence_threshold", 0.8)
+        )
+        
+        # Выполняем sub-graph
+        result = subgraph.invoke(subgraph_state)
+        
+        # Возвращаем результаты для reducer
+        return {
+            "extraction_results": result.get("extraction_results", []),
+            "clarification_requests": result.get("clarification_requests", []),
+            "errors": result.get("errors"),
+            "current_phase": "map_extract"
+        }
+        
+    except Exception as e:
+        logger.error(f"[TabularGraph] File extraction error: {e}", exc_info=True)
+        return {
+            "extraction_results": [],
+            "clarification_requests": [],
+            "errors": [f"File {file_id} extraction error: {str(e)}"],
+            "current_phase": "map_extract"
+        }
+
+
 def map_extract_node(state: TabularGraphState, db: Session = None) -> TabularGraphState:
     """
     Узел Map - параллельное извлечение из документов.
     
     Для каждого документа извлекает значения всех колонок.
+    
+    ПРИМЕЧАНИЕ: Этот узел используется как fallback когда Send API недоступен.
+    Предпочтительно использовать map_dispatch_node + extract_single_file_node.
     """
-    logger.info(f"[TabularGraph] Starting Map extraction for {len(state['file_ids'])} files")
+    logger.info(f"[TabularGraph] Starting Map extraction for {len(state['file_ids'])} files (legacy mode)")
     
     new_state = dict(state)
     new_state["current_phase"] = "map_extract"
@@ -470,11 +597,11 @@ def save_results_node(state: TabularGraphState, db: Session = None) -> TabularGr
 
 # ============== Routing Functions ==============
 
-def route_after_validation(state: TabularGraphState) -> str:
+def route_after_validation(state: TabularGraphState, use_send_api: bool = True) -> str:
     """Определить следующий узел после валидации."""
     validation = state.get("validation_result", {})
     if validation.get("valid", False):
-        return "map_extract"
+        return "map_dispatch" if use_send_api else "map_extract"
     else:
         return "end_node"
 
@@ -509,7 +636,10 @@ def end_node(state: TabularGraphState) -> TabularGraphState:
 
 def create_tabular_graph(
     db: Session = None,
-    use_checkpointing: bool = True
+    use_checkpointing: bool = True,
+    interrupt_before: List[str] = None,
+    interrupt_after: List[str] = None,
+    use_send_api: bool = True
 ):
     """
     Создать LangGraph граф для Tabular Review.
@@ -517,11 +647,35 @@ def create_tabular_graph(
     Args:
         db: Database session
         use_checkpointing: Использовать checkpointing (важно для HITL)
+        interrupt_before: Узлы для прерывания перед выполнением
+        interrupt_after: Узлы для прерывания после выполнения
+        use_send_api: Использовать Send API для параллельной обработки файлов
     
     Returns:
         Compiled LangGraph
+    
+    # АРХИТЕКТУРА ГРАФА (с Send API)
+    ```
+    START
+      ↓
+    validate (проверка колонок и файлов)
+      ↓
+    map_dispatch ──→ [Send] extract_single_file (параллельно для каждого файла)
+      ↓                      ↓
+    reduce_merge ←──────────┘ (собирает результаты)
+      ↓
+    check_confidence (проверка уверенности)
+      ↓
+      ├── confidence >= threshold → save → END
+      │
+      └── confidence < threshold → clarify_interrupt (HITL)
+                                        ↓
+                                   [user response]
+                                        ↓
+                                      save → END
+    ```
     """
-    logger.info("[TabularGraph] Creating tabular graph")
+    logger.info(f"[TabularGraph] Creating tabular graph (use_send_api={use_send_api})")
     
     # Создаём граф
     graph = StateGraph(TabularGraphState)
@@ -533,12 +687,23 @@ def create_tabular_graph(
     def map_extract_wrapper(state):
         return map_extract_node(state, db)
     
+    def extract_single_file_wrapper(state):
+        return extract_single_file_node(state, db)
+    
     def save_results_wrapper(state):
         return save_results_node(state, db)
     
     # Добавляем узлы
     graph.add_node("validate", validate_wrapper)
-    graph.add_node("map_extract", map_extract_wrapper)
+    
+    if use_send_api:
+        # Используем Send API для параллельной обработки
+        graph.add_node("map_dispatch", map_dispatch_node)
+        graph.add_node("extract_single_file", extract_single_file_wrapper)
+    else:
+        # Fallback: последовательная обработка
+        graph.add_node("map_extract", map_extract_wrapper)
+    
     graph.add_node("reduce_merge", reduce_merge_node)
     graph.add_node("check_confidence", check_confidence_node)
     graph.add_node("clarify_interrupt", clarify_interrupt_node)
@@ -549,18 +714,39 @@ def create_tabular_graph(
     # Добавляем рёбра
     graph.add_edge(START, "validate")
     
-    # После валидации
-    graph.add_conditional_edges(
-        "validate",
-        route_after_validation,
-        {
-            "map_extract": "map_extract",
-            "end_node": "end_node"
-        }
-    )
+    # После валидации - создаём routing function с учётом use_send_api
+    def route_after_validation_wrapper(state):
+        validation = state.get("validation_result", {})
+        if validation.get("valid", False):
+            return "map_dispatch" if use_send_api else "map_extract"
+        else:
+            return "end_node"
     
-    # Последовательные рёбра
-    graph.add_edge("map_extract", "reduce_merge")
+    if use_send_api:
+        # Send API: validate -> map_dispatch -> [Send] extract_single_file -> reduce_merge
+        graph.add_conditional_edges(
+            "validate",
+            route_after_validation_wrapper,
+            {
+                "map_dispatch": "map_dispatch",
+                "end_node": "end_node"
+            }
+        )
+        # map_dispatch возвращает List[Send], которые параллельно вызывают extract_single_file
+        # extract_single_file результаты собираются через reducer и передаются в reduce_merge
+        graph.add_edge("extract_single_file", "reduce_merge")
+    else:
+        # Legacy: validate -> map_extract -> reduce_merge
+        graph.add_conditional_edges(
+            "validate",
+            route_after_validation_wrapper,
+            {
+                "map_extract": "map_extract",
+                "end_node": "end_node"
+            }
+        )
+        graph.add_edge("map_extract", "reduce_merge")
+    
     graph.add_edge("reduce_merge", "check_confidence")
     
     # После проверки уверенности
@@ -581,18 +767,37 @@ def create_tabular_graph(
     graph.add_edge("save_results", "end_node")
     graph.add_edge("end_node", END)
     
-    # Компилируем граф
+    # Компилируем граф с input/output schemas и breakpoints
     # ВАЖНО: для HITL через interrupt нужен checkpointer
+    compile_kwargs = {
+        "input": TabularGraphInputState,
+        "output": TabularGraphOutputState,
+    }
+    
+    # Добавляем breakpoints если указаны
+    if interrupt_before:
+        compile_kwargs["interrupt_before"] = interrupt_before
+        logger.info(f"[TabularGraph] interrupt_before: {interrupt_before}")
+    if interrupt_after:
+        compile_kwargs["interrupt_after"] = interrupt_after
+        logger.info(f"[TabularGraph] interrupt_after: {interrupt_after}")
+    
+    # Получаем Store для долгосрочной памяти
+    store = get_store_instance()
+    if store:
+        compile_kwargs["store"] = store
+        logger.info("[TabularGraph] Store integrated for long-term memory")
+    
     if use_checkpointing:
         try:
             checkpointer = get_checkpointer_instance()
-            compiled = graph.compile(checkpointer=checkpointer)
-            logger.info("[TabularGraph] Compiled with PostgresSaver checkpointer")
+            compiled = graph.compile(checkpointer=checkpointer, **compile_kwargs)
+            logger.info("[TabularGraph] Compiled with PostgresSaver checkpointer, Store and input/output schemas")
         except Exception as e:
             logger.warning(f"[TabularGraph] Failed to get PostgresSaver, using MemorySaver: {e}")
-            compiled = graph.compile(checkpointer=MemorySaver())
+            compiled = graph.compile(checkpointer=MemorySaver(), **compile_kwargs)
     else:
-        compiled = graph.compile(checkpointer=MemorySaver())  # HITL требует checkpointer
+        compiled = graph.compile(checkpointer=MemorySaver(), **compile_kwargs)  # HITL требует checkpointer
     
     logger.info("[TabularGraph] Graph created successfully")
     return compiled

@@ -14,6 +14,7 @@ from app.services.langchain_memory import MemoryService
 from app.services.llm_factory import create_legal_llm
 from app.services.external_sources.web_research_service import get_web_research_service
 from app.services.external_sources.source_router import initialize_source_router
+from app.core.container import get_rag_service, get_document_processor, get_memory_service
 from app.config import config
 from datetime import datetime
 import re
@@ -23,49 +24,6 @@ import asyncio
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
-
-# Lazy initialization for services (to allow app startup without Yandex credentials)
-_rag_service = None
-_document_processor = None
-_memory_service = None
-
-
-def get_rag_service() -> RAGService:
-    """Get or initialize RAG service (lazy initialization)"""
-    global _rag_service
-    if _rag_service is None:
-        try:
-            _rag_service = RAGService()
-        except Exception as e:
-            logger.error(f"Failed to initialize RAG service: {e}")
-            raise HTTPException(
-                status_code=503,
-                detail=f"RAG service недоступен: {str(e)}. Убедитесь, что YANDEX_API_KEY или YANDEX_IAM_TOKEN настроены."
-            )
-    return _rag_service
-
-
-def get_document_processor() -> DocumentProcessor:
-    """Get or initialize document processor (lazy initialization)"""
-    global _document_processor
-    if _document_processor is None:
-        try:
-            _document_processor = DocumentProcessor()
-        except Exception as e:
-            logger.error(f"Failed to initialize document processor: {e}")
-            raise HTTPException(
-                status_code=503,
-                detail=f"Document processor недоступен: {str(e)}. Убедитесь, что YANDEX_API_KEY или YANDEX_IAM_TOKEN настроены."
-            )
-    return _document_processor
-
-
-def get_memory_service() -> MemoryService:
-    """Get or initialize memory service (lazy initialization)"""
-    global _memory_service
-    if _memory_service is None:
-        _memory_service = MemoryService()
-    return _memory_service
 
 
 class ChatRequest(BaseModel):
@@ -261,318 +219,8 @@ async def chat(
             detail="В деле нет загруженных документов. Пожалуйста, сначала загрузите документы."
         )
     
-    # AGENTS DISABLED - Always use RAG path
-    # Agent code is preserved below but disabled (wrapped in if False:)
+    # REMOVED: Закомментированный код агентов (305 строк) - не используется
     # Process question with RAG and optional enhancements (web search, legal research, deep thinking)
-    
-    # === AGENT CODE DISABLED (preserved for future use) ===
-    # To re-enable agents, change "if False:" to "if True:" below
-    if False:  # AGENTS DISABLED - change to True to re-enable
-        # This is a task - use Planning Agent
-        try:
-            logger.info(f"Detected task request for case {request.case_id}: {request.question[:100]}...")
-            
-            # Get case info to pass document count to planning agent
-            # Case is already imported at top of file, no need to re-import
-            case = db.query(Case).filter(Case.id == request.case_id).first()
-            num_documents = case.num_documents if case else 0
-            file_names = case.file_names if case and case.file_names else []
-            
-            # Use Advanced Planning Agent with subtask support
-            try:
-                advanced_planning_agent = AdvancedPlanningAgent(
-                    rag_service=rag_service,
-                    document_processor=document_processor
-                )
-                logger.info("Using Advanced Planning Agent with subtask support")
-                planning_agent = advanced_planning_agent
-                use_subtasks = True
-            except Exception as e:
-                logger.warning(f"Failed to initialize Advanced Planning Agent: {e}, using base PlanningAgent")
-                planning_agent = PlanningAgent(rag_service=rag_service, document_processor=document_processor)
-                use_subtasks = False
-            
-            # Create analysis plan with document information
-            if use_subtasks:
-                plan = planning_agent.plan_with_subtasks(
-                    user_task=request.question,
-                    case_id=request.case_id,
-                    available_documents=file_names[:10] if file_names else None,
-                    num_documents=num_documents
-                )
-            else:
-                plan = planning_agent.plan_analysis(
-                    user_task=request.question,
-                    case_id=request.case_id,
-                    available_documents=file_names[:10] if file_names else None,
-                    num_documents=num_documents
-                )
-            
-            # Extract plan information
-            analysis_types = plan.get("analysis_types", [])
-            reasoning = plan.get("reasoning", "План создан на основе задачи")
-            confidence = plan.get("confidence", 0.8)
-            estimated_time = plan.get("estimated_time", plan.get("estimated_execution_time", "неизвестно"))
-            subtasks = plan.get("subtasks", [])
-            
-            logger.info(
-                f"Planning completed for case {request.case_id}: {len(subtasks) if subtasks else len(analysis_types)} steps, "
-                f"confidence: {confidence:.2f}, estimated_time: {estimated_time}"
-            )
-            
-            # Проверяем валидность плана
-            from app.services.langchain_agents.legacy_stubs import PlanningValidator
-            validator = PlanningValidator()
-            validation_result = validator.validate_plan(plan, request.case_id)
-            
-            # ВСЕГДА показываем план для одобрения (убрано условие confidence < 0.7)
-            # Сохраняем план в БД
-            from app.models.analysis import AnalysisPlan
-            from datetime import datetime
-            import uuid
-            
-            plan_id = str(uuid.uuid4())
-            try:
-                analysis_plan = AnalysisPlan(
-                    id=plan_id,
-                    case_id=request.case_id,
-                    user_id=current_user.id,
-                    user_task=request.question,
-                    plan_data=plan,
-                    status="pending_approval",
-                    confidence=confidence,
-                    validation_result={
-                        "is_valid": validation_result.is_valid,
-                        "issues": validation_result.issues,
-                        "warnings": validation_result.warnings
-                    },
-                    tables_to_create=plan.get("tables_to_create", [])
-                )
-                db.add(analysis_plan)
-                db.commit()
-                logger.info(f"Plan saved to DB with id: {plan_id}")
-            except Exception as save_error:
-                db.rollback()
-                logger.error(f"Error saving plan to DB: {save_error}", exc_info=True)
-                # Продолжаем без сохранения в БД
-            
-            # ВСЕГДА показываем план для одобрения
-                # Форматируем план для показа
-                plan_display = _format_plan_for_display(plan, validation_result)
-                
-                # Форматируем план для показа
-                plan_display = _format_plan_for_display(plan, validation_result)
-                
-                answer = f"""Я составил план анализа. Пожалуйста, проверьте и подтвердите выполнение:
-
-{plan_display}
-
-**Уверенность:** {confidence:.0%}"""
-                
-                if validation_result and validation_result.issues:
-                    answer += f"\n\n**Проблемы:**\n" + "\n".join(f"- {issue}" for issue in validation_result.issues)
-                
-                if validation_result and validation_result.warnings:
-                    answer += f"\n\n**Предупреждения:**\n" + "\n".join(f"- {warning}" for warning in validation_result.warnings)
-                
-                answer += f"\n\n**ID плана:** `{plan_id}`\n\nПодтвердите выполнение или уточните задачу."
-                
-                try:
-                    # Save user message
-                    user_message = ChatMessage(
-                        case_id=request.case_id,
-                        role="user",
-                        content=request.question,
-                        session_id=None
-                    )
-                    db.add(user_message)
-                    
-                    # Save assistant message with plan ready status
-                    assistant_message = ChatMessage(
-                        case_id=request.case_id,
-                        role="assistant",
-                        content=answer,
-                        source_references=[],
-                        session_id=None
-                    )
-                    db.add(assistant_message)
-                    db.commit()
-                except Exception as commit_error:
-                    db.rollback()
-                    logger.error(f"Ошибка при сохранении сообщений: {commit_error}", exc_info=True)
-                
-                return ChatResponse(
-                    answer=answer,
-                    sources=[],
-                    status="plan_ready"  # Новый статус - план готов, ожидает подтверждения
-                )
-            
-            # Map analysis types to API format (discrepancy -> discrepancies, risk -> risk_analysis)
-            api_analysis_types = []
-            for at in analysis_types:
-                if at == "discrepancy":
-                    api_analysis_types.append("discrepancies")
-                elif at == "risk":
-                    api_analysis_types.append("risk_analysis")
-                else:
-                    api_analysis_types.append(at)
-            
-            # Start analysis in background
-            from app.utils.database import SessionLocal
-            
-            # Capture case_id for background task
-            task_case_id = request.case_id
-            
-            def run_planned_analysis():
-                """Run analysis in background based on plan"""
-                background_db = SessionLocal()
-                try:
-                    analysis_service = AnalysisService(background_db)
-                    
-                    if analysis_service.use_agents:
-                        # Map back to agent format
-                        agent_types = []
-                        for at in api_analysis_types:
-                            if at == "discrepancies":
-                                agent_types.append("discrepancy")
-                            elif at == "risk_analysis":
-                                agent_types.append("risk")
-                            else:
-                                agent_types.append(at)
-                        
-                        logger.info(f"Running planned analysis for case {task_case_id}: {agent_types}")
-                        results = analysis_service.run_agent_analysis(task_case_id, agent_types)
-                        logger.info(
-                            f"Planned analysis completed for case {task_case_id}, "
-                            f"execution time: {results.get('execution_time', 0):.2f}s"
-                        )
-                    else:
-                        # Legacy approach
-                        logger.info(f"Using legacy analysis for planned task, case {task_case_id}")
-                        for analysis_type in api_analysis_types:
-                            if analysis_type == "timeline":
-                                analysis_service.extract_timeline(task_case_id)
-                            elif analysis_type == "discrepancies":
-                                analysis_service.find_discrepancies(task_case_id)
-                            elif analysis_type == "key_facts":
-                                analysis_service.extract_key_facts(task_case_id)
-                            elif analysis_type == "summary":
-                                analysis_service.generate_summary(task_case_id)
-                            elif analysis_type == "risk_analysis":
-                                analysis_service.analyze_risks(task_case_id)
-                except Exception as e:
-                    logger.error(f"Error in planned analysis background task: {e}", exc_info=True)
-                finally:
-                    background_db.close()
-            
-            background_tasks.add_task(run_planned_analysis)
-            
-            try:
-                # Update case status
-                case.status = "processing"
-                if case.case_metadata is None:
-                    case.case_metadata = {}
-                case.case_metadata["planned_task"] = request.question
-                case.case_metadata["planned_analyses"] = api_analysis_types
-                case.case_metadata["plan_confidence"] = confidence
-                db.commit()
-            except Exception as commit_error:
-                db.rollback()
-                logger.error(f"Ошибка при обновлении статуса дела {request.case_id}: {commit_error}", exc_info=True)
-                # Continue - analysis will still run in background
-            
-            # Create response message with multi-level plan details
-            answer = f"""Я понял вашу задачу и создал план анализа:
-
-**Планируемые анализы:**
-{', '.join(api_analysis_types)}"""
-            
-            # Add goals if present
-            if "goals" in plan and plan["goals"]:
-                answer += "\n\n**Цели анализа:**\n"
-                for idx, goal in enumerate(plan["goals"], 1):
-                    answer += f"{idx}. {goal.get('description', '')}\n"
-            
-            # Add strategy if present
-            if "strategy" in plan:
-                strategy_names = {
-                    "comprehensive_analysis": "Комплексный анализ",
-                    "parallel_optimized": "Параллельная оптимизация",
-                    "sequential_dependent": "Последовательное выполнение с зависимостями",
-                    "simple_sequential": "Простое последовательное выполнение",
-                    "dependent_sequential": "Последовательное выполнение зависимых анализов",
-                    "parallel_independent": "Параллельное выполнение независимых анализов"
-                }
-                strategy_display = strategy_names.get(plan["strategy"], plan["strategy"])
-                answer += f"\n**Стратегия:** {strategy_display}"
-            
-            # Add steps details if present
-            if "steps" in plan and plan["steps"]:
-                answer += "\n\n**Детали плана:**\n"
-                for idx, step in enumerate(plan["steps"][:5], 1):  # Показываем первые 5 шагов
-                    step_name = step.get("agent_name", "unknown")
-                    step_desc = step.get("description", "")
-                    step_time = step.get("estimated_time", "")
-                    answer += f"{idx}. {step_desc}"
-                    if step_time:
-                        answer += f" (~{step_time})"
-                    answer += "\n"
-                if len(plan["steps"]) > 5:
-                    answer += f"... и еще {len(plan['steps']) - 5} шагов\n"
-            
-            answer += f"\n**Объяснение:** {reasoning}\n\n**Уверенность:** {confidence:.0%}"
-            
-            # Add estimated time if available
-            estimated_time = plan.get("estimated_execution_time", "")
-            if estimated_time:
-                answer += f"\n**Оценка времени выполнения:** {estimated_time}"
-            
-            # Add alternative plans if present
-            if "alternative_plans" in plan and plan["alternative_plans"]:
-                answer += "\n\n**Альтернативные варианты:**\n"
-                for alt_plan in plan["alternative_plans"][:2]:  # Показываем первые 2 альтернативы
-                    answer += f"- {alt_plan.get('name', 'Альтернативный план')}: {', '.join(alt_plan.get('analysis_types', []))}\n"
-            
-            answer += "\n\nАнализ выполняется в фоне. Результаты будут доступны через несколько минут. Вы можете проверить статус анализа в разделе отчетов."
-            
-            try:
-                # Save user message
-                # session_id is nullable - no need to create chat_sessions entry
-                user_message = ChatMessage(
-                    case_id=request.case_id,
-                    role="user",
-                    content=request.question,
-                    session_id=None  # Nullable field, no foreign key constraint violation
-                )
-                db.add(user_message)
-
-                # Save assistant message
-                assistant_message = ChatMessage(
-                    case_id=request.case_id,
-                    role="assistant",
-                    content=answer,
-                    source_references=[],
-                    session_id=None  # Nullable field, no foreign key constraint violation
-                )
-                db.add(assistant_message)
-                db.commit()
-            except Exception as commit_error:
-                db.rollback()
-                logger.error(f"Ошибка при сохранении сообщений в БД для дела {request.case_id}: {commit_error}", exc_info=True)
-                # Continue - message is already generated
-            
-            return ChatResponse(
-                answer=answer,
-                sources=[],
-                status="task_planned"
-            )
-            
-        except Exception as e:
-            logger.error(f"Error in planning agent: {e}", exc_info=True)
-            # Fallback to regular RAG if planning fails
-            logger.info("Falling back to RAG for task request")
-            # Continue to RAG processing below
-    # === END OF DISABLED AGENT CODE ===
     
     # Get chat history
     history_messages = db.query(ChatMessage).filter(
@@ -1049,40 +697,16 @@ async def approve_plan(
                         # Extract tables from delivery_result if available
                         # Check both "delivery" key and direct delivery_result in results
                         delivery_result = results.get("delivery") or results.get("delivery_result", {})
-                        # #region agent log
-                        logger.info(f"[DEBUG-HYP-A] chat.py: saving table_results to plan_data, "
-                                   f"results_keys={list(results.keys())}, "
-                                   f"has_delivery_key={bool(results.get('delivery'))}, "
-                                   f"has_delivery_result_key={bool(results.get('delivery_result'))}, "
-                                   f"has_delivery={bool(delivery_result)}, "
-                                   f"delivery_keys={list(delivery_result.keys()) if delivery_result and isinstance(delivery_result, dict) else None}, "
-                                   f"delivery_tables={list(delivery_result.get('tables', {}).keys()) if delivery_result and isinstance(delivery_result, dict) and delivery_result.get('tables') else None}, "
-                                   f"has_results_tables={bool(results.get('tables'))}, "
-                                   f"results_tables_keys={list(results.get('tables', {}).keys()) if results.get('tables') else None}, "
-                                   f"plan_id={plan.id if plan else None}")
-                        # #endregion
                         if delivery_result and isinstance(delivery_result, dict):
                             plan_data["delivery_result"] = delivery_result
                             # Also save tables separately for easier access
                             if delivery_result.get("tables"):
                                 plan_data["table_results"] = delivery_result.get("tables")
                                 logger.info(f"Saved {len(delivery_result.get('tables', {}))} table results to plan_data")
-                                # #region agent log
-                                table_results_summary = {k: {"table_id": v.get("table_id"), "status": v.get("status")} for k, v in plan_data.get("table_results", {}).items()}
-                                logger.info(f"[DEBUG-HYP-A] chat.py: table_results saved to plan_data, "
-                                           f"table_results_keys={list(plan_data.get('table_results', {}).keys())}, "
-                                           f"table_results={table_results_summary}")
-                                # #endregion
                         elif results.get("tables"):
                             # Fallback: save tables directly if delivery_result not available
                             plan_data["table_results"] = results.get("tables")
                             logger.info(f"Saved {len(results.get('tables', {}))} table results to plan_data (fallback)")
-                        
-                        # Log plan_data state before commit
-                        logger.info(f"[DEBUG-HYP-A] chat.py: plan_data before commit, "
-                                   f"plan_data_keys={list(plan_data.keys())}, "
-                                   f"has_table_results={bool(plan_data.get('table_results'))}, "
-                                   f"has_delivery_result={bool(plan_data.get('delivery_result'))}")
                         
                         # CRITICAL: Explicitly reassign plan.plan_data to ensure SQLAlchemy tracks the change
                         # Even though plan_data is a reference, SQLAlchemy needs explicit reassignment for JSON fields
@@ -1092,11 +716,6 @@ async def approve_plan(
                         background_db.commit()
                         # Re-query plan to ensure we have the latest data (refresh fails if plan is not in session)
                         plan = background_db.query(AnalysisPlan).filter(AnalysisPlan.id == plan_id_for_execution).first()
-                        # #region agent log
-                        logger.info(f"[DEBUG-HYP-A] chat.py: plan_data committed to DB, "
-                                   f"plan_id={plan.id if plan else None}, "
-                                   f"plan_status={plan.status if plan else None}, "
-                                   f"plan_data_keys={list(plan.plan_data.keys()) if plan and plan.plan_data else None}, "
                                    f"has_table_results_in_plan={bool(plan.plan_data.get('table_results') if plan and plan.plan_data else False)}, "
                                    f"has_delivery_result_in_plan={bool(plan.plan_data.get('delivery_result') if plan and plan.plan_data else False)}")
                         # #endregion
