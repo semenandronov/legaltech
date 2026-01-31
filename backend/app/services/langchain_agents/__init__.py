@@ -105,10 +105,10 @@ from app.services.langchain_agents.utils.message_utils import (
     summarize_old_messages,
 )
 from app.services.langchain_agents.utils.streaming import (
-    StreamingEvent,
-    format_sse,
-    stream_graph_events,
-    stream_token_events,
+    StreamEvent,
+    format_sse_event,
+    stream_graph_with_mode,
+    stream_tokens,
 )
 from app.services.langchain_agents.utils.time_travel import (
     get_state_history,
@@ -199,10 +199,10 @@ __all__ = [
     "summarize_old_messages",
     
     # Utils - Streaming
-    "StreamingEvent",
-    "format_sse",
-    "stream_graph_events",
-    "stream_token_events",
+    "StreamEvent",
+    "format_sse_event",
+    "stream_graph_with_mode",
+    "stream_tokens",
     
     # Utils - Time Travel
     "get_state_history",
