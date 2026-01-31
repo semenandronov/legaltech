@@ -471,10 +471,41 @@ def init_db():
     except Exception as e:
         logger.warning(f"Could not check/fix tabular_reviews table: {e}", exc_info=True)
     
+    # Test database connection before creating tables
+    # #region agent log
+    try:
+        _debug_log("database.py:474", "Testing database connection", {"step": "test_connection"})
+    except: pass
+    # #endregion
+    try:
+        with engine.connect() as conn:
+            conn.execute(text("SELECT 1"))
+        logger.info("✅ Database connection successful")
+        # #region agent log
+        try:
+            _debug_log("database.py:477", "Database connection test succeeded", {"step": "connection_test_success"})
+        except: pass
+        # #endregion
+    except Exception as e:
+        error_msg = f"❌ Failed to connect to database: {e}"
+        logger.error(error_msg, exc_info=True)
+        # #region agent log
+        try:
+            import traceback
+            _debug_log("database.py:480", "Database connection test failed", {"step": "connection_test_error", "error": str(e), "error_type": type(e).__name__, "traceback": traceback.format_exc()})
+        except: pass
+        # #endregion
+        # Print to both stderr and stdout for visibility
+        import sys
+        for stream in [sys.stderr, sys.stdout]:
+            for _ in range(3):
+                print(f"\n{'='*80}\n{error_msg}\n{'='*80}\n", file=stream, flush=True)
+        raise
+    
     # Create all tables
     # #region agent log
     try:
-        _debug_log("database.py:449", "Before create_all", {"step": "before_create_all"})
+        _debug_log("database.py:492", "Before create_all", {"step": "before_create_all"})
     except: pass
     # #endregion
     try:
@@ -482,16 +513,23 @@ def init_db():
         logger.info("✅ All database tables created")
         # #region agent log
         try:
-            _debug_log("database.py:451", "create_all succeeded", {"step": "create_all_success"})
+            _debug_log("database.py:497", "create_all succeeded", {"step": "create_all_success"})
         except: pass
         # #endregion
     except Exception as e:
+        error_msg = f"❌ Failed to create database tables: {e}"
+        logger.error(error_msg, exc_info=True)
         # #region agent log
         try:
             import traceback
-            _debug_log("database.py:451", "create_all failed", {"step": "create_all_error", "error": str(e), "error_type": type(e).__name__, "traceback": traceback.format_exc()})
+            _debug_log("database.py:503", "create_all failed", {"step": "create_all_error", "error": str(e), "error_type": type(e).__name__, "traceback": traceback.format_exc()})
         except: pass
         # #endregion
+        # Print to both stderr and stdout for visibility
+        import sys
+        for stream in [sys.stderr, sys.stdout]:
+            for _ in range(3):
+                print(f"\n{'='*80}\n{error_msg}\n{'='*80}\n", file=stream, flush=True)
         raise
     
     # #region agent log

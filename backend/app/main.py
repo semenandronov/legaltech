@@ -124,12 +124,18 @@ try:
     except: pass
     # #endregion
 except Exception as e:
-    logger.error(f"Failed to initialize database: {e}", exc_info=True)
+    error_msg = f"❌ Failed to initialize database: {e}"
+    logger.error(error_msg, exc_info=True)
     # #region agent log
     try:
-        _debug_log("main.py:43", "init_db failed", {"step": "init_db_error", "error": str(e), "error_type": type(e).__name__, "traceback": traceback.format_exc()}, hypothesis_id="B")
+        _debug_log("main.py:126", "init_db failed", {"step": "init_db_error", "error": str(e), "error_type": type(e).__name__, "traceback": traceback.format_exc()}, hypothesis_id="B")
     except: pass
     # #endregion
+    # Print to both stderr and stdout for visibility
+    import sys
+    for stream in [sys.stderr, sys.stdout]:
+        for _ in range(3):
+            print(f"\n{'='*80}\n{error_msg}\n{'='*80}\n", file=stream, flush=True)
     raise
 
 # #region agent log
