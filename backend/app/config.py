@@ -288,9 +288,30 @@ class Config:
 config = Config()
 
 # Validate DATABASE_URL on module import
+# #region agent log
+import json
+from datetime import datetime
+try:
+    with open('/Users/semyon_andronov04/Desktop/C ДВ/.cursor/debug.log', 'a') as f:
+        f.write(json.dumps({"sessionId":"debug-session","runId":"startup","hypothesisId":"A","location":"config.py:290","message":"Before DATABASE_URL validation","data":{"step":"before_validation","db_url_set":bool(os.getenv("DATABASE_URL")),"db_url_preview":os.getenv("DATABASE_URL","")[:50] if os.getenv("DATABASE_URL") else "NOT_SET"},"timestamp":int(datetime.now().timestamp()*1000)})+'\n')
+except: pass
+# #endregion
 try:
     Config._validate_database_url()
+    # #region agent log
+    try:
+        with open('/Users/semyon_andronov04/Desktop/C ДВ/.cursor/debug.log', 'a') as f:
+            f.write(json.dumps({"sessionId":"debug-session","runId":"startup","hypothesisId":"A","location":"config.py:293","message":"DATABASE_URL validation succeeded","data":{"step":"validation_success"},"timestamp":int(datetime.now().timestamp()*1000)})+'\n')
+    except: pass
+    # #endregion
 except ValueError as e:
+    # #region agent log
+    try:
+        import traceback
+        with open('/Users/semyon_andronov04/Desktop/C ДВ/.cursor/debug.log', 'a') as f:
+            f.write(json.dumps({"sessionId":"debug-session","runId":"startup","hypothesisId":"A","location":"config.py:296","message":"DATABASE_URL validation failed","data":{"step":"validation_failed","error":str(e),"error_type":type(e).__name__},"timestamp":int(datetime.now().timestamp()*1000)})+'\n')
+    except: pass
+    # #endregion
     # In production, we want to fail fast if DATABASE_URL is not set
     import sys
     print(str(e), file=sys.stderr)

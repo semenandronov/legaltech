@@ -412,6 +412,14 @@ def ensure_schema():
 
 def init_db():
     """Initialize database tables"""
+    # #region agent log
+    import json
+    from datetime import datetime
+    try:
+        with open('/Users/semyon_andronov04/Desktop/C ДВ/.cursor/debug.log', 'a') as f:
+            f.write(json.dumps({"sessionId":"debug-session","runId":"startup","hypothesisId":"B","location":"database.py:413","message":"init_db called","data":{"step":"init_db_start","db_url_present":bool(config.DATABASE_URL)},"timestamp":int(datetime.now().timestamp()*1000)})+'\n')
+    except: pass
+    # #endregion
     # Import all models to ensure they are registered with Base
     from app.models.case import Case, ChatMessage, File
     from app.models.user import User, UserSession
@@ -446,10 +454,54 @@ def init_db():
         logger.warning(f"Could not check/fix tabular_reviews table: {e}", exc_info=True)
     
     # Create all tables
-    Base.metadata.create_all(bind=engine)
-    logger.info("✅ All database tables created")
+    # #region agent log
+    try:
+        with open('/Users/semyon_andronov04/Desktop/C ДВ/.cursor/debug.log', 'a') as f:
+            f.write(json.dumps({"sessionId":"debug-session","runId":"startup","hypothesisId":"B","location":"database.py:449","message":"Before create_all","data":{"step":"before_create_all"},"timestamp":int(datetime.now().timestamp()*1000)})+'\n')
+    except: pass
+    # #endregion
+    try:
+        Base.metadata.create_all(bind=engine)
+        logger.info("✅ All database tables created")
+        # #region agent log
+        try:
+            with open('/Users/semyon_andronov04/Desktop/C ДВ/.cursor/debug.log', 'a') as f:
+                f.write(json.dumps({"sessionId":"debug-session","runId":"startup","hypothesisId":"B","location":"database.py:451","message":"create_all succeeded","data":{"step":"create_all_success"},"timestamp":int(datetime.now().timestamp()*1000)})+'\n')
+        except: pass
+        # #endregion
+    except Exception as e:
+        # #region agent log
+        try:
+            import traceback
+            with open('/Users/semyon_andronov04/Desktop/C ДВ/.cursor/debug.log', 'a') as f:
+                f.write(json.dumps({"sessionId":"debug-session","runId":"startup","hypothesisId":"B","location":"database.py:451","message":"create_all failed","data":{"step":"create_all_error","error":str(e),"error_type":type(e).__name__,"traceback":traceback.format_exc()},"timestamp":int(datetime.now().timestamp()*1000)})+'\n')
+        except: pass
+        # #endregion
+        raise
     
-    ensure_schema()
+    # #region agent log
+    try:
+        with open('/Users/semyon_andronov04/Desktop/C ДВ/.cursor/debug.log', 'a') as f:
+            f.write(json.dumps({"sessionId":"debug-session","runId":"startup","hypothesisId":"B","location":"database.py:453","message":"Before ensure_schema","data":{"step":"before_ensure_schema"},"timestamp":int(datetime.now().timestamp()*1000)})+'\n')
+    except: pass
+    # #endregion
+    try:
+        ensure_schema()
+        # #region agent log
+        try:
+            with open('/Users/semyon_andronov04/Desktop/C ДВ/.cursor/debug.log', 'a') as f:
+                f.write(json.dumps({"sessionId":"debug-session","runId":"startup","hypothesisId":"B","location":"database.py:453","message":"ensure_schema succeeded","data":{"step":"ensure_schema_success"},"timestamp":int(datetime.now().timestamp()*1000)})+'\n')
+        except: pass
+        # #endregion
+    except Exception as e:
+        # #region agent log
+        try:
+            import traceback
+            with open('/Users/semyon_andronov04/Desktop/C ДВ/.cursor/debug.log', 'a') as f:
+                f.write(json.dumps({"sessionId":"debug-session","runId":"startup","hypothesisId":"B","location":"database.py:453","message":"ensure_schema failed","data":{"step":"ensure_schema_error","error":str(e),"error_type":type(e).__name__,"traceback":traceback.format_exc()},"timestamp":int(datetime.now().timestamp()*1000)})+'\n')
+        except: pass
+        # #endregion
+        raise
     
     # Apply tabular_reviews and tabular_columns/tabular_cells migrations if needed
     try:

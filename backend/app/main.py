@@ -10,12 +10,44 @@ import os
 import logging
 import sys
 from datetime import datetime
+import json
+import traceback
+
+# #region agent log
+try:
+    with open('/Users/semyon_andronov04/Desktop/C ДВ/.cursor/debug.log', 'a') as f:
+        f.write(json.dumps({"sessionId":"debug-session","runId":"startup","hypothesisId":"A","location":"main.py:1","message":"Module import started","data":{"step":"import_start"},"timestamp":int(datetime.now().timestamp()*1000)})+'\n')
+except: pass
+# #endregion
 
 # Version info for deployment tracking
 APP_VERSION = "6.0.0"
 APP_BUILD_DATE = "2026-01-29"
 APP_COMMIT = "039f731"  # feat: Add Reflection Pattern and Citation Verification
-from app.config import config
+
+# #region agent log
+try:
+    with open('/Users/semyon_andronov04/Desktop/C ДВ/.cursor/debug.log', 'a') as f:
+        f.write(json.dumps({"sessionId":"debug-session","runId":"startup","hypothesisId":"A","location":"main.py:18","message":"Before config import","data":{"step":"before_config"},"timestamp":int(datetime.now().timestamp()*1000)})+'\n')
+except: pass
+# #endregion
+
+try:
+    from app.config import config
+    # #region agent log
+    try:
+        with open('/Users/semyon_andronov04/Desktop/C ДВ/.cursor/debug.log', 'a') as f:
+            f.write(json.dumps({"sessionId":"debug-session","runId":"startup","hypothesisId":"A","location":"main.py:21","message":"Config imported successfully","data":{"step":"config_imported","has_db_url":bool(os.getenv("DATABASE_URL"))},"timestamp":int(datetime.now().timestamp()*1000)})+'\n')
+    except: pass
+    # #endregion
+except Exception as e:
+    # #region agent log
+    try:
+        with open('/Users/semyon_andronov04/Desktop/C ДВ/.cursor/debug.log', 'a') as f:
+            f.write(json.dumps({"sessionId":"debug-session","runId":"startup","hypothesisId":"A","location":"main.py:21","message":"Config import failed","data":{"step":"config_import_error","error":str(e),"traceback":traceback.format_exc()},"timestamp":int(datetime.now().timestamp()*1000)})+'\n')
+    except: pass
+    # #endregion
+    raise
 from app.routes import upload, chat, auth, cases, dashboard, analysis, reports, settings, websocket, tabular_review, prompts, workflows, folders, review_table, assistant_chat, assistant_chat_v2, workflow_execution, plan_execution, metrics, document_editor, playbooks, workflow_agentic, health
 from app.utils.database import init_db
 
@@ -35,17 +67,49 @@ logger = logging.getLogger(__name__)
 
 # Initialize database on startup
 logger.info("Initializing database...")
+# #region agent log
+try:
+    with open('/Users/semyon_andronov04/Desktop/C ДВ/.cursor/debug.log', 'a') as f:
+        f.write(json.dumps({"sessionId":"debug-session","runId":"startup","hypothesisId":"B","location":"main.py:36","message":"Before init_db","data":{"step":"before_init_db","db_url_present":bool(os.getenv("DATABASE_URL"))},"timestamp":int(datetime.now().timestamp()*1000)})+'\n')
+except: pass
+# #endregion
 try:
     init_db()
     logger.info("Database initialized successfully")
+    # #region agent log
+    try:
+        with open('/Users/semyon_andronov04/Desktop/C ДВ/.cursor/debug.log', 'a') as f:
+            f.write(json.dumps({"sessionId":"debug-session","runId":"startup","hypothesisId":"B","location":"main.py:40","message":"init_db succeeded","data":{"step":"init_db_success"},"timestamp":int(datetime.now().timestamp()*1000)})+'\n')
+    except: pass
+    # #endregion
 except Exception as e:
     logger.error(f"Failed to initialize database: {e}", exc_info=True)
+    # #region agent log
+    try:
+        with open('/Users/semyon_andronov04/Desktop/C ДВ/.cursor/debug.log', 'a') as f:
+            f.write(json.dumps({"sessionId":"debug-session","runId":"startup","hypothesisId":"B","location":"main.py:43","message":"init_db failed","data":{"step":"init_db_error","error":str(e),"error_type":type(e).__name__,"traceback":traceback.format_exc()},"timestamp":int(datetime.now().timestamp()*1000)})+'\n')
+    except: pass
+    # #endregion
     raise
+
+# #region agent log
+try:
+    with open('/Users/semyon_andronov04/Desktop/C ДВ/.cursor/debug.log', 'a') as f:
+        f.write(json.dumps({"sessionId":"debug-session","runId":"startup","hypothesisId":"C","location":"main.py:45","message":"Before FastAPI app creation","data":{"step":"before_app_creation"},"timestamp":int(datetime.now().timestamp()*1000)})+'\n')
+except: pass
+# #endregion
 
 app = FastAPI(
     title=config.API_TITLE,
     version=config.API_VERSION,
 )
+
+# #region agent log
+try:
+    with open('/Users/semyon_andronov04/Desktop/C ДВ/.cursor/debug.log', 'a') as f:
+        f.write(json.dumps({"sessionId":"debug-session","runId":"startup","hypothesisId":"C","location":"main.py:49","message":"FastAPI app created","data":{"step":"app_created"},"timestamp":int(datetime.now().timestamp()*1000)})+'\n')
+except: pass
+# #endregion
 
 # Обработчик ошибок валидации
 @app.exception_handler(RequestValidationError)
@@ -307,5 +371,14 @@ async def get_version():
 if __name__ == "__main__":
     import uvicorn
     import os
-    port = int(os.getenv("PORT", 8000))
+    # #region agent log
+    try:
+        port = int(os.getenv("PORT", 8000))
+        with open('/Users/semyon_andronov04/Desktop/C ДВ/.cursor/debug.log', 'a') as f:
+            f.write(json.dumps({"sessionId":"debug-session","runId":"startup","hypothesisId":"D","location":"main.py:307","message":"Starting uvicorn","data":{"step":"uvicorn_start","port":port,"port_env":os.getenv("PORT")},"timestamp":int(datetime.now().timestamp()*1000)})+'\n')
+    except Exception as e:
+        with open('/Users/semyon_andronov04/Desktop/C ДВ/.cursor/debug.log', 'a') as f:
+            f.write(json.dumps({"sessionId":"debug-session","runId":"startup","hypothesisId":"D","location":"main.py:307","message":"Port setup error","data":{"step":"port_error","error":str(e)},"timestamp":int(datetime.now().timestamp()*1000)})+'\n')
+        port = 8000
+    # #endregion
     uvicorn.run(app, host="0.0.0.0", port=port, reload=False)
