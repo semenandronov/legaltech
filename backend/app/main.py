@@ -3,6 +3,40 @@
 import sys
 import json
 from datetime import datetime
+import logging
+
+# Configure basic logging immediately to capture all errors
+logging.basicConfig(
+    level=logging.DEBUG,
+    format='%(asctime)s [%(levelname)s] %(name)s: %(message)s',
+    handlers=[
+        logging.StreamHandler(sys.stderr),  # Always use stderr for Docker
+        logging.StreamHandler(sys.stdout)   # Also stdout for visibility
+    ],
+    force=True  # Override any existing configuration
+)
+
+# Set up exception handler to catch all unhandled exceptions
+def handle_exception(exc_type, exc_value, exc_traceback):
+    """Handle all unhandled exceptions"""
+    if issubclass(exc_type, KeyboardInterrupt):
+        sys.__excepthook__(exc_type, exc_value, exc_traceback)
+        return
+    
+    error_msg = f"UNHANDLED EXCEPTION: {exc_type.__name__}: {exc_value}"
+    import traceback
+    tb_str = ''.join(traceback.format_exception(exc_type, exc_value, exc_traceback))
+    
+    # Print to both streams multiple times
+    for stream in [sys.stderr, sys.stdout]:
+        for _ in range(5):
+            print(f"\n{'='*80}\n{error_msg}\n{tb_str}\n{'='*80}\n", file=stream, flush=True)
+    
+    # Also log
+    logging.critical(f"{error_msg}\n{tb_str}")
+
+sys.excepthook = handle_exception
+
 try:
     log_entry = json.dumps({
         "sessionId": "debug-session",
@@ -15,15 +49,19 @@ try:
     })
     # Print to both stderr and stdout, multiple times for visibility
     for stream in [sys.stderr, sys.stdout]:
-        for _ in range(2):
+        for _ in range(3):
             print(f"[DEBUG] {log_entry}", file=stream, flush=True)
+    # Also use logging
+    logging.error(f"[DEBUG] {log_entry}")
     with open('/tmp/debug.log', 'a') as f:
         f.write(log_entry + '\n')
 except Exception as e:
     try:
+        error_msg = f"[DEBUG] EARLY LOG FAILED: {e}"
         for stream in [sys.stderr, sys.stdout]:
-            for _ in range(2):
-                print(f"[DEBUG] EARLY LOG FAILED: {e}", file=stream, flush=True)
+            for _ in range(3):
+                print(error_msg, file=stream, flush=True)
+        logging.error(error_msg, exc_info=True)
     except: pass
 # #endregion
 
@@ -91,13 +129,75 @@ except Exception as e:
     except: pass
     # #endregion
     raise
-from app.routes import upload, chat, auth, cases, dashboard, analysis, reports, settings, websocket, tabular_review, prompts, workflows, folders, review_table, assistant_chat, assistant_chat_v2, workflow_execution, plan_execution, metrics, document_editor, playbooks, workflow_agentic, health
-from app.utils.database import init_db
+
+# #region agent log
+try:
+    _debug_log("main.py:94", "Before routes import", {"step": "before_routes_import"})
+except: pass
+# #endregion
+
+try:
+    from app.routes import upload, chat, auth, cases, dashboard, analysis, reports, settings, websocket, tabular_review, prompts, workflows, folders, review_table, assistant_chat, assistant_chat_v2, workflow_execution, plan_execution, metrics, document_editor, playbooks, workflow_agentic, health
+    # #region agent log
+    try:
+        _debug_log("main.py:97", "Routes imported successfully", {"step": "routes_imported"})
+    except: pass
+    # #endregion
+except Exception as e:
+    error_msg = f"❌ Failed to import routes: {e}"
+    logging.critical(error_msg, exc_info=True)
+    import sys
+    for stream in [sys.stderr, sys.stdout]:
+        for _ in range(5):
+            print(f"\n{'='*80}\n{error_msg}\n{traceback.format_exc()}\n{'='*80}\n", file=stream, flush=True)
+    raise
+
+# #region agent log
+try:
+    _debug_log("main.py:100", "Before database import", {"step": "before_database_import"})
+except: pass
+# #endregion
+
+try:
+    from app.utils.database import init_db
+    # #region agent log
+    try:
+        _debug_log("main.py:103", "Database utils imported successfully", {"step": "database_imported"})
+    except: pass
+    # #endregion
+except Exception as e:
+    error_msg = f"❌ Failed to import database utils: {e}"
+    logging.critical(error_msg, exc_info=True)
+    import sys
+    for stream in [sys.stderr, sys.stdout]:
+        for _ in range(5):
+            print(f"\n{'='*80}\n{error_msg}\n{traceback.format_exc()}\n{'='*80}\n", file=stream, flush=True)
+    raise
 
 # Core modules
-from app.core.errors import register_exception_handlers
-from app.core.logging import setup_logging, RequestLoggingMiddleware
-from app.core.rate_limiter import RateLimitMiddleware
+# #region agent log
+try:
+    _debug_log("main.py:115", "Before core modules import", {"step": "before_core_import"})
+except: pass
+# #endregion
+
+try:
+    from app.core.errors import register_exception_handlers
+    from app.core.logging import setup_logging, RequestLoggingMiddleware
+    from app.core.rate_limiter import RateLimitMiddleware
+    # #region agent log
+    try:
+        _debug_log("main.py:120", "Core modules imported successfully", {"step": "core_imported"})
+    except: pass
+    # #endregion
+except Exception as e:
+    error_msg = f"❌ Failed to import core modules: {e}"
+    logging.critical(error_msg, exc_info=True)
+    import sys
+    for stream in [sys.stderr, sys.stdout]:
+        for _ in range(5):
+            print(f"\n{'='*80}\n{error_msg}\n{traceback.format_exc()}\n{'='*80}\n", file=stream, flush=True)
+    raise
 
 # Configure structured logging
 is_production = os.getenv("ENVIRONMENT", "development") == "production"
@@ -133,9 +233,12 @@ except Exception as e:
     # #endregion
     # Print to both stderr and stdout for visibility
     import sys
+    error_output = f"\n{'='*80}\n{error_msg}\n{traceback.format_exc()}\n{'='*80}\n"
     for stream in [sys.stderr, sys.stdout]:
-        for _ in range(3):
-            print(f"\n{'='*80}\n{error_msg}\n{'='*80}\n", file=stream, flush=True)
+        for _ in range(5):  # Print 5 times for maximum visibility
+            print(error_output, file=stream, flush=True)
+    # Also use logging at critical level
+    logging.critical(error_output)
     raise
 
 # #region agent log
