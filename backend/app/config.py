@@ -1,10 +1,42 @@
 """Configuration for Legal AI Vault Backend"""
 import os
 import logging
+import sys
+import json
+from datetime import datetime
 from typing import List, Optional
 from dotenv import load_dotenv
 
+# #region agent log
+def _debug_log(location, message, data, hypothesis_id="A", run_id="startup"):
+    """Write debug log to stderr (Docker captures) and /tmp/debug.log"""
+    log_entry = json.dumps({
+        "sessionId": "debug-session",
+        "runId": run_id,
+        "hypothesisId": hypothesis_id,
+        "location": location,
+        "message": message,
+        "data": data,
+        "timestamp": int(datetime.now().timestamp() * 1000)
+    })
+    try:
+        print(f"[DEBUG] {log_entry}", file=sys.stderr, flush=True)
+        with open('/tmp/debug.log', 'a') as f:
+            f.write(log_entry + '\n')
+    except: pass
+
+try:
+    _debug_log("config.py:1", "Config module import started", {"step": "config_import_start"})
+except: pass
+# #endregion
+
 load_dotenv()
+
+# #region agent log
+try:
+    _debug_log("config.py:load_dotenv", "After load_dotenv", {"step": "after_load_dotenv", "db_url_set": bool(os.getenv("DATABASE_URL"))})
+except: pass
+# #endregion
 
 logger = logging.getLogger(__name__)
 
@@ -289,29 +321,8 @@ config = Config()
 
 # Validate DATABASE_URL on module import
 # #region agent log
-import json
-from datetime import datetime
-import sys
-
-def _debug_log(location, message, data, hypothesis_id="A", run_id="startup"):
-    """Write debug log to stderr (Docker captures) and /tmp/debug.log"""
-    log_entry = json.dumps({
-        "sessionId": "debug-session",
-        "runId": run_id,
-        "hypothesisId": hypothesis_id,
-        "location": location,
-        "message": message,
-        "data": data,
-        "timestamp": int(datetime.now().timestamp() * 1000)
-    })
-    try:
-        print(f"[DEBUG] {log_entry}", file=sys.stderr, flush=True)
-        with open('/tmp/debug.log', 'a') as f:
-            f.write(log_entry + '\n')
-    except: pass
-
 try:
-    _debug_log("config.py:290", "Before DATABASE_URL validation", {"step": "before_validation", "db_url_set": bool(os.getenv("DATABASE_URL")), "db_url_preview": os.getenv("DATABASE_URL", "")[:50] if os.getenv("DATABASE_URL") else "NOT_SET"})
+    _debug_log("config.py:322", "Before DATABASE_URL validation", {"step": "before_validation", "db_url_set": bool(os.getenv("DATABASE_URL")), "db_url_preview": os.getenv("DATABASE_URL", "")[:50] if os.getenv("DATABASE_URL") else "NOT_SET"})
 except: pass
 # #endregion
 try:
