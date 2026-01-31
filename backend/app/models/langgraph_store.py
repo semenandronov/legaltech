@@ -6,7 +6,7 @@ query history и insights.
 """
 from sqlalchemy import Column, String, Text, DateTime, Index
 from sqlalchemy.sql import func
-from app.core.database import Base
+from app.models.case import Base
 
 
 class LangGraphStoreEntry(Base):
