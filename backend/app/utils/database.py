@@ -555,8 +555,7 @@ def init_db():
     
     # Apply tabular_reviews and tabular_columns/tabular_cells migrations if needed
     try:
-        from sqlalchemy import text, inspect as sql_inspect
-        inspector = sql_inspect(engine)
+        inspector = inspect(engine)
         # ---- tabular_reviews: ensure table_mode / entity_config / review_rules exist ----
         if "tabular_reviews" in inspector.get_table_names():
             reviews_columns = [col["name"] for col in inspector.get_columns("tabular_reviews")]
