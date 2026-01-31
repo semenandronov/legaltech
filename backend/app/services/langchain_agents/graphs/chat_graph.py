@@ -290,13 +290,13 @@ async def manage_memory_node(state: ChatGraphState) -> ChatGraphState:
         
         # Шаг 3: Если trim_messages не помог (нет ID), используем MessageManager для summary
         if len(messages) >= SUMMARIZE_THRESHOLD:
-        llm = create_legal_llm(use_rate_limiting=False)
-        manager = MessageManager(
-            llm=llm,
-            max_messages=MAX_MESSAGES,
-            max_tokens=MAX_TOKENS,
-            summarize_threshold=SUMMARIZE_THRESHOLD,
-            keep_last_n=KEEP_LAST_N
+            llm = create_legal_llm(use_rate_limiting=False)
+            manager = MessageManager(
+                llm=llm,
+                max_messages=MAX_MESSAGES,
+                max_tokens=MAX_TOKENS,
+                summarize_threshold=SUMMARIZE_THRESHOLD,
+                keep_last_n=KEEP_LAST_N
         )
         
         result = await manager.process_messages(messages)
@@ -304,11 +304,11 @@ async def manage_memory_node(state: ChatGraphState) -> ChatGraphState:
         if result["trimmed"]:
             if result["summary"]:
                 new_state["message_summary"] = result["summary"]
-                    summary_msg = SystemMessage(content=f"[Краткое содержание предыдущего диалога: {result['summary']}]")
-                    new_state["messages"] = [summary_msg] + result["messages"]
-                else:
-                    new_state["messages"] = result["messages"]
-                logger.info(f"[ManageMemory] MessageManager trimmed to {len(new_state['messages'])} messages")
+                summary_msg = SystemMessage(content=f"[Краткое содержание предыдущего диалога: {result['summary']}]")
+                new_state["messages"] = [summary_msg] + result["messages"]
+            else:
+                new_state["messages"] = result["messages"]
+            logger.info(f"[ManageMemory] MessageManager trimmed to {len(new_state['messages'])} messages")
         
     except Exception as e:
         logger.warning(f"[ManageMemory] Error: {e}, using RemoveMessage fallback")
