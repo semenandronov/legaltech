@@ -716,8 +716,6 @@ async def approve_plan(
                         background_db.commit()
                         # Re-query plan to ensure we have the latest data (refresh fails if plan is not in session)
                         plan = background_db.query(AnalysisPlan).filter(AnalysisPlan.id == plan_id_for_execution).first()
-                                   f"has_table_results_in_plan={bool(plan.plan_data.get('table_results') if plan and plan.plan_data else False)}, "
-                                   f"has_delivery_result_in_plan={bool(plan.plan_data.get('delivery_result') if plan and plan.plan_data else False)}")
                         # #endregion
                     else:
                         # Legacy approach
