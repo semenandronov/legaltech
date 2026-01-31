@@ -1,4 +1,27 @@
 """Main FastAPI application for Legal AI Vault"""
+# #region agent log - EARLY LOGGING BEFORE ANY IMPORTS
+import sys
+import json
+from datetime import datetime
+try:
+    log_entry = json.dumps({
+        "sessionId": "debug-session",
+        "runId": "startup",
+        "hypothesisId": "EARLY",
+        "location": "main.py:1",
+        "message": "VERY EARLY: Before any imports",
+        "data": {"step": "very_early_start"},
+        "timestamp": int(datetime.now().timestamp() * 1000)
+    })
+    print(f"[DEBUG] {log_entry}", file=sys.stderr, flush=True)
+    with open('/tmp/debug.log', 'a') as f:
+        f.write(log_entry + '\n')
+except Exception as e:
+    try:
+        print(f"[DEBUG] EARLY LOG FAILED: {e}", file=sys.stderr, flush=True)
+    except: pass
+# #endregion
+
 from fastapi import FastAPI, Request, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
