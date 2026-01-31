@@ -9,13 +9,8 @@ Editor Handler - Обработчик редактирования докуме�
 from typing import AsyncGenerator, Optional, List, Dict, Any
 from sqlalchemy.orm import Session
 import logging
-import re
-import uuid
 
-from app.services.chat.events import (
-    SSESerializer,
-    StructuredEdit,
-)
+from app.services.chat.events import SSESerializer
 from app.services.rag_service import RAGService
 from app.models.user import User
 
@@ -80,28 +75,26 @@ class EditorHandler:
                 selected_text=selected_text
             )
             
-            # Генерируем ответ через ChatAgent
-            full_response = ""
-            async for chunk in self._generate_response(enhanced_question):
-                full_response += chunk
-                yield SSESerializer.text_delta(chunk)
+            # Используем ChatGraphService вместо legacy ChatAgent
+            from app.services.langchain_agents.chat_graph_service import get_chat_graph_service
             
-            # Извлекаем и применяем structured edits
-            structured_edits = self._extract_structured_edits(full_response, document_context)
+            chat_service = get_chat_graph_service(self.db, self.rag_service)
             
-            if structured_edits:
-                yield SSESerializer.structured_edits([e.model_dump() for e in structured_edits])
-                logger.info(f"[EditorHandler] Extracted {len(structured_edits)} edits")
-                
-                # Применяем изменения и отправляем edited_content
-                edited_content = self._apply_edits(document_context, structured_edits)
-                if edited_content and edited_content != document_context:
-                    from app.services.chat.events import EditedContentEvent
-                    yield EditedContentEvent(
-                        edited_content=edited_content,
-                        structured_edits=structured_edits
-                    ).to_sse()
-                    logger.info(f"[EditorHandler] Applied edits, new length: {len(edited_content)}")
+            # Вызываем stream_response с document_context
+            async for event in chat_service.stream_response(
+                case_id=case_id,
+                question=enhanced_question,
+                user=current_user,
+                document_context=document_context,
+                document_id=document_id,
+                selected_text=selected_text,
+                deep_think=False,
+                legal_research=False,
+                draft_mode=False
+            ):
+                # Обрабатываем SSE события, включая structured_edits
+                # structured_edits теперь приходят из графа через SSE
+                yield event
             
         except Exception as e:
             logger.error(f"[EditorHandler] Error: {e}", exc_info=True)
@@ -160,117 +153,5 @@ class EditorHandler:
         
         return question + "".join(context_parts)
     
-    async def _generate_response(self, enhanced_question: str) -> AsyncGenerator[str, None]:
-        """
-        Генерация ответа через ChatAgent
-        """
-        try:
-            from app.services.langchain_agents.legacy_stubs import ChatAgent
-            
-            chat_agent = ChatAgent(
-                case_id="",
-                rag_service=self.rag_service,
-                db=self.db,
-                legal_research_enabled=False
-            )
-            
-            async for chunk in chat_agent.answer_stream(enhanced_question):
-                if chunk:
-                    yield chunk
-                    
-        except Exception as e:
-            logger.error(f"[EditorHandler] ChatAgent error: {e}", exc_info=True)
-            yield f"Ошибка генерации ответа: {str(e)}"
-    
-    def _extract_structured_edits(
-        self,
-        response: str,
-        document_context: str
-    ) -> List[StructuredEdit]:
-        """
-        Извлечь structured edits из ответа
-        
-        Returns:
-            Список StructuredEdit
-        """
-        structured_edits = []
-        
-        # Ищем блоки ```edit
-        edit_blocks = re.findall(r'```edit\s*\n(.*?)\n```', response, re.DOTALL)
-        
-        for block in edit_blocks:
-            find_match = re.search(r'НАЙТИ:\s*(.+?)(?=\nЗАМЕНИТЬ:|$)', block, re.DOTALL)
-            replace_match = re.search(r'ЗАМЕНИТЬ:\s*(.+?)$', block, re.DOTALL)
-            
-            if find_match and replace_match:
-                find_text = find_match.group(1).strip()
-                replace_text = replace_match.group(1).strip()
-                
-                # Проверяем наличие в документе
-                find_pos = document_context.find(find_text)
-                found_in_doc = find_pos != -1
-                
-                # Извлекаем контекст
-                context_before = ""
-                context_after = ""
-                
-                if found_in_doc:
-                    # Контекст до (50 символов)
-                    start_ctx = max(0, find_pos - 50)
-                    context_before = document_context[start_ctx:find_pos]
-                    if start_ctx > 0:
-                        space_pos = context_before.find(' ')
-                        if space_pos != -1:
-                            context_before = context_before[space_pos + 1:]
-                    
-                    # Контекст после (50 символов)
-                    end_pos = find_pos + len(find_text)
-                    end_ctx = min(len(document_context), end_pos + 50)
-                    context_after = document_context[end_pos:end_ctx]
-                    if end_ctx < len(document_context):
-                        space_pos = context_after.rfind(' ')
-                        if space_pos != -1:
-                            context_after = context_after[:space_pos]
-                
-                structured_edits.append(StructuredEdit(
-                    id=f"edit-{uuid.uuid4().hex[:8]}",
-                    original_text=find_text,
-                    new_text=replace_text,
-                    context_before=context_before,
-                    context_after=context_after,
-                    found_in_document=found_in_doc
-                ))
-                
-                if found_in_doc:
-                    logger.info(f"[EditorHandler] Found edit: '{find_text[:50]}…' → '{replace_text[:50]}…'")
-                else:
-                    logger.warning(f"[EditorHandler] Edit text not found: '{find_text[:100]}…'")
-        
-        return structured_edits
-    
-    def _apply_edits(
-        self,
-        document_context: str,
-        edits: List[StructuredEdit]
-    ) -> Optional[str]:
-        """
-        Применить изменения к документу
-        
-        Returns:
-            Изменённый документ или None
-        """
-        modified_content = document_context
-        changes_applied = 0
-        
-        for edit in edits:
-            if edit.found_in_document:
-                modified_content = modified_content.replace(edit.original_text, edit.new_text, 1)
-                changes_applied += 1
-        
-        if changes_applied > 0:
-            logger.info(f"[EditorHandler] Applied {changes_applied} edits")
-            return modified_content
-        
-        return None
 
 

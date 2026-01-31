@@ -415,6 +415,13 @@ class ChatGraphService:
                             for step in thinking_steps:
                                 yield f"data: {json.dumps({'type': 'thinking-step', 'data': step})}\n\n"
                         
+                        # Обрабатываем structured_edits (editor mode)
+                        structured_edits = node_data.get("structured_edits")
+                        if structured_edits:
+                            from app.services.chat.events import SSESerializer
+                            yield SSESerializer.structured_edits(structured_edits)
+                            logger.info(f"[ChatGraphService] Sent {len(structured_edits)} structured edits")
+                        
                         # Обрабатываем current_phase для прогресса
                         phase = node_data.get("current_phase")
                         if phase:
@@ -534,6 +541,7 @@ class ChatGraphService:
                 current_state["enable_garant"] = legal_research or mode == "garant"
                 if document_context:
                     current_state["document_context"] = document_context
+                    current_state["editor_mode"] = True
                 if document_id:
                     current_state["document_id"] = document_id
                 if selected_text:
@@ -543,6 +551,7 @@ class ChatGraphService:
                 current_state["rag_context"] = None
                 current_state["garant_context"] = None
                 current_state["thinking_steps"] = None
+                current_state["structured_edits"] = None
                 # Сбрасываем HITL флаги для нового запроса (кроме draft mode)
                 if mode != "draft":
                     current_state["draft_plan"] = None
@@ -704,6 +713,7 @@ class ChatGraphService:
                 current_state["enable_garant"] = kwargs.get("legal_research", False) or mode == "garant"
                 if kwargs.get("document_context"):
                     current_state["document_context"] = kwargs.get("document_context")
+                    current_state["editor_mode"] = True
                 if kwargs.get("document_id"):
                     current_state["document_id"] = kwargs.get("document_id")
                 if kwargs.get("selected_text"):
@@ -713,6 +723,7 @@ class ChatGraphService:
                 current_state["rag_context"] = None
                 current_state["garant_context"] = None
                 current_state["thinking_steps"] = None
+                current_state["structured_edits"] = None
                 # Сбрасываем HITL флаги для нового запроса (кроме draft mode)
                 if mode != "draft":
                     current_state["draft_plan"] = None

@@ -123,6 +123,13 @@ class ChatGraphState(TypedDict):
     document_id: Optional[str]
     selected_text: Optional[str]
     
+    # Editor mode fields
+    editor_mode: Optional[bool]  # Флаг режима редактора
+    structured_edits: Optional[List[Dict[str, Any]]]  # Структурированные изменения
+    document_analysis: Optional[Dict[str, Any]]  # Анализ документа
+    risks: Optional[List[Dict[str, Any]]]  # Найденные риски
+    improved_text: Optional[str]  # Улучшенный текст
+    
     # Промежуточные результаты
     rag_context: Optional[str]
     garant_context: Optional[str]
@@ -186,6 +193,11 @@ def create_initial_chat_state(
         document_context=document_context,
         document_id=document_id,
         selected_text=selected_text,
+        editor_mode=bool(document_context),  # Режим редактора если есть document_context
+        structured_edits=None,
+        document_analysis=None,
+        risks=None,
+        improved_text=None,
         rag_context=None,
         garant_context=None,
         thinking_steps=None,
@@ -750,6 +762,37 @@ def generate_response_node(
         if selected_text:
             context_parts.append(f"=== ВЫДЕЛЕННЫЙ ТЕКСТ ===\n{selected_text}")
         
+        # Добавляем результаты editor nodes если есть
+        document_analysis = state.get("document_analysis")
+        if document_analysis:
+            analysis_text = f"Тип документа: {document_analysis.get('doc_type', 'Неизвестный')}\n"
+            if document_analysis.get('key_elements'):
+                analysis_text += f"Ключевые элементы: {', '.join(document_analysis['key_elements'][:5])}\n"
+            context_parts.append(f"=== АНАЛИЗ ДОКУМЕНТА ===\n{analysis_text}")
+        
+        risks = state.get("risks")
+        if risks:
+            risks_text = f"Найдено рисков: {len(risks)}\n"
+            for i, risk in enumerate(risks[:3], 1):
+                severity = risk.get('severity', 'unknown')
+                desc = risk.get('description', '')[:100]
+                risks_text += f"{i}. [{severity.upper()}] {desc}\n"
+            context_parts.append(f"=== НАЙДЕННЫЕ РИСКИ ===\n{risks_text}")
+        
+        improved_text = state.get("improved_text")
+        if improved_text:
+            context_parts.append(f"=== УЛУЧШЕННЫЙ ТЕКСТ ===\n{improved_text[:1000]}")
+        
+        structured_edits = state.get("structured_edits")
+        if structured_edits:
+            edits_text = f"Сгенерировано правок: {len(structured_edits)}\n"
+            for i, edit in enumerate(structured_edits[:3], 1):
+                original = edit.get('original_text', '')[:50]
+                new = edit.get('new_text', '')[:50]
+                found = edit.get('found_in_document', False)
+                edits_text += f"{i}. {'✓' if found else '✗'} '{original}...' → '{new}...'\n"
+            context_parts.append(f"=== СТРУКТУРИРОВАННЫЕ ПРАВКИ ===\n{edits_text}")
+        
         full_context = "\n\n".join(context_parts) if context_parts else "Контекст не найден."
         
         # Генерируем ответ
@@ -1004,6 +1047,11 @@ def draft_node(
 def route_by_mode(state: ChatGraphState) -> str:
     """Определить следующий узел на основе режима."""
     mode = state.get("mode", "normal")
+    editor_mode = state.get("editor_mode", False)
+    
+    # Проверяем режим редактора
+    if editor_mode or state.get("document_context"):
+        return "editor_mode"  # Новый маршрут для редактора
     
     if mode == "draft":
         return "draft"  # Возвращаем ключ для conditional_edges, который ведёт к generate_draft_plan
@@ -1013,6 +1061,29 @@ def route_by_mode(state: ChatGraphState) -> str:
         return "garant_retrieval"  # Возвращаем ключ для conditional_edges
     else:
         return "rag_retrieval"  # Возвращаем ключ для conditional_edges
+
+
+def route_editor_mode(state: ChatGraphState) -> str:
+    """
+    Определяет тип операции редактора на основе запроса.
+    
+    Использует простую эвристику для классификации запроса.
+    Можно улучшить через LLM классификацию с structured output.
+    
+    Returns:
+        Ключ узла для выполнения операции
+    """
+    question = state.get("question", "").lower()
+    
+    # Простая эвристика (можно улучшить через LLM классификацию)
+    if "риск" in question or "опасн" in question or "проблем" in question:
+        return "check_risks"
+    elif "улучш" in question or "исправ" in question or "редакт" in question:
+        return "improve_text"
+    elif "анализ" in question or "структур" in question or "разбор" in question:
+        return "analyze_document"
+    else:
+        return "generate_edits"  # По умолчанию генерация правок
 
 
 def route_after_rag(state: ChatGraphState) -> str:
@@ -1039,6 +1110,36 @@ def route_after_garant(state: ChatGraphState) -> str:
 def route_after_thinking(state: ChatGraphState) -> str:
     """Определить следующий узел после thinking."""
     return "generate_response"
+
+
+def route_after_validate(state: ChatGraphState) -> str:
+    """
+    Маршрутизация после валидации.
+    
+    Hard limit: максимум 3 итерации.
+    Если edits невалидны и iteration < MAX, возвращаемся к generate_edits.
+    Иначе принудительно применяем.
+    """
+    MAX_EDIT_ITERATIONS = 3
+    
+    edits_valid = state.get("edits_valid", False)
+    iteration = state.get("edit_validation_iteration", 0)
+    edit_iterations = state.get("edit_iterations", 0)
+    
+    if not edits_valid:
+        # Проверяем количество итераций
+        if edit_iterations < MAX_EDIT_ITERATIONS:
+            # Увеличиваем счётчик итераций
+            new_state = dict(state)
+            new_state["edit_iterations"] = edit_iterations + 1
+            logger.info(f"[RouteAfterValidate] Edits invalid, retrying (iteration {edit_iterations + 1}/{MAX_EDIT_ITERATIONS})")
+            return "generate_edits"  # Повторная генерация
+        else:
+            # Hard limit достигнут - принудительно применяем
+            logger.warning(f"[RouteAfterValidate] Max iterations ({MAX_EDIT_ITERATIONS}) reached, applying edits anyway")
+            return "apply_edits"
+    
+    return "apply_edits"  # Применение валидных правок
 
 
 # ============== Graph Builder ==============
@@ -1103,6 +1204,57 @@ def create_chat_graph(
     def draft_wrapper(state):
         return draft_node(state, db)
     
+    # Импортируем editor nodes
+    from app.services.langchain_agents.graphs.nodes.editor_nodes import (
+        analyze_document_node,
+        check_risks_node,
+        improve_text_node,
+        generate_edits_node,
+        validate_edits_node,
+        apply_edits_node,
+        check_grammar_node,
+        check_legal_accuracy_node,
+        check_compliance_node,
+        parallel_checks_node,
+        merge_checks_results_node,
+        search_precedents_node
+    )
+    
+    # Wrapper функции для editor nodes
+    def analyze_document_wrapper(state):
+        return analyze_document_node(state, db=db)
+    
+    def check_risks_wrapper(state):
+        return check_risks_node(state, db=db)
+    
+    def improve_text_wrapper(state):
+        return improve_text_node(state, db=db)
+    
+    def generate_edits_wrapper(state):
+        return generate_edits_node(state, db=db)
+    
+    def validate_edits_wrapper(state):
+        return validate_edits_node(state, db=db)
+    
+    def apply_edits_wrapper(state):
+        return apply_edits_node(state, db=db)
+    
+    # Wrapper функции для parallel checks
+    def check_grammar_wrapper(state):
+        return check_grammar_node(state, db=db)
+    
+    def check_legal_accuracy_wrapper(state):
+        return check_legal_accuracy_node(state, db=db)
+    
+    def check_compliance_wrapper(state):
+        return check_compliance_node(state, db=db)
+    
+    def merge_checks_results_wrapper(state):
+        return merge_checks_results_node(state, db=db)
+    
+    def search_precedents_wrapper(state):
+        return search_precedents_node(state, db=db)
+    
     # Добавляем узлы
     if enable_memory_management:
         graph.add_node("manage_memory", manage_memory_node)
@@ -1116,6 +1268,25 @@ def create_chat_graph(
     graph.add_node("generate_draft_plan", generate_draft_plan_node)  # Генерация плана перед draft
     graph.add_node("draft", draft_wrapper)
     
+    # Editor nodes
+    graph.add_node("route_editor_mode", mode_router_node)  # Маршрутизация для редактора
+    graph.add_node("analyze_document", analyze_document_wrapper)
+    graph.add_node("check_risks", check_risks_wrapper)
+    graph.add_node("improve_text", improve_text_wrapper)
+    graph.add_node("generate_edits", generate_edits_wrapper)
+    graph.add_node("validate_edits", validate_edits_wrapper)
+    graph.add_node("apply_edits", apply_edits_wrapper)
+    
+    # Parallel checks nodes
+    graph.add_node("parallel_checks", parallel_checks_node)
+    graph.add_node("check_grammar", check_grammar_wrapper)
+    graph.add_node("check_legal_accuracy", check_legal_accuracy_wrapper)
+    graph.add_node("check_compliance", check_compliance_wrapper)
+    graph.add_node("merge_checks_results", merge_checks_results_wrapper)
+    
+    # Precedents search node
+    graph.add_node("search_precedents", search_precedents_wrapper)
+    
     # Добавляем рёбра
     if enable_memory_management:
         graph.add_edge(START, "manage_memory")
@@ -1128,12 +1299,58 @@ def create_chat_graph(
         "mode_router",
         route_by_mode,
         {
+            "editor_mode": "route_editor_mode",  # editor mode -> маршрутизация редактора
             "draft": "generate_draft_plan",  # draft mode -> генерируем план
             "thinking": "parallel_retrieval",  # deep_think mode -> параллельный поиск
             "garant_retrieval": "parallel_retrieval",  # garant mode -> параллельный поиск
             "rag_retrieval": "parallel_retrieval"  # normal mode -> параллельный поиск
         }
     )
+    
+    # Conditional edge после route_editor_mode
+    graph.add_conditional_edges(
+        "route_editor_mode",
+        route_editor_mode,
+        {
+            "analyze_document": "analyze_document",
+            "check_risks": "check_risks",
+            "improve_text": "improve_text",
+            "generate_edits": "generate_edits"
+        }
+    )
+    
+    # Send API: parallel_checks возвращает List[Send], которые параллельно вызывают
+    # check_grammar, check_legal_accuracy, check_compliance
+    graph.add_edge("check_grammar", "merge_checks_results")
+    graph.add_edge("check_legal_accuracy", "merge_checks_results")
+    graph.add_edge("check_compliance", "merge_checks_results")
+    
+    # Edge от merge_checks_results к generate_response
+    graph.add_edge("merge_checks_results", "generate_response")
+    
+    # Edge от search_precedents к generate_response (может быть вызван после analyze_document)
+    graph.add_edge("search_precedents", "generate_response")
+    
+    # Edges от editor nodes
+    graph.add_edge("analyze_document", "generate_response")
+    graph.add_edge("check_risks", "generate_response")
+    graph.add_edge("improve_text", "generate_response")
+    
+    # Для generate_edits: валидация перед применением
+    graph.add_edge("generate_edits", "validate_edits")
+    
+    # Conditional edge после validate_edits (цикл валидации с hard limits)
+    graph.add_conditional_edges(
+        "validate_edits",
+        route_after_validate,
+        {
+            "generate_edits": "generate_edits",  # Повторная генерация если невалидно
+            "apply_edits": "apply_edits"  # Применение если валидно
+        }
+    )
+    
+    # Edge от apply_edits к generate_response
+    graph.add_edge("apply_edits", "generate_response")
     
     # Edge от generate_draft_plan к draft (прерывается через interrupt_before)
     graph.add_edge("generate_draft_plan", "draft")
