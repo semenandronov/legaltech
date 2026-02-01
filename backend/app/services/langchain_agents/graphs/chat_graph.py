@@ -1381,11 +1381,9 @@ def create_chat_graph(
     # Edge после generate_response
     graph.add_edge("generate_response", END)
     
-    # Компилируем граф с input/output schemas и breakpoints
-    compile_kwargs = {
-        "input": ChatGraphInputState,
-        "output": ChatGraphOutputState,
-    }
+    # Компилируем граф с breakpoints
+    # Примечание: input/output schemas не поддерживаются в StateGraph.compile()
+    compile_kwargs = {}
     
     # Добавляем breakpoints если указаны
     # По умолчанию прерываем перед draft для HITL (подтверждение перед созданием документа)
