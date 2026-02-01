@@ -1407,6 +1407,9 @@ def create_chat_graph(
     if use_checkpointing:
         try:
             checkpointer = get_checkpointer_instance()
+            # Apply async wrapper for PostgresSaver to support astream
+            from app.utils.async_checkpointer_wrapper import wrap_postgres_saver_if_needed
+            checkpointer = wrap_postgres_saver_if_needed(checkpointer)
             compiled = graph.compile(checkpointer=checkpointer, **compile_kwargs)
             logger.info("[ChatGraph] Compiled with PostgresSaver checkpointer, Store and input/output schemas")
         except Exception as e:
