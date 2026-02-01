@@ -174,8 +174,14 @@ def _add_aget_tuple_to_instance(postgres_saver: PostgresSaver):
             logger.debug(f"aget_tuple completed successfully")
             return result
         except Exception as e:
-            logger.error(f"Error in aget_tuple wrapper after retries: {e}", exc_info=True)
-            raise
+            # If checkpoint loading fails, return None instead of raising
+            # This allows the graph to continue without checkpoint state
+            if _is_connection_error(e):
+                logger.warning(f"Checkpoint connection error in aget_tuple, returning None: {e}")
+                return None
+            else:
+                logger.error(f"Error in aget_tuple wrapper after retries: {e}", exc_info=True)
+                raise
     
     # Bind the async method to the instance
     # For async methods, we need to assign directly (not using MethodType which doesn't work well with async)
