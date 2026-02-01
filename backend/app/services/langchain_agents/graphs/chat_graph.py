@@ -1076,14 +1076,27 @@ def route_editor_mode(state: ChatGraphState) -> str:
     question = state.get("question", "").lower()
     
     # Простая эвристика (можно улучшить через LLM классификацию)
+    # 1. Проверка рисков
     if "риск" in question or "опасн" in question or "проблем" in question:
         return "check_risks"
+    # 2. Улучшение текста
     elif "улучш" in question or "исправ" in question or "редакт" in question:
         return "improve_text"
+    # 3. Анализ документа
     elif "анализ" in question or "структур" in question or "разбор" in question:
         return "analyze_document"
+    # 4. Параллельные проверки (грамматика + юридическая точность + соответствие)
+    elif "провер" in question and ("ошиб" in question or "грамматик" in question or "документ" in question):
+        return "parallel_checks"
+    # 5. Поиск прецедентов
+    elif "прецедент" in question or "похож" in question or "аналог" in question:
+        return "search_precedents"
+    # 6. По умолчанию - generate_response (для вопросов о документе)
+    # Не генерируем правки по умолчанию - это слишком агрессивно
+    elif any(kw in question for kw in ["добав", "замен", "удал", "измен", "вставь", "убери"]):
+        return "generate_edits"
     else:
-        return "generate_edits"  # По умолчанию генерация правок
+        return "generate_response"  # Просто ответ на вопрос о документе
 
 
 def route_after_rag(state: ChatGraphState) -> str:
@@ -1216,48 +1229,34 @@ def create_chat_graph(
         generate_edits_node,
         validate_edits_node,
         apply_edits_node,
-        check_grammar_node,
-        check_legal_accuracy_node,
-        check_compliance_node,
-        parallel_checks_node,
-        merge_checks_results_node,
+        parallel_checks_node,  # Внутри вызывает check_grammar, check_legal, check_compliance, merge
         search_precedents_node
     )
     
     # Wrapper функции для editor nodes
-    def analyze_document_wrapper(state):
-        return analyze_document_node(state, db=db)
+    # LangGraph передаёт config как второй позиционный аргумент!
+    def analyze_document_wrapper(state, config=None):
+        return analyze_document_node(state, config=config, db=db)
     
-    def check_risks_wrapper(state):
-        return check_risks_node(state, db=db)
+    def check_risks_wrapper(state, config=None):
+        return check_risks_node(state, config=config, db=db)
     
-    def improve_text_wrapper(state):
-        return improve_text_node(state, db=db)
+    def improve_text_wrapper(state, config=None):
+        return improve_text_node(state, config=config, db=db)
     
-    def generate_edits_wrapper(state):
-        return generate_edits_node(state, db=db)
+    def generate_edits_wrapper(state, config=None):
+        return generate_edits_node(state, config=config, db=db)
     
-    def validate_edits_wrapper(state):
-        return validate_edits_node(state, db=db)
+    def validate_edits_wrapper(state, config=None):
+        return validate_edits_node(state, config=config, db=db)
     
-    def apply_edits_wrapper(state):
-        return apply_edits_node(state, db=db)
+    def apply_edits_wrapper(state, config=None):
+        # apply_edits_node использует config.get("store") для Memory!
+        return apply_edits_node(state, config=config, db=db)
     
     # Wrapper функции для parallel checks
-    def check_grammar_wrapper(state):
-        return check_grammar_node(state, db=db)
-    
-    def check_legal_accuracy_wrapper(state):
-        return check_legal_accuracy_node(state, db=db)
-    
-    def check_compliance_wrapper(state):
-        return check_compliance_node(state, db=db)
-    
-    def merge_checks_results_wrapper(state):
-        return merge_checks_results_node(state, db=db)
-    
-    def search_precedents_wrapper(state):
-        return search_precedents_node(state, db=db)
+    def search_precedents_wrapper(state, config=None):
+        return search_precedents_node(state, config=config, db=db)
     
     # Добавляем узлы
     if enable_memory_management:
@@ -1273,7 +1272,13 @@ def create_chat_graph(
     graph.add_node("draft", draft_wrapper)
     
     # Editor nodes
-    graph.add_node("route_editor_mode", mode_router_node)  # Маршрутизация для редактора
+    # ВАЖНО: route_editor_mode должен быть пустым узлом (pass-through),
+    # так как маршрутизация происходит через conditional_edges с route_editor_mode функцией
+    def editor_mode_passthrough_node(state, config=None):
+        """Транзитный узел для маршрутизации редактора."""
+        return state  # Просто пропускаем дальше, маршрутизация через conditional edge
+    
+    graph.add_node("route_editor_mode", editor_mode_passthrough_node)  # Транзитный узел для редактора
     graph.add_node("analyze_document", analyze_document_wrapper)
     graph.add_node("check_risks", check_risks_wrapper)
     graph.add_node("improve_text", improve_text_wrapper)
@@ -1281,12 +1286,11 @@ def create_chat_graph(
     graph.add_node("validate_edits", validate_edits_wrapper)
     graph.add_node("apply_edits", apply_edits_wrapper)
     
-    # Parallel checks nodes
-    graph.add_node("parallel_checks", parallel_checks_node)
-    graph.add_node("check_grammar", check_grammar_wrapper)
-    graph.add_node("check_legal_accuracy", check_legal_accuracy_wrapper)
-    graph.add_node("check_compliance", check_compliance_wrapper)
-    graph.add_node("merge_checks_results", merge_checks_results_wrapper)
+    # Parallel checks node (выполняет все проверки внутри себя)
+    def parallel_checks_wrapper(state, config=None):
+        return parallel_checks_node(state, config=config, db=db)
+    
+    graph.add_node("parallel_checks", parallel_checks_wrapper)
     
     # Precedents search node
     graph.add_node("search_precedents", search_precedents_wrapper)
@@ -1319,18 +1323,16 @@ def create_chat_graph(
             "analyze_document": "analyze_document",
             "check_risks": "check_risks",
             "improve_text": "improve_text",
-            "generate_edits": "generate_edits"
+            "generate_edits": "generate_edits",
+            "parallel_checks": "parallel_checks",  # Параллельные проверки
+            "search_precedents": "search_precedents",  # Поиск прецедентов
+            "generate_response": "generate_response"  # Просто ответ на вопрос
         }
     )
     
-    # Send API: parallel_checks возвращает List[Send], которые параллельно вызывают
-    # check_grammar, check_legal_accuracy, check_compliance
-    graph.add_edge("check_grammar", "merge_checks_results")
-    graph.add_edge("check_legal_accuracy", "merge_checks_results")
-    graph.add_edge("check_compliance", "merge_checks_results")
-    
-    # Edge от merge_checks_results к generate_response
-    graph.add_edge("merge_checks_results", "generate_response")
+    # parallel_checks теперь выполняет все проверки внутри себя и объединяет результаты
+    # Edge от parallel_checks к generate_response
+    graph.add_edge("parallel_checks", "generate_response")
     
     # Edge от search_precedents к generate_response (может быть вызван после analyze_document)
     graph.add_edge("search_precedents", "generate_response")

@@ -912,29 +912,54 @@ def check_compliance_node(
     return new_state
 
 
-def parallel_checks_node(state: ChatGraphState) -> List:
+def parallel_checks_node(
+    state: ChatGraphState,
+    config: Dict[str, Any] = None,
+    db: Session = None
+) -> ChatGraphState:
     """
-    Запускает параллельные проверки документа через Send API.
+    Выполняет все проверки документа последовательно и объединяет результаты.
     
-    Паттерн из Workflow Graph курса.
+    Проверяет:
+    - Грамматику и орфографию
+    - Юридическую точность
+    - Соответствие стандартам
     
-    Returns:
-        List[Send] - список Send объектов для параллельного выполнения
+    Затем объединяет результаты.
     """
-    from langgraph.types import Send
+    logger.info("[ParallelChecks] Running all checks")
     
-    logger.info("[ParallelChecks] Dispatching parallel checks")
+    # Выполняем все проверки последовательно
+    # (для настоящей параллельности нужно использовать Send API через conditional edges)
     
-    sends = [
-        Send("check_grammar", state),
-        Send("check_legal_accuracy", state),
-        Send("check_compliance", state)
-    ]
+    # 1. Грамматика
+    grammar_state = check_grammar_node(state, config=config, db=db)
     
-    return sends
+    # 2. Юридическая точность  
+    legal_state = check_legal_accuracy_node(state, config=config, db=db)
+    
+    # 3. Соответствие стандартам
+    compliance_state = check_compliance_node(state, config=config, db=db)
+    
+    # Объединяем результаты в новое состояние
+    new_state = dict(state)
+    new_state["grammar_check"] = grammar_state.get("grammar_check")
+    new_state["legal_check"] = legal_state.get("legal_check")
+    new_state["compliance_check"] = compliance_state.get("compliance_check")
+    
+    # Объединяем через merge
+    merged_state = merge_checks_results_node(new_state, config=config, db=db)
+    
+    logger.info("[ParallelChecks] All checks completed and merged")
+    
+    return merged_state
 
 
-def merge_checks_results_node(state: ChatGraphState) -> ChatGraphState:
+def merge_checks_results_node(
+    state: ChatGraphState,
+    config: Dict[str, Any] = None,
+    db: Session = None
+) -> ChatGraphState:
     """
     Объединяет результаты параллельных проверок.
     
