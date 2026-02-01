@@ -224,6 +224,28 @@ def get_checkpointer_instance() -> Optional[PostgresSaver]:
     return _global_checkpointer
 
 
+def reset_checkpointer_instance():
+    """
+    Reset the global checkpointer instance to force recreation on next access.
+    
+    This is useful when the connection is closed and needs to be recreated.
+    """
+    global _global_checkpointer
+    
+    if _global_checkpointer is not None:
+        logger.info("Resetting global checkpointer instance (will be recreated on next access)")
+        # Try to close the old checkpointer if it has a close method
+        try:
+            if hasattr(_global_checkpointer, 'close') and callable(_global_checkpointer.close):
+                _global_checkpointer.close()
+        except Exception as close_error:
+            logger.debug(f"Error closing old checkpointer: {close_error}")
+        
+        # Clear the global reference
+        _global_checkpointer = None
+        logger.info("✅ Global checkpointer instance reset")
+
+
 def setup_checkpointer():
     """
     Initialize PostgreSQL checkpointer tables (one-time setup)

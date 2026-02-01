@@ -174,10 +174,35 @@ def _add_aget_tuple_to_instance(postgres_saver: PostgresSaver):
             logger.debug(f"aget_tuple completed successfully")
             return result
         except Exception as e:
-            # If checkpoint loading fails, return None instead of raising
-            # This allows the graph to continue without checkpoint state
+            # If connection error, try to recreate checkpointer and retry once
             if _is_connection_error(e):
-                logger.warning(f"Checkpoint connection error in aget_tuple, returning None: {e}")
+                logger.warning(f"Checkpoint connection error in aget_tuple: {e}. Attempting to recreate checkpointer...")
+                try:
+                    # Reset and recreate the checkpointer for future requests
+                    from app.utils.checkpointer_setup import reset_checkpointer_instance, get_checkpointer_instance
+                    reset_checkpointer_instance()
+                    new_checkpointer = get_checkpointer_instance()
+                    
+                    if new_checkpointer:
+                        logger.info("✅ Recreated checkpointer instance after connection error")
+                        
+                        # Try one more time with the new checkpointer
+                        new_sync_get_tuple = getattr(new_checkpointer, 'get_tuple', None)
+                        if new_sync_get_tuple:
+                            loop = asyncio.get_event_loop()
+                            try:
+                                result = await loop.run_in_executor(None, new_sync_get_tuple, config)
+                                logger.info("✅ Successfully loaded checkpoint after reconnection")
+                                return result
+                            except Exception as retry_error:
+                                logger.warning(f"Retry with new checkpointer failed: {retry_error}")
+                                # Fall through to return None
+                except Exception as recreate_error:
+                    logger.error(f"Failed to recreate checkpointer: {recreate_error}", exc_info=True)
+                
+                # If reconnection failed, return None to allow graph to continue
+                # The checkpointer has been reset, so future requests will use a fresh connection
+                logger.warning(f"Checkpoint unavailable for this request, returning None. Checkpointer recreated for future requests.")
                 return None
             else:
                 logger.error(f"Error in aget_tuple wrapper after retries: {e}", exc_info=True)
@@ -242,6 +267,32 @@ def _add_aput_to_instance(postgres_saver: PostgresSaver):
             await _retry_on_connection_error(_execute, max_retries=3)
             logger.debug(f"aput completed successfully")
         except Exception as e:
+            # If connection error, try to recreate checkpointer and retry once
+            if _is_connection_error(e):
+                logger.warning(f"Checkpoint connection error in aput: {e}. Attempting to recreate checkpointer...")
+                try:
+                    from app.utils.checkpointer_setup import reset_checkpointer_instance, get_checkpointer_instance
+                    reset_checkpointer_instance()
+                    new_checkpointer = get_checkpointer_instance()
+                    
+                    if new_checkpointer:
+                        logger.info("✅ Recreated checkpointer instance after connection error")
+                        new_sync_put = getattr(new_checkpointer, 'put', None)
+                        if new_sync_put:
+                            loop = asyncio.get_event_loop()
+                            await loop.run_in_executor(
+                                None,
+                                new_sync_put,
+                                config,
+                                checkpoint,
+                                metadata,
+                                new_versions
+                            )
+                            logger.info("✅ Successfully saved checkpoint after reconnection")
+                            return
+                except Exception as recreate_error:
+                    logger.error(f"Failed to recreate checkpointer: {recreate_error}", exc_info=True)
+            
             logger.error(f"Error in aput wrapper after retries: {e}", exc_info=True)
             raise
     
@@ -309,6 +360,26 @@ def _add_aput_writes_to_instance(postgres_saver: PostgresSaver):
             await _retry_on_connection_error(_execute, max_retries=3)
             logger.debug(f"aput_writes completed successfully")
         except Exception as e:
+            # If connection error, try to recreate checkpointer and retry once
+            if _is_connection_error(e):
+                logger.warning(f"Checkpoint connection error in aput_writes: {e}. Attempting to recreate checkpointer...")
+                try:
+                    from app.utils.checkpointer_setup import reset_checkpointer_instance, get_checkpointer_instance
+                    reset_checkpointer_instance()
+                    new_checkpointer = get_checkpointer_instance()
+                    
+                    if new_checkpointer:
+                        logger.info("✅ Recreated checkpointer instance after connection error")
+                        new_sync_put_writes = getattr(new_checkpointer, 'put_writes', None)
+                        if new_sync_put_writes:
+                            loop = asyncio.get_event_loop()
+                            bound_put_writes = partial(new_sync_put_writes, config, writes, task_id)
+                            await loop.run_in_executor(None, bound_put_writes)
+                            logger.info("✅ Successfully saved checkpoint writes after reconnection")
+                            return
+                except Exception as recreate_error:
+                    logger.error(f"Failed to recreate checkpointer: {recreate_error}", exc_info=True)
+            
             logger.error(f"Error in aput_writes wrapper after retries: {e}", exc_info=True)
             raise
     
