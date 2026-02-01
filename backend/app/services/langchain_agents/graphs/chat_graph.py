@@ -1195,14 +1195,18 @@ def create_chat_graph(
     graph = StateGraph(ChatGraphState)
     
     # Создаём wrapper функции с замыканием для db и rag_service
-    def rag_retrieval_wrapper(state):
+    # LangGraph автоматически передаёт config как второй позиционный аргумент
+    def rag_retrieval_wrapper(state, config=None):
+        # rag_retrieval_node не принимает config, только state, rag_service, db
         return rag_retrieval_node(state, rag_service, db)
     
-    def generate_response_wrapper(state):
-        return generate_response_node(state, db)
+    def generate_response_wrapper(state, config=None):
+        # generate_response_node принимает (state, config, db)
+        return generate_response_node(state, config=config, db=db)
     
-    def draft_wrapper(state):
-        return draft_node(state, db)
+    def draft_wrapper(state, config=None):
+        # draft_node принимает (state, config, db)
+        return draft_node(state, config=config, db=db)
     
     # Импортируем editor nodes
     from app.services.langchain_agents.graphs.nodes.editor_nodes import (
