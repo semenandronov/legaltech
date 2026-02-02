@@ -259,15 +259,50 @@ def analyze_all_documents(question: str, task_type: str = "answer") -> str:
         # Запускаем Map-Reduce
         service = MapReduceService()
         
-        # Запускаем асинхронно
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
+        # #region agent log
+        import json
+        from datetime import datetime
+        def _debug_log(location, message, data, hypothesis_id="B", run_id="runtime"):
+            log_entry = json.dumps({
+                "sessionId": "debug-session",
+                "runId": run_id,
+                "hypothesisId": hypothesis_id,
+                "location": location,
+                "message": message,
+                "data": data,
+                "timestamp": int(datetime.now().timestamp() * 1000)
+            })
+            try:
+                with open('/Users/semyon_andronov04/Desktop/C ДВ/.cursor/debug.log', 'a') as f:
+                    f.write(log_entry + '\n')
+            except: pass
+        
         try:
-            result = loop.run_until_complete(
-                service.process(documents, question, task_type)
-            )
-        finally:
-            loop.close()
+            import asyncio as asyncio_module
+            loop_check = None
+            try:
+                loop_check = asyncio_module.get_event_loop()
+                _debug_log("universal_tools.py:262", "Event loop check", {"loop_exists": True, "loop_running": loop_check.is_running() if loop_check else False}, hypothesis_id="B")
+            except RuntimeError:
+                _debug_log("universal_tools.py:262", "Event loop check", {"loop_exists": False}, hypothesis_id="B")
+        except: pass
+        # #endregion
+        
+        # Запускаем асинхронно используя безопасную утилиту
+        from app.utils.async_utils import run_async_safe
+        # #region agent log
+        try:
+            _debug_log("universal_tools.py:275", "Before run_async_safe", {"documents_count": len(documents)}, hypothesis_id="B")
+        except: pass
+        # #endregion
+        result = run_async_safe(
+            service.process(documents, question, task_type)
+        )
+        # #region agent log
+        try:
+            _debug_log("universal_tools.py:280", "After run_async_safe", {"result_received": True, "sources_count": len(result.sources) if result else 0}, hypothesis_id="B")
+        except: pass
+        # #endregion
         
         # Форматируем ответ
         sources_str = ", ".join(result.sources[:5])

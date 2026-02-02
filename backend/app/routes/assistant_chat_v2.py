@@ -59,25 +59,77 @@ async def assistant_chat_v2(
     Returns:
         SSE stream с событиями
     """
+    # #region agent log
+    import json as json_module
+    from datetime import datetime
+    def _debug_log(location, message, data, hypothesis_id="C", run_id="chat_request"):
+        log_entry = json_module.dumps({
+            "sessionId": "debug-session",
+            "runId": run_id,
+            "hypothesisId": hypothesis_id,
+            "location": location,
+            "message": message,
+            "data": data,
+            "timestamp": int(datetime.now().timestamp() * 1000)
+        })
+        try:
+            with open('/Users/semyon_andronov04/Desktop/C ДВ/.cursor/debug.log', 'a') as f:
+                f.write(log_entry + '\n')
+        except: pass
+    # #endregion
+    
     try:
+        # #region agent log
+        try:
+            _debug_log("assistant_chat_v2.py:64", "Request received", {"user_id": current_user.id if current_user else None}, hypothesis_id="C")
+        except: pass
+        # #endregion
+        
         # Парсим тело запроса
         body = await request.json()
+        
+        # #region agent log
+        try:
+            _debug_log("assistant_chat_v2.py:70", "Body parsed", {"has_messages": "messages" in body, "has_case_id": "case_id" in body or "caseId" in body}, hypothesis_id="C")
+        except: pass
+        # #endregion
         
         # Извлекаем параметры
         messages = body.get("messages", [])
         case_id = body.get("case_id") or body.get("caseId")
         
         if not case_id:
+            # #region agent log
+            try:
+                _debug_log("assistant_chat_v2.py:75", "Validation failed", {"error": "case_id is required"}, hypothesis_id="C")
+            except: pass
+            # #endregion
             raise HTTPException(status_code=400, detail="case_id is required")
         
         if not messages:
+            # #region agent log
+            try:
+                _debug_log("assistant_chat_v2.py:81", "Validation failed", {"error": "No messages provided"}, hypothesis_id="C")
+            except: pass
+            # #endregion
             raise HTTPException(status_code=400, detail="No messages provided")
         
         last_message = messages[-1]
         if last_message.get("role") != "user":
+            # #region agent log
+            try:
+                _debug_log("assistant_chat_v2.py:87", "Validation failed", {"error": "Last message must be from user", "last_role": last_message.get("role")}, hypothesis_id="C")
+            except: pass
+            # #endregion
             raise HTTPException(status_code=400, detail="Last message must be from user")
         
         question = last_message.get("content", "")
+        
+        # #region agent log
+        try:
+            _debug_log("assistant_chat_v2.py:93", "Question extracted", {"question_length": len(question), "case_id": case_id}, hypothesis_id="C")
+        except: pass
+        # #endregion
         
         # Нормализуем boolean параметры
         web_search = _normalize_bool(body.get("web_search", False))
@@ -114,7 +166,19 @@ async def assistant_chat_v2(
         )
         
         # Создаём оркестратор и обрабатываем запрос
+        # #region agent log
+        try:
+            _debug_log("assistant_chat_v2.py:117", "Creating orchestrator", {"case_id": case_id}, hypothesis_id="C")
+        except: pass
+        # #endregion
+        
         orchestrator = get_chat_orchestrator(db)
+        
+        # #region agent log
+        try:
+            _debug_log("assistant_chat_v2.py:122", "Orchestrator created, starting stream", {"case_id": case_id, "question_length": len(question)}, hypothesis_id="C")
+        except: pass
+        # #endregion
         
         return StreamingResponse(
             orchestrator.process_request(chat_request),
@@ -127,8 +191,19 @@ async def assistant_chat_v2(
         )
         
     except HTTPException:
+        # #region agent log
+        try:
+            _debug_log("assistant_chat_v2.py:135", "HTTPException raised", {"status_code": "will_re_raise"}, hypothesis_id="C")
+        except: pass
+        # #endregion
         raise
     except Exception as e:
+        # #region agent log
+        try:
+            import traceback
+            _debug_log("assistant_chat_v2.py:140", "Exception caught", {"error": str(e), "error_type": type(e).__name__, "traceback": traceback.format_exc()}, hypothesis_id="C")
+        except: pass
+        # #endregion
         logger.error(f"Error in assistant_chat_v2: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
 

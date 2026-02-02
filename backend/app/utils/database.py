@@ -417,8 +417,8 @@ def init_db():
     from datetime import datetime
     import sys
     
-    def _debug_log(location, message, data, hypothesis_id="B", run_id="startup"):
-        """Write debug log to stderr (Docker captures) and /tmp/debug.log"""
+    def _debug_log(location, message, data, hypothesis_id="A", run_id="startup"):
+        """Write debug log to file"""
         log_entry = json.dumps({
             "sessionId": "debug-session",
             "runId": run_id,
@@ -429,8 +429,7 @@ def init_db():
             "timestamp": int(datetime.now().timestamp() * 1000)
         })
         try:
-            print(f"[DEBUG] {log_entry}", file=sys.stderr, flush=True)
-            with open('/tmp/debug.log', 'a') as f:
+            with open('/Users/semyon_andronov04/Desktop/C ДВ/.cursor/debug.log', 'a') as f:
                 f.write(log_entry + '\n')
         except: pass
     
@@ -438,6 +437,16 @@ def init_db():
         _debug_log("database.py:413", "init_db called", {"step": "init_db_start", "db_url_present": bool(config.DATABASE_URL)})
     except: pass
     # #endregion
+    
+    # Ensure text is imported and available
+    # #region agent log
+    try:
+        from sqlalchemy import text as sqlalchemy_text
+        _debug_log("database.py:441", "text import check", {"text_available": hasattr(sqlalchemy_text, '__call__'), "text_type": str(type(sqlalchemy_text))}, hypothesis_id="A")
+    except Exception as e:
+        _debug_log("database.py:441", "text import failed", {"error": str(e)}, hypothesis_id="A")
+    # #endregion
+    
     # Import all models to ensure they are registered with Base
     from app.models.case import Case, ChatMessage, File
     from app.models.user import User, UserSession
@@ -475,10 +484,24 @@ def init_db():
     # #region agent log
     try:
         _debug_log("database.py:474", "Testing database connection", {"step": "test_connection"})
+        # Check if text is available in local scope
+        try:
+            text_check = text
+            _debug_log("database.py:482", "text variable check", {"text_available": True, "text_type": str(type(text_check))}, hypothesis_id="A")
+        except NameError as e:
+            _debug_log("database.py:482", "text variable not found", {"error": str(e)}, hypothesis_id="A")
+            # Re-import text to fix the issue
+            from sqlalchemy import text
+            _debug_log("database.py:482", "text re-imported", {"text_available": True}, hypothesis_id="A")
     except: pass
     # #endregion
     try:
         with engine.connect() as conn:
+            # #region agent log
+            try:
+                _debug_log("database.py:490", "Before conn.execute", {"about_to_execute": "SELECT 1"}, hypothesis_id="A")
+            except: pass
+            # #endregion
             conn.execute(text("SELECT 1"))
         logger.info("✅ Database connection successful")
         # #region agent log
@@ -686,7 +709,7 @@ def init_db():
     
     # Apply document_templates migration if needed
     try:
-        inspector = sql_inspect(engine)
+        inspector = inspect(engine)
         if "document_templates" not in inspector.get_table_names():
             logger.info("⚠️  Applying migration: creating document_templates table")
             try:

@@ -136,22 +136,63 @@ class ChatOrchestrator:
         """
         import time
         import json
+        from datetime import datetime
+        
+        # #region agent log
+        def _debug_log(location, message, data, hypothesis_id="D", run_id="orchestrator"):
+            log_entry = json.dumps({
+                "sessionId": "debug-session",
+                "runId": run_id,
+                "hypothesisId": hypothesis_id,
+                "location": location,
+                "message": message,
+                "data": data,
+                "timestamp": int(datetime.now().timestamp() * 1000)
+            })
+            try:
+                with open('/Users/semyon_andronov04/Desktop/C ДВ/.cursor/debug.log', 'a') as f:
+                    f.write(log_entry + '\n')
+            except: pass
+        # #endregion
         
         start_time = time.time()
         mode = self._determine_mode(request)
+        
+        # #region agent log
+        try:
+            _debug_log("orchestrator.py:140", "process_request started", {"mode": mode, "case_id": request.case_id, "question_length": len(request.question)}, hypothesis_id="D")
+        except: pass
+        # #endregion
         
         try:
             # Записываем метрику запроса
             self.metrics.record_request(mode)
             
             # Проверяем доступ к делу
+            # #region agent log
+            try:
+                _debug_log("orchestrator.py:148", "Verifying case access", {"case_id": request.case_id, "user_id": request.current_user.id}, hypothesis_id="D")
+            except: pass
+            # #endregion
+            
             case = self._verify_case_access(request.case_id, request.current_user)
             if not case:
+                # #region agent log
+                try:
+                    _debug_log("orchestrator.py:152", "Case not found", {"case_id": request.case_id, "user_id": request.current_user.id}, hypothesis_id="D")
+                except: pass
+                # #endregion
                 self.metrics.record_error(f"{mode}:case_not_found")
                 yield SSESerializer.error("Дело не найдено")
                 return
             
             # Создаём сессию и сохраняем сообщение пользователя
+            # #region agent log
+            try:
+                _debug_log("orchestrator.py:160", "Creating session", {"case_id": request.case_id}, hypothesis_id="D")
+            except: pass
+            # #endregion
+            
             session_id = self.history_service.get_or_create_session(request.case_id)
             user_message = self.history_service.save_user_message(
                 case_id=request.case_id,
@@ -159,24 +200,54 @@ class ChatOrchestrator:
                 session_id=session_id
             )
             
+            # #region agent log
+            try:
+                _debug_log("orchestrator.py:168", "User message saved", {"message_id": user_message.id if user_message else None, "session_id": session_id}, hypothesis_id="D")
+            except: pass
+            # #endregion
+            
             # Создаём placeholder для ответа ассистента
             assistant_placeholder = self.history_service.create_assistant_placeholder(
                 case_id=request.case_id,
                 session_id=session_id
             )
             
+            # #region agent log
+            try:
+                _debug_log("orchestrator.py:177", "Assistant placeholder created", {"placeholder_id": assistant_placeholder.id if assistant_placeholder else None}, hypothesis_id="D")
+            except: pass
+            # #endregion
+            
             # Определяем handler и обрабатываем запрос
             full_response = ""
             
             try:
+                # #region agent log
+                try:
+                    _debug_log("orchestrator.py:185", "Routing to handler", {"mode": mode}, hypothesis_id="D")
+                except: pass
+                # #endregion
+                
                 async for event in self._route_to_handler(request, session_id):
                     yield event
                     # Извлекаем текст для сохранения
                     full_response += self._extract_text_from_event(event)
                 
+                # #region agent log
+                try:
+                    _debug_log("orchestrator.py:193", "Handler completed", {"response_length": len(full_response), "events_processed": True}, hypothesis_id="D")
+                except: pass
+                # #endregion
+                
             finally:
                 # Сохраняем ответ в БД
                 if full_response:
+                    # #region agent log
+                    try:
+                        _debug_log("orchestrator.py:200", "Saving assistant message", {"message_id": assistant_placeholder.id if assistant_placeholder else None, "content_length": len(full_response)}, hypothesis_id="D")
+                    except: pass
+                    # #endregion
+                    
                     self.history_service.update_assistant_message(
                         message_id=assistant_placeholder.id,
                         content=full_response
@@ -187,7 +258,20 @@ class ChatOrchestrator:
                 self.metrics.record_latency(mode, latency)
                 logger.info(f"[ChatOrchestrator] {mode} completed in {latency:.2f}s, response length: {len(full_response)}")
                 
+                # #region agent log
+                try:
+                    _debug_log("orchestrator.py:212", "Request completed", {"latency": latency, "response_length": len(full_response), "mode": mode}, hypothesis_id="D")
+                except: pass
+                # #endregion
+                
         except Exception as e:
+            # #region agent log
+            try:
+                import traceback
+                _debug_log("orchestrator.py:218", "Exception in process_request", {"error": str(e), "error_type": type(e).__name__, "traceback": traceback.format_exc()}, hypothesis_id="D")
+            except: pass
+            # #endregion
+            
             self.metrics.record_error(f"{mode}:exception")
             logger.error(f"[ChatOrchestrator] Error in {mode}: {e}", exc_info=True)
             yield SSESerializer.error(str(e))
