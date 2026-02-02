@@ -438,13 +438,13 @@ def init_db():
     except: pass
     # #endregion
     
-    # Ensure text is imported and available
+    # Ensure text is imported and available - CRITICAL: must be imported before use
+    from sqlalchemy import text
     # #region agent log
     try:
-        from sqlalchemy import text as sqlalchemy_text
-        _debug_log("database.py:441", "text import check", {"text_available": hasattr(sqlalchemy_text, '__call__'), "text_type": str(type(sqlalchemy_text))}, hypothesis_id="A")
+        _debug_log("database.py:442", "text imported", {"text_available": hasattr(text, '__call__'), "text_type": str(type(text))}, hypothesis_id="A")
     except Exception as e:
-        _debug_log("database.py:441", "text import failed", {"error": str(e)}, hypothesis_id="A")
+        _debug_log("database.py:442", "text import check failed", {"error": str(e)}, hypothesis_id="A")
     # #endregion
     
     # Import all models to ensure they are registered with Base
@@ -483,16 +483,7 @@ def init_db():
     # Test database connection before creating tables
     # #region agent log
     try:
-        _debug_log("database.py:474", "Testing database connection", {"step": "test_connection"})
-        # Check if text is available in local scope
-        try:
-            text_check = text
-            _debug_log("database.py:482", "text variable check", {"text_available": True, "text_type": str(type(text_check))}, hypothesis_id="A")
-        except NameError as e:
-            _debug_log("database.py:482", "text variable not found", {"error": str(e)}, hypothesis_id="A")
-            # Re-import text to fix the issue
-            from sqlalchemy import text
-            _debug_log("database.py:482", "text re-imported", {"text_available": True}, hypothesis_id="A")
+        _debug_log("database.py:474", "Testing database connection", {"step": "test_connection", "text_available": hasattr(text, '__call__')}, hypothesis_id="A")
     except: pass
     # #endregion
     try:
