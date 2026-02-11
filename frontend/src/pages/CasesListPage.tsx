@@ -1,8 +1,9 @@
 import { useState, useEffect } from 'react'
-import { getCasesList, CasesListResponse } from '../services/api'
+import { getCasesList, deleteCase, CasesListResponse } from '../services/api'
 import CasesGrid from '../components/Cases/CasesGrid'
 import UnifiedSidebar from '../components/Layout/UnifiedSidebar'
 import { Home, FolderOpen } from 'lucide-react'
+import { toast } from 'sonner'
 
 const CasesListPage = () => {
   const [cases, setCases] = useState<CasesListResponse['cases']>([])
@@ -41,6 +42,23 @@ const CasesListPage = () => {
     setCurrentPage(page)
     window.scrollTo({ top: 0, behavior: 'smooth' })
   }
+
+  const handleDeleteCase = async (caseId: string) => {
+    const caseItem = cases.find(c => c.id === caseId)
+    const title = caseItem?.title || 'Без названия'
+    if (!window.confirm(`Удалить дело «${title}»?\n\nВсе документы, чаты и анализы будут удалены безвозвратно.`)) {
+      return
+    }
+    try {
+      await deleteCase(caseId)
+      setCases(prev => prev.filter(c => c.id !== caseId))
+      setTotal(prev => prev - 1)
+      toast.success('Дело удалено')
+    } catch (error: any) {
+      console.error('Ошибка при удалении дела:', error)
+      toast.error('Не удалось удалить дело')
+    }
+  }
   
   return (
     <div 
@@ -67,6 +85,7 @@ const CasesListPage = () => {
               onPageChange={handlePageChange}
               viewMode={viewMode}
               onViewModeChange={setViewMode}
+              onDeleteCase={handleDeleteCase}
             />
           </div>
         </div>

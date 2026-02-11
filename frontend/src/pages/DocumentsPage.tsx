@@ -8,7 +8,7 @@ import {
   Drawer,
 } from '@mui/material'
 import { Description as DescriptionIcon, Close as CloseIcon, OpenInNew as OpenInNewIcon } from '@mui/icons-material'
-import { MessageSquare, FileText, Table, Filter, FileEdit, BookOpen, Workflow, CheckCircle, XCircle, AlertTriangle, X, Loader2, ChevronRight, Upload } from 'lucide-react'
+import { MessageSquare, FileText, Table, Filter, FileEdit, BookOpen, Workflow, CheckCircle, XCircle, AlertTriangle, X, Loader2, ChevronLeft, ChevronRight, Upload, Clock, RefreshCw, CheckCircle2 } from 'lucide-react'
 import DocumentUploadModal from '../components/Documents/DocumentUploadModal'
 import { toast } from 'sonner'
 import UnifiedSidebar from '../components/Layout/UnifiedSidebar'
@@ -422,11 +422,30 @@ const DocumentsPage = () => {
                     </span>
                   )}
 
-                  {doc.created_at && (
-                    <p className="text-xs text-text-secondary">
-                      {new Date(doc.created_at).toLocaleDateString('ru-RU')}
-                    </p>
-                  )}
+                  <div className="flex items-center justify-between">
+                    {doc.created_at && (
+                      <p className="text-xs text-text-secondary">
+                        {new Date(doc.created_at).toLocaleDateString('ru-RU')}
+                      </p>
+                    )}
+                    {doc.status && (
+                      <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium ${
+                        doc.status === 'completed' || doc.status === 'Completed'
+                          ? 'bg-green-50 text-green-700 border border-green-200'
+                          : doc.status === 'processing' || doc.status === 'Processing'
+                          ? 'bg-blue-50 text-blue-700 border border-blue-200'
+                          : 'bg-gray-50 text-gray-600 border border-gray-200'
+                      }`}>
+                        {(doc.status === 'completed' || doc.status === 'Completed') && <CheckCircle2 className="w-3 h-3" />}
+                        {(doc.status === 'processing' || doc.status === 'Processing') && <RefreshCw className="w-3 h-3 animate-spin" />}
+                        {(doc.status === 'Pending' || doc.status === 'pending') && <Clock className="w-3 h-3" />}
+                        {doc.status === 'completed' || doc.status === 'Completed' ? 'Обработан'
+                          : doc.status === 'processing' || doc.status === 'Processing' ? 'Обработка...'
+                          : doc.status === 'Pending' || doc.status === 'pending' ? 'Ожидание'
+                          : doc.status}
+                      </span>
+                    )}
+                  </div>
                   
                   {/* Playbook Button */}
                   <button
@@ -448,10 +467,19 @@ const DocumentsPage = () => {
               </div>
               )
             })}
+
+            {filteredDocuments.length === 0 && (
+              <div className="col-span-full text-center py-16">
+                <FileText className="w-12 h-12 mx-auto mb-3 opacity-30" style={{ color: 'var(--color-text-tertiary)' }} />
+                <p className="text-sm" style={{ color: 'var(--color-text-secondary)' }}>
+                  {documents.length === 0 ? 'Нет загруженных документов' : 'Ничего не найдено по выбранным фильтрам'}
+                </p>
+              </div>
+            )}
           </div>
         </div>
       </div>
-      
+
       {/* Drawer для просмотра документа */}
       <Drawer
         anchor="right"
@@ -481,9 +509,48 @@ const DocumentsPage = () => {
                 bgcolor: 'white',
               }}
             >
-              <Typography variant="h6" sx={{ fontWeight: 600, fontFamily: 'Playfair Display', color: '#1F2937' }}>
-                {selectedDocument.filename}
-              </Typography>
+              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, flex: 1, minWidth: 0 }}>
+                {/* Previous document */}
+                <IconButton
+                  onClick={() => {
+                    if (selectedDocumentIndex !== null && selectedDocumentIndex > 0) {
+                      const prevDoc = filteredDocuments[selectedDocumentIndex - 1]
+                      setSelectedDocument(prevDoc)
+                      setSelectedDocumentIndex(selectedDocumentIndex - 1)
+                    }
+                  }}
+                  disabled={selectedDocumentIndex === null || selectedDocumentIndex <= 0}
+                  sx={{ '&:hover': { bgcolor: '#F3F4F6' } }}
+                  title="Предыдущий документ"
+                  size="small"
+                >
+                  <ChevronLeft className="w-5 h-5" />
+                </IconButton>
+                <Typography variant="h6" sx={{ fontWeight: 600, fontFamily: 'Playfair Display', color: '#1F2937', flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                  {selectedDocument.filename}
+                </Typography>
+                {/* Next document */}
+                <IconButton
+                  onClick={() => {
+                    if (selectedDocumentIndex !== null && selectedDocumentIndex < filteredDocuments.length - 1) {
+                      const nextDoc = filteredDocuments[selectedDocumentIndex + 1]
+                      setSelectedDocument(nextDoc)
+                      setSelectedDocumentIndex(selectedDocumentIndex + 1)
+                    }
+                  }}
+                  disabled={selectedDocumentIndex === null || selectedDocumentIndex >= filteredDocuments.length - 1}
+                  sx={{ '&:hover': { bgcolor: '#F3F4F6' } }}
+                  title="Следующий документ"
+                  size="small"
+                >
+                  <ChevronRight className="w-5 h-5" />
+                </IconButton>
+                {selectedDocumentIndex !== null && (
+                  <Typography variant="caption" sx={{ color: '#9CA3AF', whiteSpace: 'nowrap', ml: 0.5 }}>
+                    {selectedDocumentIndex + 1} / {filteredDocuments.length}
+                  </Typography>
+                )}
+              </Box>
               <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
                 <IconButton
                   onClick={async () => {

@@ -69,6 +69,19 @@ apiClient.interceptors.request.use(
   }
 )
 
+// Token refresh mutex: prevents multiple simultaneous refresh requests
+let isRefreshing = false
+let refreshSubscribers: Array<(token: string) => void> = []
+
+function subscribeTokenRefresh(cb: (token: string) => void) {
+  refreshSubscribers.push(cb)
+}
+
+function onTokenRefreshed(token: string) {
+  refreshSubscribers.forEach(cb => cb(token))
+  refreshSubscribers = []
+}
+
 // Response interceptor to handle token refresh
 apiClient.interceptors.response.use(
   (response) => response,
@@ -78,6 +91,20 @@ apiClient.interceptors.response.use(
     // If error is 401 and we haven't tried to refresh yet
     if (error.response?.status === 401 && originalRequest && !originalRequest._retry) {
       originalRequest._retry = true
+
+      // If already refreshing, wait for the refresh to complete
+      if (isRefreshing) {
+        return new Promise((resolve) => {
+          subscribeTokenRefresh((newToken: string) => {
+            if (originalRequest.headers) {
+              originalRequest.headers.Authorization = `Bearer ${newToken}`
+            }
+            resolve(apiClient(originalRequest))
+          })
+        })
+      }
+
+      isRefreshing = true
 
       try {
         const refreshToken = localStorage.getItem('refresh_token')
@@ -92,6 +119,10 @@ apiClient.interceptors.response.use(
 
           const { access_token } = response.data
           localStorage.setItem('access_token', access_token)
+          isRefreshing = false
+
+          // Notify all waiting requests
+          onTokenRefreshed(access_token)
 
           // Retry original request with new token
           if (originalRequest.headers) {
@@ -100,6 +131,8 @@ apiClient.interceptors.response.use(
           return apiClient(originalRequest)
         }
       } catch (refreshError) {
+        isRefreshing = false
+        refreshSubscribers = []
         // Refresh failed, logout user
         logger.error('Token refresh failed:', refreshError)
         localStorage.removeItem('access_token')
@@ -271,6 +304,10 @@ export const getChatSessions = async (): Promise<Array<{
   return response.data || []
 }
 
+export const deleteChatSession = async (caseId: string, sessionId: string): Promise<void> => {
+  await apiClient.delete(getApiUrl(`/api/v2/assistant/chat/${caseId}/sessions/${sessionId}`))
+}
+
 // Dashboard API
 export interface DashboardStats {
   total_cases: number
@@ -404,6 +441,10 @@ export const deleteFileFromCase = async (
 ): Promise<FilesResponse> => {
   const response = await apiClient.delete(getApiUrl(`/api/cases/${caseId}/files/${fileId}`))
   return response.data
+}
+
+export const deleteCase = async (caseId: string): Promise<void> => {
+  await apiClient.delete(getApiUrl(`/api/cases/${caseId}`))
 }
 
 export const getCaseFiles = async (caseId: string): Promise<FilesResponse> => {

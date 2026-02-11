@@ -313,6 +313,34 @@ export const applyRedline = async (
   await api.post(`/api/playbooks/checks/${checkId}/redlines/${redlineId}`, { accepted })
 }
 
+// Batch check multiple documents
+export interface BatchCheckResult {
+  document_id: string
+  check_id: string
+  overall_status: string
+  compliance_score: number
+  violations: number
+}
+
+export interface BatchCheckResponse {
+  total_documents: number
+  completed: number
+  failed: number
+  results: BatchCheckResult[]
+}
+
+export const batchCheckDocuments = async (
+  playbookId: string,
+  documentIds: string[],
+  caseId?: string
+): Promise<BatchCheckResponse> => {
+  const response = await api.post(`/api/playbooks/${playbookId}/batch-check`, {
+    document_ids: documentIds,
+    case_id: caseId
+  })
+  return response.data
+}
+
 // Utility functions
 export const getStatusColor = (status: string): string => {
   switch (status) {

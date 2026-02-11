@@ -1,7 +1,6 @@
 import * as React from "react"
 import { cn } from "@/lib/utils"
 import { Reasoning, ReasoningContent, ReasoningTrigger } from "./reasoning"
-import { Tool, ToolInput, ToolOutput } from "./tool"
 import MessageContent from "../Chat/MessageContent"
 import { SourceInfo } from "@/services/api"
 import { ThinkingBlock, ThinkingStep } from "../Chat/ThinkingBlock"
@@ -134,38 +133,23 @@ export const AssistantMessage = React.memo(function AssistantMessage({
   return (
     <Message role="assistant" className={className}>
       <div className="text-sm leading-relaxed prose prose-sm max-w-none">
-        {/* Thinking Steps - пошаговое мышление */}
-        {reasoningSteps && reasoningSteps.length > 0 && (
-          <ThinkingBlock 
-            steps={reasoningSteps} 
+        {/* Unified reasoning + tool calls display (Leya-style) */}
+        {((reasoningSteps && reasoningSteps.length > 0) || (toolCalls && toolCalls.length > 0) || (isStreaming && !content)) && (
+          <ThinkingBlock
+            steps={reasoningSteps || []}
+            toolCalls={toolCalls}
             isStreaming={isStreaming && !content}
             defaultOpen={true}
           />
         )}
-        
+
         {/* Legacy Reasoning (для обратной совместимости) */}
-        {reasoning && !reasoningSteps?.length && (
+        {reasoning && !reasoningSteps?.length && !toolCalls?.length && (
           <div className="mb-4">
             <Reasoning isStreaming={isStreaming}>
               <ReasoningTrigger />
               <ReasoningContent>{reasoning}</ReasoningContent>
             </Reasoning>
-          </div>
-        )}
-
-        {/* Tool Calls */}
-        {toolCalls && toolCalls.length > 0 && (
-          <div className="mb-4 space-y-2">
-            {toolCalls.map((toolCall, idx) => (
-              <Tool
-                key={idx}
-                name={toolCall.name}
-                status={toolCall.status || "completed"}
-              >
-                {toolCall.input && <ToolInput>{toolCall.input}</ToolInput>}
-                {toolCall.output && <ToolOutput>{toolCall.output}</ToolOutput>}
-              </Tool>
-            ))}
           </div>
         )}
 

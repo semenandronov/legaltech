@@ -37,6 +37,7 @@ import {
   Chat as MessageSquareIcon,
   Download as DownloadIcon,
   Archive as ArchiveIcon,
+  Delete as DeleteIcon,
 } from '@mui/icons-material'
 import { CaseListItem } from "@/services/api"
 import { useNavigate } from "react-router-dom"
@@ -58,9 +59,10 @@ import { exportToCSV, exportSelectedRows } from "@/utils/exportUtils"
 interface CasesTableProps {
   data: CaseListItem[]
   loading?: boolean
+  onDeleteCase?: (caseId: string) => void
 }
 
-export function CasesTable({ data, loading }: CasesTableProps) {
+export function CasesTable({ data, loading, onDeleteCase }: CasesTableProps) {
   const navigate = useNavigate()
   const [snackbar, setSnackbar] = React.useState<{ open: boolean; message: string; severity: 'success' | 'error' }>({
     open: false,
@@ -559,6 +561,23 @@ export function CasesTable({ data, loading }: CasesTableProps) {
           <ArchiveIcon sx={{ mr: 1, fontSize: 20 }} />
           Архивировать
         </MenuItem>
+        {onDeleteCase && (
+          <MenuItem
+            onClick={() => {
+              if (menuAnchorEl) {
+                const row = table.getRowModel().rows.find(r => r.id === menuAnchorEl.rowId)
+                if (row) {
+                  onDeleteCase(row.original.id)
+                }
+              }
+              setMenuAnchorEl(null)
+            }}
+            sx={{ color: 'error.main' }}
+          >
+            <DeleteIcon sx={{ mr: 1, fontSize: 20 }} />
+            Удалить
+          </MenuItem>
+        )}
       </Menu>
 
       {/* Snackbar для уведомлений */}

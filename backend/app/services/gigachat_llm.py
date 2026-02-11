@@ -1,9 +1,9 @@
-"""GigaChat integration for LangChain with function calling support"""
-from typing import Optional, List, Any, Dict, Iterator
+"""GigaChat integration for LangChain with function calling support and streaming"""
+from typing import Optional, List, Any, AsyncIterator, Dict, Iterator
 from langchain_core.language_models import BaseChatModel
-from langchain_core.messages import BaseMessage, HumanMessage, SystemMessage, AIMessage
-from langchain_core.callbacks import CallbackManagerForLLMRun
-from langchain_core.outputs import ChatGeneration, ChatResult
+from langchain_core.messages import BaseMessage, HumanMessage, SystemMessage, AIMessage, AIMessageChunk
+from langchain_core.callbacks import CallbackManagerForLLMRun, AsyncCallbackManagerForLLMRun
+from langchain_core.outputs import ChatGeneration, ChatResult, ChatGenerationChunk
 from langchain_core.tools import BaseTool
 from langchain_core.runnables import Runnable, RunnableConfig
 import logging
@@ -151,44 +151,7 @@ class ChatGigaChat(BaseChatModel):
         Returns:
             ChatResult with generated response
         """
-        # Конвертируем LangChain messages в GigaChat format
-        gigachat_messages = self._convert_messages_to_gigachat(messages)
-        
-        # Подготавливаем параметры для Chat
-        # GigaChat SDK использует объект Chat с messages
-        # В новых версиях SDK functions передаются в объект Chat, а не как параметр chat()
-        chat_kwargs = {
-            "messages": gigachat_messages,
-            "temperature": self.temperature,
-            "model": self.model
-        }
-        
-        # Добавляем functions если есть - в объект Chat
-        if self._functions:
-            # Конвертируем functions в формат GigaChat SDK
-            try:
-                from gigachat.models import Function, FunctionParameters
-                gigachat_functions = []
-                for func in self._functions:
-                    func_params = FunctionParameters(
-                        type=func.get("parameters", {}).get("type", "object"),
-                        properties=func.get("parameters", {}).get("properties", {}),
-                        required=func.get("parameters", {}).get("required", [])
-                    )
-                    gigachat_func = Function(
-                        name=func["name"],
-                        description=func.get("description", ""),
-                        parameters=func_params
-                    )
-                    gigachat_functions.append(gigachat_func)
-                chat_kwargs["functions"] = gigachat_functions
-                logger.info(f"[GigaChat] Added {len(gigachat_functions)} functions to Chat object")
-            except ImportError as e:
-                logger.warning(f"[GigaChat] Function/FunctionParameters not available in this SDK version: {e}")
-            except Exception as e:
-                logger.warning(f"[GigaChat] Failed to add functions to Chat: {e}")
-        
-        chat_obj = Chat(**chat_kwargs)
+        chat_obj = self._build_chat_obj(messages)
         
         # Вызываем GigaChat API with retry for rate limiting
         import time
@@ -305,6 +268,201 @@ class ChatGigaChat(BaseChatModel):
             logger.error(f"Error calling GigaChat: {e}", exc_info=True)
             raise
     
+    def _build_chat_obj(self, messages: List[BaseMessage]) -> "Chat":
+        """Build a GigaChat Chat object from LangChain messages (shared by _generate and _stream)."""
+        gigachat_messages = self._convert_messages_to_gigachat(messages)
+
+        chat_kwargs = {
+            "messages": gigachat_messages,
+            "temperature": self.temperature,
+            "model": self.model
+        }
+
+        if self._functions:
+            try:
+                from gigachat.models import Function, FunctionParameters
+                gigachat_functions = []
+                for func in self._functions:
+                    func_params = FunctionParameters(
+                        type=func.get("parameters", {}).get("type", "object"),
+                        properties=func.get("parameters", {}).get("properties", {}),
+                        required=func.get("parameters", {}).get("required", [])
+                    )
+                    gigachat_func = Function(
+                        name=func["name"],
+                        description=func.get("description", ""),
+                        parameters=func_params
+                    )
+                    gigachat_functions.append(gigachat_func)
+                chat_kwargs["functions"] = gigachat_functions
+            except ImportError as e:
+                logger.warning(f"[GigaChat] Function/FunctionParameters not available: {e}")
+            except Exception as e:
+                logger.warning(f"[GigaChat] Failed to add functions: {e}")
+
+        return Chat(**chat_kwargs)
+
+    def _stream(
+        self,
+        messages: List[BaseMessage],
+        stop: Optional[List[str]] = None,
+        run_manager: Optional[CallbackManagerForLLMRun] = None,
+        **kwargs: Any,
+    ) -> Iterator[ChatGenerationChunk]:
+        """
+        Stream response from GigaChat token-by-token.
+
+        LangChain calls this method when streaming is requested (e.g. via astream_events).
+        Each yielded ChatGenerationChunk contains a single token or a tool call chunk.
+        """
+        chat_obj = self._build_chat_obj(messages)
+
+        import time
+        import random
+        max_retries = 5
+        retry_delay = 3
+
+        for attempt in range(max_retries):
+            try:
+                accumulated_function_call = None  # Track function call across chunks
+
+                for chunk in self._client.stream(chat_obj):
+                    if not chunk.choices:
+                        continue
+
+                    delta = chunk.choices[0].delta
+                    finish_reason = chunk.choices[0].finish_reason
+
+                    # Text content chunk
+                    if delta.content:
+                        yield ChatGenerationChunk(
+                            message=AIMessageChunk(content=delta.content)
+                        )
+                        if run_manager:
+                            run_manager.on_llm_new_token(delta.content)
+
+                    # Function call chunk
+                    if delta.function_call:
+                        fc = delta.function_call
+                        import json as _json
+                        raw_args = getattr(fc, 'arguments', {}) or {}
+                        # tool_call_chunks requires args as JSON string, not dict
+                        args_str = _json.dumps(raw_args, ensure_ascii=False) if isinstance(raw_args, dict) else str(raw_args)
+                        tool_call = {
+                            "name": getattr(fc, 'name', ''),
+                            "args": args_str,
+                            "id": getattr(fc, 'id', '') or f"call_{getattr(fc, 'name', 'unknown')}",
+                            "index": 0,
+                        }
+                        yield ChatGenerationChunk(
+                            message=AIMessageChunk(
+                                content="",
+                                tool_call_chunks=[tool_call]
+                            )
+                        )
+
+                # Successful stream completed
+                return
+
+            except Exception as e:
+                is_rate_limit = (
+                    ResponseError and isinstance(e, ResponseError) and
+                    hasattr(e, 'status_code') and e.status_code == 429
+                ) or (
+                    "429" in str(e) or "Too Many Requests" in str(e)
+                )
+
+                if is_rate_limit and attempt < max_retries - 1:
+                    base_wait = retry_delay * (2 ** attempt)
+                    jitter = random.uniform(0.5, 1.5)
+                    wait_time = min(base_wait * jitter, 30.0)
+                    logger.warning(
+                        f"[GigaChat stream] Rate limit 429, retrying in {wait_time:.1f}s "
+                        f"(attempt {attempt + 1}/{max_retries})"
+                    )
+                    time.sleep(wait_time)
+                    continue
+                else:
+                    if is_rate_limit:
+                        logger.error(f"[GigaChat stream] Rate limit exceeded after {max_retries} attempts")
+                    raise
+
+    async def _astream(
+        self,
+        messages: List[BaseMessage],
+        stop: Optional[List[str]] = None,
+        run_manager: Optional[AsyncCallbackManagerForLLMRun] = None,
+        **kwargs: Any,
+    ) -> AsyncIterator[ChatGenerationChunk]:
+        """
+        Async stream response from GigaChat using native SDK astream.
+        """
+        chat_obj = self._build_chat_obj(messages)
+
+        import asyncio
+        max_retries = 5
+        retry_delay = 3
+
+        for attempt in range(max_retries):
+            try:
+                async for chunk in self._client.astream(chat_obj):
+                    if not chunk.choices:
+                        continue
+
+                    delta = chunk.choices[0].delta
+
+                    if delta.content:
+                        gen_chunk = ChatGenerationChunk(
+                            message=AIMessageChunk(content=delta.content)
+                        )
+                        yield gen_chunk
+                        if run_manager:
+                            await run_manager.on_llm_new_token(delta.content)
+
+                    if delta.function_call:
+                        fc = delta.function_call
+                        import json as _json
+                        raw_args = getattr(fc, 'arguments', {}) or {}
+                        args_str = _json.dumps(raw_args, ensure_ascii=False) if isinstance(raw_args, dict) else str(raw_args)
+                        tool_call = {
+                            "name": getattr(fc, 'name', ''),
+                            "args": args_str,
+                            "id": getattr(fc, 'id', '') or f"call_{getattr(fc, 'name', 'unknown')}",
+                            "index": 0,
+                        }
+                        yield ChatGenerationChunk(
+                            message=AIMessageChunk(
+                                content="",
+                                tool_call_chunks=[tool_call]
+                            )
+                        )
+
+                return
+
+            except Exception as e:
+                import random
+                is_rate_limit = (
+                    ResponseError and isinstance(e, ResponseError) and
+                    hasattr(e, 'status_code') and e.status_code == 429
+                ) or (
+                    "429" in str(e) or "Too Many Requests" in str(e)
+                )
+
+                if is_rate_limit and attempt < max_retries - 1:
+                    base_wait = retry_delay * (2 ** attempt)
+                    jitter = random.uniform(0.5, 1.5)
+                    wait_time = min(base_wait * jitter, 30.0)
+                    logger.warning(
+                        f"[GigaChat astream] Rate limit 429, retrying in {wait_time:.1f}s "
+                        f"(attempt {attempt + 1}/{max_retries})"
+                    )
+                    await asyncio.sleep(wait_time)
+                    continue
+                else:
+                    if is_rate_limit:
+                        logger.error(f"[GigaChat astream] Rate limit exceeded after {max_retries} attempts")
+                    raise
+
     def _sanitize_property_for_gigachat(self, prop_name: str, prop_schema: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         """
         Преобразует property схему в формат совместимый с GigaChat API.

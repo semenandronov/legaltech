@@ -12,8 +12,6 @@ import {
   IconButton,
   Divider,
   Stack,
-  FormControlLabel,
-  Checkbox,
   CircularProgress,
   Fade,
   Menu,
@@ -24,16 +22,17 @@ import {
   Close as CloseIcon,
   Chat as ChatIcon,
   MoreVert as MoreVertIcon,
+  Delete as DeleteIcon,
 } from '@mui/icons-material'
-import { fetchHistory, getChatSessionsForCase, getChatSessions } from '@/services/api'
+import { getChatSessionsForCase, deleteChatSession } from '@/services/api'
 import { toast } from 'sonner'
 
 interface HistoryItem {
   id: string
   content: string
   created_at: string
-  case_id?: string
-  session_id?: string
+  session_id: string
+  message_count: number
 }
 
 interface ChatHistoryPanelProps {
@@ -54,21 +53,16 @@ export const ChatHistoryPanel: React.FC<ChatHistoryPanelProps> = ({
   const [historyItems, setHistoryItems] = useState<HistoryItem[]>([])
   const [filteredItems, setFilteredItems] = useState<HistoryItem[]>([])
   const [searchQuery, setSearchQuery] = useState('')
-  const [showAllProjects, setShowAllProjects] = useState(false)
   const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [anchorEl, setAnchorEl] = useState<null | HTMLElement>(null)
   const [selectedItem, setSelectedItem] = useState<HistoryItem | null>(null)
 
   useEffect(() => {
-    if (isOpen) {
-      if (showAllProjects) {
-        loadAllProjectsHistory()
-      } else if (currentCaseId) {
+    if (isOpen && currentCaseId) {
       loadHistory()
-      }
     }
-  }, [isOpen, currentCaseId, showAllProjects])
+  }, [isOpen, currentCaseId])
 
   useEffect(() => {
     if (searchQuery.trim()) {
@@ -87,37 +81,28 @@ export const ChatHistoryPanel: React.FC<ChatHistoryPanelProps> = ({
     setIsLoading(true)
     setError(null)
     try {
-      // Загружаем сессии для текущего дела
       const sessions = await getChatSessionsForCase(currentCaseId)
-      
-      // Преобразуем сессии в элементы истории (берем первое сообщение каждой сессии)
-      const historyItemsList: HistoryItem[] = []
-      
-      for (const session of sessions) {
-        // Загружаем первое сообщение сессии для превью
-        const sessionMessages = await fetchHistory(currentCaseId, session.session_id)
-        const firstUserMessage = sessionMessages.find((msg: any) => msg.role === 'user')
-        
-        if (firstUserMessage) {
-          historyItemsList.push({
-            id: `session-${session.session_id}`,
-            content: firstUserMessage.content,
-            created_at: session.first_message_at || session.last_message_at || '',
-          case_id: currentCaseId,
-            session_id: session.session_id,
-          })
-        }
-      }
-      
-      // Сортируем по дате (новые сверху)
-      historyItemsList.sort((a, b) => {
+
+      // Use first_message directly from the sessions response — no extra API calls
+      const items: HistoryItem[] = sessions
+        .filter(s => s.first_message && s.first_message.trim())
+        .map(session => ({
+          id: `session-${session.session_id}`,
+          content: session.first_message,
+          created_at: session.first_message_at || session.last_message_at || '',
+          session_id: session.session_id,
+          message_count: session.message_count,
+        }))
+
+      // Sort by date (newest first) — backend already sorts, but be safe
+      items.sort((a, b) => {
         const dateA = new Date(a.created_at).getTime()
         const dateB = new Date(b.created_at).getTime()
         return dateB - dateA
       })
-      
-      setHistoryItems(historyItemsList)
-      setFilteredItems(historyItemsList)
+
+      setHistoryItems(items)
+      setFilteredItems(items)
     } catch (err: any) {
       console.error('Error loading chat history:', err)
       setError('Не удалось загрузить историю чата')
@@ -127,56 +112,7 @@ export const ChatHistoryPanel: React.FC<ChatHistoryPanelProps> = ({
     }
   }
 
-  const loadAllProjectsHistory = async () => {
-    setIsLoading(true)
-    setError(null)
-    try {
-      // Загружаем все сессии всех дел пользователя
-      const allSessions = await getChatSessions()
-      
-      // Преобразуем в элементы истории
-      const historyItemsList: HistoryItem[] = []
-      
-      for (const session of allSessions) {
-        // Загружаем сессии для этого дела
-        const caseSessions = await getChatSessionsForCase(session.case_id)
-        
-        for (const caseSession of caseSessions) {
-          const sessionMessages = await fetchHistory(session.case_id, caseSession.session_id)
-          const firstUserMessage = sessionMessages.find((msg: any) => msg.role === 'user')
-          
-          if (firstUserMessage) {
-            historyItemsList.push({
-              id: `session-${caseSession.session_id}`,
-              content: firstUserMessage.content,
-              created_at: caseSession.first_message_at || caseSession.last_message_at || '',
-              case_id: session.case_id,
-              session_id: caseSession.session_id,
-            })
-          }
-        }
-      }
-      
-      // Сортируем по дате (новые сверху)
-      historyItemsList.sort((a, b) => {
-        const dateA = new Date(a.created_at).getTime()
-        const dateB = new Date(b.created_at).getTime()
-        return dateB - dateA
-      })
-      
-      setHistoryItems(historyItemsList)
-      setFilteredItems(historyItemsList)
-    } catch (err: any) {
-      console.error('Error loading all projects history:', err)
-      setError('Не удалось загрузить историю всех проектов')
-      toast.error('Ошибка загрузки истории')
-    } finally {
-      setIsLoading(false)
-    }
-  }
-
   const handleSelectQuery = async (item: HistoryItem) => {
-    // Загружаем только сессию этого сообщения, а не всю историю
     if (onLoadHistory && item.session_id) {
       await onLoadHistory(item.session_id)
     }
@@ -184,6 +120,20 @@ export const ChatHistoryPanel: React.FC<ChatHistoryPanelProps> = ({
       onSelectQuery(item.content, item.session_id)
     }
     onClose()
+  }
+
+  const handleDeleteSession = async (item: HistoryItem) => {
+    if (!currentCaseId) return
+    if (!window.confirm('Удалить эту сессию чата?')) return
+
+    try {
+      await deleteChatSession(currentCaseId, item.session_id)
+      setHistoryItems(prev => prev.filter(h => h.id !== item.id))
+      toast.success('Сессия удалена')
+    } catch (err: any) {
+      console.error('Error deleting session:', err)
+      toast.error('Не удалось удалить сессию')
+    }
   }
 
   const handleMenuOpen = (event: React.MouseEvent<HTMLElement>, item: HistoryItem) => {
@@ -247,7 +197,7 @@ export const ChatHistoryPanel: React.FC<ChatHistoryPanelProps> = ({
           <TextField
             fullWidth
             size="small"
-            placeholder="Поиск"
+            placeholder="Поиск по истории..."
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
             InputProps={{
@@ -270,21 +220,6 @@ export const ChatHistoryPanel: React.FC<ChatHistoryPanelProps> = ({
           />
         </Box>
 
-        {/* Show history from all projects toggle */}
-        <Box sx={{ px: 2, py: 1.5, borderBottom: 1, borderColor: 'divider' }}>
-          <FormControlLabel
-            control={
-              <Checkbox
-                size="small"
-                checked={showAllProjects}
-                onChange={(e) => setShowAllProjects(e.target.checked)}
-              />
-            }
-            label="Показать историю всех проектов"
-            sx={{ '& .MuiFormControlLabel-label': { fontSize: '0.875rem' } }}
-          />
-        </Box>
-
         {/* History List */}
         <Box sx={{ flex: 1, overflow: 'auto' }}>
           {isLoading ? (
@@ -297,7 +232,7 @@ export const ChatHistoryPanel: React.FC<ChatHistoryPanelProps> = ({
                 {error}
               </Typography>
               <button
-                onClick={() => showAllProjects ? loadAllProjectsHistory() : loadHistory()}
+                onClick={loadHistory}
                 className="text-sm text-blue-600 hover:underline"
               >
                 Попробовать снова
@@ -354,6 +289,7 @@ export const ChatHistoryPanel: React.FC<ChatHistoryPanelProps> = ({
                           secondary={
                             <Typography variant="caption" color="text.secondary" sx={{ mt: 0.5 }}>
                               {formatDate(item.created_at)}
+                              {item.message_count > 0 && ` · ${item.message_count} сообщ.`}
                             </Typography>
                           }
                         />
@@ -379,12 +315,18 @@ export const ChatHistoryPanel: React.FC<ChatHistoryPanelProps> = ({
             }
             handleMenuClose()
           }}>
-            Использовать запрос
+            Открыть сессию
           </MenuItem>
-          <MenuItem onClick={() => {
-            toast.info("Удаление сообщений из истории будет реализовано позже")
-            handleMenuClose()
-          }}>
+          <MenuItem
+            onClick={() => {
+              if (selectedItem) {
+                handleDeleteSession(selectedItem)
+              }
+              handleMenuClose()
+            }}
+            sx={{ color: 'error.main' }}
+          >
+            <DeleteIcon fontSize="small" sx={{ mr: 1 }} />
             Удалить
           </MenuItem>
         </Menu>
@@ -392,4 +334,3 @@ export const ChatHistoryPanel: React.FC<ChatHistoryPanelProps> = ({
     </Drawer>
   )
 }
-

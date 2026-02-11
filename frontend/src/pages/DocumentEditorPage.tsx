@@ -1,12 +1,12 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
-import { Save, Download, ArrowLeft, MessageSquare, FileText, Table, FileEdit, History, BookOpen, Workflow } from 'lucide-react'
+import { Save, Download, ArrowLeft, MessageSquare, FileText, Table, FileEdit, History, BookOpen, Workflow, Check } from 'lucide-react'
 import { toast } from 'sonner'
 import UnifiedSidebar from '../components/Layout/UnifiedSidebar'
 import { DocumentEditor, DocumentEditorRef } from '../components/Editor/DocumentEditor'
 import { AssistantUIChat } from '../components/Chat/AssistantUIChat'
 import { VersionHistory } from '../components/Editor/VersionHistory'
-import { CommentsPanel } from '../components/Editor/CommentsPanel'
+// CommentsPanel removed — was overlapping the chat sidebar
 import { TemplateSelector } from '../components/Editor/TemplateSelector'
 import { DocxImporter } from '../components/Editor/DocxImporter'
 import { getDocument, createDocument, updateDocument, exportDocx, exportPdf, listDocuments, Document } from '../services/documentEditorApi'
@@ -32,10 +32,10 @@ const DocumentEditorPage = () => {
   const [selectedText, setSelectedText] = useState('')
   const [showChat, setShowChat] = useState(false)
   const [showVersionHistory, setShowVersionHistory] = useState(false)
-  const [showComments, setShowComments] = useState(false)
+  // showComments removed — CommentsPanel was overlapping the chat sidebar
   const [showTemplateSelector, setShowTemplateSelector] = useState(false)
   const [showDocxImporter, setShowDocxImporter] = useState(false)
-  const [comments, setComments] = useState<Array<{ id: string; from: number; to: number; text: string; createdAt?: string }>>([])
+  // comments state removed — CommentsPanel was removed
   const [showPlaybookModal, setShowPlaybookModal] = useState(false)
   const [playbooks, setPlaybooks] = useState<Playbook[]>([])
   const [loadingPlaybooks, setLoadingPlaybooks] = useState(false)
@@ -44,6 +44,7 @@ const DocumentEditorPage = () => {
   const [showResultsPanel, setShowResultsPanel] = useState(false)
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
+  const [justSaved, setJustSaved] = useState(false)
   const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false)
   const [documentsList, setDocumentsList] = useState<Document[]>([])
   const [loadingDocuments, setLoadingDocuments] = useState(false)
@@ -130,6 +131,11 @@ const DocumentEditorPage = () => {
   const handleSave = useCallback(async (showToast: boolean = true) => {
     if (!caseId) return
 
+    if (!title.trim()) {
+      if (showToast) toast.error('Введите название документа')
+      return
+    }
+
     try {
       setSaving(true)
 
@@ -154,6 +160,8 @@ const DocumentEditorPage = () => {
       toast.error(error.message || 'Ошибка при сохранении')
     } finally {
       setSaving(false)
+      setJustSaved(true)
+      setTimeout(() => setJustSaved(false), 2000)
     }
   }, [caseId, documentId, document, content, title, navigate])
 
@@ -273,23 +281,7 @@ const DocumentEditorPage = () => {
     }
   }
 
-  const handleAddComment = (from: number, to: number, text: string) => {
-    if (editorRef.current) {
-      editorRef.current.addComment(from, to, text)
-      // Reload comments
-      const updatedComments = editorRef.current.getComments()
-      setComments(updatedComments)
-    }
-  }
-
-  const handleRemoveComment = (id: string) => {
-    if (editorRef.current) {
-      editorRef.current.removeComment(id)
-      // Reload comments
-      const updatedComments = editorRef.current.getComments()
-      setComments(updatedComments)
-    }
-  }
+  // handleAddComment / handleRemoveComment removed — CommentsPanel was removed
 
   const handleSetRisks = (risks: Array<{ id: string; quote: string; from: number; to: number; level: 'high' | 'medium' | 'low'; description: string }>) => {
     if (editorRef.current) {
@@ -348,13 +340,7 @@ const DocumentEditorPage = () => {
     }
   }
 
-  // Load comments when editor is ready
-  useEffect(() => {
-    if (editorRef.current) {
-      const loadedComments = editorRef.current.getComments()
-      setComments(loadedComments)
-    }
-  }, [content]) // eslint-disable-line react-hooks/exhaustive-deps
+  // Load comments effect removed — CommentsPanel was removed
 
   const navItems = caseId ? [
     { id: 'chat', label: 'Ассистент', icon: MessageSquare, path: `/cases/${caseId}/chat` },
@@ -449,22 +435,27 @@ const DocumentEditorPage = () => {
         </div>
 
         <div className="flex items-center gap-2">
-          {saving && (
-            <span className="text-sm text-gray-500 flex items-center gap-2">
-              <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-blue-600"></div>
-              Сохранение...
-            </span>
-          )}
-          {hasUnsavedChanges && !saving && (
-            <span className="text-sm text-gray-500">Несохраненные изменения</span>
-          )}
           <button
             onClick={() => handleSave()}
             disabled={saving}
-            className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 transition-colors"
+            className={`flex items-center gap-2 px-4 py-2 rounded-lg transition-all duration-200 ${
+              saving
+                ? 'bg-blue-500 text-white opacity-80'
+                : justSaved
+                ? 'bg-emerald-600 text-white'
+                : hasUnsavedChanges
+                ? 'bg-blue-600 text-white hover:bg-blue-700 ring-2 ring-blue-300 ring-offset-1'
+                : 'bg-blue-600 text-white hover:bg-blue-700'
+            }`}
           >
-            <Save className="w-4 h-4" />
-            Сохранить
+            {saving ? (
+              <div className="animate-spin rounded-full h-4 w-4 border-2 border-white border-t-transparent" />
+            ) : justSaved ? (
+              <Check className="w-4 h-4" />
+            ) : (
+              <Save className="w-4 h-4" />
+            )}
+            {saving ? 'Сохранение...' : justSaved ? 'Сохранено' : 'Сохранить'}
           </button>
           <button
             onClick={handleExportDocx}
@@ -571,18 +562,7 @@ const DocumentEditorPage = () => {
         />
       )}
 
-      {/* Comments Panel */}
-      <div className="fixed bottom-4 right-4 z-50">
-        <CommentsPanel
-          comments={comments}
-          onAddComment={handleAddComment}
-          onRemoveComment={handleRemoveComment}
-          showPanel={showComments}
-          onTogglePanel={() => setShowComments(!showComments)}
-          selectedText={selectedText}
-          selectedRange={editorRef.current?.getSelectedRange() || undefined}
-        />
-      </div>
+      {/* Comments Panel - скрыт, т.к. перекрывает чат */}
 
       {/* Template Selector */}
       {caseId && (

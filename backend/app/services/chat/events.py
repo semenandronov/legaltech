@@ -285,6 +285,23 @@ class ReflectionResultEvent(BaseModel):
         return f"data: {json.dumps({'type': 'reflection_result', 'is_valid': self.is_valid, 'confidence_score': self.confidence_score, 'confidence_level': self.confidence_level, 'issues_count': self.issues_count, 'has_improvement': self.has_improvement, 'critique': self.critique}, ensure_ascii=False)}\n\n"
 
 
+class ToolCallEvent(BaseModel):
+    """Событие вызова инструмента с отслеживанием статуса"""
+    type: Literal["tool_call"] = "tool_call"
+    name: str = Field(..., description="Название инструмента")
+    status: Literal["running", "completed", "error"] = Field(..., description="Статус выполнения")
+    input: Optional[str] = Field(None, description="Входные параметры (JSON)")
+    output: Optional[str] = Field(None, description="Результат выполнения (превью)")
+
+    def to_sse(self) -> str:
+        data: Dict[str, Any] = {'type': 'tool_call', 'name': self.name, 'status': self.status}
+        if self.input:
+            data['input'] = self.input
+        if self.output:
+            data['output'] = self.output
+        return f"data: {json.dumps(data, ensure_ascii=False)}\n\n"
+
+
 # =============================================================================
 # Union Type для всех событий
 # =============================================================================
@@ -302,6 +319,7 @@ SSEEvent = Union[
     AgentProgressEvent,
     AgentCompleteEvent,
     TableCreatedEvent,
+    ToolCallEvent,
     # NEW v3.0: События для Reflection и Citation Verification
     AgentStepEvent,
     ConfidenceScoreEvent,
@@ -369,6 +387,11 @@ class SSESerializer:
         edit_objects = [StructuredEdit(**e) for e in edits]
         return StructuredEditsEvent(edits=edit_objects).to_sse()
     
+    @staticmethod
+    def tool_call(name: str, status: str, input: Optional[str] = None, output: Optional[str] = None) -> str:
+        """Быстрый метод для tool_call"""
+        return ToolCallEvent(name=name, status=status, input=input, output=output).to_sse()
+
     @staticmethod
     def agent_step(step_type: str, content: str) -> str:
         """Быстрый метод для agent_step (Reflection, Citation Verification)"""

@@ -11,11 +11,21 @@ interface DocumentsUploadStepProps {
 const MAX_FILE_SIZE_MB = 5
 const MAX_FILE_SIZE_BYTES = MAX_FILE_SIZE_MB * 1024 * 1024
 
+type FileUploadStatus = 'pending' | 'uploading' | 'processing' | 'done' | 'error'
+
+interface FileUploadItem {
+  file: File
+  status: FileUploadStatus
+  progress: number // 0-100
+  error?: string
+}
+
 const DocumentsUploadStep = ({ caseId, onContinue, onCancel }: DocumentsUploadStepProps) => {
   const [uploadedFiles, setUploadedFiles] = useState<UploadedFile[]>([])
-  const [loading, setLoading] = useState(false)
+  const [uploadQueue, setUploadQueue] = useState<FileUploadItem[]>([])
+  const [isUploading, setIsUploading] = useState(false)
+  const [loadingList, setLoadingList] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const [uploadProgress, setUploadProgress] = useState(0)
   const [deletingFileId, setDeletingFileId] = useState<string | null>(null)
   const [dragActive, setDragActive] = useState(false)
   const fileInputRef = useRef<HTMLInputElement>(null)
@@ -26,14 +36,14 @@ const DocumentsUploadStep = ({ caseId, onContinue, onCancel }: DocumentsUploadSt
 
   const loadFiles = async () => {
     try {
-      setLoading(true)
+      setLoadingList(true)
       setError(null)
       const response = await getCaseFiles(caseId)
       setUploadedFiles(response.files || [])
     } catch (err: any) {
       setError(err.message || 'Ошибка при загрузке списка файлов')
     } finally {
-      setLoading(false)
+      setLoadingList(false)
     }
   }
 
@@ -60,7 +70,6 @@ const DocumentsUploadStep = ({ caseId, onContinue, onCancel }: DocumentsUploadSt
   const handleFileInput = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files.length > 0) {
       handleAddFiles(Array.from(e.target.files))
-      // Reset input
       if (fileInputRef.current) {
         fileInputRef.current.value = ''
       }
@@ -75,27 +84,67 @@ const DocumentsUploadStep = ({ caseId, onContinue, onCancel }: DocumentsUploadSt
       return
     }
 
-    // Validate file sizes
     const tooBig = files.find((file) => file.size > MAX_FILE_SIZE_BYTES)
     if (tooBig) {
       setError(`Файл '${tooBig.name}' слишком большой. Максимальный размер: ${MAX_FILE_SIZE_MB} МБ.`)
       return
     }
 
-    try {
-      setLoading(true)
-      setUploadProgress(0)
-      const response = await addFilesToCase(caseId, files, (percent) => {
-        setUploadProgress(percent)
-      })
-      setUploadedFiles(response.files || [])
-      setUploadProgress(0)
-    } catch (err: any) {
-      setError(err.response?.data?.detail || err.message || 'Ошибка при загрузке файлов')
-    } finally {
-      setLoading(false)
-      setUploadProgress(0)
+    // Create queue items
+    const queueItems: FileUploadItem[] = files.map(f => ({
+      file: f,
+      status: 'pending',
+      progress: 0,
+    }))
+
+    setUploadQueue(queueItems)
+    setIsUploading(true)
+
+    // Upload files one by one
+    for (let i = 0; i < queueItems.length; i++) {
+      // Update status to uploading
+      setUploadQueue(prev => prev.map((item, idx) =>
+        idx === i ? { ...item, status: 'uploading', progress: 0 } : item
+      ))
+
+      try {
+        const response = await addFilesToCase(caseId, [queueItems[i].file], (percent) => {
+          setUploadQueue(prev => prev.map((item, idx) => {
+            if (idx !== i) return item
+            // When HTTP upload is done (100%), server starts processing
+            if (percent >= 100) {
+              return { ...item, status: 'processing', progress: 100 }
+            }
+            return { ...item, progress: percent }
+          }))
+        })
+
+        // Mark as done
+        setUploadQueue(prev => prev.map((item, idx) =>
+          idx === i ? { ...item, status: 'done', progress: 100 } : item
+        ))
+
+        // Add to uploaded files list
+        const newFiles = response.files || []
+        setUploadedFiles(prev => {
+          const existingIds = new Set(prev.map(f => f.id))
+          const uniqueNew = newFiles.filter(f => !existingIds.has(f.id))
+          return [...prev, ...uniqueNew]
+        })
+      } catch (err: any) {
+        const errorMsg = err.response?.data?.detail || err.message || 'Ошибка загрузки'
+        setUploadQueue(prev => prev.map((item, idx) =>
+          idx === i ? { ...item, status: 'error', error: errorMsg } : item
+        ))
+      }
     }
+
+    setIsUploading(false)
+
+    // Clear queue after a delay so user can see the results
+    setTimeout(() => {
+      setUploadQueue(prev => prev.filter(item => item.status === 'error'))
+    }, 2000)
   }
 
   const handleDeleteFile = async (fileId: string, filename: string) => {
@@ -116,7 +165,9 @@ const DocumentsUploadStep = ({ caseId, onContinue, onCancel }: DocumentsUploadSt
   }
 
   const handleClick = () => {
-    fileInputRef.current?.click()
+    if (!isUploading) {
+      fileInputRef.current?.click()
+    }
   }
 
   const formatFileSize = (bytes: number): string => {
@@ -125,10 +176,12 @@ const DocumentsUploadStep = ({ caseId, onContinue, onCancel }: DocumentsUploadSt
     return (bytes / (1024 * 1024)).toFixed(1) + ' МБ'
   }
 
+  const hasActiveUploads = uploadQueue.some(item => item.status === 'uploading' || item.status === 'processing' || item.status === 'pending')
+
   return (
     <div className="upload-step-container">
       <h2 className="upload-step-title">Загрузка документов</h2>
-      
+
       {error && <div className="auth-error" style={{ marginBottom: '16px' }}>{error}</div>}
 
       {/* Upload area */}
@@ -139,7 +192,11 @@ const DocumentsUploadStep = ({ caseId, onContinue, onCancel }: DocumentsUploadSt
         onDragOver={handleDrag}
         onDrop={handleDrop}
         onClick={handleClick}
-        style={{ marginBottom: '24px', cursor: 'pointer' }}
+        style={{
+          marginBottom: '24px',
+          cursor: isUploading ? 'default' : 'pointer',
+          pointerEvents: isUploading ? 'none' : 'auto',
+        }}
       >
         <input
           ref={fileInputRef}
@@ -148,35 +205,129 @@ const DocumentsUploadStep = ({ caseId, onContinue, onCancel }: DocumentsUploadSt
           onChange={handleFileInput}
           style={{ display: 'none' }}
         />
-
         <div className="upload-icon">📄 📄 📄</div>
         <p className="upload-text">Перетащите документы сюда</p>
         <p className="upload-subtext">или нажмите для выбора файлов</p>
-        
-        {loading && uploadProgress > 0 && (
-          <div style={{ marginTop: '16px', width: '100%', maxWidth: '300px' }}>
-            <div className="processing-progress-bar">
-              <div 
-                className="processing-progress-fill" 
-                style={{ width: `${uploadProgress}%` }}
-              />
-            </div>
-            <div className="processing-progress-text">{uploadProgress}%</div>
-          </div>
-        )}
       </div>
 
+      {/* Per-file upload progress */}
+      {uploadQueue.length > 0 && (
+        <div style={{ marginBottom: '24px' }}>
+          <h3 style={{ fontSize: '16px', fontWeight: 600, marginBottom: '12px', color: '#1f2937' }}>
+            Загрузка ({uploadQueue.filter(f => f.status === 'done').length}/{uploadQueue.length})
+          </h3>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+            {uploadQueue.map((item, idx) => (
+              <div
+                key={idx}
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '12px',
+                  padding: '10px 14px',
+                  background: item.status === 'error' ? '#fef2f2' : '#f9fafb',
+                  border: `1px solid ${item.status === 'error' ? '#fecaca' : '#e5e7eb'}`,
+                  borderRadius: '8px',
+                }}
+              >
+                {/* Circular progress indicator */}
+                <div style={{ flexShrink: 0, width: '28px', height: '28px', position: 'relative' }}>
+                  {item.status === 'done' && (
+                    <svg width="28" height="28" viewBox="0 0 28 28">
+                      <circle cx="14" cy="14" r="12" fill="#16a34a" />
+                      <path d="M9 14.5l3 3 7-7" stroke="white" strokeWidth="2" fill="none" strokeLinecap="round" strokeLinejoin="round" />
+                    </svg>
+                  )}
+                  {item.status === 'error' && (
+                    <svg width="28" height="28" viewBox="0 0 28 28">
+                      <circle cx="14" cy="14" r="12" fill="#dc2626" />
+                      <path d="M10 10l8 8M18 10l-8 8" stroke="white" strokeWidth="2" strokeLinecap="round" />
+                    </svg>
+                  )}
+                  {item.status === 'pending' && (
+                    <svg width="28" height="28" viewBox="0 0 28 28">
+                      <circle cx="14" cy="14" r="12" fill="none" stroke="#e5e7eb" strokeWidth="2.5" />
+                    </svg>
+                  )}
+                  {(item.status === 'uploading' || item.status === 'processing') && (() => {
+                    const radius = 12
+                    const circumference = 2 * Math.PI * radius
+                    const progress = item.status === 'processing' ? 100 : item.progress
+                    const offset = circumference - (progress / 100) * circumference
+                    return (
+                      <svg width="28" height="28" viewBox="0 0 28 28" style={{ transform: 'rotate(-90deg)' }}>
+                        {/* Background circle */}
+                        <circle cx="14" cy="14" r={radius} fill="none" stroke="#e5e7eb" strokeWidth="2.5" />
+                        {/* Progress circle */}
+                        <circle
+                          cx="14" cy="14" r={radius}
+                          fill="none"
+                          stroke={item.status === 'processing' ? '#6366f1' : '#16a34a'}
+                          strokeWidth="2.5"
+                          strokeDasharray={circumference}
+                          strokeDashoffset={offset}
+                          strokeLinecap="round"
+                          style={{ transition: 'stroke-dashoffset 0.3s ease' }}
+                        />
+                        {item.status === 'processing' && (
+                          <animateTransform
+                            attributeName="transform"
+                            type="rotate"
+                            from="0 14 14"
+                            to="360 14 14"
+                            dur="1.5s"
+                            repeatCount="indefinite"
+                          />
+                        )}
+                      </svg>
+                    )
+                  })()}
+                </div>
+
+                {/* File info */}
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{
+                    fontSize: '13px',
+                    fontWeight: 500,
+                    color: item.status === 'error' ? '#dc2626' : '#1f2937',
+                    whiteSpace: 'nowrap',
+                    overflow: 'hidden',
+                    textOverflow: 'ellipsis',
+                  }}>
+                    {item.file.name}
+                  </div>
+                  <div style={{ fontSize: '11px', color: '#9ca3af', marginTop: '2px' }}>
+                    {item.status === 'pending' && 'В очереди'}
+                    {item.status === 'uploading' && `Загрузка ${item.progress}%`}
+                    {item.status === 'processing' && 'Индексация...'}
+                    {item.status === 'done' && 'Готово'}
+                    {item.status === 'error' && (
+                      <span style={{ color: '#dc2626' }}>{item.error}</span>
+                    )}
+                  </div>
+                </div>
+
+                {/* File size */}
+                <div style={{ fontSize: '11px', color: '#9ca3af', flexShrink: 0 }}>
+                  {formatFileSize(item.file.size)}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
       {/* Files list */}
-      {loading && !uploadProgress && (
+      {loadingList && (
         <div style={{ textAlign: 'center', padding: '20px', color: '#6b7280' }}>
           Загрузка списка файлов...
         </div>
       )}
 
-      {!loading && uploadedFiles.length === 0 && (
-        <div style={{ 
-          textAlign: 'center', 
-          padding: '40px', 
+      {!loadingList && uploadedFiles.length === 0 && uploadQueue.length === 0 && (
+        <div style={{
+          textAlign: 'center',
+          padding: '40px',
           color: '#6b7280',
           border: '2px dashed #e5e7eb',
           borderRadius: '8px',
@@ -194,7 +345,7 @@ const DocumentsUploadStep = ({ caseId, onContinue, onCancel }: DocumentsUploadSt
           <h3 style={{ fontSize: '16px', fontWeight: 600, marginBottom: '16px', color: '#1f2937' }}>
             Загруженные файлы ({uploadedFiles.length})
           </h3>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', maxHeight: '240px', overflowY: 'auto' }}>
             {uploadedFiles.map((file) => (
               <div
                 key={file.id}
@@ -208,11 +359,14 @@ const DocumentsUploadStep = ({ caseId, onContinue, onCancel }: DocumentsUploadSt
                   borderRadius: '8px',
                 }}
               >
-                <div style={{ flex: 1 }}>
-                  <div style={{ 
-                    fontWeight: 500, 
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{
+                    fontWeight: 500,
                     color: '#1f2937',
-                    marginBottom: '4px'
+                    marginBottom: '4px',
+                    whiteSpace: 'nowrap',
+                    overflow: 'hidden',
+                    textOverflow: 'ellipsis',
                   }}>
                     {file.filename}
                   </div>
@@ -227,25 +381,27 @@ const DocumentsUploadStep = ({ caseId, onContinue, onCancel }: DocumentsUploadSt
                     e.stopPropagation()
                     handleDeleteFile(file.id, file.filename)
                   }}
-                  disabled={deletingFileId === file.id}
+                  disabled={deletingFileId === file.id || isUploading}
                   style={{
+                    flexShrink: 0,
+                    marginLeft: '12px',
                     padding: '8px 16px',
-                    background: deletingFileId === file.id ? '#f3f4f6' : '#ef4444',
-                    color: deletingFileId === file.id ? '#9ca3af' : 'white',
+                    background: (deletingFileId === file.id || isUploading) ? '#f3f4f6' : '#ef4444',
+                    color: (deletingFileId === file.id || isUploading) ? '#9ca3af' : 'white',
                     border: 'none',
                     borderRadius: '6px',
-                    cursor: deletingFileId === file.id ? 'not-allowed' : 'pointer',
+                    cursor: (deletingFileId === file.id || isUploading) ? 'not-allowed' : 'pointer',
                     fontSize: '14px',
                     fontWeight: 500,
                     transition: 'all 0.2s',
                   }}
                   onMouseEnter={(e) => {
-                    if (deletingFileId !== file.id) {
+                    if (deletingFileId !== file.id && !isUploading) {
                       e.currentTarget.style.background = '#dc2626'
                     }
                   }}
                   onMouseLeave={(e) => {
-                    if (deletingFileId !== file.id) {
+                    if (deletingFileId !== file.id && !isUploading) {
                       e.currentTarget.style.background = '#ef4444'
                     }
                   }}
@@ -260,31 +416,37 @@ const DocumentsUploadStep = ({ caseId, onContinue, onCancel }: DocumentsUploadSt
 
       {/* Actions */}
       <div className="upload-form-actions">
-        <button 
-          type="button" 
-          className="upload-button-secondary" 
+        <button
+          type="button"
+          className="upload-button-secondary"
           onClick={onCancel}
-          disabled={loading}
+          disabled={isUploading}
         >
           Отменить
         </button>
-        <button 
+        <button
           type="button"
-          className="upload-button-primary" 
+          className="upload-button-primary"
           onClick={onContinue}
-          disabled={loading || uploadedFiles.length === 0}
+          disabled={hasActiveUploads || uploadedFiles.length === 0}
           style={{
-            opacity: (loading || uploadedFiles.length === 0) ? 0.5 : 1,
-            cursor: (loading || uploadedFiles.length === 0) ? 'not-allowed' : 'pointer',
+            opacity: (hasActiveUploads || uploadedFiles.length === 0) ? 0.5 : 1,
+            cursor: (hasActiveUploads || uploadedFiles.length === 0) ? 'not-allowed' : 'pointer',
           }}
         >
           Продолжить
         </button>
       </div>
+
+      {/* Inline keyframes for spinner */}
+      <style>{`
+        @keyframes spin {
+          from { transform: rotate(0deg); }
+          to { transform: rotate(360deg); }
+        }
+      `}</style>
     </div>
   )
 }
 
 export default DocumentsUploadStep
-
-

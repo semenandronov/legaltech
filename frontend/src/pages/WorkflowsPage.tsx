@@ -33,7 +33,10 @@ import {
   Target,
   Globe,
   Database,
-  FileSearch
+  FileSearch,
+  MoreVertical,
+  Edit3,
+  Trash2,
 } from 'lucide-react'
 import { toast } from 'sonner'
 import UnifiedSidebar from '../components/Layout/UnifiedSidebar'
@@ -42,6 +45,8 @@ import { getCaseFiles, addFilesToCase } from '../services/api'
 import type { WorkflowDefinition, WorkflowExecution, WorkflowEvent } from '../services/workflowsApi'
 import { WorkflowPlanningPhase } from '../components/Workflows/WorkflowPlanningPhase'
 import { WorkflowExecutionPanel } from '../components/Workflows/WorkflowExecutionPanel'
+import { WorkflowFormDialog } from '../components/Workflows/WorkflowFormDialog'
+import { WorkflowResultsView } from '../components/Workflows/WorkflowResultsView'
 import { savePendingWorkflowResult, WorkflowResultData } from '../services/workflowResultsService'
 
 // Иконки для инструментов workflow
@@ -60,16 +65,22 @@ const toolIcons: Record<string, React.ReactNode> = {
 const WorkflowCard = ({
   workflow,
   onRun,
+  onEdit,
+  onDelete,
   stats
 }: {
   workflow: WorkflowDefinition
   onRun: () => void
+  onEdit?: () => void
+  onDelete?: () => void
   stats?: { runs: number; avgTime: string; lastRun?: string }
 }) => {
+  const [menuOpen, setMenuOpen] = useState(false)
+
   return (
-    <div 
-      className="rounded-xl border p-5 transition-all hover:border-accent/50 hover:shadow-lg"
-      style={{ 
+    <div
+      className="rounded-xl border p-5 transition-all hover:border-accent/50 hover:shadow-lg relative"
+      style={{
         backgroundColor: 'var(--color-bg-secondary)',
         borderColor: 'var(--color-border)'
       }}
@@ -77,7 +88,7 @@ const WorkflowCard = ({
       {/* Header */}
       <div className="flex items-start justify-between mb-3">
         <div className="flex items-center gap-3">
-          <div 
+          <div
             className="w-12 h-12 rounded-xl flex items-center justify-center"
             style={{ backgroundColor: 'rgba(99, 102, 241, 0.15)' }}
           >
@@ -92,6 +103,59 @@ const WorkflowCard = ({
             </p>
           </div>
         </div>
+
+        {/* Context Menu */}
+        {!workflow.is_system && (
+          <div className="relative">
+            <button
+              onClick={() => setMenuOpen(!menuOpen)}
+              className="p-1.5 rounded-lg hover:bg-black/5 transition-colors"
+              style={{ color: 'var(--color-text-tertiary)' }}
+            >
+              <MoreVertical className="w-4 h-4" />
+            </button>
+            {menuOpen && (
+              <>
+                <div className="fixed inset-0 z-10" onClick={() => setMenuOpen(false)} />
+                <div
+                  className="absolute right-0 top-8 z-20 w-44 rounded-lg border shadow-lg py-1 overflow-hidden"
+                  style={{
+                    backgroundColor: 'var(--color-bg-primary)',
+                    borderColor: 'var(--color-border)',
+                  }}
+                >
+                  <button
+                    onClick={() => { setMenuOpen(false); onRun() }}
+                    className="w-full flex items-center gap-2 px-3 py-2 text-sm hover:bg-black/5 text-left"
+                    style={{ color: 'var(--color-text-primary)' }}
+                  >
+                    <Play className="w-4 h-4" />
+                    Запустить
+                  </button>
+                  {onEdit && (
+                    <button
+                      onClick={() => { setMenuOpen(false); onEdit() }}
+                      className="w-full flex items-center gap-2 px-3 py-2 text-sm hover:bg-black/5 text-left"
+                      style={{ color: 'var(--color-text-primary)' }}
+                    >
+                      <Edit3 className="w-4 h-4" />
+                      Редактировать
+                    </button>
+                  )}
+                  {onDelete && (
+                    <button
+                      onClick={() => { setMenuOpen(false); onDelete() }}
+                      className="w-full flex items-center gap-2 px-3 py-2 text-sm hover:bg-red-50 text-left text-red-600"
+                    >
+                      <Trash2 className="w-4 h-4" />
+                      Удалить
+                    </button>
+                  )}
+                </div>
+              </>
+            )}
+          </div>
+        )}
       </div>
 
       {/* Description */}
@@ -762,292 +826,6 @@ const AVAILABLE_TOOLS = [
   { name: 'risk_analysis', display_name: 'Risk Analysis', description: 'Анализ рисков', icon: AlertTriangle },
 ]
 
-const WORKFLOW_CATEGORIES = [
-  { name: 'due_diligence', display_name: 'Due Diligence', description: 'Анализ документов для M&A сделок' },
-  { name: 'litigation', display_name: 'Litigation Discovery', description: 'Подготовка к судебным разбирательствам' },
-  { name: 'compliance', display_name: 'Compliance Update', description: 'Проверка соответствия требованиям' },
-  { name: 'research', display_name: 'Legal Research', description: 'Юридическое исследование' },
-  { name: 'contract_analysis', display_name: 'Contract Analysis', description: 'Глубокий анализ контрактов' },
-  { name: 'custom', display_name: 'Пользовательский', description: 'Произвольный workflow' },
-]
-
-// Диалог создания Workflow
-const CreateWorkflowDialog = ({
-  onClose,
-  onCreated
-}: {
-  onClose: () => void
-  onCreated: (workflow: WorkflowDefinition) => void
-}) => {
-  const [form, setForm] = useState({
-    name: '',
-    display_name: '',
-    description: '',
-    category: 'custom',
-    available_tools: [] as string[],
-    is_public: false,
-    requires_approval: false,
-    max_steps: 50,
-    timeout_minutes: 60
-  })
-  const [saving, setSaving] = useState(false)
-
-  const handleToolToggle = (toolName: string) => {
-    setForm(prev => ({
-      ...prev,
-      available_tools: prev.available_tools.includes(toolName)
-        ? prev.available_tools.filter(t => t !== toolName)
-        : [...prev.available_tools, toolName]
-    }))
-  }
-
-  const handleSave = async () => {
-    if (!form.display_name.trim()) {
-      toast.error('Введите название workflow')
-      return
-    }
-    if (form.available_tools.length === 0) {
-      toast.error('Выберите хотя бы один инструмент')
-      return
-    }
-
-    setSaving(true)
-    try {
-      const name = form.name || form.display_name.toLowerCase().replace(/\s+/g, '_').replace(/[^a-z0-9_]/g, '')
-      const workflow = await workflowsApi.createDefinition({
-        name: `${name}_${Date.now()}`,
-        display_name: form.display_name,
-        description: form.description,
-        category: form.category,
-        available_tools: form.available_tools,
-        is_public: form.is_public
-      })
-      toast.success('Workflow создан')
-      onCreated(workflow)
-      onClose()
-    } catch (error: any) {
-      console.error('Failed to create workflow:', error)
-      toast.error(error.response?.data?.detail || 'Ошибка создания workflow')
-    } finally {
-      setSaving(false)
-    }
-  }
-
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
-      <div 
-        className="w-full max-w-2xl max-h-[90vh] rounded-xl shadow-xl flex flex-col overflow-hidden"
-        style={{ backgroundColor: 'var(--color-bg-primary)' }}
-      >
-        {/* Header */}
-        <div 
-          className="flex items-center justify-between p-5 border-b shrink-0"
-          style={{ borderColor: 'var(--color-border)' }}
-        >
-          <div className="flex items-center gap-3">
-            <div 
-              className="w-10 h-10 rounded-lg flex items-center justify-center"
-              style={{ backgroundColor: 'rgba(99, 102, 241, 0.15)' }}
-            >
-              <Plus className="w-5 h-5" style={{ color: 'var(--color-accent)' }} />
-            </div>
-            <div>
-              <h2 className="text-lg font-semibold" style={{ color: 'var(--color-text-primary)' }}>
-                Создать Workflow
-              </h2>
-              <p className="text-sm" style={{ color: 'var(--color-text-secondary)' }}>
-                Создайте свой процесс обработки документов
-              </p>
-            </div>
-          </div>
-          <button 
-            onClick={onClose}
-            className="p-2 rounded-lg hover:bg-bg-hover"
-            style={{ color: 'var(--color-text-secondary)' }}
-          >
-            <X className="w-5 h-5" />
-          </button>
-        </div>
-
-        {/* Content */}
-        <div className="flex-1 overflow-y-auto p-5 space-y-6">
-          {/* Name */}
-          <div>
-            <label className="block text-sm font-medium mb-2" style={{ color: 'var(--color-text-primary)' }}>
-              Название *
-            </label>
-            <input
-              type="text"
-              value={form.display_name}
-              onChange={(e) => setForm({ ...form, display_name: e.target.value })}
-              placeholder="Например: Due Diligence для арендных договоров"
-              className="w-full px-4 py-2.5 rounded-lg border text-sm"
-              style={{
-                backgroundColor: 'var(--color-bg-secondary)',
-                borderColor: 'var(--color-border)',
-                color: 'var(--color-text-primary)'
-              }}
-            />
-          </div>
-
-          {/* Description */}
-          <div>
-            <label className="block text-sm font-medium mb-2" style={{ color: 'var(--color-text-primary)' }}>
-              Описание
-            </label>
-            <textarea
-              value={form.description}
-              onChange={(e) => setForm({ ...form, description: e.target.value })}
-              placeholder="Опишите что делает этот workflow..."
-              rows={3}
-              className="w-full px-4 py-2.5 rounded-lg border text-sm resize-none"
-              style={{
-                backgroundColor: 'var(--color-bg-secondary)',
-                borderColor: 'var(--color-border)',
-                color: 'var(--color-text-primary)'
-              }}
-            />
-          </div>
-
-          {/* Category */}
-          <div>
-            <label className="block text-sm font-medium mb-2" style={{ color: 'var(--color-text-primary)' }}>
-              Категория
-            </label>
-            <div className="grid grid-cols-2 gap-2">
-              {WORKFLOW_CATEGORIES.map(cat => (
-                <button
-                  key={cat.name}
-                  className="p-3 rounded-lg border text-left transition-colors"
-                  style={{ 
-                    backgroundColor: form.category === cat.name 
-                      ? 'rgba(99, 102, 241, 0.1)' 
-                      : 'var(--color-bg-secondary)',
-                    borderColor: form.category === cat.name 
-                      ? 'var(--color-accent)' 
-                      : 'var(--color-border)'
-                  }}
-                  onClick={() => setForm({ ...form, category: cat.name })}
-                >
-                  <div className="font-medium text-sm" style={{ color: 'var(--color-text-primary)' }}>
-                    {cat.display_name}
-                  </div>
-                  <div className="text-xs mt-0.5" style={{ color: 'var(--color-text-tertiary)' }}>
-                    {cat.description}
-                  </div>
-                </button>
-              ))}
-            </div>
-          </div>
-
-          {/* Tools */}
-          <div>
-            <label className="block text-sm font-medium mb-2" style={{ color: 'var(--color-text-primary)' }}>
-              Инструменты * <span className="font-normal" style={{ color: 'var(--color-text-tertiary)' }}>({form.available_tools.length} выбрано)</span>
-            </label>
-            <div className="grid grid-cols-2 gap-2">
-              {AVAILABLE_TOOLS.map(tool => {
-                const ToolIcon = tool.icon
-                const isSelected = form.available_tools.includes(tool.name)
-                return (
-                  <button
-                    key={tool.name}
-                    className="flex items-center gap-3 p-3 rounded-lg border text-left transition-colors"
-                    style={{ 
-                      backgroundColor: isSelected 
-                        ? 'rgba(99, 102, 241, 0.1)' 
-                        : 'var(--color-bg-secondary)',
-                      borderColor: isSelected 
-                        ? 'var(--color-accent)' 
-                        : 'var(--color-border)'
-                    }}
-                    onClick={() => handleToolToggle(tool.name)}
-                  >
-                    <div 
-                      className="w-8 h-8 rounded-lg flex items-center justify-center shrink-0"
-                      style={{ 
-                        backgroundColor: isSelected ? 'var(--color-accent)' : 'var(--color-bg-hover)',
-                        color: isSelected ? 'white' : 'var(--color-text-secondary)'
-                      }}
-                    >
-                      <ToolIcon className="w-4 h-4" />
-                    </div>
-                    <div className="min-w-0">
-                      <div className="font-medium text-sm truncate" style={{ color: 'var(--color-text-primary)' }}>
-                        {tool.display_name}
-                      </div>
-                      <div className="text-xs truncate" style={{ color: 'var(--color-text-tertiary)' }}>
-                        {tool.description}
-                      </div>
-                    </div>
-                  </button>
-                )
-              })}
-            </div>
-          </div>
-
-          {/* Options */}
-          <div className="flex items-center gap-6">
-            <label className="flex items-center gap-2 cursor-pointer">
-              <input
-                type="checkbox"
-                checked={form.is_public}
-                onChange={(e) => setForm({ ...form, is_public: e.target.checked })}
-                className="w-4 h-4 rounded"
-              />
-              <span className="text-sm" style={{ color: 'var(--color-text-primary)' }}>
-                Публичный workflow
-              </span>
-            </label>
-
-            <label className="flex items-center gap-2 cursor-pointer">
-              <input
-                type="checkbox"
-                checked={form.requires_approval}
-                onChange={(e) => setForm({ ...form, requires_approval: e.target.checked })}
-                className="w-4 h-4 rounded"
-              />
-              <span className="text-sm" style={{ color: 'var(--color-text-primary)' }}>
-                Требует одобрения плана
-              </span>
-            </label>
-          </div>
-        </div>
-
-        {/* Footer */}
-        <div 
-          className="flex items-center justify-end gap-3 p-5 border-t shrink-0"
-          style={{ borderColor: 'var(--color-border)' }}
-        >
-          <button
-            onClick={onClose}
-            className="px-4 py-2 rounded-lg text-sm font-medium"
-            style={{ 
-              backgroundColor: 'var(--color-bg-secondary)',
-              color: 'var(--color-text-primary)' 
-            }}
-          >
-            Отмена
-          </button>
-          <button
-            onClick={handleSave}
-            disabled={saving || !form.display_name.trim() || form.available_tools.length === 0}
-            className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium disabled:opacity-50"
-            style={{ backgroundColor: 'var(--color-accent)', color: 'white' }}
-          >
-            {saving ? (
-              <Loader2 className="w-4 h-4 animate-spin" />
-            ) : (
-              <Plus className="w-4 h-4" />
-            )}
-            Создать Workflow
-          </button>
-        </div>
-      </div>
-    </div>
-  )
-}
-
 // Главная страница
 export default function WorkflowsPage() {
   const { caseId } = useParams<{ caseId: string }>()
@@ -1064,7 +842,9 @@ export default function WorkflowsPage() {
   const [runningExecution, setRunningExecution] = useState<WorkflowExecution | null>(null)
   const [executionEvents, setExecutionEvents] = useState<WorkflowEvent[]>([])
   const [showCreateDialog, setShowCreateDialog] = useState(false)
-  
+  const [editingWorkflow, setEditingWorkflow] = useState<WorkflowDefinition | null>(null)
+  const [viewingExecutionId, setViewingExecutionId] = useState<string | null>(null)
+
   // Planning Phase
   const [showPlanningPhase, setShowPlanningPhase] = useState(false)
   const [planningLoading, setPlanningLoading] = useState(false)
@@ -1143,23 +923,49 @@ export default function WorkflowsPage() {
 
   // Генерация плана через реальный API
   const generateWorkflowPlan = async (workflow: WorkflowDefinition, documents: string[], _options: Record<string, any>) => {
+    // Если у workflow есть настроенные шаги — используем их напрямую
+    const configuredSteps = workflow.config?.steps
+    if (configuredSteps && configuredSteps.length > 0) {
+      const steps = configuredSteps.map((step, idx) => ({
+        id: step.id || `step_${idx + 1}`,
+        tool: step.tool,
+        tool_display_name: AVAILABLE_TOOLS.find(t => t.name === step.tool)?.display_name || step.tool,
+        description: step.description || getToolDescription(step.tool, documents),
+        estimated_time: getEstimatedTime(step.tool),
+        dependencies: step.depends_on || (idx > 0 ? [`step_${idx}`] : []),
+        reasoning: getToolReasoning(step.tool),
+        parameters: step.params || {}
+      }))
+
+      return {
+        id: `plan_${Date.now()}`,
+        workflow_id: workflow.id,
+        workflow_name: workflow.display_name,
+        goal: workflow.description || `Обработка ${documents.length} документов с помощью ${workflow.display_name}`,
+        strategy: `Выполнение ${steps.length} настроенных шагов для анализа документов`,
+        steps,
+        total_estimated_time: calculateTotalTime(steps),
+        confidence_score: 90,
+        created_at: new Date().toISOString()
+      }
+    }
+
+    // Нет настроенных шагов — вызываем API для автоматического планирования
     try {
-      // Вызываем реальный API для генерации плана
       const planResponse = await workflowsApi.createPlan({
         definition_id: workflow.id,
         user_task: `Выполнить workflow "${workflow.display_name}" для анализа ${documents.length} документов`,
         case_id: caseId || undefined,
         file_ids: documents
       })
-      
-      // Преобразуем ответ API в формат для UI
+
       const planData = planResponse.plan
       const steps = (planData.steps || []).map((step: any, idx: number) => ({
         id: step.id || `step_${idx + 1}`,
         tool: step.tool_name || step.tool,
         tool_display_name: AVAILABLE_TOOLS.find(t => t.name === (step.tool_name || step.tool))?.display_name || step.name,
         description: step.description || getToolDescription(step.tool_name || step.tool, documents),
-        estimated_time: step.estimated_duration_seconds 
+        estimated_time: step.estimated_duration_seconds
           ? `${Math.ceil(step.estimated_duration_seconds / 60)} мин`
           : getEstimatedTime(step.tool_name || step.tool),
         dependencies: step.depends_on || [],
@@ -1167,8 +973,7 @@ export default function WorkflowsPage() {
         parameters: step.tool_params || {}
       }))
 
-      // Извлекаем goal из goals массива если есть
-      const goalText = planData.goals && planData.goals.length > 0 
+      const goalText = planData.goals && planData.goals.length > 0
         ? planData.goals.map((g: any) => g.description).join('; ')
         : `Обработка ${documents.length} документов с помощью ${workflow.display_name}`
 
@@ -1179,7 +984,7 @@ export default function WorkflowsPage() {
         goal: goalText,
         strategy: planData.summary || `Последовательное выполнение ${steps.length} шагов для комплексного анализа документов`,
         steps,
-        total_estimated_time: planResponse.estimated_duration_seconds 
+        total_estimated_time: planResponse.estimated_duration_seconds
           ? `${Math.ceil(planResponse.estimated_duration_seconds / 60)} мин`
           : calculateTotalTime(steps),
         confidence_score: planResponse.is_valid ? 90 : 70,
@@ -1187,7 +992,7 @@ export default function WorkflowsPage() {
       }
     } catch (error) {
       console.error('API plan generation failed, using fallback:', error)
-      // Fallback на локальную генерацию если API недоступен
+      // Fallback: генерируем шаги из available_tools
       const tools = workflow.available_tools || ['rag_search', 'summarize']
       const steps = tools.map((tool, idx) => ({
         id: `step_${idx + 1}`,
@@ -1746,6 +1551,17 @@ export default function WorkflowsPage() {
                   key={workflow.id}
                   workflow={workflow}
                   onRun={() => setSelectedWorkflow(workflow)}
+                  onEdit={() => setEditingWorkflow(workflow)}
+                  onDelete={async () => {
+                    if (!confirm(`Удалить "${workflow.display_name}"?`)) return
+                    try {
+                      await workflowsApi.deleteDefinition(workflow.id)
+                      setWorkflows(prev => prev.filter(w => w.id !== workflow.id))
+                      toast.success('Workflow удалён')
+                    } catch (error: any) {
+                      toast.error(error.response?.data?.detail || 'Ошибка удаления')
+                    }
+                  }}
                 />
               ))}
 
@@ -1839,6 +1655,18 @@ export default function WorkflowsPage() {
                     </div>
                   </div>
                   <div className="flex items-center gap-3">
+                    {/* Details button */}
+                    <button
+                      onClick={() => setViewingExecutionId(exec.id)}
+                      className="flex items-center gap-1 px-3 py-1.5 rounded-lg text-sm"
+                      style={{
+                        backgroundColor: 'var(--color-bg-hover)',
+                        color: 'var(--color-text-primary)'
+                      }}
+                    >
+                      <Eye className="w-4 h-4" />
+                      Подробнее
+                    </button>
                     {exec.status === 'completed' && (
                       <button
                         onClick={() => {
@@ -2000,12 +1828,61 @@ export default function WorkflowsPage() {
         />
       )}
 
-      {/* Create Workflow Dialog */}
-      {showCreateDialog && (
-        <CreateWorkflowDialog
-          onClose={() => setShowCreateDialog(false)}
-          onCreated={(workflow) => {
-            setWorkflows(prev => [workflow, ...prev])
+      {/* Create / Edit Workflow Dialog */}
+      {(showCreateDialog || editingWorkflow) && (
+        <WorkflowFormDialog
+          mode={editingWorkflow ? 'edit' : 'create'}
+          workflow={editingWorkflow}
+          onClose={() => {
+            setShowCreateDialog(false)
+            setEditingWorkflow(null)
+          }}
+          onSaved={(workflow) => {
+            if (editingWorkflow) {
+              setWorkflows(prev => prev.map(w => w.id === workflow.id ? workflow : w))
+            } else {
+              setWorkflows(prev => [workflow, ...prev])
+            }
+            setEditingWorkflow(null)
+            setShowCreateDialog(false)
+          }}
+        />
+      )}
+
+      {/* Workflow Results View */}
+      {viewingExecutionId && (
+        <WorkflowResultsView
+          executionId={viewingExecutionId}
+          onClose={() => setViewingExecutionId(null)}
+          onOpenInChat={(execId) => {
+            const exec = executions.find(e => e.id === execId)
+            if (exec && caseId) {
+              const result: WorkflowResultData = {
+                execution_id: exec.id,
+                workflow_id: exec.definition_id || '',
+                workflow_name: exec.workflow_name || 'Workflow',
+                case_id: caseId,
+                status: exec.status === 'completed' ? 'completed' : 'failed',
+                summary: exec.summary || `Результаты выполнения workflow "${exec.workflow_name}"`,
+                documents_processed: exec.documents_processed || 0,
+                elapsed_time: exec.elapsed_time || 'н/д',
+                started_at: exec.started_at,
+                completed_at: exec.completed_at || new Date().toISOString(),
+                artifacts: exec.artifacts || { reports: [], tables: [], documents: [], checks: [] },
+                results: exec.results || {},
+                steps_completed: exec.total_steps_completed || 0,
+                total_steps: exec.total_steps_completed || 0,
+              }
+              savePendingWorkflowResult(result)
+              setViewingExecutionId(null)
+              navigate(`/cases/${caseId}/chat`)
+              toast.success('Открываем результаты в чате...')
+            }
+          }}
+          onRerun={(defId) => {
+            setViewingExecutionId(null)
+            const wf = workflows.find(w => w.id === defId)
+            if (wf) setSelectedWorkflow(wf)
           }}
         />
       )}

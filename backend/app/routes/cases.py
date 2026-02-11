@@ -418,15 +418,41 @@ async def delete_case(
     # PGVector documents are automatically deleted via CASCADE in database schema
     
     try:
-        # Удаляем кейс из БД
-        # CASCADE удалит связанные записи (files, document_chunks, chat_messages и т.д.)
+        # Вручную удаляем зависимые записи (на случай если CASCADE не применился в миграции)
+        from sqlalchemy import text
+        dependent_tables = [
+            "document_versions", "editor_documents",
+            "tabular_reviews", "agent_interactions", "agent_interaction_steps",
+            "workflow_executions", "folder_items", "folders",
+            "playbook_validations",
+            "analysis_results", "discrepancies", "timeline_events",
+            "document_chunks", "document_classifications",
+            "extracted_entities", "privilege_checks", "risks", "analysis_plans",
+            "chat_messages",
+        ]
+        for table_name in dependent_tables:
+            try:
+                db.execute(text(f"SAVEPOINT sp_{table_name}"))
+                db.execute(text(f'DELETE FROM {table_name} WHERE case_id = :cid'), {"cid": case_id})
+                db.execute(text(f"RELEASE SAVEPOINT sp_{table_name}"))
+            except Exception:
+                db.execute(text(f"ROLLBACK TO SAVEPOINT sp_{table_name}"))
+
+        # Также удаляем файлы с диска
+        for f in case.files:
+            if f.file_path:
+                import os
+                try:
+                    os.remove(f.file_path)
+                except OSError:
+                    pass
+
         db.delete(case)
         db.commit()
-        
-        logger.info(f"✅ Deleted case {case_id} and associated Yandex resources")
-        
+
+        logger.info(f"Deleted case {case_id} and all associated data")
+
     except HTTPException:
-        # Пробрасываем HTTPException как есть
         raise
     except Exception as e:
         db.rollback()
@@ -815,8 +841,9 @@ async def add_files_to_case(
                     if len(sanitized_full_text) > MAX_TEXT_LENGTH:
                         sanitized_full_text = sanitized_full_text[:MAX_TEXT_LENGTH]
                     case.full_text = sanitized_full_text
+                    case.status = "completed"
                     db.commit()
-                    logger.info(f"Updated case {case_id} full_text with all files")
+                    logger.info(f"Updated case {case_id} full_text with all files, status=completed")
                     
             except Exception as index_error:
                 logger.error(f"Error indexing files in PGVector for case {case_id}: {index_error}", exc_info=True)

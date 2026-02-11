@@ -17,7 +17,8 @@ from app.services.workflows.execution_engine import ExecutionEngine, ExecutionEv
 from app.services.workflows.planning_agent import PlanningAgent
 from app.services.workflows.tool_registry import ToolRegistry
 from app.services.workflows.result_validator import ResultValidator
-from app.routes.auth import get_current_user, get_db
+from app.utils.database import get_db
+from app.utils.auth import get_current_user
 from app.models.user import User
 from datetime import datetime
 import logging

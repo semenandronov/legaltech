@@ -20,6 +20,7 @@ interface SettingsPanelProps {
   className?: string
   variant?: 'default' | 'compact'
   style?: React.CSSProperties
+  hideDraft?: boolean
 }
 
 export const SettingsPanel: React.FC<SettingsPanelProps> = ({
@@ -34,6 +35,7 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({
   className = '',
   variant = 'default',
   style,
+  hideDraft = false,
 }) => {
   // Обработчик для глубокого размышления - выключает другие функции
   const handleDeepThinkChange = (checked: boolean) => {
@@ -68,7 +70,7 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({
     onDraftModeChange(checked)
   }
 
-  const settings = [
+  const allSettings = [
     // Веб-поиск отключен - убран из списка
     {
       id: 'deepThink',
@@ -95,6 +97,8 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({
       onChange: handleDraftModeChange,
     },
   ]
+
+  const settings = hideDraft ? allSettings.filter(s => s.id !== 'draftMode') : allSettings
 
   return (
     <TooltipProvider delayDuration={200}>

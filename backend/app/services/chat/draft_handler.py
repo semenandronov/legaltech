@@ -2,9 +2,9 @@
 Draft Handler - Обработчик создания документов (Draft Mode)
 
 Отвечает за:
-- Создание документов через template graph
-- Поиск шаблонов в кэше и ГАРАНТ
-- Адаптацию шаблонов под запрос
+- Создание документов через LLM
+- Поддержку файлов-шаблонов
+- Сохранение в редакторе документов
 """
 from typing import AsyncGenerator, Optional, List, Dict, Any
 from sqlalchemy.orm import Session
@@ -22,22 +22,13 @@ logger = logging.getLogger(__name__)
 class DraftHandler:
     """
     Обработчик Draft Mode (создание документов).
-    
-    Использует template graph для:
-    1. Поиска шаблона (кэш → ГАРАНТ)
-    2. Адаптации под контекст дела
-    3. Создания документа в редакторе
+
+    Генерирует документ через LLM и сохраняет в DocumentEditorService.
     """
-    
+
     def __init__(self, db: Session):
-        """
-        Инициализация обработчика
-        
-        Args:
-            db: SQLAlchemy сессия
-        """
         self.db = db
-    
+
     async def handle(
         self,
         case_id: str,
@@ -48,108 +39,136 @@ class DraftHandler:
         template_file_content: Optional[str] = None
     ) -> AsyncGenerator[str, None]:
         """
-        Обработать запрос на создание документа
-        
-        Args:
-            case_id: ID дела
-            question: Описание документа
-            current_user: Текущий пользователь
-            chat_history: История чата (для контекста)
-            template_file_id: ID файла-шаблона (из БД)
-            template_file_content: HTML контент локального файла
-            
+        Обработать запрос на создание документа.
+
         Yields:
             SSE события
         """
         try:
             logger.info(f"[DraftHandler] Creating document for case {case_id}: {question[:100]}…")
-            logger.info(f"[DraftHandler] Template file ID: {template_file_id}, content length: {len(template_file_content) if template_file_content else 0}")
-            
-            # Извлекаем название документа
+
+            yield SSESerializer.reasoning(
+                phase="draft",
+                step=1,
+                total_steps=3,
+                content="Определяю название документа..."
+            )
+
+            # 1. Извлекаем название документа
             document_title = await self._extract_document_title(question)
-            
-            # Создаём и запускаем template graph
-            from app.services.langchain_agents.legacy_stubs import create_template_graph, TemplateState
-            
-            graph = create_template_graph(self.db)
-            
-            # Инициализируем состояние
-            initial_state: TemplateState = {
-                "user_query": question,
-                "case_id": case_id,
-                "user_id": current_user.id,
-                "cached_template": None,
-                "garant_template": None,
-                "template_source": None,
-                "final_template": None,
-                "adapted_content": None,
-                "document_id": None,
-                "messages": [],
-                "errors": [],
-                "metadata": {},
-                "should_adapt": False,  # В draft mode возвращаем пустой шаблон
-                "document_title": document_title,
-                "template_file_id": template_file_id,
-                "template_file_content": template_file_content,
-                "case_context": None,
-                "chat_history": chat_history
-            }
-            
-            # Запускаем граф
-            logger.info("[DraftHandler] Running template graph…")
-            result = await graph.ainvoke(initial_state)
-            
-            # Проверяем результат
-            if not result.get("document_id"):
-                if result.get("errors"):
-                    error_msg = "; ".join(result["errors"])
-                    logger.error(f"[DraftHandler] Graph errors: {error_msg}")
-                    yield SSESerializer.error(f"Ошибка создания документа: {error_msg}")
-                    return
-                else:
-                    yield SSESerializer.error("Не удалось создать документ")
-                    return
-            
-            # Логируем некритичные ошибки
-            if result.get("errors"):
-                critical_errors = [
-                    err for err in result["errors"]
-                    if "Нет содержимого" in err or "Ошибка при создании" in err
-                ]
-                if critical_errors:
-                    yield SSESerializer.error("; ".join(critical_errors))
-                    return
-                else:
-                    logger.warning(f"[DraftHandler] Non-critical warnings: {result['errors']}")
-            
-            # Получаем созданный документ
-            from app.services.document_editor_service import DocumentEditorService
-            
-            doc_service = DocumentEditorService(self.db)
-            document = doc_service.get_document(result["document_id"], current_user.id)
-            
-            if not document:
-                yield SSESerializer.error("Созданный документ не найден")
+
+            yield SSESerializer.reasoning(
+                phase="draft",
+                step=2,
+                total_steps=3,
+                content="Генерирую содержимое документа..."
+            )
+
+            # 2. Генерируем содержимое документа
+            content = await self._generate_document_content(
+                question=question,
+                title=document_title,
+                template_file_id=template_file_id,
+                template_file_content=template_file_content,
+                case_id=case_id,
+            )
+
+            if not content:
+                yield SSESerializer.error("Не удалось сгенерировать содержимое документа")
                 return
-            
-            logger.info(f"[DraftHandler] Document created: {document.id} (source: {result.get('template_source', 'unknown')})")
-            
-            # Отправляем событие о создании документа
-            doc_preview = document.content[:500] if document.content else ''
+
+            yield SSESerializer.reasoning(
+                phase="draft",
+                step=3,
+                total_steps=3,
+                content="Сохраняю документ..."
+            )
+
+            # 3. Сохраняем документ
+            from app.services.document_editor_service import DocumentEditorService
+
+            doc_service = DocumentEditorService(self.db)
+            document = doc_service.create_document(
+                case_id=case_id,
+                user_id=current_user.id,
+                title=document_title,
+                content=content
+            )
+
+            logger.info(f"[DraftHandler] Document created: {document.id}")
+
+            # 4. Отправляем событие о создании документа
+            doc_preview = content[:500] if content else ''
             yield SSESerializer.document_created(
-                doc_id=document.id,
+                doc_id=str(document.id),
                 title=document.title,
-                case_id=document.case_id,
+                case_id=case_id,
                 content=doc_preview
             )
-            
-            # Отправляем текстовое сообщение
+
             response_text = f'✅ Документ "{document.title}" успешно создан! Вы можете открыть его в редакторе для дальнейшего редактирования.'
             yield SSESerializer.text_delta(response_text)
-            
+
         except Exception as e:
             logger.error(f"[DraftHandler] Error: {e}", exc_info=True)
             yield SSESerializer.error(f"Ошибка при создании документа: {str(e)}")
+
+    async def _generate_document_content(
+        self,
+        question: str,
+        title: str,
+        template_file_id: Optional[str] = None,
+        template_file_content: Optional[str] = None,
+        case_id: Optional[str] = None,
+    ) -> Optional[str]:
+        """Сгенерировать HTML содержимое документа через LLM"""
+        try:
+            from app.services.llm_factory import create_legal_llm
+            from langchain_core.messages import HumanMessage
+
+            llm = create_legal_llm(temperature=0.2)
+
+            # Собираем контекст шаблона
+            template_context = ""
+            if template_file_content:
+                template_context = f"\n\nШАБЛОН ДОКУМЕНТА (используй его как основу):\n{template_file_content[:5000]}"
+            elif template_file_id:
+                # Загружаем шаблон из БД
+                try:
+                    from app.models.case import File as FileModel
+                    file_record = self.db.query(FileModel).filter(FileModel.id == template_file_id).first()
+                    if file_record and file_record.content:
+                        template_context = f"\n\nШАБЛОН ДОКУМЕНТА (используй его как основу):\n{file_record.content[:5000]}"
+                except Exception as e:
+                    logger.warning(f"[DraftHandler] Failed to load template file: {e}")
+
+            prompt = f"""Создай юридический документ на основе описания пользователя.
+
+НАЗВАНИЕ: {title}
+ОПИСАНИЕ: {question}
+{template_context}
+
+ИНСТРУКЦИИ:
+- Создай профессиональный юридический документ в формате HTML
+- Используй стандартную структуру для данного типа документа
+- Включи все необходимые разделы
+- Поля для заполнения отметь как [ЗАПОЛНИТЬ]
+- Даты, суммы и имена которые неизвестны — отметь как [ЗАПОЛНИТЬ]
+- Используй HTML-теги для форматирования (h1, h2, p, ul, li, table и т.д.)
+
+Ответь только HTML-кодом документа без дополнительных комментариев."""
+
+            response = llm.invoke([HumanMessage(content=prompt)])
+            content = response.content if hasattr(response, 'content') else str(response)
+
+            if not content or len(content.strip()) < 50:
+                return None
+
+            return content.strip()
+
+        except Exception as e:
+            logger.error(f"[DraftHandler] Error generating content: {e}", exc_info=True)
+            return None
     
     async def _extract_document_title(self, question: str) -> str:
         """

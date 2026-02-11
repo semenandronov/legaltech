@@ -14,10 +14,12 @@ import { CreateTableModeDialog } from "../components/TabularReview/CreateTableMo
 import { AutomaticTableCreationDialog } from "../components/TabularReview/AutomaticTableCreationDialog"
 import { FeaturedTemplatesCarousel } from "../components/TabularReview/FeaturedTemplatesCarousel"
 import { tabularReviewApi, TableData } from "../services/tabularReviewApi"
+import { getPlaybooks, batchCheckDocuments, getStatusColor, getStatusLabel } from "../services/playbooksApi"
+import type { Playbook, BatchCheckResult } from "../services/playbooksApi"
 import { Card } from "../components/UI/Card"
 import Spinner from "../components/UI/Spinner"
 import { toast } from "sonner"
-import { ArrowLeft, Edit2, X, Trash2 } from "lucide-react"
+import { ArrowLeft, Edit2, X, Trash2, Shield, AlertTriangle, CheckCircle } from "lucide-react"
 import {
   Dialog,
   DialogContent,
@@ -85,6 +87,13 @@ const TabularReviewPage: React.FC = () => {
   const [pendingFileIds, setPendingFileIds] = useState<string[]>([])
   const [showCreateModeDialog, setShowCreateModeDialog] = useState(false)
   const [showAutomaticCreationDialog, setShowAutomaticCreationDialog] = useState(false)
+
+  // Playbook integration
+  const [showPlaybookModal, setShowPlaybookModal] = useState(false)
+  const [playbooks, setPlaybooks] = useState<Playbook[]>([])
+  const [loadingPlaybooks, setLoadingPlaybooks] = useState(false)
+  const [playbookRunning, setPlaybookRunning] = useState(false)
+  const [playbookResults, setPlaybookResults] = useState<Map<string, BatchCheckResult>>(new Map())
 
   // Load existing reviews when caseId is available but no reviewId
   useEffect(() => {
@@ -363,6 +372,52 @@ const TabularReviewPage: React.FC = () => {
     }
   }
 
+
+  // Playbook handlers
+  const handleOpenPlaybookModal = async () => {
+    setShowPlaybookModal(true)
+    setLoadingPlaybooks(true)
+    try {
+      const data = await getPlaybooks()
+      setPlaybooks(data)
+    } catch (err: any) {
+      toast.error("Не удалось загрузить playbooks")
+    } finally {
+      setLoadingPlaybooks(false)
+    }
+  }
+
+  const handleRunPlaybookCheck = async (playbookId: string) => {
+    if (!caseId || !tableData) return
+
+    const documentIds = tableData.rows.map(r => r.file_id)
+    if (documentIds.length === 0) {
+      toast.error("Нет документов для проверки")
+      return
+    }
+
+    setShowPlaybookModal(false)
+    setPlaybookRunning(true)
+    toast.info(`Проверка ${documentIds.length} документов по Playbook...`)
+
+    try {
+      const response = await batchCheckDocuments(playbookId, documentIds, caseId)
+
+      // Store results by document_id
+      const resultsMap = new Map<string, BatchCheckResult>()
+      response.results.forEach(r => resultsMap.set(r.document_id, r))
+      setPlaybookResults(resultsMap)
+
+      toast.success(
+        `Проверка завершена: ${response.completed} из ${response.total_documents} документов проверено`
+      )
+    } catch (err: any) {
+      console.error("Playbook batch check error:", err)
+      toast.error("Ошибка при проверке: " + (err.response?.data?.detail || err.message || ""))
+    } finally {
+      setPlaybookRunning(false)
+    }
+  }
 
   const navItems = caseId ? [
     { id: 'chat', label: 'Ассистент', icon: MessageSquare, path: `/cases/${caseId}/chat` },
@@ -767,9 +822,11 @@ const TabularReviewPage: React.FC = () => {
           onUpdateDocuments={reviewId ? () => setShowDocumentSelector(true) : undefined}
           onAddColumns={() => setShowColumnBuilder(true)}
           onRunAll={handleRunAll}
+          onRunPlaybook={handleOpenPlaybookModal}
           onToggleChat={() => setIsChatOpen(!isChatOpen)}
           isChatOpen={isChatOpen}
           processing={processing}
+          playbookRunning={playbookRunning}
         />
 
         {/* Featured Templates Carousel */}
@@ -1002,6 +1059,118 @@ const TabularReviewPage: React.FC = () => {
                 }}
                 onCancel={() => setEditingCell(null)}
               />
+            </div>
+          </div>
+        )}
+
+        {/* Playbook Selection Modal */}
+        {showPlaybookModal && (
+          <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50" onClick={() => setShowPlaybookModal(false)}>
+            <div className="bg-white rounded-xl shadow-xl max-w-lg w-full mx-4 max-h-[80vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
+              <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200">
+                <div className="flex items-center gap-2">
+                  <BookOpen className="w-5 h-5 text-green-600" />
+                  <h3 className="text-lg font-semibold text-gray-900">Выберите Playbook</h3>
+                </div>
+                <button
+                  onClick={() => setShowPlaybookModal(false)}
+                  className="p-1 rounded-lg hover:bg-gray-100 text-gray-400 hover:text-gray-600"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+              <div className="flex-1 overflow-auto p-4">
+                {loadingPlaybooks ? (
+                  <div className="flex items-center justify-center py-12">
+                    <Spinner size="md" />
+                  </div>
+                ) : playbooks.length === 0 ? (
+                  <div className="text-center py-12">
+                    <BookOpen className="w-10 h-10 text-gray-300 mx-auto mb-3" />
+                    <p className="text-gray-500">Нет доступных playbooks</p>
+                    <p className="text-xs text-gray-400 mt-1">Создайте playbook на странице Playbooks</p>
+                  </div>
+                ) : (
+                  <div className="space-y-2">
+                    <p className="text-sm text-gray-500 mb-3">
+                      Playbook будет применён ко всем {tableData?.rows.length || 0} документам в таблице
+                    </p>
+                    {playbooks.map((pb) => (
+                      <button
+                        key={pb.id}
+                        onClick={() => handleRunPlaybookCheck(pb.id)}
+                        className="w-full text-left px-4 py-3 rounded-lg border border-gray-200 hover:border-green-300 hover:bg-green-50/50 transition-all group"
+                      >
+                        <div className="flex items-start justify-between">
+                          <div className="min-w-0 flex-1">
+                            <div className="font-medium text-gray-900 group-hover:text-green-800">
+                              {pb.display_name}
+                            </div>
+                            {pb.description && (
+                              <div className="text-xs text-gray-500 mt-1 line-clamp-2">
+                                {pb.description}
+                              </div>
+                            )}
+                            <div className="flex items-center gap-3 mt-2 text-xs text-gray-400">
+                              <span>{pb.rules_count || pb.rules?.length || 0} правил</span>
+                              {pb.document_type && <span>{pb.document_type}</span>}
+                              {pb.usage_count > 0 && <span>Использован {pb.usage_count} раз</span>}
+                            </div>
+                          </div>
+                          <Shield className="w-4 h-4 text-gray-300 group-hover:text-green-500 mt-1 shrink-0" />
+                        </div>
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Playbook Results Banner */}
+        {playbookResults.size > 0 && tableData && (
+          <div className="fixed bottom-4 right-4 z-40 bg-white rounded-xl shadow-lg border border-gray-200 p-4 max-w-sm">
+            <div className="flex items-center justify-between mb-3">
+              <div className="flex items-center gap-2">
+                <Shield className="w-4 h-4 text-green-600" />
+                <span className="text-sm font-medium text-gray-900">Результаты Playbook</span>
+              </div>
+              <button
+                onClick={() => setPlaybookResults(new Map())}
+                className="p-1 rounded hover:bg-gray-100 text-gray-400"
+              >
+                <X className="w-3.5 h-3.5" />
+              </button>
+            </div>
+            <div className="space-y-1.5 max-h-60 overflow-auto">
+              {tableData.rows.map(row => {
+                const result = playbookResults.get(row.file_id)
+                if (!result) return null
+                const isCompliant = result.overall_status === 'compliant'
+                const needsReview = result.overall_status === 'needs_review'
+                return (
+                  <div key={row.file_id} className="flex items-center gap-2 text-xs">
+                    {isCompliant ? (
+                      <CheckCircle className="w-3.5 h-3.5 text-green-500 shrink-0" />
+                    ) : needsReview ? (
+                      <AlertTriangle className="w-3.5 h-3.5 text-yellow-500 shrink-0" />
+                    ) : (
+                      <AlertTriangle className="w-3.5 h-3.5 text-red-500 shrink-0" />
+                    )}
+                    <span className="truncate text-gray-700 flex-1">{row.file_name || row.file_id}</span>
+                    <span
+                      className="shrink-0 font-medium"
+                      style={{ color: getStatusColor(result.overall_status) }}
+                    >
+                      {result.compliance_score != null ? `${Math.round(result.compliance_score)}%` : getStatusLabel(result.overall_status)}
+                    </span>
+                    {result.violations > 0 && (
+                      <span className="shrink-0 text-red-600">{result.violations} нар.</span>
+                    )}
+                  </div>
+                )
+              })}
             </div>
           </div>
         )}

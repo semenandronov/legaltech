@@ -26,7 +26,7 @@ Universal Tools - 12 универсальных инструментов для 
 - calculate: расчеты
 - get_current_date: текущая дата
 """
-from typing import List, Optional
+from typing import List, Optional, Dict, Any
 from langchain_core.tools import tool
 from sqlalchemy.orm import Session
 from datetime import datetime
@@ -41,6 +41,20 @@ _rag_service = None
 _case_id: Optional[str] = None
 _user_id: Optional[str] = None
 
+# Отслеживание использованных источников для citations
+_used_sources: List[Dict[str, Any]] = []
+
+
+def get_used_sources() -> List[Dict[str, Any]]:
+    """Получить список использованных источников (для отправки citations в SSE)"""
+    return list(_used_sources)
+
+
+def clear_used_sources():
+    """Очистить список использованных источников"""
+    global _used_sources
+    _used_sources = []
+
 
 def initialize_universal_tools(
     db: Session, 
@@ -54,6 +68,7 @@ def initialize_universal_tools(
     _rag_service = rag_service
     _case_id = case_id
     _user_id = user_id
+    clear_used_sources()
 
 
 # =============================================================================
@@ -141,15 +156,15 @@ def search_in_documents(query: str, k: int = 20) -> str:
     Returns:
         Найденные фрагменты документов с источниками
     """
-    global _rag_service, _case_id, _db
-    
+    global _rag_service, _case_id, _db, _used_sources
+
     if not _rag_service or not _case_id:
         return "Ошибка: сервис поиска не инициализирован"
-    
+
     try:
         # Ограничиваем k разумными пределами
         k = max(5, min(100, k))
-        
+
         documents = _rag_service.retrieve_context(
             case_id=_case_id,
             query=query,
@@ -157,27 +172,30 @@ def search_in_documents(query: str, k: int = 20) -> str:
             retrieval_strategy="multi_query",
             db=_db
         )
-        
+
         if not documents:
             return f"По запросу '{query}' ничего не найдено в документах дела."
-        
+
+        # Очищаем предыдущие источники при новом поиске
+        _used_sources = []
+
         # Форматируем результаты - увеличен лимит контекста
         # и улучшен формат для лучшего понимания LLM
         result_parts = []
         total_chars = 0
         max_chars = 25000  # Увеличен лимит
-        
+
         for i, doc in enumerate(documents, 1):
             if total_chars >= max_chars:
                 break
-                
+
             metadata = doc.metadata
             source_file = metadata.get("source_file", "Документ")
             content = doc.page_content.strip()
-            
+
             # Формат: номер, источник, контент
             entry = f"[{i}] {source_file}:\n{content}"
-            
+
             if total_chars + len(entry) > max_chars:
                 # Обрезаем последний документ если не влезает
                 available = max_chars - total_chars - 100
@@ -185,12 +203,23 @@ def search_in_documents(query: str, k: int = 20) -> str:
                     entry = f"[{i}] {source_file}:\n{content[:available]}..."
                 else:
                     break
-            
+
             result_parts.append(entry)
             total_chars += len(entry)
-        
+
+            # Сохраняем метаданные источника для citations
+            _used_sources.append({
+                "source_id": str(metadata.get("file_id", metadata.get("doc_id", f"src-{i}"))),
+                "file_name": source_file,
+                "page": metadata.get("source_page") or metadata.get("page"),
+                "quote": content[:300],
+                "char_start": metadata.get("char_start"),
+                "char_end": metadata.get("char_end"),
+                "source_type": "document",
+            })
+
         logger.info(f"[UniversalTools] search_in_documents: найдено {len(documents)} фрагментов, вернули {len(result_parts)} для '{query[:50]}...'")
-        
+
         return f"Найдено {len(documents)} фрагментов в документах:\n\n" + "\n\n".join(result_parts)
         
     except Exception as e:
@@ -255,70 +284,46 @@ def analyze_all_documents(question: str, task_type: str = "answer") -> str:
             return "Документы найдены, но текст не извлечён."
         
         logger.info(f"[UniversalTools] analyze_all_documents: {len(documents)} документов для анализа")
-        
+
         # Запускаем Map-Reduce
         service = MapReduceService()
-        
-        # #region agent log
-        import json
-        from datetime import datetime
-        def _debug_log(location, message, data, hypothesis_id="B", run_id="runtime"):
-            log_entry = json.dumps({
-                "sessionId": "debug-session",
-                "runId": run_id,
-                "hypothesisId": hypothesis_id,
-                "location": location,
-                "message": message,
-                "data": data,
-                "timestamp": int(datetime.now().timestamp() * 1000)
-            })
-            try:
-                with open('/Users/semyon_andronov04/Desktop/C ДВ/.cursor/debug.log', 'a') as f:
-                    f.write(log_entry + '\n')
-            except: pass
-        
-        try:
-            import asyncio as asyncio_module
-            loop_check = None
-            try:
-                loop_check = asyncio_module.get_event_loop()
-                _debug_log("universal_tools.py:262", "Event loop check", {"loop_exists": True, "loop_running": loop_check.is_running() if loop_check else False}, hypothesis_id="B")
-            except RuntimeError:
-                _debug_log("universal_tools.py:262", "Event loop check", {"loop_exists": False}, hypothesis_id="B")
-        except: pass
-        # #endregion
-        
-        # Запускаем асинхронно используя безопасную утилиту
+
         from app.utils.async_utils import run_async_safe
-        # #region agent log
-        try:
-            _debug_log("universal_tools.py:275", "Before run_async_safe", {"documents_count": len(documents)}, hypothesis_id="B")
-        except: pass
-        # #endregion
         result = run_async_safe(
             service.process(documents, question, task_type)
         )
-        # #region agent log
-        try:
-            _debug_log("universal_tools.py:280", "After run_async_safe", {"result_received": True, "sources_count": len(result.sources) if result else 0}, hypothesis_id="B")
-        except: pass
-        # #endregion
-        
+
+        # Сохраняем источники для citations (каждый обработанный документ)
+        _used_sources.clear()
+        for f in files:
+            if f.original_text:
+                _used_sources.append({
+                    "source_id": str(f.id),
+                    "file_name": f.filename,
+                    "page": 1,
+                    "quote": f.original_text[:300],
+                    "source_type": "document",
+                })
+
         # Форматируем ответ
         sources_str = ", ".join(result.sources[:5])
         if len(result.sources) > 5:
             sources_str += f" и ещё {len(result.sources) - 5}"
-        
-        response = f"{result.answer}\n\n"
-        response += f"📊 Проанализировано {result.documents_processed} документов "
-        response += f"(стратегия: {result.strategy_used.value})\n"
-        response += f"📁 Источники: {sources_str}"
-        
+
+        response = f"{result.answer}"
+
+        # Добавляем [N] ссылки на источники
+        for i, f_obj in enumerate(files, 1):
+            if f_obj.original_text:
+                response += f" [{i}]"
+                if i >= 5:
+                    break
+
         logger.info(
             f"[UniversalTools] analyze_all_documents: завершено, "
             f"стратегия={result.strategy_used.value}, документов={result.documents_processed}"
         )
-        
+
         return response
         
     except Exception as e:

@@ -213,6 +213,11 @@ export const createDefinition = async (data: {
   available_tools: string[]
   default_plan?: Record<string, any>
   output_schema?: Record<string, any>
+  planning_prompt?: string
+  summary_prompt?: string
+  max_steps?: number
+  timeout_minutes?: number
+  requires_approval?: boolean
   is_public?: boolean
 }): Promise<WorkflowDefinition> => {
   const response = await api.post('/api/workflow-agentic/definitions', data)

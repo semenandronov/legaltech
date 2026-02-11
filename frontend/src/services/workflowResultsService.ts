@@ -92,7 +92,53 @@ export const formatWorkflowResultMessage = (result: WorkflowResultData): string 
   if (result.summary) {
     message += `### 📝 Резюме\n${result.summary}\n\n`
   }
-  
+
+  // Детальные результаты по шагам
+  if (result.results && typeof result.results === 'object') {
+    const stepsData = result.results.steps || result.results
+    const stepEntries = Object.entries(stepsData)
+    if (stepEntries.length > 0) {
+      message += `### 📋 Результаты по шагам\n\n`
+      stepEntries.forEach(([stepId, stepResult]: [string, any]) => {
+        if (!stepResult) return
+        const status = stepResult.success !== false ? '✅' : '❌'
+        const stepName = stepResult.name || stepId.replace(/_/g, ' ')
+        message += `**${status} ${stepName}**\n`
+        // Show summary
+        if (stepResult.summary) {
+          message += `${stepResult.summary}\n`
+        }
+        // Show key data from results
+        if (stepResult.data && typeof stepResult.data === 'object') {
+          const data = stepResult.data
+          // Search results
+          if (data.results && Array.isArray(data.results)) {
+            data.results.slice(0, 5).forEach((r: any) => {
+              const title = r.title || r.file || r.document || ''
+              const preview = r.text_preview || r.snippet || r.summary || ''
+              if (title) message += `- **${title}**${preview ? ': ' + preview.substring(0, 150) + (preview.length > 150 ? '...' : '') : ''}\n`
+            })
+            if (data.results.length > 5) {
+              message += `- _...и ещё ${data.results.length - 5} результатов_\n`
+            }
+          }
+          // Summary text
+          if (data.summary && typeof data.summary === 'string') {
+            message += `${data.summary.substring(0, 500)}${data.summary.length > 500 ? '...' : ''}\n`
+          }
+          // Entities
+          if (data.entities && Array.isArray(data.entities)) {
+            message += `Найдено сущностей: ${data.entities.length}\n`
+            data.entities.slice(0, 10).forEach((e: any) => {
+              message += `- ${e.type || 'entity'}: **${e.value || e.text || e.name}**\n`
+            })
+          }
+        }
+        message += '\n'
+      })
+    }
+  }
+
   // Созданные артефакты
   const hasArtifacts = 
     result.artifacts.reports.length > 0 ||
@@ -129,7 +175,7 @@ export const formatWorkflowResultMessage = (result: WorkflowResultData): string 
     if (result.artifacts.documents.length > 0) {
       message += `**📑 Документы:**\n`
       result.artifacts.documents.forEach(doc => {
-        message += `- ${doc.name}\n`
+        message += `- [${doc.name}](/cases/${result.case_id}/documents)\n`
       })
       message += '\n'
     }
@@ -153,7 +199,9 @@ export const formatWorkflowResultMessage = (result: WorkflowResultData): string 
   if (isSuccess) {
     message += `---\n\n`
     message += `💡 **Что дальше?**\n`
-    message += `- Изучите созданные материалы по ссылкам выше\n`
+    if (hasArtifacts) {
+      message += `- Изучите созданные материалы выше\n`
+    }
     message += `- Задайте мне вопросы по результатам анализа\n`
     message += `- Запросите дополнительный анализ или уточнения\n`
   }

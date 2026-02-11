@@ -1,6 +1,6 @@
-import { useState, useRef } from 'react'
-import { X, Upload, FileText, Trash2, Loader2 } from 'lucide-react'
-import { addFilesToCase, deleteFileFromCase, UploadedFile } from '../../services/api'
+import { useState, useEffect, useRef } from 'react'
+import { X, Upload, Trash2, Loader2 } from 'lucide-react'
+import { addFilesToCase, deleteFileFromCase, getCaseFiles, UploadedFile } from '../../services/api'
 
 interface DocumentUploadModalProps {
   isOpen: boolean
@@ -12,14 +12,52 @@ interface DocumentUploadModalProps {
 const MAX_FILE_SIZE_MB = 5
 const MAX_FILE_SIZE_BYTES = MAX_FILE_SIZE_MB * 1024 * 1024
 
+type FileUploadStatus = 'pending' | 'uploading' | 'processing' | 'done' | 'error'
+
+interface FileUploadItem {
+  file: File
+  status: FileUploadStatus
+  progress: number
+  error?: string
+}
+
 const DocumentUploadModal = ({ isOpen, onClose, caseId, onUploadComplete }: DocumentUploadModalProps) => {
   const [uploadedFiles, setUploadedFiles] = useState<UploadedFile[]>([])
-  const [loading, setLoading] = useState(false)
+  const [uploadQueue, setUploadQueue] = useState<FileUploadItem[]>([])
+  const [isUploading, setIsUploading] = useState(false)
+  const [loadingList, setLoadingList] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const [uploadProgress, setUploadProgress] = useState(0)
   const [deletingFileId, setDeletingFileId] = useState<string | null>(null)
   const [dragActive, setDragActive] = useState(false)
   const fileInputRef = useRef<HTMLInputElement>(null)
+
+  // Load existing files when modal opens
+  useEffect(() => {
+    if (isOpen && caseId) {
+      loadFiles()
+    }
+  }, [isOpen, caseId])
+
+  // Clean up on close
+  useEffect(() => {
+    if (!isOpen) {
+      setUploadQueue([])
+      setError(null)
+    }
+  }, [isOpen])
+
+  const loadFiles = async () => {
+    try {
+      setLoadingList(true)
+      setError(null)
+      const response = await getCaseFiles(caseId)
+      setUploadedFiles(response.files || [])
+    } catch (err: any) {
+      setError(err.message || 'Ошибка при загрузке списка файлов')
+    } finally {
+      setLoadingList(false)
+    }
+  }
 
   if (!isOpen) return null
 
@@ -66,23 +104,64 @@ const DocumentUploadModal = ({ isOpen, onClose, caseId, onUploadComplete }: Docu
       return
     }
 
-    try {
-      setLoading(true)
-      setUploadProgress(0)
-      const response = await addFilesToCase(caseId, files, (percent) => {
-        setUploadProgress(percent)
-      })
-      setUploadedFiles((prev) => [...prev, ...(response.files || [])])
-      setUploadProgress(0)
-    } catch (err: any) {
-      setError(err.response?.data?.detail || err.message || 'Ошибка при загрузке файлов')
-    } finally {
-      setLoading(false)
-      setUploadProgress(0)
+    // Create queue items
+    const queueItems: FileUploadItem[] = files.map(f => ({
+      file: f,
+      status: 'pending',
+      progress: 0,
+    }))
+
+    setUploadQueue(queueItems)
+    setIsUploading(true)
+
+    // Upload files one by one
+    for (let i = 0; i < queueItems.length; i++) {
+      setUploadQueue(prev => prev.map((item, idx) =>
+        idx === i ? { ...item, status: 'uploading', progress: 0 } : item
+      ))
+
+      try {
+        const response = await addFilesToCase(caseId, [queueItems[i].file], (percent) => {
+          setUploadQueue(prev => prev.map((item, idx) => {
+            if (idx !== i) return item
+            if (percent >= 100) {
+              return { ...item, status: 'processing', progress: 100 }
+            }
+            return { ...item, progress: percent }
+          }))
+        })
+
+        setUploadQueue(prev => prev.map((item, idx) =>
+          idx === i ? { ...item, status: 'done', progress: 100 } : item
+        ))
+
+        const newFiles = response.files || []
+        setUploadedFiles(prev => {
+          const existingIds = new Set(prev.map(f => f.id))
+          const uniqueNew = newFiles.filter(f => !existingIds.has(f.id))
+          return [...prev, ...uniqueNew]
+        })
+      } catch (err: any) {
+        const errorMsg = err.response?.data?.detail || err.message || 'Ошибка загрузки'
+        setUploadQueue(prev => prev.map((item, idx) =>
+          idx === i ? { ...item, status: 'error', error: errorMsg } : item
+        ))
+      }
     }
+
+    setIsUploading(false)
+
+    // Clear successful uploads after delay
+    setTimeout(() => {
+      setUploadQueue(prev => prev.filter(item => item.status === 'error'))
+    }, 2000)
   }
 
   const handleDeleteFile = async (fileId: string, filename: string) => {
+    if (!confirm(`Вы уверены, что хотите удалить файл "${filename}"?`)) {
+      return
+    }
+
     try {
       setDeletingFileId(fileId)
       setError(null)
@@ -96,7 +175,9 @@ const DocumentUploadModal = ({ isOpen, onClose, caseId, onUploadComplete }: Docu
   }
 
   const handleClick = () => {
-    fileInputRef.current?.click()
+    if (!isUploading) {
+      fileInputRef.current?.click()
+    }
   }
 
   const formatFileSize = (bytes: number): string => {
@@ -109,8 +190,6 @@ const DocumentUploadModal = ({ isOpen, onClose, caseId, onUploadComplete }: Docu
     if (uploadedFiles.length > 0) {
       onUploadComplete()
     }
-    setUploadedFiles([])
-    setError(null)
     onClose()
   }
 
@@ -162,12 +241,16 @@ const DocumentUploadModal = ({ isOpen, onClose, caseId, onUploadComplete }: Docu
           {/* Drop zone */}
           <div
             className={`
-              relative border-2 border-dashed rounded-xl p-8 text-center cursor-pointer transition-all
-              ${dragActive 
-                ? 'border-indigo-500 bg-indigo-50' 
+              relative border-2 border-dashed rounded-xl p-8 text-center transition-all
+              ${dragActive
+                ? 'border-indigo-500 bg-indigo-50'
                 : 'border-gray-300 hover:border-gray-400 hover:bg-gray-50'
               }
             `}
+            style={{
+              cursor: isUploading ? 'default' : 'pointer',
+              pointerEvents: isUploading ? 'none' : 'auto',
+            }}
             onDragEnter={handleDrag}
             onDragLeave={handleDrag}
             onDragOver={handleDrag}
@@ -201,56 +284,156 @@ const DocumentUploadModal = ({ isOpen, onClose, caseId, onUploadComplete }: Docu
                 Максимальный размер файла: {MAX_FILE_SIZE_MB} МБ
               </p>
             </div>
-
-            {loading && uploadProgress > 0 && (
-              <div className="mt-6 w-full max-w-xs mx-auto">
-                <div className="h-2 bg-gray-200 rounded-full overflow-hidden">
-                  <div
-                    className="h-full transition-all duration-300"
-                    style={{
-                      width: `${uploadProgress}%`,
-                      background: 'linear-gradient(90deg, #667eea 0%, #764ba2 100%)'
-                    }}
-                  />
-                </div>
-                <p className="text-sm mt-2" style={{ color: 'var(--color-text-secondary, #6b7280)' }}>
-                  Загрузка… {uploadProgress}%
-                </p>
-              </div>
-            )}
           </div>
 
+          {/* Per-file upload progress */}
+          {uploadQueue.length > 0 && (
+            <div className="mt-6">
+              <h3 className="text-sm font-medium mb-3" style={{ color: 'var(--color-text-primary, #1f2937)' }}>
+                Загрузка ({uploadQueue.filter(f => f.status === 'done').length}/{uploadQueue.length})
+              </h3>
+              <div className="space-y-2">
+                {uploadQueue.map((item, idx) => (
+                  <div
+                    key={idx}
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '12px',
+                      padding: '10px 14px',
+                      background: item.status === 'error' ? '#fef2f2' : 'var(--color-bg-secondary, #f9fafb)',
+                      border: `1px solid ${item.status === 'error' ? '#fecaca' : 'var(--color-border, #e5e7eb)'}`,
+                      borderRadius: '8px',
+                    }}
+                  >
+                    {/* Circular progress indicator */}
+                    <div style={{ flexShrink: 0, width: '28px', height: '28px', position: 'relative' }}>
+                      {item.status === 'done' && (
+                        <svg width="28" height="28" viewBox="0 0 28 28">
+                          <circle cx="14" cy="14" r="12" fill="#16a34a" />
+                          <path d="M9 14.5l3 3 7-7" stroke="white" strokeWidth="2" fill="none" strokeLinecap="round" strokeLinejoin="round" />
+                        </svg>
+                      )}
+                      {item.status === 'error' && (
+                        <svg width="28" height="28" viewBox="0 0 28 28">
+                          <circle cx="14" cy="14" r="12" fill="#dc2626" />
+                          <path d="M10 10l8 8M18 10l-8 8" stroke="white" strokeWidth="2" strokeLinecap="round" />
+                        </svg>
+                      )}
+                      {item.status === 'pending' && (
+                        <svg width="28" height="28" viewBox="0 0 28 28">
+                          <circle cx="14" cy="14" r="12" fill="none" stroke="#e5e7eb" strokeWidth="2.5" />
+                        </svg>
+                      )}
+                      {(item.status === 'uploading' || item.status === 'processing') && (() => {
+                        const radius = 12
+                        const circumference = 2 * Math.PI * radius
+                        const progress = item.status === 'processing' ? 100 : item.progress
+                        const offset = circumference - (progress / 100) * circumference
+                        return (
+                          <svg width="28" height="28" viewBox="0 0 28 28" style={{ transform: 'rotate(-90deg)' }}>
+                            <circle cx="14" cy="14" r={radius} fill="none" stroke="#e5e7eb" strokeWidth="2.5" />
+                            <circle
+                              cx="14" cy="14" r={radius}
+                              fill="none"
+                              stroke={item.status === 'processing' ? '#6366f1' : '#16a34a'}
+                              strokeWidth="2.5"
+                              strokeDasharray={circumference}
+                              strokeDashoffset={offset}
+                              strokeLinecap="round"
+                              style={{ transition: 'stroke-dashoffset 0.3s ease' }}
+                            />
+                            {item.status === 'processing' && (
+                              <animateTransform
+                                attributeName="transform"
+                                type="rotate"
+                                from="0 14 14"
+                                to="360 14 14"
+                                dur="1.5s"
+                                repeatCount="indefinite"
+                              />
+                            )}
+                          </svg>
+                        )
+                      })()}
+                    </div>
+
+                    {/* File info */}
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{
+                        fontSize: '13px',
+                        fontWeight: 500,
+                        color: item.status === 'error' ? '#dc2626' : 'var(--color-text-primary, #1f2937)',
+                        whiteSpace: 'nowrap',
+                        overflow: 'hidden',
+                        textOverflow: 'ellipsis',
+                      }}>
+                        {item.file.name}
+                      </div>
+                      <div style={{ fontSize: '11px', color: '#9ca3af', marginTop: '2px' }}>
+                        {item.status === 'pending' && 'В очереди'}
+                        {item.status === 'uploading' && `Загрузка ${item.progress}%`}
+                        {item.status === 'processing' && 'Индексация...'}
+                        {item.status === 'done' && 'Готово'}
+                        {item.status === 'error' && (
+                          <span style={{ color: '#dc2626' }}>{item.error}</span>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* File size */}
+                    <div style={{ fontSize: '11px', color: '#9ca3af', flexShrink: 0 }}>
+                      {formatFileSize(item.file.size)}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Loading state */}
+          {loadingList && (
+            <div className="mt-6 flex items-center justify-center gap-2 py-4" style={{ color: 'var(--color-text-secondary, #6b7280)' }}>
+              <Loader2 className="w-4 h-4 animate-spin" />
+              <span className="text-sm">Загрузка списка файлов...</span>
+            </div>
+          )}
+
           {/* Uploaded files list */}
-          {uploadedFiles.length > 0 && (
+          {!loadingList && uploadedFiles.length > 0 && (
             <div className="mt-6">
               <h3 className="text-sm font-medium mb-3" style={{ color: 'var(--color-text-primary, #1f2937)' }}>
                 Загруженные файлы ({uploadedFiles.length})
               </h3>
-              <div className="space-y-2">
+              <div className="space-y-2" style={{ maxHeight: '240px', overflowY: 'auto' }}>
                 {uploadedFiles.map((file) => (
                   <div
                     key={file.id}
-                    className="flex items-center justify-between p-3 rounded-lg border"
                     style={{
-                      backgroundColor: 'var(--color-bg-secondary, #f9fafb)',
-                      borderColor: 'var(--color-border, #e5e7eb)'
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'space-between',
+                      padding: '12px 14px',
+                      background: 'var(--color-bg-secondary, #f9fafb)',
+                      border: '1px solid var(--color-border, #e5e7eb)',
+                      borderRadius: '8px',
                     }}
                   >
-                    <div className="flex items-center gap-3 min-w-0 flex-1">
-                      <div
-                        className="w-9 h-9 rounded-lg flex items-center justify-center shrink-0"
-                        style={{ backgroundColor: 'rgba(99, 102, 241, 0.1)' }}
-                      >
-                        <FileText className="w-4 h-4" style={{ color: '#6366f1' }} />
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{
+                        fontWeight: 500,
+                        fontSize: '13px',
+                        color: 'var(--color-text-primary, #1f2937)',
+                        whiteSpace: 'nowrap',
+                        overflow: 'hidden',
+                        textOverflow: 'ellipsis',
+                      }}>
+                        {file.filename}
                       </div>
-                      <div className="min-w-0 flex-1">
-                        <p className="text-sm font-medium truncate" style={{ color: 'var(--color-text-primary, #1f2937)' }}>
-                          {file.filename}
-                        </p>
-                        <p className="text-xs" style={{ color: 'var(--color-text-secondary, #6b7280)' }}>
-                          {file.file_type.toUpperCase()}
-                          {file.size && ` • ${formatFileSize(file.size)}`}
-                        </p>
+                      <div style={{ fontSize: '12px', color: 'var(--color-text-secondary, #6b7280)', marginTop: '2px' }}>
+                        {file.file_type?.toUpperCase()}
+                        {file.size && ` • ${formatFileSize(file.size)}`}
+                        {file.created_at && ` • ${new Date(file.created_at).toLocaleDateString('ru-RU')}`}
                       </div>
                     </div>
                     <button
@@ -258,10 +441,10 @@ const DocumentUploadModal = ({ isOpen, onClose, caseId, onUploadComplete }: Docu
                         e.stopPropagation()
                         handleDeleteFile(file.id, file.filename)
                       }}
-                      disabled={deletingFileId === file.id}
-                      className="p-2 rounded-lg transition-colors hover:bg-red-50 shrink-0"
+                      disabled={deletingFileId === file.id || isUploading}
+                      className="p-2 rounded-lg transition-colors hover:bg-red-50 shrink-0 ml-2"
                       style={{
-                        color: deletingFileId === file.id ? '#9ca3af' : '#ef4444'
+                        color: (deletingFileId === file.id || isUploading) ? '#9ca3af' : '#ef4444'
                       }}
                       aria-label={`Удалить ${file.filename}`}
                     >
@@ -274,6 +457,13 @@ const DocumentUploadModal = ({ isOpen, onClose, caseId, onUploadComplete }: Docu
                   </div>
                 ))}
               </div>
+            </div>
+          )}
+
+          {/* Empty state */}
+          {!loadingList && uploadedFiles.length === 0 && uploadQueue.length === 0 && (
+            <div className="mt-6 text-center py-6" style={{ color: 'var(--color-text-secondary, #6b7280)' }}>
+              <p className="text-sm">Файлы ещё не загружены</p>
             </div>
           )}
         </div>
@@ -307,4 +497,3 @@ const DocumentUploadModal = ({ isOpen, onClose, caseId, onUploadComplete }: Docu
 }
 
 export default DocumentUploadModal
-

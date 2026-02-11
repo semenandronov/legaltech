@@ -19,6 +19,7 @@ interface CasesGridProps {
   onPageChange: (page: number) => void
   viewMode: 'grid' | 'list' | 'table'
   onViewModeChange: (mode: 'grid' | 'list' | 'table') => void
+  onDeleteCase?: (caseId: string) => void
 }
 
 const CasesGrid = ({
@@ -29,6 +30,7 @@ const CasesGrid = ({
   onPageChange,
   viewMode,
   onViewModeChange,
+  onDeleteCase,
 }: CasesGridProps) => {
   const [isUploadDialogOpen, setIsUploadDialogOpen] = useState(false)
   const limit = 20
@@ -142,7 +144,7 @@ const CasesGrid = ({
         >
           <DialogTitle>Создать новое дело</DialogTitle>
           <DialogContent sx={{ maxHeight: '90vh', overflowY: 'auto' }}>
-            <UploadArea onUpload={handleUploadComplete} />
+            <UploadArea onUpload={handleUploadComplete} onCancel={() => setIsUploadDialogOpen(false)} />
           </DialogContent>
         </Dialog>
       </div>
@@ -246,7 +248,7 @@ const CasesGrid = ({
       {/* Grid/List/Table */}
       <div className="flex-1 overflow-y-auto p-8">
         {viewMode === 'table' ? (
-          <CasesTable data={cases} loading={loading} />
+          <CasesTable data={cases} loading={loading} onDeleteCase={onDeleteCase} />
         ) : viewMode === 'grid' ? (
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
             {cases.map((caseItem, index) => (
@@ -255,7 +257,7 @@ const CasesGrid = ({
                 className="stagger-item"
                 style={{ animationDelay: `${index * 0.05}s` }}
               >
-                <CaseCard caseItem={caseItem} />
+                <CaseCard caseItem={caseItem} onDelete={onDeleteCase} />
               </div>
             ))}
           </div>
@@ -267,7 +269,7 @@ const CasesGrid = ({
                 className="stagger-item"
                 style={{ animationDelay: `${index * 0.03}s` }}
               >
-                <CaseCard caseItem={caseItem} />
+                <CaseCard caseItem={caseItem} onDelete={onDeleteCase} />
               </div>
             ))}
           </div>
@@ -300,7 +302,7 @@ const CasesGrid = ({
       >
         <DialogTitle>Создать новое дело</DialogTitle>
         <DialogContent sx={{ maxHeight: '90vh', overflowY: 'auto' }}>
-          <UploadArea onUpload={handleUploadComplete} />
+          <UploadArea onUpload={handleUploadComplete} onCancel={() => setIsUploadDialogOpen(false)} />
         </DialogContent>
       </Dialog>
     </div>

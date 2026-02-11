@@ -21,6 +21,7 @@ from typing import AsyncGenerator, Optional, List, Dict, Any
 from sqlalchemy.orm import Session
 import logging
 import json
+import re
 
 from app.services.chat.events import SSESerializer
 from app.services.chat.universal_tools import get_universal_tools
@@ -28,6 +29,41 @@ from app.services.rag_service import RAGService
 from app.models.user import User
 
 logger = logging.getLogger(__name__)
+
+# Tool names used for stripping echoed tool calls from GigaChat responses
+_TOOL_NAMES = [
+    "search_in_documents", "get_document", "analyze_all_documents",
+    "extract_structured_data", "compare_documents", "search_garant",
+    "get_law_article", "generate_document", "list_templates",
+    "validate_with_playbook", "get_user_playbooks", "calculate",
+    "get_current_date", "web_research",
+]
+
+# Pre-compiled regex patterns for cleaning GigaChat response artifacts
+_TOOL_CALL_PATTERN = re.compile(
+    r'^[ \t]*(?:' + '|'.join(re.escape(t) for t in _TOOL_NAMES) + r')\s*\(.*?\)\s*$',
+    re.MULTILINE
+)
+_RESULT_PREFIX_PATTERN = re.compile(
+    r'^\s*\[Результат (?:анализа|поиска|извлечения)\]\s*:\s*',
+    re.MULTILINE
+)
+_SEARCH_RESULTS_HEADER = re.compile(
+    r'^\s*Результаты поиска:\s*$',
+    re.MULTILINE
+)
+
+
+def _clean_response_text(text: str) -> str:
+    """Strip GigaChat artifacts: echoed tool calls, [Результат анализа]: prefixes, etc."""
+    cleaned = _TOOL_CALL_PATTERN.sub('', text)
+    cleaned = _RESULT_PREFIX_PATTERN.sub('', cleaned)
+    cleaned = _SEARCH_RESULTS_HEADER.sub('', cleaned)
+    # Remove "Улучшенный ответ:" prefix from reflection
+    cleaned = re.sub(r'^\s*Улучшенный ответ:\s*', '', cleaned, flags=re.MULTILINE)
+    # Collapse excessive blank lines
+    cleaned = re.sub(r'\n{3,}', '\n\n', cleaned)
+    return cleaned.strip()
 
 
 class ReActChatAgent:
@@ -114,7 +150,9 @@ class ReActChatAgent:
 3. Для обзорных вопросов ("о чём дело?") используй analyze_all_documents
 4. Для конкретных вопросов используй search_in_documents
 5. Можешь вызывать несколько инструментов для полного ответа
-6. Цитируй источники в формате [Название документа]
+6. ОБЯЗАТЕЛЬНО ссылайся на источники через НОМЕРНЫЕ СНОСКИ: [1], [2], [3] и т.д.
+   Номера соответствуют номерам фрагментов из результатов search_in_documents.
+   Пример: "Срок договора составляет 1 год [1]. Штраф за нарушение — 10% [3]."
 7. Если информация не найдена - честно скажи об этом
 
 ═══════════════════════════════════════════════════════════════════════════════
@@ -123,7 +161,8 @@ class ReActChatAgent:
 
 - Используй Markdown для форматирования
 - Структурируй ответ с заголовками
-- Указывай источники информации
+- ВСЕГДА ставь номерные сноски [1], [2], [3] после утверждений, основанных на документах
+- НЕ используй формат [название](ссылка) — используй ТОЛЬКО [число]
 - Для списков используй маркеры
 - Для важного используй **жирный** текст"""
     
@@ -454,11 +493,15 @@ class ReActChatAgent:
                     content=f"Обнаружено {len(high_severity_issues)} важных проблем, улучшаю ответ..."
                 )
             
-            # Если есть улучшенный ответ, возвращаем его
-            if result.improved_answer and not result.is_valid:
-                logger.info(f"[ReActChatAgent] Reflection improved answer (confidence: {result.confidence_score:.2f})")
-                yield SSESerializer.text_delta("\n\n---\n\n**Улучшенный ответ:**\n\n")
-                yield SSESerializer.text_delta(result.improved_answer)
+            # Если есть улучшенный ответ с реальным содержимым, добавляем его без заголовка
+            if (result.improved_answer and not result.is_valid
+                    and result.improved_answer.strip()
+                    and len(result.improved_answer.strip()) > 50
+                    and result.confidence_score < 0.6):
+                cleaned_improvement = _clean_response_text(result.improved_answer)
+                if cleaned_improvement and len(cleaned_improvement) > 50:
+                    logger.info(f"[ReActChatAgent] Reflection improved answer (confidence: {result.confidence_score:.2f})")
+                    yield SSESerializer.text_delta("\n\n" + cleaned_improvement)
             
             # Отправляем confidence score
             yield SSESerializer.agent_step(
@@ -591,36 +634,132 @@ ID дела: {self.case_id}
                 response_text = ""
                 tool_calls_made = []
                 context_used = ""  # Сохраняем контекст для reflection
-                
-                # Проверяем, поддерживает ли агент стриминг
-                if hasattr(self.agent, 'astream'):
+
+                # Token-level streaming via astream_events (v2)
+                if hasattr(self.agent, 'astream_events'):
+                    logger.info("[ReActChatAgent] Using astream_events for token-level streaming")
+                    active_tool_calls = set()  # Track tool calls we've already emitted "running" for
+
+                    # Buffer text tokens: GigaChat may output "reasoning" text before a tool call.
+                    # We buffer tokens per LLM invocation and only flush if there's no tool call.
+                    text_buffer = ""
+                    has_tool_call_in_current_step = False
+
+                    async for event in self.agent.astream_events(input_data, version="v2"):
+                        kind = event.get("event", "")
+
+                        # Token-by-token streaming from LLM
+                        if kind == "on_chat_model_stream":
+                            chunk = event.get("data", {}).get("chunk")
+                            if chunk:
+                                # Text content — buffer it (don't send yet)
+                                token = getattr(chunk, 'content', '') or ''
+                                if token:
+                                    if has_tool_call_in_current_step:
+                                        # Already saw a tool call in this step, skip reasoning text
+                                        pass
+                                    else:
+                                        text_buffer += token
+
+                                # Tool call chunks — emit "running" on first appearance
+                                tool_call_chunks = getattr(chunk, 'tool_call_chunks', None)
+                                if tool_call_chunks:
+                                    for tc_chunk in tool_call_chunks:
+                                        tc_name = tc_chunk.get('name', '')
+                                        if tc_name and tc_name not in active_tool_calls:
+                                            has_tool_call_in_current_step = True
+                                            # Discard buffered reasoning text (it was pre-tool-call thinking)
+                                            if text_buffer:
+                                                logger.info(f"[ReActChatAgent] Discarding pre-tool-call text ({len(text_buffer)} chars)")
+                                                text_buffer = ""
+
+                                            active_tool_calls.add(tc_name)
+                                            tool_calls_made.append(tc_name)
+                                            logger.info(f"[ReActChatAgent] Tool call: {tc_name}")
+                                            tc_input = tc_chunk.get('args', '')
+                                            if tc_input and not isinstance(tc_input, str):
+                                                tc_input = json.dumps(tc_input, ensure_ascii=False)[:200]
+                                            yield SSESerializer.tool_call(
+                                                name=tc_name,
+                                                status="running",
+                                                input=tc_input if tc_input else None
+                                            )
+
+                        # LLM call ended — flush text buffer if it was a final response (no tool calls)
+                        elif kind == "on_chat_model_end":
+                            if text_buffer and not has_tool_call_in_current_step:
+                                # This was a final text response — clean and stream it
+                                cleaned = _clean_response_text(text_buffer)
+                                if cleaned:
+                                    yield SSESerializer.text_delta(cleaned)
+                                    response_text += cleaned
+                            text_buffer = ""
+                            has_tool_call_in_current_step = False
+
+                        # Tool execution completed
+                        elif kind == "on_tool_end":
+                            tool_name = event.get("name", "unknown")
+                            output_data = event.get("data", {}).get("output", "")
+                            output_preview = str(output_data)[:300] if output_data else ''
+                            yield SSESerializer.tool_call(
+                                name=tool_name,
+                                status="completed",
+                                output=output_preview
+                            )
+
+                    # Flush any remaining buffered text
+                    if text_buffer:
+                        cleaned = _clean_response_text(text_buffer)
+                        if cleaned:
+                            yield SSESerializer.text_delta(cleaned)
+                            response_text += cleaned
+
+                # Fallback: step-level streaming (old behavior)
+                elif hasattr(self.agent, 'astream'):
+                    logger.info("[ReActChatAgent] Falling back to astream (step-level streaming)")
+                    last_processed = 0
+
                     async for event in self.agent.astream(input_data):
-                        # Обрабатываем события
                         if isinstance(event, dict):
-                            # Событие от агента
                             if "messages" in event:
-                                for msg in event["messages"]:
+                                all_msgs = event["messages"]
+                                new_msgs = all_msgs[last_processed:]
+                                last_processed = len(all_msgs)
+
+                                for msg in new_msgs:
+                                    msg_type = getattr(msg, 'type', '')
+
+                                    if msg_type == 'tool':
+                                        tool_name = getattr(msg, 'name', 'unknown')
+                                        output_preview = str(msg.content)[:300] if hasattr(msg, 'content') and msg.content else ''
+                                        yield SSESerializer.tool_call(
+                                            name=tool_name,
+                                            status="completed",
+                                            output=output_preview
+                                        )
+                                        continue
+
+                                    if msg_type in ('system', 'human'):
+                                        continue
+
                                     if hasattr(msg, 'content') and msg.content:
-                                        # Стримим контент
-                                        yield SSESerializer.text_delta(msg.content)
-                                        response_text += msg.content
-                                    
-                                    # Логируем tool calls
+                                        cleaned_msg = _clean_response_text(msg.content)
+                                        if cleaned_msg:
+                                            yield SSESerializer.text_delta(cleaned_msg)
+                                            response_text += cleaned_msg
+
                                     if hasattr(msg, 'tool_calls') and msg.tool_calls:
                                         for tc in msg.tool_calls:
                                             tool_name = tc.get('name', 'unknown')
                                             tool_calls_made.append(tool_name)
                                             logger.info(f"[ReActChatAgent] Tool call: {tool_name}")
-                                            
-                                            # Отправляем событие о вызове инструмента
-                                            yield SSESerializer.reasoning(
-                                                phase="tool_call",
-                                                step=len(tool_calls_made),
-                                                total_steps=0,
-                                                content=f"Использую инструмент: {tool_name}"
+                                            tool_input = json.dumps(tc.get('args', {}), ensure_ascii=False)[:200] if tc.get('args') else None
+                                            yield SSESerializer.tool_call(
+                                                name=tool_name,
+                                                status="running",
+                                                input=tool_input
                                             )
-                            
-                            # Финальный ответ
+
                             elif "output" in event:
                                 output = event["output"]
                                 if output and output not in response_text:
@@ -641,7 +780,25 @@ ID дела: {self.case_id}
                     response_text = fallback_response
                 
                 logger.info(f"[ReActChatAgent] Completed. Tools used: {tool_calls_made}")
-                
+
+                # Отправляем citations из использованных источников
+                from app.services.chat.universal_tools import get_used_sources, clear_used_sources
+                used_sources = get_used_sources()
+                if used_sources:
+                    try:
+                        # Fallback: если LLM не включил [1] маркеры — добавляем их
+                        if not re.search(r"\[\d+\]", response_text):
+                            refs = " ".join(f"[{i+1}]" for i in range(len(used_sources)))
+                            yield SSESerializer.text_delta(f"\n\n{refs}")
+                            response_text += f"\n\n{refs}"
+                            logger.info(f"[ReActChatAgent] Added inline citation markers: {refs}")
+                        yield SSESerializer.citations(used_sources)
+                        logger.info(f"[ReActChatAgent] Sent {len(used_sources)} citations")
+                    except Exception as cite_err:
+                        logger.warning(f"[ReActChatAgent] Failed to send citations: {cite_err}")
+                    finally:
+                        clear_used_sources()
+
                 # === NEW v3.0: Post-processing с Reflection и Citation Verification ===
                 if response_text and (self.enable_reflection or self.enable_citation_verification):
                     async for event in self._post_process_answer(question, response_text, context_used):

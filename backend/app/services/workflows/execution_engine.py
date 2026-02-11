@@ -194,7 +194,7 @@ class ExecutionEngine:
             yield ExecutionEvent(
                 event_type="completed",
                 execution_id=execution_id,
-                data={"results": aggregated_results, "artifacts": artifacts},
+                data={"results": aggregated_results, "artifacts": artifacts, "summary": summary},
                 message="Workflow успешно завершён",
                 progress_percent=100
             )

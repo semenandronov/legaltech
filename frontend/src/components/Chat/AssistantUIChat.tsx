@@ -27,7 +27,7 @@ import { Loader } from '../ai-elements/loader'
 import DocumentPreviewSheet from './DocumentPreviewSheet'
 import { SourceInfo } from '@/services/api'
 import { useOptionalProviderAttachments } from '../ai-elements/prompt-input'
-import { Plus, Check, FileText, X, MessageCircleQuestion, Pencil } from 'lucide-react'
+import { Plus, Check, FileText, X, MessageCircleQuestion, Pencil, Square, Paperclip } from 'lucide-react'
 import type { ExtendedFileUIPart } from '../ai-elements/prompt-input'
 import { EditSuggestionsList } from '../Editor/EditSuggestionCard'
 import type { StructuredEdit } from '@/services/documentEditorApi'
@@ -44,6 +44,115 @@ type MessageType = 'question' | 'edit'
 function detectMessageType(content: string): MessageType {
   const lowerContent = content.toLowerCase()
   return EDIT_KEYWORDS.some(keyword => lowerContent.includes(keyword)) ? 'edit' : 'question'
+}
+
+/**
+ * Strip HTML tags from a string, returning plain text.
+ */
+function stripHtml(html: string): string {
+  return html.replace(/<[^>]*>/g, '').replace(/&nbsp;/g, ' ').replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').trim()
+}
+
+/**
+ * Remove ```edit ... ``` blocks from message content so they aren't displayed as raw text.
+ * Also removes "Для замены..." instruction lines that the AI sometimes adds.
+ */
+function stripEditBlocksFromContent(content: string): string {
+  // Remove ```edit ... ``` blocks
+  let cleaned = content.replace(/```edit\s*\n[\s\S]*?```/gi, '')
+  // Remove "Для замены имени..." style instruction lines often surrounding edit blocks
+  cleaned = cleaned.replace(/Для замены[^\n]*\n?/gi, '')
+  // Collapse multiple consecutive blank lines into max 2
+  cleaned = cleaned.replace(/\n{3,}/g, '\n\n')
+  return cleaned.trim()
+}
+
+/**
+ * Parse ```edit blocks with НАЙТИ/ЗАМЕНИТЬ from AI response text.
+ * Fallback for when backend structured_edits are empty.
+ */
+function parseEditBlocksFromContent(
+  content: string,
+  documentContent?: string
+): Array<{
+  id: string
+  original_text: string
+  new_text: string
+  context_before: string
+  context_after: string
+  found_in_document: boolean
+}> {
+  const edits: Array<{
+    id: string
+    original_text: string
+    new_text: string
+    context_before: string
+    context_after: string
+    found_in_document: boolean
+  }> = []
+
+  // Plain text version of document for searching (strip HTML)
+  const plainDoc = documentContent ? stripHtml(documentContent) : undefined
+
+  // Match ```edit ... ``` blocks
+  const editBlockRegex = /```edit\s*\n([\s\S]*?)```/gi
+  let match: RegExpExecArray | null
+
+  while ((match = editBlockRegex.exec(content)) !== null) {
+    const block = match[1].trim()
+    // Parse НАЙТИ: ... ЗАМЕНИТЬ: ...
+    const findMatch = block.match(/НАЙТИ:\s*([\s\S]*?)(?=\nЗАМЕНИТЬ:)/i)
+    const replaceMatch = block.match(/ЗАМЕНИТЬ:\s*([\s\S]*?)$/i)
+
+    if (findMatch && replaceMatch) {
+      const originalText = findMatch[1].trim()
+      const newText = replaceMatch[1].trim()
+
+      if (originalText && newText) {
+        const foundInDoc = plainDoc
+          ? plainDoc.includes(originalText)
+          : true // Assume found if no document content to check
+
+        // Extract context from plain text (not HTML)
+        let contextBefore = ''
+        let contextAfter = ''
+        if (plainDoc && foundInDoc) {
+          const pos = plainDoc.indexOf(originalText)
+          if (pos > 0) {
+            contextBefore = plainDoc.substring(Math.max(0, pos - 50), pos).trim()
+          }
+          const endPos = pos + originalText.length
+          if (endPos < plainDoc.length) {
+            contextAfter = plainDoc.substring(endPos, Math.min(plainDoc.length, endPos + 50)).trim()
+          }
+        }
+
+        edits.push({
+          id: `edit-fe-${edits.length + 1}-${Date.now()}`,
+          original_text: originalText,
+          new_text: newText,
+          context_before: contextBefore,
+          context_after: contextAfter,
+          found_in_document: foundInDoc,
+        })
+      }
+    }
+  }
+
+  // Deduplicate overlapping edits: if one edit's original_text is a substring
+  // of another's, keep only the longer (more specific) one
+  const deduped = edits.filter((edit, idx) => {
+    for (let j = 0; j < edits.length; j++) {
+      if (j === idx) continue
+      // If this edit's original_text is contained within another's, remove it
+      if (edits[j].original_text.includes(edit.original_text) && edits[j].original_text.length > edit.original_text.length) {
+        return false
+      }
+    }
+    return true
+  })
+
+  return deduped
 }
 
 interface Message {
@@ -193,6 +302,7 @@ interface PromptInputWithDropProps {
   onDocumentDrop?: (documentFilename: string) => void
   handlePromptSubmit: (message: { text: string; files: any[] }, event: React.FormEvent<HTMLFormElement>) => void | Promise<void>
   isLoading: boolean
+  onStop?: () => void
   selectedText?: string
   documentEditorMode?: boolean
   deepThink: boolean
@@ -261,6 +371,7 @@ const PromptInputWithDrop = ({
   onDocumentDrop,
   handlePromptSubmit,
   isLoading,
+  onStop,
   selectedText,
   documentEditorMode,
   deepThink,
@@ -272,6 +383,7 @@ const PromptInputWithDrop = ({
 }: PromptInputWithDropProps) => {
   const attachments = useOptionalProviderAttachments()
   const containerRef = useRef<HTMLDivElement | null>(null)
+  const fileAttachInputRef = useRef<HTMLInputElement | null>(null)
   const [isDraggingOver, setIsDraggingOver] = useState(false)
   const dragCounterRef = useRef(0)
   
@@ -484,37 +596,75 @@ const PromptInputWithDrop = ({
           <div className="flex flex-col w-full gap-2 px-2 pt-1.5 pb-2">
             <PromptInputTextarea 
               placeholder="Задайте уточняющий вопрос"
-              className="absolute top-[9px] w-full min-h-[56px] max-h-[200px] text-base px-3 py-2 resize-none focus:outline-none leading-relaxed overflow-y-auto"
+              className="w-full min-h-[56px] max-h-[200px] text-base px-3 py-2 resize-none focus:outline-none leading-relaxed overflow-y-auto"
               style={{
                 color: 'var(--color-text-primary)',
                 backgroundColor: 'transparent',
               }}
             />
-            <PromptInputFooter className="absolute top-[42px] h-[49px] items-center gap-2 px-2 pb-1">
-              <SettingsPanel
-                webSearch={false}
-                deepThink={deepThink}
-                legalResearch={legalResearch}
-                draftMode={draftMode}
-                onWebSearchChange={() => {}}
-                onDeepThinkChange={onDeepThinkChange}
-                onLegalResearchChange={onLegalResearchChange}
-                onDraftModeChange={onDraftModeChange}
-                variant="compact"
-                className="absolute left-[5px] top-[32px] bg-white/80 border border-[#E7EAF0] rounded-xl px-1.5 py-1"
-                style={{ paddingTop: 4, paddingBottom: 4 }}
-              />
-              <PromptInputSubmit 
-                variant="default"
-                className="absolute right-[5px] top-[32px] rounded-xl h-10 w-10 p-0 flex items-center justify-center shrink-0 transition-all duration-150 disabled:opacity-50 disabled:cursor-not-allowed"
-                style={{
-                  backgroundColor: 'var(--color-accent)',
-                  color: 'var(--color-bg-primary)',
-                }}
-                disabled={isLoading || !actualCaseId}
-                status={isLoading ? "submitted" : undefined}
-                aria-label="Отправить сообщение"
-              />
+            <PromptInputFooter className="flex items-center justify-between px-3 py-2 mt-1">
+              <div className="flex items-center gap-1">
+                <input
+                  ref={fileAttachInputRef}
+                  type="file"
+                  multiple
+                  onChange={(e) => {
+                    if (e.target.files && e.target.files.length > 0 && attachments) {
+                      attachments.add(e.target.files)
+                    }
+                    if (fileAttachInputRef.current) {
+                      fileAttachInputRef.current.value = ''
+                    }
+                  }}
+                  style={{ display: 'none' }}
+                />
+                <button
+                  type="button"
+                  onClick={() => fileAttachInputRef.current?.click()}
+                  className="flex items-center justify-center w-8 h-8 rounded-lg transition-colors bg-transparent text-gray-400 hover:text-gray-600 hover:bg-gray-100"
+                  aria-label="Прикрепить файл"
+                  title="Прикрепить файл"
+                >
+                  <Paperclip className="w-4 h-4" aria-hidden="true" />
+                </button>
+                <SettingsPanel
+                  webSearch={false}
+                  deepThink={deepThink}
+                  legalResearch={legalResearch}
+                  draftMode={draftMode}
+                  onWebSearchChange={() => {}}
+                  onDeepThinkChange={onDeepThinkChange}
+                  onLegalResearchChange={onLegalResearchChange}
+                  onDraftModeChange={onDraftModeChange}
+                  variant="compact"
+                  hideDraft={documentEditorMode}
+                  className="bg-white/80 border border-[#E7EAF0] rounded-xl px-1.5 py-1"
+                  style={{ paddingTop: 4, paddingBottom: 4 }}
+                />
+              </div>
+              {isLoading ? (
+                <button
+                  type="button"
+                  onClick={onStop}
+                  className="rounded-xl h-10 w-10 p-0 flex items-center justify-center shrink-0 transition-all duration-150 border-2 border-gray-300 hover:border-red-400 hover:bg-red-50 group"
+                  style={{ backgroundColor: 'var(--color-bg-primary)' }}
+                  aria-label="Остановить генерацию"
+                  title="Остановить генерацию"
+                >
+                  <Square className="w-3.5 h-3.5 text-gray-500 group-hover:text-red-500 transition-colors" fill="currentColor" />
+                </button>
+              ) : (
+                <PromptInputSubmit
+                  variant="default"
+                  className="rounded-xl h-10 w-10 p-0 flex items-center justify-center shrink-0 transition-all duration-150 disabled:opacity-50 disabled:cursor-not-allowed"
+                  style={{
+                    backgroundColor: 'var(--color-accent)',
+                    color: 'var(--color-bg-primary)',
+                  }}
+                  disabled={!actualCaseId}
+                  aria-label="Отправить сообщение"
+                />
+              )}
             </PromptInputFooter>
           </div>
         </PromptInputBody>
@@ -854,6 +1004,8 @@ export const AssistantUIChat = forwardRef<AssistantUIChatRef, AssistantUIChatPro
                             title: source.title || source.file,
                             url: source.url,
                             page: source.page,
+                            file: source.file || source.title,
+                            text_preview: source.text_preview || source.quote,
                           })),
                         }
                       : msg
@@ -903,6 +1055,54 @@ export const AssistantUIChat = forwardRef<AssistantUIChatRef, AssistantUIChatPro
                           ? currentSteps.map((s, idx) => (idx === stepIndex ? newStep : s))
                           : [...currentSteps, newStep]
                       return { ...msg, reasoningSteps: updatedSteps }
+                    }
+                    return msg
+                  })
+                )
+              }
+              // Обработка tool_call events (вызовы инструментов с статусом)
+              if (data.type === 'tool_call' && data.name) {
+                setMessages((prev) =>
+                  prev.map((msg) => {
+                    if (msg.id === assistantMsgId) {
+                      const currentToolCalls = msg.toolCalls || []
+                      if (data.status === 'running') {
+                        return {
+                          ...msg,
+                          toolCalls: [...currentToolCalls, {
+                            name: data.name,
+                            input: data.input,
+                            status: 'running' as const,
+                          }]
+                        }
+                      } else if (data.status === 'completed' || data.status === 'error') {
+                        // Find last running tool call with this name and update it
+                        let idx = -1
+                        for (let i = currentToolCalls.length - 1; i >= 0; i--) {
+                          if (currentToolCalls[i].name === data.name && currentToolCalls[i].status === 'running') {
+                            idx = i
+                            break
+                          }
+                        }
+                        if (idx >= 0) {
+                          const updated = [...currentToolCalls]
+                          updated[idx] = {
+                            ...updated[idx],
+                            status: data.status as 'completed' | 'error',
+                            output: data.output,
+                          }
+                          return { ...msg, toolCalls: updated }
+                        }
+                        // No matching running tool found — add as completed
+                        return {
+                          ...msg,
+                          toolCalls: [...currentToolCalls, {
+                            name: data.name,
+                            status: data.status as 'completed' | 'error',
+                            output: data.output,
+                          }]
+                        }
+                      }
                     }
                     return msg
                   })
@@ -1022,6 +1222,24 @@ export const AssistantUIChat = forwardRef<AssistantUIChatRef, AssistantUIChatPro
     } finally {
       setIsLoading(false)
       abortControllerRef.current = null
+
+      // Fallback: parse edit blocks from AI response content if no structured_edits arrived
+      if (documentEditorMode) {
+        setMessages((prev) => {
+          const msg = prev.find(m => m.id === assistantMsgId)
+          if (msg && msg.content && (!msg.structuredEdits || msg.structuredEdits.length === 0)) {
+            const parsed = parseEditBlocksFromContent(msg.content, currentDocumentContent)
+            if (parsed.length > 0) {
+              return prev.map(m =>
+                m.id === assistantMsgId
+                  ? { ...m, structuredEdits: parsed }
+                  : m
+              )
+            }
+          }
+          return prev
+        })
+      }
     }
   }, [actualCaseId, isLoading, messages, legalResearch, deepThink, draftMode, documentEditorMode, currentDocumentContent, currentDocumentId, selectedText])
 
@@ -1296,20 +1514,22 @@ export const AssistantUIChat = forwardRef<AssistantUIChatRef, AssistantUIChatPro
                     </span>
                   </div>
                 )}
-                {hasUserText && <UserMessage content={message.content} />}
-                {/* Отображаем файлы под сообщением пользователя */}
+                {/* Отображаем файлы над сообщением пользователя (справа) */}
                 {message.attachments && message.attachments.length > 0 && (
-                  <div className="mt-2 space-y-2">
-                    {message.attachments.map((attachment) => (
-                      <FileChip
-                        key={attachment.id}
-                        attachment={attachment}
-                        onRemove={() => {}}
-                        readonly // В отправленном сообщении нельзя удалять
-                      />
-                    ))}
+                  <div className="flex justify-end mb-1">
+                    <div className="space-y-1.5 max-w-[75%]">
+                      {message.attachments.map((attachment) => (
+                        <FileChip
+                          key={attachment.id}
+                          attachment={attachment}
+                          onRemove={() => {}}
+                          readonly
+                        />
+                      ))}
+                    </div>
                   </div>
                 )}
+                {hasUserText && <UserMessage content={message.content} />}
               </div>
             )
           }
@@ -1317,7 +1537,9 @@ export const AssistantUIChat = forwardRef<AssistantUIChatRef, AssistantUIChatPro
           return (
             <AssistantMessage
               key={message.id}
-              content={message.content}
+              content={message.structuredEdits && message.structuredEdits.length > 0
+                ? stripEditBlocksFromContent(message.content || '')
+                : message.content}
               reasoning={message.reasoning}
               reasoningSteps={message.reasoningSteps}
               toolCalls={message.toolCalls}
@@ -1455,10 +1677,13 @@ export const AssistantUIChat = forwardRef<AssistantUIChatRef, AssistantUIChatPro
                     questions={message.feedbackRequest.questions || []}
                     context={message.feedbackRequest.context || {}}
                     availableDocTypes={message.feedbackRequest.availableDocTypes || []}
-                    onSubmit={async (_answer: { doc_types?: string[], columns_clarification?: string }) => {
-                      // REMOVED: API endpoint /api/assistant/chat/resume не работает (использует заглушки)
-                      logger.error('Resume endpoint is not available - feature disabled')
-                      throw new Error('Функция возобновления выполнения временно недоступна')
+                    onSubmit={async (answer: { doc_types?: string[], columns_clarification?: string }) => {
+                      // Send feedback as a new chat message
+                      const parts: string[] = []
+                      if (answer.doc_types?.length) parts.push(`Типы документов: ${answer.doc_types.join(', ')}`)
+                      if (answer.columns_clarification) parts.push(answer.columns_clarification)
+                      const feedbackText = parts.join('. ') || 'Подтверждаю'
+                      sendMessage(feedbackText)
                     }}
                   />
                 ) : (
@@ -1469,10 +1694,9 @@ export const AssistantUIChat = forwardRef<AssistantUIChatRef, AssistantUIChatPro
                       typeof opt === 'string' ? { id: opt, label: opt } : opt
                     )}
                     agentName={message.feedbackRequest.agentName}
-                    onResponse={async (_response: string) => {
-                      // REMOVED: API endpoint /api/assistant/chat/human-feedback не работает (использует заглушки)
-                      logger.error('Human feedback endpoint is not available - feature disabled')
-                      throw new Error('Функция обратной связи временно недоступна')
+                    onResponse={async (response: string) => {
+                      // Send feedback as a new chat message
+                      sendMessage(response)
                     }}
                   />
                 )
@@ -1485,6 +1709,14 @@ export const AssistantUIChat = forwardRef<AssistantUIChatRef, AssistantUIChatPro
                     const success = onReplaceTextInDocument(edit.original_text, edit.new_text)
                     if (success) {
                       setAppliedEdits(prev => new Set(prev).add(edit.id))
+                      // Auto-skip other edits whose original_text overlaps with this one
+                      message.structuredEdits?.forEach(other => {
+                        if (other.id !== edit.id && !appliedEdits.has(other.id) && !skippedEdits.has(other.id)) {
+                          if (edit.original_text.includes(other.original_text) || other.original_text.includes(edit.original_text)) {
+                            setSkippedEdits(prev => new Set(prev).add(other.id))
+                          }
+                        }
+                      })
                     }
                   }}
                   onSkip={(edit) => {
@@ -1540,19 +1772,6 @@ export const AssistantUIChat = forwardRef<AssistantUIChatRef, AssistantUIChatPro
           )
         })}
 
-            {isLoading && (
-              <div className="flex justify-start">
-                <div 
-                  className="rounded-lg px-4 py-3 border border-border"
-                  style={{ 
-                    backgroundColor: 'var(--color-bg-secondary)',
-                    borderColor: 'var(--color-border)'
-                  }}
-                >
-                  <Loader size={20} style={{ color: 'var(--color-text-secondary)' }} />
-                </div>
-              </div>
-            )}
           </ConversationContent>
         </Conversation>
       </div>
@@ -1576,6 +1795,7 @@ export const AssistantUIChat = forwardRef<AssistantUIChatRef, AssistantUIChatPro
               onDocumentDrop={onDocumentDrop}
               handlePromptSubmit={handlePromptSubmit}
               isLoading={isLoading}
+              onStop={() => { abortControllerRef.current?.abort(); setIsLoading(false) }}
               selectedText={selectedText}
               documentEditorMode={documentEditorMode}
               deepThink={deepThink}
@@ -1608,6 +1828,7 @@ export const AssistantUIChat = forwardRef<AssistantUIChatRef, AssistantUIChatPro
               onDocumentDrop={onDocumentDrop}
               handlePromptSubmit={handlePromptSubmit}
               isLoading={isLoading}
+              onStop={() => { abortControllerRef.current?.abort(); setIsLoading(false) }}
               selectedText={selectedText}
               documentEditorMode={documentEditorMode}
               deepThink={deepThink}
