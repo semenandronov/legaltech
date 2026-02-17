@@ -19,6 +19,7 @@ ReAct Chat Agent v3.0 - Адаптивный агент для чата с Refle
 """
 from typing import AsyncGenerator, Optional, List, Dict, Any
 from sqlalchemy.orm import Session
+import asyncio
 import logging
 import json
 import re
@@ -52,6 +53,26 @@ _SEARCH_RESULTS_HEADER = re.compile(
     r'^\s*Результаты поиска:\s*$',
     re.MULTILINE
 )
+
+
+# Задержка между «словами» при эффекте печати (секунды)
+_STREAM_TYPING_DELAY_SEC = 0.032  # ~32 ms на слово — создаёт впечатление набора текста
+
+
+async def _stream_text_with_typing_effect(
+    text: str, delay_sec: float = _STREAM_TYPING_DELAY_SEC
+) -> AsyncGenerator[str, None]:
+    """
+    Отдаёт текст по словам с небольшой задержкой, чтобы создавалось впечатление печати.
+    """
+    if not text:
+        return
+    parts = text.split(" ")
+    for i, part in enumerate(parts):
+        chunk = part + (" " if i < len(parts) - 1 else "")
+        if chunk:
+            yield SSESerializer.text_delta(chunk)
+            await asyncio.sleep(delay_sec)
 
 
 def _clean_response_text(text: str) -> str:
@@ -780,10 +801,11 @@ ID дела: {self.case_id}
                         # LLM call ended — flush text buffer if it was a final response (no tool calls)
                         elif kind == "on_chat_model_end":
                             if text_buffer and not has_tool_call_in_current_step:
-                                # This was a final text response — clean and stream it
+                                # This was a final text response — stream with typing effect
                                 cleaned = _clean_response_text(text_buffer)
                                 if cleaned:
-                                    yield SSESerializer.text_delta(cleaned)
+                                    async for sse_chunk in _stream_text_with_typing_effect(cleaned):
+                                        yield sse_chunk
                                     response_text += cleaned
                             text_buffer = ""
                             has_tool_call_in_current_step = False
@@ -799,11 +821,12 @@ ID дела: {self.case_id}
                                 output=output_preview
                             )
 
-                    # Flush any remaining buffered text
+                    # Flush any remaining buffered text (with typing effect)
                     if text_buffer:
                         cleaned = _clean_response_text(text_buffer)
                         if cleaned:
-                            yield SSESerializer.text_delta(cleaned)
+                            async for sse_chunk in _stream_text_with_typing_effect(cleaned):
+                                yield sse_chunk
                             response_text += cleaned
 
                 # Fallback: step-level streaming (old behavior)
@@ -837,7 +860,8 @@ ID дела: {self.case_id}
                                     if hasattr(msg, 'content') and msg.content:
                                         cleaned_msg = _clean_response_text(msg.content)
                                         if cleaned_msg:
-                                            yield SSESerializer.text_delta(cleaned_msg)
+                                            async for sse_chunk in _stream_text_with_typing_effect(cleaned_msg):
+                                                yield sse_chunk
                                             response_text += cleaned_msg
 
                                     if hasattr(msg, 'tool_calls') and msg.tool_calls:
@@ -855,7 +879,8 @@ ID дела: {self.case_id}
                             elif "output" in event:
                                 output = event["output"]
                                 if output and output not in response_text:
-                                    yield SSESerializer.text_delta(output)
+                                    async for sse_chunk in _stream_text_with_typing_effect(output):
+                                        yield sse_chunk
                                     response_text += output
                 else:
                     # Синхронный вызов с fallback
