@@ -583,6 +583,98 @@ class ReActChatAgent:
             
         except Exception as e:
             logger.warning(f"[ReActChatAgent] Citation verification error: {e}")
+
+    async def _stream_agent_tokens(
+        self,
+        input_data: dict,
+        config: dict,
+        tool_calls_made: list,
+    ) -> AsyncGenerator[tuple, None]:
+        """
+        Стриминг по токенам через astream_events (ответ по слову/токену).
+        Yields: (sse_string, delta_text) для накопления response_text наверх.
+        """
+        seen_tool_names = set()
+        async for event in self.agent.astream_events(
+            input_data, config=config, version="v2"
+        ):
+            event_type = event.get("event") or event.get("event_type")
+            data = event.get("data") or {}
+
+            # Токены от LLM — стримим по кусочкам
+            if event_type in ("on_chat_model_stream", "on_llm_stream"):
+                chunk = data.get("chunk")
+                if not chunk:
+                    continue
+                content = getattr(chunk, "content", None)
+                if content is None and isinstance(chunk, str):
+                    content = chunk
+                elif content is not None and not isinstance(content, str):
+                    content = str(content) if content else ""
+                if content:
+                    yield (SSESerializer.text_delta(content), content)
+
+            # Вызов инструмента — одно событие на инструмент
+            elif event_type == "on_tool_start":
+                name = event.get("name") or data.get("name") or "unknown"
+                if name not in seen_tool_names:
+                    seen_tool_names.add(name)
+                    tool_calls_made.append(name)
+                    logger.info("[ReActChatAgent] Tool call: %s", name)
+                    yield (
+                        SSESerializer.reasoning(
+                            phase="tool_call",
+                            step=len(tool_calls_made),
+                            total_steps=0,
+                            content=f"Использую инструмент: {name}",
+                        ),
+                        "",
+                    )
+
+    async def _stream_agent_messages(
+        self, input_data: dict, tool_calls_made: list
+    ) -> AsyncGenerator[tuple, None]:
+        """
+        Стриминг по сообщениям (целыми кусками). Fallback при отсутствии astream_events.
+        Yields: (sse_string, delta_text).
+        """
+        response_text = ""
+        async for event in self.agent.astream(input_data):
+            if not isinstance(event, dict):
+                continue
+            if "messages" in event:
+                for msg in event["messages"]:
+                    if hasattr(msg, "content") and msg.content:
+                        delta = msg.content
+                        if delta and delta != response_text:
+                            if response_text and delta.startswith(response_text):
+                                delta = delta[len(response_text) :]
+                            elif response_text:
+                                delta = msg.content
+                            if delta:
+                                yield (SSESerializer.text_delta(delta), delta)
+                                response_text += delta
+                    if hasattr(msg, "tool_calls") and msg.tool_calls:
+                        for tc in msg.tool_calls:
+                            name = tc.get("name", "unknown")
+                            tool_calls_made.append(name)
+                            logger.info("[ReActChatAgent] Tool call: %s", name)
+                            yield (
+                                SSESerializer.reasoning(
+                                    phase="tool_call",
+                                    step=len(tool_calls_made),
+                                    total_steps=0,
+                                    content=f"Использую инструмент: {name}",
+                                ),
+                                "",
+                            )
+            elif "output" in event:
+                output = event["output"]
+                if output and output not in response_text:
+                    delta = output[len(response_text) :] if response_text and output.startswith(response_text) else output
+                    if delta:
+                        yield (SSESerializer.text_delta(delta), delta)
+                        response_text += delta
     
     async def _run_agent(self, question: str) -> AsyncGenerator[str, None]:
         """Запустить ReAct агента с Reflection и Citation Verification"""
@@ -629,7 +721,7 @@ ID дела: {self.case_id}
                         yield event
                 return
             
-            # Пробуем стриминг
+            # Пробуем стриминг (сначала по токенам для качественного UX)
             try:
                 response_text = ""
                 tool_calls_made = []
