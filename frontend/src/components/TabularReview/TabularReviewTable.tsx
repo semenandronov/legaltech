@@ -1050,7 +1050,7 @@ export const TabularReviewTable = React.memo(({ reviewId, tableData, onTableData
                   <tr style={{ height: `${totalSize - (virtualRows[virtualRows.length - 1]?.end ?? 0)}px` }} />
                 </>
               ) : (
-                table.getRowModel().rows.map((row, rowIndex) => (
+                table.getRowModel().rows.map((row) => (
                   <TableRow
                     key={row.id}
                     sx={{
