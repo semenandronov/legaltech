@@ -1,20 +1,17 @@
 import {
   FileText,
-  Play,
   FolderOpen,
 } from "lucide-react"
 
 interface TabularReviewToolbarProps {
   onAddColumns?: () => void
   onUpdateDocuments?: () => void
-  onRunAll?: () => void
   processing?: boolean
 }
 
 export function TabularReviewToolbar({
   onAddColumns,
   onUpdateDocuments,
-  onRunAll,
   processing = false,
 }: TabularReviewToolbarProps) {
 
@@ -38,17 +35,6 @@ export function TabularReviewToolbar({
         >
           <FileText className="w-4 h-4" />
           Column builder
-        </button>
-      </div>
-
-      <div className="flex items-center gap-3">
-        <button
-          onClick={onRunAll}
-          disabled={processing}
-          className="px-5 py-2 bg-gradient-to-r from-[#00D4FF] to-[#7C3AED] text-white text-sm font-medium rounded-lg hover:shadow-lg hover:shadow-[#00D4FF]/30 transition-all duration-300 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
-        >
-          <Play className="w-4 h-4" />
-          {processing ? "Обработка…" : "Run all"}
         </button>
       </div>
     </div>

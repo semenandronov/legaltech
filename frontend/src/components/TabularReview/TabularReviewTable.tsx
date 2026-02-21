@@ -26,14 +26,12 @@ import {
   TableRow,
   Paper,
   Stack,
-  Checkbox,
   Typography,
   IconButton,
   Chip,
 } from '@mui/material'
 import {
   Description as FileTextIcon,
-  PlayArrow as PlayArrowIcon,
   Close as CloseIcon,
   Add as AddIcon,
   ExpandMore as ExpandMoreIcon,
@@ -44,8 +42,6 @@ import {
 import { TabularRow, TabularColumn, TabularCell, CellDetails } from "@/services/tabularReviewApi"
 import { tabularReviewApi } from "@/services/tabularReviewApi"
 import { TagCell } from "./TagCell"
-import { BulkActionsToolbar } from "./BulkActionsToolbar"
-import { useBatchSelection } from "@/hooks/useBatchSelection"
 import { CellHistoryPanel } from "./CellHistoryPanel"
 import { AdvancedFiltersPanel, AdvancedFilters } from "./AdvancedFiltersPanel"
 import { useKeyboardNavigation } from "@/hooks/useKeyboardNavigation"
@@ -89,7 +85,7 @@ export const TabularReviewTable = React.memo(({ reviewId, tableData, onTableData
   const [columnFilters, setColumnFilters] = React.useState<ColumnFiltersState>([])
   const [columnVisibility, setColumnVisibility] = React.useState<VisibilityState>({})
   const [columnSizing, setColumnSizing] = React.useState<ColumnSizingState>({})
-  const [columnPinning, setColumnPinning] = React.useState<ColumnPinningState>({ left: ['row_index', 'select', 'file_name'], right: [] })
+  const [columnPinning, setColumnPinning] = React.useState<ColumnPinningState>({ left: ['row_index', 'file_name'], right: [] })
   const [globalFilter, setGlobalFilter] = React.useState("")
   const [_loadingCell, setLoadingCell] = React.useState(false)
   const [historyPanelOpen, setHistoryPanelOpen] = React.useState(false)
@@ -98,7 +94,6 @@ export const TabularReviewTable = React.memo(({ reviewId, tableData, onTableData
     columnId: string
     columnLabel: string
   } | null>(null)
-  const [runningColumns, setRunningColumns] = React.useState<Set<string>>(new Set())
   const [advancedFilters, setAdvancedFilters] = React.useState<AdvancedFilters>({
     cellStatuses: [],
     documentStatuses: [],
@@ -116,19 +111,6 @@ export const TabularReviewTable = React.memo(({ reviewId, tableData, onTableData
     logicOperator: "AND",
   })
   const [filtersPanelOpen, setFiltersPanelOpen] = React.useState(false)
-  
-  // Batch selection - get all file IDs
-  const allFileIds = React.useMemo(() => tableData.rows.map(row => row.file_id), [tableData.rows])
-  const {
-    selectedItems,
-    toggleSelection,
-    selectAll,
-    clearSelection,
-  } = useBatchSelection(allFileIds)
-  
-  const selectedIds = selectedItems
-  const isAllSelected = selectedIds.size === allFileIds.length && allFileIds.length > 0
-  const selectedCount = selectedIds.size
   
   // Кеш для cellDetails
   const cellDetailsCache = React.useRef<Map<string, CellDetails>>(new Map())
@@ -266,37 +248,6 @@ export const TabularReviewTable = React.memo(({ reviewId, tableData, onTableData
           {row.index + 1}
         </Typography>
       ),
-    }
-
-    // Selection column
-    const selectionColumn: ColumnDef<any> = {
-      id: "select",
-      header: () => (
-        <Checkbox
-          checked={isAllSelected}
-          indeterminate={selectedCount > 0 && !isAllSelected}
-          onChange={(e) => {
-            if (e.target.checked) {
-              selectAll()
-            } else {
-              clearSelection()
-            }
-          }}
-          onClick={(e) => e.stopPropagation()}
-        />
-      ),
-        cell: ({ row }) => (
-        <Checkbox
-          checked={selectedIds.has(row.original.file_id)}
-          onChange={(e) => {
-                  e.stopPropagation()
-            toggleSelection(row.original.file_id)
-          }}
-          onClick={(e) => e.stopPropagation()}
-        />
-      ),
-      enableSorting: false,
-      enableHiding: false,
     }
 
     // File name column
@@ -445,9 +396,22 @@ export const TabularReviewTable = React.memo(({ reviewId, tableData, onTableData
         
         return (
           <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, width: '100%' }}>
-            <Typography sx={{ fontWeight: 600, color: '#1F2937', flex: 1 }}>
-              {col.column_label}
-            </Typography>
+            <Box
+              component="span"
+              onClick={(e) => {
+                e.stopPropagation()
+                onColumnEdit?.(col.id)
+              }}
+              sx={{
+                flex: 1,
+                cursor: onColumnEdit ? 'pointer' : 'default',
+                '&:hover': onColumnEdit ? { opacity: 0.8 } : {},
+              }}
+            >
+              <Typography sx={{ fontWeight: 600, color: '#1F2937' }}>
+                {col.column_label}
+              </Typography>
+            </Box>
             <ColumnHeaderMenu
               columnId={col.id}
               columnLabel={col.column_label}
@@ -460,37 +424,6 @@ export const TabularReviewTable = React.memo(({ reviewId, tableData, onTableData
               onSortAsc={() => column.toggleSorting(false)}
               onSortDesc={() => column.toggleSorting(true)}
             />
-            <IconButton
-              size="small"
-              onClick={async (e) => {
-                e.stopPropagation()
-                setRunningColumns(prev => new Set(prev).add(col.id))
-                try {
-                  await tabularReviewApi.runColumnExtraction(reviewId, col.id)
-                  // WebSocket обновит ячейки автоматически
-                  if (onRunColumn) {
-                    onRunColumn(col.id)
-                  }
-                } catch (error) {
-                  console.error("Error running column extraction:", error)
-                } finally {
-                  setRunningColumns(prev => {
-                    const next = new Set(prev)
-                    next.delete(col.id)
-                    return next
-                  })
-                }
-              }}
-              disabled={runningColumns.has(col.id)}
-              sx={{ 
-                p: 0.5,
-                color: runningColumns.has(col.id) ? '#9CA3AF' : '#6B7280',
-                '&:hover': { color: '#1F2937', bgcolor: 'action.hover' },
-                '&.Mui-disabled': { color: '#9CA3AF' }
-              }}
-            >
-              <PlayArrowIcon fontSize="small" />
-            </IconButton>
           </Box>
         )
       },
@@ -714,9 +647,9 @@ export const TabularReviewTable = React.memo(({ reviewId, tableData, onTableData
       cell: () => null,
     }
 
-    const baseColumns = [rowIndexColumn, selectionColumn, fileColumn, ...dynamicColumns]
+    const baseColumns = [rowIndexColumn, fileColumn, ...dynamicColumns]
     return onAddColumnClick ? [...baseColumns, addColumnColumn] : baseColumns
-  }, [tableData.columns, reviewId, onCellClick, onRunColumn, onRemoveDocument, runningColumns, selectedIds, isAllSelected, selectedCount, toggleSelection, selectAll, clearSelection, onAddColumnClick])
+  }, [tableData.columns, reviewId, onCellClick, onRemoveDocument, onColumnEdit, onColumnDelete, onAddColumnClick])
 
   const table = useReactTable({
     data: tableRows,
@@ -784,12 +717,6 @@ export const TabularReviewTable = React.memo(({ reviewId, tableData, onTableData
     onFilter: () => {
       setFiltersPanelOpen(true)
     },
-    onSelectAll: () => {
-      selectAll()
-    },
-    onDeselectAll: () => {
-      clearSelection()
-    },
     onNextPage: () => {
       table.nextPage()
     },
@@ -819,65 +746,8 @@ export const TabularReviewTable = React.memo(({ reviewId, tableData, onTableData
   const totalSize = virtualizer.getTotalSize()
 
 
-  // Bulk action handlers
-  const handleBulkMarkAsReviewed = React.useCallback(async () => {
-    if (selectedIds.size === 0) return
-    try {
-      await tabularReviewApi.bulkUpdateStatus(
-        reviewId,
-        Array.from(selectedIds),
-        "reviewed"
-      )
-      clearSelection()
-      // TODO: Reload data or show success message
-    } catch (error) {
-      console.error("Error bulk updating status:", error)
-    }
-  }, [reviewId, selectedIds, clearSelection])
-
-  const handleBulkReRun = React.useCallback(async () => {
-    if (selectedIds.size === 0) return
-    try {
-      const columnIds = tableData.columns.map(col => col.id)
-      await tabularReviewApi.bulkRunExtraction(
-        reviewId,
-        Array.from(selectedIds),
-        columnIds
-      )
-      clearSelection()
-      // WebSocket will update cells automatically
-    } catch (error) {
-      console.error("Error bulk running extraction:", error)
-    }
-  }, [reviewId, selectedIds, tableData.columns, clearSelection])
-
-  const handleBulkDelete = React.useCallback(async () => {
-    if (selectedIds.size === 0) return
-    if (!confirm(`Удалить ${selectedIds.size} строк?`)) return
-    try {
-      await tabularReviewApi.bulkDeleteRows(
-        reviewId,
-        Array.from(selectedIds)
-      )
-      clearSelection()
-      // TODO: Replace with proper data reload
-      window.location.reload()
-    } catch (error) {
-      console.error("Error bulk deleting rows:", error)
-    }
-  }, [reviewId, selectedIds, clearSelection])
-
   return (
     <Box sx={{ width: '100%', height: '100%', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
-      {/* Bulk Actions Toolbar */}
-      <BulkActionsToolbar
-        selectedCount={selectedCount}
-        onMarkAsReviewed={handleBulkMarkAsReviewed}
-        onReRunExtraction={handleBulkReRun}
-        onDelete={handleBulkDelete}
-        onClearSelection={clearSelection}
-      />
-
       {/* Documents count bar (above table) */}
       <Stack
         direction="row"
@@ -909,7 +779,7 @@ export const TabularReviewTable = React.memo(({ reviewId, tableData, onTableData
           borderRadius: '8px',
           overflowX: 'auto',
           overflowY: 'auto',
-          maxHeight: shouldVirtualize ? '600px' : '100%',
+          maxHeight: shouldVirtualize ? '500px' : '65vh',
           width: '100%',
           flex: 1,
           minWidth: 0,
@@ -1035,7 +905,7 @@ export const TabularReviewTable = React.memo(({ reviewId, tableData, onTableData
                             ? `${cell.column.getStart('right')}px` 
                             : undefined,
                           zIndex: cell.column.getIsPinned() ? 10 : 1,
-                          bgcolor: 'inherit',
+                          bgcolor: 'transparent',
                         }}
                       >
                         {flexRender(
@@ -1080,7 +950,7 @@ export const TabularReviewTable = React.memo(({ reviewId, tableData, onTableData
                             ? `${cell.column.getStart('right')}px` 
                             : undefined,
                           zIndex: cell.column.getIsPinned() ? 10 : 1,
-                          bgcolor: 'inherit',
+                          bgcolor: 'transparent',
                         }}
                       >
                         {flexRender(

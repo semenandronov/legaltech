@@ -764,7 +764,6 @@ const TabularReviewPage: React.FC = () => {
         <TabularReviewToolbar
           onUpdateDocuments={reviewId ? () => setShowDocumentSelector(true) : undefined}
           onAddColumns={() => setShowColumnBuilder(true)}
-          onRunAll={handleRunAll}
           processing={processing}
         />
 
