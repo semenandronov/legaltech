@@ -1,6 +1,5 @@
 import { useState, useEffect } from "react"
 import Modal from "@/components/UI/Modal"
-import { Popover } from "@mui/material"
 import { Button } from "@/components/UI/Button"
 import Input from "@/components/UI/Input"
 import { Textarea } from "@/components/UI/Textarea"
@@ -11,8 +10,6 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/UI/Select"
-import { Button as MUIButton, CircularProgress, Tooltip } from "@mui/material"
-import { AutoAwesome as AutoAwesomeIcon } from "@mui/icons-material"
 import { tabularReviewApi } from "@/services/tabularReviewApi"
 import { toast } from "sonner"
 
@@ -38,19 +35,17 @@ interface ColumnBuilderProps {
       allow_custom?: boolean
     }
   } | null
-  /** When set (create flow), render as popover under this element instead of centered modal with backdrop */
-  anchorEl?: HTMLElement | null
 }
 
 const COLUMN_TYPES = [
-  { value: "text", label: "Text", icon: "📝" },
-  { value: "number", label: "Number", icon: "#" },
-  { value: "currency", label: "Currency", icon: "$" },
-  { value: "yes_no", label: "Yes/No", icon: "✓" },
-  { value: "date", label: "Date", icon: "📅" },
-  { value: "tag", label: "Tag", icon: "🏷️" },
-  { value: "verbatim", label: "Verbatim", icon: "💬" },
-  { value: "manual_input", label: "Manual input", icon: "✏️" },
+  { value: "text", label: "Текст", icon: "📝" },
+  { value: "number", label: "Число", icon: "#" },
+  { value: "currency", label: "Валюта", icon: "$" },
+  { value: "yes_no", label: "Да/Нет", icon: "✓" },
+  { value: "date", label: "Дата", icon: "📅" },
+  { value: "tag", label: "Тег", icon: "🏷️" },
+  { value: "verbatim", label: "Дословно", icon: "💬" },
+  { value: "manual_input", label: "Ручной ввод", icon: "✏️" },
 ]
 
 // Цвета для тегов (как у Legora)
@@ -73,8 +68,7 @@ function suggestLabelFromPrompt(promptText: string): string {
   return firstLine.slice(0, 42).trim() + "…"
 }
 
-export function ColumnBuilder({ isOpen, onClose, onSave, editingColumn, anchorEl }: ColumnBuilderProps) {
-  const isCreate = !editingColumn
+export function ColumnBuilder({ isOpen, onClose, onSave, editingColumn }: ColumnBuilderProps) {
   const [step, setStep] = useState<1 | 2>(1)
   const [columnLabel, setColumnLabel] = useState(editingColumn?.label || "")
   const [columnType, setColumnType] = useState(editingColumn?.type || "text")
@@ -82,7 +76,6 @@ export function ColumnBuilder({ isOpen, onClose, onSave, editingColumn, anchorEl
   const [saving, setSaving] = useState(false)
   const [isGenerating, setIsGenerating] = useState(false)
   
-  // Конфигурация для tag
   const [tagOptions, setTagOptions] = useState<Array<{ label: string; color: string }>>(
     editingColumn?.column_config?.options || [
       { label: "Email", color: TAG_COLORS[0] },
@@ -92,19 +85,11 @@ export function ColumnBuilder({ isOpen, onClose, onSave, editingColumn, anchorEl
   )
   const [newTagLabel, setNewTagLabel] = useState("")
   
-  // При открытии в режиме создания — сброс на шаг 1
+  // При открытии: сброс или подстановка данных (создание и редактирование — один поток)
   useEffect(() => {
-    if (isOpen && isCreate) {
-      setStep(1)
-      setPrompt("")
-      setColumnLabel("")
-      setColumnType("verbatim")
-    }
-  }, [isOpen, isCreate])
-  
-  // Обновляем поля при изменении editingColumn
-  useEffect(() => {
+    if (!isOpen) return
     if (editingColumn) {
+      setStep(1)
       setColumnLabel(editingColumn.label)
       setColumnType(editingColumn.type)
       setPrompt(editingColumn.prompt || "")
@@ -113,17 +98,18 @@ export function ColumnBuilder({ isOpen, onClose, onSave, editingColumn, anchorEl
         { label: "Contract", color: TAG_COLORS[1] },
         { label: "Letter", color: TAG_COLORS[2] },
       ])
-    } else if (!isOpen) {
-      setColumnLabel("")
-      setColumnType("text")
+    } else {
+      setStep(1)
       setPrompt("")
+      setColumnLabel("")
+      setColumnType("verbatim")
       setTagOptions([
         { label: "Email", color: TAG_COLORS[0] },
         { label: "Contract", color: TAG_COLORS[1] },
         { label: "Letter", color: TAG_COLORS[2] },
       ])
     }
-  }, [editingColumn, isOpen])
+  }, [isOpen, editingColumn])
 
   const handleContinueToStep2 = () => {
     if (!prompt.trim()) {
@@ -223,87 +209,54 @@ export function ColumnBuilder({ isOpen, onClose, onSave, editingColumn, anchorEl
     }
   }
 
-  const createStep1Content = (
+  // Шаг 1: промпт (создание и редактирование)
+  const step1Content = (
     <>
       <p className="text-sm text-muted-foreground mb-4">
-        Get started by asking Harvey a question.
+        Опишите, какую информацию должна извлекать колонка.
       </p>
       <div className="space-y-4">
         <div>
           <Textarea
             value={prompt}
             onChange={(e) => setPrompt(e.target.value)}
-            placeholder="What is the signing date of this agreement?"
+            placeholder="Например: какая дата подписания договора?"
             rows={4}
             className="resize-none"
           />
         </div>
         <div className="flex justify-end gap-2">
           <Button variant="outline" onClick={onClose}>
-            Cancel
+            Отмена
           </Button>
           <Button onClick={handleContinueToStep2} disabled={!prompt.trim()}>
-            Continue
+            Далее
           </Button>
         </div>
       </div>
     </>
   )
 
-  // ——— Режим создания: два шага ———
-  if (isCreate && step === 1) {
-    if (anchorEl) {
-      return (
-        <Popover
-          open={isOpen}
-          anchorEl={anchorEl}
-          onClose={onClose}
-          anchorOrigin={{ vertical: "bottom", horizontal: "left" }}
-          transformOrigin={{ vertical: "top", horizontal: "left" }}
-          slotProps={{
-            root: { disableScrollLock: true },
-            backdrop: { sx: { backgroundColor: "transparent" } },
-          }}
-          PaperProps={{
-            sx: { minWidth: 320, maxWidth: 380, p: 2, borderRadius: 2, boxShadow: 2 },
-          }}
-        >
-          <div className="px-1">
-            <h3 className="text-sm font-semibold mb-3">Create column</h3>
-            {createStep1Content}
-          </div>
-        </Popover>
-      )
-    }
-    return (
-      <Modal isOpen={isOpen} onClose={onClose} title="Create column" size="sm">
-        {createStep1Content}
-      </Modal>
-    )
-  }
-
-  const createStep2Content = (
+  // Шаг 2: название колонки и тип (создание и редактирование)
+  const step2Content = (
     <>
-      <p className="text-sm text-muted-foreground mb-4">
-        Based on your question, Harvey has suggested the column header and type.
-      </p>
       <div className="space-y-4">
         <div>
-          <label className="text-sm font-medium mb-2 block">Label</label>
+          <label className="text-sm font-medium mb-2 block">Название колонки</label>
           <Input
             value={columnLabel}
             onChange={(e) => setColumnLabel(e.target.value)}
-            placeholder="e.g. Indemnification Clause"
+            placeholder="Например: Дата подписания"
           />
         </div>
         <div>
-          <label className="text-sm font-medium mb-2 block">Type</label>
+          <label className="text-sm font-medium mb-2 block">Тип колонки</label>
           <Select value={columnType} onValueChange={(v) => handleColumnTypeChange(v)}>
             <SelectTrigger
               onClick={(e) => e.stopPropagation()}
               onPointerDown={(e) => e.stopPropagation()}
             >
-              <SelectValue placeholder="Select type" />
+              <SelectValue placeholder="Выберите тип" />
             </SelectTrigger>
             <SelectContent onPointerDownOutside={() => {}} onEscapeKeyDown={() => {}}>
               {COLUMN_TYPES.map((type) => (
@@ -319,7 +272,7 @@ export function ColumnBuilder({ isOpen, onClose, onSave, editingColumn, anchorEl
         </div>
         {columnType === "tag" && (
           <div>
-            <label className="text-sm font-medium mb-2 block">Options</label>
+            <label className="text-sm font-medium mb-2 block">Опции тега</label>
             <div className="space-y-2">
               {tagOptions.map((option, index) => (
                 <div key={index} className="flex items-center gap-2 p-2 border rounded">
@@ -337,115 +290,38 @@ export function ColumnBuilder({ isOpen, onClose, onSave, editingColumn, anchorEl
                 </div>
               ))}
               <div className="flex gap-2">
-                <Input value={newTagLabel} onChange={(e) => setNewTagLabel(e.target.value)} placeholder="New option" onKeyDown={(e) => e.key === "Enter" && (e.preventDefault(), handleAddTag())} />
-                <Button variant="outline" size="sm" onClick={handleAddTag} disabled={!newTagLabel.trim()}>+ Add</Button>
+                <Input value={newTagLabel} onChange={(e) => setNewTagLabel(e.target.value)} placeholder="Новая опция" onKeyDown={(e) => e.key === "Enter" && (e.preventDefault(), handleAddTag())} />
+                <Button variant="outline" size="sm" onClick={handleAddTag} disabled={!newTagLabel.trim()}>+ Добавить</Button>
               </div>
             </div>
           </div>
         )}
         <div className="flex justify-end gap-2 pt-2">
           <Button variant="ghost" onClick={handleBackToStep1} disabled={saving}>
-            Back
+            Назад
           </Button>
           <Button variant="outline" onClick={onClose} disabled={saving}>
-            Cancel
+            Отмена
           </Button>
           <Button onClick={handleSave} disabled={saving || !columnLabel.trim()}>
-            {saving ? "Saving…" : "Add column"}
+            {saving ? "Сохранение…" : "Сохранить"}
           </Button>
         </div>
       </div>
     </>
   )
 
-  if (isCreate && step === 2) {
-    if (anchorEl) {
-      return (
-        <Popover
-          open={isOpen}
-          anchorEl={anchorEl}
-          onClose={onClose}
-          anchorOrigin={{ vertical: "bottom", horizontal: "left" }}
-          transformOrigin={{ vertical: "top", horizontal: "left" }}
-          slotProps={{
-            root: { disableScrollLock: true },
-            backdrop: { sx: { backgroundColor: "transparent" } },
-          }}
-          PaperProps={{
-            sx: { minWidth: 320, maxWidth: 380, p: 2, borderRadius: 2, boxShadow: 2 },
-          }}
-        >
-          <div className="px-1">
-            <h3 className="text-sm font-semibold mb-3">Confirm column properties</h3>
-            {createStep2Content}
-          </div>
-        </Popover>
-      )
-    }
+  if (step === 1) {
     return (
-      <Modal isOpen={isOpen} onClose={onClose} title="Confirm column properties" size="sm">
-        {createStep2Content}
+      <Modal isOpen={isOpen} onClose={onClose} title="Промпт" size="sm">
+        {step1Content}
       </Modal>
     )
   }
 
-  // ——— Режим редактирования: одна форма ———
   return (
-    <Modal isOpen={isOpen} onClose={onClose} title="Редактировать колонку" size="md">
-      <div className="space-y-4">
-        <div>
-          <label className="text-sm font-medium mb-2 block">Название колонки</label>
-          <Input value={columnLabel} onChange={(e) => setColumnLabel(e.target.value)} placeholder="Например: Loan Type, Payment Date" />
-        </div>
-        <div>
-          <label className="text-sm font-medium mb-2 block">Format</label>
-          <Select value={columnType} onValueChange={(value) => handleColumnTypeChange(value)}>
-            <SelectTrigger onClick={(e) => e.stopPropagation()} onPointerDown={(e) => e.stopPropagation()}>
-              <SelectValue placeholder="Выберите тип колонки" />
-            </SelectTrigger>
-            <SelectContent onPointerDownOutside={() => {}} onEscapeKeyDown={() => {}}>
-              {COLUMN_TYPES.map((type) => (
-                <SelectItem key={type.value} value={type.value}>
-                  <span className="flex items-center gap-2"><span>{type.icon}</span><span>{type.label}</span></span>
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </div>
-        {columnType === "tag" && (
-          <div>
-            <label className="text-sm font-medium mb-2 block">Options</label>
-            <div className="space-y-2">
-              {tagOptions.map((option, index) => (
-                <div key={index} className="flex items-center gap-2 p-2 border rounded">
-                  <div className="w-4 h-4 rounded" style={{ backgroundColor: option.color }} />
-                  <Input value={option.label} onChange={(e) => { const newOptions = [...tagOptions]; newOptions[index].label = e.target.value; setTagOptions(newOptions) }} className="flex-1" />
-                  <Button variant="ghost" size="sm" onClick={() => handleRemoveTag(index)} className="text-red-500">×</Button>
-                </div>
-              ))}
-              <div className="flex gap-2">
-                <Input value={newTagLabel} onChange={(e) => setNewTagLabel(e.target.value)} placeholder="Новая опция" onKeyPress={(e) => { if (e.key === "Enter") { e.preventDefault(); handleAddTag() } }} />
-                <Button variant="outline" size="sm" onClick={handleAddTag} disabled={!newTagLabel.trim()}>+ Add option</Button>
-              </div>
-            </div>
-          </div>
-        )}
-        <div>
-          <div className="flex items-center justify-between mb-2">
-            <label className="text-sm font-medium">Prompt</label>
-            <Tooltip title="Сгенерировать промпт с помощью AI">
-              <MUIButton size="small" variant="outlined" startIcon={isGenerating ? <CircularProgress size={16} /> : <AutoAwesomeIcon />} onClick={handleGeneratePrompt} disabled={isGenerating || !columnLabel.trim()} sx={{ textTransform: 'none' }}>
-                {isGenerating ? "Генерация..." : "✨ AI Generate"}
-              </MUIButton>
-            </Tooltip>
-          </div>
-          <Textarea value={prompt} onChange={(e) => setPrompt(e.target.value)} placeholder="Write your prompt..." rows={6} className="font-mono text-sm" />
-        </div>
-        <div className="flex justify-end gap-2 pt-4">
-          <Button variant="outline" onClick={onClose} disabled={saving}>Отмена</Button>
-          <Button onClick={handleSave} disabled={saving || !columnLabel.trim() || !prompt.trim()}>{saving ? "Сохранение..." : "Сохранить"}</Button>
-        </div>
-      </div>
+    <Modal isOpen={isOpen} onClose={onClose} title="Название и тип колонки" size="sm">
+      {step2Content}
     </Modal>
   )
 }
