@@ -10,7 +10,6 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/UI/Select"
-import { tabularReviewApi } from "@/services/tabularReviewApi"
 import { toast } from "sonner"
 
 interface ColumnBuilderProps {
@@ -74,7 +73,6 @@ export function ColumnBuilder({ isOpen, onClose, onSave, editingColumn }: Column
   const [columnType, setColumnType] = useState(editingColumn?.type || "text")
   const [prompt, setPrompt] = useState(editingColumn?.prompt || "")
   const [saving, setSaving] = useState(false)
-  const [isGenerating, setIsGenerating] = useState(false)
   
   const [tagOptions, setTagOptions] = useState<Array<{ label: string; color: string }>>(
     editingColumn?.column_config?.options || [
@@ -123,25 +121,6 @@ export function ColumnBuilder({ isOpen, onClose, onSave, editingColumn }: Column
 
   const handleBackToStep1 = () => {
     setStep(1)
-  }
-
-  const handleGeneratePrompt = async () => {
-    if (!columnLabel.trim()) {
-      toast.error("Введите название колонки для генерации промпта")
-      return
-    }
-
-    setIsGenerating(true)
-    try {
-      const result = await tabularReviewApi.generateColumnPrompt(columnLabel, columnType)
-      setPrompt(result.prompt)
-      toast.success("Промпт сгенерирован")
-    } catch (error: any) {
-      console.error("Error generating prompt:", error)
-      toast.error("Ошибка при генерации промпта: " + (error.message || "Неизвестная ошибка"))
-    } finally {
-      setIsGenerating(false)
-    }
   }
 
   const handleAddTag = () => {
