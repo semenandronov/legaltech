@@ -104,7 +104,7 @@ export function FilterPopover({
 }: FilterPopoverProps) {
   const [appliedConditions, setAppliedConditions] = useState<ColumnValueFilterCondition[]>([])
   const [currentRows, setCurrentRows] = useState<ColumnValueFilterCondition[]>([emptyCondition()])
-  const popoverPaperRef = useRef<HTMLDivElement>(null)
+  const popoverPaperRef = useRef<HTMLDivElement | null>(null)
   const idPrefix = useId().replace(/:/g, "")
 
   useEffect(() => {
@@ -349,7 +349,7 @@ function FilterRow({
           sx={selectSx}
           MenuProps={{
             disableScrollLock: true,
-            container: () => menuContainerRef.current ?? undefined,
+            container: () => menuContainerRef.current ?? null,
             sx: { zIndex: 9999 },
           }}
         >
