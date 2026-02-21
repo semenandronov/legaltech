@@ -35,6 +35,8 @@ const TabularReviewPage: React.FC = () => {
   const [loading, setLoading] = useState(false) // Start with false, will be set to true when actually loading
   const [processing, setProcessing] = useState(false)
   const [showColumnBuilder, setShowColumnBuilder] = useState(false)
+  const [addColumnAnchorEl, setAddColumnAnchorEl] = useState<HTMLElement | null>(null)
+  const [editColumnAnchorEl, setEditColumnAnchorEl] = useState<HTMLElement | null>(null)
   const [editingColumn, setEditingColumn] = useState<{ id: string; label: string; type: string; prompt: string; column_config?: any } | null>(null)
   const [showDocumentSelector, setShowDocumentSelector] = useState(false)
   const [showTemplatesModal, setShowTemplatesModal] = useState(false)
@@ -279,11 +281,11 @@ const TabularReviewPage: React.FC = () => {
     }
   }
 
-  const handleColumnEdit = (columnId: string) => {
+  const handleColumnEdit = (columnId: string, anchorEl?: HTMLElement) => {
     if (!tableData) return
     const column = tableData.columns.find(c => c.id === columnId)
     if (!column) return
-    
+    setEditColumnAnchorEl(anchorEl ?? null)
     setEditingColumn({
       id: column.id,
       label: column.column_label,
@@ -291,7 +293,6 @@ const TabularReviewPage: React.FC = () => {
       prompt: column.prompt || "",
       column_config: column.column_config,
     })
-    setShowColumnBuilder(true)
   }
 
   const handleColumnDelete = async (columnId: string) => {
@@ -732,6 +733,9 @@ const TabularReviewPage: React.FC = () => {
                     <Edit2 className="w-4 h-4" />
                   </button>
                 </div>
+                <p className="text-sm text-text-secondary mt-1">
+                  {tableData.rows.length} документов
+                </p>
                 {tableData.review.description && (
                   <p className="text-sm text-text-secondary mt-1">
                     {tableData.review.description}
@@ -787,7 +791,17 @@ const TabularReviewPage: React.FC = () => {
                 <TabularReviewTable
                   reviewId={reviewId}
                   tableData={tableData}
-                  onAddColumnClick={() => setShowColumnBuilder(true)}
+                  onAddColumnClick={(el) => {
+                    setAddColumnAnchorEl(el)
+                    requestAnimationFrame(() => setShowColumnBuilder(true))
+                  }}
+                  addColumnAnchorEl={addColumnAnchorEl}
+                  showAddColumnPopover={showColumnBuilder}
+                  onCloseAddColumnPopover={() => {
+                    setShowColumnBuilder(false)
+                    setAddColumnAnchorEl(null)
+                  }}
+                  onSaveNewColumn={handleAddColumn}
                   onTableDataUpdate={(updater) => {
                     if (tableData) {
                       setTableData(updater(tableData))
@@ -924,15 +938,23 @@ const TabularReviewPage: React.FC = () => {
         </div>
 
         {/* Column Builder: одни и те же модалки для создания и редактирования */}
-        {(showColumnBuilder || editingColumn != null) && (
+        {editingColumn != null && (
           <ColumnBuilder
             isOpen={true}
             onClose={() => {
-              setShowColumnBuilder(false)
               setEditingColumn(null)
+              setEditColumnAnchorEl(null)
             }}
-            onSave={editingColumn ? handleUpdateColumn : handleAddColumn}
+            onSave={handleUpdateColumn}
             editingColumn={editingColumn}
+            anchorEl={editColumnAnchorEl}
+          />
+        )}
+        {showColumnBuilder && tableData.columns.length === 0 && (
+          <ColumnBuilder
+            isOpen={true}
+            onClose={() => setShowColumnBuilder(false)}
+            onSave={handleAddColumn}
           />
         )}
 

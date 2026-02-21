@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react"
 import Modal from "@/components/UI/Modal"
+import { Popover } from "@mui/material"
 import { Button } from "@/components/UI/Button"
 import Input from "@/components/UI/Input"
 import { Textarea } from "@/components/UI/Textarea"
@@ -34,6 +35,8 @@ interface ColumnBuilderProps {
       allow_custom?: boolean
     }
   } | null
+  /** Якорь для поповера — окно открывается внутри колонки (под кнопкой/заголовком) */
+  anchorEl?: HTMLElement | null
 }
 
 const COLUMN_TYPES = [
@@ -67,7 +70,15 @@ function suggestLabelFromPrompt(promptText: string): string {
   return firstLine.slice(0, 42).trim() + "…"
 }
 
-export function ColumnBuilder({ isOpen, onClose, onSave, editingColumn }: ColumnBuilderProps) {
+const popoverProps = {
+  anchorReference: "anchorEl" as const,
+  anchorOrigin: { vertical: "bottom" as const, horizontal: "left" as const },
+  transformOrigin: { vertical: "top" as const, horizontal: "left" as const },
+  slotProps: { root: { disableScrollLock: true }, backdrop: { sx: { backgroundColor: "transparent" } } },
+  PaperProps: { sx: { minWidth: 320, maxWidth: 380, p: 2, borderRadius: 2, boxShadow: 2 } },
+}
+
+export function ColumnBuilder({ isOpen, onClose, onSave, editingColumn, anchorEl }: ColumnBuilderProps) {
   const [step, setStep] = useState<1 | 2>(1)
   const [columnLabel, setColumnLabel] = useState(editingColumn?.label || "")
   const [columnType, setColumnType] = useState(editingColumn?.type || "text")
@@ -290,7 +301,16 @@ export function ColumnBuilder({ isOpen, onClose, onSave, editingColumn }: Column
     </>
   )
 
+  const usePopover = anchorEl && typeof anchorEl.isConnected === 'boolean' && anchorEl.isConnected
+
   if (step === 1) {
+    if (usePopover) {
+      return (
+        <Popover open={isOpen} anchorEl={anchorEl} onClose={onClose} {...popoverProps}>
+          <div className="px-1"><h3 className="text-sm font-semibold mb-3">Промпт</h3>{step1Content}</div>
+        </Popover>
+      )
+    }
     return (
       <Modal isOpen={isOpen} onClose={onClose} title="Промпт" size="sm">
         {step1Content}
@@ -298,6 +318,13 @@ export function ColumnBuilder({ isOpen, onClose, onSave, editingColumn }: Column
     )
   }
 
+  if (usePopover) {
+    return (
+      <Popover open={isOpen} anchorEl={anchorEl} onClose={onClose} {...popoverProps}>
+        <div className="px-1"><h3 className="text-sm font-semibold mb-3">Название и тип колонки</h3>{step2Content}</div>
+      </Popover>
+    )
+  }
   return (
     <Modal isOpen={isOpen} onClose={onClose} title="Название и тип колонки" size="sm">
       {step2Content}
