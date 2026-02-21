@@ -1298,8 +1298,7 @@ class TabularReviewService:
             from app.services.iterative_rag_service import IterativeRAGService
             from app.services.rag_service import RAGService
             from app.services.legal_splitter import LegalTextSplitter
-            from app.services.langchain_agents.llm_helper import create_fixing_parser
-            
+
             document_processor = DocumentProcessor()
             retriever_service = AdvancedRetrieverService(document_processor)
             
@@ -1457,22 +1456,28 @@ class TabularReviewService:
                         result = TabularCellExtractionModel(**result_dict)
                         
                     except Exception as e:
-                        logger.warning(f"Structured output failed, using parser: {e}")
-                        # Fallback: use parser with retry
+                        logger.warning(f"Structured output failed, using parser or manual extraction: {e}")
+                        # Fallback: try parser with retry (if llm_helper available), else manual extraction
                         chain = prompt | self.llm
                         response = await chain.ainvoke({})
                         response_text = response.content if hasattr(response, 'content') else str(response)
-                        
-                        parser = create_fixing_parser(
-                            TabularCellExtractionModel,
-                            self.llm,
-                            max_retries=3
-                        )
+
+                        result = None
                         try:
+                            from app.services.langchain_agents.llm_helper import create_fixing_parser
+                            parser = create_fixing_parser(
+                                TabularCellExtractionModel,
+                                self.llm,
+                                max_retries=3
+                            )
                             result = parser.parse(response_text)
                             result.column_type = column.column_type
+                        except ImportError:
+                            logger.debug("llm_helper not available, using manual extraction")
                         except Exception as parse_error:
-                            logger.warning(f"Parser also failed: {parse_error}, using manual extraction")
+                            logger.warning(f"Parser failed: {parse_error}")
+
+                        if result is None:
                             # Manual JSON extraction as last resort
                             import json as json_module
                             import re as re_module
@@ -1483,7 +1488,7 @@ class TabularReviewService:
                                     parsed = self._normalize_extraction_result(parsed, column, file)
                                     parsed['column_type'] = column.column_type
                                     result = TabularCellExtractionModel(**parsed)
-                                except:
+                                except Exception:
                                     result = TabularCellExtractionModel(
                                         cell_value="N/A",
                                         reasoning=f"Не удалось извлечь данные из документа '{file.filename}'",

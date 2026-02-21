@@ -86,9 +86,11 @@ interface TabularReviewTableProps {
   filterPopoverOpen?: boolean
   filterAnchorEl?: HTMLElement | null
   onCloseFilterPopover?: () => void
+  /** ID колонки, которую сейчас заполняет ИИ — в ячейках этой колонки показывается индикатор */
+  runningColumnId?: string | null
 }
 
-export const TabularReviewTable = React.memo(({ reviewId, tableData, onTableDataUpdate: _onTableDataUpdate, onCellClick, onCellEdit, onRemoveDocument, onRunColumn, onColumnEdit, onColumnDelete, onAddColumnClick, showAddColumnPopover, onCloseAddColumnPopover, onSaveNewColumn, filterPopoverOpen, filterAnchorEl, onCloseFilterPopover }: TabularReviewTableProps) => {
+export const TabularReviewTable = React.memo(({ reviewId, tableData, onTableDataUpdate: _onTableDataUpdate, onCellClick, onCellEdit, onRemoveDocument, onRunColumn, onColumnEdit, onColumnDelete, onAddColumnClick, showAddColumnPopover, onCloseAddColumnPopover, onSaveNewColumn, filterPopoverOpen, filterAnchorEl, onCloseFilterPopover, runningColumnId }: TabularReviewTableProps) => {
   const addColumnButtonRef = React.useRef<HTMLElement | null>(null)
   const [sorting, setSorting] = React.useState<SortingState>([])
   const [columnFilters, setColumnFilters] = React.useState<ColumnFiltersState>([])
@@ -467,7 +469,8 @@ export const TabularReviewTable = React.memo(({ reviewId, tableData, onTableData
         
         const cellStatus = cell?.status || "pending"
         const isTagType = col.column_type === "tag"
-        
+        const isColumnRunning = runningColumnId === col.id
+
         return (
           <Box
             sx={{
@@ -572,8 +575,30 @@ export const TabularReviewTable = React.memo(({ reviewId, tableData, onTableData
               }
             }}
           >
-            {/* Status indicator */}
-            {cellStatus === "processing" && (
+            {/* Индикатор заполнения колонки ИИ — прямоугольник с закруглёнными углами */}
+            {isColumnRunning && (
+              <Box
+                sx={{
+                  position: 'absolute',
+                  left: 4,
+                  top: '50%',
+                  transform: 'translateY(-50%)',
+                  height: 20,
+                  minWidth: 24,
+                  borderRadius: '6px',
+                  bgcolor: 'primary.main',
+                  opacity: 0.85,
+                  animation: 'pulse 1.5s ease-in-out infinite',
+                  '@keyframes pulse': {
+                    '0%, 100%': { opacity: 0.85 },
+                    '50%': { opacity: 0.5 },
+                  },
+                }}
+                aria-hidden
+              />
+            )}
+            {/* Status indicator (per-cell processing dot; скрыт, если показывается индикатор колонки) */}
+            {cellStatus === "processing" && !isColumnRunning && (
               <Box
                 sx={{
                   position: 'absolute',
@@ -673,7 +698,7 @@ export const TabularReviewTable = React.memo(({ reviewId, tableData, onTableData
 
     const baseColumns = [rowIndexColumn, fileColumn, ...dynamicColumns]
     return onAddColumnClick ? [...baseColumns, addColumnColumn] : baseColumns
-  }, [tableData.columns, reviewId, onCellClick, onRemoveDocument, onColumnEdit, onColumnDelete, onAddColumnClick, onRunColumn])
+  }, [tableData.columns, reviewId, onCellClick, onRemoveDocument, onColumnEdit, onColumnDelete, onAddColumnClick, onRunColumn, runningColumnId])
 
   const table = useReactTable({
     data: tableRows,

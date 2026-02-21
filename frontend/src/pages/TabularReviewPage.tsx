@@ -34,6 +34,7 @@ const TabularReviewPage: React.FC = () => {
   const [tableData, setTableData] = useState<TableData | null>(null)
   const [loading, setLoading] = useState(false) // Start with false, will be set to true when actually loading
   const [processing, setProcessing] = useState(false)
+  const [runningColumnId, setRunningColumnId] = useState<string | null>(null)
   const [showColumnBuilder, setShowColumnBuilder] = useState(false)
   const [filterPopoverOpen, setFilterPopoverOpen] = useState(false)
   const [filterAnchorEl, setFilterAnchorEl] = useState<HTMLElement | null>(null)
@@ -890,22 +891,24 @@ const TabularReviewPage: React.FC = () => {
                       toast.error("Не удалось удалить документ: " + (err.message || ""))
                     }
                   }}
-                  onRunColumn={async (_columnId) => {
+                  onRunColumn={async (columnId) => {
                     if (!reviewId) return
                     try {
-                      // For now, run extraction for all (you might want to add column-specific extraction)
                       setProcessing(true)
-                      const result = await tabularReviewApi.runExtraction(reviewId)
+                      setRunningColumnId(columnId)
+                      const result = await tabularReviewApi.runColumnExtraction(reviewId, columnId)
                       toast.success(
-                        `Обработка завершена: ${result.saved_count} ячеек сохранено`
+                        `Колонка заполнена: ${result.saved_count} ячеек сохранено`
                       )
                       await loadReviewData()
                     } catch (err: any) {
-                      toast.error("Ошибка при обработке: " + (err.message || ""))
+                      toast.error("Ошибка при заполнении колонки: " + (err.message || ""))
                     } finally {
                       setProcessing(false)
+                      setRunningColumnId(null)
                     }
                   }}
+                  runningColumnId={runningColumnId}
                 />
               )}
             </div>

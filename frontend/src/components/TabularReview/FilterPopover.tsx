@@ -14,6 +14,7 @@ import {
   ListItemText,
   Checkbox,
   Stack,
+  Chip,
 } from "@mui/material"
 import { Close as CloseIcon, Add as AddIcon } from "@mui/icons-material"
 import type { TabularColumn, TabularRow } from "@/services/tabularReviewApi"
@@ -55,7 +56,25 @@ const popoverProps = {
     backdrop: { sx: { backgroundColor: "transparent" } },
   },
   PaperProps: {
-    sx: { minWidth: 420, maxWidth: 520, p: 2, borderRadius: 2, boxShadow: 2 },
+    sx: {
+      minWidth: 480,
+      maxWidth: 560,
+      p: 2.5,
+      borderRadius: 2,
+      boxShadow: "0 4px 20px rgba(0,0,0,0.08)",
+      border: "1px solid #E5E7EB",
+    },
+  },
+}
+
+const selectSx = {
+  borderRadius: "8px",
+  bgcolor: "#FAFAFA",
+  "& .MuiOutlinedInput-notchedOutline": { borderColor: "#E5E7EB" },
+  "&:hover .MuiOutlinedInput-notchedOutline": { borderColor: "#D1D5DB" },
+  "&.Mui-focused .MuiOutlinedInput-notchedOutline": {
+    borderColor: "#9CA3AF",
+    borderWidth: "1.5px",
   },
 }
 
@@ -84,40 +103,49 @@ export function FilterPopover({
   valueFilters,
   onApply,
 }: FilterPopoverProps) {
-  const [conditions, setConditions] = useState<ColumnValueFilterCondition[]>([])
+  const [appliedConditions, setAppliedConditions] = useState<ColumnValueFilterCondition[]>([])
+  const [currentRows, setCurrentRows] = useState<ColumnValueFilterCondition[]>([emptyCondition()])
 
   useEffect(() => {
     if (open) {
-      setConditions(
+      setAppliedConditions(
         valueFilters.length > 0
           ? valueFilters.map((c) => ({ ...c, selectedValues: [...c.selectedValues] }))
-          : [emptyCondition()]
+          : []
       )
+      setCurrentRows([emptyCondition()])
     }
   }, [open, valueFilters])
 
-  const updateCondition = (index: number, patch: Partial<ColumnValueFilterCondition>) => {
-    setConditions((prev) => {
+  const updateCurrentRow = (index: number, patch: Partial<ColumnValueFilterCondition>) => {
+    setCurrentRows((prev) => {
       const next = [...prev]
       next[index] = { ...next[index], ...patch }
       return next
     })
   }
 
-  const addFilter = () => {
-    setConditions((prev) => [...prev, emptyCondition()])
+  const addFilterRow = () => {
+    setCurrentRows((prev) => [...prev, emptyCondition()])
   }
 
-  const removeCondition = (index: number) => {
-    setConditions((prev) => prev.filter((_, i) => i !== index))
+  const removeCurrentRow = (index: number) => {
+    setCurrentRows((prev) => (prev.length > 1 ? prev.filter((_, i) => i !== index) : [emptyCondition()]))
   }
 
   const handleApply = () => {
-    const valid = conditions.filter(
-      (c) => c.columnId && c.selectedValues.length > 0
-    )
-    onApply(valid)
-    onClose()
+    const valid = currentRows.filter((c) => c.columnId && c.selectedValues.length > 0)
+    if (valid.length === 0) return
+    const nextApplied = [...appliedConditions, ...valid.map((c) => ({ ...c, selectedValues: [...c.selectedValues] }))]
+    setAppliedConditions(nextApplied)
+    onApply(nextApplied)
+    setCurrentRows([emptyCondition()])
+  }
+
+  const removeApplied = (index: number) => {
+    const next = appliedConditions.filter((_, i) => i !== index)
+    setAppliedConditions(next)
+    onApply(next)
   }
 
   return (
@@ -128,78 +156,114 @@ export function FilterPopover({
       {...popoverProps}
     >
       <Box sx={{ pb: 1 }}>
-        {/* Header */}
-        <Box
-          sx={{
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "space-between",
-            mb: 2,
-          }}
-        >
-          <Typography variant="subtitle1" fontWeight={600}>
-            Filter
+        {/* Заголовок слева, крестик справа */}
+        <Box sx={{ display: "flex", alignItems: "center", justifyContent: "space-between", mb: 2 }}>
+          <Typography variant="subtitle1" fontWeight={700} sx={{ color: "#111827", fontSize: "1rem" }}>
+            Фильтр по колонке
           </Typography>
-          <IconButton
-            size="small"
-            onClick={onClose}
-            aria-label="Close"
-            sx={{ mr: -0.5 }}
-          >
-            <CloseIcon fontSize="small" />
+          <IconButton size="small" onClick={onClose} aria-label="Закрыть" sx={{ color: "#6B7280", p: 0.5 }}>
+            <CloseIcon sx={{ fontSize: 20 }} />
           </IconButton>
         </Box>
 
-        {/* Condition rows */}
-        <Stack spacing={2}>
-          {conditions.map((cond, index) => (
-            <ConditionRow
+        {/* Строки фильтра: колонка — Равно — Выберите значения — x */}
+        <Stack spacing={1.5} sx={{ mb: 2 }}>
+          {currentRows.map((cond, index) => (
+            <FilterRow
               key={index}
+              rowIndex={index}
               condition={cond}
               columns={columns}
               rows={rows}
-              onChange={(patch) => updateCondition(index, patch)}
-              onRemove={() => removeCondition(index)}
-              canRemove={conditions.length > 1}
-              onApply={handleApply}
+              onChange={(patch) => updateCurrentRow(index, patch)}
+              onRemove={() => removeCurrentRow(index)}
+              selectSx={selectSx}
             />
           ))}
         </Stack>
 
-        {/* Add filter */}
-        <Button
-          startIcon={<AddIcon />}
-          onClick={addFilter}
-          size="small"
-          sx={{ mt: 2 }}
-          aria-label="Add filter"
-        >
-          Add filter
-        </Button>
+        {/* Кнопки внизу: слева Добавить фильтр, справа Применить */}
+        <Box sx={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 1 }}>
+          <Button
+            startIcon={<AddIcon sx={{ fontSize: 18 }} />}
+            onClick={addFilterRow}
+            size="medium"
+            aria-label="Добавить фильтр"
+            sx={{
+              borderRadius: "8px",
+              textTransform: "none",
+              color: "#6B7280",
+              bgcolor: "#F3F4F6",
+              "&:hover": { bgcolor: "#E5E7EB", color: "#374151" },
+            }}
+          >
+            Добавить фильтр
+          </Button>
+          <Button
+            variant="contained"
+            size="medium"
+            onClick={handleApply}
+            disabled={!currentRows.some((c) => c.columnId && c.selectedValues.length > 0)}
+            aria-label="Применить"
+            sx={{
+              borderRadius: "8px",
+              textTransform: "none",
+              bgcolor: "#374151",
+              "&:hover": { bgcolor: "#1F2937" },
+            }}
+          >
+            Применить
+          </Button>
+        </Box>
+
+        {/* Применённые фильтры — чипы внизу */}
+        {appliedConditions.length > 0 && (
+          <Box sx={{ mt: 2, pt: 2, borderTop: "1px solid #E5E7EB" }}>
+            <Typography variant="caption" sx={{ color: "#6B7280", display: "block", mb: 1 }}>
+              Применённые фильтры
+            </Typography>
+            <Stack direction="row" flexWrap="wrap" gap={0.75} useFlexGap>
+              {appliedConditions.map((cond, index) => {
+                const col = columns.find((c) => c.id === cond.columnId)
+                const label = col ? col.column_label : cond.columnId
+                const valuesStr = cond.selectedValues.map((v) => displayValue(v)).join(", ")
+                return (
+                  <Chip
+                    key={index}
+                    size="small"
+                    label={`${label} = ${valuesStr}`}
+                    onDelete={() => removeApplied(index)}
+                    sx={{ borderRadius: "8px" }}
+                  />
+                )
+              })}
+            </Stack>
+          </Box>
+        )}
       </Box>
     </Popover>
   )
 }
 
-interface ConditionRowProps {
+interface FilterRowProps {
+  rowIndex: number
   condition: ColumnValueFilterCondition
   columns: TabularColumn[]
   rows: TabularRow[]
   onChange: (patch: Partial<ColumnValueFilterCondition>) => void
   onRemove: () => void
-  canRemove: boolean
-  onApply: () => void
+  selectSx: object
 }
 
-function ConditionRow({
+function FilterRow({
+  rowIndex,
   condition,
   columns,
   rows,
   onChange,
   onRemove,
-  canRemove,
-  onApply,
-}: ConditionRowProps) {
+  selectSx,
+}: FilterRowProps) {
   const valueCounts = useMemo(
     () =>
       condition.columnId
@@ -213,22 +277,23 @@ function ConditionRow({
       sx={{
         display: "flex",
         flexWrap: "wrap",
-        alignItems: "flex-start",
+        alignItems: "center",
         gap: 1,
       }}
     >
-      <FormControl size="small" sx={{ minWidth: 140 }}>
-        <InputLabel id={`col-${condition.columnId}`}>Select column</InputLabel>
+      <FormControl size="small" sx={{ minWidth: 160, flex: 1 }}>
+        <InputLabel id={`filter-col-${rowIndex}`}>Колонка</InputLabel>
         <Select
-          labelId={`col-${condition.columnId}`}
+          labelId={`filter-col-${rowIndex}`}
           value={condition.columnId || ""}
-          label="Select column"
+          label="Колонка"
           onChange={(e) =>
             onChange({
               columnId: e.target.value as string,
               selectedValues: [],
             })
           }
+          sx={selectSx}
         >
           {columns.map((c) => (
             <MenuItem key={c.id} value={c.id}>
@@ -239,19 +304,19 @@ function ConditionRow({
       </FormControl>
 
       <FormControl size="small" sx={{ minWidth: 100 }}>
-        <InputLabel>Operator</InputLabel>
-        <Select value="equals" label="Operator" disabled>
-          <MenuItem value="equals">Equals</MenuItem>
+        <InputLabel id={`filter-op-${rowIndex}`}>Оператор</InputLabel>
+        <Select value="equals" label="Оператор" disabled sx={selectSx}>
+          <MenuItem value="equals">Равно</MenuItem>
         </Select>
       </FormControl>
 
-      <FormControl size="small" sx={{ minWidth: 180 }}>
-        <InputLabel id={`vals-${condition.columnId}`}>Select values</InputLabel>
+      <FormControl size="small" sx={{ minWidth: 180, flex: 1 }}>
+        <InputLabel id={`filter-vals-${rowIndex}`}>Выберите значения</InputLabel>
         <Select
-          labelId={`vals-${condition.columnId}`}
+          labelId={`filter-vals-${rowIndex}`}
           multiple
           value={condition.selectedValues}
-          label="Select values"
+          label="Выберите значения"
           onChange={(e) => {
             const v = e.target.value
             onChange({
@@ -263,9 +328,10 @@ function ConditionRow({
               ? (selected as string[])
                   .map((s) => displayValue(s))
                   .join(", ")
-              : "Select values"
+              : "Выберите значения"
           }
           disabled={!condition.columnId}
+          sx={selectSx}
         >
           {valueCounts.map(({ value, count }) => (
             <MenuItem key={value === EMPTY_VALUE_KEY ? "__empty" : value} value={value}>
@@ -282,26 +348,14 @@ function ConditionRow({
         </Select>
       </FormControl>
 
-      <Button
-        variant="contained"
+      <IconButton
         size="small"
-        onClick={onApply}
-        aria-label="Apply"
-        sx={{ alignSelf: "center" }}
+        onClick={onRemove}
+        aria-label="Удалить условие"
+        sx={{ color: "#6B7280", "&:hover": { color: "#374151", bgcolor: "#F3F4F6" } }}
       >
-        Apply
-      </Button>
-
-      {canRemove && (
-        <IconButton
-          size="small"
-          onClick={onRemove}
-          aria-label="Remove condition"
-          sx={{ alignSelf: "center" }}
-        >
-          <CloseIcon fontSize="small" />
-        </IconButton>
-      )}
+        <CloseIcon sx={{ fontSize: 18 }} />
+      </IconButton>
     </Box>
   )
 }
