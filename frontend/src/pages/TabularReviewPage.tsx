@@ -35,7 +35,8 @@ const TabularReviewPage: React.FC = () => {
   const [loading, setLoading] = useState(false) // Start with false, will be set to true when actually loading
   const [processing, setProcessing] = useState(false)
   const [showColumnBuilder, setShowColumnBuilder] = useState(false)
-  const [addColumnAnchorEl, setAddColumnAnchorEl] = useState<HTMLElement | null>(null)
+  const [filterPopoverOpen, setFilterPopoverOpen] = useState(false)
+  const [filterAnchorEl, setFilterAnchorEl] = useState<HTMLElement | null>(null)
   const [editColumnAnchorEl, setEditColumnAnchorEl] = useState<HTMLElement | null>(null)
   const [editingColumn, setEditingColumn] = useState<{ id: string; label: string; type: string; prompt: string; column_config?: any } | null>(null)
   const [showDocumentSelector, setShowDocumentSelector] = useState(false)
@@ -748,6 +749,10 @@ const TabularReviewPage: React.FC = () => {
 
         {/* Toolbar */}
         <TabularReviewToolbar
+          onOpenFilter={(el) => {
+            setFilterAnchorEl(el)
+            setFilterPopoverOpen(true)
+          }}
           onUpdateDocuments={reviewId ? () => setShowDocumentSelector(true) : undefined}
           onAddColumns={() => setShowColumnBuilder(true)}
           processing={processing}
@@ -791,16 +796,15 @@ const TabularReviewPage: React.FC = () => {
                 <TabularReviewTable
                   reviewId={reviewId}
                   tableData={tableData}
-                  onAddColumnClick={(el) => {
-                    setAddColumnAnchorEl(el)
-                    requestAnimationFrame(() => setShowColumnBuilder(true))
+                  filterPopoverOpen={filterPopoverOpen}
+                  filterAnchorEl={filterAnchorEl}
+                  onCloseFilterPopover={() => {
+                    setFilterPopoverOpen(false)
+                    setFilterAnchorEl(null)
                   }}
-                  addColumnAnchorEl={addColumnAnchorEl}
+                  onAddColumnClick={() => setShowColumnBuilder(true)}
                   showAddColumnPopover={showColumnBuilder}
-                  onCloseAddColumnPopover={() => {
-                    setShowColumnBuilder(false)
-                    setAddColumnAnchorEl(null)
-                  }}
+                  onCloseAddColumnPopover={() => setShowColumnBuilder(false)}
                   onSaveNewColumn={handleAddColumn}
                   onTableDataUpdate={(updater) => {
                     if (tableData) {

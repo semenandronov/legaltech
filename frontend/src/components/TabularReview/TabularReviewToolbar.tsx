@@ -1,15 +1,18 @@
 import {
   FileText,
+  Filter,
   FolderOpen,
 } from "lucide-react"
 
 interface TabularReviewToolbarProps {
+  onOpenFilter?: (anchorEl: HTMLElement) => void
   onAddColumns?: () => void
   onUpdateDocuments?: () => void
   processing?: boolean
 }
 
 export function TabularReviewToolbar({
+  onOpenFilter,
   onAddColumns,
   onUpdateDocuments,
   processing = false,
@@ -18,6 +21,18 @@ export function TabularReviewToolbar({
   return (
     <div className="flex items-center justify-between py-4 px-6 border-b border-[#E5E7EB] bg-white/80 backdrop-blur-sm">
       <div className="flex items-center gap-3">
+        {onOpenFilter && (
+          <button
+            type="button"
+            onClick={(e) => onOpenFilter(e.currentTarget as HTMLElement)}
+            disabled={processing}
+            className="px-4 py-2 bg-white border border-[#E5E7EB] text-[#6B7280] text-sm font-medium rounded-lg hover:bg-[#F3F4F6] hover:text-[#1F2937] transition-all duration-300 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+            aria-label="Filter"
+          >
+            <Filter className="w-4 h-4" />
+            Filter
+          </button>
+        )}
         {onUpdateDocuments && (
           <button
             onClick={onUpdateDocuments}

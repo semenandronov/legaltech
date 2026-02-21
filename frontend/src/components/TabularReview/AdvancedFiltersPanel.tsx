@@ -56,8 +56,17 @@ export interface AdvancedFilters {
   // Text search in specific columns
   columnTextFilters: Record<string, string> // columnId -> search text
   
+  // Column value conditions (column equals one of selected values)
+  columnValueFilters: ColumnValueFilterCondition[]
+  
   // Logic operator
   logicOperator: "AND" | "OR" // How to combine multiple filters
+}
+
+export interface ColumnValueFilterCondition {
+  columnId: string
+  operator: "equals"
+  selectedValues: string[]
 }
 
 const defaultFilters: AdvancedFilters = {
@@ -74,6 +83,7 @@ const defaultFilters: AdvancedFilters = {
   updatedAfter: null,
   updatedBefore: null,
   columnTextFilters: {},
+  columnValueFilters: [],
   logicOperator: "AND",
 }
 
@@ -127,6 +137,7 @@ export const AdvancedFiltersPanel: React.FC<AdvancedFiltersPanelProps> = ({
     if (localFilters.createdAfter || localFilters.createdBefore) count++
     if (localFilters.updatedAfter || localFilters.updatedBefore) count++
     if (Object.keys(localFilters.columnTextFilters).length > 0) count++
+    if (localFilters.columnValueFilters?.length > 0) count++
     return count
   }, [localFilters])
 

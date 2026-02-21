@@ -29,11 +29,13 @@ import {
   Typography,
   IconButton,
   Chip,
+  Tooltip,
 } from '@mui/material'
 import {
   Description as FileTextIcon,
   Close as CloseIcon,
   Add as AddIcon,
+  PlayArrow as PlayArrowIcon,
   UnfoldMore as UnfoldMoreIcon,
   ArrowUpward as ArrowUpwardIcon,
   ArrowDownward as ArrowDownwardIcon,
@@ -45,6 +47,7 @@ import { CellHistoryPanel } from "./CellHistoryPanel"
 import { AdvancedFiltersPanel, AdvancedFilters } from "./AdvancedFiltersPanel"
 import { useKeyboardNavigation } from "@/hooks/useKeyboardNavigation"
 import { ColumnBuilder } from "./ColumnBuilder"
+import { FilterPopover } from "./FilterPopover"
 
 interface TabularReviewTableProps {
   reviewId: string
@@ -76,14 +79,17 @@ interface TabularReviewTableProps {
   onRunColumn?: (columnId: string) => void
   onColumnEdit?: (columnId: string, anchorEl?: HTMLElement) => void
   onColumnDelete?: (columnId: string) => void
-  onAddColumnClick?: (anchorEl: HTMLElement) => void
-  addColumnAnchorEl?: HTMLElement | null
+  onAddColumnClick?: () => void
   showAddColumnPopover?: boolean
   onCloseAddColumnPopover?: () => void
   onSaveNewColumn?: (column: { column_label: string; column_type: string; prompt: string; column_config?: { options?: Array<{ label: string; color: string }>; allow_custom?: boolean } }) => Promise<void>
+  filterPopoverOpen?: boolean
+  filterAnchorEl?: HTMLElement | null
+  onCloseFilterPopover?: () => void
 }
 
-export const TabularReviewTable = React.memo(({ reviewId, tableData, onTableDataUpdate: _onTableDataUpdate, onCellClick, onCellEdit, onRemoveDocument, onRunColumn: _onRunColumn, onColumnEdit, onColumnDelete, onAddColumnClick, addColumnAnchorEl, showAddColumnPopover, onCloseAddColumnPopover, onSaveNewColumn }: TabularReviewTableProps) => {
+export const TabularReviewTable = React.memo(({ reviewId, tableData, onTableDataUpdate: _onTableDataUpdate, onCellClick, onCellEdit, onRemoveDocument, onRunColumn, onColumnEdit, onColumnDelete, onAddColumnClick, showAddColumnPopover, onCloseAddColumnPopover, onSaveNewColumn, filterPopoverOpen, filterAnchorEl, onCloseFilterPopover }: TabularReviewTableProps) => {
+  const addColumnButtonRef = React.useRef<HTMLElement | null>(null)
   const [sorting, setSorting] = React.useState<SortingState>([])
   const [columnFilters, setColumnFilters] = React.useState<ColumnFiltersState>([])
   const [columnVisibility, setColumnVisibility] = React.useState<VisibilityState>({})
@@ -111,6 +117,7 @@ export const TabularReviewTable = React.memo(({ reviewId, tableData, onTableData
     updatedAfter: null,
     updatedBefore: null,
     columnTextFilters: {},
+    columnValueFilters: [],
     logicOperator: "AND",
   })
   const [filtersPanelOpen, setFiltersPanelOpen] = React.useState(false)
@@ -120,6 +127,11 @@ export const TabularReviewTable = React.memo(({ reviewId, tableData, onTableData
 
   // Apply advanced filters to rows
   const applyAdvancedFilters = React.useCallback((rows: typeof tableData.rows, filters: AdvancedFilters, columns: TabularColumn[]) => {
+    // Normalize cell value for comparison (empty -> same key as in FilterPopover)
+    const EMPTY_VALUE_KEY = ""
+    const normalizeCellValue = (val: string | null | undefined): string =>
+      val == null || val === "" ? EMPTY_VALUE_KEY : String(val).trim()
+
     // Check if any filters are active
     const hasActiveFilters = 
       filters.cellStatuses.length > 0 ||
@@ -134,12 +146,23 @@ export const TabularReviewTable = React.memo(({ reviewId, tableData, onTableData
       filters.createdBefore !== null ||
       filters.updatedAfter !== null ||
       filters.updatedBefore !== null ||
-      Object.keys(filters.columnTextFilters).length > 0
+      Object.keys(filters.columnTextFilters).length > 0 ||
+      (filters.columnValueFilters && filters.columnValueFilters.length > 0)
 
     if (!hasActiveFilters) return rows
 
     return rows.filter((row) => {
       const conditions: boolean[] = []
+
+      // Column value filters (each condition: cell value in selectedValues; all conditions AND)
+      const activeValueFilters = filters.columnValueFilters?.filter((c) => c.selectedValues.length > 0) ?? []
+      if (activeValueFilters.length > 0) {
+        const valueMatch = activeValueFilters.every((cond) => {
+          const cellVal = normalizeCellValue(row.cells[cond.columnId]?.cell_value ?? null)
+          return cond.selectedValues.includes(cellVal)
+        })
+        conditions.push(valueMatch)
+      }
 
       // Cell status filter
       if (filters.cellStatuses.length > 0) {
@@ -392,20 +415,38 @@ export const TabularReviewTable = React.memo(({ reviewId, tableData, onTableData
         return valueA.localeCompare(valueB, 'ru')
       },
       header: () => (
-        <Box
+        <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, width: '100%' }}>
+          <Box
             component="span"
             onClick={(e) => {
               e.stopPropagation()
               onColumnEdit?.(col.id, e.currentTarget as HTMLElement)
             }}
-          sx={{
-            cursor: onColumnEdit ? 'pointer' : 'default',
-            '&:hover': onColumnEdit ? { opacity: 0.8 } : {},
-          }}
-        >
-          <Typography sx={{ fontWeight: 600, color: '#1F2937' }}>
-            {col.column_label}
-          </Typography>
+            sx={{
+              flex: 1,
+              cursor: onColumnEdit ? 'pointer' : 'default',
+              '&:hover': onColumnEdit ? { opacity: 0.8 } : {},
+            }}
+          >
+            <Typography sx={{ fontWeight: 600, color: '#1F2937' }}>
+              {col.column_label}
+            </Typography>
+          </Box>
+          {onRunColumn && (
+            <Tooltip title="Запустить ИИ для заполнения колонки">
+              <IconButton
+                size="small"
+                onClick={(e) => {
+                  e.stopPropagation()
+                  onRunColumn(col.id)
+                }}
+                aria-label="Запустить ИИ для заполнения колонки"
+                sx={{ p: 0.25 }}
+              >
+                <PlayArrowIcon sx={{ fontSize: 18 }} />
+              </IconButton>
+            </Tooltip>
+          )}
         </Box>
       ),
       cell: ({ row }) => {
@@ -604,9 +645,11 @@ export const TabularReviewTable = React.memo(({ reviewId, tableData, onTableData
           <Box
             component="button"
             type="button"
+            ref={(el) => { addColumnButtonRef.current = el as HTMLElement | null }}
             onClick={(e) => {
               e.stopPropagation()
-              onAddColumnClick?.(e.currentTarget as HTMLElement)
+              addColumnButtonRef.current = e.currentTarget as HTMLElement
+              onAddColumnClick?.()
             }}
             sx={{
               display: 'flex',
@@ -630,7 +673,7 @@ export const TabularReviewTable = React.memo(({ reviewId, tableData, onTableData
 
     const baseColumns = [rowIndexColumn, fileColumn, ...dynamicColumns]
     return onAddColumnClick ? [...baseColumns, addColumnColumn] : baseColumns
-  }, [tableData.columns, reviewId, onCellClick, onRemoveDocument, onColumnEdit, onColumnDelete, onAddColumnClick])
+  }, [tableData.columns, reviewId, onCellClick, onRemoveDocument, onColumnEdit, onColumnDelete, onAddColumnClick, onRunColumn])
 
   const table = useReactTable({
     data: tableRows,
@@ -960,12 +1003,27 @@ export const TabularReviewTable = React.memo(({ reviewId, tableData, onTableData
         }}
       />
 
-      {showAddColumnPopover && onCloseAddColumnPopover && onSaveNewColumn && addColumnAnchorEl && (
+      {showAddColumnPopover && onCloseAddColumnPopover && onSaveNewColumn && addColumnButtonRef.current && (
         <ColumnBuilder
           isOpen={true}
           onClose={onCloseAddColumnPopover}
           onSave={onSaveNewColumn}
-          anchorEl={addColumnAnchorEl}
+          anchorEl={addColumnButtonRef.current}
+        />
+      )}
+
+      {filterPopoverOpen && filterAnchorEl && onCloseFilterPopover && (
+        <FilterPopover
+          open={true}
+          anchorEl={filterAnchorEl}
+          onClose={onCloseFilterPopover}
+          columns={tableData.columns}
+          rows={tableData.rows}
+          valueFilters={advancedFilters.columnValueFilters}
+          onApply={(newColumnValueFilters) => {
+            setAdvancedFilters((prev) => ({ ...prev, columnValueFilters: newColumnValueFilters }))
+            onCloseFilterPopover()
+          }}
         />
       )}
 
