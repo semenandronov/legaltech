@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useEffect, useMemo } from "react"
+import { useState, useEffect, useMemo, useRef, useId } from "react"
 import {
   Popover,
   Box,
@@ -104,6 +104,8 @@ export function FilterPopover({
 }: FilterPopoverProps) {
   const [appliedConditions, setAppliedConditions] = useState<ColumnValueFilterCondition[]>([])
   const [currentRows, setCurrentRows] = useState<ColumnValueFilterCondition[]>([emptyCondition()])
+  const popoverPaperRef = useRef<HTMLDivElement>(null)
+  const idPrefix = useId().replace(/:/g, "")
 
   useEffect(() => {
     if (open) {
@@ -163,6 +165,7 @@ export function FilterPopover({
       anchorEl={anchorEl}
       onClose={onClose}
       {...popoverProps}
+      PaperProps={{ ...popoverProps.PaperProps, ref: popoverPaperRef }}
     >
       <Box sx={{ pb: 1 }}>
         {/* Заголовок слева, крестик справа */}
@@ -181,12 +184,14 @@ export function FilterPopover({
             <FilterRow
               key={index}
               rowIndex={index}
+              idPrefix={idPrefix}
               condition={cond}
               columns={columns}
               rows={rows}
               onChange={(patch) => updateCurrentRow(index, patch)}
               onRemove={() => removeCurrentRow(index)}
               selectSx={selectSx}
+              menuContainerRef={popoverPaperRef}
             />
           ))}
         </Stack>
@@ -232,12 +237,14 @@ export function FilterPopover({
               <FilterRow
                 key={`applied-${index}`}
                 rowIndex={1000 + index}
+                idPrefix={idPrefix}
                 condition={cond}
                 columns={columns}
                 rows={rows}
                 onChange={(patch) => updateApplied(index, patch)}
                 onRemove={() => removeApplied(index)}
                 selectSx={selectSx}
+                menuContainerRef={popoverPaperRef}
               />
             ))}
           </Stack>
@@ -249,22 +256,26 @@ export function FilterPopover({
 
 interface FilterRowProps {
   rowIndex: number
+  idPrefix: string
   condition: ColumnValueFilterCondition
   columns: TabularColumn[]
   rows: TabularRow[]
   onChange: (patch: Partial<ColumnValueFilterCondition>) => void
   onRemove: () => void
   selectSx: object
+  menuContainerRef: React.RefObject<HTMLDivElement | null>
 }
 
 function FilterRow({
   rowIndex,
+  idPrefix,
   condition,
   columns,
   rows,
   onChange,
   onRemove,
   selectSx,
+  menuContainerRef,
 }: FilterRowProps) {
   const valueCounts = useMemo(
     () =>
@@ -273,6 +284,8 @@ function FilterRow({
         : [],
     [rows, condition.columnId]
   )
+
+  const baseId = `${idPrefix}-${rowIndex}`
 
   return (
     <Box
@@ -284,9 +297,9 @@ function FilterRow({
       }}
     >
       <FormControl size="small" sx={{ minWidth: 160, flex: 1 }}>
-        <InputLabel id={`filter-col-${rowIndex}`}>Колонка</InputLabel>
+        <InputLabel id={`${baseId}-col`}>Колонка</InputLabel>
         <Select
-          labelId={`filter-col-${rowIndex}`}
+          labelId={`${baseId}-col`}
           value={condition.columnId || ""}
           label="Колонка"
           onChange={(e) =>
@@ -306,16 +319,16 @@ function FilterRow({
       </FormControl>
 
       <FormControl size="small" sx={{ minWidth: 100 }}>
-        <InputLabel id={`filter-op-${rowIndex}`}>Оператор</InputLabel>
+        <InputLabel id={`${baseId}-op`}>Оператор</InputLabel>
         <Select value="equals" label="Оператор" disabled sx={selectSx}>
           <MenuItem value="equals">Равно</MenuItem>
         </Select>
       </FormControl>
 
       <FormControl size="small" sx={{ minWidth: 180, flex: 1 }}>
-        <InputLabel id={`filter-vals-${rowIndex}`}>Выберите значения</InputLabel>
+        <InputLabel id={`${baseId}-vals`}>Выберите значения</InputLabel>
         <Select
-          labelId={`filter-vals-${rowIndex}`}
+          labelId={`${baseId}-vals`}
           multiple
           value={condition.selectedValues}
           label="Выберите значения"
@@ -334,6 +347,11 @@ function FilterRow({
           }
           disabled={!condition.columnId}
           sx={selectSx}
+          MenuProps={{
+            disableScrollLock: true,
+            container: () => menuContainerRef.current ?? undefined,
+            sx: { zIndex: 9999 },
+          }}
         >
           {valueCounts.map(({ value, count }) => (
             <MenuItem key={value === EMPTY_VALUE_KEY ? "__empty" : value} value={value}>
