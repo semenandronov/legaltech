@@ -35,6 +35,7 @@ const TabularReviewPage: React.FC = () => {
   const [loading, setLoading] = useState(false) // Start with false, will be set to true when actually loading
   const [processing, setProcessing] = useState(false)
   const [showColumnBuilder, setShowColumnBuilder] = useState(false)
+  const [addColumnAnchorEl, setAddColumnAnchorEl] = useState<HTMLElement | null>(null)
   const [editingColumn, setEditingColumn] = useState<{ id: string; label: string; type: string; prompt: string; column_config?: any } | null>(null)
   const [showDocumentSelector, setShowDocumentSelector] = useState(false)
   const [showTemplatesModal, setShowTemplatesModal] = useState(false)
@@ -787,9 +788,16 @@ const TabularReviewPage: React.FC = () => {
                 <TabularReviewTable
                   reviewId={reviewId}
                   tableData={tableData}
-                  onAddColumnClick={() => setShowColumnBuilder(true)}
+                  onAddColumnClick={(el) => {
+                    setAddColumnAnchorEl(el)
+                    setShowColumnBuilder(true)
+                  }}
+                  addColumnAnchorEl={addColumnAnchorEl}
                   showAddColumnPopover={showColumnBuilder}
-                  onCloseAddColumnPopover={() => setShowColumnBuilder(false)}
+                  onCloseAddColumnPopover={() => {
+                    setShowColumnBuilder(false)
+                    setAddColumnAnchorEl(null)
+                  }}
                   onSaveNewColumn={handleAddColumn}
                   onTableDataUpdate={(updater) => {
                     if (tableData) {
@@ -926,13 +934,20 @@ const TabularReviewPage: React.FC = () => {
           </div>
         </div>
 
-        {/* Column Builder: only for edit (create flow is popover in table) */}
+        {/* Column Builder: edit = modal; create with anchor = popover in table; create without anchor = modal here */}
         {editingColumn != null && (
           <ColumnBuilder
             isOpen={true}
             onClose={() => setEditingColumn(null)}
             onSave={handleUpdateColumn}
             editingColumn={editingColumn}
+          />
+        )}
+        {showColumnBuilder && !addColumnAnchorEl && (
+          <ColumnBuilder
+            isOpen={true}
+            onClose={() => setShowColumnBuilder(false)}
+            onSave={handleAddColumn}
           />
         )}
 
