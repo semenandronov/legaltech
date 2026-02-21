@@ -344,24 +344,6 @@ const TabularReviewPage: React.FC = () => {
     }
   }
 
-  const handleRunAll = async () => {
-    if (!reviewId) return
-    
-    try {
-      setProcessing(true)
-      const result = await tabularReviewApi.runExtraction(reviewId)
-      toast.success(
-        `Обработка завершена: ${result.saved_count} ячеек сохранено, ${result.error_count} ошибок`
-      )
-      await loadReviewData()
-    } catch (err: any) {
-      toast.error("Ошибка при обработке: " + (err.message || ""))
-    } finally {
-      setProcessing(false)
-    }
-  }
-
-
   const navItems = caseId ? [
     { id: 'chat', label: 'Ассистент', icon: MessageSquare, path: `/cases/${caseId}/chat` },
     { id: 'documents', label: 'Документы', icon: FileText, path: `/cases/${caseId}/documents` },

@@ -274,7 +274,7 @@ export function ColumnBuilder({ isOpen, onClose, onSave, editingColumn }: Column
               >
                 <SelectValue placeholder="Select type" />
               </SelectTrigger>
-              <SelectContent onPointerDownOutside={(e) => {}} onEscapeKeyDown={(e) => {}}>
+              <SelectContent onPointerDownOutside={() => {}} onEscapeKeyDown={() => {}}>
                 {COLUMN_TYPES.map((type) => (
                   <SelectItem key={type.value} value={type.value}>
                     <span className="flex items-center gap-2">
