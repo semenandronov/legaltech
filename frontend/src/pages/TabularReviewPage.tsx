@@ -765,7 +765,7 @@ const TabularReviewPage: React.FC = () => {
           {/* Table, Cell Detail, and Document Split View */}
           <div className="flex-1 overflow-hidden flex">
             {/* Table */}
-            <div className={`overflow-hidden p-6 transition-all bg-bg-primary ${selectedDocument ? 'w-1/4 min-w-[300px]' : 'flex-1'} flex flex-col`}>
+            <div className={`overflow-hidden p-6 transition-all bg-bg-primary min-h-0 ${selectedDocument ? 'w-1/4 min-w-[300px]' : 'flex-1'} flex flex-col`}>
               {tableData.columns.length === 0 ? (
                 <Card className="p-6 hoverable">
                   <div className="text-center">
@@ -788,6 +788,9 @@ const TabularReviewPage: React.FC = () => {
                   reviewId={reviewId}
                   tableData={tableData}
                   onAddColumnClick={() => setShowColumnBuilder(true)}
+                  showAddColumnPopover={showColumnBuilder}
+                  onCloseAddColumnPopover={() => setShowColumnBuilder(false)}
+                  onSaveNewColumn={handleAddColumn}
                   onTableDataUpdate={(updater) => {
                     if (tableData) {
                       setTableData(updater(tableData))
@@ -923,16 +926,15 @@ const TabularReviewPage: React.FC = () => {
           </div>
         </div>
 
-        {/* Column Builder Modal */}
-        <ColumnBuilder
-          isOpen={showColumnBuilder}
-          onClose={() => {
-            setShowColumnBuilder(false)
-            setEditingColumn(null)
-          }}
-          onSave={editingColumn ? handleUpdateColumn : handleAddColumn}
-          editingColumn={editingColumn}
-        />
+        {/* Column Builder: only for edit (create flow is popover in table) */}
+        {editingColumn != null && (
+          <ColumnBuilder
+            isOpen={true}
+            onClose={() => setEditingColumn(null)}
+            onSave={handleUpdateColumn}
+            editingColumn={editingColumn}
+          />
+        )}
 
         {/* Document Selector Modal */}
         {caseId && (

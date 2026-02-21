@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react"
 import Modal from "@/components/UI/Modal"
+import { Popover } from "@mui/material"
 import { Button } from "@/components/UI/Button"
 import Input from "@/components/UI/Input"
 import { Textarea } from "@/components/UI/Textarea"
@@ -37,6 +38,8 @@ interface ColumnBuilderProps {
       allow_custom?: boolean
     }
   } | null
+  /** When set (create flow), render as popover under this element instead of centered modal with backdrop */
+  anchorEl?: HTMLElement | null
 }
 
 const COLUMN_TYPES = [
@@ -70,7 +73,7 @@ function suggestLabelFromPrompt(promptText: string): string {
   return firstLine.slice(0, 42).trim() + "…"
 }
 
-export function ColumnBuilder({ isOpen, onClose, onSave, editingColumn }: ColumnBuilderProps) {
+export function ColumnBuilder({ isOpen, onClose, onSave, editingColumn, anchorEl }: ColumnBuilderProps) {
   const isCreate = !editingColumn
   const [step, setStep] = useState<1 | 2>(1)
   const [columnLabel, setColumnLabel] = useState(editingColumn?.label || "")
@@ -220,110 +223,168 @@ export function ColumnBuilder({ isOpen, onClose, onSave, editingColumn }: Column
     }
   }
 
+  const createStep1Content = (
+    <>
+      <p className="text-sm text-muted-foreground mb-4">
+        Get started by asking Harvey a question.
+      </p>
+      <div className="space-y-4">
+        <div>
+          <Textarea
+            value={prompt}
+            onChange={(e) => setPrompt(e.target.value)}
+            placeholder="What is the signing date of this agreement?"
+            rows={4}
+            className="resize-none"
+          />
+        </div>
+        <div className="flex justify-end gap-2">
+          <Button variant="outline" onClick={onClose}>
+            Cancel
+          </Button>
+          <Button onClick={handleContinueToStep2} disabled={!prompt.trim()}>
+            Continue
+          </Button>
+        </div>
+      </div>
+    </>
+  )
+
   // ——— Режим создания: два шага ———
   if (isCreate && step === 1) {
+    if (anchorEl) {
+      return (
+        <Popover
+          open={isOpen}
+          anchorEl={anchorEl}
+          onClose={onClose}
+          anchorOrigin={{ vertical: "bottom", horizontal: "left" }}
+          transformOrigin={{ vertical: "top", horizontal: "left" }}
+          slotProps={{
+            root: { disableScrollLock: true },
+            backdrop: { sx: { backgroundColor: "transparent" } },
+          }}
+          PaperProps={{
+            sx: { minWidth: 320, maxWidth: 380, p: 2, borderRadius: 2, boxShadow: 2 },
+          }}
+        >
+          <div className="px-1">
+            <h3 className="text-sm font-semibold mb-3">Create column</h3>
+            {createStep1Content}
+          </div>
+        </Popover>
+      )
+    }
     return (
       <Modal isOpen={isOpen} onClose={onClose} title="Create column" size="sm">
-        <p className="text-sm text-muted-foreground mb-4">
-          Get started by asking Harvey a question.
-        </p>
-        <div className="space-y-4">
-          <div>
-            <Textarea
-              value={prompt}
-              onChange={(e) => setPrompt(e.target.value)}
-              placeholder="What is the signing date of this agreement?"
-              rows={4}
-              className="resize-none"
-            />
-          </div>
-          <div className="flex justify-end gap-2">
-            <Button variant="outline" onClick={onClose}>
-              Cancel
-            </Button>
-            <Button onClick={handleContinueToStep2} disabled={!prompt.trim()}>
-              Continue
-            </Button>
-          </div>
-        </div>
+        {createStep1Content}
       </Modal>
     )
   }
 
-  if (isCreate && step === 2) {
-    return (
-      <Modal isOpen={isOpen} onClose={onClose} title="Confirm column properties" size="sm">
-        <p className="text-sm text-muted-foreground mb-4">
-          Based on your question, Harvey has suggested the column header and type.
-        </p>
-        <div className="space-y-4">
+  const createStep2Content = (
+    <>
+      <p className="text-sm text-muted-foreground mb-4">
+        Based on your question, Harvey has suggested the column header and type.
+      </p>
+      <div className="space-y-4">
+        <div>
+          <label className="text-sm font-medium mb-2 block">Label</label>
+          <Input
+            value={columnLabel}
+            onChange={(e) => setColumnLabel(e.target.value)}
+            placeholder="e.g. Indemnification Clause"
+          />
+        </div>
+        <div>
+          <label className="text-sm font-medium mb-2 block">Type</label>
+          <Select value={columnType} onValueChange={(v) => handleColumnTypeChange(v)}>
+            <SelectTrigger
+              onClick={(e) => e.stopPropagation()}
+              onPointerDown={(e) => e.stopPropagation()}
+            >
+              <SelectValue placeholder="Select type" />
+            </SelectTrigger>
+            <SelectContent onPointerDownOutside={() => {}} onEscapeKeyDown={() => {}}>
+              {COLUMN_TYPES.map((type) => (
+                <SelectItem key={type.value} value={type.value}>
+                  <span className="flex items-center gap-2">
+                    <span>{type.icon}</span>
+                    <span>{type.label}</span>
+                  </span>
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+        {columnType === "tag" && (
           <div>
-            <label className="text-sm font-medium mb-2 block">Label</label>
-            <Input
-              value={columnLabel}
-              onChange={(e) => setColumnLabel(e.target.value)}
-              placeholder="e.g. Indemnification Clause"
-            />
-          </div>
-          <div>
-            <label className="text-sm font-medium mb-2 block">Type</label>
-            <Select value={columnType} onValueChange={(v) => handleColumnTypeChange(v)}>
-              <SelectTrigger
-                onClick={(e) => e.stopPropagation()}
-                onPointerDown={(e) => e.stopPropagation()}
-              >
-                <SelectValue placeholder="Select type" />
-              </SelectTrigger>
-              <SelectContent onPointerDownOutside={() => {}} onEscapeKeyDown={() => {}}>
-                {COLUMN_TYPES.map((type) => (
-                  <SelectItem key={type.value} value={type.value}>
-                    <span className="flex items-center gap-2">
-                      <span>{type.icon}</span>
-                      <span>{type.label}</span>
-                    </span>
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
-          {columnType === "tag" && (
-            <div>
-              <label className="text-sm font-medium mb-2 block">Options</label>
-              <div className="space-y-2">
-                {tagOptions.map((option, index) => (
-                  <div key={index} className="flex items-center gap-2 p-2 border rounded">
-                    <div className="w-4 h-4 rounded shrink-0" style={{ backgroundColor: option.color }} />
-                    <Input
-                      value={option.label}
-                      onChange={(e) => {
-                        const next = [...tagOptions]
-                        next[index] = { ...next[index], label: e.target.value }
-                        setTagOptions(next)
-                      }}
-                      className="flex-1"
-                    />
-                    <Button variant="ghost" size="sm" className="text-red-500" onClick={() => handleRemoveTag(index)}>×</Button>
-                  </div>
-                ))}
-                <div className="flex gap-2">
-                  <Input value={newTagLabel} onChange={(e) => setNewTagLabel(e.target.value)} placeholder="New option" onKeyDown={(e) => e.key === "Enter" && (e.preventDefault(), handleAddTag())} />
-                  <Button variant="outline" size="sm" onClick={handleAddTag} disabled={!newTagLabel.trim()}>+ Add</Button>
+            <label className="text-sm font-medium mb-2 block">Options</label>
+            <div className="space-y-2">
+              {tagOptions.map((option, index) => (
+                <div key={index} className="flex items-center gap-2 p-2 border rounded">
+                  <div className="w-4 h-4 rounded shrink-0" style={{ backgroundColor: option.color }} />
+                  <Input
+                    value={option.label}
+                    onChange={(e) => {
+                      const next = [...tagOptions]
+                      next[index] = { ...next[index], label: e.target.value }
+                      setTagOptions(next)
+                    }}
+                    className="flex-1"
+                  />
+                  <Button variant="ghost" size="sm" className="text-red-500" onClick={() => handleRemoveTag(index)}>×</Button>
                 </div>
+              ))}
+              <div className="flex gap-2">
+                <Input value={newTagLabel} onChange={(e) => setNewTagLabel(e.target.value)} placeholder="New option" onKeyDown={(e) => e.key === "Enter" && (e.preventDefault(), handleAddTag())} />
+                <Button variant="outline" size="sm" onClick={handleAddTag} disabled={!newTagLabel.trim()}>+ Add</Button>
               </div>
             </div>
-          )}
-          <div className="flex justify-end gap-2 pt-2">
-            <Button variant="ghost" onClick={handleBackToStep1} disabled={saving}>
-              Back
-            </Button>
-            <Button variant="outline" onClick={onClose} disabled={saving}>
-              Cancel
-            </Button>
-            <Button onClick={handleSave} disabled={saving || !columnLabel.trim()}>
-              {saving ? "Saving…" : "Add column"}
-            </Button>
           </div>
+        )}
+        <div className="flex justify-end gap-2 pt-2">
+          <Button variant="ghost" onClick={handleBackToStep1} disabled={saving}>
+            Back
+          </Button>
+          <Button variant="outline" onClick={onClose} disabled={saving}>
+            Cancel
+          </Button>
+          <Button onClick={handleSave} disabled={saving || !columnLabel.trim()}>
+            {saving ? "Saving…" : "Add column"}
+          </Button>
         </div>
+      </div>
+    </>
+  )
+
+  if (isCreate && step === 2) {
+    if (anchorEl) {
+      return (
+        <Popover
+          open={isOpen}
+          anchorEl={anchorEl}
+          onClose={onClose}
+          anchorOrigin={{ vertical: "bottom", horizontal: "left" }}
+          transformOrigin={{ vertical: "top", horizontal: "left" }}
+          slotProps={{
+            root: { disableScrollLock: true },
+            backdrop: { sx: { backgroundColor: "transparent" } },
+          }}
+          PaperProps={{
+            sx: { minWidth: 320, maxWidth: 380, p: 2, borderRadius: 2, boxShadow: 2 },
+          }}
+        >
+          <div className="px-1">
+            <h3 className="text-sm font-semibold mb-3">Confirm column properties</h3>
+            {createStep2Content}
+          </div>
+        </Popover>
+      )
+    }
+    return (
+      <Modal isOpen={isOpen} onClose={onClose} title="Confirm column properties" size="sm">
+        {createStep2Content}
       </Modal>
     )
   }

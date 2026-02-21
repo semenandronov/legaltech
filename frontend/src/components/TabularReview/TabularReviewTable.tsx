@@ -46,6 +46,7 @@ import { CellHistoryPanel } from "./CellHistoryPanel"
 import { AdvancedFiltersPanel, AdvancedFilters } from "./AdvancedFiltersPanel"
 import { useKeyboardNavigation } from "@/hooks/useKeyboardNavigation"
 import { ColumnHeaderMenu } from "./ColumnHeaderMenu"
+import { ColumnBuilder } from "./ColumnBuilder"
 
 interface TabularReviewTableProps {
   reviewId: string
@@ -78,9 +79,18 @@ interface TabularReviewTableProps {
   onColumnEdit?: (columnId: string) => void
   onColumnDelete?: (columnId: string) => void
   onAddColumnClick?: () => void
+  /** Create-column popover: when true, show ColumnBuilder as popover under Add column button */
+  showAddColumnPopover?: boolean
+  onCloseAddColumnPopover?: () => void
+  onSaveNewColumn?: (column: {
+    column_label: string
+    column_type: string
+    prompt: string
+    column_config?: { options?: Array<{ label: string; color: string }>; allow_custom?: boolean }
+  }) => Promise<void>
 }
 
-export const TabularReviewTable = React.memo(({ reviewId, tableData, onTableDataUpdate: _onTableDataUpdate, onCellClick, onCellEdit, onRemoveDocument, onRunColumn: _onRunColumn, onColumnEdit, onColumnDelete, onAddColumnClick }: TabularReviewTableProps) => {
+export const TabularReviewTable = React.memo(({ reviewId, tableData, onTableDataUpdate: _onTableDataUpdate, onCellClick, onCellEdit, onRemoveDocument, onRunColumn: _onRunColumn, onColumnEdit, onColumnDelete, onAddColumnClick, showAddColumnPopover, onCloseAddColumnPopover, onSaveNewColumn }: TabularReviewTableProps) => {
   const [sorting, setSorting] = React.useState<SortingState>([])
   const [columnFilters, setColumnFilters] = React.useState<ColumnFiltersState>([])
   const [columnVisibility, setColumnVisibility] = React.useState<VisibilityState>({})
@@ -114,6 +124,7 @@ export const TabularReviewTable = React.memo(({ reviewId, tableData, onTableData
   
   // Кеш для cellDetails
   const cellDetailsCache = React.useRef<Map<string, CellDetails>>(new Map())
+  const addColumnAnchorRef = React.useRef<HTMLButtonElement>(null)
   
   // Debounced глобальный фильтр (оставлен для внутренней логики фильтрации)
 
@@ -623,6 +634,7 @@ export const TabularReviewTable = React.memo(({ reviewId, tableData, onTableData
           <Box
             component="button"
             type="button"
+            ref={addColumnAnchorRef}
             onClick={(e) => {
               e.stopPropagation()
               onAddColumnClick()
@@ -756,7 +768,7 @@ export const TabularReviewTable = React.memo(({ reviewId, tableData, onTableData
         sx={{
           py: 1,
           px: 0,
-          borderBottom: '1px solid #F0F0F0',
+          borderBottom: '1px solid var(--border, #F0F0F0)',
           minHeight: 40,
         }}
       >
@@ -773,15 +785,15 @@ export const TabularReviewTable = React.memo(({ reviewId, tableData, onTableData
         variant="outlined"
         ref={tableContainerRef}
         sx={{
-          bgcolor: '#FFFFFF',
+          bgcolor: 'var(--bg-primary)',
           boxShadow: 'none',
-          border: '1px solid #E5E7EB',
+          border: '1px solid var(--border, #E5E7EB)',
           borderRadius: '8px',
           overflowX: 'auto',
           overflowY: 'auto',
-          maxHeight: shouldVirtualize ? '500px' : '65vh',
           width: '100%',
           flex: 1,
+          minHeight: 0,
           minWidth: 0,
           '&::-webkit-scrollbar': {
             height: '8px',
@@ -800,18 +812,18 @@ export const TabularReviewTable = React.memo(({ reviewId, tableData, onTableData
         }}
       >
         <Table sx={{ borderCollapse: 'collapse', minWidth: 'max-content', width: '100%' }}>
-          <TableHead sx={{ position: 'sticky', top: 0, zIndex: 10, bgcolor: '#FFFFFF' }}>
+          <TableHead sx={{ position: 'sticky', top: 0, zIndex: 10, bgcolor: 'var(--bg-primary)' }}>
             {table.getHeaderGroups().map((headerGroup) => (
               <TableRow 
                 key={headerGroup.id}
                 sx={{
-                  bgcolor: '#F5F5F4',
+                  bgcolor: 'var(--bg-primary)',
                   '& th': {
-                    borderBottom: '1px solid #E5E7EB',
-                    borderRight: '1px solid #EBEBEB',
+                    borderBottom: '1px solid var(--border, #E5E7EB)',
+                    borderRight: '1px solid var(--border, #EBEBEB)',
                     fontWeight: 600,
                     fontSize: '0.875rem',
-                    color: '#1F2937',
+                    color: 'var(--text-primary, #1F2937)',
                     py: '12px',
                     px: '16px',
                   },
@@ -822,7 +834,7 @@ export const TabularReviewTable = React.memo(({ reviewId, tableData, onTableData
                   <TableCell
                     key={header.id}
                     sx={{
-                      bgcolor: '#F5F5F4',
+                      bgcolor: header.column.id === 'add_column' ? 'var(--bg-secondary)' : 'var(--bg-primary)',
                       width: header.getSize(),
                       position: header.column.getIsPinned() ? 'sticky' : 'relative',
                       left: header.column.getIsPinned() === 'left' 
@@ -879,11 +891,11 @@ export const TabularReviewTable = React.memo(({ reviewId, tableData, onTableData
                           }
                         }}
                         sx={{
-                          bgcolor: '#FAFAF9',
-                          '&:hover': { bgcolor: '#F5F5F4' },
+                          bgcolor: 'var(--bg-primary)',
+                          '&:hover': { bgcolor: 'var(--bg-secondary)' },
                           '& td': {
-                            borderBottom: '1px solid #F0F0F0',
-                            borderRight: '1px solid #EBEBEB',
+                            borderBottom: '1px solid var(--border, #F0F0F0)',
+                            borderRight: '1px solid var(--border, #EBEBEB)',
                             py: '12px',
                             px: '16px',
                             fontSize: '0.875rem',
@@ -905,7 +917,7 @@ export const TabularReviewTable = React.memo(({ reviewId, tableData, onTableData
                             ? `${cell.column.getStart('right')}px` 
                             : undefined,
                           zIndex: cell.column.getIsPinned() ? 10 : 1,
-                          bgcolor: 'transparent',
+                          bgcolor: cell.column.id === 'add_column' ? 'var(--bg-secondary)' : 'transparent',
                         }}
                       >
                         {flexRender(
@@ -924,11 +936,11 @@ export const TabularReviewTable = React.memo(({ reviewId, tableData, onTableData
                   <TableRow
                     key={row.id}
                     sx={{
-                      bgcolor: '#FAFAF9',
-                      '&:hover': { bgcolor: '#F5F5F4' },
+                      bgcolor: 'var(--bg-primary)',
+                      '&:hover': { bgcolor: 'var(--bg-secondary)' },
                       '& td': {
-                        borderBottom: '1px solid #F0F0F0',
-                        borderRight: '1px solid #EBEBEB',
+                        borderBottom: '1px solid var(--border, #F0F0F0)',
+                        borderRight: '1px solid var(--border, #EBEBEB)',
                         py: '12px',
                         px: '16px',
                         fontSize: '0.875rem',
@@ -950,7 +962,7 @@ export const TabularReviewTable = React.memo(({ reviewId, tableData, onTableData
                             ? `${cell.column.getStart('right')}px` 
                             : undefined,
                           zIndex: cell.column.getIsPinned() ? 10 : 1,
-                          bgcolor: 'transparent',
+                          bgcolor: cell.column.id === 'add_column' ? 'var(--bg-secondary)' : 'transparent',
                         }}
                       >
                         {flexRender(
@@ -1004,6 +1016,16 @@ export const TabularReviewTable = React.memo(({ reviewId, tableData, onTableData
         onFiltersChange={setAdvancedFilters}
         columns={tableData.columns}
       />
+
+      {/* Create column popover (anchored under Add column button) */}
+      {showAddColumnPopover && onCloseAddColumnPopover && onSaveNewColumn && (
+        <ColumnBuilder
+          isOpen={true}
+          onClose={onCloseAddColumnPopover}
+          onSave={onSaveNewColumn}
+          anchorEl={addColumnAnchorRef.current}
+        />
+      )}
     </Box>
   )
 })
