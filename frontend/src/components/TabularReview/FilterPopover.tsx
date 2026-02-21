@@ -14,7 +14,6 @@ import {
   ListItemText,
   Checkbox,
   Stack,
-  Chip,
 } from "@mui/material"
 import { Close as CloseIcon, Add as AddIcon } from "@mui/icons-material"
 import type { TabularColumn, TabularRow } from "@/services/tabularReviewApi"
@@ -142,6 +141,16 @@ export function FilterPopover({
     setCurrentRows([emptyCondition()])
   }
 
+  const updateApplied = (index: number, patch: Partial<ColumnValueFilterCondition>) => {
+    setAppliedConditions((prev) => {
+      const next = prev.map((c, i) =>
+        i === index ? { ...c, ...patch } : c
+      )
+      onApply(next)
+      return next
+    })
+  }
+
   const removeApplied = (index: number) => {
     const next = appliedConditions.filter((_, i) => i !== index)
     setAppliedConditions(next)
@@ -216,29 +225,22 @@ export function FilterPopover({
           </Button>
         </Box>
 
-        {/* Применённые фильтры — чипы внизу */}
+        {/* Применённые фильтры — те же три поля внизу, редактируемые */}
         {appliedConditions.length > 0 && (
-          <Box sx={{ mt: 2, pt: 2, borderTop: "1px solid #E5E7EB" }}>
-            <Typography variant="caption" sx={{ color: "#6B7280", display: "block", mb: 1 }}>
-              Применённые фильтры
-            </Typography>
-            <Stack direction="row" flexWrap="wrap" gap={0.75} useFlexGap>
-              {appliedConditions.map((cond, index) => {
-                const col = columns.find((c) => c.id === cond.columnId)
-                const label = col ? col.column_label : cond.columnId
-                const valuesStr = cond.selectedValues.map((v) => displayValue(v)).join(", ")
-                return (
-                  <Chip
-                    key={index}
-                    size="small"
-                    label={`${label} = ${valuesStr}`}
-                    onDelete={() => removeApplied(index)}
-                    sx={{ borderRadius: "8px" }}
-                  />
-                )
-              })}
-            </Stack>
-          </Box>
+          <Stack spacing={1.5} sx={{ mt: 2, pt: 2, borderTop: "1px solid #E5E7EB" }}>
+            {appliedConditions.map((cond, index) => (
+              <FilterRow
+                key={`applied-${index}`}
+                rowIndex={1000 + index}
+                condition={cond}
+                columns={columns}
+                rows={rows}
+                onChange={(patch) => updateApplied(index, patch)}
+                onRemove={() => removeApplied(index)}
+                selectSx={selectSx}
+              />
+            ))}
+          </Stack>
         )}
       </Box>
     </Popover>

@@ -30,6 +30,7 @@ import {
   IconButton,
   Chip,
   Tooltip,
+  CircularProgress,
 } from '@mui/material'
 import {
   Description as FileTextIcon,
@@ -440,12 +441,18 @@ export const TabularReviewTable = React.memo(({ reviewId, tableData, onTableData
                 size="small"
                 onClick={(e) => {
                   e.stopPropagation()
+                  if (runningColumnId === col.id) return
                   onRunColumn(col.id)
                 }}
+                disabled={runningColumnId === col.id}
                 aria-label="Запустить ИИ для заполнения колонки"
                 sx={{ p: 0.25 }}
               >
-                <PlayArrowIcon sx={{ fontSize: 18 }} />
+                {runningColumnId === col.id ? (
+                  <CircularProgress size={18} color="inherit" />
+                ) : (
+                  <PlayArrowIcon sx={{ fontSize: 18 }} />
+                )}
               </IconButton>
             </Tooltip>
           )}
@@ -469,7 +476,6 @@ export const TabularReviewTable = React.memo(({ reviewId, tableData, onTableData
         
         const cellStatus = cell?.status || "pending"
         const isTagType = col.column_type === "tag"
-        const isColumnRunning = runningColumnId === col.id
 
         return (
           <Box
@@ -575,30 +581,8 @@ export const TabularReviewTable = React.memo(({ reviewId, tableData, onTableData
               }
             }}
           >
-            {/* Индикатор заполнения колонки ИИ — прямоугольник с закруглёнными углами */}
-            {isColumnRunning && (
-              <Box
-                sx={{
-                  position: 'absolute',
-                  left: 4,
-                  top: '50%',
-                  transform: 'translateY(-50%)',
-                  height: 20,
-                  minWidth: 24,
-                  borderRadius: '6px',
-                  bgcolor: 'primary.main',
-                  opacity: 0.85,
-                  animation: 'pulse 1.5s ease-in-out infinite',
-                  '@keyframes pulse': {
-                    '0%, 100%': { opacity: 0.85 },
-                    '50%': { opacity: 0.5 },
-                  },
-                }}
-                aria-hidden
-              />
-            )}
-            {/* Status indicator (per-cell processing dot; скрыт, если показывается индикатор колонки) */}
-            {cellStatus === "processing" && !isColumnRunning && (
+            {/* Status indicator (per-cell processing) */}
+            {cellStatus === "processing" && (
               <Box
                 sx={{
                   position: 'absolute',
@@ -1047,7 +1031,6 @@ export const TabularReviewTable = React.memo(({ reviewId, tableData, onTableData
           valueFilters={advancedFilters.columnValueFilters}
           onApply={(newColumnValueFilters) => {
             setAdvancedFilters((prev) => ({ ...prev, columnValueFilters: newColumnValueFilters }))
-            onCloseFilterPopover()
           }}
         />
       )}
