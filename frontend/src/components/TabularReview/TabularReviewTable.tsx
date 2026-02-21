@@ -26,20 +26,20 @@ import {
   TableRow,
   Paper,
   Stack,
-  MenuItem,
   Checkbox,
   Typography,
   IconButton,
   Chip,
-  Pagination,
-  Select,
-  FormControl,
-  InputLabel,
 } from '@mui/material'
 import {
   Description as FileTextIcon,
   PlayArrow as PlayArrowIcon,
   Close as CloseIcon,
+  Add as AddIcon,
+  ExpandMore as ExpandMoreIcon,
+  UnfoldMore as UnfoldMoreIcon,
+  ArrowUpward as ArrowUpwardIcon,
+  ArrowDownward as ArrowDownwardIcon,
 } from '@mui/icons-material'
 import { TabularRow, TabularColumn, TabularCell, CellDetails } from "@/services/tabularReviewApi"
 import { tabularReviewApi } from "@/services/tabularReviewApi"
@@ -81,14 +81,15 @@ interface TabularReviewTableProps {
   onRunColumn?: (columnId: string) => void
   onColumnEdit?: (columnId: string) => void
   onColumnDelete?: (columnId: string) => void
+  onAddColumnClick?: () => void
 }
 
-export const TabularReviewTable = React.memo(({ reviewId, tableData, onTableDataUpdate: _onTableDataUpdate, onCellClick, onCellEdit, onRemoveDocument, onRunColumn, onColumnEdit, onColumnDelete }: TabularReviewTableProps) => {
+export const TabularReviewTable = React.memo(({ reviewId, tableData, onTableDataUpdate: _onTableDataUpdate, onCellClick, onCellEdit, onRemoveDocument, onRunColumn, onColumnEdit, onColumnDelete, onAddColumnClick }: TabularReviewTableProps) => {
   const [sorting, setSorting] = React.useState<SortingState>([])
   const [columnFilters, setColumnFilters] = React.useState<ColumnFiltersState>([])
   const [columnVisibility, setColumnVisibility] = React.useState<VisibilityState>({})
   const [columnSizing, setColumnSizing] = React.useState<ColumnSizingState>({})
-  const [columnPinning, setColumnPinning] = React.useState<ColumnPinningState>({ left: ['select', 'file_name'], right: [] })
+  const [columnPinning, setColumnPinning] = React.useState<ColumnPinningState>({ left: ['row_index', 'select', 'file_name'], right: [] })
   const [globalFilter, setGlobalFilter] = React.useState("")
   const [_loadingCell, setLoadingCell] = React.useState(false)
   const [historyPanelOpen, setHistoryPanelOpen] = React.useState(false)
@@ -250,7 +251,24 @@ export const TabularReviewTable = React.memo(({ reviewId, tableData, onTableData
 
   // Build columns dynamically
   const columns = React.useMemo<ColumnDef<any>[]>(() => {
-    // Selection column (first)
+    // Row number column (first)
+    const rowIndexColumn: ColumnDef<any> = {
+      id: "row_index",
+      size: 48,
+      minSize: 40,
+      maxSize: 56,
+      enableResizing: false,
+      enableSorting: false,
+      enableHiding: false,
+      header: () => null,
+      cell: ({ row }) => (
+        <Typography component="span" sx={{ fontSize: '0.875rem', color: '#6B7280' }}>
+          {row.index + 1}
+        </Typography>
+      ),
+    }
+
+    // Selection column
     const selectionColumn: ColumnDef<any> = {
       id: "select",
       header: () => (
@@ -283,51 +301,60 @@ export const TabularReviewTable = React.memo(({ reviewId, tableData, onTableData
 
     // File name column
     const fileColumn: ColumnDef<any> = {
-      id: "file_name", // Explicitly set id
+      id: "file_name",
       accessorKey: "file_name",
-      size: 250, // Default column width
+      size: 250,
       minSize: 150,
       maxSize: 500,
-      meta: {
-        columnLabel: "Document", // Store column label in meta for dropdown
-        },
-        header: () => {
-          return (
-            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-              <Typography sx={{ fontWeight: 600, color: '#1F2937' }}>
-                Document
-              </Typography>
-            </Box>
-          )
-        },
+      enableSorting: true,
+      meta: { columnLabel: "Name" },
+      header: ({ column }) => {
+        const sortDir = column.getIsSorted()
+        return (
+          <Box
+            sx={{ display: 'flex', alignItems: 'center', gap: 0.5, cursor: column.getCanSort() ? 'pointer' : 'default' }}
+            onClick={column.getToggleSortingHandler()}
+          >
+            <Typography sx={{ fontWeight: 600, fontSize: '0.875rem', color: '#1F2937' }}>
+              Name
+            </Typography>
+            {sortDir === 'asc' && <ArrowUpwardIcon sx={{ fontSize: 16, color: '#6B7280' }} />}
+            {sortDir === 'desc' && <ArrowDownwardIcon sx={{ fontSize: 16, color: '#6B7280' }} />}
+            {sortDir === false && <UnfoldMoreIcon sx={{ fontSize: 16, color: '#9CA3AF' }} />}
+          </Box>
+        )
+      },
       cell: ({ row }) => (
         <Stack 
           direction="row" 
           spacing={1} 
           alignItems="center" 
-              sx={{ 
-                py: 1,
+          sx={{ 
             cursor: 'pointer',
-            '&:hover': {
-              bgcolor: 'action.hover',
-            }
+            '&:hover': { bgcolor: 'transparent' },
           }}
           onClick={async () => {
-            // Open document when clicking on file name
             if (onCellClick) {
               const fileId = row.original.file_id
-              // Use first column ID or empty string if no columns
               const columnId = tableData.columns.length > 0 ? tableData.columns[0].id : ""
-              onCellClick(fileId, columnId, {
-                highlightMode: 'none',
-              })
+              onCellClick(fileId, columnId, { highlightMode: 'none' })
             }
           }}
         >
-          <FileTextIcon fontSize="small" sx={{ color: '#6B7280' }} />
-          <Typography variant="body2" sx={{ color: '#1F2937', flex: 1 }}>
+          <FileTextIcon fontSize="small" sx={{ color: '#6B7280', flexShrink: 0 }} />
+          <Typography
+            variant="body2"
+            sx={{
+              fontSize: '0.875rem',
+              color: '#374151',
+              flex: 1,
+              minWidth: 0,
+              overflow: 'hidden',
+              textOverflow: 'ellipsis',
+            }}
+          >
             {row.getValue("file_name")}
-            </Typography>
+          </Typography>
           {onRemoveDocument && (
               <IconButton
                 size="small"
@@ -649,8 +676,47 @@ export const TabularReviewTable = React.memo(({ reviewId, tableData, onTableData
       },
     }))
 
-    return [selectionColumn, fileColumn, ...dynamicColumns]
-  }, [tableData.columns, reviewId, onCellClick, onRunColumn, onRemoveDocument, runningColumns, selectedIds, isAllSelected, selectedCount, toggleSelection, selectAll, clearSelection])
+    // "+ Add column" column (last, header only)
+    const addColumnColumn: ColumnDef<any> = {
+      id: "add_column",
+      size: 140,
+      minSize: 120,
+      maxSize: 160,
+      enableResizing: false,
+      enableSorting: false,
+      enableHiding: false,
+      header: () =>
+        onAddColumnClick ? (
+          <Box
+            component="button"
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation()
+              onAddColumnClick()
+            }}
+            sx={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: 0.5,
+              border: 'none',
+              background: 'none',
+              cursor: 'pointer',
+              fontSize: '0.875rem',
+              color: '#6B7280',
+              fontWeight: 500,
+              '&:hover': { color: '#1F2937' },
+            }}
+          >
+            <AddIcon sx={{ fontSize: 18 }} />
+            Add column
+          </Box>
+        ) : null,
+      cell: () => null,
+    }
+
+    const baseColumns = [rowIndexColumn, selectionColumn, fileColumn, ...dynamicColumns]
+    return onAddColumnClick ? [...baseColumns, addColumnColumn] : baseColumns
+  }, [tableData.columns, reviewId, onCellClick, onRunColumn, onRemoveDocument, runningColumns, selectedIds, isAllSelected, selectedCount, toggleSelection, selectAll, clearSelection, onAddColumnClick])
 
   const table = useReactTable({
     data: tableRows,
@@ -669,15 +735,15 @@ export const TabularReviewTable = React.memo(({ reviewId, tableData, onTableData
     enableColumnResizing: true,
     columnResizeMode: 'onChange',
     enablePinning: true,
-    // CRITICAL: Disable automatic column creation from rowData keys
-    // Only use explicitly defined columns - TanStack Table should NOT auto-create columns
     manualPagination: false,
     manualSorting: false,
     manualFiltering: false,
     defaultColumn: {
       enableHiding: false,
-      // Prevent auto-creation of columns from data keys
       enableColumnFilter: false,
+    },
+    initialState: {
+      pagination: { pageSize: 10000, pageIndex: 0 },
     },
     state: {
       sorting,
@@ -811,16 +877,38 @@ export const TabularReviewTable = React.memo(({ reviewId, tableData, onTableData
         onDelete={handleBulkDelete}
         onClearSelection={clearSelection}
       />
+
+      {/* Documents count bar (above table) */}
+      <Stack
+        direction="row"
+        alignItems="center"
+        justifyContent="space-between"
+        sx={{
+          py: 1,
+          px: 0,
+          borderBottom: '1px solid #F0F0F0',
+          minHeight: 40,
+        }}
+      >
+        <Stack direction="row" alignItems="center" spacing={0.5} sx={{ color: '#6B7280', fontSize: '0.875rem' }}>
+          <Typography variant="body2" sx={{ color: '#6B7280', fontSize: '0.875rem' }}>
+            {table.getFilteredRowModel().rows.length} documents
+          </Typography>
+          <ExpandMoreIcon sx={{ fontSize: 20, color: '#9CA3AF' }} />
+        </Stack>
+      </Stack>
       
       <TableContainer 
         component={Paper} 
         variant="outlined"
         ref={tableContainerRef}
         sx={{
+          bgcolor: '#FFFFFF',
+          boxShadow: 'none',
           border: '1px solid #E5E7EB',
           borderRadius: '8px',
           overflowX: 'auto',
-          overflowY: shouldVirtualize ? 'auto' : 'hidden',
+          overflowY: 'auto',
           maxHeight: shouldVirtualize ? '600px' : '100%',
           width: '100%',
           flex: 1,
@@ -830,35 +918,41 @@ export const TabularReviewTable = React.memo(({ reviewId, tableData, onTableData
             width: '8px',
           },
           '&::-webkit-scrollbar-track': {
-            background: '#f1f1f1',
+            background: '#F9FAFB',
           },
           '&::-webkit-scrollbar-thumb': {
-            background: '#888',
+            background: '#D1D5DB',
             borderRadius: '4px',
           },
           '&::-webkit-scrollbar-thumb:hover': {
-            background: '#555',
+            background: '#9CA3AF',
           },
         }}
       >
-        <Table sx={{ borderCollapse: 'separate', minWidth: 'max-content', width: '100%' }}>
-          <TableHead sx={{ position: shouldVirtualize ? 'sticky' : 'static', top: 0, zIndex: 10 }}>
+        <Table sx={{ borderCollapse: 'collapse', minWidth: 'max-content', width: '100%' }}>
+          <TableHead sx={{ position: 'sticky', top: 0, zIndex: 10, bgcolor: '#FFFFFF' }}>
             {table.getHeaderGroups().map((headerGroup) => (
               <TableRow 
                 key={headerGroup.id}
                 sx={{
-                  bgcolor: '#F9FAFB',
-                  borderBottom: '1px solid #E5E7EB',
+                  bgcolor: '#F5F5F4',
+                  '& th': {
+                    borderBottom: '1px solid #E5E7EB',
+                    borderRight: '1px solid #EBEBEB',
+                    fontWeight: 600,
+                    fontSize: '0.875rem',
+                    color: '#1F2937',
+                    py: '12px',
+                    px: '16px',
+                  },
+                  '& th:last-child': { borderRight: 'none' },
                 }}
               >
                 {headerGroup.headers.map((header) => (
                   <TableCell
                     key={header.id}
                     sx={{
-                      borderRight: '1px solid #E5E7EB',
-                      bgcolor: header.column.getIsPinned() ? '#F9FAFB' : '#F9FAFB',
-                      py: 1.5,
-                      px: 2,
+                      bgcolor: '#F5F5F4',
                       width: header.getSize(),
                       position: header.column.getIsPinned() ? 'sticky' : 'relative',
                       left: header.column.getIsPinned() === 'left' 
@@ -868,9 +962,6 @@ export const TabularReviewTable = React.memo(({ reviewId, tableData, onTableData
                         ? `${header.getStart('right')}px` 
                         : undefined,
                       zIndex: header.column.getIsPinned() ? 15 : 1,
-                      '&:last-child': {
-                        borderRight: 'none',
-                      },
                     }}
                   >
                     {header.isPlaceholder
@@ -892,9 +983,7 @@ export const TabularReviewTable = React.memo(({ reviewId, tableData, onTableData
                         userSelect: 'none',
                         touchAction: 'none',
                         bgcolor: header.column.getIsResizing() ? '#2563EB' : 'transparent',
-                        '&:hover': {
-                          bgcolor: '#9CA3AF',
-                        },
+                        '&:hover': { bgcolor: '#9CA3AF' },
                         zIndex: 2,
                       }}
                     />
@@ -920,19 +1009,23 @@ export const TabularReviewTable = React.memo(({ reviewId, tableData, onTableData
                           }
                         }}
                         sx={{
-                          bgcolor: virtualRow.index % 2 === 0 ? '#FFFFFF' : '#F9FAFB',
-                          borderBottom: '1px solid #E5E7EB',
-                          '&:hover': {
-                            bgcolor: '#F3F4F6',
+                          bgcolor: '#FAFAF9',
+                          '&:hover': { bgcolor: '#F5F5F4' },
+                          '& td': {
+                            borderBottom: '1px solid #F0F0F0',
+                            borderRight: '1px solid #EBEBEB',
+                            py: '12px',
+                            px: '16px',
+                            fontSize: '0.875rem',
+                            color: '#1F2937',
                           },
+                          '& td:last-child': { borderRight: 'none' },
                         }}
                       >
                     {row.getVisibleCells().map((cell) => (
                       <TableCell
                         key={cell.id}
                         sx={{
-                          borderRight: '1px solid #E5E7EB',
-                          px: 2,
                           width: cell.column.getSize(),
                           position: cell.column.getIsPinned() ? 'sticky' : 'static',
                           left: cell.column.getIsPinned() === 'left' 
@@ -942,12 +1035,7 @@ export const TabularReviewTable = React.memo(({ reviewId, tableData, onTableData
                             ? `${cell.column.getStart('right')}px` 
                             : undefined,
                           zIndex: cell.column.getIsPinned() ? 10 : 1,
-                          bgcolor: cell.column.getIsPinned() 
-                            ? (virtualRow.index % 2 === 0 ? '#FFFFFF' : '#F9FAFB')
-                            : 'transparent',
-                          '&:last-child': {
-                            borderRight: 'none',
-                          },
+                          bgcolor: 'inherit',
                         }}
                       >
                         {flexRender(
@@ -966,19 +1054,23 @@ export const TabularReviewTable = React.memo(({ reviewId, tableData, onTableData
                   <TableRow
                     key={row.id}
                     sx={{
-                      bgcolor: rowIndex % 2 === 0 ? '#FFFFFF' : '#F9FAFB',
-                      borderBottom: '1px solid #E5E7EB',
-                      '&:hover': {
-                        bgcolor: '#F3F4F6',
+                      bgcolor: '#FAFAF9',
+                      '&:hover': { bgcolor: '#F5F5F4' },
+                      '& td': {
+                        borderBottom: '1px solid #F0F0F0',
+                        borderRight: '1px solid #EBEBEB',
+                        py: '12px',
+                        px: '16px',
+                        fontSize: '0.875rem',
+                        color: '#1F2937',
                       },
+                      '& td:last-child': { borderRight: 'none' },
                     }}
                   >
                     {row.getVisibleCells().map((cell) => (
                       <TableCell
                         key={cell.id}
                         sx={{
-                          borderRight: '1px solid #E5E7EB',
-                          px: 2,
                           width: cell.column.getSize(),
                           position: cell.column.getIsPinned() ? 'sticky' : 'static',
                           left: cell.column.getIsPinned() === 'left' 
@@ -988,12 +1080,7 @@ export const TabularReviewTable = React.memo(({ reviewId, tableData, onTableData
                             ? `${cell.column.getStart('right')}px` 
                             : undefined,
                           zIndex: cell.column.getIsPinned() ? 10 : 1,
-                          bgcolor: cell.column.getIsPinned() 
-                            ? (rowIndex % 2 === 0 ? '#FFFFFF' : '#F9FAFB')
-                            : 'transparent',
-                          '&:last-child': {
-                            borderRight: 'none',
-                          },
+                          bgcolor: 'inherit',
                         }}
                       >
                         {flexRender(
@@ -1021,47 +1108,7 @@ export const TabularReviewTable = React.memo(({ reviewId, tableData, onTableData
           </TableBody>
         </Table>
       </TableContainer>
-      <Stack direction="row" spacing={2} alignItems="center" justifyContent="space-between" sx={{ py: 2 }}>
-        <Typography variant="body2" color="text.secondary">
-          Показано {table.getRowModel().rows.length} из {table.getFilteredRowModel().rows.length} строк
-        </Typography>
-        <Stack direction="row" spacing={2} alignItems="center">
-          <FormControl size="small" sx={{ minWidth: 140 }}>
-            <InputLabel>Строк на странице</InputLabel>
-            <Select
-              value={table.getState().pagination.pageSize}
-              label="Строк на странице"
-              onChange={(e) => {
-                const value = e.target.value
-                if (value === 'all') {
-                  table.setPageSize(tableRows.length || 1000)
-                } else {
-                  table.setPageSize(Number(value))
-                }
-              }}
-            >
-              {[10, 25, 50, 100].map((pageSize) => (
-                <MenuItem key={pageSize} value={pageSize}>
-                  {pageSize}
-                </MenuItem>
-              ))}
-              <MenuItem value="all">Все</MenuItem>
-            </Select>
-          </FormControl>
-          {table.getPageCount() > 1 && (
-            <Pagination
-              count={table.getPageCount()}
-              page={table.getState().pagination.pageIndex + 1}
-              onChange={(_, page) => table.setPageIndex(page - 1)}
-              color="primary"
-              showFirstButton
-              showLastButton
-            />
-          )}
-        </Stack>
-      </Stack>
-      
-      
+
       {/* Cell History Panel */}
       <CellHistoryPanel
         reviewId={reviewId}
