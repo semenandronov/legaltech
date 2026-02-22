@@ -191,9 +191,6 @@ export function PlaybookCheckCard({ check }: PlaybookCheckCardProps) {
   const pctViol    = total > 0 ? (violations.length / total) * 100 : 0
 
   const hasIssues = violations.length > 0 || warnings.length > 0
-  const visibleRules = filter === 'issues'
-    ? check.results.filter(r => getRuleGroup(r) !== 'passed')
-    : check.results
 
   const score = check.compliance_score
   const scoreColor = score >= 80 ? '#22c55e' : score >= 50 ? '#f59e0b' : '#ef4444'
