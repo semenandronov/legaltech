@@ -1,13 +1,14 @@
 import { BubbleMenu, Editor } from '@tiptap/react'
 import { PenLine, Copy, Trash2, Loader2, ArrowRight, X } from 'lucide-react'
 import { useState, useRef, useEffect } from 'react'
-import { aiAssist } from '../../services/documentEditorApi'
+import { aiAssist, type RiskItem } from '../../services/documentEditorApi'
 import { toast } from 'sonner'
 
 interface SelectionMenuProps {
   editor: Editor
   documentId?: string
   onReplaceSelection?: (text: string) => void
+  onSetRisks?: (risks: RiskItem[]) => void
 }
 
 type Mode = 'idle' | 'input' | 'loading'
@@ -16,6 +17,7 @@ export const SelectionMenu = ({
   editor,
   documentId,
   onReplaceSelection,
+  onSetRisks: _onSetRisks,
 }: SelectionMenuProps) => {
   const [mode, setMode] = useState<Mode>('idle')
   const [instruction, setInstruction] = useState('')

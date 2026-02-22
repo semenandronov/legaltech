@@ -460,6 +460,64 @@ export const getCaseFiles = async (caseId: string): Promise<FilesResponse> => {
   }
 }
 
+// Folders (case-level folder tree)
+export interface FolderItem {
+  id: string
+  name: string
+  parent_id: string | null
+  file_count: number
+  color?: string
+  icon?: string
+  children?: FolderItem[]
+}
+
+export const getCaseFolders = async (caseId: string): Promise<FolderItem[]> => {
+  try {
+    const response = await apiClient.get(getApiUrl(`/api/cases/${caseId}/folders`))
+    return response.data?.folders ?? []
+  } catch {
+    return []
+  }
+}
+
+export const createFolder = async (
+  caseId: string,
+  name: string,
+  parentId: string | null
+): Promise<void> => {
+  await apiClient.post(getApiUrl(`/api/cases/${caseId}/folders`), {
+    name,
+    parent_id: parentId,
+  })
+}
+
+export const renameFolder = async (
+  caseId: string,
+  folderId: string,
+  newName: string
+): Promise<void> => {
+  await apiClient.patch(getApiUrl(`/api/cases/${caseId}/folders/${folderId}`), {
+    name: newName,
+  })
+}
+
+export const deleteFolder = async (
+  caseId: string,
+  folderId: string
+): Promise<void> => {
+  await apiClient.delete(getApiUrl(`/api/cases/${caseId}/folders/${folderId}`))
+}
+
+export const moveFileToFolder = async (
+  caseId: string,
+  fileId: string,
+  folderId: string | null
+): Promise<void> => {
+  await apiClient.patch(getApiUrl(`/api/cases/${caseId}/files/${fileId}`), {
+    folder_id: folderId,
+  })
+}
+
 export interface ProcessResponse {
   status: string
   message: string
