@@ -215,7 +215,6 @@ export const ThinkingBlock = memo(({
   const hasContent = steps.length > 0 || (toolCalls && toolCalls.length > 0);
   if (!hasContent && !isStreaming) return null;
 
-  const completedCount = unifiedSteps.filter(s => s.status === "completed").length;
   const totalCount = unifiedSteps.length;
 
   return (

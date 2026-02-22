@@ -16,6 +16,7 @@ import { TrackChanges } from './extensions/TrackChanges'
 import { Comment } from './extensions/Comment'
 import { RiskHighlight } from './extensions/RiskHighlight'
 import { AIKeyboardShortcuts } from './extensions/AIKeyboardShortcuts'
+import { SelectionHighlight } from './extensions/SelectionHighlight'
 import { SelectionMenu } from './SelectionMenu'
 import type { RiskItem } from '../../services/documentEditorApi'
 import { Ruler } from './Ruler'
@@ -27,6 +28,7 @@ interface DocumentEditorProps {
   content: string
   onChange: (content: string) => void
   onSelectionChange: (text: string) => void
+  onSelectionRangeChange?: (range: { from: number; to: number } | null) => void
   caseId?: string
   documentId?: string
   onInsertText?: (text: string) => void
@@ -48,12 +50,17 @@ export interface DocumentEditorRef {
   getRisks: () => Array<{ id: string; from: number; to: number; level: 'high' | 'medium' | 'low'; description: string }>
   scrollToText: (text: string) => boolean
   replaceText: (originalText: string, newText: string) => boolean
+  replaceRange: (from: number, to: number, text: string) => void
+  replaceMultipleTexts: (replacements: Array<{ original: string; replacement: string }>) => number
+  setSelectionHighlight: (from: number, to: number) => void
+  clearSelectionHighlight: () => void
 }
 
 export const DocumentEditor = forwardRef<DocumentEditorRef, DocumentEditorProps>(({
   content,
   onChange,
   onSelectionChange,
+  onSelectionRangeChange,
   caseId,
   documentId,
   onInsertText
@@ -146,6 +153,7 @@ export const DocumentEditor = forwardRef<DocumentEditorRef, DocumentEditorProps>
         onOpenFindReplace: handleOpenFindReplace,
         onOpenClauseLibrary: handleOpenClauseLibrary,
       }),
+      SelectionHighlight,
     ],
     content,
     editorProps: {
@@ -161,6 +169,9 @@ export const DocumentEditor = forwardRef<DocumentEditorRef, DocumentEditorProps>
       const { from, to } = editor.state.selection
       const text = editor.state.doc.textBetween(from, to)
       onSelectionChange(text)
+      if (onSelectionRangeChange) {
+        onSelectionRangeChange(from !== to ? { from, to } : null)
+      }
     },
   })
 
@@ -394,7 +405,44 @@ export const DocumentEditor = forwardRef<DocumentEditorRef, DocumentEditorProps>
       
       onChange(editor.getHTML())
       return true
-    }
+    },
+    replaceRange: (from: number, to: number, text: string) => {
+      if (!editor) return
+      editor.chain().focus().deleteRange({ from, to }).insertContent(text).run()
+      onChange(editor.getHTML())
+    },
+    replaceMultipleTexts: (replacements: Array<{ original: string; replacement: string }>) => {
+      if (!editor) return 0
+      let applied = 0
+      for (const { original, replacement } of replacements) {
+        let foundPos = -1
+        let foundEnd = -1
+        editor.state.doc.descendants((node, pos) => {
+          if (foundPos !== -1) return false
+          if (node.isText && node.text) {
+            const idx = node.text.indexOf(original)
+            if (idx !== -1) {
+              foundPos = pos + idx
+              foundEnd = foundPos + original.length
+              return false
+            }
+          }
+          return true
+        })
+        if (foundPos !== -1) {
+          editor.chain().focus().deleteRange({ from: foundPos, to: foundEnd }).insertContent(replacement).run()
+          applied++
+        }
+      }
+      if (applied > 0) onChange(editor.getHTML())
+      return applied
+    },
+    setSelectionHighlight: (from: number, to: number) => {
+      editor?.commands.setSelectionHighlight(from, to)
+    },
+    clearSelectionHighlight: () => {
+      editor?.commands.clearSelectionHighlight()
+    },
   }), [editor, onChange, trackChangesEnabled])
 
   if (!editor) {

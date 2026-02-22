@@ -797,7 +797,7 @@ export const AssistantUIChat = forwardRef<AssistantUIChatRef, AssistantUIChatPro
   onQuerySelected,
   caseTitle,
   documentCount,
-  isLoadingCaseInfo = false,
+  isLoadingCaseInfo: _isLoadingCaseInfo = false,
   onDocumentDrop,
   documentEditorMode = false,
   editorChatMode = 'edit',

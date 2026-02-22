@@ -1,10 +1,9 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
-import { Save, Download, ArrowLeft, MessageSquare, FileText, Table, FileEdit, History, BookOpen, Workflow, Check, Pencil, HelpCircle } from 'lucide-react'
+import { Save, Download, ArrowLeft, MessageSquare, FileText, Table, FileEdit, History, BookOpen, Workflow, Check } from 'lucide-react'
 import { toast } from 'sonner'
 import UnifiedSidebar from '../components/Layout/UnifiedSidebar'
 import { DocumentEditor, DocumentEditorRef } from '../components/Editor/DocumentEditor'
-import { AssistantUIChat } from '../components/Chat/AssistantUIChat'
 import { DocumentEditorContextChat } from '../components/Editor/DocumentEditorContextChat'
 import { VersionHistory } from '../components/Editor/VersionHistory'
 // CommentsPanel removed — was overlapping the chat sidebar
@@ -49,7 +48,6 @@ const DocumentEditorPage = () => {
   const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false)
   const [documentsList, setDocumentsList] = useState<Document[]>([])
   const [loadingDocuments, setLoadingDocuments] = useState(false)
-  const [editorChatMode, setEditorChatMode] = useState<'edit' | 'ask'>('edit')
   const saveTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const editorRef = useRef<DocumentEditorRef>(null)
 
@@ -241,14 +239,6 @@ const DocumentEditorPage = () => {
     }
   }
 
-  const handleReplaceText = (text: string) => {
-    // Replace selected text with new text
-    if (editorRef.current) {
-      editorRef.current.replaceSelectedText(text)
-      setHasUnsavedChanges(true)
-    }
-  }
-
   const handleScrollToText = (text: string): boolean => {
     // Scroll to specific text in the document
     if (editorRef.current) {
@@ -274,17 +264,6 @@ const DocumentEditorPage = () => {
       editorRef.current.replaceRange(from, to, text)
       setHasUnsavedChanges(true)
     }
-  }
-
-  const handleReplaceMultipleTexts = (replacements: Array<{ originalText: string; newText: string }>): number => {
-    if (editorRef.current) {
-      const count = editorRef.current.replaceMultipleTexts(replacements)
-      if (count > 0) {
-        setHasUnsavedChanges(true)
-      }
-      return count
-    }
-    return 0
   }
 
   const handleVersionRestored = (restoredContent: string) => {
@@ -323,12 +302,6 @@ const DocumentEditorPage = () => {
   }
 
   // handleAddComment / handleRemoveComment removed — CommentsPanel was removed
-
-  const handleSetRisks = (risks: Array<{ id: string; quote: string; from: number; to: number; level: 'high' | 'medium' | 'low'; description: string }>) => {
-    if (editorRef.current) {
-      editorRef.current.setRisks(risks)
-    }
-  }
 
   // Загрузка playbooks при открытии модального окна
   const handleOpenPlaybookModal = async () => {
