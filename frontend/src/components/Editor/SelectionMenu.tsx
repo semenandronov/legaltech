@@ -1,27 +1,35 @@
 import { BubbleMenu, Editor } from '@tiptap/react'
-import { Wand2, RefreshCw, Minimize2, AlertTriangle, Loader2 } from 'lucide-react'
-import { useState } from 'react'
-import { aiAssist, RiskItem } from '../../services/documentEditorApi'
+import { PenLine, Copy, Trash2, Loader2, ArrowRight, X } from 'lucide-react'
+import { useState, useRef, useEffect } from 'react'
+import { aiAssist } from '../../services/documentEditorApi'
 import { toast } from 'sonner'
 
 interface SelectionMenuProps {
   editor: Editor
   documentId?: string
   onReplaceSelection?: (text: string) => void
-  onSetRisks?: (risks: RiskItem[]) => void
 }
 
-type AIAction = 'improve' | 'rewrite' | 'simplify' | 'check_risks'
+type Mode = 'idle' | 'input' | 'loading'
 
-export const SelectionMenu = ({ 
-  editor, 
+export const SelectionMenu = ({
+  editor,
   documentId,
   onReplaceSelection,
-  onSetRisks 
 }: SelectionMenuProps) => {
-  const [loadingAction, setLoadingAction] = useState<AIAction | null>(null)
+  const [mode, setMode] = useState<Mode>('idle')
+  const [instruction, setInstruction] = useState('')
+  const inputRef = useRef<HTMLInputElement>(null)
 
-  const handleAIAction = async (action: AIAction) => {
+  // Focus input when entering revision mode
+  useEffect(() => {
+    if (mode === 'input') {
+      setTimeout(() => inputRef.current?.focus(), 50)
+    }
+  }, [mode])
+
+  const handleRevise = async () => {
+    if (!instruction.trim()) return
     if (!documentId) {
       toast.error('Сначала сохраните документ')
       return
@@ -29,101 +37,168 @@ export const SelectionMenu = ({
 
     const { from, to } = editor.state.selection
     const selectedText = editor.state.doc.textBetween(from, to)
-
     if (!selectedText) {
       toast.error('Выделите текст')
       return
     }
 
-    setLoadingAction(action)
-
+    setMode('loading')
     try {
-      const result = await aiAssist(documentId, action, selectedText, '')
+      const result = await aiAssist(documentId, 'improve', selectedText, instruction.trim())
+      if (result.result) {
+        let cleaned = result.result.trim()
+        cleaned = cleaned.replace(/^```[\s\S]*?\n/, '').replace(/\n```\s*$/, '')
+        cleaned = cleaned.replace(/^(Улучшенн(ый|ая|ое) (версия|текст|вариант)|Результат|Переписанн(ый|ая) (версия|текст)):?\s*\n*/i, '').trim()
 
-      if (action === 'check_risks') {
-        if (result.risks && result.risks.length > 0 && onSetRisks) {
-          onSetRisks(result.risks)
-          toast.success(`Найдено ${result.risks.length} риск(ов)`)
-        } else {
-          toast.success('Рисков не обнаружено')
-        }
-      } else if (result.result) {
-        // Replace selected text with improved version
-        editor
-          .chain()
-          .focus()
-          .deleteRange({ from, to })
-          .insertContent(result.result)
-          .run()
-        
-        if (onReplaceSelection) {
-          onReplaceSelection(result.result)
-        }
-        
-        toast.success('Текст обновлен')
+        editor.chain().focus().deleteRange({ from, to }).insertContent(cleaned).run()
+        if (onReplaceSelection) onReplaceSelection(cleaned)
+        toast.success('Текст исправлен')
       } else {
         toast.error('Не удалось обработать текст')
       }
     } catch (error: any) {
       toast.error(error.message || 'Ошибка AI')
     } finally {
-      setLoadingAction(null)
+      setMode('idle')
+      setInstruction('')
     }
   }
 
-  const actions = [
-    { id: 'improve' as AIAction, icon: Wand2, label: 'Улучшить', title: 'Улучшить текст' },
-    { id: 'rewrite' as AIAction, icon: RefreshCw, label: 'Переписать', title: 'Переписать текст' },
-    { id: 'simplify' as AIAction, icon: Minimize2, label: 'Упростить', title: 'Упростить текст' },
-    { id: 'check_risks' as AIAction, icon: AlertTriangle, label: 'Риски', title: 'Проверить на риски' },
-  ]
-
-  // Only show if document is saved
-  if (!documentId) {
-    return null
+  const handleCopy = () => {
+    const { from, to } = editor.state.selection
+    const selectedText = editor.state.doc.textBetween(from, to)
+    navigator.clipboard.writeText(selectedText)
+    toast.success('Скопировано')
   }
+
+  const handleDelete = () => {
+    editor.chain().focus().deleteSelection().run()
+  }
+
+  const handleKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === 'Enter') handleRevise()
+    if (e.key === 'Escape') { setMode('idle'); setInstruction('') }
+  }
+
+  if (!documentId) return null
 
   return (
     <BubbleMenu
       editor={editor}
-      tippyOptions={{
-        duration: 100,
-        placement: 'top',
-        hideOnClick: false,
+      shouldShow={({ editor: e }) => {
+        const { from, to } = e.state.selection
+        return from !== to
       }}
-      className="bg-white rounded-lg shadow-lg border border-gray-200 flex items-center p-1 gap-0.5"
+      tippyOptions={{
+        duration: 150,
+        placement: 'top',
+        offset: [0, 8],
+        appendTo: () => document.body,
+        popperOptions: {
+          modifiers: [
+            { name: 'preventOverflow', options: { boundary: 'viewport', padding: 8 } },
+            { name: 'flip', options: { fallbackPlacements: ['bottom', 'top'] } },
+          ],
+        },
+      }}
     >
-      {actions.map((action) => {
-        const Icon = action.icon
-        const isLoading = loadingAction === action.id
+      <div
+        className="flex items-center rounded-xl overflow-hidden"
+        style={{
+          background: 'rgba(10, 10, 10, 0.96)',
+          boxShadow: '0 4px 20px rgba(0,0,0,0.3), 0 0 0 1px rgba(255,255,255,0.07)',
+          backdropFilter: 'blur(12px)',
+        }}
+      >
+        {mode === 'idle' && (
+          <>
+            {/* Add revision */}
+            <button
+              onMouseDown={(e) => e.preventDefault()}
+              onClick={() => setMode('input')}
+              className="flex items-center gap-2 px-3.5 py-2 text-[13px] font-medium transition-colors duration-100 whitespace-nowrap"
+              style={{ color: 'rgba(255,255,255,0.9)', borderRight: '1px solid rgba(255,255,255,0.08)' }}
+              onMouseEnter={(e) => { e.currentTarget.style.background = 'rgba(255,255,255,0.09)' }}
+              onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent' }}
+            >
+              <PenLine className="w-3.5 h-3.5" />
+              Add revision
+            </button>
 
-        return (
-          <button
-            key={action.id}
-            onClick={() => handleAIAction(action.id)}
-            disabled={loadingAction !== null}
-            className={`
-              flex items-center gap-1.5 px-2.5 py-1.5 rounded text-sm font-medium
-              transition-colors duration-150
-              ${isLoading 
-                ? 'bg-blue-100 text-blue-700' 
-                : 'hover:bg-gray-100 text-gray-700'
-              }
-              disabled:opacity-50 disabled:cursor-not-allowed
-            `}
-            title={action.title}
-            aria-label={action.title}
-          >
-            {isLoading ? (
-              <Loader2 className="w-3.5 h-3.5 animate-spin" aria-hidden="true" />
-            ) : (
-              <Icon className="w-3.5 h-3.5" aria-hidden="true" />
-            )}
-            <span className="hidden sm:inline">{action.label}</span>
-          </button>
-        )
-      })}
+            {/* Copy */}
+            <button
+              onMouseDown={(e) => e.preventDefault()}
+              onClick={handleCopy}
+              className="flex items-center justify-center w-9 py-2 transition-colors duration-100"
+              style={{ color: 'rgba(255,255,255,0.6)', borderRight: '1px solid rgba(255,255,255,0.08)' }}
+              onMouseEnter={(e) => { e.currentTarget.style.background = 'rgba(255,255,255,0.09)' }}
+              onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent' }}
+              title="Копировать"
+            >
+              <Copy className="w-3.5 h-3.5" />
+            </button>
+
+            {/* Delete */}
+            <button
+              onMouseDown={(e) => e.preventDefault()}
+              onClick={handleDelete}
+              className="flex items-center justify-center w-9 py-2 transition-colors duration-100"
+              style={{ color: 'rgba(255,255,255,0.6)' }}
+              onMouseEnter={(e) => { e.currentTarget.style.background = 'rgba(255,80,80,0.15)'; e.currentTarget.style.color = '#f87171' }}
+              onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.color = 'rgba(255,255,255,0.6)' }}
+              title="Удалить"
+            >
+              <Trash2 className="w-3.5 h-3.5" />
+            </button>
+          </>
+        )}
+
+        {mode === 'input' && (
+          <>
+            <PenLine className="w-3.5 h-3.5 ml-3 flex-shrink-0" style={{ color: 'rgba(255,255,255,0.5)' }} />
+            <input
+              ref={inputRef}
+              value={instruction}
+              onChange={(e) => setInstruction(e.target.value)}
+              onKeyDown={handleKeyDown}
+              placeholder="Как исправить..."
+              className="bg-transparent outline-none text-[13px] px-2.5 py-2 w-56"
+              style={{ color: 'rgba(255,255,255,0.9)', caretColor: 'white' }}
+              onMouseDown={(e) => e.stopPropagation()}
+            />
+            {/* Confirm */}
+            <button
+              onMouseDown={(e) => e.preventDefault()}
+              onClick={handleRevise}
+              disabled={!instruction.trim()}
+              className="flex items-center justify-center w-8 py-2 transition-colors duration-100 disabled:opacity-30"
+              style={{ color: 'rgba(255,255,255,0.8)', borderLeft: '1px solid rgba(255,255,255,0.08)' }}
+              onMouseEnter={(e) => { if (instruction.trim()) e.currentTarget.style.background = 'rgba(255,255,255,0.09)' }}
+              onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent' }}
+            >
+              <ArrowRight className="w-3.5 h-3.5" />
+            </button>
+            {/* Cancel */}
+            <button
+              onMouseDown={(e) => e.preventDefault()}
+              onClick={() => { setMode('idle'); setInstruction('') }}
+              className="flex items-center justify-center w-8 py-2 transition-colors duration-100"
+              style={{ color: 'rgba(255,255,255,0.4)', borderLeft: '1px solid rgba(255,255,255,0.08)' }}
+              onMouseEnter={(e) => { e.currentTarget.style.background = 'rgba(255,255,255,0.09)' }}
+              onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent' }}
+            >
+              <X className="w-3.5 h-3.5" />
+            </button>
+          </>
+        )}
+
+        {mode === 'loading' && (
+          <div className="flex items-center gap-2 px-4 py-2">
+            <Loader2 className="w-3.5 h-3.5 animate-spin" style={{ color: '#93c5fd' }} />
+            <span className="text-[13px]" style={{ color: 'rgba(255,255,255,0.7)' }}>Исправляю...</span>
+          </div>
+        )}
+      </div>
     </BubbleMenu>
   )
 }
-

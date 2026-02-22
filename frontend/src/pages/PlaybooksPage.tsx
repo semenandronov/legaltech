@@ -37,12 +37,84 @@ import {
   Layers,
   Settings,
   ChevronUp,
-  Info
+  Info,
+  X
 } from 'lucide-react'
 import { toast } from 'sonner'
 import UnifiedSidebar from '../components/Layout/UnifiedSidebar'
 import * as playbooksApi from '../services/playbooksApi'
 import type { Playbook, PlaybookRule, PlaybookCheck } from '../services/playbooksApi'
+
+// ==================== HARVEY FIELDS HELPERS ====================
+interface HarveyFields {
+  standard_position: string
+  fallback_positions: string[]        // multiple fallback positions
+  unacceptable_deviations: string[]   // multiple unacceptable deviations
+  internal_guidance: string
+  mark_missing_as_violation: boolean  // if clause not found → mark as not acceptable
+}
+
+const EMPTY_HARVEY: HarveyFields = {
+  standard_position: '',
+  fallback_positions: [''],
+  unacceptable_deviations: [],
+  internal_guidance: '',
+  mark_missing_as_violation: false,
+}
+
+/**
+ * Parse Harvey fields from backend data.
+ * Priority: structured fallback_options JSON > old serialized description format.
+ */
+const parseHarveyFromDescription = (
+  description?: string,
+  suggested_clause_template?: string,
+  fallback_options?: any
+): HarveyFields => {
+  // 1. Try structured fallback_options JSON (new format)
+  if (fallback_options && typeof fallback_options === 'object' && !Array.isArray(fallback_options)) {
+    const fo = fallback_options as any
+    if (fo.fallbacks !== undefined || fo.unacceptable !== undefined) {
+      return {
+        standard_position: suggested_clause_template || fo.standard_position || '',
+        fallback_positions: Array.isArray(fo.fallbacks) && fo.fallbacks.length > 0 ? fo.fallbacks : [''],
+        unacceptable_deviations: Array.isArray(fo.unacceptable) ? fo.unacceptable : [],
+        internal_guidance: description || fo.guidance || '',
+        mark_missing_as_violation: fo.mark_missing ?? false,
+      }
+    }
+  }
+  // 2. Backward compat: old serialized description format
+  const desc = description || ''
+  const hasHarveyFormat = desc.includes('СТАНДАРТ:') || desc.includes('ЗАПАСНОЙ ВАРИАНТ:') ||
+                          desc.includes('НЕДОПУСТИМО:') || desc.includes('ИНСТРУКЦИИ:')
+  if (!hasHarveyFormat) {
+    return {
+      standard_position: suggested_clause_template || '',
+      fallback_positions: [''],
+      unacceptable_deviations: [],
+      internal_guidance: desc,
+      mark_missing_as_violation: false,
+    }
+  }
+  const sections: Record<string, string> = {}
+  const parts = desc.split('\n\n')
+  for (const part of parts) {
+    const colonIdx = part.indexOf(':')
+    if (colonIdx > 0) {
+      const key = part.substring(0, colonIdx).trim()
+      const value = part.substring(colonIdx + 1).trim()
+      sections[key] = value
+    }
+  }
+  return {
+    standard_position: sections['СТАНДАРТ'] || suggested_clause_template || '',
+    fallback_positions: sections['ЗАПАСНОЙ ВАРИАНТ'] ? [sections['ЗАПАСНОЙ ВАРИАНТ']] : [''],
+    unacceptable_deviations: sections['НЕДОПУСТИМО'] ? [sections['НЕДОПУСТИМО']] : [],
+    internal_guidance: sections['ИНСТРУКЦИИ'] || '',
+    mark_missing_as_violation: false,
+  }
+}
 
 // ==================== RULE TYPE BADGE ====================
 const RuleTypeBadge = ({ type, size = 'sm' }: { type: string; size?: 'sm' | 'lg' }) => {
@@ -99,7 +171,8 @@ const DraggableRuleCard = ({
   onDragStart,
   onDragOver,
   onDrop,
-  isDragging
+  isDragging,
+  harveyFields
 }: {
   rule: PlaybookRule
   index: number
@@ -111,7 +184,9 @@ const DraggableRuleCard = ({
   onDragOver: (e: React.DragEvent) => void
   onDrop: (e: React.DragEvent, index: number) => void
   isDragging: boolean
+  harveyFields?: HarveyFields
 }) => {
+  const fields = harveyFields || parseHarveyFromDescription(rule.description, rule.suggested_clause_template)
   return (
     <div
       draggable
@@ -174,49 +249,58 @@ const DraggableRuleCard = ({
           className="px-4 pb-4 pt-0 border-t"
           style={{ borderColor: 'var(--color-border)' }}
         >
-          <div className="pt-4 space-y-4">
-            {/* Description */}
-            {rule.description && (
-              <div>
-                <label className="text-xs font-medium mb-1 block" style={{ color: 'var(--color-text-tertiary)' }}>
-                  Описание
-                </label>
-                <p className="text-sm" style={{ color: 'var(--color-text-secondary)' }}>
-                  {rule.description}
-                </p>
+          <div className="pt-4 space-y-3">
+            {/* Harvey sections */}
+            {fields.standard_position && (
+              <div className="rounded-lg p-3" style={{ backgroundColor: 'rgba(34, 197, 94, 0.08)' }}>
+                <p className="text-xs font-semibold mb-1" style={{ color: '#22c55e' }}>✅ Стандартная позиция</p>
+                <p className="text-sm leading-relaxed" style={{ color: 'var(--color-text-secondary)' }}>{fields.standard_position}</p>
               </div>
             )}
-
-            {/* Category */}
-            <div className="flex items-center gap-4">
-              <div>
-                <label className="text-xs font-medium mb-1 block" style={{ color: 'var(--color-text-tertiary)' }}>
-                  Категория
-                </label>
-                <span className="text-sm font-mono px-2 py-1 rounded" style={{ 
-                  backgroundColor: 'var(--color-bg-hover)',
-                  color: 'var(--color-text-secondary)' 
-                }}>
-                  {rule.clause_category || 'general'}
-                </span>
+            {fields.fallback_positions.some(Boolean) && (
+              <div className="rounded-lg p-3" style={{ backgroundColor: 'rgba(234, 179, 8, 0.08)' }}>
+                <p className="text-xs font-semibold mb-1.5" style={{ color: '#eab308' }}>🟡 Запасные варианты</p>
+                <ul className="space-y-1">
+                  {fields.fallback_positions.filter(Boolean).map((pos, i) => (
+                    <li key={i} className="flex items-start gap-2">
+                      <span className="text-xs font-semibold mt-0.5 shrink-0" style={{ color: '#eab308' }}>{i + 1}.</span>
+                      <span className="text-sm leading-relaxed" style={{ color: 'var(--color-text-secondary)' }}>{pos}</span>
+                    </li>
+                  ))}
+                </ul>
               </div>
-              <div>
-                <label className="text-xs font-medium mb-1 block" style={{ color: 'var(--color-text-tertiary)' }}>
-                  Важность
-                </label>
-                <span className={`text-sm px-2 py-1 rounded ${
-                  rule.severity === 'critical' ? 'bg-red-500/10 text-red-500' :
-                  rule.severity === 'high' ? 'bg-orange-500/10 text-orange-500' :
-                  rule.severity === 'medium' ? 'bg-yellow-500/10 text-yellow-500' :
-                  'bg-gray-500/10 text-gray-500'
-                }`}>
-                  {rule.severity || 'medium'}
-                </span>
+            )}
+            {fields.unacceptable_deviations.some(Boolean) && (
+              <div className="rounded-lg p-3" style={{ backgroundColor: 'rgba(239, 68, 68, 0.08)' }}>
+                <p className="text-xs font-semibold mb-1.5" style={{ color: '#ef4444' }}>❌ Недопустимые отклонения</p>
+                <ul className="space-y-1">
+                  {fields.unacceptable_deviations.filter(Boolean).map((dev, i) => (
+                    <li key={i} className="flex items-start gap-2">
+                      <span className="text-xs font-bold mt-0.5 shrink-0" style={{ color: '#ef4444' }}>✕</span>
+                      <span className="text-sm leading-relaxed" style={{ color: 'var(--color-text-secondary)' }}>{dev}</span>
+                    </li>
+                  ))}
+                </ul>
               </div>
-            </div>
+            )}
+            {fields.internal_guidance && (
+              <div className="rounded-lg p-3" style={{ backgroundColor: 'rgba(99, 102, 241, 0.08)' }}>
+                <p className="text-xs font-semibold mb-1" style={{ color: 'var(--color-accent)' }}>📋 Внутренние инструкции</p>
+                <p className="text-sm leading-relaxed" style={{ color: 'var(--color-text-secondary)' }}>{fields.internal_guidance}</p>
+              </div>
+            )}
+            {fields.mark_missing_as_violation && (
+              <div className="flex items-center gap-2 px-3 py-2 rounded-lg" style={{ backgroundColor: 'rgba(239, 68, 68, 0.06)' }}>
+                <span className="text-xs" style={{ color: '#ef4444' }}>⚑</span>
+                <span className="text-xs font-medium" style={{ color: '#ef4444' }}>Отсутствие → Неприемлемо</span>
+              </div>
+            )}
+            {!fields.standard_position && !fields.fallback_positions.some(Boolean) && !fields.unacceptable_deviations.some(Boolean) && !fields.internal_guidance && (
+              <p className="text-sm italic" style={{ color: 'var(--color-text-tertiary)' }}>Нет описания</p>
+            )}
 
             {/* Actions */}
-            <div className="flex items-center gap-2 pt-2">
+            <div className="flex items-center gap-2 pt-1">
               <button
                 onClick={(e) => { e.stopPropagation(); onEdit(); }}
                 className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium transition-colors hover:bg-bg-hover"
@@ -496,6 +580,46 @@ const PlaybookEditor = ({
   const [draggedIndex, setDraggedIndex] = useState<number | null>(null)
   const [activeSection, setActiveSection] = useState<'settings' | 'rules'>('rules')
 
+  // Harvey fields — keyed by rule.id
+  const [ruleHarveyFields, setRuleHarveyFields] = useState<Record<string, HarveyFields>>(() => {
+    const fields: Record<string, HarveyFields> = {}
+    playbook.rules?.forEach((rule) => {
+      fields[rule.id] = parseHarveyFromDescription(rule.description, rule.suggested_clause_template, rule.fallback_options)
+    })
+    return fields
+  })
+
+  const updateHarveyField = (ruleId: string, field: keyof HarveyFields, value: string | boolean | string[]) => {
+    setRuleHarveyFields(prev => ({
+      ...prev,
+      [ruleId]: { ...prev[ruleId] || EMPTY_HARVEY, [field]: value }
+    }))
+  }
+
+  const addHarveyArrayItem = (ruleId: string, field: 'fallback_positions' | 'unacceptable_deviations') => {
+    setRuleHarveyFields(prev => {
+      const current = prev[ruleId] || EMPTY_HARVEY
+      return { ...prev, [ruleId]: { ...current, [field]: [...current[field], ''] } }
+    })
+  }
+
+  const removeHarveyArrayItem = (ruleId: string, field: 'fallback_positions' | 'unacceptable_deviations', index: number) => {
+    setRuleHarveyFields(prev => {
+      const current = prev[ruleId] || EMPTY_HARVEY
+      const newArr = current[field].filter((_, i) => i !== index)
+      return { ...prev, [ruleId]: { ...current, [field]: newArr.length > 0 ? newArr : [''] } }
+    })
+  }
+
+  const updateHarveyArrayItem = (ruleId: string, field: 'fallback_positions' | 'unacceptable_deviations', index: number, value: string) => {
+    setRuleHarveyFields(prev => {
+      const current = prev[ruleId] || EMPTY_HARVEY
+      const newArr = [...current[field]]
+      newArr[index] = value
+      return { ...prev, [ruleId]: { ...current, [field]: newArr } }
+    })
+  }
+
   // Toggle rule expansion
   const toggleRuleExpand = (index: number) => {
     setExpandedRules(prev => {
@@ -525,6 +649,10 @@ const PlaybookEditor = ({
       is_active: true,
       created_at: new Date().toISOString()
     }
+    setRuleHarveyFields(prev => ({
+      ...prev,
+      [newRule.id]: parseHarveyFromDescription(template.description, undefined)
+    }))
     setForm(prev => ({ ...prev, rules: [...prev.rules, newRule] }))
     setShowTemplates(false)
     toast.success('Правило добавлено')
@@ -546,6 +674,7 @@ const PlaybookEditor = ({
       is_active: true,
       created_at: new Date().toISOString()
     }
+    setRuleHarveyFields(prev => ({ ...prev, [newRule.id]: { ...EMPTY_HARVEY } }))
     setForm(prev => ({ ...prev, rules: [...prev.rules, newRule] }))
     setEditingRuleIndex(form.rules.length)
     setExpandedRules(prev => new Set(prev).add(form.rules.length))
@@ -642,12 +771,26 @@ const PlaybookEditor = ({
                 toast.error('Все правила должны иметь название')
                 return
               }
-              if (!rule.clause_category || rule.clause_category.length < 1) {
-                toast.error('Все правила должны иметь категорию')
-                return
-              }
             }
-            onSave(form)
+            // Serialize Harvey fields into backend fields
+            const normalizedRules = form.rules.map(r => {
+              const harvey = ruleHarveyFields[r.id] || EMPTY_HARVEY
+              const fallbackOptions = {
+                standard_position: harvey.standard_position,
+                fallbacks: harvey.fallback_positions.filter(Boolean),
+                unacceptable: harvey.unacceptable_deviations.filter(Boolean),
+                guidance: harvey.internal_guidance,
+                mark_missing: harvey.mark_missing_as_violation,
+              }
+              return {
+                ...r,
+                description: harvey.internal_guidance || r.description,
+                suggested_clause_template: harvey.standard_position || r.suggested_clause_template,
+                fallback_options: fallbackOptions,
+                clause_category: r.clause_category || r.rule_name.toLowerCase().replace(/\s+/g, '_').replace(/[^a-z0-9_а-яё]/gi, '').slice(0, 40) || 'general'
+              }
+            })
+            onSave({ ...form, rules: normalizedRules })
           }}
           className="flex items-center gap-2 px-5 py-2.5 rounded-lg text-sm font-medium transition-colors"
           style={{ backgroundColor: 'var(--color-accent)', color: 'white' }}
@@ -876,133 +1019,18 @@ const PlaybookEditor = ({
                       borderColor: 'var(--color-accent)'
                     }}
                   >
-                    <div className="grid grid-cols-2 gap-4">
-                      <div>
-                        <label className="block text-xs font-medium mb-1.5" style={{ color: 'var(--color-text-secondary)' }}>
-                          Название правила
-                        </label>
-                        <input
-                          type="text"
-                          value={rule.rule_name}
-                          onChange={(e) => updateRule(index, { rule_name: e.target.value })}
-                          placeholder="Срок конфиденциальности"
-                          className="w-full px-3 py-2 rounded-lg border text-sm"
-                          style={{
-                            backgroundColor: 'var(--color-bg-primary)',
-                            borderColor: 'var(--color-border)',
-                            color: 'var(--color-text-primary)'
-                          }}
-                        />
-                      </div>
-                      <div>
-                        <label className="block text-xs font-medium mb-1.5" style={{ color: 'var(--color-text-secondary)' }}>
-                          Тип правила
-                        </label>
-                        <select
-                          value={rule.rule_type}
-                          onChange={(e) => updateRule(index, { rule_type: e.target.value as any })}
-                          className="w-full px-3 py-2 rounded-lg border text-sm"
-                          style={{
-                            backgroundColor: 'var(--color-bg-primary)',
-                            borderColor: 'var(--color-border)',
-                            color: 'var(--color-text-primary)'
-                          }}
-                        >
-                          <option value="red_line">🔴 Red Line (Обязательное)</option>
-                          <option value="fallback">🟡 Fallback (Рекомендуемое)</option>
-                          <option value="no_go">⛔ No-Go (Запрещённое)</option>
-                        </select>
-                      </div>
-                    </div>
-
-                    <div className="grid grid-cols-2 gap-4">
-                      <div>
-                        <label className="block text-xs font-medium mb-1.5" style={{ color: 'var(--color-text-secondary)' }}>
-                          Категория
-                        </label>
-                        <input
-                          type="text"
-                          value={rule.clause_category}
-                          onChange={(e) => updateRule(index, { clause_category: e.target.value })}
-                          placeholder="confidentiality, liability..."
-                          className="w-full px-3 py-2 rounded-lg border text-sm"
-                          style={{
-                            backgroundColor: 'var(--color-bg-primary)',
-                            borderColor: 'var(--color-border)',
-                            color: 'var(--color-text-primary)'
-                          }}
-                        />
-                      </div>
-                      <div>
-                        <label className="block text-xs font-medium mb-1.5" style={{ color: 'var(--color-text-secondary)' }}>
-                          Тип условия
-                        </label>
-                        <select
-                          value={rule.condition_type}
-                          onChange={(e) => updateRule(index, { condition_type: e.target.value })}
-                          className="w-full px-3 py-2 rounded-lg border text-sm"
-                          style={{
-                            backgroundColor: 'var(--color-bg-primary)',
-                            borderColor: 'var(--color-border)',
-                            color: 'var(--color-text-primary)'
-                          }}
-                        >
-                          <option value="must_exist">Должен присутствовать</option>
-                          <option value="must_not_exist">Не должен присутствовать</option>
-                          <option value="value_check">Проверка значения</option>
-                          <option value="duration_check">Проверка срока</option>
-                          <option value="text_match">Текст должен содержать</option>
-                          <option value="text_not_match">Текст не должен содержать</option>
-                        </select>
-                      </div>
-                    </div>
-
-                    <div className="grid grid-cols-2 gap-4">
-                      <div>
-                        <label className="block text-xs font-medium mb-1.5" style={{ color: 'var(--color-text-secondary)' }}>
-                          Важность
-                        </label>
-                        <select
-                          value={rule.severity}
-                          onChange={(e) => updateRule(index, { severity: e.target.value as 'low' | 'medium' | 'high' | 'critical' })}
-                          className="w-full px-3 py-2 rounded-lg border text-sm"
-                          style={{
-                            backgroundColor: 'var(--color-bg-primary)',
-                            borderColor: 'var(--color-border)',
-                            color: 'var(--color-text-primary)'
-                          }}
-                        >
-                          <option value="critical">Критическая</option>
-                          <option value="high">Высокая</option>
-                          <option value="medium">Средняя</option>
-                          <option value="low">Низкая</option>
-                        </select>
-                      </div>
-                      <div className="flex items-end">
-                        <label className="flex items-center gap-2 cursor-pointer">
-                          <input
-                            type="checkbox"
-                            checked={rule.is_active}
-                            onChange={(e) => updateRule(index, { is_active: e.target.checked })}
-                            className="w-4 h-4 rounded"
-                          />
-                          <span className="text-sm" style={{ color: 'var(--color-text-primary)' }}>
-                            Правило активно
-                          </span>
-                        </label>
-                      </div>
-                    </div>
-
+                    {/* Row 1: rule name */}
                     <div>
                       <label className="block text-xs font-medium mb-1.5" style={{ color: 'var(--color-text-secondary)' }}>
-                        Описание правила
+                        Название правила
                       </label>
-                      <textarea
-                        value={rule.description || ''}
-                        onChange={(e) => updateRule(index, { description: e.target.value })}
-                        placeholder="Подробное описание что проверяет это правило..."
-                        rows={3}
-                        className="w-full px-3 py-2 rounded-lg border text-sm resize-none"
+                      <input
+                        type="text"
+                        value={rule.rule_name}
+                        onChange={(e) => updateRule(index, { rule_name: e.target.value })}
+                        placeholder="Срок конфиденциальности"
+                        autoFocus
+                        className="w-full px-3 py-2 rounded-lg border text-sm"
                         style={{
                           backgroundColor: 'var(--color-bg-primary)',
                           borderColor: 'var(--color-border)',
@@ -1011,10 +1039,174 @@ const PlaybookEditor = ({
                       />
                     </div>
 
-                    <div className="flex items-center justify-end gap-2 pt-2">
+                    {/* Rule type */}
+                    <div>
+                      <label className="block text-xs font-medium mb-1.5" style={{ color: 'var(--color-text-secondary)' }}>
+                        Тип правила
+                      </label>
+                      <div className="flex gap-2">
+                        {(['red_line', 'fallback', 'no_go'] as const).map(type => (
+                          <button
+                            key={type}
+                            type="button"
+                            onClick={() => updateRule(index, { rule_type: type })}
+                            className="flex-1 flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg text-xs font-medium border transition-colors"
+                            style={{
+                              borderColor: rule.rule_type === type
+                                ? (type === 'red_line' ? '#ef4444' : type === 'no_go' ? '#dc2626' : '#eab308')
+                                : 'var(--color-border)',
+                              backgroundColor: rule.rule_type === type
+                                ? (type === 'red_line' ? 'rgba(239,68,68,0.1)' : type === 'no_go' ? 'rgba(220,38,38,0.1)' : 'rgba(234,179,8,0.1)')
+                                : 'var(--color-bg-primary)',
+                              color: rule.rule_type === type
+                                ? (type === 'red_line' ? '#ef4444' : type === 'no_go' ? '#dc2626' : '#eab308')
+                                : 'var(--color-text-tertiary)',
+                            }}
+                          >
+                            {type === 'red_line' ? 'Red Line' : type === 'no_go' ? 'No-Go' : 'Fallback'}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+
+                    {/* Standard position */}
+                    <div>
+                      <label className="block text-xs font-semibold mb-1.5" style={{ color: '#22c55e' }}>
+                        ✅ Стандартная позиция
+                        <span className="ml-1 font-normal" style={{ color: 'var(--color-text-tertiary)' }}>— идеальная формулировка</span>
+                      </label>
+                      <textarea
+                        value={ruleHarveyFields[rule.id]?.standard_position || ''}
+                        onChange={(e) => updateHarveyField(rule.id, 'standard_position', e.target.value)}
+                        placeholder="Обязательства по конфиденциальности действуют в течение 3 лет с даты раскрытия информации"
+                        rows={2}
+                        className="w-full px-3 py-2 rounded-lg border text-sm resize-none"
+                        style={{ backgroundColor: 'var(--color-bg-primary)', borderColor: 'var(--color-border)', color: 'var(--color-text-primary)' }}
+                      />
+                    </div>
+
+                    {/* Fallback positions — multiple */}
+                    <div>
+                      <label className="block text-xs font-semibold mb-1.5" style={{ color: '#eab308' }}>
+                        🟡 Запасные варианты
+                        <span className="ml-1 font-normal" style={{ color: 'var(--color-text-tertiary)' }}>— допустимые альтернативы</span>
+                      </label>
+                      <div className="space-y-2">
+                        {(ruleHarveyFields[rule.id]?.fallback_positions || ['']).map((pos, fbIdx) => (
+                          <div key={fbIdx} className="flex gap-2 items-start">
+                            <span className="text-xs font-semibold mt-2.5 w-4 shrink-0 text-center" style={{ color: '#eab308' }}>{fbIdx + 1}</span>
+                            <textarea
+                              value={pos}
+                              onChange={(e) => updateHarveyArrayItem(rule.id, 'fallback_positions', fbIdx, e.target.value)}
+                              placeholder="Допускается сокращение срока до 2 лет, если на этом настаивает контрагент"
+                              rows={2}
+                              className="flex-1 px-3 py-2 rounded-lg border text-sm resize-none"
+                              style={{ backgroundColor: 'var(--color-bg-primary)', borderColor: 'var(--color-border)', color: 'var(--color-text-primary)' }}
+                            />
+                            {(ruleHarveyFields[rule.id]?.fallback_positions || ['']).length > 1 && (
+                              <button
+                                type="button"
+                                onClick={() => removeHarveyArrayItem(rule.id, 'fallback_positions', fbIdx)}
+                                className="mt-2 p-1.5 rounded-lg hover:bg-red-500/10 transition-colors"
+                                style={{ color: '#9ca3af' }}
+                              >
+                                <X className="w-3.5 h-3.5" />
+                              </button>
+                            )}
+                          </div>
+                        ))}
+                        <button
+                          type="button"
+                          onClick={() => addHarveyArrayItem(rule.id, 'fallback_positions')}
+                          className="flex items-center gap-1.5 text-xs font-medium px-3 py-1.5 rounded-lg border transition-colors hover:bg-bg-hover"
+                          style={{ borderColor: 'var(--color-border)', color: '#eab308', borderStyle: 'dashed' }}
+                        >
+                          <Plus className="w-3.5 h-3.5" />
+                          Добавить запасной вариант
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* Unacceptable deviations — multiple */}
+                    <div>
+                      <label className="block text-xs font-semibold mb-1.5" style={{ color: '#ef4444' }}>
+                        ❌ Недопустимые отклонения
+                        <span className="ml-1 font-normal" style={{ color: 'var(--color-text-tertiary)' }}>— что нельзя принимать</span>
+                      </label>
+                      <div className="space-y-2">
+                        {(ruleHarveyFields[rule.id]?.unacceptable_deviations || []).map((dev, devIdx) => (
+                          <div key={devIdx} className="flex gap-2 items-start">
+                            <span className="text-xs font-bold mt-2.5 w-4 shrink-0 text-center" style={{ color: '#ef4444' }}>✕</span>
+                            <textarea
+                              value={dev}
+                              onChange={(e) => updateHarveyArrayItem(rule.id, 'unacceptable_deviations', devIdx, e.target.value)}
+                              placeholder="Бессрочный характер обязательств или срок менее 1 года"
+                              rows={2}
+                              className="flex-1 px-3 py-2 rounded-lg border text-sm resize-none"
+                              style={{ backgroundColor: 'var(--color-bg-primary)', borderColor: 'var(--color-border)', color: 'var(--color-text-primary)' }}
+                            />
+                            <button
+                              type="button"
+                              onClick={() => removeHarveyArrayItem(rule.id, 'unacceptable_deviations', devIdx)}
+                              className="mt-2 p-1.5 rounded-lg hover:bg-red-500/10 transition-colors"
+                              style={{ color: '#9ca3af' }}
+                            >
+                              <X className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
+                        ))}
+                        <button
+                          type="button"
+                          onClick={() => addHarveyArrayItem(rule.id, 'unacceptable_deviations')}
+                          className="flex items-center gap-1.5 text-xs font-medium px-3 py-1.5 rounded-lg border transition-colors hover:bg-bg-hover"
+                          style={{ borderColor: 'var(--color-border)', color: '#ef4444', borderStyle: 'dashed' }}
+                        >
+                          <Plus className="w-3.5 h-3.5" />
+                          Добавить недопустимое отклонение
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* Internal guidance */}
+                    <div>
+                      <label className="block text-xs font-semibold mb-1.5" style={{ color: 'var(--color-accent)' }}>
+                        📋 Внутренние инструкции
+                        <span className="ml-1 font-normal" style={{ color: 'var(--color-text-tertiary)' }}>— советы для юриста</span>
+                      </label>
+                      <textarea
+                        value={ruleHarveyFields[rule.id]?.internal_guidance || ''}
+                        onChange={(e) => updateHarveyField(rule.id, 'internal_guidance', e.target.value)}
+                        placeholder="Мы стремимся к 3-летнему сроку. Если контрагент требует менее 2 лет — необходимо согласование с руководителем юридического отдела"
+                        rows={3}
+                        className="w-full px-3 py-2 rounded-lg border text-sm resize-none"
+                        style={{ backgroundColor: 'var(--color-bg-primary)', borderColor: 'var(--color-border)', color: 'var(--color-text-primary)' }}
+                      />
+                    </div>
+
+                    {/* Mark missing as violation checkbox */}
+                    <label className="flex items-start gap-3 cursor-pointer rounded-lg px-3 py-2.5 border transition-colors hover:bg-bg-hover"
+                      style={{ borderColor: 'var(--color-border)' }}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={ruleHarveyFields[rule.id]?.mark_missing_as_violation ?? false}
+                        onChange={(e) => updateHarveyField(rule.id, 'mark_missing_as_violation', e.target.checked)}
+                        className="mt-0.5 w-4 h-4 rounded accent-red-500 shrink-0"
+                      />
+                      <div>
+                        <div className="text-xs font-medium" style={{ color: 'var(--color-text-primary)' }}>
+                          Если оговорки нет в документе — отметить как Неприемлемо
+                        </div>
+                        <div className="text-xs mt-0.5" style={{ color: 'var(--color-text-tertiary)' }}>
+                          Отсутствие этого пункта будет считаться нарушением
+                        </div>
+                      </div>
+                    </label>
+
+                    <div className="flex items-center justify-between pt-1">
                       <button
                         onClick={() => removeRule(index)}
-                        className="px-4 py-2 rounded-lg text-sm font-medium transition-colors hover:bg-red-500/10"
+                        className="px-3 py-1.5 rounded-lg text-sm font-medium transition-colors hover:bg-red-500/10"
                         style={{ color: '#ef4444' }}
                       >
                         Удалить
@@ -1042,6 +1234,7 @@ const PlaybookEditor = ({
                     onDragOver={handleDragOver}
                     onDrop={handleDrop}
                     isDragging={draggedIndex === index}
+                    harveyFields={ruleHarveyFields[rule.id]}
                   />
                 )
               ))}

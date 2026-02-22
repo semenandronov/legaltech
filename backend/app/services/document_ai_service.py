@@ -349,13 +349,14 @@ class DocumentAIService:
         
         system_prompt = f"""Ты - опытный редактор юридических текстов.
 Улучши текст, сделав его более {style_descriptions.get(style, 'профессиональным')}, четким и юридически корректным.
-Сохрани смысл, но улучши формулировки, структуру и читаемость."""
-        
-        user_prompt = f"""Улучши следующий текст:
+Сохрани смысл, но улучши формулировки, структуру и читаемость.
 
-{text}
+ВАЖНО: Верни ТОЛЬКО улучшенный текст. Без вступлений, пояснений, комментариев, заголовков вроде "Улучшенная версия:" и т.п.
+Просто замени исходный текст на улучшенную версию. Длина результата должна быть примерно такой же, как у исходного текста."""
 
-Сделай его более {style_descriptions.get(style, 'профессиональным')} и юридически корректным."""
+        user_prompt = f"""Улучши следующий текст (верни только результат, без пояснений):
+
+{text}"""
         
         llm = create_legal_llm(temperature=0.2)
         messages = [
@@ -393,9 +394,12 @@ class DocumentAIService:
             }
         
         system_prompt = """Ты - опытный редактор юридических текстов.
-Перепиши текст согласно инструкции пользователя, сохранив юридическую корректность и смысл."""
-        
-        user_prompt = f"""Перепиши следующий текст:
+Перепиши текст согласно инструкции пользователя, сохранив юридическую корректность и смысл.
+
+ВАЖНО: Верни ТОЛЬКО переписанный текст. Без вступлений, пояснений, комментариев и заголовков.
+Просто замени исходный текст на переписанную версию."""
+
+        user_prompt = f"""Перепиши следующий текст (верни только результат):
 
 {text}
 
@@ -436,9 +440,12 @@ class DocumentAIService:
         
         system_prompt = """Ты - опытный редактор, специализирующийся на упрощении юридических текстов.
 Упрости текст, сделав его понятным для неспециалистов, но сохрани юридическую точность и смысл.
-Замени сложные юридические термины на более простые, где это возможно без потери смысла."""
-        
-        user_prompt = f"""Упрости следующий юридический текст для понимания неспециалистом:
+Замени сложные юридические термины на более простые, где это возможно без потери смысла.
+
+ВАЖНО: Верни ТОЛЬКО упрощённый текст. Без вступлений, пояснений, комментариев и заголовков.
+Просто замени исходный текст на упрощённую версию."""
+
+        user_prompt = f"""Упрости следующий текст (верни только результат):
 
 {text}"""
         
@@ -579,6 +586,8 @@ class DocumentAIService:
         document_content: str,
         case_id: str,
         question: str,
+        mode: str = "ask",
+        selected_text: Optional[str] = None,
         user_id: Optional[str] = None,
         deep_think: bool = False,
         legal_research: bool = False
@@ -598,79 +607,16 @@ class DocumentAIService:
         Returns:
             Dictionary with answer and suggested edits
         """
-        # Проверяем, является ли запрос запросом на создание документа из шаблона
-        create_keywords = [
-            "создай договор", "составь договор", "нужен договор",
-            "создай документ", "составь документ",
-            "шаблон договора", "форма договора",
-            "создай", "составь", "нужен шаблон"
-        ]
-        is_create_request = any(keyword in question.lower() for keyword in create_keywords)
-        
-        # Если это запрос на создание документа из шаблона
-        if is_create_request:
-            try:
-                from app.services.langchain_agents.legacy_stubs import create_template_graph, TemplateState
-                from app.services.document_editor_service import DocumentEditorService
-                
-                # Создаем граф для работы с шаблонами
-                graph = create_template_graph(self.db)
-                
-                # Инициализируем состояние для графа
-                initial_state: TemplateState = {
-                    "user_query": question,
-                    "case_id": case_id,
-                    "user_id": user_id or "",
-                    "cached_template": None,
-                    "garant_template": None,
-                    "template_source": None,
-                    "final_template": None,
-                    "adapted_content": None,
-                    "document_id": document_id,  # Обновляем существующий документ или создаем новый
-                    "messages": [],
-                    "errors": [],
-                    "metadata": {},
-                    "should_adapt": True,
-                    "document_title": None
-                }
-                
-                # Запускаем граф
-                logger.info(f"[DocumentAIService] Running template graph for document creation: {question[:100]}...")
-                result = await graph.ainvoke(initial_state)
-                
-                if result.get("errors"):
-                    error_msg = "; ".join(result["errors"])
-                    logger.error(f"[DocumentAIService] Template graph errors: {error_msg}")
-                    return {
-                        "answer": f"Ошибка при создании документа из шаблона: {error_msg}",
-                        "citations": [],
-                        "suggestions": []
-                    }
-                
-                # Если создан новый документ
-                new_document_id = result.get("document_id")
-                if new_document_id and new_document_id != document_id:
-                    return {
-                        "answer": f"Документ успешно создан из шаблона (источник: {result.get('template_source', 'unknown')}). Документ готов к редактированию.",
-                        "citations": [],
-                        "suggestions": ["Открыть документ", "Проверить на риски"],
-                        "edited_content": result.get("adapted_content"),
-                        "new_document_id": new_document_id
-                    }
-                
-                return {
-                    "answer": f"Документ обновлен из шаблона (источник: {result.get('template_source', 'unknown')}).",
-                    "citations": [],
-                    "suggestions": ["Проверить на риски", "Улучшить формулировки"],
-                    "edited_content": result.get("adapted_content")
-                }
-            except Exception as template_error:
-                logger.error(f"[DocumentAIService] Error using template graph: {template_error}", exc_info=True)
-                # Fallback на обычный чат если template_graph не работает
-        
-        # Get context from case documents
+        import re
+        import uuid
+
+        # Normalize mode (fallback to ask for unknown values)
+        mode = mode if mode in ("ask", "edit", "draft") else "ask"
+        logger.info(f"[DocumentAI] chat_over_document mode={mode} question={question[:80]!r}")
+
+        # ── RAG: retrieve case context (used in all modes) ──────────────────
         context = ""
-        sources = []
+        sources: List = []
         try:
             docs, source_list = self.rag_service.generate_with_sources(
                 case_id=case_id,
@@ -687,169 +633,339 @@ class DocumentAIService:
             sources = source_list
         except Exception as e:
             logger.warning(f"Could not retrieve context: {e}")
-            context = ""
-            sources = []
-        
-        # Check if user wants to edit the document
-        is_edit_request = any(keyword in question.lower() for keyword in [
-            "изменить", "редактировать", "исправить", "добавить", "удалить", 
-            "переписать", "улучшить", "изменить текст", "заменить"
-        ])
-        
-        # Create LLM prompt for document editing
-        system_prompt = """Ты - AI-ассистент для редактирования юридических документов.
 
-ТВОИ ЗАДАЧИ:
-1. Отвечать на вопросы о документе
-2. Вносить точечные правки по запросу пользователя
-
-ФОРМАТ ОТВЕТА ПРИ РЕДАКТИРОВАНИИ:
-1. Сначала объясни какие изменения нужно внести
-2. Затем укажи ТОЧНУЮ команду замены в формате:
-
-```edit
-НАЙТИ: <точный текст который нужно найти в документе>
-ЗАМЕНИТЬ: <новый текст на замену>
-```
-
-ПРИМЕР:
-Пользователь: "Добавь номер договора 123/2024 в пункт 1.1"
-Ответ: "Добавляю номер договора в пункт 1.1.
-```edit
-НАЙТИ: 1.1. Предмет договора
-ЗАМЕНИТЬ: 1.1. Договор №123/2024. Предмет договора
-```"
-
-ВАЖНО:
-- В НАЙТИ указывай ТОЧНЫЙ текст из документа (можно короткий уникальный фрагмент)
-- В ЗАМЕНИТЬ указывай полный новый текст
-- Если нужно несколько замен - используй несколько блоков ```edit```
-- Если пользователь просто задаёт вопрос - просто ответь без блока edit"""
-        
-        # Увеличиваем лимит до 15000 символов для полноценной работы с документом
         doc_limit = 15000
         doc_preview = document_content[:doc_limit] if document_content else ""
-        doc_truncated = f"\n[... документ обрезан, показано {doc_limit} из {len(document_content)} символов ...]" if document_content and len(document_content) > doc_limit else ""
-        
-        # Формируем контекст из других документов дела
-        other_docs_context = f'=== КОНТЕКСТ ИЗ ДРУГИХ ДОКУМЕНТОВ ДЕЛА ===\n{context}\n=== КОНЕЦ КОНТЕКСТА ===' if context else ''
-        
-        user_prompt = f"""ВОПРОС/ЗАПРОС ПОЛЬЗОВАТЕЛЯ: {question}
+        doc_truncated = (
+            f"\n[... документ обрезан, показано {doc_limit} из {len(document_content)} символов ...]"
+            if document_content and len(document_content) > doc_limit else ""
+        )
+        other_docs_context = (
+            f'=== КОНТЕКСТ ИЗ ДРУГИХ ДОКУМЕНТОВ ДЕЛА ===\n{context}\n=== КОНЕЦ КОНТЕКСТА ==='
+            if context else ''
+        )
 
-=== ПОЛНЫЙ ТЕКСТ ДОКУМЕНТА В РЕДАКТОРЕ ===
-{doc_preview}{doc_truncated}
-=== КОНЕЦ ДОКУМЕНТА ===
+        # ═══════════════════════════════════════════════════════════════════
+        # ASK MODE — pure Q&A, no editing
+        # ═══════════════════════════════════════════════════════════════════
+        if mode == "ask":
+            system_prompt = (
+                "Ты — AI-ассистент для анализа юридических документов. Сейчас ты работаешь в режиме Ask (вопросы и ответы).\n"
+                "Отвечай на вопросы подробно и профессионально.\n"
+                "Цитируй конкретные пункты документа там, где это уместно.\n"
+                "Не используй Markdown-форматирование (**, *, ##) — пиши обычным текстом.\n\n"
+                "ВАЖНО: если пользователь просит что-то изменить, переписать, отредактировать, добавить или удалить текст — "
+                "не выполняй редактирование. Вместо этого кратко и по-дружески ответь, что для этого нужно переключиться "
+                "в режим Edit (для правок существующего текста) или Draft (для создания нового текста), "
+                "нажав на кнопку режима в поле ввода. Одно-два предложения, без лишних объяснений."
+            )
+            doc_section = f"=== ДОКУМЕНТ ===\n{doc_preview}{doc_truncated}\n=== КОНЕЦ ===" if document_content else ""
+            user_prompt = f"ВОПРОС: {question}\n\n{doc_section}\n\n{other_docs_context}\n\nОтветь на вопрос."
 
-{other_docs_context}
+            llm = create_legal_llm(temperature=0.2)
+            response = llm.invoke([SystemMessage(content=system_prompt), HumanMessage(content=user_prompt)])
+            answer = response.content if hasattr(response, "content") else str(response)
+            answer = re.sub(r'```[\s\S]*?```', '', answer, flags=re.DOTALL).strip()
 
-Ответь на вопрос. Если требуется редактирование - предоставь полный обновленный HTML в блоке ```html ... ```"""
-        
-        llm = create_legal_llm(temperature=0.3)
-        messages = [
-            SystemMessage(content=system_prompt),
-            HumanMessage(content=user_prompt)
+            return {
+                "answer": answer,
+                "citations": [{"file": s.get("file", "Документ дела"), "file_id": s.get("file_id", "")} for s in sources[:3]],
+                "suggestions": [],
+                "structured_edits": [],
+            }
+
+        # ═══════════════════════════════════════════════════════════════════
+        # DRAFT MODE — create new text / full document
+        # ═══════════════════════════════════════════════════════════════════
+        if mode == "draft":
+            if document_content:
+                system_prompt = (
+                    "Ты — AI-ассистент для создания юридических документов.\n"
+                    "Пользователь хочет добавить новый раздел или пункт в существующий документ.\n"
+                    "1. Кратко опиши что добавляешь (1–2 предложения).\n"
+                    "2. Верни ПОЛНЫЙ документ с добавленным разделом как HTML в блоке ```html\n\n"
+                    "ВАЖНО:\n"
+                    "- Сохрани весь существующий текст документа.\n"
+                    "- Вставь новый раздел в логичное место.\n"
+                    "- Используй теги: h1, h2, h3, p, ul, li, strong, em, table.\n"
+                    "- НЕ добавляй DOCTYPE, html, head, body — только содержимое."
+                )
+                user_prompt = (
+                    f"ЗАПРОС: {question}\n\n"
+                    f"=== ТЕКУЩИЙ ДОКУМЕНТ ===\n{doc_preview}{doc_truncated}\n=== КОНЕЦ ===\n\n"
+                    f"{other_docs_context}\n\n"
+                    "Добавь запрошенный раздел и верни полный обновлённый документ в блоке ```html."
+                )
+            else:
+                system_prompt = (
+                    "Ты — AI-ассистент для создания юридических документов.\n"
+                    "Пользователь хочет создать документ с нуля.\n"
+                    "1. Кратко опиши что создаёшь (1 предложение).\n"
+                    "2. Верни ПОЛНЫЙ документ как HTML в блоке ```html\n\n"
+                    "ВАЖНО:\n"
+                    "- Создай профессиональный юридический документ по российскому праву.\n"
+                    "- Используй теги: h1, h2, h3, p, ul, li, strong, em, table.\n"
+                    "- НЕ добавляй DOCTYPE, html, head, body — только содержимое."
+                )
+                user_prompt = (
+                    f"ЗАПРОС: {question}\n\n"
+                    f"{other_docs_context}\n\n"
+                    "Создай документ и верни его целиком в блоке ```html."
+                )
+
+            llm = create_legal_llm(temperature=0.3)
+            response = llm.invoke([SystemMessage(content=system_prompt), HumanMessage(content=user_prompt)])
+            answer = response.content if hasattr(response, "content") else str(response)
+
+            edited_content = None
+            html_patterns = [
+                r'```html\s*\n([\s\S]*?)\n?```',
+                r'```\s*\n\.?html\s*\n([\s\S]*?)\n?```',
+                r'```[a-z.]*\n((?:\s*<[^>]+>[\s\S]*?))\n?```',
+            ]
+            for pattern in html_patterns:
+                m = re.search(pattern, answer, re.DOTALL | re.IGNORECASE)
+                if m:
+                    extracted = m.group(1).strip()
+                    lines = extracted.splitlines()
+                    while lines and not lines[0].strip().startswith('<'):
+                        lines.pop(0)
+                    extracted = '\n'.join(lines).strip()
+                    if extracted:
+                        edited_content = extracted
+                    break
+
+            answer = re.sub(r'```[\s\S]*?```', '', answer, flags=re.DOTALL).strip()
+            answer = re.sub(r'(?m)^\s*\.?html\s*$', '', answer).strip()
+            if not answer:
+                action = "добавлен" if document_content else "создан"
+                answer = f"Текст {action}. Нажмите «Применить к документу»."
+
+            result = {
+                "answer": answer,
+                "citations": [],
+                "suggestions": ["Применить к документу"] if edited_content else [],
+                "structured_edits": [],
+            }
+            if edited_content:
+                result["edited_content"] = edited_content
+            return result
+
+        # ═══════════════════════════════════════════════════════════════════
+        # EDIT MODE — modify existing document
+        # If selected_text provided — always targeted replacement of that text.
+        # Otherwise: targeted if keywords match, full HTML otherwise.
+        # ═══════════════════════════════════════════════════════════════════
+        # mode == "edit"
+        targeted_keywords = [
+            " на ", "замени", "поменяй", "вместо", "заменить на",
+            "поставь", "впиши", "укажи", "обнови значение",
         ]
-        
-        response = llm.invoke(messages)
-        answer = response.content if hasattr(response, 'content') else str(response)
-        
-        # Try to extract edited HTML from answer
+        has_file_reference = "[файл:" in question.lower() or "[file:" in question.lower()
+        # selected_text forces targeted mode — user is working on a specific fragment
+        use_targeted = bool(selected_text) or any(kw in question.lower() for kw in targeted_keywords) or has_file_reference
+
+        if selected_text:
+            # ── Selected-text mode ──────────────────────────────────────────────
+            # Ask LLM only for the replacement text using simple labeled format.
+            # We set original_text = selected_text ourselves (100% accurate).
+            # The frontend applies at exact {from, to} positions — no text search.
+            system_prompt = (
+                "Ты — AI-ассистент для точечного редактирования юридических текстов.\n\n"
+                "Пользователь выделил конкретный фрагмент и хочет применить к нему инструкцию.\n\n"
+                "Ответь строго в следующем формате (две строки):\n\n"
+                "ОБЪЯСНЕНИЕ: <одно предложение — что именно ты изменяешь>\n"
+                "ЗАМЕНА: <улучшенный вариант выделенного текста>\n\n"
+                "Правила:\n"
+                "- После слова ЗАМЕНА: — только новый текст, без кавычек и пояснений.\n"
+                "- Не добавляй ничего после текста замены.\n"
+                "- Сохраняй стиль юридического документа."
+            )
+            user_prompt = (
+                f"ИНСТРУКЦИЯ: {question}\n\n"
+                f"ВЫДЕЛЕННЫЙ ТЕКСТ:\n{selected_text}\n\n"
+                f"=== КОНТЕКСТ ДОКУМЕНТА ===\n{doc_preview[:3000]}\n=== КОНЕЦ ==="
+            )
+            llm = create_legal_llm(temperature=0.3)
+            response = llm.invoke([SystemMessage(content=system_prompt), HumanMessage(content=user_prompt)])
+            answer = response.content if hasattr(response, "content") else str(response)
+
+            explanation_match = re.search(r'ОБЪЯСНЕНИЕ:\s*(.+?)(?=\nЗАМЕНА:|$)', answer, re.DOTALL)
+            replacement_match = re.search(r'ЗАМЕНА:\s*([\s\S]+)', answer)
+
+            explanation = explanation_match.group(1).strip() if explanation_match else ""
+            new_text = replacement_match.group(1).strip() if replacement_match else None
+
+            if new_text:
+                return {
+                    "answer": explanation or "Правка подготовлена.",
+                    "citations": [{"file": s.get("file", "Документ дела"), "file_id": s.get("file_id", "")} for s in sources[:3]],
+                    "suggestions": ["Применить правку"],
+                    "structured_edits": [{
+                        "id": f"edit-{uuid.uuid4().hex[:8]}",
+                        "original_text": selected_text,
+                        "new_text": new_text,
+                        "context_before": "",
+                        "context_after": "",
+                        "found_in_document": True,  # frontend uses exact range — always True
+                    }],
+                }
+            else:
+                # Fallback: show full LLM response as plain text
+                clean_answer = re.sub(r'```[\s\S]*?```', '', answer, flags=re.DOTALL).strip()
+                return {
+                    "answer": clean_answer or "Не удалось подготовить правку. Попробуйте перефразировать запрос.",
+                    "citations": [],
+                    "suggestions": [],
+                    "structured_edits": [],
+                }
+            # (unreachable — selected_text path always returns above)
+        elif use_targeted:
+            system_prompt = (
+                "Ты — AI-ассистент для точечного редактирования юридических документов.\n\n"
+                "Когда пользователь просит внести конкретные изменения:\n"
+                "1. Кратко объясни что делаешь (1 предложение).\n"
+                "2. Для КАЖДОГО изменения выведи блок:\n\n"
+                "```edit\n"
+                "НАЙТИ: точный текст из документа\n"
+                "ЗАМЕНИТЬ: новый текст\n"
+                "```\n\n"
+                "ВАЖНО:\n"
+                "- В НАЙТИ: пиши ТОЧНЫЙ текст из документа (не перефразируй).\n"
+                "- В ЗАМЕНИТЬ: только новый текст, без пояснений.\n"
+                "- Один блок — одно изменение.\n"
+                "- Если текст не найден в документе — напиши об этом текстом."
+            )
+            if document_content:
+                user_prompt = (
+                    f"ЗАПРОС: {question}\n\n"
+                    f"=== ДОКУМЕНТ ===\n{doc_preview}{doc_truncated}\n=== КОНЕЦ ===\n\n"
+                    f"{other_docs_context}\n\n"
+                    "Выведи точечные правки в формате ```edit."
+                )
+            else:
+                user_prompt = (
+                    f"ЗАПРОС: {question}\n\n{other_docs_context}\n\n"
+                    "Документ не передан. Опиши изменения текстом."
+                )
+        else:
+            system_prompt = (
+                "Ты — AI-ассистент для редактирования юридических документов.\n\n"
+                "1. Кратко объясни что изменил (1–2 предложения).\n"
+                "2. Верни ПОЛНЫЙ обновлённый документ как HTML в блоке ```html\n\n"
+                "ВАЖНО:\n"
+                "- В блоке ```html должен быть ПОЛНЫЙ текст документа.\n"
+                "- Используй теги: h1, h2, h3, p, ul, li, strong, em, table.\n"
+                "- НЕ добавляй DOCTYPE, html, head, body.\n"
+                "- Применяй профессиональные юридические формулировки."
+            )
+            if document_content:
+                user_prompt = (
+                    f"ЗАПРОС: {question}\n\n"
+                    f"=== ДОКУМЕНТ (HTML) ===\n{doc_preview}{doc_truncated}\n=== КОНЕЦ ===\n\n"
+                    f"{other_docs_context}\n\n"
+                    "Внеси изменения. Объясни кратко что изменил, затем верни ПОЛНЫЙ HTML в блоке ```html."
+                )
+            else:
+                user_prompt = (
+                    f"ЗАПРОС: {question}\n\n{other_docs_context}\n\n"
+                    "Документ пустой. Создай документ с нуля и верни ПОЛНЫЙ HTML в блоке ```html."
+                )
+
+        llm = create_legal_llm(temperature=0.3)
+        response = llm.invoke([SystemMessage(content=system_prompt), HumanMessage(content=user_prompt)])
+        answer = response.content if hasattr(response, "content") else str(response)
+
         edited_content = None
-        suggestions = []
-        
-        # Список структурированных изменений для UI
-        structured_edits = []
-        
-        if is_edit_request and document_content:
-            import re
-            import uuid
-            # Новый подход: извлекаем команды НАЙТИ/ЗАМЕНИТЬ и применяем к оригиналу
-            edit_blocks = re.findall(r'```edit\s*\n(.*?)\n```', answer, re.DOTALL)
-            
-            if edit_blocks:
-                modified_content = document_content
-                changes_applied = 0
-                
-                for block in edit_blocks:
-                    # Парсим НАЙТИ и ЗАМЕНИТЬ
-                    find_match = re.search(r'НАЙТИ:\s*(.+?)(?=\nЗАМЕНИТЬ:|$)', block, re.DOTALL)
-                    replace_match = re.search(r'ЗАМЕНИТЬ:\s*(.+?)$', block, re.DOTALL)
-                    
-                    if find_match and replace_match:
-                        find_text = find_match.group(1).strip()
-                        replace_text = replace_match.group(1).strip()
-                        
-                        # Извлекаем контекст (до 50 символов до и после)
-                        context_before = ""
-                        context_after = ""
-                        find_pos = document_content.find(find_text)
-                        if find_pos != -1:
-                            # Контекст до
-                            start_ctx = max(0, find_pos - 50)
-                            context_before = document_content[start_ctx:find_pos]
-                            # Убираем незавершенные слова в начале
-                            if start_ctx > 0:
-                                space_pos = context_before.find(' ')
-                                if space_pos != -1:
-                                    context_before = context_before[space_pos + 1:]
-                            
-                            # Контекст после
-                            end_pos = find_pos + len(find_text)
-                            end_ctx = min(len(document_content), end_pos + 50)
-                            context_after = document_content[end_pos:end_ctx]
-                            # Убираем незавершенные слова в конце
-                            if end_ctx < len(document_content):
-                                space_pos = context_after.rfind(' ')
-                                if space_pos != -1:
-                                    context_after = context_after[:space_pos]
-                        
-                        # Добавляем структурированное изменение
+        suggestions: List[str] = []
+        structured_edits: List[Dict[str, Any]] = []
+
+        if use_targeted:
+            edit_block_pattern = r'```edit\s*\n([\s\S]*?)```'
+            for block_match in re.finditer(edit_block_pattern, answer, re.DOTALL | re.IGNORECASE):
+                block = block_match.group(1).strip()
+                find_match = re.search(r'НАЙТИ:\s*([\s\S]*?)(?=\nЗАМЕНИТЬ:)', block, re.IGNORECASE)
+                replace_match = re.search(r'ЗАМЕНИТЬ:\s*([\s\S]*?)$', block, re.IGNORECASE)
+                if find_match and replace_match:
+                    original_text = find_match.group(1).strip().strip('"\'')
+                    new_text = replace_match.group(1).strip().strip('"\'')
+                    if original_text and new_text:
+                        doc_plain = re.sub(r'<[^>]+>', '', document_content) if document_content else ""
+                        found_in_doc = original_text in (document_content or "") or original_text in doc_plain
                         structured_edits.append({
                             "id": f"edit-{uuid.uuid4().hex[:8]}",
-                            "original_text": find_text,
-                            "new_text": replace_text,
-                            "context_before": context_before,
-                            "context_after": context_after,
-                            "found_in_document": find_text in modified_content
+                            "original_text": original_text,
+                            "new_text": new_text,
+                            "context_before": "",
+                            "context_after": "",
+                            "found_in_document": found_in_doc,
                         })
-                        
-                        if find_text in modified_content:
-                            modified_content = modified_content.replace(find_text, replace_text, 1)
-                            changes_applied += 1
-                            logger.info(f"[DocumentAI] Applied edit: '{find_text[:50]}...' -> '{replace_text[:50]}...'")
-                        else:
-                            logger.warning(f"[DocumentAI] Text not found in document: '{find_text[:100]}...'")
-                
-                if changes_applied > 0:
-                    edited_content = modified_content
-                    suggestions.append("Применить изменения")
-                    logger.info(f"[DocumentAI] Applied {changes_applied} edits to document")
-                else:
-                    answer += "\n\n⚠️ Не удалось найти указанный текст в документе. Попробуйте указать точную фразу из документа."
-            else:
-                # Fallback: старый подход с полным HTML (если ИИ вернул его)
-                html_match = re.search(r'```(?:html)?\s*\n(.*?)\n```', answer, re.DOTALL)
-                if html_match:
-                    extracted_html = html_match.group(1).strip()
-                    original_len = len(document_content)
-                    # Принимаем только если HTML близок по размеру к оригиналу (±30%)
-                    if original_len * 0.7 <= len(extracted_html) <= original_len * 1.5:
-                        edited_content = extracted_html
+
+            # Fallback: LLM skipped code fences — parse raw НАЙТИ/ЗАМЕНИТЬ
+            if not structured_edits:
+                raw_match = re.search(
+                    r'НАЙТИ:\s*"?([\s\S]*?)"?\s*\nЗАМЕНИТЬ:\s*"?([\s\S]+?)"?\s*(?=\n\S|\Z)',
+                    answer, re.IGNORECASE
+                )
+                if raw_match:
+                    original_text = raw_match.group(1).strip()
+                    new_text = raw_match.group(2).strip()
+                    if original_text and new_text:
+                        doc_plain = re.sub(r'<[^>]+>', '', document_content) if document_content else ""
+                        found_in_doc = original_text in (document_content or "") or original_text in doc_plain
+                        structured_edits.append({
+                            "id": f"edit-{uuid.uuid4().hex[:8]}",
+                            "original_text": original_text,
+                            "new_text": new_text,
+                            "context_before": "",
+                            "context_after": "",
+                            "found_in_document": found_in_doc,
+                        })
+
+            # Strip all edit-format content from answer text
+            answer = re.sub(r'```edit[\s\S]*?```', '', answer, flags=re.DOTALL)
+            answer = re.sub(r'\n*НАЙТИ:[\s\S]*', '', answer, flags=re.IGNORECASE)
+            answer = re.sub(r'(?im)^\s*edit\s*$', '', answer)
+            answer = re.sub(r'(?m)^\s*$\n', '', answer).strip()
+            if structured_edits and not answer:
+                answer = f"Предлагаю {len(structured_edits)} правку(-и). Примите или отклоните каждую."
+            elif not answer:
+                answer = "Не удалось найти подходящие фрагменты для замены."
+            if structured_edits:
+                suggestions.append("Применить все правки")
+                logger.info(f"[DocumentAI] Found {len(structured_edits)} structured edits")
+        else:
+            html_patterns = [
+                r'```html\s*\n([\s\S]*?)\n?```',
+                r'```\s*\n\.?html\s*\n([\s\S]*?)\n?```',
+                r'```[a-z.]*\n((?:\s*<[^>]+>[\s\S]*?))\n?```',
+            ]
+            for pattern in html_patterns:
+                m = re.search(pattern, answer, re.DOTALL | re.IGNORECASE)
+                if m:
+                    extracted = m.group(1).strip()
+                    lines = extracted.splitlines()
+                    while lines and not lines[0].strip().startswith('<'):
+                        lines.pop(0)
+                    extracted = '\n'.join(lines).strip()
+                    if extracted:
+                        edited_content = extracted
                         suggestions.append("Применить изменения")
-                        logger.info(f"[DocumentAI] Using full HTML fallback ({len(extracted_html)} chars)")
-                    else:
-                        logger.warning(f"[DocumentAI] HTML size mismatch, not applying")
-        
+                        logger.info(f"[DocumentAI] Extracted HTML edit ({len(extracted)} chars)")
+                    break
+
+            answer = re.sub(r'```[\s\S]*?```', '', answer, flags=re.DOTALL).strip()
+            answer = re.sub(r'(?m)^\s*\.?html\s*$', '', answer).strip()
+            if not answer:
+                answer = "Изменения готовы. Нажмите «Применить изменения» чтобы обновить документ."
+
         result = {
             "answer": answer,
             "citations": [{"file": s.get("file", "Документ дела"), "file_id": s.get("file_id", "")} for s in sources[:3]],
             "suggestions": suggestions,
-            "structured_edits": structured_edits
+            "structured_edits": structured_edits,
         }
-        
-        # Add edited content if found and validated (для обратной совместимости)
         if edited_content:
             result["edited_content"] = edited_content
-        
         return result
 

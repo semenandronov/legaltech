@@ -7,9 +7,6 @@
 import { useState } from 'react'
 import {
   X,
-  CheckCircle,
-  XCircle,
-  AlertTriangle,
   ChevronDown,
   ChevronRight,
   FileText,
@@ -17,8 +14,10 @@ import {
   Download,
   RefreshCw,
   Lightbulb,
-  ExternalLink
+  ExternalLink,
+  CheckCheck,
 } from 'lucide-react'
+import { toast } from 'sonner'
 
 interface RuleResult {
   rule_id: string
@@ -68,6 +67,8 @@ interface PlaybookResultsPanelProps {
   result: PlaybookResult
   onClose: () => void
   onNavigateToIssue?: (location: { start: number; end: number }) => void
+  onScrollToText?: (text: string) => boolean
+  onApplyFix?: (foundText: string, fixedText: string) => boolean
   onRerun?: () => void
   onDownloadReport?: () => void
 }
@@ -76,11 +77,14 @@ export const PlaybookResultsPanel = ({
   result,
   onClose,
   onNavigateToIssue,
+  onScrollToText,
+  onApplyFix,
   onRerun,
   onDownloadReport
 }: PlaybookResultsPanelProps) => {
   const [expandedRules, setExpandedRules] = useState<Set<string>>(new Set())
   const [activeFilter, setActiveFilter] = useState<'all' | 'violations' | 'warnings' | 'passed'>('all')
+  const [appliedRules, setAppliedRules] = useState<Set<string>>(new Set())
 
   const toggleRule = (ruleId: string) => {
     setExpandedRules(prev => {
@@ -94,19 +98,15 @@ export const PlaybookResultsPanel = ({
     })
   }
 
-  const getStatusIcon = (status: RuleResult['status']) => {
-    switch (status) {
-      case 'passed':
-        return <CheckCircle className="w-4 h-4 text-green-500" />
-      case 'violation':
-      case 'not_found':
-      case 'error':
-        return <XCircle className="w-4 h-4 text-red-500" />
-      case 'warning':
-        return <AlertTriangle className="w-4 h-4 text-yellow-500" />
-      default:
-        return <div className="w-4 h-4 rounded-full border-2 border-gray-300" />
+  /** Harvey-style classification for a rule result */
+  const getHarveyClassification = (rule: RuleResult) => {
+    if (rule.status === 'passed') {
+      return { label: 'Приемлемо', icon: '✅', color: '#16a34a', bg: 'rgba(22, 163, 74, 0.1)', border: 'rgba(22, 163, 74, 0.25)' }
     }
+    if (rule.status === 'warning' || rule.rule_type === 'fallback') {
+      return { label: 'Требует проверки', icon: '🔍', color: '#ca8a04', bg: 'rgba(202, 138, 4, 0.08)', border: 'rgba(202, 138, 4, 0.2)' }
+    }
+    return { label: 'Неприемлемо', icon: '❌', color: '#dc2626', bg: 'rgba(220, 38, 38, 0.08)', border: 'rgba(220, 38, 38, 0.2)' }
   }
 
   const getRuleTypeBadge = (type: RuleResult['rule_type']) => {
@@ -229,11 +229,11 @@ export const PlaybookResultsPanel = ({
           />
         </div>
 
-        {/* Stats */}
+        {/* Stats — Harvey style */}
         <div className="grid grid-cols-4 gap-2 mt-4">
           <div className="text-center p-2 rounded-lg bg-green-50">
             <div className="text-lg font-bold text-green-600">{result.passed_rules}</div>
-            <div className="text-xs text-gray-500">Passed</div>
+            <div className="text-xs text-gray-500">Приемлемо</div>
           </div>
           <div className="text-center p-2 rounded-lg bg-red-50">
             <div className="text-lg font-bold text-red-600">{result.red_line_violations}</div>
@@ -245,7 +245,7 @@ export const PlaybookResultsPanel = ({
           </div>
           <div className="text-center p-2 rounded-lg bg-yellow-50">
             <div className="text-lg font-bold text-yellow-600">{result.fallback_issues}</div>
-            <div className="text-xs text-gray-500">Fallback</div>
+            <div className="text-xs text-gray-500">На проверке</div>
           </div>
         </div>
       </div>
@@ -262,8 +262,8 @@ export const PlaybookResultsPanel = ({
         </div>
       )}
 
-      {/* Filters */}
-      <div className="flex items-center gap-2 px-4 py-3 border-b" style={{ borderColor: 'var(--color-border)' }}>
+      {/* Filters — Harvey classifications */}
+      <div className="flex items-center gap-1.5 px-4 py-3 border-b flex-wrap" style={{ borderColor: 'var(--color-border)' }}>
         <button
           onClick={() => setActiveFilter('all')}
           className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${
@@ -280,7 +280,7 @@ export const PlaybookResultsPanel = ({
           }`}
           style={{ color: activeFilter === 'violations' ? undefined : 'var(--color-text-secondary)' }}
         >
-          Нарушения ({violationsCount})
+          ❌ Неприемлемо ({violationsCount})
         </button>
         <button
           onClick={() => setActiveFilter('warnings')}
@@ -289,7 +289,7 @@ export const PlaybookResultsPanel = ({
           }`}
           style={{ color: activeFilter === 'warnings' ? undefined : 'var(--color-text-secondary)' }}
         >
-          Предупреждения ({warningsCount})
+          🔍 На проверке ({warningsCount})
         </button>
         <button
           onClick={() => setActiveFilter('passed')}
@@ -298,7 +298,7 @@ export const PlaybookResultsPanel = ({
           }`}
           style={{ color: activeFilter === 'passed' ? undefined : 'var(--color-text-secondary)' }}
         >
-          ✓ ({passedCount})
+          ✅ Приемлемо ({passedCount})
         </button>
       </div>
 
@@ -313,30 +313,36 @@ export const PlaybookResultsPanel = ({
           </div>
         ) : (
           <div className="divide-y" style={{ borderColor: 'var(--color-border)' }}>
-            {filteredResults.map((rule) => (
+            {filteredResults.map((rule) => {
+              const harvey = getHarveyClassification(rule)
+              return (
               <div key={rule.rule_id} className="transition-colors hover:bg-gray-50/50">
-                {/* Rule Header */}
+                {/* Rule Header — Harvey style */}
                 <button
                   onClick={() => toggleRule(rule.rule_id)}
                   className="w-full flex items-start gap-3 p-4 text-left"
                 >
-                  <div className="mt-0.5">
-                    {getStatusIcon(rule.status)}
-                  </div>
                   <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2 flex-wrap mb-1">
-                      <span className="font-medium text-sm" style={{ color: 'var(--color-text-primary)' }}>
-                        {rule.rule_name}
+                    {/* Harvey classification badge */}
+                    <div className="flex items-center gap-2 mb-1.5 flex-wrap">
+                      <span
+                        className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-xs font-semibold"
+                        style={{ color: harvey.color, backgroundColor: harvey.bg, border: `1px solid ${harvey.border}` }}
+                      >
+                        {harvey.icon} {harvey.label}
                       </span>
                       {getRuleTypeBadge(rule.rule_type)}
                     </div>
+                    <span className="font-medium text-sm" style={{ color: 'var(--color-text-primary)' }}>
+                      {rule.rule_name}
+                    </span>
                     {rule.issue_description && rule.status !== 'passed' && (
-                      <p className="text-xs line-clamp-2" style={{ color: 'var(--color-text-secondary)' }}>
+                      <p className="text-xs mt-1 line-clamp-2" style={{ color: 'var(--color-text-secondary)' }}>
                         {rule.issue_description}
                       </p>
                     )}
                   </div>
-                  <div className="shrink-0">
+                  <div className="shrink-0 mt-1">
                     {expandedRules.has(rule.rule_id) ? (
                       <ChevronDown className="w-4 h-4" style={{ color: 'var(--color-text-tertiary)' }} />
                     ) : (
@@ -345,81 +351,153 @@ export const PlaybookResultsPanel = ({
                   </div>
                 </button>
 
-                {/* Expanded Details */}
+                {/* Expanded Details — Harvey layout */}
                 {expandedRules.has(rule.rule_id) && (
-                  <div className="px-4 pb-4 ml-7 space-y-3">
-                    {rule.issue_description && (
-                      <div>
-                        <h4 className="text-xs font-medium mb-1" style={{ color: 'var(--color-text-secondary)' }}>
-                          Описание проблемы
+                  <div className="px-4 pb-4 space-y-3" style={{ borderTop: `1px solid var(--color-border)`, paddingTop: '12px' }}>
+
+                    {/* 1. AI Reasoning — most prominent */}
+                    {rule.reasoning && (
+                      <div className="p-3 rounded-lg" style={{ backgroundColor: 'var(--color-bg-secondary)' }}>
+                        <h4 className="text-xs font-semibold mb-1.5" style={{ color: 'var(--color-text-secondary)' }}>
+                          📊 Обоснование AI
                         </h4>
-                        <p className="text-sm" style={{ color: 'var(--color-text-primary)' }}>
-                          {rule.issue_description}
+                        <p className="text-sm leading-relaxed" style={{ color: 'var(--color-text-primary)' }}>
+                          {rule.reasoning}
                         </p>
                       </div>
                     )}
 
-                    {(rule.suggestion || rule.suggested_fix) && (
-                      <div className="p-3 rounded-lg bg-blue-50 border border-blue-100">
-                        <h4 className="text-xs font-medium text-blue-700 mb-1">
-                          💡 Рекомендация
+                    {/* 2. Issue description (if different from reasoning) */}
+                    {rule.issue_description && rule.issue_description !== rule.reasoning && (
+                      <p className="text-sm" style={{ color: 'var(--color-text-secondary)' }}>
+                        {rule.issue_description}
+                      </p>
+                    )}
+
+                    {/* 3. Предлагаемая правка (Harvey redline) */}
+                    {rule.found_text && (rule.suggestion || rule.suggested_fix) && (
+                      <div>
+                        <h4 className="text-xs font-semibold mb-2" style={{ color: 'var(--color-text-secondary)' }}>
+                          🔄 Предлагаемая правка
                         </h4>
+                        <div
+                          className="p-3 rounded-lg text-sm leading-relaxed space-y-2"
+                          style={{ background: 'var(--color-bg-primary)', border: '1px solid var(--color-border)' }}
+                        >
+                          <div>
+                            <span className="text-xs font-medium" style={{ color: '#dc2626' }}>Было:</span>
+                            <p className="line-through text-red-500 mt-0.5">
+                              {rule.found_text.length > 250 ? rule.found_text.substring(0, 250) + '…' : rule.found_text}
+                            </p>
+                          </div>
+                          <div>
+                            <span className="text-xs font-medium" style={{ color: '#2563eb' }}>Стало:</span>
+                            <p className="mt-0.5" style={{ color: '#2563eb', textDecoration: 'underline' }}>
+                              {(() => {
+                                const fix = rule.suggestion || rule.suggested_fix || ''
+                                return fix.length > 250 ? fix.substring(0, 250) + '…' : fix
+                              })()}
+                            </p>
+                          </div>
+                        </div>
+
+                        {/* Action buttons */}
+                        <div className="flex items-center gap-2 mt-2">
+                          {(onScrollToText || (onNavigateToIssue && (rule.document_location || rule.location))) && (
+                            <button
+                              onClick={() => {
+                                if (onScrollToText && rule.found_text) {
+                                  const found = onScrollToText(rule.found_text)
+                                  if (!found) toast.warning('Текст не найден в документе')
+                                } else if (onNavigateToIssue && (rule.document_location || rule.location)) {
+                                  onNavigateToIssue(
+                                    rule.document_location ||
+                                    { start: rule.location?.start || 0, end: rule.location?.end || 0 }
+                                  )
+                                }
+                              }}
+                              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium border transition-colors hover:bg-gray-50"
+                              style={{ color: 'var(--color-text-secondary)', borderColor: 'var(--color-border)' }}
+                            >
+                              <Eye className="w-3 h-3" />
+                              Перейти к тексту
+                            </button>
+                          )}
+
+                          {onApplyFix && rule.found_text && (rule.suggestion || rule.suggested_fix) && (
+                            appliedRules.has(rule.rule_id) ? (
+                              <span className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium text-green-600 bg-green-50">
+                                <CheckCheck className="w-3 h-3" />
+                                Применено
+                              </span>
+                            ) : (
+                              <button
+                                onClick={() => {
+                                  const fix = rule.suggestion || rule.suggested_fix || ''
+                                  const success = onApplyFix(rule.found_text!, fix)
+                                  if (success) {
+                                    setAppliedRules(prev => new Set(prev).add(rule.rule_id))
+                                    toast.success('Правка применена')
+                                  } else {
+                                    toast.error('Не удалось найти текст в документе')
+                                  }
+                                }}
+                                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium text-white transition-colors hover:opacity-90"
+                                style={{ backgroundColor: 'var(--color-accent, #6366f1)' }}
+                              >
+                                Применить правку
+                              </button>
+                            )
+                          )}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* 4. Recommendation (no found_text case) */}
+                    {!rule.found_text && (rule.suggestion || rule.suggested_fix) && (
+                      <div className="p-3 rounded-lg bg-blue-50 border border-blue-100">
+                        <h4 className="text-xs font-semibold text-blue-700 mb-1">💡 Рекомендация</h4>
                         <p className="text-sm text-blue-800">
                           {rule.suggestion || rule.suggested_fix}
                         </p>
                       </div>
                     )}
 
-                    {(rule.document_location || rule.found_text) && (
-                      <div>
-                        <h4 className="text-xs font-medium mb-1" style={{ color: 'var(--color-text-secondary)' }}>
-                          Найдено в документе
-                        </h4>
-                        <div className="p-2 rounded-lg bg-gray-50 border border-gray-200">
-                          <p className="text-xs font-mono text-gray-600 line-clamp-3">
-                            "...{rule.document_location?.text || rule.found_text}..."
-                          </p>
-                        </div>
-                        {onNavigateToIssue && (rule.document_location || rule.location) && (
-                          <button
-                            onClick={() => onNavigateToIssue(
-                              rule.document_location || 
-                              { start: rule.location?.start || 0, end: rule.location?.end || 0 }
-                            )}
-                            className="flex items-center gap-1 mt-2 text-xs text-blue-600 hover:text-blue-700"
-                          >
-                            <Eye className="w-3 h-3" />
-                            Перейти к месту в документе
-                          </button>
+                    {/* 5. Navigate when no found_text */}
+                    {!rule.found_text && onNavigateToIssue && (rule.document_location || rule.location) && (
+                      <button
+                        onClick={() => onNavigateToIssue(
+                          rule.document_location ||
+                          { start: rule.location?.start || 0, end: rule.location?.end || 0 }
                         )}
-                      </div>
+                        className="flex items-center gap-1 text-xs text-blue-600 hover:text-blue-700"
+                      >
+                        <Eye className="w-3 h-3" />
+                        Перейти к месту в документе
+                      </button>
                     )}
 
+                    {/* Citations */}
                     {rule.citations && rule.citations.length > 0 && (
-                      <div>
-                        <h4 className="text-xs font-medium mb-1" style={{ color: 'var(--color-text-secondary)' }}>
-                          Источники
-                        </h4>
-                        <div className="space-y-1">
-                          {rule.citations.map((citation, idx) => (
-                            <a
-                              key={idx}
-                              href={citation}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              className="flex items-center gap-1 text-xs text-blue-600 hover:text-blue-700"
-                            >
-                              <ExternalLink className="w-3 h-3" />
-                              {citation}
-                            </a>
-                          ))}
-                        </div>
+                      <div className="space-y-1">
+                        {rule.citations.map((citation, idx) => (
+                          <a
+                            key={idx}
+                            href={citation}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="flex items-center gap-1 text-xs text-blue-600 hover:text-blue-700"
+                          >
+                            <ExternalLink className="w-3 h-3" />
+                            {citation}
+                          </a>
+                        ))}
                       </div>
                     )}
                   </div>
                 )}
               </div>
-            ))}
+            )})}
           </div>
         )}
       </div>

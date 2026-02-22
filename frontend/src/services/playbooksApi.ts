@@ -16,7 +16,7 @@ export interface PlaybookRule {
   extraction_prompt?: string
   validation_prompt?: string
   suggested_clause_template?: string
-  fallback_options?: any[]
+  fallback_options?: any
   priority: number
   severity: 'low' | 'medium' | 'high' | 'critical'
   is_active: boolean
@@ -108,7 +108,7 @@ export const getPlaybooks = async (params?: {
   include_system?: boolean
   include_public?: boolean
 }): Promise<Playbook[]> => {
-  const response = await api.get('/api/playbooks', { params })
+  const response = await api.get('/api/playbooks/', { params })
   // Ensure we always return an array
   return Array.isArray(response.data) ? response.data : []
 }
@@ -127,7 +127,7 @@ export const createPlaybook = async (data: {
   is_public?: boolean
   rules?: Omit<PlaybookRule, 'id' | 'playbook_id' | 'created_at'>[]
 }): Promise<Playbook> => {
-  const response = await api.post('/api/playbooks', data)
+  const response = await api.post('/api/playbooks/', data)
   return response.data
 }
 

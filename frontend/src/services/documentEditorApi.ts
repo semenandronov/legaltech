@@ -80,6 +80,26 @@ export async function createDocument(
 }
 
 /**
+ * Create a document in the editor from an uploaded case file.
+ * If the file was already imported, returns the existing document.
+ */
+export async function createDocumentFromFile(
+  fileId: string,
+  caseId: string,
+  title?: string
+): Promise<Document> {
+  try {
+    const response = await apiClient.post<Document>(
+      `${BASE_URL}/api/documents-editor/create-from-file/${fileId}`,
+      { case_id: caseId, title }
+    )
+    return response.data
+  } catch (error) {
+    throw new Error(extractErrorMessage(error))
+  }
+}
+
+/**
  * Get a document by ID
  */
 export async function getDocument(documentId: string): Promise<Document> {
@@ -227,6 +247,9 @@ export async function chatOverDocument(
   options?: {
     deepThink?: boolean
     legalResearch?: boolean
+    currentContent?: string
+    mode?: 'ask' | 'edit' | 'draft'
+    selectedText?: string
   }
 ): Promise<DocumentChatResponse> {
   try {
@@ -236,6 +259,9 @@ export async function chatOverDocument(
         question,
         deep_think: options?.deepThink ?? false,
         legal_research: options?.legalResearch ?? false,
+        current_content: options?.currentContent ?? null,
+        mode: options?.mode ?? 'ask',
+        selected_text: options?.selectedText ?? null,
       }
     )
     return response.data
