@@ -101,6 +101,14 @@ class ColumnExamplesRequest(BaseModel):
     examples: List[ColumnExampleRequest]
 
 
+class GenerateFromQuestionsRequest(BaseModel):
+    questions_text: str
+
+
+class BulkColumnsRequest(BaseModel):
+    columns: List[ColumnCreateRequest]
+
+
 class TableModeUpdateRequest(BaseModel):
     table_mode: str  # 'document', 'entity', 'fact'
     entity_config: Optional[dict] = None
@@ -327,6 +335,42 @@ async def add_column(
     except Exception as e:
         logger.error(f"Error adding column: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail="Failed to add column")
+
+
+@router.post("/{review_id}/columns/bulk")
+async def add_columns_bulk(
+    review_id: str,
+    request: BulkColumnsRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """Add multiple columns in one request."""
+    try:
+        service = TabularReviewService(db)
+        added = []
+        for req in request.columns:
+            column = service.add_column(
+                review_id=review_id,
+                column_label=req.column_label,
+                column_type=req.column_type,
+                prompt=req.prompt,
+                user_id=current_user.id,
+                column_config=req.column_config,
+            )
+            added.append({
+                "id": column.id,
+                "column_label": column.column_label,
+                "column_type": column.column_type,
+                "prompt": column.prompt,
+                "column_config": column.column_config,
+                "order_index": column.order_index,
+            })
+        return {"columns": added}
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        logger.error(f"Error adding columns bulk: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Failed to add columns")
 
 
 @router.patch("/{review_id}/columns/{column_id}")
@@ -1989,6 +2033,44 @@ async def generate_column_prompt(
     except Exception as e:
         logger.error(f"Error generating column prompt: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail="Failed to generate prompt")
+
+
+@router.post("/{review_id}/columns/generate-from-questions")
+async def generate_columns_from_questions(
+    review_id: str,
+    request: GenerateFromQuestionsRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """Generate column suggestions from a block of questions text (no DB write)."""
+    try:
+        from app.services.smart_column_service import SmartColumnService
+        from app.models.tabular_review import TabularReview
+
+        review = db.query(TabularReview).filter(
+            and_(TabularReview.id == review_id, TabularReview.user_id == current_user.id)
+        ).first()
+        if not review:
+            raise HTTPException(status_code=404, detail="Tabular review not found or access denied")
+
+        service = SmartColumnService(db)
+        columns = await service.generate_columns_from_questions(request.questions_text)
+        return {
+            "columns": [
+                {
+                    "column_label": c.column_label,
+                    "column_type": c.column_type,
+                    "prompt": c.prompt,
+                    "column_config": c.column_config,
+                }
+                for c in columns
+            ]
+        }
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.error(f"Error generating columns from questions: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Failed to generate columns from questions")
 
 
 @router.post("/{review_id}/columns/smart-from-description")

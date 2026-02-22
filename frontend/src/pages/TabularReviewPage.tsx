@@ -5,6 +5,7 @@ import UnifiedSidebar from "../components/Layout/UnifiedSidebar"
 import { TabularReviewTable } from "../components/TabularReview/TabularReviewTable"
 import { TabularReviewToolbar } from "../components/TabularReview/TabularReviewToolbar"
 import { ColumnBuilder } from "../components/TabularReview/ColumnBuilder"
+import { BulkColumnBuilder } from "../components/TabularReview/BulkColumnBuilder"
 import { InlineCellEditor } from "../components/TabularReview/InlineCellEditor"
 import { DocumentSelector } from "../components/TabularReview/DocumentSelector"
 import { TabularDocumentViewer } from "../components/TabularReview/TabularDocumentViewer"
@@ -944,7 +945,7 @@ const TabularReviewPage: React.FC = () => {
           </div>
         </div>
 
-        {/* Column Builder: одни и те же модалки для создания и редактирования */}
+        {/* Edit column: single-column wizard */}
         {editingColumn != null && (
           <ColumnBuilder
             isOpen={true}
@@ -957,11 +958,13 @@ const TabularReviewPage: React.FC = () => {
             anchorEl={editColumnAnchorEl}
           />
         )}
-        {showColumnBuilder && tableData.columns.length === 0 && (
-          <ColumnBuilder
+        {/* Column builder: bulk generate from questions (toolbar button or empty table) */}
+        {showColumnBuilder && reviewId && (
+          <BulkColumnBuilder
             isOpen={true}
             onClose={() => setShowColumnBuilder(false)}
-            onSave={handleAddColumn}
+            reviewId={reviewId}
+            onColumnsAdded={loadReviewData}
           />
         )}
 

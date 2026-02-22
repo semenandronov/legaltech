@@ -77,6 +77,17 @@ export interface TabularColumn {
   order_index: number
 }
 
+/** Column suggestion from generate-from-questions (no id until saved) */
+export interface ProposedColumn {
+  column_label: string
+  column_type: string
+  prompt: string
+  column_config?: {
+    options?: Array<{ label: string; color: string }>
+    allow_custom?: boolean
+  }
+}
+
 export interface SourceReference {
   page?: number | null
   section?: string | null
@@ -308,6 +319,42 @@ export const tabularReviewApi = {
         column_type: columnType,
         prompt,
         column_config: columnConfig,
+      })
+      return response.data
+    } catch (error) {
+      throw new Error(extractErrorMessage(error))
+    }
+  },
+
+  // Generate column suggestions from questions text (no DB write)
+  async generateColumnsFromQuestions(
+    reviewId: string,
+    questionsText: string
+  ): Promise<{ columns: ProposedColumn[] }> {
+    try {
+      const response = await apiClient.post(
+        `/api/tabular-review/${reviewId}/columns/generate-from-questions`,
+        { questions_text: questionsText }
+      )
+      return response.data
+    } catch (error) {
+      throw new Error(extractErrorMessage(error))
+    }
+  },
+
+  // Add multiple columns in one request
+  async addColumnsBulk(
+    reviewId: string,
+    columns: ProposedColumn[]
+  ): Promise<{ columns: TabularColumn[] }> {
+    try {
+      const response = await apiClient.post(`/api/tabular-review/${reviewId}/columns/bulk`, {
+        columns: columns.map((c) => ({
+          column_label: c.column_label,
+          column_type: c.column_type,
+          prompt: c.prompt,
+          column_config: c.column_config,
+        })),
       })
       return response.data
     } catch (error) {

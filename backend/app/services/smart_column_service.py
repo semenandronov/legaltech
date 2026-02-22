@@ -19,6 +19,11 @@ class ColumnDescription(BaseModel):
     validation_rules: Optional[Dict[str, Any]] = Field(None, description="Additional validation rules if needed")
 
 
+class ColumnDescriptionList(BaseModel):
+    """List of column definitions for bulk generation from questions text"""
+    columns: List[ColumnDescription] = Field(description="List of column definitions", default_factory=list)
+
+
 class Example(BaseModel):
     """Example for column creation from examples"""
     document_text: str = Field(description="Text from document")
@@ -236,4 +241,75 @@ class SmartColumnService:
         except Exception as e:
             logger.error(f"Error creating column from examples: {e}", exc_info=True)
             raise ValueError(f"Failed to create column from examples: {str(e)}")
+
+    async def generate_columns_from_questions(self, questions_text: str) -> List[ColumnDescription]:
+        """
+        Generate a list of column definitions from a block of text containing multiple questions.
+        Does not write to DB; returns structured suggestions only.
+
+        Args:
+            questions_text: Raw text with multiple questions (newlines, "?" etc. as separators)
+
+        Returns:
+            List of ColumnDescription (column_label, column_type, prompt, column_config)
+        """
+        if not self.llm:
+            raise ValueError("LLM not configured")
+
+        text = (questions_text or "").strip()
+        if not text:
+            return []
+
+        prompt = ChatPromptTemplate.from_messages([
+            ("system", """Ты эксперт по созданию колонок для извлечения информации из юридических документов.
+
+Твоя задача: по тексту с несколькими вопросами/запросами разбить его на отдельные вопросы и для каждого создать определение колонки.
+
+Типы колонок (используй только эти значения):
+- text: свободный текст
+- number: числовое значение
+- currency: денежная сумма с валютой
+- yes_no: да/нет (boolean)
+- date: дата
+- tag: один тег из предопределенного списка
+- verbatim: точная цитата из документа
+- manual_input: ручной ввод (без AI)
+
+Для каждого вопроса определи:
+1. column_label: короткое название колонки (на английском, для заголовка таблицы)
+2. column_type: наиболее подходящий тип из списка выше
+3. prompt: четкий промпт для AI-извлечения (на английском), формулировка вопроса
+4. column_config: только для type=tag — предложи options: [{label, color}]; иначе null
+
+Верни список колонок в том же порядке, в каком идут вопросы в тексте. Не объединяй и не пропускай вопросы."""),
+            ("human", "Обработай следующий текст и верни список определений колонок:\n\n{questions_text}"),
+        ])
+
+        try:
+            structured_llm = self.llm.with_structured_output(
+                ColumnDescriptionList,
+                method="json_schema",
+            )
+            chain = prompt | structured_llm
+            result = await chain.ainvoke({"questions_text": text})
+            columns = getattr(result, "columns", None) or []
+            if not isinstance(columns, list):
+                return []
+            out = []
+            for c in columns:
+                if isinstance(c, ColumnDescription):
+                    out.append(c)
+                elif isinstance(c, dict):
+                    out.append(ColumnDescription(
+                        column_label=c.get("column_label", ""),
+                        column_type=c.get("column_type", "text"),
+                        prompt=c.get("prompt", ""),
+                        column_config=c.get("column_config"),
+                        validation_rules=c.get("validation_rules"),
+                    ))
+            logger.info(f"Generated {len(out)} column suggestions from questions text")
+            return out
+        except Exception as e:
+            logger.error(f"Error generating columns from questions: {e}", exc_info=True)
+            return []
 
