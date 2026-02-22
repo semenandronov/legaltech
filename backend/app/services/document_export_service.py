@@ -11,13 +11,69 @@ from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib.units import inch
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table as ReportLabTable, TableStyle
 from reportlab.lib import colors
+from reportlab.pdfbase import pdfmetrics
+from reportlab.pdfbase.ttfonts import TTFont
 from io import BytesIO
 import logging
+import os
 import re
 from html.parser import HTMLParser
 from html import unescape
 
 logger = logging.getLogger(__name__)
+
+# Register Cyrillic-supporting fonts for PDF export
+_FONT_REGISTERED = False
+_FONT_NAME = 'Helvetica'  # fallback
+_FONT_NAME_BOLD = 'Helvetica-Bold'
+_FONT_NAME_ITALIC = 'Helvetica-Oblique'
+
+def _register_cyrillic_font():
+    """Register a TTF font that supports Cyrillic characters."""
+    global _FONT_REGISTERED, _FONT_NAME, _FONT_NAME_BOLD, _FONT_NAME_ITALIC
+    if _FONT_REGISTERED:
+        return
+
+    # Try common font paths (macOS, Linux, bundled)
+    font_candidates = [
+        # macOS
+        ('/System/Library/Fonts/Supplemental/Arial.ttf',
+         '/System/Library/Fonts/Supplemental/Arial Bold.ttf',
+         '/System/Library/Fonts/Supplemental/Arial Italic.ttf'),
+        ('/Library/Fonts/Arial Unicode.ttf', None, None),
+        # Linux (DejaVu)
+        ('/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf',
+         '/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf',
+         '/usr/share/fonts/truetype/dejavu/DejaVuSans-Oblique.ttf'),
+        # Linux (Liberation)
+        ('/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf',
+         '/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf',
+         '/usr/share/fonts/truetype/liberation/LiberationSans-Italic.ttf'),
+    ]
+
+    for regular, bold, italic in font_candidates:
+        if os.path.exists(regular):
+            try:
+                pdfmetrics.registerFont(TTFont('CyrillicFont', regular))
+                _FONT_NAME = 'CyrillicFont'
+                if bold and os.path.exists(bold):
+                    pdfmetrics.registerFont(TTFont('CyrillicFont-Bold', bold))
+                    _FONT_NAME_BOLD = 'CyrillicFont-Bold'
+                else:
+                    _FONT_NAME_BOLD = 'CyrillicFont'
+                if italic and os.path.exists(italic):
+                    pdfmetrics.registerFont(TTFont('CyrillicFont-Italic', italic))
+                    _FONT_NAME_ITALIC = 'CyrillicFont-Italic'
+                else:
+                    _FONT_NAME_ITALIC = 'CyrillicFont'
+                _FONT_REGISTERED = True
+                logger.info(f"Registered Cyrillic font from: {regular}")
+                return
+            except Exception as e:
+                logger.warning(f"Failed to register font {regular}: {e}")
+                continue
+
+    logger.warning("No Cyrillic TTF font found, PDF may not render Cyrillic correctly")
 
 
 class HTMLParserForExport(HTMLParser):
@@ -210,94 +266,91 @@ class DocumentExportService:
         if not document:
             raise ValueError(f"Document {document_id} not found")
         
+        # Register Cyrillic font
+        _register_cyrillic_font()
+
         # Create PDF document
         buffer = BytesIO()
         doc = SimpleDocTemplate(buffer, pagesize=A4)
         story = []
-        
+
         styles = getSampleStyleSheet()
-        
-        # Add title
+
+        # Override all styles to use Cyrillic font
+        for style_name in styles.byName:
+            styles.byName[style_name].fontName = _FONT_NAME
+
+        # Create custom styles with Cyrillic font
         title_style = ParagraphStyle(
             'DocumentTitle',
             parent=styles['Heading1'],
+            fontName=_FONT_NAME_BOLD,
             fontSize=18,
             spaceAfter=12
         )
+        h1_style = ParagraphStyle('CyrH1', parent=styles['Heading1'], fontName=_FONT_NAME_BOLD, fontSize=16)
+        h2_style = ParagraphStyle('CyrH2', parent=styles['Heading2'], fontName=_FONT_NAME_BOLD, fontSize=14)
+        h3_style = ParagraphStyle('CyrH3', parent=styles['Heading3'], fontName=_FONT_NAME_BOLD, fontSize=12)
+        h4_style = ParagraphStyle('CyrH4', parent=styles['Heading4'], fontName=_FONT_NAME_BOLD, fontSize=11)
+        normal_style = ParagraphStyle('CyrNormal', parent=styles['Normal'], fontName=_FONT_NAME, fontSize=10)
+        bold_style = ParagraphStyle('CyrBold', parent=styles['Normal'], fontName=_FONT_NAME_BOLD, fontSize=10)
+        italic_style = ParagraphStyle('CyrItalic', parent=styles['Normal'], fontName=_FONT_NAME_ITALIC, fontSize=10)
+
         story.append(Paragraph(document.title, title_style))
         story.append(Spacer(1, 12))
-        
+
         # Parse HTML content
         html_content = document.content
         if not html_content:
             html_content = "<p>Пустой документ</p>"
-        
+
         # Remove script and style tags
         html_content = re.sub(r'<script[^>]*>.*?</script>', '', html_content, flags=re.DOTALL | re.IGNORECASE)
-        html_content = re.sub(r'<style[^>]*>.*?</script>', '', html_content, flags=re.DOTALL | re.IGNORECASE)
-        
+        html_content = re.sub(r'<style[^>]*>.*?</style>', '', html_content, flags=re.DOTALL | re.IGNORECASE)
+
         # Parse HTML
         parser = HTMLParserForExport()
         parser.feed(html_content)
         elements = parser.get_elements()
-        
+
         # Convert elements to PDF
         for element in elements:
             if element['type'] == 'text':
                 tag = element['tag']
                 text = unescape(element['text'])
-                
+
                 if not text:
                     continue
-                
+
                 # Handle different HTML tags
                 if tag == 'h1':
-                    story.append(Paragraph(text, styles['Heading1']))
+                    story.append(Paragraph(text, h1_style))
                     story.append(Spacer(1, 12))
                 elif tag == 'h2':
-                    story.append(Paragraph(text, styles['Heading2']))
+                    story.append(Paragraph(text, h2_style))
                     story.append(Spacer(1, 10))
                 elif tag == 'h3':
-                    story.append(Paragraph(text, styles['Heading3']))
+                    story.append(Paragraph(text, h3_style))
                     story.append(Spacer(1, 8))
-                elif tag == 'h4':
-                    story.append(Paragraph(text, styles['Heading4']))
+                elif tag in ['h4', 'h5', 'h6']:
+                    story.append(Paragraph(text, h4_style))
                     story.append(Spacer(1, 6))
-                elif tag == 'h5':
-                    story.append(Paragraph(text, styles['Heading5']))
-                    story.append(Spacer(1, 4))
-                elif tag == 'h6':
-                    story.append(Paragraph(text, styles['Heading6']))
-                    story.append(Spacer(1, 4))
                 elif tag == 'p':
-                    story.append(Paragraph(text, styles['Normal']))
+                    story.append(Paragraph(text, normal_style))
                     story.append(Spacer(1, 6))
                 elif tag == 'li':
-                    story.append(Paragraph(f"• {text}", styles['Normal']))
+                    story.append(Paragraph(f"\u2022 {text}", normal_style))
                     story.append(Spacer(1, 4))
                 elif tag in ['strong', 'b']:
-                    # Bold text
-                    bold_style = ParagraphStyle(
-                        'BoldText',
-                        parent=styles['Normal'],
-                        fontName='Helvetica-Bold'
-                    )
                     story.append(Paragraph(text, bold_style))
                     story.append(Spacer(1, 6))
                 elif tag in ['em', 'i']:
-                    # Italic text
-                    italic_style = ParagraphStyle(
-                        'ItalicText',
-                        parent=styles['Normal'],
-                        fontName='Helvetica-Oblique'
-                    )
                     story.append(Paragraph(text, italic_style))
                     story.append(Spacer(1, 6))
                 else:
-                    # Default to normal paragraph
-                    story.append(Paragraph(text, styles['Normal']))
+                    story.append(Paragraph(text, normal_style))
                     story.append(Spacer(1, 6))
-        
+
         # Build PDF
         doc.build(story)
         buffer.seek(0)

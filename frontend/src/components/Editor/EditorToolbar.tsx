@@ -1,9 +1,9 @@
 import { Editor } from '@tiptap/react'
-import { 
-  Bold, 
-  Italic, 
-  List, 
-  ListOrdered, 
+import {
+  Bold,
+  Italic,
+  List,
+  ListOrdered,
   Link as LinkIcon,
   Undo,
   Redo,
@@ -32,7 +32,14 @@ interface EditorToolbarProps {
   onOpenClauseLibrary?: () => void
 }
 
-export const EditorToolbar = ({ 
+// Prevent toolbar buttons from stealing focus from the editor.
+// This is the standard fix for TipTap toolbar — without it,
+// the first click only returns focus and the command is ignored.
+const preventFocusLoss = (e: React.MouseEvent) => {
+  e.preventDefault()
+}
+
+export const EditorToolbar = ({
   editor,
   trackChangesEnabled = false,
   onTrackChangesToggle,
@@ -45,13 +52,13 @@ export const EditorToolbar = ({
     return null
   }
 
-  const ToolbarButton = ({ 
-    onClick, 
-    isActive, 
-    disabled, 
-    icon: Icon, 
-    title 
-  }: { 
+  const ToolbarButton = ({
+    onClick,
+    isActive,
+    disabled,
+    icon: Icon,
+    title
+  }: {
     onClick: () => void
     isActive?: boolean
     disabled?: boolean
@@ -59,11 +66,12 @@ export const EditorToolbar = ({
     title: string
   }) => (
     <button
+      onMouseDown={preventFocusLoss}
       onClick={onClick}
       disabled={disabled}
       aria-label={title}
       aria-pressed={isActive}
-      className={`p-2 rounded transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-1 ${
+      className={`p-2 rounded transition-colors ${
         isActive
           ? 'bg-blue-100 text-blue-700'
           : 'hover:bg-gray-100 text-gray-700'
@@ -177,12 +185,12 @@ export const EditorToolbar = ({
       />
 
       {/* Table */}
-      <div className="w-px h-6 bg-gray-300 mx-1"></div>
       <button
+        onMouseDown={preventFocusLoss}
         onClick={() => {
           editor.chain().focus().insertTable({ rows: 3, cols: 3, withHeaderRow: true }).run()
         }}
-        className="p-2 rounded hover:bg-gray-100 text-gray-700 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
+        className="p-2 rounded hover:bg-gray-100 text-gray-700 transition-colors"
         aria-label="Вставить таблицу"
       >
         <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
@@ -195,8 +203,9 @@ export const EditorToolbar = ({
       {/* Find & Replace */}
       {onOpenFindReplace && (
         <button
+          onMouseDown={preventFocusLoss}
           onClick={onOpenFindReplace}
-          className="p-2 rounded hover:bg-gray-100 text-gray-700 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
+          className="p-2 rounded hover:bg-gray-100 text-gray-700 transition-colors"
           aria-label="Поиск и замена"
         >
           <Search className="w-4 h-4" aria-hidden="true" />
@@ -206,8 +215,9 @@ export const EditorToolbar = ({
       {/* Clause Library */}
       {onOpenClauseLibrary && (
         <button
+          onMouseDown={preventFocusLoss}
           onClick={onOpenClauseLibrary}
-          className="p-2 rounded hover:bg-gray-100 text-gray-700 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
+          className="p-2 rounded hover:bg-gray-100 text-gray-700 transition-colors"
           aria-label="Библиотека клауз"
         >
           <Library className="w-4 h-4" aria-hidden="true" />
@@ -225,6 +235,7 @@ export const EditorToolbar = ({
             <span>Риски подсвечены</span>
           </div>
           <button
+            onMouseDown={preventFocusLoss}
             onClick={onClearRisks}
             className="p-2 rounded hover:bg-amber-100 text-amber-600 transition-colors"
             aria-label="Очистить подсветку рисков"
@@ -239,6 +250,7 @@ export const EditorToolbar = ({
       {onTrackChangesToggle && (
         <div className="flex items-center gap-1">
           <button
+            onMouseDown={preventFocusLoss}
             onClick={() => onTrackChangesToggle(!trackChangesEnabled)}
             className={`flex items-center gap-1.5 px-3 py-1.5 rounded text-sm transition-colors ${
               trackChangesEnabled
@@ -251,27 +263,27 @@ export const EditorToolbar = ({
             <GitCompareArrows className="w-4 h-4" aria-hidden="true" />
             <span className="hidden sm:inline">Track Changes</span>
           </button>
-          
+
           {/* Accept/Reject buttons when Track Changes is enabled */}
           {trackChangesEnabled && (
             <>
               <button
+                onMouseDown={preventFocusLoss}
                 onClick={() => {
-                  // Accept all changes - clear pending changes
                   editor.chain().focus().clearPendingChanges().run()
                 }}
-                className="p-1.5 rounded hover:bg-green-100 text-green-600 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-green-500"
+                className="p-1.5 rounded hover:bg-green-100 text-green-600 transition-colors"
                 aria-label="Принять все изменения"
               >
                 <Check className="w-4 h-4" aria-hidden="true" />
               </button>
               <button
+                onMouseDown={preventFocusLoss}
                 onClick={() => {
-                  // Reject all changes - revert and clear pending changes
                   editor.chain().focus().undo().run()
                   editor.chain().focus().clearPendingChanges().run()
                 }}
-                className="p-1.5 rounded hover:bg-red-100 text-red-600 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-500"
+                className="p-1.5 rounded hover:bg-red-100 text-red-600 transition-colors"
                 aria-label="Отклонить все изменения"
               >
                 <X className="w-4 h-4" aria-hidden="true" />
@@ -283,4 +295,3 @@ export const EditorToolbar = ({
     </div>
   )
 }
-

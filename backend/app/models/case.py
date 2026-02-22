@@ -71,6 +71,7 @@ class File(Base):
     file_path = Column(String(512), nullable=True)  # Путь к оригинальному файлу на диске (deprecated, kept for backward compatibility)
     file_content = Column(LargeBinary, nullable=True)  # Binary content of the original file stored in DB
     html_content = Column(Text, nullable=True)  # Cached HTML representation of the file for faster viewing
+    folder_id = Column(String, ForeignKey("folders.id", ondelete="SET NULL"), nullable=True, index=True)
     # metadata удалено - не существует в БД, используем другие поля для хранения метаданных
     created_at = Column(DateTime, default=datetime.utcnow)
 

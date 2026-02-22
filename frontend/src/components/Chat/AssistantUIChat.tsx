@@ -13,8 +13,20 @@ import { TableCard } from './TableCard'
 import { HumanFeedbackRequestCard } from './HumanFeedbackRequestCard'
 import { TableClarificationModal } from './TableClarificationModal'
 import { DocumentCard } from './DocumentCard'
-import { WelcomeScreen } from './WelcomeScreen'
+import { PlaybookCheckCard, type PlaybookCheckData } from './PlaybookCheckCard'
+
+// Wrapper to suppress type error on dynamic check data
+const PlaybookCheckCardLazy = ({ check }: { check: PlaybookCheckData }) => (
+  <PlaybookCheckCard check={check} />
+)
 import { SettingsPanel } from './SettingsPanel'
+
+const QUICK_ACTIONS = [
+  'Какие ключевые сроки важны в этом деле?',
+  'Что говорится в договоре о сроках?',
+  'Какие суммы упоминаются в документах?',
+  'Какие риски есть в этом договоре?',
+]
 import {
   PromptInputProvider,
   PromptInput,
@@ -27,7 +39,7 @@ import { Loader } from '../ai-elements/loader'
 import DocumentPreviewSheet from './DocumentPreviewSheet'
 import { SourceInfo } from '@/services/api'
 import { useOptionalProviderAttachments } from '../ai-elements/prompt-input'
-import { Plus, Check, FileText, X, MessageCircleQuestion, Pencil, Square, Paperclip } from 'lucide-react'
+import { Plus, Check, FileText, X, MessageCircleQuestion, Pencil, Square, Paperclip, ChevronDown } from 'lucide-react'
 import type { ExtendedFileUIPart } from '../ai-elements/prompt-input'
 import { EditSuggestionsList } from '../Editor/EditSuggestionCard'
 import type { StructuredEdit } from '@/services/documentEditorApi'
@@ -248,6 +260,8 @@ interface Message {
     preview?: string
     caseId: string
   }
+  // Playbook check: структурированный результат проверки
+  playbookCheckResult?: import('./PlaybookCheckCard').PlaybookCheckData
   // Редактирование документа
   editedContent?: string  // Для применения правок к документу
   // Структурированные изменения для редактора
@@ -283,6 +297,7 @@ interface AssistantUIChatProps {
   onDocumentDrop?: (documentFilename: string) => void
   // Режим редактора документов
   documentEditorMode?: boolean
+  editorChatMode?: 'edit' | 'ask'
   currentDocumentId?: string
   currentDocumentContent?: string  // Для передачи контекста документа
   selectedText?: string
@@ -293,6 +308,7 @@ interface AssistantUIChatProps {
   onOpenDocumentInEditor?: (documentId: string) => void
   onScrollToText?: (text: string) => boolean
   onReplaceTextInDocument?: (originalText: string, newText: string) => boolean
+  onReplaceMultipleTexts?: (replacements: Array<{ originalText: string; newText: string }>) => number
   onSetRisks?: (risks: RiskItem[]) => void
 }
 
@@ -305,6 +321,7 @@ interface PromptInputWithDropProps {
   onStop?: () => void
   selectedText?: string
   documentEditorMode?: boolean
+  editorChatMode?: 'edit' | 'ask'
   deepThink: boolean
   legalResearch: boolean
   draftMode: boolean
@@ -374,6 +391,7 @@ const PromptInputWithDrop = ({
   onStop,
   selectedText,
   documentEditorMode,
+  editorChatMode = 'edit',
   deepThink,
   legalResearch,
   draftMode,
@@ -386,6 +404,31 @@ const PromptInputWithDrop = ({
   const fileAttachInputRef = useRef<HTMLInputElement | null>(null)
   const [isDraggingOver, setIsDraggingOver] = useState(false)
   const dragCounterRef = useRef(0)
+  const [showModeDropdown, setShowModeDropdown] = useState(false)
+  const modeDropdownRef = useRef<HTMLDivElement | null>(null)
+
+  // Compute current mode label/color from toggle state
+  const currentModeName = deepThink ? 'Deep Think' : draftMode ? 'Draft' : legalResearch ? 'ГАРАНТ' : 'Ask'
+  const currentModeColor = deepThink ? '#6366f1' : draftMode ? '#10b981' : legalResearch ? '#0ea5e9' : '#374151'
+
+  // Close mode dropdown on outside click
+  useEffect(() => {
+    if (!showModeDropdown) return
+    const handleClick = (e: MouseEvent) => {
+      if (modeDropdownRef.current && !modeDropdownRef.current.contains(e.target as Node)) {
+        setShowModeDropdown(false)
+      }
+    }
+    document.addEventListener('mousedown', handleClick)
+    return () => document.removeEventListener('mousedown', handleClick)
+  }, [showModeDropdown])
+
+  const handleModeSelect = (mode: 'ask' | 'deepThink' | 'draft' | 'legal') => {
+    onDeepThinkChange(mode === 'deepThink')
+    onDraftModeChange(mode === 'draft')
+    onLegalResearchChange(mode === 'legal')
+    setShowModeDropdown(false)
+  }
   
   // Сбрасываем индикатор drag при потере фокуса окна или через таймаут
   useEffect(() => {
@@ -594,8 +637,13 @@ const PromptInputWithDrop = ({
       >
         <PromptInputBody>
           <div className="flex flex-col w-full gap-2 px-2 pt-1.5 pb-2">
-            <PromptInputTextarea 
-              placeholder="Задайте уточняющий вопрос"
+            <PromptInputTextarea
+              placeholder={documentEditorMode
+                ? (editorChatMode === 'edit'
+                  ? "Опишите, что нужно изменить в документе..."
+                  : "Задайте вопрос о документе...")
+                : "Задайте уточняющий вопрос"
+              }
               className="w-full min-h-[56px] max-h-[200px] text-base px-3 py-2 resize-none focus:outline-none leading-relaxed overflow-y-auto"
               style={{
                 color: 'var(--color-text-primary)',
@@ -603,7 +651,47 @@ const PromptInputWithDrop = ({
               }}
             />
             <PromptInputFooter className="flex items-center justify-between px-3 py-2 mt-1">
-              <div className="flex items-center gap-1">
+              <div className="flex items-center gap-0.5">
+                {/* Mode selector dropdown */}
+                <div className="relative" ref={modeDropdownRef}>
+                  <button
+                    type="button"
+                    onClick={() => setShowModeDropdown(!showModeDropdown)}
+                    className="flex items-center gap-1 px-2 py-1.5 rounded-lg hover:bg-gray-100 transition-colors text-xs font-semibold"
+                    style={{ color: currentModeColor }}
+                  >
+                    {currentModeName}
+                    <ChevronDown className="w-3 h-3 text-gray-400" />
+                  </button>
+                  {showModeDropdown && (
+                    <div className="absolute bottom-full left-0 mb-1 bg-white border rounded-xl shadow-lg overflow-hidden z-50 min-w-[180px]" style={{ borderColor: '#e5e7eb' }}>
+                      {[
+                        { id: 'ask' as const, label: 'Ask', hint: 'Вопросы по документам', color: '#374151' },
+                        { id: 'deepThink' as const, label: 'Deep Think', hint: 'Углублённый анализ', color: '#6366f1' },
+                        ...(documentEditorMode ? [] : [{ id: 'draft' as const, label: 'Draft', hint: 'Создание документов', color: '#10b981' }]),
+                        { id: 'legal' as const, label: 'ГАРАНТ', hint: 'Поиск по законодательству', color: '#0ea5e9' },
+                      ].map((m) => {
+                        const isActive = currentModeName === m.label
+                        return (
+                          <button
+                            key={m.id}
+                            type="button"
+                            onClick={() => handleModeSelect(m.id)}
+                            className="w-full flex items-center gap-2.5 px-3 py-2.5 text-left hover:bg-gray-50 transition-colors"
+                            style={{ color: isActive ? m.color : '#374151' }}
+                          >
+                            <div className="min-w-0 flex-1">
+                              <div className="text-xs font-semibold">{m.label}</div>
+                              <div className="text-xs text-gray-400">{m.hint}</div>
+                            </div>
+                            {isActive && <Check className="w-3.5 h-3.5 shrink-0" style={{ color: m.color }} />}
+                          </button>
+                        )
+                      })}
+                    </div>
+                  )}
+                </div>
+
                 <input
                   ref={fileAttachInputRef}
                   type="file"
@@ -712,6 +800,7 @@ export const AssistantUIChat = forwardRef<AssistantUIChatRef, AssistantUIChatPro
   isLoadingCaseInfo = false,
   onDocumentDrop,
   documentEditorMode = false,
+  editorChatMode = 'edit',
   currentDocumentId,
   currentDocumentContent,
   selectedText,
@@ -719,6 +808,7 @@ export const AssistantUIChat = forwardRef<AssistantUIChatRef, AssistantUIChatPro
   onOpenDocumentInEditor,
   onScrollToText,
   onReplaceTextInDocument,
+  onReplaceMultipleTexts,
   onSetRisks: _onSetRisks
 }, ref) => {
   const params = useParams<{ caseId: string }>()
@@ -786,7 +876,10 @@ export const AssistantUIChat = forwardRef<AssistantUIChatRef, AssistantUIChatPro
     const currentAttachments = filesSnapshot.length > 0 ? [...filesSnapshot] : []
 
     // Add user message с файлами и типом сообщения
-    const messageType = documentEditorMode ? detectMessageType(userMessage) : undefined
+    // Если пользователь выбрал режим вручную - используем его, иначе автоопределение
+    const messageType = documentEditorMode
+      ? (editorChatMode === 'ask' ? 'question' : detectMessageType(userMessage))
+      : undefined
     const userMsg: Message = {
       id: `user-${Date.now()}`,
       role: 'user',
@@ -870,6 +963,8 @@ export const AssistantUIChat = forwardRef<AssistantUIChatRef, AssistantUIChatPro
         if (selectedText) {
           requestBody.selected_text = selectedText
         }
+        // Передаём hint режима от пользователя (edit/ask)
+        requestBody.editor_mode_hint = editorChatMode
       }
 
       // Обработка прикрепленных файлов для обычных сообщений (не draft_mode)
@@ -1155,6 +1250,16 @@ export const AssistantUIChat = forwardRef<AssistantUIChatRef, AssistantUIChatPro
                           },
                           content: msg.content + `\n\n✅ Документ "${data.document.title}" создан!`,
                         }
+                      : msg
+                  )
+                )
+              }
+              // Обработка результата проверки Playbook
+              if (data.type === 'playbook_check_result' && data.check) {
+                setMessages((prev) =>
+                  prev.map((msg) =>
+                    msg.id === assistantMsgId
+                      ? { ...msg, playbookCheckResult: data.check }
                       : msg
                   )
                 )
@@ -1461,30 +1566,75 @@ export const AssistantUIChat = forwardRef<AssistantUIChatRef, AssistantUIChatPro
       className={`flex flex-col h-full ${className || ''}`}
       style={{ backgroundColor: 'var(--color-bg-primary)' }}
     >
+      {/* Loading state */}
+      {isLoadingHistory && (
+        <div className="flex-1 flex items-center justify-center">
+          <Loader size={24} style={{ color: 'var(--color-text-muted)' }} />
+          <span className="ml-3 text-sm" style={{ color: 'var(--color-text-secondary)' }}>
+            Загрузка истории...
+          </span>
+        </div>
+      )}
+
+      {/* Harvey-style empty state: centered input */}
+      {!isLoadingHistory && messages.length === 0 && (
+        <div className="flex-1 flex flex-col items-center justify-center px-6 pb-16">
+          <div className="w-full max-w-2xl space-y-6">
+            <div className="text-center space-y-2">
+              <h1 className="text-2xl font-semibold" style={{ color: 'var(--color-text-primary)' }}>
+                Чем могу помочь?
+              </h1>
+              {(caseTitle || documentCount !== undefined) ? (
+                <p className="text-sm" style={{ color: 'var(--color-text-secondary)' }}>
+                  {[caseTitle, documentCount !== undefined ? `${documentCount} ${documentCount === 1 ? 'документ' : documentCount !== undefined && documentCount < 5 ? 'документа' : 'документов'}` : null].filter(Boolean).join(' · ')}
+                </p>
+              ) : (
+                <p className="text-sm" style={{ color: 'var(--color-text-secondary)' }}>
+                  Задайте вопрос о ваших документах
+                </p>
+              )}
+            </div>
+            <PromptInputWithDrop
+              actualCaseId={actualCaseId}
+              onDocumentDrop={onDocumentDrop}
+              handlePromptSubmit={handlePromptSubmit}
+              isLoading={isLoading}
+              onStop={() => { abortControllerRef.current?.abort(); setIsLoading(false) }}
+              selectedText={selectedText}
+              documentEditorMode={documentEditorMode}
+              editorChatMode={editorChatMode}
+              deepThink={deepThink}
+              legalResearch={legalResearch}
+              draftMode={draftMode}
+              onDeepThinkChange={setDeepThink}
+              onLegalResearchChange={setLegalResearch}
+              onDraftModeChange={setDraftMode}
+            />
+            <div className="flex flex-wrap gap-2 justify-center">
+              {QUICK_ACTIONS.map((q) => (
+                <button
+                  key={q}
+                  onClick={() => handleQuickAction(q)}
+                  className="px-3 py-1.5 rounded-full text-sm border transition-colors"
+                  style={{
+                    borderColor: 'var(--color-border)',
+                    color: 'var(--color-text-secondary)',
+                    backgroundColor: 'var(--color-bg-secondary)',
+                  }}
+                >
+                  {q}
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Messages area */}
+      {!isLoadingHistory && messages.length > 0 && (
       <div className="flex-1 min-h-0 flex flex-col">
         <Conversation className="flex-1 min-h-0 flex flex-col">
           <ConversationContent className="flex-1 overflow-y-auto">
-              {isLoadingHistory ? (
-                <div className="flex items-center justify-center py-8">
-                  <Loader size={24} style={{ color: 'var(--color-text-muted)' }} />
-                  <span 
-                    className="ml-3 text-sm"
-                    style={{ color: 'var(--color-text-secondary)' }}
-                  >
-                    Загрузка истории...
-                  </span>
-                </div>
-              ) : messages.length === 0 && !isLoadingHistory ? (
-                <div className="h-full flex items-start justify-center pt-8 pb-4 overflow-y-auto">
-                  <WelcomeScreen
-                    onQuickAction={handleQuickAction}
-                    caseTitle={caseTitle}
-                    documentCount={documentCount}
-                    isLoading={isLoadingCaseInfo}
-                  />
-                </div>
-              ) : null}
 
         {messages.map((message) => {
           if (message.role === 'user') {
@@ -1670,6 +1820,10 @@ export const AssistantUIChat = forwardRef<AssistantUIChatRef, AssistantUIChatPro
                   />
                 </div>
               )}
+              {/* Результат проверки Playbook — интерактивная карточка */}
+              {message.playbookCheckResult && (
+                <PlaybookCheckCardLazy check={message.playbookCheckResult} />
+              )}
               {/* Фаза 9.3: Human feedback request card */}
               {message.feedbackRequest && (
                 message.feedbackRequest.isTableClarification ? (
@@ -1728,14 +1882,32 @@ export const AssistantUIChat = forwardRef<AssistantUIChatRef, AssistantUIChatPro
                     }
                   }}
                   onApplyAll={() => {
-                    message.structuredEdits?.forEach(edit => {
-                      if (!appliedEdits.has(edit.id) && !skippedEdits.has(edit.id) && edit.found_in_document) {
+                    const pendingEdits = (message.structuredEdits || []).filter(
+                      edit => !appliedEdits.has(edit.id) && !skippedEdits.has(edit.id) && edit.found_in_document
+                    )
+                    if (pendingEdits.length === 0) return
+
+                    // Используем пакетную замену если доступна
+                    if (onReplaceMultipleTexts && pendingEdits.length > 1) {
+                      const replacements = pendingEdits.map(edit => ({
+                        originalText: edit.original_text,
+                        newText: edit.new_text,
+                      }))
+                      const applied = onReplaceMultipleTexts(replacements)
+                      if (applied > 0) {
+                        const newApplied = new Set(appliedEdits)
+                        pendingEdits.forEach(edit => newApplied.add(edit.id))
+                        setAppliedEdits(newApplied)
+                      }
+                    } else {
+                      // Fallback: по одной замене
+                      pendingEdits.forEach(edit => {
                         const success = onReplaceTextInDocument(edit.original_text, edit.new_text)
                         if (success) {
                           setAppliedEdits(prev => new Set(prev).add(edit.id))
                         }
-                      }
-                    })
+                      })
+                    }
                   }}
                   onSkipAll={() => {
                     const newSkipped = new Set(skippedEdits)
@@ -1775,52 +1947,22 @@ export const AssistantUIChat = forwardRef<AssistantUIChatRef, AssistantUIChatPro
           </ConversationContent>
         </Conversation>
       </div>
+      )}
 
-      {/* Input area - когда нет сообщений, поле ввода внизу, Welcome Screen выше */}
-      {messages.length === 0 ? (
-        <div 
-          className="flex-shrink-0 border-t"
-          style={{ 
-            backgroundColor: 'var(--color-bg-primary)',
-            borderTopColor: 'var(--color-border)'
-          }}
-        >
-          <div 
-            className="w-full max-w-4xl mx-auto space-y-4"
-            style={{ padding: 'var(--space-4) var(--space-6)' }}
-          >
-            {/* PromptInput с готовыми компонентами из @ai */}
-            <PromptInputWithDrop
-              actualCaseId={actualCaseId}
-              onDocumentDrop={onDocumentDrop}
-              handlePromptSubmit={handlePromptSubmit}
-              isLoading={isLoading}
-              onStop={() => { abortControllerRef.current?.abort(); setIsLoading(false) }}
-              selectedText={selectedText}
-              documentEditorMode={documentEditorMode}
-              deepThink={deepThink}
-              legalResearch={legalResearch}
-              draftMode={draftMode}
-              onDeepThinkChange={setDeepThink}
-              onLegalResearchChange={setLegalResearch}
-              onDraftModeChange={setDraftMode}
-            />
-
-          </div>
-        </div>
-      ) : (
-        <div 
-          style={{ 
+      {/* Input area - only when messages exist */}
+      {!isLoadingHistory && messages.length > 0 && (
+        <div
+          style={{
             backgroundColor: 'var(--color-bg-primary)',
             padding: 'var(--space-8) var(--space-6) var(--space-4)'
           }}
         >
-          <div 
+          <div
             className="w-full max-w-4xl mx-auto"
-            style={{ 
-              display: 'flex', 
-              flexDirection: 'column', 
-              gap: 'var(--space-4)' 
+            style={{
+              display: 'flex',
+              flexDirection: 'column',
+              gap: 'var(--space-4)'
             }}
           >
             <PromptInputWithDrop
@@ -1831,6 +1973,7 @@ export const AssistantUIChat = forwardRef<AssistantUIChatRef, AssistantUIChatPro
               onStop={() => { abortControllerRef.current?.abort(); setIsLoading(false) }}
               selectedText={selectedText}
               documentEditorMode={documentEditorMode}
+              editorChatMode={editorChatMode}
               deepThink={deepThink}
               legalResearch={legalResearch}
               draftMode={draftMode}
@@ -1838,7 +1981,6 @@ export const AssistantUIChat = forwardRef<AssistantUIChatRef, AssistantUIChatPro
               onLegalResearchChange={setLegalResearch}
               onDraftModeChange={setDraftMode}
             />
-
           </div>
         </div>
       )}

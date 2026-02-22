@@ -21,50 +21,93 @@ class DocumentLoaderService:
     """Service for loading documents using LangChain loaders"""
     
     @staticmethod
+    def _ocr_pdf(content: bytes, filename: str) -> List[Document]:
+        """
+        OCR fallback for scanned PDFs using PyMuPDF + Tesseract.
+        """
+        try:
+            import fitz  # pymupdf
+            import pytesseract
+            from PIL import Image
+        except ImportError as e:
+            logger.warning(f"OCR dependencies not available: {e}")
+            return []
+
+        documents = []
+        try:
+            pdf_doc = fitz.open(stream=content, filetype="pdf")
+            for page_num in range(len(pdf_doc)):
+                page = pdf_doc[page_num]
+                # Render page to image at 300 DPI for good OCR quality
+                mat = fitz.Matrix(300 / 72, 300 / 72)
+                pix = page.get_pixmap(matrix=mat)
+                img = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
+
+                # OCR with Russian + English
+                text = pytesseract.image_to_string(img, lang='rus+eng')
+                text = text.strip()
+
+                if text:
+                    documents.append(Document(
+                        page_content=text,
+                        metadata={
+                            "source_file": filename,
+                            "source_page": page_num,
+                            "ocr": True,
+                        }
+                    ))
+            pdf_doc.close()
+
+            if documents:
+                total_chars = sum(len(d.page_content) for d in documents)
+                logger.info(f"OCR extracted text from {filename}: {len(documents)} pages, {total_chars} chars")
+
+        except Exception as e:
+            logger.error(f"OCR failed for {filename}: {e}", exc_info=True)
+
+        return documents
+
+    @staticmethod
     def load_pdf(content: bytes, filename: str) -> List[Document]:
         """
-        Load PDF document using PyPDFLoader
-        
-        Args:
-            content: PDF file content as bytes
-            filename: Original filename
-            
-        Returns:
-            List of Document objects with metadata
+        Load PDF document using PyPDFLoader with OCR fallback for scanned PDFs.
         """
         try:
             # Save to temporary file
             with tempfile.NamedTemporaryFile(delete=False, suffix='.pdf') as tmp_file:
                 tmp_file.write(content)
                 tmp_path = tmp_file.name
-            
+
             try:
                 loader = PyPDFLoader(tmp_path)
                 documents = loader.load()
-                
+
                 # Add filename and page info to metadata
                 for doc in documents:
-                    # Устанавливаем source_file для всех документов
                     doc.metadata["source_file"] = filename
-                    
-                    # Извлекаем номер страницы из source метаданных PyPDFLoader
                     source = doc.metadata.get("source", "")
                     if source and "page" in source.lower():
                         try:
-                            # PyPDFLoader формат: ".../filename.pdf:page=N"
-                            # Ищем номер страницы
-                            import re
                             page_match = re.search(r'page[=:]?\s*(\d+)', source, re.IGNORECASE)
                             if page_match:
-                                page_num = int(page_match.group(1))
-                                doc.metadata["source_page"] = page_num
+                                doc.metadata["source_page"] = int(page_match.group(1))
                         except Exception as e:
                             logger.debug(f"Could not extract page number from source '{source}': {e}")
-                
+
+                # Check if extracted text is meaningful (scanned PDFs return near-empty text)
+                total_text = "".join(doc.page_content.strip() for doc in documents)
+                if len(total_text) < 50 and len(documents) > 0:
+                    logger.info(
+                        f"PDF {filename} has {len(documents)} pages but only {len(total_text)} chars of text. "
+                        f"Attempting OCR for scanned PDF..."
+                    )
+                    ocr_docs = DocumentLoaderService._ocr_pdf(content, filename)
+                    if ocr_docs:
+                        return ocr_docs
+
                 logger.info(f"Loaded PDF {filename}: {len(documents)} pages")
                 return documents
             finally:
-                # Clean up temp file
                 if os.path.exists(tmp_path):
                     os.unlink(tmp_path)
         except Exception as e:

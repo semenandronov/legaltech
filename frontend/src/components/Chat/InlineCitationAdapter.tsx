@@ -1,4 +1,5 @@
 import React, { useState } from 'react'
+import ReactDOM from 'react-dom'
 import { SourceInfo } from '@/services/api'
 
 interface InlineCitationAdapterProps {
@@ -8,8 +9,9 @@ interface InlineCitationAdapterProps {
 }
 
 /**
- * Inline citation rendered as a compact clickable text link.
- * Shows abbreviated document name + page. Hover shows quote preview tooltip.
+ * Inline citation rendered as a compact superscript badge [N].
+ * Hover shows document name + quote preview tooltip (fixed positioning).
+ * Click opens document preview.
  */
 export const InlineCitationAdapter: React.FC<InlineCitationAdapterProps> = ({
   index,
@@ -17,11 +19,11 @@ export const InlineCitationAdapter: React.FC<InlineCitationAdapterProps> = ({
   onClick,
 }) => {
   const source = sources[index - 1] // Citations are 1-indexed
-  const [showTooltip, setShowTooltip] = useState(false)
+  const [tooltipPos, setTooltipPos] = useState<{ x: number; y: number } | null>(null)
 
   if (!source) {
     return (
-      <span style={{ color: '#9ca3af', fontSize: '0.85em' }}>[{index}]</span>
+      <sup style={{ color: '#9ca3af', fontSize: '0.7em', marginLeft: '1px' }}>[{index}]</sup>
     )
   }
 
@@ -33,79 +35,85 @@ export const InlineCitationAdapter: React.FC<InlineCitationAdapterProps> = ({
     }
   }
 
-  // Format short file name for display
-  const formatShortName = (filename: string): string => {
-    let name = filename.replace(/\.[^/.]+$/, '') // Remove extension
-    name = name.replace(/[_-]/g, ' ')
-    if (name.length > 20) {
-      name = name.substring(0, 20) + '\u2026'
-    }
-    return name
+  const handleMouseEnter = (e: React.MouseEvent<HTMLElement>) => {
+    const rect = e.currentTarget.getBoundingClientRect()
+    const tooltipWidth = 300
+    // Center tooltip on badge, clamped to viewport
+    let x = rect.left + rect.width / 2 - tooltipWidth / 2
+    x = Math.max(8, Math.min(x, window.innerWidth - tooltipWidth - 8))
+    const y = rect.top - 8 // above the badge
+    setTooltipPos({ x, y })
   }
 
-  const shortName = source.file ? formatShortName(source.file) : '\u0414\u043E\u043A\u0443\u043C\u0435\u043D\u0442'
-  const pageInfo = source.page ? `, \u0441.${source.page}` : ''
+  const handleMouseLeave = () => {
+    setTooltipPos(null)
+  }
+
   const quoteText = source.quote || source.text_preview || ''
 
   return (
     <span
       style={{ position: 'relative', display: 'inline' }}
-      onMouseEnter={() => setShowTooltip(true)}
-      onMouseLeave={() => setShowTooltip(false)}
+      onMouseEnter={handleMouseEnter}
+      onMouseLeave={handleMouseLeave}
     >
-      <span
+      {/* Compact superscript badge */}
+      <sup
         onClick={handleClick}
         role="button"
         tabIndex={0}
         onKeyDown={(e) => { if (e.key === 'Enter') handleClick(e as any) }}
         style={{
-          display: 'inline',
+          display: 'inline-flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          minWidth: '16px',
+          height: '16px',
+          padding: '0 4px',
+          marginLeft: '2px',
+          background: 'rgba(37, 99, 235, 0.12)',
           color: '#2563eb',
+          border: '1px solid rgba(37, 99, 235, 0.25)',
+          borderRadius: '4px',
+          fontSize: '10px',
+          fontWeight: 600,
+          lineHeight: 1,
           cursor: 'pointer',
-          fontSize: '0.85em',
-          fontWeight: 500,
-          borderBottom: '1px dashed #93c5fd',
-          paddingBottom: '1px',
+          verticalAlign: 'super',
           transition: 'all 0.15s ease',
-          whiteSpace: 'nowrap',
+          userSelect: 'none',
         }}
         onMouseOver={(e) => {
-          e.currentTarget.style.color = '#1d4ed8'
-          e.currentTarget.style.borderBottomColor = '#2563eb'
-          e.currentTarget.style.borderBottomStyle = 'solid'
+          e.currentTarget.style.background = 'rgba(37, 99, 235, 0.2)'
+          e.currentTarget.style.borderColor = '#2563eb'
         }}
         onMouseOut={(e) => {
-          e.currentTarget.style.color = '#2563eb'
-          e.currentTarget.style.borderBottomColor = '#93c5fd'
-          e.currentTarget.style.borderBottomStyle = 'dashed'
+          e.currentTarget.style.background = 'rgba(37, 99, 235, 0.12)'
+          e.currentTarget.style.borderColor = 'rgba(37, 99, 235, 0.25)'
         }}
-        title={`${source.file || '\u0414\u043E\u043A\u0443\u043C\u0435\u043D\u0442'}${source.page ? `, \u0441\u0442\u0440. ${source.page}` : ''}`}
       >
-        [{shortName}{pageInfo}]
-      </span>
+        {index}
+      </sup>
 
-      {/* Tooltip with quote preview */}
-      {showTooltip && quoteText && (
-        <span
-          style={{
-            position: 'absolute',
-            bottom: 'calc(100% + 8px)',
-            left: '50%',
-            transform: 'translateX(-50%)',
-            minWidth: '250px',
-            maxWidth: '360px',
-            padding: '12px 14px',
-            background: '#1e293b',
-            color: '#e2e8f0',
-            border: '1px solid #334155',
-            borderRadius: '10px',
-            boxShadow: '0 8px 24px rgba(0, 0, 0, 0.3)',
-            zIndex: 1000,
-            fontSize: '12px',
-            lineHeight: 1.5,
-            pointerEvents: 'none',
-          }}
-        >
+      {/* Tooltip rendered in portal to avoid overflow clipping */}
+      {tooltipPos && ReactDOM.createPortal(
+        <div style={{
+          position: 'fixed',
+          left: `${tooltipPos.x}px`,
+          top: `${tooltipPos.y}px`,
+          transform: 'translateY(-100%)',
+          width: '300px',
+          padding: '12px 14px',
+          background: '#1e293b',
+          color: '#e2e8f0',
+          border: '1px solid #334155',
+          borderRadius: '10px',
+          boxShadow: '0 8px 24px rgba(0, 0, 0, 0.3)',
+          zIndex: 9999,
+          fontSize: '12px',
+          lineHeight: 1.5,
+          pointerEvents: 'none',
+        }}>
           {/* Header */}
           <span style={{
             display: 'block',
@@ -117,23 +125,25 @@ export const InlineCitationAdapter: React.FC<InlineCitationAdapterProps> = ({
             textOverflow: 'ellipsis',
             whiteSpace: 'nowrap',
           }}>
-            {source.file || '\u0414\u043E\u043A\u0443\u043C\u0435\u043D\u0442'}
-            {source.page ? ` \u00B7 \u0441\u0442\u0440. ${source.page}` : ''}
+            {source.file || 'Документ'}
+            {source.page ? ` · стр. ${source.page}` : ''}
           </span>
 
           {/* Quote */}
-          <span style={{
-            display: 'block',
-            padding: '8px 10px',
-            background: 'rgba(0, 0, 0, 0.2)',
-            borderRadius: '6px',
-            fontStyle: 'italic',
-            color: '#cbd5e1',
-            maxHeight: '80px',
-            overflow: 'hidden',
-          }}>
-            &laquo;{quoteText.length > 180 ? quoteText.substring(0, 180) + '...' : quoteText}&raquo;
-          </span>
+          {quoteText && (
+            <span style={{
+              display: 'block',
+              padding: '8px 10px',
+              background: 'rgba(0, 0, 0, 0.2)',
+              borderRadius: '6px',
+              fontStyle: 'italic',
+              color: '#cbd5e1',
+              maxHeight: '80px',
+              overflow: 'hidden',
+            }}>
+              &laquo;{quoteText.length > 180 ? quoteText.substring(0, 180) + '...' : quoteText}&raquo;
+            </span>
+          )}
 
           {/* CTA */}
           <span style={{
@@ -143,22 +153,10 @@ export const InlineCitationAdapter: React.FC<InlineCitationAdapterProps> = ({
             fontSize: '11px',
             color: '#60a5fa',
           }}>
-            {'\u041D\u0430\u0436\u043C\u0438\u0442\u0435, \u0447\u0442\u043E\u0431\u044B \u043E\u0442\u043A\u0440\u044B\u0442\u044C \u0434\u043E\u043A\u0443\u043C\u0435\u043D\u0442'}
+            Нажмите, чтобы открыть документ
           </span>
-
-          {/* Arrow */}
-          <span style={{
-            position: 'absolute',
-            bottom: '-5px',
-            left: '50%',
-            transform: 'translateX(-50%) rotate(45deg)',
-            width: '10px',
-            height: '10px',
-            background: '#1e293b',
-            borderRight: '1px solid #334155',
-            borderBottom: '1px solid #334155',
-          }} />
-        </span>
+        </div>,
+        document.body
       )}
     </span>
   )

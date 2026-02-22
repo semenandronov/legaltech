@@ -48,7 +48,8 @@ class EditorHandler:
         current_user: User,
         document_id: str,
         document_context: str,
-        selected_text: Optional[str] = None
+        selected_text: Optional[str] = None,
+        editor_mode_hint: Optional[str] = None
     ) -> AsyncGenerator[str, None]:
         """
         Обработать запрос в контексте документа
@@ -90,7 +91,8 @@ class EditorHandler:
                 selected_text=selected_text,
                 deep_think=False,
                 legal_research=False,
-                draft_mode=False
+                draft_mode=False,
+                editor_mode_hint=editor_mode_hint
             ):
                 # Обрабатываем SSE события, включая structured_edits
                 # structured_edits теперь приходят из графа через SSE

@@ -498,6 +498,7 @@ async def get_case_files(
                 "id": file.id,
                 "filename": file.filename,
                 "file_type": file.file_type,
+                "folder_id": file.folder_id,
                 "created_at": file.created_at.isoformat() if file.created_at else None,
                 "doc_type": classification.doc_type if (classification := classification_map.get(file.id)) else None,
                 "classification": {
@@ -515,6 +516,53 @@ async def get_case_files(
         ],
         "total": len(files)
     }
+
+
+class MoveFileRequest(BaseModel):
+    folder_id: Optional[str] = None
+
+
+@router.patch("/{case_id}/files/{file_id}")
+async def move_file_to_folder(
+    case_id: str,
+    file_id: str,
+    request: MoveFileRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """Move a file to a folder (or to root if folder_id is null)"""
+    case = db.query(Case).filter(
+        Case.id == case_id,
+        Case.user_id == current_user.id
+    ).first()
+    if not case:
+        raise HTTPException(status_code=404, detail="Дело не найдено")
+
+    file = db.query(FileModel).filter(
+        FileModel.id == file_id,
+        FileModel.case_id == case_id
+    ).first()
+    if not file:
+        raise HTTPException(status_code=404, detail="Файл не найден")
+
+    # Update file_count on old folder
+    if file.folder_id:
+        from app.models.folder import Folder
+        old_folder = db.query(Folder).filter(Folder.id == file.folder_id).first()
+        if old_folder and old_folder.file_count > 0:
+            old_folder.file_count -= 1
+
+    file.folder_id = request.folder_id
+
+    # Update file_count on new folder
+    if request.folder_id:
+        from app.models.folder import Folder
+        new_folder = db.query(Folder).filter(Folder.id == request.folder_id).first()
+        if new_folder:
+            new_folder.file_count += 1
+
+    db.commit()
+    return {"id": file.id, "folder_id": file.folder_id}
 
 
 @router.post("/{case_id}/files")
@@ -670,6 +718,10 @@ async def add_files_to_case(
                 db.rollback()
                 _cleanup_uploaded_files(saved_file_paths)
                 raise HTTPException(status_code=400, detail=str(e))
+            except HTTPException:
+                db.rollback()
+                _cleanup_uploaded_files(saved_file_paths)
+                raise
             except Exception as e:
                 logger.exception("Неизвестная ошибка при обработке файла %s", filename)
                 db.rollback()

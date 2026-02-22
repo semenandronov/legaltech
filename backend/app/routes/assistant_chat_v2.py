@@ -141,6 +141,7 @@ async def assistant_chat_v2(
         document_context = body.get("document_context")
         document_id = body.get("document_id")
         selected_text = body.get("selected_text")
+        editor_mode_hint = body.get("editor_mode_hint")  # 'edit' or 'ask' from UI toggle
         template_file_id = body.get("template_file_id")
         template_file_content = body.get("template_file_content")
         attached_file_ids = body.get("attached_file_ids")
@@ -162,7 +163,8 @@ async def assistant_chat_v2(
             selected_text=selected_text,
             template_file_id=template_file_id,
             template_file_content=template_file_content,
-            attached_file_ids=attached_file_ids
+            attached_file_ids=attached_file_ids,
+            editor_mode_hint=editor_mode_hint
         )
         
         # Создаём оркестратор и обрабатываем запрос

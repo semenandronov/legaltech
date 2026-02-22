@@ -40,6 +40,7 @@ _db: Optional[Session] = None
 _rag_service = None
 _case_id: Optional[str] = None
 _user_id: Optional[str] = None
+_attached_file_ids: Optional[List[str]] = None  # Фильтрация по прикреплённым файлам
 
 # Отслеживание использованных источников для citations
 _used_sources: List[Dict[str, Any]] = []
@@ -57,17 +58,19 @@ def clear_used_sources():
 
 
 def initialize_universal_tools(
-    db: Session, 
-    rag_service, 
+    db: Session,
+    rag_service,
     case_id: str,
-    user_id: Optional[str] = None
+    user_id: Optional[str] = None,
+    attached_file_ids: Optional[List[str]] = None
 ):
     """Инициализировать глобальные зависимости для tools"""
-    global _db, _rag_service, _case_id, _user_id
+    global _db, _rag_service, _case_id, _user_id, _attached_file_ids
     _db = db
     _rag_service = rag_service
     _case_id = case_id
     _user_id = user_id
+    _attached_file_ids = attached_file_ids or None
     clear_used_sources()
 
 
@@ -156,7 +159,7 @@ def search_in_documents(query: str, k: int = 20) -> str:
     Returns:
         Найденные фрагменты документов с источниками
     """
-    global _rag_service, _case_id, _db, _used_sources
+    global _rag_service, _case_id, _db, _used_sources, _attached_file_ids
 
     if not _rag_service or not _case_id:
         return "Ошибка: сервис поиска не инициализирован"
@@ -170,7 +173,8 @@ def search_in_documents(query: str, k: int = 20) -> str:
             query=query,
             k=k,
             retrieval_strategy="multi_query",
-            db=_db
+            db=_db,
+            file_ids=_attached_file_ids  # Фильтр по прикреплённым файлам
         )
 
         if not documents:
@@ -842,35 +846,161 @@ def list_templates() -> str:
 # БЛОК 4: PLAYBOOK (2 инструмента)
 # =============================================================================
 
+# Global to store last playbook check result for SSE emission by react_chat_agent
+_last_playbook_check: Optional[Dict] = None
+
+
+def get_last_playbook_check() -> Optional[Dict]:
+    """Get and return the last playbook check result (for SSE emission)."""
+    global _last_playbook_check
+    return _last_playbook_check
+
+
+def clear_last_playbook_check() -> None:
+    """Clear the stored playbook check result after it's been emitted."""
+    global _last_playbook_check
+    _last_playbook_check = None
+
+
+def _run_async_in_new_loop(coro):
+    """Run an async coroutine in a new thread with its own event loop (sync wrapper)."""
+    import concurrent.futures
+
+    def _run():
+        import asyncio
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        try:
+            return loop.run_until_complete(coro)
+        finally:
+            loop.close()
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+        return executor.submit(_run).result(timeout=120)
+
+
+def _format_playbook_check_markdown(result, doc_name: str, playbook_name: str) -> str:
+    """Format a PlaybookCheckResult as rich markdown for chat display."""
+    score = result.compliance_score
+
+    if score >= 80:
+        score_label = "✅ Соответствует"
+    elif score >= 50:
+        score_label = "⚠️ Требует доработки"
+    else:
+        score_label = "❌ Критичные нарушения"
+
+    lines = [
+        f"## 📋 Проверка: {doc_name}",
+        f"**Playbook:** {playbook_name} | **Соответствие: {score:.0f}%** — {score_label}",
+        "",
+        f"🟢 Прошло: **{result.passed_rules}** | "
+        f"🔴 Нарушения: **{result.red_line_violations}** | "
+        f"🟡 Замечания: **{result.fallback_issues}** | "
+        f"🚫 Запреты: **{result.no_go_violations}**",
+        "",
+        "---",
+    ]
+
+    # Red line violations (must fix)
+    violations = [
+        r for r in result.results
+        if r.status in ('violation', 'not_found') and r.rule_type in ('red_line', 'standard')
+    ]
+    if violations:
+        lines.append("### 🔴 Нарушения (обязательно исправить)")
+        lines.append("")
+        for i, r in enumerate(violations, 1):
+            lines.append(f"**{i}. {r.rule_name}**")
+            if r.found_text:
+                preview = r.found_text[:200].replace('\n', ' ')
+                lines.append(f"> _{preview}_")
+            else:
+                lines.append("> _(Не найдено в документе)_")
+            if r.issue_description:
+                lines.append(f"- ❌ {r.issue_description}")
+            if r.suggested_fix:
+                fix = r.suggested_fix[:300].replace('\n', ' ')
+                lines.append(f"- ✅ **Рекомендация:** _{fix}_")
+            lines.append("")
+
+    # No-go violations
+    no_go = [
+        r for r in result.results
+        if r.rule_type == 'no_go' and r.status in ('violation', 'not_found')
+    ]
+    if no_go:
+        lines.append("### 🚫 Недопустимые условия")
+        lines.append("")
+        for i, r in enumerate(no_go, 1):
+            lines.append(f"**{i}. {r.rule_name}**")
+            if r.found_text:
+                preview = r.found_text[:200].replace('\n', ' ')
+                lines.append(f"> _{preview}_")
+            if r.issue_description:
+                lines.append(f"- ❌ {r.issue_description}")
+            lines.append("")
+
+    # Fallback issues (negotiable)
+    fallbacks = [
+        r for r in result.results
+        if r.rule_type == 'fallback' and r.status not in ('passed',)
+    ]
+    if fallbacks:
+        lines.append("### 🟡 Рекомендации (можно доработать)")
+        lines.append("")
+        for i, r in enumerate(fallbacks, 1):
+            lines.append(f"**{i}. {r.rule_name}**")
+            if r.found_text:
+                preview = r.found_text[:200].replace('\n', ' ')
+                lines.append(f"> _{preview}_")
+            if r.issue_description:
+                lines.append(f"- ⚠️ {r.issue_description}")
+            if r.suggested_fix:
+                fix = r.suggested_fix[:300].replace('\n', ' ')
+                lines.append(f"- 💡 **Вариант:** _{fix}_")
+            lines.append("")
+
+    # Passed rules
+    passed = [r for r in result.results if r.status == 'passed']
+    if passed:
+        lines.append(f"### 🟢 Выполнено ({len(passed)})")
+        for r in passed:
+            lines.append(f"- ✅ {r.rule_name}")
+        lines.append("")
+
+    return "\n".join(lines)
+
+
 @tool
 def validate_with_playbook(document_name: str, playbook_name: str = "") -> str:
     """
     Проверить документ на соответствие правилам Playbook.
-    
+
     КОГДА ИСПОЛЬЗОВАТЬ:
     - Пользователь просит проверить документ по правилам
     - Нужен compliance check
     - Вопросы типа "проверь договор", "соответствует ли..."
-    
+
     Args:
         document_name: Имя документа для проверки
-        playbook_name: Имя playbook (опционально, если не указано - используется default)
-    
+        playbook_name: Имя playbook (опционально, если не указано - используется первый доступный)
+
     Returns:
         Результат проверки с указанием нарушений и рекомендаций
     """
-    global _db, _case_id, _user_id
-    
+    global _db, _case_id, _user_id, _last_playbook_check
+
     if not _db or not _case_id:
         return "Ошибка: база данных не инициализирована"
-    
+
     try:
         from app.models.case import File as FileModel
         from app.services.playbook_service import PlaybookService
         from app.services.llm_factory import create_legal_llm
         from langchain_core.messages import HumanMessage, SystemMessage
-        
-        # Ищем документ
+
+        # Find document in the case
         files = _db.query(FileModel).filter(FileModel.case_id == _case_id).all()
         doc = None
         doc_name_lower = document_name.lower()
@@ -878,52 +1008,116 @@ def validate_with_playbook(document_name: str, playbook_name: str = "") -> str:
             if doc_name_lower in f.filename.lower():
                 doc = f
                 break
-        
         if not doc:
-            return f"Документ '{document_name}' не найден."
-        
-        # Получаем playbooks
+            # Try word-by-word partial match
+            for f in files:
+                if any(w in f.filename.lower() for w in doc_name_lower.split() if len(w) > 3):
+                    doc = f
+                    break
+
+        if not doc:
+            available = ", ".join(f.filename for f in files[:5]) if files else "нет документов"
+            return f"Документ '{document_name}' не найден. Доступны: {available}"
+
+        # Get available playbooks
         playbook_service = PlaybookService(_db)
         playbooks = playbook_service.get_playbooks(
             user_id=_user_id or "system",
             include_system=True,
             include_public=True,
-            limit=10
+            limit=20
         )
-        
+
         if not playbooks:
-            # Если нет playbooks - делаем базовую проверку через LLM
+            # Fall back to LLM-based check when no playbooks exist
             text = (doc.original_text or "")[:8000]
-            
             llm = create_legal_llm()
-            prompt = f"""Проверь документ на типичные юридические проблемы:
-
-ДОКУМЕНТ: {doc.filename}
-{text}
-
-Проверь:
-1. Полнота обязательных разделов
-2. Корректность формулировок
-3. Наличие существенных условий
-4. Потенциальные риски
-
-Дай структурированный отчёт."""
-
             response = llm.invoke([
-                SystemMessage(content="Ты юридический аудитор. Проверяешь документы на соответствие."),
-                HumanMessage(content=prompt)
+                SystemMessage(content="Ты юридический аудитор. Проверяешь документы на типичные юридические проблемы."),
+                HumanMessage(content=f"Проверь документ:\n\nДОКУМЕНТ: {doc.filename}\n{text}\n\n"
+                             "Проверь: 1) Полноту обязательных разделов 2) Корректность формулировок "
+                             "3) Наличие существенных условий 4) Потенциальные риски.\n\n"
+                             "Дай структурированный отчёт с конкретными рекомендациями.")
             ])
-            
             result = response.content if hasattr(response, 'content') else str(response)
             return f"✅ **Проверка документа: {doc.filename}**\n\n{result}"
-        
-        # Если есть playbooks - используем их
-        # TODO: Интеграция с PlaybookChecker
-        playbook_names = [p.get("name", "Без названия") for p in playbooks[:5]]
-        return f"📋 Доступные Playbooks:\n" + "\n".join([f"- {n}" for n in playbook_names]) + "\n\n⚠️ Для полной проверки используйте функционал Playbook в интерфейсе."
-        
+
+        # Select playbook by name or use the first available
+        selected = None
+        if playbook_name:
+            for p in playbooks:
+                if (playbook_name.lower() in p.get('name', '').lower() or
+                        playbook_name.lower() in p.get('display_name', '').lower()):
+                    selected = p
+                    break
+        if not selected:
+            selected = playbooks[0]
+
+        playbook_display = selected.get('display_name') or selected.get('name', 'Playbook')
+        logger.info(f"[UniversalTools] Running PlaybookChecker: doc={doc.filename}, playbook={playbook_display}")
+
+        # Run the full PlaybookChecker (async, executed in a new thread)
+        try:
+            from app.services.playbook_checker import PlaybookChecker
+            checker = PlaybookChecker(_db)
+            check_result = _run_async_in_new_loop(
+                checker.check_document(
+                    document_id=doc.id,
+                    playbook_id=selected['id'],
+                    user_id=_user_id or 'system',
+                    case_id=_case_id
+                )
+            )
+
+            # Store structured result for SSE emission by react_chat_agent
+            _last_playbook_check = {
+                'check_id': check_result.check_id,
+                'playbook_id': check_result.playbook_id,
+                'playbook_name': playbook_display,
+                'document_id': check_result.document_id,
+                'document_name': doc.filename,
+                'overall_status': check_result.overall_status,
+                'compliance_score': float(check_result.compliance_score),
+                'red_line_violations': check_result.red_line_violations,
+                'fallback_issues': check_result.fallback_issues,
+                'no_go_violations': check_result.no_go_violations,
+                'passed_rules': check_result.passed_rules,
+                'results': [
+                    {
+                        'rule_id': r.rule_id,
+                        'rule_name': r.rule_name,
+                        'rule_type': r.rule_type,
+                        'status': r.status,
+                        'issue_description': r.issue_description,
+                        'suggested_fix': r.suggested_fix,
+                        'found_text': (r.found_text or '')[:300],
+                        'confidence': r.confidence,
+                    }
+                    for r in check_result.results
+                ],
+            }
+
+            logger.info(
+                f"[UniversalTools] PlaybookChecker done: score={check_result.compliance_score:.0f}%, "
+                f"violations={check_result.red_line_violations}, issues={check_result.fallback_issues}"
+            )
+            return _format_playbook_check_markdown(check_result, doc.filename, playbook_display)
+
+        except Exception as checker_error:
+            logger.warning(f"[UniversalTools] PlaybookChecker failed ({checker_error}), falling back to LLM check")
+            # Fallback to LLM-based check
+            text = (doc.original_text or "")[:8000]
+            llm = create_legal_llm()
+            response = llm.invoke([
+                SystemMessage(content="Ты юридический аудитор."),
+                HumanMessage(content=f"Проверь документ '{doc.filename}' по правилам playbook '{playbook_display}':\n{text}")
+            ])
+            return f"✅ **Проверка документа: {doc.filename}**\n\n" + (
+                response.content if hasattr(response, 'content') else str(response)
+            )
+
     except Exception as e:
-        logger.error(f"[UniversalTools] validate_with_playbook error: {e}")
+        logger.error(f"[UniversalTools] validate_with_playbook error: {e}", exc_info=True)
         return f"Ошибка проверки: {str(e)}"
 
 
@@ -1121,7 +1315,8 @@ def get_universal_tools(
     case_id: str,
     user_id: Optional[str] = None,
     legal_research: bool = False,
-    web_search: bool = False
+    web_search: bool = False,
+    attached_file_ids: Optional[List[str]] = None
 ) -> List:
     """
     Получить набор из 12 универсальных инструментов.
@@ -1138,7 +1333,7 @@ def get_universal_tools(
         Список из 12 инструментов
     """
     # Инициализируем глобальные зависимости
-    initialize_universal_tools(db, rag_service, case_id, user_id)
+    initialize_universal_tools(db, rag_service, case_id, user_id, attached_file_ids)
     
     # Базовые инструменты (всегда доступны)
     tools = [

@@ -17,6 +17,7 @@ from typing import AsyncGenerator, Optional, List, Dict, Any
 from dataclasses import dataclass
 from sqlalchemy.orm import Session
 import logging
+import re
 
 from app.services.chat.events import SSESerializer, SSEEvent
 from app.services.chat.classifier import RequestClassifier, ClassificationResult
@@ -50,6 +51,7 @@ class ChatRequest:
     document_context: Optional[str] = None
     document_id: Optional[str] = None
     selected_text: Optional[str] = None
+    editor_mode_hint: Optional[str] = None  # 'edit' or 'ask' from UI toggle
     
     # Шаблон для draft mode
     template_file_id: Optional[str] = None
@@ -276,12 +278,23 @@ class ChatOrchestrator:
             logger.error(f"[ChatOrchestrator] Error in {mode}: {e}", exc_info=True)
             yield SSESerializer.error(str(e))
     
+    _DRAFT_INTENT_PATTERN = re.compile(
+        r'(?:создай|создать|составь|составить|сформируй|сформировать|подготовь|подготовить|напиши|написать)\b.{0,60}'
+        r'(?:договор|контракт|иск|заявлен|претензи|письмо|акт|доверенность|документ|соглашение|протокол)',
+        re.IGNORECASE | re.DOTALL
+    )
+
     def _determine_mode(self, request: ChatRequest) -> str:
         """Определить режим обработки запроса"""
         if request.draft_mode:
             return "draft"
         elif request.document_context:
             return "editor"
+        # Auto-detect document creation intent even without explicit draft_mode toggle
+        elif self._DRAFT_INTENT_PATTERN.search(request.question):
+            request.draft_mode = True  # mutate so _route_to_handler sees it
+            logger.info(f"[ChatOrchestrator] Auto-detected document creation intent, switching to draft mode")
+            return "draft"
         elif request.deep_think:
             return "react_agent_deep"
         elif request.legal_research:
@@ -325,7 +338,8 @@ class ChatOrchestrator:
                 current_user=request.current_user,
                 document_id=request.document_id or "",
                 document_context=request.document_context,
-                selected_text=request.selected_text
+                selected_text=request.selected_text,
+                editor_mode_hint=request.editor_mode_hint
             ):
                 yield event
         
@@ -387,7 +401,8 @@ class ChatOrchestrator:
                 deep_think=request.deep_think,
                 web_search=request.web_search,
                 chat_history=chat_history,
-                session_id=session_id
+                session_id=session_id,
+                attached_file_ids=request.attached_file_ids
             )
             
             # Запускаем агента

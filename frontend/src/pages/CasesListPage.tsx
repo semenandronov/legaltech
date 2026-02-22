@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react'
 import { getCasesList, deleteCase, CasesListResponse } from '../services/api'
 import CasesGrid from '../components/Cases/CasesGrid'
 import UnifiedSidebar from '../components/Layout/UnifiedSidebar'
-import { Home, FolderOpen } from 'lucide-react'
+import { Home, FolderOpen, MessageSquare } from 'lucide-react'
 import { toast } from 'sonner'
 
 const CasesListPage = () => {
@@ -18,6 +18,7 @@ const CasesListPage = () => {
   const mainNavItems = [
     { id: 'home', label: 'Главная', icon: Home, path: '/' },
     { id: 'cases', label: 'Дела', icon: FolderOpen, path: '/cases' },
+    { id: 'assistant', label: 'Ассистент', icon: MessageSquare, path: '/assistant' },
   ]
   
   useEffect(() => {
@@ -29,8 +30,8 @@ const CasesListPage = () => {
     try {
       const skip = (currentPage - 1) * limit
       const data = await getCasesList(skip, limit)
-      setCases(data.cases)
-      setTotal(data.total)
+      setCases(data.cases || [])
+      setTotal(data.total || 0)
     } catch (error: any) {
       console.error('Ошибка при загрузке дел:', error)
     } finally {

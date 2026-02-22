@@ -302,6 +302,15 @@ class ToolCallEvent(BaseModel):
         return f"data: {json.dumps(data, ensure_ascii=False)}\n\n"
 
 
+class PlaybookCheckResultEvent(BaseModel):
+    """Событие с результатами проверки Playbook — показывает детальный отчёт в чате"""
+    type: Literal["playbook_check_result"] = "playbook_check_result"
+    check: Dict[str, Any] = Field(..., description="Структурированный результат проверки")
+
+    def to_sse(self) -> str:
+        return f"data: {json.dumps({'type': 'playbook_check_result', 'check': self.check}, ensure_ascii=False)}\n\n"
+
+
 # =============================================================================
 # Union Type для всех событий
 # =============================================================================
@@ -437,5 +446,10 @@ class SSESerializer:
             has_improvement=has_improvement,
             critique=critique
         ).to_sse()
+
+    @staticmethod
+    def playbook_check_result(check: Dict[str, Any]) -> str:
+        """Быстрый метод для playbook_check_result"""
+        return PlaybookCheckResultEvent(check=check).to_sse()
 
 

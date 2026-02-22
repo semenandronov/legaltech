@@ -374,6 +374,7 @@ async def assistant_chat(
         document_context = body.get("document_context")
         document_id = body.get("document_id")
         selected_text = body.get("selected_text")
+        editor_mode_hint = body.get("editor_mode_hint")  # 'edit' or 'ask' from UI toggle
         
         # Template file ID for draft mode (optional) - для файлов из БД
         template_file_id = body.get("template_file_id")
@@ -413,7 +414,8 @@ async def assistant_chat(
                 draft_mode=draft_mode,
                 document_context=document_context,
                 document_id=document_id,
-                selected_text=selected_text
+                selected_text=selected_text,
+                editor_mode_hint=editor_mode_hint
             ),
             media_type="text/event-stream",
             headers={

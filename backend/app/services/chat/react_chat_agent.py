@@ -201,7 +201,9 @@ class ReActChatAgent:
         session_id: Optional[str] = None,
         # NEW v3.0: Reflection и Citation Verification
         enable_reflection: bool = True,
-        enable_citation_verification: bool = True
+        enable_citation_verification: bool = True,
+        # Прикреплённые файлы (для фильтрации RAG)
+        attached_file_ids: Optional[List[str]] = None
     ):
         """
         Инициализация агента
@@ -243,7 +245,8 @@ class ReActChatAgent:
             case_id=case_id,
             user_id=user_id,
             legal_research=legal_research,
-            web_search=web_search
+            web_search=web_search,
+            attached_file_ids=attached_file_ids
         )
         
         # Создаём LLM и агента
@@ -755,8 +758,12 @@ ID дела: {self.case_id}
 
                     # Buffer text tokens: GigaChat may output "reasoning" text before a tool call.
                     # We buffer tokens per LLM invocation and only flush if there's no tool call.
+                    # EXCEPTION: after at least one tool has executed, the final response is streamed
+                    # token-by-token in real-time (GigaChat won't echo tool names at that point).
                     text_buffer = ""
                     has_tool_call_in_current_step = False
+                    has_seen_tool_execution = False  # True after first on_tool_end event
+                    step_tokens_streamed = False  # True if current step's tokens were streamed live
 
                     async for event in self.agent.astream_events(input_data, version="v2"):
                         kind = event.get("event", "")
@@ -765,13 +772,19 @@ ID дела: {self.case_id}
                         if kind == "on_chat_model_stream":
                             chunk = event.get("data", {}).get("chunk")
                             if chunk:
-                                # Text content — buffer it (don't send yet)
+                                # Text content
                                 token = getattr(chunk, 'content', '') or ''
                                 if token:
                                     if has_tool_call_in_current_step:
                                         # Already saw a tool call in this step, skip reasoning text
                                         pass
+                                    elif has_seen_tool_execution:
+                                        # Post-tools final response: stream token in real-time!
+                                        text_buffer += token
+                                        step_tokens_streamed = True
+                                        yield SSESerializer.text_delta(token)
                                     else:
+                                        # First LLM call: buffer to avoid GigaChat tool-echo artifacts
                                         text_buffer += token
 
                                 # Tool call chunks — emit "running" on first appearance
@@ -781,8 +794,8 @@ ID дела: {self.case_id}
                                         tc_name = tc_chunk.get('name', '')
                                         if tc_name and tc_name not in active_tool_calls:
                                             has_tool_call_in_current_step = True
-                                            # Discard buffered reasoning text (it was pre-tool-call thinking)
-                                            if text_buffer:
+                                            # Discard buffered reasoning text (pre-tool-call thinking)
+                                            if text_buffer and not step_tokens_streamed:
                                                 logger.info(f"[ReActChatAgent] Discarding pre-tool-call text ({len(text_buffer)} chars)")
                                                 text_buffer = ""
 
@@ -798,20 +811,26 @@ ID дела: {self.case_id}
                                                 input=tc_input if tc_input else None
                                             )
 
-                        # LLM call ended — flush text buffer if it was a final response (no tool calls)
+                        # LLM call ended
                         elif kind == "on_chat_model_end":
                             if text_buffer and not has_tool_call_in_current_step:
-                                # This was a final text response — stream with typing effect
-                                cleaned = _clean_response_text(text_buffer)
-                                if cleaned:
-                                    async for sse_chunk in _stream_text_with_typing_effect(cleaned):
-                                        yield sse_chunk
+                                if step_tokens_streamed:
+                                    # Already streamed in real-time — just accumulate for post-processing
+                                    cleaned = _clean_response_text(text_buffer)
                                     response_text += cleaned
+                                else:
+                                    # Wasn't streamed yet (first LLM call, no tools) — send now
+                                    cleaned = _clean_response_text(text_buffer)
+                                    if cleaned:
+                                        yield SSESerializer.text_delta(cleaned)
+                                        response_text += cleaned
                             text_buffer = ""
                             has_tool_call_in_current_step = False
+                            step_tokens_streamed = False
 
                         # Tool execution completed
                         elif kind == "on_tool_end":
+                            has_seen_tool_execution = True  # Enable real-time streaming for final response
                             tool_name = event.get("name", "unknown")
                             output_data = event.get("data", {}).get("output", "")
                             output_preview = str(output_data)[:300] if output_data else ''
@@ -820,9 +839,23 @@ ID дела: {self.case_id}
                                 status="completed",
                                 output=output_preview
                             )
+                            # If validate_with_playbook finished, emit rich playbook result card
+                            if tool_name == "validate_with_playbook":
+                                try:
+                                    from app.services.chat.universal_tools import (
+                                        get_last_playbook_check,
+                                        clear_last_playbook_check,
+                                    )
+                                    check_data = get_last_playbook_check()
+                                    if check_data:
+                                        yield SSESerializer.playbook_check_result(check_data)
+                                        clear_last_playbook_check()
+                                        logger.info("[ReActChatAgent] Emitted playbook_check_result SSE event")
+                                except Exception as pb_err:
+                                    logger.warning(f"[ReActChatAgent] Failed to emit playbook result: {pb_err}")
 
-                    # Flush any remaining buffered text (with typing effect)
-                    if text_buffer:
+                    # Flush any remaining buffered text (only if not already streamed live)
+                    if text_buffer and not step_tokens_streamed:
                         cleaned = _clean_response_text(text_buffer)
                         if cleaned:
                             async for sse_chunk in _stream_text_with_typing_effect(cleaned):

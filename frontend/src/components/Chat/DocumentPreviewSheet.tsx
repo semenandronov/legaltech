@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import {
   Drawer,
   Box,
@@ -377,7 +377,110 @@ const DocumentPreviewSheet = ({
   }
 
 
+  // Ref for DOCX content container — used to auto-scroll to the highlighted mark
+  const docxContainerRef = useRef<HTMLDivElement>(null)
+
+  // Auto-scroll to the first <mark id="citation-highlight"> after DOCX content renders
+  useEffect(() => {
+    if (!docxContainerRef.current || !documentHtml) return
+    const mark = docxContainerRef.current.querySelector('#citation-highlight')
+    if (mark) {
+      mark.scrollIntoView({ behavior: 'smooth', block: 'center' })
+    }
+  }, [documentHtml])
+
   if (!source) return null
+
+  /**
+   * Highlight a quote inside an HTML string using DOM text-node traversal.
+   * Regex-based search fails when HTML tags split the matched text (e.g. <strong>text</strong>).
+   * This function walks all text nodes, builds the full plain-text string, finds the quote
+   * position, then wraps the matching segment(s) with <mark> elements in the real DOM tree.
+   */
+  const insertMarkInHtml = (html: string, quote: string): string => {
+    if (!quote || quote.length < 10) return html
+    const searchText = quote.replace(/\.{3}$/, '').trim()
+    if (searchText.length < 10) return html
+    try {
+      const container = window.document.createElement('div')
+      container.innerHTML = html
+
+      // Collect all leaf text nodes
+      const textNodes: Text[] = []
+      const walk = (node: Node): void => {
+        if (node.nodeType === Node.TEXT_NODE) {
+          textNodes.push(node as Text)
+        } else {
+          Array.from(node.childNodes).forEach(walk)
+        }
+      }
+      walk(container)
+
+      const nodeTexts = textNodes.map(n => n.textContent || '')
+      const fullText = nodeTexts.join('')
+      const fullTextLower = fullText.toLowerCase()
+
+      // Try progressively shorter prefixes of the quote until a match is found
+      let pos = -1
+      let matchLength = 0
+      for (const len of [200, 100, 60, 30]) {
+        const candidate = searchText.substring(0, len).toLowerCase()
+        if (candidate.length < 10) continue
+        const idx = fullTextLower.indexOf(candidate)
+        if (idx !== -1) {
+          pos = idx
+          matchLength = candidate.length
+          break
+        }
+      }
+      if (pos === -1) return html
+
+      const endPos = pos + matchLength
+      let currentPos = 0
+      let firstMark = true
+
+      for (let i = 0; i < textNodes.length; i++) {
+        const nodeStart = currentPos
+        const nodeText = nodeTexts[i]
+        const nodeEnd = nodeStart + nodeText.length
+
+        if (nodeEnd > pos && nodeStart < endPos) {
+          const hlStart = Math.max(0, pos - nodeStart)
+          const hlEnd = Math.min(nodeText.length, endPos - nodeStart)
+
+          if (hlStart < hlEnd) {
+            const parent = textNodes[i].parentNode
+            if (parent) {
+              const before = nodeText.substring(0, hlStart)
+              const middle = nodeText.substring(hlStart, hlEnd)
+              const after = nodeText.substring(hlEnd)
+
+              const mark = window.document.createElement('mark')
+              mark.style.backgroundColor = '#fef08a'
+              mark.style.borderRadius = '2px'
+              mark.style.padding = '2px 0'
+              if (firstMark) {
+                mark.id = 'citation-highlight'
+                firstMark = false
+              }
+              mark.textContent = middle
+
+              const frag = window.document.createDocumentFragment()
+              if (before) frag.appendChild(window.document.createTextNode(before))
+              frag.appendChild(mark)
+              if (after) frag.appendChild(window.document.createTextNode(after))
+              parent.replaceChild(frag, textNodes[i])
+            }
+          }
+        }
+        currentPos = nodeEnd
+      }
+
+      return container.innerHTML
+    } catch {
+      return html
+    }
+  }
 
   return (
     <Drawer
@@ -440,51 +543,6 @@ const DocumentPreviewSheet = ({
             </Box>
           </Box>
           
-          {/* Citation Quote Block - Harvey/Perplexity style */}
-          {source.quote && (
-            <Box
-              sx={{
-                mt: 2,
-                p: 2,
-                bgcolor: 'rgba(254, 240, 138, 0.3)', // Light yellow
-                borderLeft: '4px solid #fbbf24', // Yellow accent
-                borderRadius: '0 8px 8px 0',
-              }}
-            >
-              <Typography
-                variant="caption"
-                sx={{
-                  display: 'block',
-                  mb: 0.5,
-                  fontWeight: 600,
-                  color: 'text.secondary',
-                  textTransform: 'uppercase',
-                  letterSpacing: '0.05em',
-                }}
-              >
-                📌 Цитата из документа
-              </Typography>
-              <Typography
-                variant="body2"
-                sx={{
-                  fontStyle: 'italic',
-                  color: 'text.primary',
-                  lineHeight: 1.6,
-                }}
-              >
-                "{source.quote.length > 300 ? source.quote.substring(0, 300) + '...' : source.quote}"
-              </Typography>
-              {source.char_start !== undefined && source.char_end !== undefined && (
-                <Typography
-                  variant="caption"
-                  sx={{ display: 'block', mt: 1, color: 'text.secondary' }}
-                >
-                  Позиция: символы {source.char_start} — {source.char_end}
-                </Typography>
-              )}
-            </Box>
-          )}
-
           {/* Navigation & Actions */}
           <Divider sx={{ my: 1.5 }} />
           <Box
@@ -583,24 +641,16 @@ const DocumentPreviewSheet = ({
               </Box>
             </Box>
           ) : fileInfo && documentHtml && fileInfo.file_type === 'docx' ? (
-            // DOCX - отображаем HTML с подсветкой
+            // DOCX - отображаем HTML с подсветкой цитаты через <mark>
             <Box sx={{ flex: 1, overflow: 'auto', p: 2 }}>
-              {source.quote ? (
-                <TextHighlighter
-                  text={documentHtml}
-                  highlightText={source.quote}
-                  className="whitespace-pre-wrap text-sm"
-                />
-              ) : (
-                <Box
-                  component="div"
-                  dangerouslySetInnerHTML={{ __html: documentHtml }}
-                  sx={{
-                    fontSize: '0.875rem',
-                    fontFamily: 'inherit',
-                  }}
-                />
-              )}
+              <Box
+                ref={docxContainerRef}
+                component="div"
+                dangerouslySetInnerHTML={{
+                  __html: source.quote ? insertMarkInHtml(documentHtml, source.quote) : documentHtml
+                }}
+                sx={{ fontSize: '0.875rem', fontFamily: 'inherit' }}
+              />
             </Box>
           ) : fileInfo && documentText && ['txt', 'html', 'md', 'json', 'xml', 'csv'].includes(fileInfo.file_type.toLowerCase()) ? (
             // Текстовые документы - отображаем с подсветкой по координатам или по найденной цитате

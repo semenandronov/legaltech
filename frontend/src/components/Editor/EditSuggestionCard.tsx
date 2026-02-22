@@ -1,5 +1,4 @@
-import React, { useState } from 'react'
-import { Check, X, ArrowRight, ChevronDown, ChevronUp } from 'lucide-react'
+import React from 'react'
 import type { StructuredEdit } from '@/services/documentEditorApi'
 
 interface EditSuggestionCardProps {
@@ -11,6 +10,82 @@ interface EditSuggestionCardProps {
   isSkipped?: boolean
 }
 
+/**
+ * Word-level diff: returns segments marked as 'equal', 'removed', or 'added'.
+ * Uses a simple LCS-based approach on word arrays.
+ */
+type DiffSegment = { type: 'equal' | 'removed' | 'added'; text: string }
+
+function computeWordDiff(oldText: string, newText: string): DiffSegment[] {
+  const oldWords = oldText.split(/(\s+)/)
+  const newWords = newText.split(/(\s+)/)
+
+  // Build LCS table
+  const m = oldWords.length
+  const n = newWords.length
+  const dp: number[][] = Array.from({ length: m + 1 }, () => new Array(n + 1).fill(0))
+  for (let i = 1; i <= m; i++) {
+    for (let j = 1; j <= n; j++) {
+      if (oldWords[i - 1] === newWords[j - 1]) {
+        dp[i][j] = dp[i - 1][j - 1] + 1
+      } else {
+        dp[i][j] = Math.max(dp[i - 1][j], dp[i][j - 1])
+      }
+    }
+  }
+
+  // Backtrack to build diff
+  const segments: DiffSegment[] = []
+  let i = m, j = n
+  const raw: { type: 'equal' | 'removed' | 'added'; word: string }[] = []
+
+  while (i > 0 || j > 0) {
+    if (i > 0 && j > 0 && oldWords[i - 1] === newWords[j - 1]) {
+      raw.push({ type: 'equal', word: oldWords[i - 1] })
+      i--; j--
+    } else if (j > 0 && (i === 0 || dp[i][j - 1] >= dp[i - 1][j])) {
+      raw.push({ type: 'added', word: newWords[j - 1] })
+      j--
+    } else {
+      raw.push({ type: 'removed', word: oldWords[i - 1] })
+      i--
+    }
+  }
+  raw.reverse()
+
+  // Merge consecutive segments of the same type
+  for (const item of raw) {
+    if (segments.length > 0 && segments[segments.length - 1].type === item.type) {
+      segments[segments.length - 1].text += item.word
+    } else {
+      segments.push({ type: item.type, text: item.word })
+    }
+  }
+
+  return segments
+}
+
+/** Generate a brief description from the edit */
+function generateEditTitle(edit: StructuredEdit): string {
+  if ((edit as any).description) return (edit as any).description
+
+  const origLen = edit.original_text.length
+  const newLen = edit.new_text.length
+
+  if (origLen === 0 && newLen > 0) {
+    const preview = edit.new_text.slice(0, 60)
+    return `Добавить: "${preview}${edit.new_text.length > 60 ? '...' : ''}"`
+  }
+  if (newLen === 0 && origLen > 0) {
+    const preview = edit.original_text.slice(0, 60)
+    return `Удалить: "${preview}${edit.original_text.length > 60 ? '...' : ''}"`
+  }
+
+  // For replacements, show a short summary
+  const origPreview = edit.original_text.slice(0, 40)
+  return `Заменить: "${origPreview}${origLen > 40 ? '...' : ''}"`
+}
+
 export const EditSuggestionCard: React.FC<EditSuggestionCardProps> = ({
   edit,
   onApply,
@@ -19,141 +94,98 @@ export const EditSuggestionCard: React.FC<EditSuggestionCardProps> = ({
   isApplied = false,
   isSkipped = false,
 }) => {
-  const [isExpanded, setIsExpanded] = useState(true)
-  
   const isProcessed = isApplied || isSkipped
-  
-  // Функция для подсветки различий между оригиналом и новым текстом
-  const highlightDiff = (original: string, newText: string) => {
-    // Простая подсветка - показываем полный текст
-    // В будущем можно добавить более сложный diff алгоритм
-    return { original, newText }
-  }
-  
-  const { original, newText } = highlightDiff(edit.original_text, edit.new_text)
-  
+  const title = generateEditTitle(edit)
+  const diffSegments = computeWordDiff(edit.original_text, edit.new_text)
+
   return (
-    <div 
-      className={`rounded-lg border overflow-hidden transition-all duration-200 ${
-        isApplied 
-          ? 'border-green-300 bg-green-50/50' 
-          : isSkipped 
-            ? 'border-gray-200 bg-gray-50/50 opacity-60' 
-            : 'border-amber-200 bg-amber-50/30'
+    <div
+      className={`rounded-xl border overflow-hidden transition-all duration-200 ${
+        isApplied
+          ? 'border-green-200 bg-green-50/30 opacity-70'
+          : isSkipped
+            ? 'border-gray-200 bg-gray-50/30 opacity-50'
+            : 'border-gray-200 bg-white shadow-sm'
       }`}
     >
-      {/* Заголовок карточки */}
+      {/* Title */}
       <div
-        className="flex items-center justify-between px-3 py-2 cursor-pointer hover:bg-black/5 transition-colors"
-        onClick={() => setIsExpanded(!isExpanded)}
+        className="px-4 pt-3 pb-2 cursor-pointer"
+        onClick={() => edit.found_in_document && !isProcessed && onNavigate(edit.original_text)}
       >
-        <div className="flex items-center gap-2 min-w-0">
-          <div className={`w-2 h-2 rounded-full shrink-0 ${
-            isApplied ? 'bg-green-500' : isSkipped ? 'bg-gray-400' : 'bg-amber-500'
-          }`} />
-          <span className="text-xs font-medium text-gray-700 truncate">
-            {isApplied ? 'Изменение применено' : isSkipped ? 'Изменение пропущено' : 'Предлагаемое изменение'}
-          </span>
-        </div>
-        <div className="flex items-center gap-1 shrink-0">
-          {!isProcessed && edit.found_in_document && (
-            <button
-              onClick={(e) => {
-                e.stopPropagation()
-                onNavigate(edit.original_text)
-              }}
-              className="p-1 rounded-md hover:bg-amber-200/50 text-amber-700 transition-colors"
-              title="Перейти к месту в документе"
-              aria-label="Перейти к месту в документе"
-            >
-              <ArrowRight className="w-3.5 h-3.5" />
-            </button>
-          )}
-          {isExpanded ? (
-            <ChevronUp className="w-3.5 h-3.5 text-gray-400" />
-          ) : (
-            <ChevronDown className="w-3.5 h-3.5 text-gray-400" />
-          )}
-        </div>
+        <h4 className="text-sm font-semibold text-gray-900 leading-snug">
+          {title}
+        </h4>
+        {isApplied && (
+          <span className="inline-block mt-1 text-xs font-medium text-green-600">Применено</span>
+        )}
+        {isSkipped && (
+          <span className="inline-block mt-1 text-xs font-medium text-gray-400">Пропущено</span>
+        )}
       </div>
-      
-      {/* Содержимое карточки */}
-      {isExpanded && (
-        <div className="px-3 pb-3">
-          {/* Контекст (если есть) */}
+
+      {/* Inline redline diff */}
+      <div className="px-4 pb-3">
+        <div className="rounded-lg bg-gray-50 border border-gray-100 px-3 py-2.5 text-sm leading-relaxed text-gray-700">
+          {/* Context before */}
           {edit.context_before && (
-            <div className="text-xs text-gray-400 mb-1 truncate">
-              ...{edit.context_before}
-            </div>
+            <span className="text-gray-400">...{edit.context_before.slice(-80)} </span>
           )}
 
-          {/* Блок "Было" */}
-          <div className="mb-2">
-            <div className="text-xs font-medium text-red-600 mb-1 uppercase tracking-wide">
-              Было:
-            </div>
-            <div className="px-2 py-1.5 rounded-md bg-red-50 border border-red-200 overflow-hidden">
-              <span className="text-xs text-red-800 line-through decoration-red-400 break-words">
-                {original}
-              </span>
-            </div>
-          </div>
+          {/* Diff segments */}
+          {diffSegments.map((seg, idx) => {
+            if (seg.type === 'removed') {
+              return (
+                <span
+                  key={idx}
+                  className="line-through decoration-2 text-red-500"
+                  style={{ textDecorationColor: 'rgb(239 68 68)' }}
+                >
+                  {seg.text}
+                </span>
+              )
+            }
+            if (seg.type === 'added') {
+              return (
+                <span key={idx} className="text-green-600 font-medium">
+                  {seg.text}
+                </span>
+              )
+            }
+            return <span key={idx}>{seg.text}</span>
+          })}
 
-          {/* Стрелка вниз */}
-          <div className="flex justify-center my-1.5">
-            <div className="w-5 h-5 rounded-full bg-gray-100 flex items-center justify-center">
-              <ChevronDown className="w-3 h-3 text-gray-400" />
-            </div>
-          </div>
-
-          {/* Блок "Стало" */}
-          <div className="mb-3">
-            <div className="text-xs font-medium text-green-600 mb-1 uppercase tracking-wide">
-              Стало:
-            </div>
-            <div className="px-2 py-1.5 rounded-md bg-green-50 border border-green-200 overflow-hidden">
-              <span className="text-xs text-green-800 font-medium break-words">
-                {newText}
-              </span>
-            </div>
-          </div>
-
-          {/* Контекст после (если есть) */}
+          {/* Context after */}
           {edit.context_after && (
-            <div className="text-xs text-gray-400 mb-2 truncate">
-              {edit.context_after}...
-            </div>
+            <span className="text-gray-400"> {edit.context_after.slice(0, 80)}...</span>
           )}
+        </div>
 
-          {/* Предупреждение если текст не найден */}
-          {!edit.found_in_document && (
-            <div className="mb-2 px-2 py-1.5 rounded-md bg-yellow-50 border border-yellow-200">
-              <span className="text-xs text-yellow-700">
-                Текст не найден в документе.
-              </span>
-            </div>
-          )}
+        {/* Warning if text not found */}
+        {!edit.found_in_document && !isProcessed && (
+          <div className="mt-2 text-xs text-amber-600">
+            Текст не найден в документе
+          </div>
+        )}
+      </div>
 
-          {/* Кнопки действий */}
-          {!isProcessed && (
-            <div className="flex items-center gap-2">
-              <button
-                onClick={() => onApply(edit)}
-                disabled={!edit.found_in_document}
-                className="flex-1 flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-lg bg-green-600 text-white text-xs font-medium hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-              >
-                <Check className="w-3.5 h-3.5" />
-                Применить
-              </button>
-              <button
-                onClick={() => onSkip(edit)}
-                className="flex-1 flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-lg bg-gray-100 text-gray-700 text-xs font-medium hover:bg-gray-200 transition-colors"
-              >
-                <X className="w-3.5 h-3.5" />
-                Пропустить
-              </button>
-            </div>
-          )}
+      {/* Action buttons - Harvey style */}
+      {!isProcessed && (
+        <div className="flex items-center border-t border-gray-100">
+          <button
+            onClick={() => onSkip(edit)}
+            className="flex-1 px-4 py-2.5 text-sm font-medium text-gray-500 hover:text-gray-700 hover:bg-gray-50 transition-colors"
+          >
+            Dismiss
+          </button>
+          <div className="w-px h-8 bg-gray-100" />
+          <button
+            onClick={() => onApply(edit)}
+            disabled={!edit.found_in_document}
+            className="flex-1 px-4 py-2.5 text-sm font-semibold text-gray-900 hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+          >
+            Apply
+          </button>
         </div>
       )}
     </div>
@@ -183,37 +215,37 @@ export const EditSuggestionsList: React.FC<EditSuggestionsListProps> = ({
 }) => {
   const pendingEdits = edits.filter(e => !appliedIds.has(e.id) && !skippedIds.has(e.id))
   const hasFoundEdits = pendingEdits.some(e => e.found_in_document)
-  
+
   if (edits.length === 0) return null
-  
+
   return (
     <div className="mt-4 space-y-3">
-      {/* Заголовок списка */}
+      {/* Header */}
       <div className="flex flex-wrap items-center gap-2">
-        <div className="text-sm font-medium text-gray-700 mr-auto">
-          Предложенные изменения ({edits.length})
+        <div className="text-sm font-semibold text-gray-900 mr-auto">
+          {edits.length} suggestions
         </div>
         {pendingEdits.length > 1 && (
-          <>
+          <div className="flex items-center gap-1.5">
             <button
               onClick={onApplyAll}
               disabled={!hasFoundEdits}
-              className="text-xs px-2 py-1 rounded bg-green-100 text-green-700 hover:bg-green-200 disabled:opacity-50 disabled:cursor-not-allowed transition-colors whitespace-nowrap"
+              className="text-xs px-2.5 py-1 rounded-md bg-gray-900 text-white hover:bg-gray-800 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
             >
-              Применить все
+              Apply all
             </button>
             <button
               onClick={onSkipAll}
-              className="text-xs px-2 py-1 rounded bg-gray-100 text-gray-600 hover:bg-gray-200 transition-colors whitespace-nowrap"
+              className="text-xs px-2.5 py-1 rounded-md border border-gray-200 text-gray-600 hover:bg-gray-50 transition-colors"
             >
-              Пропустить все
+              Dismiss all
             </button>
-          </>
+          </div>
         )}
       </div>
-      
-      {/* Список карточек */}
-      <div className="space-y-2">
+
+      {/* Cards */}
+      <div className="space-y-3">
         {edits.map((edit) => (
           <EditSuggestionCard
             key={edit.id}
@@ -231,13 +263,3 @@ export const EditSuggestionsList: React.FC<EditSuggestionsListProps> = ({
 }
 
 export default EditSuggestionCard
-
-
-
-
-
-
-
-
-
-

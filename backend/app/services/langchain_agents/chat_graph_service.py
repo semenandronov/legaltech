@@ -229,7 +229,8 @@ class ChatGraphService:
         selected_text: str = None,
         stream_mode: str = "updates",
         enable_token_streaming: bool = False,
-        existing_messages: List[BaseMessage] = None
+        existing_messages: List[BaseMessage] = None,
+        editor_mode_hint: str = None
     ) -> AsyncGenerator[str, None]:
         """
         Streaming ответ через ChatGraph.
@@ -309,6 +310,8 @@ class ChatGraphService:
                     current_state["document_id"] = document_id
                 if selected_text:
                     current_state["selected_text"] = selected_text
+                if editor_mode_hint:
+                    current_state["editor_mode_hint"] = editor_mode_hint
                 # Очищаем предыдущий ответ для нового запроса
                 current_state["response"] = None
                 current_state["rag_context"] = None
@@ -333,7 +336,8 @@ class ChatGraphService:
                     document_context=document_context,
                     document_id=document_id,
                     selected_text=selected_text,
-                    existing_messages=existing_messages
+                    existing_messages=existing_messages,
+                    editor_mode_hint=editor_mode_hint
                 )
                 logger.info(f"[ChatGraphService] Starting new dialog, thread_id: {thread_id}")
         except Exception as e:
@@ -349,107 +353,155 @@ class ChatGraphService:
             document_context=document_context,
             document_id=document_id,
             selected_text=selected_text,
-            existing_messages=existing_messages
+            existing_messages=existing_messages,
+            editor_mode_hint=editor_mode_hint
         )
         
         full_response = ""
         citations = []
         document_created = None
-        
+
         try:
-            # Streaming через граф
-            async for chunk in graph.astream(initial_state, config=config):
-                # Извлекаем данные из chunk
-                if isinstance(chunk, dict):
-                    for node_name, node_data in chunk.items():
-                        if not isinstance(node_data, dict):
-                            continue
-                        
-                        # Обрабатываем messages
-                        messages = node_data.get("messages", [])
-                        for msg in messages:
-                            if isinstance(msg, AIMessage) and msg.content:
-                                content = msg.content
-                                
-                                # Отправляем дельту
-                                if content != full_response:
-                                    if full_response and content.startswith(full_response):
-                                        delta = content[len(full_response):]
-                                    else:
-                                        delta = content
-                                    
-                                    if delta:
-                                        yield f"data: {json.dumps({'type': 'text-delta', 'textDelta': delta})}\n\n"
-                                    
-                                    full_response = content
-                        
-                        # Обрабатываем response (финальный ответ)
-                        response = node_data.get("response")
-                        if response and response != full_response:
-                            if full_response and response.startswith(full_response):
-                                delta = response[len(full_response):]
-                            else:
-                                delta = response
-                            
-                            if delta:
-                                yield f"data: {json.dumps({'type': 'text-delta', 'textDelta': delta})}\n\n"
-                            
-                            full_response = response
-                        
-                        # Обрабатываем citations
-                        node_citations = node_data.get("citations")
-                        if node_citations:
-                            citations = node_citations
-                        
-                        # Обрабатываем document_created (draft mode)
-                        doc_created = node_data.get("document_created")
-                        if doc_created:
-                            document_created = doc_created
-                            
-                            # Отправляем событие о создании документа
-                            yield f"data: {json.dumps({'type': 'document-card', 'data': doc_created})}\n\n"
-                        
-                        # Обрабатываем thinking_steps (deep_think mode)
-                        thinking_steps = node_data.get("thinking_steps")
-                        if thinking_steps:
-                            for step in thinking_steps:
-                                yield f"data: {json.dumps({'type': 'thinking-step', 'data': step})}\n\n"
-                        
-                        # Обрабатываем structured_edits (editor mode)
-                        structured_edits = node_data.get("structured_edits")
-                        if structured_edits:
-                            from app.services.chat.events import SSESerializer
-                            yield SSESerializer.structured_edits(structured_edits)
-                            logger.info(f"[ChatGraphService] Sent {len(structured_edits)} structured edits")
-                        
-                        # Обрабатываем current_phase для прогресса
-                        phase = node_data.get("current_phase")
-                        if phase:
-                            yield f"data: {json.dumps({'type': 'status', 'phase': phase})}\n\n"
-            
+            # Token-level streaming: используем stream_mode=["messages", "updates"]
+            # "messages" даёт токены по мере генерации LLM
+            # "updates" даёт метаданные (citations, structured_edits и т.д.)
+            try:
+                async for stream_mode_type, chunk in graph.astream(
+                    initial_state, config=config,
+                    stream_mode=["messages", "updates"]
+                ):
+                    if stream_mode_type == "messages":
+                        # Token-level streaming от LLM
+                        msg_chunk, metadata = chunk
+                        if hasattr(msg_chunk, 'content') and msg_chunk.content:
+                            token = msg_chunk.content
+                            if token:
+                                full_response += token
+                                yield f"data: {json.dumps({'type': 'text-delta', 'textDelta': token})}\n\n"
+
+                    elif stream_mode_type == "updates":
+                        # Node-level updates для метаданных
+                        if isinstance(chunk, dict):
+                            for node_name, node_data in chunk.items():
+                                if not isinstance(node_data, dict):
+                                    continue
+
+                                # Обрабатываем response если текст не пришёл через messages
+                                response = node_data.get("response")
+                                if response and response != full_response:
+                                    if not full_response:
+                                        # Текст не стримился через messages — отправляем целиком
+                                        yield f"data: {json.dumps({'type': 'text-delta', 'textDelta': response})}\n\n"
+                                    full_response = response
+
+                                # Обрабатываем citations
+                                node_citations = node_data.get("citations")
+                                if node_citations:
+                                    citations = node_citations
+
+                                # Обрабатываем document_created (draft mode)
+                                doc_created = node_data.get("document_created")
+                                if doc_created:
+                                    document_created = doc_created
+                                    yield f"data: {json.dumps({'type': 'document-card', 'data': doc_created})}\n\n"
+
+                                # Обрабатываем thinking_steps (deep_think mode)
+                                thinking_steps = node_data.get("thinking_steps")
+                                if thinking_steps:
+                                    for step in thinking_steps:
+                                        yield f"data: {json.dumps({'type': 'thinking-step', 'data': step})}\n\n"
+
+                                # Обрабатываем structured_edits (editor mode)
+                                structured_edits = node_data.get("structured_edits")
+                                if structured_edits:
+                                    from app.services.chat.events import SSESerializer
+                                    yield SSESerializer.structured_edits(structured_edits)
+                                    logger.info(f"[ChatGraphService] Sent {len(structured_edits)} structured edits")
+
+                                # Обрабатываем current_phase для прогресса
+                                phase = node_data.get("current_phase")
+                                if phase:
+                                    yield f"data: {json.dumps({'type': 'status', 'phase': phase})}\n\n"
+
+            except TypeError:
+                # Fallback: если LangGraph не поддерживает multi-mode streaming
+                logger.warning("[ChatGraphService] Multi-mode streaming not supported, falling back to updates mode")
+                async for chunk in graph.astream(initial_state, config=config):
+                    if isinstance(chunk, dict):
+                        for node_name, node_data in chunk.items():
+                            if not isinstance(node_data, dict):
+                                continue
+
+                            # Обрабатываем messages
+                            messages = node_data.get("messages", [])
+                            for msg in messages:
+                                if isinstance(msg, AIMessage) and msg.content:
+                                    content = msg.content
+                                    if content != full_response:
+                                        if full_response and content.startswith(full_response):
+                                            delta = content[len(full_response):]
+                                        else:
+                                            delta = content
+                                        if delta:
+                                            yield f"data: {json.dumps({'type': 'text-delta', 'textDelta': delta})}\n\n"
+                                        full_response = content
+
+                            response = node_data.get("response")
+                            if response and response != full_response:
+                                if full_response and response.startswith(full_response):
+                                    delta = response[len(full_response):]
+                                else:
+                                    delta = response
+                                if delta:
+                                    yield f"data: {json.dumps({'type': 'text-delta', 'textDelta': delta})}\n\n"
+                                full_response = response
+
+                            node_citations = node_data.get("citations")
+                            if node_citations:
+                                citations = node_citations
+
+                            doc_created = node_data.get("document_created")
+                            if doc_created:
+                                document_created = doc_created
+                                yield f"data: {json.dumps({'type': 'document-card', 'data': doc_created})}\n\n"
+
+                            thinking_steps = node_data.get("thinking_steps")
+                            if thinking_steps:
+                                for step in thinking_steps:
+                                    yield f"data: {json.dumps({'type': 'thinking-step', 'data': step})}\n\n"
+
+                            structured_edits = node_data.get("structured_edits")
+                            if structured_edits:
+                                from app.services.chat.events import SSESerializer
+                                yield SSESerializer.structured_edits(structured_edits)
+
+                            phase = node_data.get("current_phase")
+                            if phase:
+                                yield f"data: {json.dumps({'type': 'status', 'phase': phase})}\n\n"
+
             # Если ответ пустой, отправляем fallback
             if not full_response:
                 full_response = "Не удалось получить ответ. Попробуйте переформулировать вопрос."
                 yield f"data: {json.dumps({'type': 'text-delta', 'textDelta': full_response})}\n\n"
-            
+
             # Отправляем citations если есть
             if citations:
                 yield f"data: {json.dumps({'type': 'citations', 'citations': citations})}\n\n"
-            
+
             # Сохраняем ответ ассистента
             self._save_assistant_message(case_id, full_response, session_id, citations)
-            
+
             # Отправляем финальное событие
             yield f"data: {json.dumps({'type': 'finish', 'finishReason': 'stop'})}\n\n"
-            
+
             logger.info(f"[ChatGraphService] Stream completed: {len(full_response)} chars")
-            
+
         except Exception as e:
             logger.error(f"[ChatGraphService] Stream error: {e}", exc_info=True)
             error_msg = f"Ошибка: {str(e)}"
             yield f"data: {json.dumps({'type': 'text-delta', 'textDelta': error_msg})}\n\n"
             yield f"data: {json.dumps({'type': 'finish', 'finishReason': 'error', 'error': str(e)})}\n\n"
-            
+
             # Сохраняем ошибку как ответ
             self._save_assistant_message(case_id, error_msg, session_id)
     

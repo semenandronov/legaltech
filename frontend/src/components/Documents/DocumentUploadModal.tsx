@@ -9,7 +9,7 @@ interface DocumentUploadModalProps {
   onUploadComplete: () => void
 }
 
-const MAX_FILE_SIZE_MB = 5
+const MAX_FILE_SIZE_MB = 30
 const MAX_FILE_SIZE_BYTES = MAX_FILE_SIZE_MB * 1024 * 1024
 
 type FileUploadStatus = 'pending' | 'uploading' | 'processing' | 'done' | 'error'
@@ -120,16 +120,30 @@ const DocumentUploadModal = ({ isOpen, onClose, caseId, onUploadComplete }: Docu
         idx === i ? { ...item, status: 'uploading', progress: 0 } : item
       ))
 
+      let processingTimer: ReturnType<typeof setInterval> | null = null
+
       try {
         const response = await addFilesToCase(caseId, [queueItems[i].file], (percent) => {
           setUploadQueue(prev => prev.map((item, idx) => {
             if (idx !== i) return item
+            const mappedProgress = Math.round(percent * 0.7)
             if (percent >= 100) {
-              return { ...item, status: 'processing', progress: 100 }
+              if (!processingTimer) {
+                processingTimer = setInterval(() => {
+                  setUploadQueue(prev2 => prev2.map((item2, idx2) => {
+                    if (idx2 !== i || item2.status !== 'processing') return item2
+                    const newProgress = Math.min(95, item2.progress + 0.5)
+                    return { ...item2, progress: newProgress }
+                  }))
+                }, 300)
+              }
+              return { ...item, status: 'processing', progress: 70 }
             }
-            return { ...item, progress: percent }
+            return { ...item, progress: mappedProgress }
           }))
         })
+
+        if (processingTimer) clearInterval(processingTimer)
 
         setUploadQueue(prev => prev.map((item, idx) =>
           idx === i ? { ...item, status: 'done', progress: 100 } : item
@@ -142,6 +156,7 @@ const DocumentUploadModal = ({ isOpen, onClose, caseId, onUploadComplete }: Docu
           return [...prev, ...uniqueNew]
         })
       } catch (err: any) {
+        if (processingTimer) clearInterval(processingTimer)
         const errorMsg = err.response?.data?.detail || err.message || 'Ошибка загрузки'
         setUploadQueue(prev => prev.map((item, idx) =>
           idx === i ? { ...item, status: 'error', error: errorMsg } : item
@@ -328,31 +343,20 @@ const DocumentUploadModal = ({ isOpen, onClose, caseId, onUploadComplete }: Docu
                       {(item.status === 'uploading' || item.status === 'processing') && (() => {
                         const radius = 12
                         const circumference = 2 * Math.PI * radius
-                        const progress = item.status === 'processing' ? 100 : item.progress
-                        const offset = circumference - (progress / 100) * circumference
+                        const offset = circumference - (item.progress / 100) * circumference
                         return (
                           <svg width="28" height="28" viewBox="0 0 28 28" style={{ transform: 'rotate(-90deg)' }}>
                             <circle cx="14" cy="14" r={radius} fill="none" stroke="#e5e7eb" strokeWidth="2.5" />
                             <circle
                               cx="14" cy="14" r={radius}
                               fill="none"
-                              stroke={item.status === 'processing' ? '#6366f1' : '#16a34a'}
+                              stroke="#16a34a"
                               strokeWidth="2.5"
                               strokeDasharray={circumference}
                               strokeDashoffset={offset}
                               strokeLinecap="round"
                               style={{ transition: 'stroke-dashoffset 0.3s ease' }}
                             />
-                            {item.status === 'processing' && (
-                              <animateTransform
-                                attributeName="transform"
-                                type="rotate"
-                                from="0 14 14"
-                                to="360 14 14"
-                                dur="1.5s"
-                                repeatCount="indefinite"
-                              />
-                            )}
                           </svg>
                         )
                       })()}
@@ -372,8 +376,8 @@ const DocumentUploadModal = ({ isOpen, onClose, caseId, onUploadComplete }: Docu
                       </div>
                       <div style={{ fontSize: '11px', color: '#9ca3af', marginTop: '2px' }}>
                         {item.status === 'pending' && 'В очереди'}
-                        {item.status === 'uploading' && `Загрузка ${item.progress}%`}
-                        {item.status === 'processing' && 'Индексация...'}
+                        {item.status === 'uploading' && `Загрузка... ${Math.round(item.progress)}%`}
+                        {item.status === 'processing' && `Обработка на сервере... ${Math.round(item.progress)}%`}
                         {item.status === 'done' && 'Готово'}
                         {item.status === 'error' && (
                           <span style={{ color: '#dc2626' }}>{item.error}</span>

@@ -1,10 +1,11 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
-import { Save, Download, ArrowLeft, MessageSquare, FileText, Table, FileEdit, History, BookOpen, Workflow, Check } from 'lucide-react'
+import { Save, Download, ArrowLeft, MessageSquare, FileText, Table, FileEdit, History, BookOpen, Workflow, Check, Pencil, HelpCircle } from 'lucide-react'
 import { toast } from 'sonner'
 import UnifiedSidebar from '../components/Layout/UnifiedSidebar'
 import { DocumentEditor, DocumentEditorRef } from '../components/Editor/DocumentEditor'
 import { AssistantUIChat } from '../components/Chat/AssistantUIChat'
+import { DocumentEditorContextChat } from '../components/Editor/DocumentEditorContextChat'
 import { VersionHistory } from '../components/Editor/VersionHistory'
 // CommentsPanel removed — was overlapping the chat sidebar
 import { TemplateSelector } from '../components/Editor/TemplateSelector'
@@ -12,7 +13,6 @@ import { DocxImporter } from '../components/Editor/DocxImporter'
 import { getDocument, createDocument, updateDocument, exportDocx, exportPdf, listDocuments, Document } from '../services/documentEditorApi'
 import { getPlaybooks, checkDocument as runPlaybookCheck, getCheck, Playbook } from '../services/playbooksApi'
 import { DocumentsList } from '../components/Editor/DocumentsList'
-import { CreateDocumentScreen } from '../components/Editor/CreateDocumentScreen'
 import { PlaybookResultsPanel } from '../components/Playbooks/PlaybookResultsPanel'
 
 interface DocumentData {
@@ -30,6 +30,7 @@ const DocumentEditorPage = () => {
   const [content, setContent] = useState('')
   const [title, setTitle] = useState('Новый документ')
   const [selectedText, setSelectedText] = useState('')
+  const [selectionRange, setSelectionRange] = useState<{ from: number; to: number } | null>(null)
   const [showChat, setShowChat] = useState(false)
   const [showVersionHistory, setShowVersionHistory] = useState(false)
   // showComments removed — CommentsPanel was overlapping the chat sidebar
@@ -39,7 +40,7 @@ const DocumentEditorPage = () => {
   const [showPlaybookModal, setShowPlaybookModal] = useState(false)
   const [playbooks, setPlaybooks] = useState<Playbook[]>([])
   const [loadingPlaybooks, setLoadingPlaybooks] = useState(false)
-  const [runningPlaybook, setRunningPlaybook] = useState(false)
+  const [runningPlaybookId, setRunningPlaybookId] = useState<string | null>(null)
   const [playbookResult, setPlaybookResult] = useState<any>(null)
   const [showResultsPanel, setShowResultsPanel] = useState(false)
   const [loading, setLoading] = useState(true)
@@ -48,6 +49,7 @@ const DocumentEditorPage = () => {
   const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false)
   const [documentsList, setDocumentsList] = useState<Document[]>([])
   const [loadingDocuments, setLoadingDocuments] = useState(false)
+  const [editorChatMode, setEditorChatMode] = useState<'edit' | 'ask'>('edit')
   const saveTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const editorRef = useRef<DocumentEditorRef>(null)
 
@@ -225,10 +227,15 @@ const DocumentEditorPage = () => {
     }
   }
 
+  const stripMarkdownCodeBlock = (text: string): string => {
+    const trimmed = text.trim()
+    const match = trimmed.match(/^```(?:html)?\s*\n?([\s\S]*?)\n?```$/i)
+    return match ? match[1].trim() : trimmed
+  }
+
   const handleApplyEdit = (editedContent: string) => {
-    // Apply edited content from AI to the document
     if (editorRef.current) {
-      editorRef.current.setContent(editedContent)
+      editorRef.current.setContent(stripMarkdownCodeBlock(editedContent))
       setHasUnsavedChanges(true)
       toast.success('Изменения применены к документу')
     }
@@ -262,6 +269,24 @@ const DocumentEditorPage = () => {
     return false
   }
 
+  const handleReplaceRange = (from: number, to: number, text: string) => {
+    if (editorRef.current) {
+      editorRef.current.replaceRange(from, to, text)
+      setHasUnsavedChanges(true)
+    }
+  }
+
+  const handleReplaceMultipleTexts = (replacements: Array<{ originalText: string; newText: string }>): number => {
+    if (editorRef.current) {
+      const count = editorRef.current.replaceMultipleTexts(replacements)
+      if (count > 0) {
+        setHasUnsavedChanges(true)
+      }
+      return count
+    }
+    return 0
+  }
+
   const handleVersionRestored = (restoredContent: string) => {
     setContent(restoredContent)
     setHasUnsavedChanges(true)
@@ -274,10 +299,26 @@ const DocumentEditorPage = () => {
     }
   }
 
-  const handleDocxImport = (html: string) => {
+  const handleDocxImport = async (html: string) => {
+    const cleanHtml = stripMarkdownCodeBlock(html)
+    // Also strip full DOCTYPE/html wrappers — TipTap needs body content only
+    const bodyContent = cleanHtml.replace(/<!DOCTYPE[^>]*>[\s\S]*?<body[^>]*>/i, '')
+                                 .replace(/<\/body>[\s\S]*?<\/html>/i, '')
+                                 .trim() || cleanHtml
+
     if (editorRef.current) {
-      editorRef.current.setContent(html)
+      // Already inside editor — just set content
+      editorRef.current.setContent(bodyContent)
       setHasUnsavedChanges(true)
+    } else {
+      // In list mode — create a new document with the imported content
+      try {
+        const doc = await createDocument(caseId!, 'Импортированный документ', bodyContent)
+        toast.success('Документ импортирован')
+        navigate(`/cases/${caseId}/editor/${doc.id}`)
+      } catch (err: any) {
+        toast.error('Ошибка при создании документа: ' + (err.message || ''))
+      }
     }
   }
 
@@ -291,6 +332,7 @@ const DocumentEditorPage = () => {
 
   // Загрузка playbooks при открытии модального окна
   const handleOpenPlaybookModal = async () => {
+    setShowChat(true)
     setShowPlaybookModal(true)
     setLoadingPlaybooks(true)
     setPlaybookResult(null)
@@ -308,19 +350,23 @@ const DocumentEditorPage = () => {
   const handleRunPlaybook = async (playbookId: string) => {
     if (!documentId || !caseId) return
     
-    setRunningPlaybook(true)
+    setRunningPlaybookId(playbookId)
     try {
       const checkResponse = await runPlaybookCheck(playbookId, documentId, caseId)
       // Get full check result using check_id
       const fullResult = await getCheck(checkResponse.check_id)
       setPlaybookResult(fullResult)
       setShowPlaybookModal(false)
-      setShowResultsPanel(true)
+      if (showChat) {
+        // Result will be injected into the chat sidebar as a message
+      } else {
+        setShowResultsPanel(true)
+      }
       toast.success(`Проверка завершена! Соответствие: ${fullResult.compliance_score?.toFixed(1) || 0}%`)
     } catch (error: any) {
       toast.error('Ошибка проверки: ' + (error.message || 'Неизвестная ошибка'))
     } finally {
-      setRunningPlaybook(false)
+      setRunningPlaybookId(null)
     }
   }
 
@@ -355,7 +401,7 @@ const DocumentEditorPage = () => {
   if (loading || loadingDocuments) {
     return (
       <div className="h-screen bg-bg-primary flex">
-        {caseId && <UnifiedSidebar navItems={navItems} title="Legal AI" />}
+        {caseId && <UnifiedSidebar navItems={navItems} title="Legal AI" forceCollapsed={showChat} />}
         <div className="flex-1 flex items-center justify-center">
           <div className="text-center">
             <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto mb-4"></div>
@@ -368,23 +414,26 @@ const DocumentEditorPage = () => {
     )
   }
 
-  // Show documents list or create screen if no documentId
+  // Show documents list if no documentId
   if (!documentId) {
     return (
       <div className="h-screen bg-bg-primary flex">
-        {caseId && <UnifiedSidebar navItems={navItems} title="Legal AI" />}
+        {caseId && <UnifiedSidebar navItems={navItems} title="Legal AI" forceCollapsed={showChat} />}
         <div className="flex-1 flex flex-col" style={{ backgroundColor: 'var(--color-bg-primary)' }}>
-          {documentsList.length === 0 ? (
-            <CreateDocumentScreen caseId={caseId!} onDocumentCreated={handleDocumentCreated} />
-          ) : (
-            <DocumentsList
-              documents={documentsList}
-              caseId={caseId!}
-              onDocumentSelect={handleDocumentSelect}
-              onDocumentDeleted={handleDocumentDeleted}
-            />
-          )}
+          <DocumentsList
+            documents={documentsList}
+            caseId={caseId!}
+            onDocumentSelect={handleDocumentSelect}
+            onDocumentDeleted={handleDocumentDeleted}
+            onDocumentCreated={handleDocumentCreated}
+            onImportDocx={() => setShowDocxImporter(true)}
+          />
         </div>
+        <DocxImporter
+          isOpen={showDocxImporter}
+          onClose={() => setShowDocxImporter(false)}
+          onImport={handleDocxImport}
+        />
       </div>
     )
   }
@@ -392,15 +441,15 @@ const DocumentEditorPage = () => {
   // Show editor for specific document
   return (
     <div className="h-screen bg-bg-primary flex">
-      {caseId && <UnifiedSidebar navItems={navItems} title="Legal AI" />}
+      {caseId && <UnifiedSidebar navItems={navItems} title="Legal AI" forceCollapsed={showChat} />}
       <div className="flex-1 flex flex-col" style={{ backgroundColor: 'var(--color-bg-primary)' }}>
       {/* Toolbar */}
-      <div className="flex items-center justify-between px-6 py-4 border-b" style={{ borderBottomColor: 'var(--color-border)' }}>
-        <div className="flex items-center gap-4">
-          <div className="flex items-center gap-2">
+      <div className="flex items-center justify-between px-4 py-3 border-b gap-2" style={{ borderBottomColor: 'var(--color-border)' }}>
+        <div className="flex items-center gap-3 min-w-0 flex-1">
+          <div className="flex items-center gap-2 flex-shrink-0">
             <button
               onClick={() => navigate(`/cases/${caseId}/editor`)}
-              className="flex items-center gap-2 px-3 py-1.5 text-sm font-medium rounded-lg transition-all duration-150 hover:bg-gray-100"
+              className="flex items-center gap-1.5 px-2.5 py-1.5 text-sm font-medium rounded-lg transition-all duration-150 hover:bg-gray-100"
               style={{ color: 'var(--color-text-secondary)' }}
             >
               <ArrowLeft className="w-4 h-4" />
@@ -409,18 +458,18 @@ const DocumentEditorPage = () => {
             {!documentId && (
               <button
                 onClick={() => setShowTemplateSelector(true)}
-                className="flex items-center gap-2 px-3 py-1.5 text-sm font-medium rounded-lg transition-all duration-150 hover:bg-gray-100 border"
-                style={{ 
+                className="flex items-center gap-1.5 px-2.5 py-1.5 text-sm font-medium rounded-lg transition-all duration-150 hover:bg-gray-100 border"
+                style={{
                   color: 'var(--color-text-primary)',
                   borderColor: 'var(--color-border)'
                 }}
               >
                 <FileText className="w-4 h-4" />
-                Создать из шаблона
+                Шаблон
               </button>
             )}
           </div>
-          <div className="h-6 w-px bg-gray-300"></div>
+          <div className="h-6 w-px bg-gray-300 flex-shrink-0"></div>
           <input
             type="text"
             value={title}
@@ -428,17 +477,17 @@ const DocumentEditorPage = () => {
               setTitle(e.target.value)
               setHasUnsavedChanges(true)
             }}
-            className="text-lg font-semibold bg-transparent border-none outline-none px-2 py-1 rounded"
+            className="text-base font-semibold bg-transparent border-none outline-none px-2 py-1 rounded min-w-0 flex-1"
             style={{ color: 'var(--color-text-primary)' }}
             placeholder="Название документа"
           />
         </div>
 
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-1.5 flex-shrink-0">
           <button
             onClick={() => handleSave()}
             disabled={saving}
-            className={`flex items-center gap-2 px-4 py-2 rounded-lg transition-all duration-200 ${
+            className={`flex items-center gap-1.5 px-3 py-2 text-sm rounded-lg transition-all duration-200 ${
               saving
                 ? 'bg-blue-500 text-white opacity-80'
                 : justSaved
@@ -460,7 +509,7 @@ const DocumentEditorPage = () => {
           <button
             onClick={handleExportDocx}
             disabled={!documentId || saving}
-            className="flex items-center gap-2 px-4 py-2 border rounded-lg hover:bg-gray-50 disabled:opacity-50 transition-colors"
+            className="flex items-center gap-1.5 px-3 py-2 text-sm border rounded-lg hover:bg-gray-50 disabled:opacity-50 transition-colors"
             style={{ borderColor: 'var(--color-border)' }}
           >
             <Download className="w-4 h-4" />
@@ -469,26 +518,15 @@ const DocumentEditorPage = () => {
           <button
             onClick={handleExportPdf}
             disabled={!documentId || saving}
-            className="flex items-center gap-2 px-4 py-2 border rounded-lg hover:bg-gray-50 disabled:opacity-50 transition-colors"
+            className="flex items-center gap-1.5 px-3 py-2 text-sm border rounded-lg hover:bg-gray-50 disabled:opacity-50 transition-colors"
             style={{ borderColor: 'var(--color-border)' }}
           >
             <Download className="w-4 h-4" />
             PDF
           </button>
-          {/* Кнопка Playbooks - проверка документа */}
-          <button
-            onClick={handleOpenPlaybookModal}
-            disabled={!documentId}
-            className="flex items-center gap-2 px-4 py-2 border rounded-lg hover:bg-green-50 hover:border-green-300 disabled:opacity-50 transition-colors"
-            style={{ borderColor: 'var(--color-border)', color: 'var(--color-text-primary)' }}
-          >
-            <BookOpen className="w-4 h-4" style={{ color: '#10b981' }} />
-            Playbook
-          </button>
-          {/* Кнопка чата - показывается всегда */}
           <button
             onClick={() => setShowChat(!showChat)}
-            className={`flex items-center gap-2 px-4 py-2 rounded-lg transition-colors ${
+            className={`flex items-center gap-1.5 px-3 py-2 text-sm rounded-lg transition-colors ${
               showChat
                 ? 'bg-blue-100 text-blue-700'
                 : 'border hover:bg-gray-50'
@@ -501,7 +539,7 @@ const DocumentEditorPage = () => {
           {documentId && (
             <button
               onClick={() => setShowVersionHistory(true)}
-              className="flex items-center gap-2 px-4 py-2 border rounded-lg hover:bg-gray-50 transition-colors"
+              className="flex items-center gap-1.5 px-3 py-2 text-sm border rounded-lg hover:bg-gray-50 transition-colors"
               style={{ borderColor: 'var(--color-border)' }}
             >
               <History className="w-4 h-4" />
@@ -520,31 +558,43 @@ const DocumentEditorPage = () => {
             content={content}
             onChange={handleContentChange}
             onSelectionChange={setSelectedText}
+            onSelectionRangeChange={(range) => {
+              setSelectionRange(range)
+              if (range) {
+                editorRef.current?.setSelectionHighlight(range.from, range.to)
+              } else {
+                editorRef.current?.clearSelectionHighlight()
+                setSelectedText('')
+              }
+            }}
             caseId={caseId}
             documentId={documentId}
             onInsertText={handleInsertText}
           />
         </div>
 
-        {/* Chat справа */}
-        {showChat && caseId && (
-          <div className="w-80 border-l border-border shrink-0 bg-bg-elevated flex flex-col">
-            <AssistantUIChat
-              caseId={caseId}
-              className="h-full"
-              documentEditorMode={true}
-              currentDocumentId={documentId}
-              currentDocumentContent={content}
-              selectedText={selectedText}
+        {/* Harvey AI панель справа */}
+        {showChat && documentId && (
+          <div className="w-[480px] border-l border-border shrink-0 flex flex-col">
+            <DocumentEditorContextChat
+              documentId={documentId}
+              documentTitle={title}
+              documentContent={content}
               onApplyEdit={handleApplyEdit}
               onInsertText={handleInsertText}
-              onReplaceText={handleReplaceText}
-              onScrollToText={handleScrollToText}
-              onReplaceTextInDocument={handleReplaceTextInDocument}
-              onSetRisks={handleSetRisks}
-              onOpenDocumentInEditor={(docId) => {
-                navigate(`/cases/${caseId}/editor/${docId}`, { replace: true })
+              onReplaceText={handleReplaceTextInDocument}
+              onRunPlaybook={handleOpenPlaybookModal}
+              caseId={caseId}
+              pendingPlaybookResult={playbookResult}
+              onPlaybookResultConsumed={() => setPlaybookResult(null)}
+              selectedText={selectedText}
+              selectionRange={selectionRange}
+              onClearSelection={() => {
+                setSelectedText('')
+                setSelectionRange(null)
+                editorRef.current?.clearSelectionHighlight()
               }}
+              onReplaceRange={handleReplaceRange}
             />
           </div>
         )}
@@ -623,7 +673,7 @@ const DocumentEditorPage = () => {
                     <button
                       key={pb.id}
                       onClick={() => handleRunPlaybook(pb.id)}
-                      disabled={runningPlaybook}
+                      disabled={runningPlaybookId !== null}
                       className="w-full p-4 border rounded-lg text-left hover:border-blue-300 hover:bg-blue-50 transition-all disabled:opacity-50"
                       style={{ borderColor: 'var(--color-border)' }}
                     >
@@ -643,7 +693,7 @@ const DocumentEditorPage = () => {
                             <span className="text-xs text-gray-400">{pb.rules_count || 0} правил</span>
                           </div>
                         </div>
-                        {runningPlaybook && (
+                        {runningPlaybookId === pb.id && (
                           <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-blue-600"></div>
                         )}
                       </div>
@@ -680,6 +730,8 @@ const DocumentEditorPage = () => {
             setPlaybookResult(null)
           }}
           onNavigateToIssue={handleNavigateToIssue}
+          onScrollToText={handleScrollToText}
+          onApplyFix={handleReplaceTextInDocument}
           onRerun={() => {
             setShowResultsPanel(false)
             setShowPlaybookModal(true)

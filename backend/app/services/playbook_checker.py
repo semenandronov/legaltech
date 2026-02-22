@@ -5,6 +5,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy import and_
 from app.models.playbook import Playbook, PlaybookRule, PlaybookCheck
 from app.models.case import File
+from app.models.document_editor import Document
 from app.services.clause_extractor import ClauseExtractor, ExtractedClause, ClauseExtractionResult
 from app.services.llm_factory import create_llm
 from langchain_core.prompts import ChatPromptTemplate
@@ -158,29 +159,47 @@ class PlaybookChecker:
         if not (playbook.user_id == user_id or playbook.is_public or playbook.is_system):
             raise ValueError(f"Access denied to playbook {playbook_id}")
         
-        # Load document
+        # Load document - try File first, then editor Document
         file = self.db.query(File).filter(File.id == document_id).first()
+        editor_doc = None
         if not file:
+            editor_doc = self.db.query(Document).filter(Document.id == document_id).first()
+
+        if not file and not editor_doc:
             raise ValueError(f"Document {document_id} not found")
-        
-        # Check document access - user must have access to the case
-        if file.case_id:
+
+        # Check document access
+        if file:
+            if file.case_id:
+                from app.models.case import Case
+                case = self.db.query(Case).filter(Case.id == file.case_id).first()
+                if case and case.user_id != user_id:
+                    raise ValueError(f"Access denied to document {document_id}")
+            document_text = file.original_text or ""
+            document_name = file.filename
+        else:
+            # Editor document
             from app.models.case import Case
-            case = self.db.query(Case).filter(Case.id == file.case_id).first()
+            case = self.db.query(Case).filter(Case.id == editor_doc.case_id).first()
             if case and case.user_id != user_id:
                 raise ValueError(f"Access denied to document {document_id}")
-        
-        document_text = file.original_text or ""
+            document_text = editor_doc.content_plain or ""
+            if not document_text and editor_doc.content:
+                # Strip HTML tags to get plain text
+                document_text = re.sub(r'<[^>]+>', ' ', editor_doc.content)
+                document_text = re.sub(r'\s+', ' ', document_text).strip()
+            document_name = editor_doc.title
+
         if not document_text:
             raise ValueError(f"Document {document_id} has no text content")
-        
+
         # Create check record
         check = PlaybookCheck(
             playbook_id=playbook_id,
             document_id=document_id,
             case_id=case_id,
             user_id=user_id,
-            document_name=file.filename,
+            document_name=document_name,
             document_hash=hashlib.sha256(document_text.encode()).hexdigest()[:64],
             overall_status="in_progress",
             started_at=start_time,

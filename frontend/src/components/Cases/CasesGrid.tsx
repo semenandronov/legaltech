@@ -32,6 +32,8 @@ const CasesGrid = ({
   onViewModeChange,
   onDeleteCase,
 }: CasesGridProps) => {
+  // Defensive: ensure cases is always an array
+  const safeCases = cases || []
   const [isUploadDialogOpen, setIsUploadDialogOpen] = useState(false)
   const limit = 20
   const totalPages = Math.ceil(total / limit)
@@ -42,7 +44,7 @@ const CasesGrid = ({
     window.location.reload()
   }
   
-  if (loading && cases.length === 0) {
+  if (loading && safeCases.length === 0) {
     return (
       <div className="flex-1 p-8" style={{ padding: 'var(--space-8)' }}>
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
@@ -75,7 +77,7 @@ const CasesGrid = ({
     )
   }
   
-  if (cases.length === 0) {
+  if (safeCases.length === 0) {
     return (
       <div className="flex-1 flex flex-col">
         <div 
@@ -248,10 +250,10 @@ const CasesGrid = ({
       {/* Grid/List/Table */}
       <div className="flex-1 overflow-y-auto p-8">
         {viewMode === 'table' ? (
-          <CasesTable data={cases} loading={loading} onDeleteCase={onDeleteCase} />
+          <CasesTable data={safeCases} loading={loading} onDeleteCase={onDeleteCase} />
         ) : viewMode === 'grid' ? (
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-            {cases.map((caseItem, index) => (
+            {safeCases.map((caseItem, index) => (
               <div 
                 key={caseItem.id} 
                 className="stagger-item"
@@ -263,7 +265,7 @@ const CasesGrid = ({
           </div>
         ) : (
           <div className="space-y-4">
-            {cases.map((caseItem, index) => (
+            {safeCases.map((caseItem, index) => (
               <div 
                 key={caseItem.id}
                 className="stagger-item"

@@ -200,7 +200,7 @@ class Config:
     API_VERSION: str = "0.1.0"
     
     # File Upload
-    MAX_FILE_SIZE: int = 5 * 1024 * 1024  # 5 MB
+    MAX_FILE_SIZE: int = 30 * 1024 * 1024  # 30 MB
     ALLOWED_EXTENSIONS: List[str] = [".pdf", ".docx", ".txt", ".xlsx"]
     MAX_TOTAL_TEXT_CHARS: int = 2_000_000  # Ограничение суммарного текста
 

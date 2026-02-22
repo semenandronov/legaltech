@@ -759,6 +759,9 @@ class DocumentChatRequest(BaseModel):
     question: str = Field(..., min_length=1, description="User question or instruction")
     deep_think: bool = Field(False, description="Enable deep thinking mode for complex questions")
     legal_research: bool = Field(False, description="Enable legal research mode")
+    current_content: Optional[str] = Field(None, description="Current editor content (overrides DB content)")
+    mode: str = Field("ask", description="Editor mode: ask | edit | draft")
+    selected_text: Optional[str] = Field(None, description="Text selected in the editor")
 
 
 class StructuredEdit(BaseModel):
@@ -810,7 +813,8 @@ async def chat_over_document(
             if not document:
                 raise HTTPException(status_code=404, detail="Документ не найден")
             case_id = document.case_id
-            document_content = document.content
+            # Use current editor content if provided (unsaved changes)
+            document_content = request.current_content if request.current_content is not None else document.content
         else:
             # Для нового документа нужно получить case_id из запроса или создать документ
             # В этом случае case_id должен быть в metadata запроса или мы создаем документ
@@ -833,6 +837,8 @@ async def chat_over_document(
             document_content=document_content,
             case_id=case_id or (document.case_id if document else None),
             question=request.question,
+            mode=request.mode,
+            selected_text=request.selected_text,
             user_id=current_user.id,
             deep_think=request.deep_think,
             legal_research=request.legal_research

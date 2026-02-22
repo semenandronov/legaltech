@@ -13,17 +13,19 @@ interface UnifiedSidebarProps {
   navItems: NavItem[]
   title?: string
   showBackButton?: boolean
+  forceCollapsed?: boolean
 }
 
 const SIDEBAR_STATE_KEY = 'unified-sidebar-collapsed'
 
-const UnifiedSidebar = ({ navItems, title = 'Legal AI', showBackButton = true }: UnifiedSidebarProps) => {
+const UnifiedSidebar = ({ navItems, title = 'Legal AI', showBackButton = true, forceCollapsed = false }: UnifiedSidebarProps) => {
   const navigate = useNavigate()
   const location = useLocation()
-  const [isCollapsed, setIsCollapsed] = useState(() => {
+  const [userCollapsed, setUserCollapsed] = useState(() => {
     const saved = localStorage.getItem(SIDEBAR_STATE_KEY)
     return saved === 'true'
   })
+  const isCollapsed = forceCollapsed || userCollapsed
   
   const isActive = (path: string) => {
     return location.pathname === path || location.pathname.startsWith(path + '/')
@@ -34,11 +36,11 @@ const UnifiedSidebar = ({ navItems, title = 'Legal AI', showBackButton = true }:
   
   // Сохраняем состояние в localStorage
   useEffect(() => {
-    localStorage.setItem(SIDEBAR_STATE_KEY, String(isCollapsed))
-  }, [isCollapsed])
-  
+    localStorage.setItem(SIDEBAR_STATE_KEY, String(userCollapsed))
+  }, [userCollapsed])
+
   const toggleCollapse = () => {
-    setIsCollapsed(prev => !prev)
+    setUserCollapsed((prev: boolean) => !prev)
   }
   
   return (
@@ -94,13 +96,13 @@ const UnifiedSidebar = ({ navItems, title = 'Legal AI', showBackButton = true }:
         )}
         
         {/* Navigation */}
-        <nav className="flex-1 p-4 space-y-1 overflow-y-auto" style={{ padding: isCollapsed ? 'var(--space-2)' : 'var(--space-4)' }}>
+        <nav className="flex-1 p-4 space-y-1 overflow-y-auto overflow-x-hidden" style={{ padding: isCollapsed ? 'var(--space-2)' : 'var(--space-4)' }}>
           {/* Back button - показать если мы на странице с делом */}
           {shouldShowBackButton && (
             <button
               onClick={() => navigate('/cases')}
               className={`
-                w-full flex items-center ${isCollapsed ? 'justify-center px-2 py-3' : 'gap-3 px-4 py-3'} 
+                w-full flex items-center overflow-hidden ${isCollapsed ? 'justify-center px-2 py-3' : 'gap-3 px-4 py-3'}
                 text-sm font-medium rounded-md
                 transition-all duration-150
                 mb-2
@@ -110,7 +112,7 @@ const UnifiedSidebar = ({ navItems, title = 'Legal AI', showBackButton = true }:
                 backgroundColor: 'transparent',
                 color: 'var(--color-text-secondary)',
               }}
-              title={isCollapsed ? 'Дела' : undefined}
+              title={undefined}
             >
               <FolderOpen 
                 className="w-5 h-5 flex-shrink-0"
@@ -131,7 +133,7 @@ const UnifiedSidebar = ({ navItems, title = 'Legal AI', showBackButton = true }:
                 key={item.id}
                 onClick={() => navigate(item.path)}
                 className={`
-                  w-full flex items-center ${isCollapsed ? 'justify-center px-2 py-3' : 'gap-3 px-4 py-3'} 
+                  w-full flex items-center overflow-hidden ${isCollapsed ? 'justify-center px-2 py-3' : 'gap-3 px-4 py-3'}
                   text-sm font-medium rounded-md
                   transition-all duration-150
                   relative
@@ -145,7 +147,7 @@ const UnifiedSidebar = ({ navItems, title = 'Legal AI', showBackButton = true }:
                   backgroundColor: active ? 'var(--color-bg-active)' : 'transparent',
                   color: active ? 'var(--color-text-primary)' : 'var(--color-text-secondary)',
                 }}
-                title={isCollapsed ? item.label : undefined}
+                title={undefined}
               >
                 {/* Active indicator - subtle left border */}
                 {active && (

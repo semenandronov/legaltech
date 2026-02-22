@@ -11,7 +11,7 @@ import logging
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/folders", tags=["folders"])
+router = APIRouter(tags=["folders"])
 
 
 # Pydantic models

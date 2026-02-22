@@ -125,6 +125,7 @@ class ChatGraphState(TypedDict):
     
     # Editor mode fields
     editor_mode: Optional[bool]  # Флаг режима редактора
+    editor_mode_hint: Optional[str]  # Подсказка от UI: 'edit' или 'ask'
     structured_edits: Optional[List[Dict[str, Any]]]  # Структурированные изменения
     document_analysis: Optional[Dict[str, Any]]  # Анализ документа
     risks: Optional[List[Dict[str, Any]]]  # Найденные риски
@@ -163,7 +164,8 @@ def create_initial_chat_state(
     document_context: str = None,
     document_id: str = None,
     selected_text: str = None,
-    existing_messages: List[BaseMessage] = None
+    existing_messages: List[BaseMessage] = None,
+    editor_mode_hint: str = None
 ) -> ChatGraphState:
     """
     Создать начальное состояние для графа чата.
@@ -194,6 +196,7 @@ def create_initial_chat_state(
         document_id=document_id,
         selected_text=selected_text,
         editor_mode=bool(document_context),  # Режим редактора если есть document_context
+        editor_mode_hint=editor_mode_hint,
         structured_edits=None,
         document_analysis=None,
         risks=None,
@@ -1066,15 +1069,21 @@ def route_by_mode(state: ChatGraphState) -> str:
 def route_editor_mode(state: ChatGraphState) -> str:
     """
     Определяет тип операции редактора на основе запроса.
-    
-    Использует простую эвристику для классификации запроса.
-    Можно улучшить через LLM классификацию с structured output.
-    
+
+    Если пользователь явно выбрал режим 'ask' в UI,
+    всегда отвечаем на вопрос (generate_response).
+    Иначе используем эвристику для классификации.
+
     Returns:
         Ключ узла для выполнения операции
     """
     question = state.get("question", "").lower()
-    
+    editor_mode_hint = state.get("editor_mode_hint")
+
+    # Если пользователь явно выбрал режим "Спросить" — просто отвечаем
+    if editor_mode_hint == "ask":
+        return "generate_response"
+
     # Простая эвристика (можно улучшить через LLM классификацию)
     # 1. Проверка рисков
     if "риск" in question or "опасн" in question or "проблем" in question:

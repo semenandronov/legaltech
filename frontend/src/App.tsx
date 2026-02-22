@@ -18,6 +18,7 @@ const TabularReviewPage = lazy(() => import('./pages/TabularReviewPage'))
 const DocumentEditorPage = lazy(() => import('./pages/DocumentEditorPage'))
 const PlaybooksPage = lazy(() => import('./pages/PlaybooksPage'))
 const WorkflowsPage = lazy(() => import('./pages/WorkflowsPage'))
+const GlobalAssistantPage = lazy(() => import('./pages/GlobalAssistantPage'))
 
 // Loading fallback
 const PageLoader = () => (
@@ -52,6 +53,16 @@ function App() {
           <ProtectedRoute>
             <Suspense fallback={<PageLoader />}>
               <CasesListPage />
+            </Suspense>
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/assistant"
+        element={
+          <ProtectedRoute>
+            <Suspense fallback={<PageLoader />}>
+              <GlobalAssistantPage />
             </Suspense>
           </ProtectedRoute>
         }

@@ -100,6 +100,20 @@ const InlineCitation: React.FC<InlineCitationProps> = ({
       }
       arrow
       placement="top"
+      slotProps={{
+        popper: {
+          modifiers: [
+            {
+              name: 'preventOverflow',
+              options: { boundary: 'viewport', padding: 8 },
+            },
+            {
+              name: 'flip',
+              options: { fallbackPlacements: ['bottom', 'right', 'left'] },
+            },
+          ],
+        },
+      }}
     >
       <Chip
         icon={<DescriptionIcon />}

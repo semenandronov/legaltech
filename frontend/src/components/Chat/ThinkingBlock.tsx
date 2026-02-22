@@ -2,21 +2,7 @@
 
 import { useState, useEffect, useMemo, memo } from "react";
 import { cn } from "@/lib/utils";
-import {
-  CheckCircle2,
-  ChevronDown,
-  ChevronRight,
-  Loader2,
-  Sparkles,
-  Search,
-  FileText,
-  Scale,
-  Globe,
-  PenTool,
-  Brain,
-  Shield,
-  BarChart3,
-} from "lucide-react";
+import { Check, ChevronUp, ChevronDown, Loader2 } from "lucide-react";
 
 export interface ThinkingStep {
   phase: string;
@@ -40,149 +26,125 @@ interface ThinkingBlockProps {
   defaultOpen?: boolean;
 }
 
-// ─── Tool name → Russian label + icon ───────────────────────────────────────
-
-const TOOL_CONFIG: Record<string, { label: string; icon: typeof Search }> = {
-  search_in_documents: { label: "Поиск в документах дела", icon: Search },
-  analyze_all_documents: { label: "Анализ всех документов", icon: BarChart3 },
-  search_garant: { label: "Поиск в ГАРАНТ", icon: Scale },
-  create_document: { label: "Создание документа", icon: FileText },
-  edit_document: { label: "Редактирование документа", icon: PenTool },
-  search_web: { label: "Поиск в интернете", icon: Globe },
-  create_tabular_review: { label: "Создание таблицы", icon: BarChart3 },
-  run_playbook_check: { label: "Проверка по Playbook", icon: Shield },
-};
-
-// ─── Reasoning phase → Russian label ────────────────────────────────────────
+// ─── Reasoning phase → natural Russian sentence ──────────────────────────────
 
 const PHASE_LABELS: Record<string, string> = {
-  thinking: "Глубокий анализ вопроса",
-  agent: "Выбор стратегии ответа",
-  understanding: "Понимание вопроса",
-  context: "Анализ контекста",
-  reasoning: "Рассуждение",
-  synthesis: "Синтез ответа",
-  reflection: "Проверка качества ответа",
-  citation_verification: "Проверка цитат",
+  thinking: "Анализирую вопрос",
+  agent: "Выбираю стратегию",
+  understanding: "Разбираю запрос",
+  context: "Изучаю контекст",
+  reasoning: "Формирую логику ответа",
+  synthesis: "Составляю ответ",
+  reflection: "Проверяю качество ответа",
+  citation_verification: "Верифицирую цитаты",
 };
 
-// ─── Unified step type ──────────────────────────────────────────────────────
+// ─── Build natural sentence from tool name + input ───────────────────────────
 
-interface UnifiedStep {
-  id: string;
-  label: string;
-  status: "pending" | "running" | "completed" | "error";
-  icon: typeof Search;
-  details?: string;
-  expandable: boolean;
-  type: "reasoning" | "tool";
+function buildStepLabel(name: string, input?: any): string {
+  const inp = input || {};
+  const q = inp.query || inp.filename || inp.doc_name || inp.document_name;
+  const short = (s: string, n = 55) => s.length > n ? s.substring(0, n) + "…" : s;
+
+  switch (name) {
+    case "search_in_documents":
+      return q ? `Ищу в документах: «${short(q)}»` : "Ищу в документах дела";
+    case "analyze_all_documents":
+      return "Анализирую все документы дела";
+    case "search_garant":
+      return q ? `Ищу в ГАРАНТ: «${short(q)}»` : "Поиск в ГАРАНТ";
+    case "get_law_article":
+      return inp.article_id ? `Получаю статью ${inp.article_id}` : "Получаю статью закона";
+    case "get_document":
+      return q ? `Читаю документ «${short(q)}»` : "Читаю документ";
+    case "extract_structured_data":
+      return "Извлекаю структурированные данные из документов";
+    case "compare_documents":
+      return "Сравниваю документы";
+    case "validate_with_playbook":
+      return "Проверяю документ по Playbook";
+    case "get_user_playbooks":
+      return "Загружаю список Playbooks";
+    case "generate_document":
+      return inp.template_name ? `Создаю документ по шаблону «${short(inp.template_name)}»` : "Создаю документ";
+    case "create_document":
+      return inp.title ? `Создаю документ «${short(inp.title)}»` : "Создаю документ";
+    case "edit_document":
+      return "Редактирую документ";
+    case "calculate":
+      return inp.expression ? `Вычисляю: ${short(inp.expression, 45)}` : "Выполняю расчёт";
+    case "get_current_date":
+      return "Получаю текущую дату";
+    case "list_templates":
+      return "Просматриваю доступные шаблоны";
+    case "search_web":
+    case "web_research":
+      return q ? `Ищу в интернете: «${short(q)}»` : "Поиск в интернете";
+    case "create_tabular_review":
+      return "Создаю табличный анализ";
+    case "run_playbook_check":
+      return "Проверяю документ по Playbook";
+    default:
+      return name.replace(/_/g, " ");
+  }
 }
 
-// ─── Helper: parse tool output for short summary ────────────────────────────
-
-function getToolSummary(name: string, output?: any): string | undefined {
-  if (!output) return undefined;
-  const text = typeof output === "string" ? output : JSON.stringify(output);
-
-  if (name === "search_in_documents") {
-    const match = text.match(/Найдено (\d+)/);
-    if (match) return `${match[1]} результатов`;
-    // Count "Источник" occurrences
-    const sources = (text.match(/Источник/g) || []).length;
-    if (sources > 0) return `${sources} источников`;
-  }
-
-  if (name === "analyze_all_documents") {
-    const match = text.match(/(\d+)\s*(документ|файл)/i);
-    if (match) return `${match[1]} документов`;
-  }
-
-  if (name === "search_garant") {
-    const match = text.match(/найден|статья|закон/i);
-    if (match) return "найдено";
-  }
-
-  // Truncate for general display
-  if (text.length > 80) return text.substring(0, 80) + "…";
-  return text;
-}
-
-// ─── Expandable step row ────────────────────────────────────────────────────
+// ─── Step row (Harvey style) ─────────────────────────────────────────────────
 
 const StepRow = memo(({
-  step,
-  isLast
+  label,
+  status,
+  details,
+  isLast,
 }: {
-  step: UnifiedStep;
+  label: string;
+  status: "pending" | "running" | "completed" | "error";
+  details?: string;
   isLast: boolean;
 }) => {
-  const [isExpanded, setIsExpanded] = useState(false);
-  const Icon = step.icon;
-
-  const statusIcon = (() => {
-    switch (step.status) {
-      case "completed":
-        return <CheckCircle2 className="w-4 h-4 text-emerald-500 flex-shrink-0" />;
-      case "running":
-        return <Loader2 className="w-4 h-4 text-blue-500 animate-spin flex-shrink-0" />;
-      case "error":
-        return <CheckCircle2 className="w-4 h-4 text-red-500 flex-shrink-0" />;
-      default:
-        return (
-          <div className="w-4 h-4 rounded-full border-2 border-gray-300 flex-shrink-0" />
-        );
-    }
-  })();
+  const [expanded, setExpanded] = useState(false);
 
   return (
-    <div className={cn(!isLast && "mb-0.5")}>
-      {/* Main row */}
+    <div className={cn(!isLast && "mb-1")}>
       <div
         className={cn(
-          "flex items-center gap-2.5 py-1.5 px-1 rounded-md transition-colors",
-          step.expandable && step.details && "cursor-pointer hover:bg-gray-50",
-          step.status === "running" && "text-blue-700"
+          "flex items-start gap-2.5 py-1 px-0.5",
+          details && "cursor-pointer"
         )}
-        onClick={() => {
-          if (step.expandable && step.details) {
-            setIsExpanded(!isExpanded);
-          }
-        }}
+        onClick={() => details && setExpanded(!expanded)}
       >
-        {/* Status icon */}
-        {statusIcon}
-
-        {/* Tool/Phase icon */}
-        <Icon className={cn(
-          "w-3.5 h-3.5 flex-shrink-0",
-          step.status === "completed" ? "text-gray-400" :
-          step.status === "running" ? "text-blue-500" : "text-gray-300"
-        )} />
+        {/* Status mark */}
+        <div className="mt-0.5 flex-shrink-0 w-4 h-4 flex items-center justify-center">
+          {status === "completed" && (
+            <Check className="w-3.5 h-3.5 text-emerald-500" strokeWidth={2.5} />
+          )}
+          {status === "running" && (
+            <Loader2 className="w-3.5 h-3.5 text-gray-400 animate-spin" />
+          )}
+          {status === "pending" && (
+            <div className="w-2.5 h-2.5 rounded-full border border-gray-300" />
+          )}
+          {status === "error" && (
+            <Check className="w-3.5 h-3.5 text-red-400" strokeWidth={2.5} />
+          )}
+        </div>
 
         {/* Label */}
         <span className={cn(
-          "text-sm flex-1",
-          step.status === "completed" ? "text-gray-600" :
-          step.status === "running" ? "text-gray-800 font-medium" : "text-gray-400"
+          "text-sm leading-snug flex-1",
+          status === "completed" ? "text-gray-600" :
+          status === "running" ? "text-gray-900 font-medium" :
+          "text-gray-400"
         )}>
-          {step.label}
+          {label}
         </span>
-
-        {/* Expand chevron */}
-        {step.expandable && step.details && (
-          isExpanded ? (
-            <ChevronDown className="w-3.5 h-3.5 text-gray-400" />
-          ) : (
-            <ChevronRight className="w-3.5 h-3.5 text-gray-400" />
-          )
-        )}
       </div>
 
-      {/* Expanded details */}
-      {isExpanded && step.details && (
-        <div className="ml-9 mt-1 mb-2 pl-3 border-l-2 border-gray-200">
-          <pre className="text-xs text-gray-500 whitespace-pre-wrap break-words font-sans leading-relaxed max-h-32 overflow-y-auto">
-            {step.details}
+      {/* Expanded raw output */}
+      {expanded && details && (
+        <div className="ml-7 mb-1.5 pl-3 border-l-2 border-gray-200">
+          <pre className="text-xs text-gray-400 whitespace-pre-wrap break-words font-sans leading-relaxed max-h-28 overflow-y-auto">
+            {details}
           </pre>
         </div>
       )}
@@ -192,177 +154,120 @@ const StepRow = memo(({
 
 StepRow.displayName = "StepRow";
 
-// ─── Main ThinkingBlock component ───────────────────────────────────────────
+// ─── Main ThinkingBlock component ────────────────────────────────────────────
 
 export const ThinkingBlock = memo(({
   steps,
   toolCalls,
   isStreaming = false,
   className,
-  defaultOpen = true
+  defaultOpen = true,
 }: ThinkingBlockProps) => {
   const [isOpen, setIsOpen] = useState(defaultOpen);
   const [hasAutoClosed, setHasAutoClosed] = useState(false);
-  const [duration, setDuration] = useState(0);
   const [startTime] = useState(() => Date.now());
+  const [duration, setDuration] = useState(0);
 
-  // Track duration
+  // Track duration while streaming
   useEffect(() => {
-    if (isStreaming) {
-      const interval = setInterval(() => {
-        setDuration(Math.floor((Date.now() - startTime) / 1000));
-      }, 1000);
-      return () => clearInterval(interval);
-    }
+    if (!isStreaming) return;
+    const interval = setInterval(() => {
+      setDuration(Math.floor((Date.now() - startTime) / 1000));
+    }, 1000);
+    return () => clearInterval(interval);
   }, [isStreaming, startTime]);
 
-  // Auto-collapse after streaming ends
+  // Auto-collapse 2s after streaming ends
   useEffect(() => {
     if (!isStreaming && (steps.length > 0 || (toolCalls && toolCalls.length > 0)) && isOpen && !hasAutoClosed) {
-      const timer = setTimeout(() => {
-        setIsOpen(false);
-        setHasAutoClosed(true);
-      }, 2000);
-      return () => clearTimeout(timer);
+      const t = setTimeout(() => { setIsOpen(false); setHasAutoClosed(true); }, 2000);
+      return () => clearTimeout(t);
     }
   }, [isStreaming, steps.length, toolCalls, isOpen, hasAutoClosed]);
 
   // Build unified step list
-  const unifiedSteps = useMemo((): UnifiedStep[] => {
-    const result: UnifiedStep[] = [];
+  type UStep = { id: string; label: string; status: "pending" | "running" | "completed" | "error"; details?: string };
 
-    // Add reasoning steps
-    if (steps) {
-      steps.forEach((rs) => {
-        result.push({
-          id: `r-${rs.phase}-${rs.step}`,
-          label: PHASE_LABELS[rs.phase] || rs.content || rs.phase,
-          status: "completed",
-          icon: rs.phase === "thinking" ? Brain :
-                rs.phase === "reflection" ? Shield :
-                rs.phase === "citation_verification" ? Scale :
-                Brain,
-          details: rs.content && rs.content !== (PHASE_LABELS[rs.phase] || rs.phase) ? rs.content : undefined,
-          expandable: !!(rs.content && rs.content.length > 50),
-          type: "reasoning",
-        });
+  const unifiedSteps = useMemo((): UStep[] => {
+    const result: UStep[] = [];
+
+    steps?.forEach((rs) => {
+      result.push({
+        id: `r-${rs.phase}-${rs.step}`,
+        label: PHASE_LABELS[rs.phase] || rs.content || rs.phase,
+        status: "completed",
+        details: rs.content && rs.content !== (PHASE_LABELS[rs.phase] || rs.phase) ? rs.content : undefined,
       });
-    }
+    });
 
-    // Add tool calls
-    if (toolCalls) {
-      toolCalls.forEach((tc, i) => {
-        const config = TOOL_CONFIG[tc.name] || { label: tc.name, icon: Search };
-        const summary = getToolSummary(tc.name, tc.output);
-        const label = summary && tc.status === "completed"
-          ? `${config.label} — ${summary}`
-          : config.label;
-
-        result.push({
-          id: `t-${tc.name}-${i}`,
-          label,
-          status: tc.status || "completed",
-          icon: config.icon,
-          details: tc.output ? (typeof tc.output === "string" ? tc.output : JSON.stringify(tc.output, null, 2)) : undefined,
-          expandable: !!tc.output,
-          type: "tool",
-        });
+    toolCalls?.forEach((tc, i) => {
+      result.push({
+        id: `t-${tc.name}-${i}`,
+        label: buildStepLabel(tc.name, tc.input),
+        status: tc.status || "completed",
+        details: tc.output ? (typeof tc.output === "string" ? tc.output : JSON.stringify(tc.output, null, 2)) : undefined,
       });
-    }
+    });
 
     return result;
   }, [steps, toolCalls]);
 
-  // Don't render if nothing to show
   const hasContent = steps.length > 0 || (toolCalls && toolCalls.length > 0);
-  if (!hasContent && !isStreaming) {
-    return null;
-  }
+  if (!hasContent && !isStreaming) return null;
 
   const completedCount = unifiedSteps.filter(s => s.status === "completed").length;
   const totalCount = unifiedSteps.length;
 
   return (
-    <div className={cn("mb-4", className)}>
-      {/* Header / trigger */}
+    <div className={cn("mb-3 select-none", className)}>
+      {/* Header */}
       <button
         onClick={() => setIsOpen(!isOpen)}
-        className={cn(
-          "w-full flex items-center gap-2.5 px-3 py-2 rounded-lg transition-all",
-          "hover:bg-gray-50 group text-left",
-          "border border-transparent",
-          isStreaming && "border-blue-100 bg-blue-50/30"
-        )}
+        className="flex items-center gap-1.5 py-1 text-sm text-gray-500 hover:text-gray-700 transition-colors"
       >
-        {/* Animated icon */}
         {isStreaming ? (
-          <div className="relative">
-            <Sparkles className="w-4 h-4 text-blue-500 animate-pulse" />
-          </div>
+          <>
+            <Loader2 className="w-3.5 h-3.5 text-gray-400 animate-spin flex-shrink-0" />
+            <span className="font-medium text-gray-600">
+              Работаю{totalCount > 0 ? ` · ${totalCount} ${totalCount === 1 ? "шаг" : totalCount < 5 ? "шага" : "шагов"}` : "..."}
+            </span>
+            {duration > 0 && (
+              <span className="text-gray-400 font-normal">{duration} с</span>
+            )}
+          </>
         ) : (
-          <Brain className="w-4 h-4 text-gray-400" />
-        )}
-
-        {/* Label */}
-        <span className={cn(
-          "text-sm font-medium flex-1",
-          isStreaming ? "text-blue-700" : "text-gray-500"
-        )}>
-          {isStreaming ? (
-            <span className="inline-flex items-center gap-1.5">
-              <span className="relative flex h-1.5 w-1.5">
-                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-blue-400 opacity-75"></span>
-                <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-blue-500"></span>
-              </span>
-              Думаю...
-            </span>
-          ) : (
-            <span>
-              Рассуждение
-              {duration > 0 && (
-                <span className="text-gray-400 font-normal ml-1">
-                  {duration} сек
-                </span>
-              )}
-            </span>
-          )}
-        </span>
-
-        {/* Step counter */}
-        {totalCount > 0 && (
-          <span className="text-xs text-gray-400">
-            {completedCount}/{totalCount}
+          <span className="font-medium">
+            Завершено за {totalCount} {totalCount === 1 ? "шаг" : totalCount < 5 ? "шага" : "шагов"}
+            {duration > 0 && (
+              <span className="text-gray-400 font-normal ml-1">· {duration} с</span>
+            )}
           </span>
         )}
-
-        {/* Chevron */}
-        <ChevronDown
-          className={cn(
-            "w-4 h-4 text-gray-400 transition-transform duration-200",
-            !isOpen && "-rotate-90"
-          )}
-        />
+        {isOpen ? (
+          <ChevronUp className="w-3.5 h-3.5 text-gray-400 ml-0.5" />
+        ) : (
+          <ChevronDown className="w-3.5 h-3.5 text-gray-400 ml-0.5" />
+        )}
       </button>
 
       {/* Steps list */}
       {isOpen && (
-        <div className="mt-1 ml-1 pl-3 border-l-2 border-gray-100">
+        <div className="mt-1.5 ml-0.5">
           {unifiedSteps.map((step, idx) => (
             <StepRow
               key={step.id}
-              step={step}
+              label={step.label}
+              status={step.status}
+              details={step.details}
               isLast={idx === unifiedSteps.length - 1}
             />
           ))}
 
-          {/* Placeholder when streaming and waiting for next step */}
+          {/* Placeholder spinner */}
           {isStreaming && unifiedSteps.every(s => s.status === "completed") && (
-            <div className="flex items-center gap-2.5 py-1.5 px-1">
-              <Loader2 className="w-4 h-4 text-blue-400 animate-spin flex-shrink-0" />
-              <div className="w-3.5 h-3.5" />
-              <span className="text-sm text-gray-400 animate-pulse">
-                Обрабатываю...
-              </span>
+            <div className="flex items-center gap-2.5 py-1 px-0.5">
+              <Loader2 className="w-3.5 h-3.5 text-gray-400 animate-spin flex-shrink-0" />
+              <span className="text-sm text-gray-400">Обрабатываю...</span>
             </div>
           )}
         </div>
