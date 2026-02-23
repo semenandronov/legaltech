@@ -617,16 +617,15 @@ export const DocumentEditorContextChat: React.FC<DocumentEditorContextChatProps>
         .replace(/```[\s\S]*?```/g, '')
         .trim() || "Изменения готовы."
 
-      // Draft mode: insert generated text at cursor/selection position in editor
-      if (mode === 'draft' && selectionRangeSnapshot && onReplaceRange && cleanAnswer) {
-        const insertText = cleanAnswer
-        onReplaceRange(selectionRangeSnapshot.from, selectionRangeSnapshot.to, insertText)
+      // Draft mode: show preview with accept/reject before inserting
+      if (mode === 'draft' && cleanAnswer) {
         setMessages((prev) => [...prev, {
           id: `assistant-${Date.now()}`,
           role: "assistant",
           content: '',
           mode,
-          draftInsertedText: insertText,
+          draftInsertedText: cleanAnswer,
+          selectionRange: selectionRangeSnapshot || undefined,
         }])
         return
       }
@@ -801,18 +800,61 @@ export const DocumentEditorContextChat: React.FC<DocumentEditorContextChatProps>
 
             return (
               <div key={message.id} className="space-y-2">
-                {/* Draft inserted text card */}
-                {message.draftInsertedText && (
-                  <div className="rounded-xl border overflow-hidden" style={{ borderColor: '#bbf7d0', background: '#f0fdf4' }}>
-                    <div className="flex items-center gap-1.5 px-3 py-1.5 border-b" style={{ borderColor: '#bbf7d0' }}>
-                      <Check className="w-3 h-3" style={{ color: '#16a34a' }} />
-                      <span className="text-xs font-semibold" style={{ color: '#16a34a' }}>Текст вставлен в документ</span>
+                {/* Draft text card with accept/reject */}
+                {message.draftInsertedText && (() => {
+                  const draftStatus = editStatuses[message.id]?.['draft']
+                  return (
+                    <div className="rounded-xl border overflow-hidden" style={{
+                      borderColor: draftStatus === 'accepted' ? '#bbf7d0' : draftStatus === 'rejected' ? '#fecaca' : '#e5e7eb',
+                      background: draftStatus === 'accepted' ? '#f0fdf4' : draftStatus === 'rejected' ? '#fef2f2' : '#f9fafb',
+                    }}>
+                      <div className="flex items-center gap-1.5 px-3 py-1.5 border-b" style={{
+                        borderColor: draftStatus === 'accepted' ? '#bbf7d0' : draftStatus === 'rejected' ? '#fecaca' : '#e5e7eb',
+                      }}>
+                        {draftStatus === 'accepted'
+                          ? <><Check className="w-3 h-3" style={{ color: '#16a34a' }} /><span className="text-xs font-semibold" style={{ color: '#16a34a' }}>Вставлено в документ</span></>
+                          : draftStatus === 'rejected'
+                          ? <><X className="w-3 h-3" style={{ color: '#ef4444' }} /><span className="text-xs font-semibold" style={{ color: '#ef4444' }}>Отклонено</span></>
+                          : <><FileText className="w-3 h-3" style={{ color: '#6b7280' }} /><span className="text-xs font-semibold" style={{ color: '#6b7280' }}>Черновик</span></>
+                        }
+                      </div>
+                      <div className="px-3 py-2 text-xs leading-relaxed text-gray-700 whitespace-pre-wrap line-clamp-4">
+                        {message.draftInsertedText}
+                      </div>
+                      {!draftStatus && (
+                        <div className="flex items-center gap-2 px-3 pb-2.5 pt-1 border-t" style={{ borderColor: '#e5e7eb' }}>
+                          <button
+                            onClick={() => { setStatus(message.id, 'draft', 'rejected') }}
+                            className="text-xs font-medium px-3 py-1.5 rounded-lg border transition-colors"
+                            style={{ borderColor: '#e5e7eb', color: '#9ca3af', background: 'transparent' }}
+                            onMouseEnter={e => { const el = e.currentTarget; el.style.borderColor = '#fca5a5'; el.style.color = '#ef4444'; el.style.background = 'rgba(239,68,68,0.05)' }}
+                            onMouseLeave={e => { const el = e.currentTarget; el.style.borderColor = '#e5e7eb'; el.style.color = '#9ca3af'; el.style.background = 'transparent' }}
+                          >
+                            Отклонить
+                          </button>
+                          <button
+                            onClick={() => {
+                              if (onReplaceRange && message.selectionRange) {
+                                onReplaceRange(message.selectionRange.from, message.selectionRange.to, message.draftInsertedText!)
+                              } else if (onApplyEdit) {
+                                onApplyEdit(message.draftInsertedText!)
+                              }
+                              setStatus(message.id, 'draft', 'accepted')
+                              toast.success('Текст вставлен')
+                            }}
+                            className="flex items-center gap-1 text-xs font-semibold px-3 py-1.5 rounded-lg border transition-colors"
+                            style={{ borderColor: '#d1d5db', color: '#374151', background: 'transparent' }}
+                            onMouseEnter={e => { const el = e.currentTarget; el.style.borderColor = '#10b981'; el.style.color = '#10b981'; el.style.background = 'rgba(16,185,129,0.07)' }}
+                            onMouseLeave={e => { const el = e.currentTarget; el.style.borderColor = '#d1d5db'; el.style.color = '#374151'; el.style.background = 'transparent' }}
+                          >
+                            <Check className="w-3 h-3" />
+                            Вставить
+                          </button>
+                        </div>
+                      )}
                     </div>
-                    <div className="px-3 py-2 text-xs leading-relaxed text-gray-700 whitespace-pre-wrap line-clamp-4">
-                      {message.draftInsertedText}
-                    </div>
-                  </div>
-                )}
+                  )
+                })()}
                 {message.content && (
                   <div className="text-sm text-gray-700 leading-relaxed whitespace-pre-wrap">
                     {renderMarkdown(message.content)}

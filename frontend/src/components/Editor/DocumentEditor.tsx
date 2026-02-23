@@ -17,8 +17,6 @@ import { Comment } from './extensions/Comment'
 import { RiskHighlight } from './extensions/RiskHighlight'
 import { AIKeyboardShortcuts } from './extensions/AIKeyboardShortcuts'
 import { SelectionHighlight } from './extensions/SelectionHighlight'
-import { SelectionMenu } from './SelectionMenu'
-import type { RiskItem } from '../../services/documentEditorApi'
 import { Ruler } from './Ruler'
 import { FindReplace } from './FindReplace'
 import { ClauseLibrary } from './ClauseLibrary'
@@ -513,17 +511,6 @@ export const DocumentEditor = forwardRef<DocumentEditorRef, DocumentEditorProps>
                 >
                   <EditorContent editor={editor} />
                   {/* Selection bubble menu for AI actions */}
-                  <SelectionMenu 
-                    editor={editor}
-                    documentId={documentId}
-                    onReplaceSelection={() => {
-                      onChange(editor.getHTML())
-                    }}
-                    onSetRisks={(risks: RiskItem[]) => {
-                      editor.chain().focus().setRisks(risks).run()
-                      setHasRisks(risks.length > 0)
-                    }}
-                  />
                   {/* Find and Replace panel */}
                   <FindReplace
                     editor={editor}
