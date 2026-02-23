@@ -518,14 +518,18 @@ export const DocumentEditorContextChat: React.FC<DocumentEditorContextChatProps>
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pendingPlaybookResult])
 
-  // Capture selection when it becomes available (user selected text in editor then clicked chat)
+  // Capture selection/cursor when editor updates
   useEffect(() => {
     if (selectedText && selectedText.trim()) {
+      // Text is selected — capture it and its range
       setActiveSelection(selectedText.trim())
       setActiveSelectionRange(selectionRange || null)
+    } else if (mode === 'draft' && selectionRange) {
+      // Draft mode: always track cursor position even without a text selection
+      setActiveSelectionRange(selectionRange)
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedText])
+  }, [selectedText, selectionRange, mode])
 
   const clearActiveSelection = () => {
     setActiveSelection('')
@@ -612,6 +616,19 @@ export const DocumentEditorContextChat: React.FC<DocumentEditorContextChatProps>
         .replace(/```[\s\S]*?```/g, '')
         .trim() || "Изменения готовы."
 
+      // Draft mode: insert generated text at cursor/selection position in editor
+      if (mode === 'draft' && selectionRangeSnapshot && onReplaceRange && cleanAnswer) {
+        const insertText = cleanAnswer
+        onReplaceRange(selectionRangeSnapshot.from, selectionRangeSnapshot.to, insertText)
+        setMessages((prev) => [...prev, {
+          id: `assistant-${Date.now()}`,
+          role: "assistant",
+          content: '✓ Текст вставлен в документ',
+          mode,
+        }])
+        return
+      }
+
       const assistantMessage: Message = {
         id: `assistant-${Date.now()}`,
         role: "assistant",
@@ -639,7 +656,7 @@ export const DocumentEditorContextChat: React.FC<DocumentEditorContextChatProps>
     } finally {
       setIsLoading(false)
     }
-  }, [documentId, isLoading, mode, documentContent, activeSelection, activeSelectionRange])
+  }, [documentId, isLoading, mode, documentContent, activeSelection, activeSelectionRange, onReplaceRange])
 
   const handleKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === 'Enter' && !e.shiftKey) {
@@ -894,6 +911,14 @@ export const DocumentEditorContextChat: React.FC<DocumentEditorContextChatProps>
                 ))}
               </div>
             ))}
+          </div>
+        )}
+
+        {/* Draft mode: cursor position indicator */}
+        {mode === 'draft' && !activeSelection && activeSelectionRange && (
+          <div className="mx-3 mb-2 flex items-center gap-2 px-3 py-2 rounded-xl border" style={{ background: '#f0fdf4', borderColor: '#bbf7d0' }}>
+            <span className="text-xs" style={{ color: '#16a34a' }}>|</span>
+            <span className="text-xs font-medium" style={{ color: '#16a34a' }}>Курсор установлен — текст будет вставлен в это место</span>
           </div>
         )}
 

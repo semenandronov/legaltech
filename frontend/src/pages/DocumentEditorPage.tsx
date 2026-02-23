@@ -533,11 +533,12 @@ const DocumentEditorPage = () => {
             onSelectionChange={setSelectedText}
             onSelectionRangeChange={(range) => {
               setSelectionRange(range)
-              if (range) {
+              if (range && range.from !== range.to) {
+                // Actual text selection — highlight it
                 editorRef.current?.setSelectionHighlight(range.from, range.to)
               } else {
+                // Just cursor movement — clear highlight but keep position
                 editorRef.current?.clearSelectionHighlight()
-                setSelectedText('')
               }
             }}
             caseId={caseId}

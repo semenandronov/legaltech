@@ -169,8 +169,9 @@ export const DocumentEditor = forwardRef<DocumentEditorRef, DocumentEditorProps>
       const { from, to } = editor.state.selection
       const text = editor.state.doc.textBetween(from, to)
       onSelectionChange(text)
+      // Always report position — cursor (from===to) or selection (from!==to)
       if (onSelectionRangeChange) {
-        onSelectionRangeChange(from !== to ? { from, to } : null)
+        onSelectionRangeChange({ from, to })
       }
     },
   })
