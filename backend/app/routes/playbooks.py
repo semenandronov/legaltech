@@ -502,8 +502,12 @@ async def check_document(
     current_user: User = Depends(get_current_user)
 ):
     """Check a document against a playbook"""
-    checker = PlaybookChecker(db)
-    
+    try:
+        checker = PlaybookChecker(db)
+    except Exception as e:
+        logger.error(f"Failed to initialize PlaybookChecker: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Ошибка инициализации проверки: {str(e)}")
+
     try:
         result = await checker.check_document(
             document_id=request.document_id,
@@ -511,7 +515,7 @@ async def check_document(
             user_id=current_user.id,
             case_id=request.case_id
         )
-        
+
         return {
             "check_id": result.check_id,
             "playbook_id": result.playbook_id,
@@ -540,7 +544,7 @@ async def check_document(
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
         logger.error(f"Error checking document: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail="Failed to check document")
+        raise HTTPException(status_code=500, detail=f"Ошибка проверки: {str(e)}")
 
 
 @router.post("/{playbook_id}/batch-check")

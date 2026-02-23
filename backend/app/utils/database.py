@@ -409,6 +409,20 @@ def ensure_schema():
     except Exception as e:
         logger.error(f"Error checking/adding needs_human_review column: {e}", exc_info=True)
 
+    # Ensure playbook tables exist (may be missing if DB was created before playbooks feature)
+    try:
+        from app.models.playbook import Playbook, PlaybookRule, PlaybookCheck
+        table_names = inspector.get_table_names()
+        for model_cls, tname in [(Playbook, "playbooks"), (PlaybookRule, "playbook_rules"), (PlaybookCheck, "playbook_checks")]:
+            if tname not in table_names:
+                logger.info(f"⚠️  Table '{tname}' missing, creating...")
+                model_cls.__table__.create(bind=engine, checkfirst=True)
+                logger.info(f"✅ Table '{tname}' created")
+            else:
+                logger.debug(f"✅ Table '{tname}' exists")
+    except Exception as e:
+        logger.warning(f"Could not ensure playbook tables: {e}", exc_info=True)
+
 
 def init_db():
     """Initialize database tables"""

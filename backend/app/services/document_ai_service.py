@@ -675,81 +675,39 @@ class DocumentAIService:
             }
 
         # ═══════════════════════════════════════════════════════════════════
-        # DRAFT MODE — create new text / full document
+        # DRAFT MODE — generate text snippet to insert at cursor position
+        # The frontend inserts the answer text directly at the cursor position.
+        # We do NOT return the full document — only the new fragment.
         # ═══════════════════════════════════════════════════════════════════
         if mode == "draft":
-            if document_content:
-                system_prompt = (
-                    "Ты — AI-ассистент для создания юридических документов.\n"
-                    "Пользователь хочет добавить новый раздел или пункт в существующий документ.\n"
-                    "1. Кратко опиши что добавляешь (1–2 предложения).\n"
-                    "2. Верни ПОЛНЫЙ документ с добавленным разделом как HTML в блоке ```html\n\n"
-                    "ВАЖНО:\n"
-                    "- Сохрани весь существующий текст документа.\n"
-                    "- Вставь новый раздел в логичное место.\n"
-                    "- Используй теги: h1, h2, h3, p, ul, li, strong, em, table.\n"
-                    "- НЕ добавляй DOCTYPE, html, head, body — только содержимое."
-                )
-                user_prompt = (
-                    f"ЗАПРОС: {question}\n\n"
-                    f"=== ТЕКУЩИЙ ДОКУМЕНТ ===\n{doc_preview}{doc_truncated}\n=== КОНЕЦ ===\n\n"
-                    f"{other_docs_context}\n\n"
-                    "Добавь запрошенный раздел и верни полный обновлённый документ в блоке ```html."
-                )
-            else:
-                system_prompt = (
-                    "Ты — AI-ассистент для создания юридических документов.\n"
-                    "Пользователь хочет создать документ с нуля.\n"
-                    "1. Кратко опиши что создаёшь (1 предложение).\n"
-                    "2. Верни ПОЛНЫЙ документ как HTML в блоке ```html\n\n"
-                    "ВАЖНО:\n"
-                    "- Создай профессиональный юридический документ по российскому праву.\n"
-                    "- Используй теги: h1, h2, h3, p, ul, li, strong, em, table.\n"
-                    "- НЕ добавляй DOCTYPE, html, head, body — только содержимое."
-                )
-                user_prompt = (
-                    f"ЗАПРОС: {question}\n\n"
-                    f"{other_docs_context}\n\n"
-                    "Создай документ и верни его целиком в блоке ```html."
-                )
+            system_prompt = (
+                "Ты — AI-ассистент для юридических документов. Сейчас ты работаешь в режиме Draft.\n"
+                "Пользователь поставил курсор в нужное место документа и просит создать текст для вставки.\n\n"
+                "ПРАВИЛА:\n"
+                "- Верни ТОЛЬКО текст нового фрагмента — без вступлений, без пояснений, без markdown.\n"
+                "- Пиши профессионально, в стиле юридического документа на русском языке.\n"
+                "- Не добавляй HTML-теги, если только пользователь явно не просит форматирование.\n"
+                "- Не начинай ответ со слов «Конечно», «Вот», «Я напишу» и т.п.\n"
+                "- Первое слово ответа — уже текст для вставки."
+            )
+            doc_context = (
+                f"\n\n=== КОНТЕКСТ ДОКУМЕНТА ===\n{doc_preview[:3000]}\n=== КОНЕЦ ==="
+                if document_content else ""
+            )
+            rag_context = f"\n\n{other_docs_context}" if other_docs_context else ""
+            user_prompt = f"ЗАПРОС: {question}{doc_context}{rag_context}\n\nСгенерируй текст для вставки."
 
-            llm = create_legal_llm(temperature=0.3)
+            llm = create_legal_llm(temperature=0.4)
             response = llm.invoke([SystemMessage(content=system_prompt), HumanMessage(content=user_prompt)])
             answer = response.content if hasattr(response, "content") else str(response)
-
-            edited_content = None
-            html_patterns = [
-                r'```html\s*\n([\s\S]*?)\n?```',
-                r'```\s*\n\.?html\s*\n([\s\S]*?)\n?```',
-                r'```[a-z.]*\n((?:\s*<[^>]+>[\s\S]*?))\n?```',
-            ]
-            for pattern in html_patterns:
-                m = re.search(pattern, answer, re.DOTALL | re.IGNORECASE)
-                if m:
-                    extracted = m.group(1).strip()
-                    lines = extracted.splitlines()
-                    while lines and not lines[0].strip().startswith('<'):
-                        lines.pop(0)
-                    extracted = '\n'.join(lines).strip()
-                    if extracted:
-                        edited_content = extracted
-                    break
-
             answer = re.sub(r'```[\s\S]*?```', '', answer, flags=re.DOTALL).strip()
-            answer = re.sub(r'(?m)^\s*\.?html\s*$', '', answer).strip()
-            if not answer:
-                action = "добавлен" if document_content else "создан"
-                answer = f"Текст {action}. Нажмите «Применить к документу»."
 
-            result = {
+            return {
                 "answer": answer,
                 "citations": [],
-                "suggestions": ["Применить к документу"] if edited_content else [],
+                "suggestions": [],
                 "structured_edits": [],
             }
-            if edited_content:
-                result["edited_content"] = edited_content
-            return result
 
         # ═══════════════════════════════════════════════════════════════════
         # EDIT MODE — modify existing document

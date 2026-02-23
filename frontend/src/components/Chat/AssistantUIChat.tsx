@@ -39,7 +39,7 @@ import { Loader } from '../ai-elements/loader'
 import DocumentPreviewSheet from './DocumentPreviewSheet'
 import { SourceInfo } from '@/services/api'
 import { useOptionalProviderAttachments } from '../ai-elements/prompt-input'
-import { Plus, Check, FileText, X, MessageCircleQuestion, Pencil, Square, Paperclip, ChevronDown } from 'lucide-react'
+import { Plus, Check, FileText, X, MessageCircleQuestion, Pencil, Square } from 'lucide-react'
 import type { ExtendedFileUIPart } from '../ai-elements/prompt-input'
 import { EditSuggestionsList } from '../Editor/EditSuggestionCard'
 import type { StructuredEdit } from '@/services/documentEditorApi'
@@ -401,34 +401,8 @@ const PromptInputWithDrop = ({
 }: PromptInputWithDropProps) => {
   const attachments = useOptionalProviderAttachments()
   const containerRef = useRef<HTMLDivElement | null>(null)
-  const fileAttachInputRef = useRef<HTMLInputElement | null>(null)
   const [isDraggingOver, setIsDraggingOver] = useState(false)
   const dragCounterRef = useRef(0)
-  const [showModeDropdown, setShowModeDropdown] = useState(false)
-  const modeDropdownRef = useRef<HTMLDivElement | null>(null)
-
-  // Compute current mode label/color from toggle state
-  const currentModeName = deepThink ? 'Deep Think' : draftMode ? 'Draft' : legalResearch ? 'ГАРАНТ' : 'Ask'
-  const currentModeColor = deepThink ? '#6366f1' : draftMode ? '#10b981' : legalResearch ? '#0ea5e9' : '#374151'
-
-  // Close mode dropdown on outside click
-  useEffect(() => {
-    if (!showModeDropdown) return
-    const handleClick = (e: MouseEvent) => {
-      if (modeDropdownRef.current && !modeDropdownRef.current.contains(e.target as Node)) {
-        setShowModeDropdown(false)
-      }
-    }
-    document.addEventListener('mousedown', handleClick)
-    return () => document.removeEventListener('mousedown', handleClick)
-  }, [showModeDropdown])
-
-  const handleModeSelect = (mode: 'ask' | 'deepThink' | 'draft' | 'legal') => {
-    onDeepThinkChange(mode === 'deepThink')
-    onDraftModeChange(mode === 'draft')
-    onLegalResearchChange(mode === 'legal')
-    setShowModeDropdown(false)
-  }
   
   // Сбрасываем индикатор drag при потере фокуса окна или через таймаут
   useEffect(() => {
@@ -652,69 +626,6 @@ const PromptInputWithDrop = ({
             />
             <PromptInputFooter className="flex items-center justify-between px-3 py-2 mt-1">
               <div className="flex items-center gap-0.5">
-                {/* Mode selector dropdown */}
-                <div className="relative" ref={modeDropdownRef}>
-                  <button
-                    type="button"
-                    onClick={() => setShowModeDropdown(!showModeDropdown)}
-                    className="flex items-center gap-1 px-2 py-1.5 rounded-lg hover:bg-gray-100 transition-colors text-xs font-semibold"
-                    style={{ color: currentModeColor }}
-                  >
-                    {currentModeName}
-                    <ChevronDown className="w-3 h-3 text-gray-400" />
-                  </button>
-                  {showModeDropdown && (
-                    <div className="absolute bottom-full left-0 mb-1 bg-white border rounded-xl shadow-lg overflow-hidden z-50 min-w-[180px]" style={{ borderColor: '#e5e7eb' }}>
-                      {[
-                        { id: 'ask' as const, label: 'Ask', hint: 'Вопросы по документам', color: '#374151' },
-                        { id: 'deepThink' as const, label: 'Deep Think', hint: 'Углублённый анализ', color: '#6366f1' },
-                        ...(documentEditorMode ? [] : [{ id: 'draft' as const, label: 'Draft', hint: 'Создание документов', color: '#10b981' }]),
-                        { id: 'legal' as const, label: 'ГАРАНТ', hint: 'Поиск по законодательству', color: '#0ea5e9' },
-                      ].map((m) => {
-                        const isActive = currentModeName === m.label
-                        return (
-                          <button
-                            key={m.id}
-                            type="button"
-                            onClick={() => handleModeSelect(m.id)}
-                            className="w-full flex items-center gap-2.5 px-3 py-2.5 text-left hover:bg-gray-50 transition-colors"
-                            style={{ color: isActive ? m.color : '#374151' }}
-                          >
-                            <div className="min-w-0 flex-1">
-                              <div className="text-xs font-semibold">{m.label}</div>
-                              <div className="text-xs text-gray-400">{m.hint}</div>
-                            </div>
-                            {isActive && <Check className="w-3.5 h-3.5 shrink-0" style={{ color: m.color }} />}
-                          </button>
-                        )
-                      })}
-                    </div>
-                  )}
-                </div>
-
-                <input
-                  ref={fileAttachInputRef}
-                  type="file"
-                  multiple
-                  onChange={(e) => {
-                    if (e.target.files && e.target.files.length > 0 && attachments) {
-                      attachments.add(e.target.files)
-                    }
-                    if (fileAttachInputRef.current) {
-                      fileAttachInputRef.current.value = ''
-                    }
-                  }}
-                  style={{ display: 'none' }}
-                />
-                <button
-                  type="button"
-                  onClick={() => fileAttachInputRef.current?.click()}
-                  className="flex items-center justify-center w-8 h-8 rounded-lg transition-colors bg-transparent text-gray-400 hover:text-gray-600 hover:bg-gray-100"
-                  aria-label="Прикрепить файл"
-                  title="Прикрепить файл"
-                >
-                  <Paperclip className="w-4 h-4" aria-hidden="true" />
-                </button>
                 <SettingsPanel
                   webSearch={false}
                   deepThink={deepThink}

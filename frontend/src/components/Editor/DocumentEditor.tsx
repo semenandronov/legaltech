@@ -67,7 +67,6 @@ export const DocumentEditor = forwardRef<DocumentEditorRef, DocumentEditorProps>
 }, ref) => {
   // Zoom level for document scaling (could be made configurable via props in future)
   const zoom = 100
-  const [trackChangesEnabled, setTrackChangesEnabled] = useState(false)
   const [hasRisks, setHasRisks] = useState(false)
   const [showFindReplace, setShowFindReplace] = useState(false)
   const [showClauseLibrary, setShowClauseLibrary] = useState(false)
@@ -385,17 +384,6 @@ export const DocumentEditor = forwardRef<DocumentEditorRef, DocumentEditorProps>
       
       if (foundPos === -1) return false
       
-      // If track changes is enabled, add as pending change
-      if (trackChangesEnabled) {
-        editor.chain().focus().addPendingChange({
-          id: `change-${Date.now()}`,
-          from: foundPos,
-          to: foundPos + newText.length,
-          type: 'insertion' as const,
-          content: newText,
-        }).run()
-      }
-      
       // Заменяем текст
       editor.chain()
         .focus()
@@ -444,7 +432,7 @@ export const DocumentEditor = forwardRef<DocumentEditorRef, DocumentEditorProps>
     clearSelectionHighlight: () => {
       editor?.commands.clearSelectionHighlight()
     },
-  }), [editor, onChange, trackChangesEnabled])
+  }), [editor, onChange])
 
   if (!editor) {
     return (
@@ -465,14 +453,6 @@ export const DocumentEditor = forwardRef<DocumentEditorRef, DocumentEditorProps>
   const scaledHeight = (pageHeight * zoom) / 100
   const scaledMargin = (margin * zoom) / 100
 
-  // Handle track changes toggle
-  const handleTrackChangesToggle = (enabled: boolean) => {
-    setTrackChangesEnabled(enabled)
-    if (editor) {
-      editor.chain().focus().setTrackChangesEnabled(enabled).run()
-    }
-  }
-
   // Handle clear risks
   const handleClearRisks = () => {
     if (editor) {
@@ -485,8 +465,6 @@ export const DocumentEditor = forwardRef<DocumentEditorRef, DocumentEditorProps>
     <div className="flex-1 flex flex-col overflow-hidden">
       <EditorToolbar 
         editor={editor}
-        trackChangesEnabled={trackChangesEnabled}
-        onTrackChangesToggle={handleTrackChangesToggle}
         hasRisks={hasRisks}
         onClearRisks={handleClearRisks}
         onOpenFindReplace={handleOpenFindReplace}

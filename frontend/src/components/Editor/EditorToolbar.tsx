@@ -13,9 +13,6 @@ import {
   Strikethrough,
   Code,
   Quote,
-  GitCompareArrows,
-  Check,
-  X,
   AlertTriangle,
   Trash2,
   Search,
@@ -24,8 +21,6 @@ import {
 
 interface EditorToolbarProps {
   editor: Editor | null
-  trackChangesEnabled?: boolean
-  onTrackChangesToggle?: (enabled: boolean) => void
   hasRisks?: boolean
   onClearRisks?: () => void
   onOpenFindReplace?: () => void
@@ -41,8 +36,6 @@ const preventFocusLoss = (e: React.MouseEvent) => {
 
 export const EditorToolbar = ({
   editor,
-  trackChangesEnabled = false,
-  onTrackChangesToggle,
   hasRisks = false,
   onClearRisks,
   onOpenFindReplace,
@@ -246,52 +239,7 @@ export const EditorToolbar = ({
         </>
       )}
 
-      {/* Track Changes toggle */}
-      {onTrackChangesToggle && (
-        <div className="flex items-center gap-1">
-          <button
-            onMouseDown={preventFocusLoss}
-            onClick={() => onTrackChangesToggle(!trackChangesEnabled)}
-            className={`flex items-center gap-1.5 px-3 py-1.5 rounded text-sm transition-colors ${
-              trackChangesEnabled
-                ? 'bg-blue-100 text-blue-700 border border-blue-300'
-                : 'hover:bg-gray-100 text-gray-600 border border-transparent'
-            }`}
-            aria-label={trackChangesEnabled ? "Выключить отслеживание изменений" : "Включить отслеживание изменений"}
-            aria-pressed={trackChangesEnabled}
-          >
-            <GitCompareArrows className="w-4 h-4" aria-hidden="true" />
-            <span className="hidden sm:inline">Track Changes</span>
-          </button>
 
-          {/* Accept/Reject buttons when Track Changes is enabled */}
-          {trackChangesEnabled && (
-            <>
-              <button
-                onMouseDown={preventFocusLoss}
-                onClick={() => {
-                  editor.chain().focus().clearPendingChanges().run()
-                }}
-                className="p-1.5 rounded hover:bg-green-100 text-green-600 transition-colors"
-                aria-label="Принять все изменения"
-              >
-                <Check className="w-4 h-4" aria-hidden="true" />
-              </button>
-              <button
-                onMouseDown={preventFocusLoss}
-                onClick={() => {
-                  editor.chain().focus().undo().run()
-                  editor.chain().focus().clearPendingChanges().run()
-                }}
-                className="p-1.5 rounded hover:bg-red-100 text-red-600 transition-colors"
-                aria-label="Отклонить все изменения"
-              >
-                <X className="w-4 h-4" aria-hidden="true" />
-              </button>
-            </>
-          )}
-        </div>
-      )}
     </div>
   )
 }

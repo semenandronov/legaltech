@@ -68,6 +68,7 @@ interface Message {
   mode?: EditorMode
   selectionRange?: { from: number; to: number }
   selectedTextSnapshot?: string
+  draftInsertedText?: string
 }
 
 // ==================== TEMPLATE PROMPTS ====================
@@ -623,8 +624,9 @@ export const DocumentEditorContextChat: React.FC<DocumentEditorContextChatProps>
         setMessages((prev) => [...prev, {
           id: `assistant-${Date.now()}`,
           role: "assistant",
-          content: '✓ Текст вставлен в документ',
+          content: '',
           mode,
+          draftInsertedText: insertText,
         }])
         return
       }
@@ -799,6 +801,18 @@ export const DocumentEditorContextChat: React.FC<DocumentEditorContextChatProps>
 
             return (
               <div key={message.id} className="space-y-2">
+                {/* Draft inserted text card */}
+                {message.draftInsertedText && (
+                  <div className="rounded-xl border overflow-hidden" style={{ borderColor: '#bbf7d0', background: '#f0fdf4' }}>
+                    <div className="flex items-center gap-1.5 px-3 py-1.5 border-b" style={{ borderColor: '#bbf7d0' }}>
+                      <Check className="w-3 h-3" style={{ color: '#16a34a' }} />
+                      <span className="text-xs font-semibold" style={{ color: '#16a34a' }}>Текст вставлен в документ</span>
+                    </div>
+                    <div className="px-3 py-2 text-xs leading-relaxed text-gray-700 whitespace-pre-wrap line-clamp-4">
+                      {message.draftInsertedText}
+                    </div>
+                  </div>
+                )}
                 {message.content && (
                   <div className="text-sm text-gray-700 leading-relaxed whitespace-pre-wrap">
                     {renderMarkdown(message.content)}
@@ -903,7 +917,7 @@ export const DocumentEditorContextChat: React.FC<DocumentEditorContextChatProps>
                 {group.items.map((item) => (
                   <button
                     key={item}
-                    onClick={() => { handleSend(item); setShowTemplates(false) }}
+                    onClick={() => { setInputValue(item); setShowTemplates(false) }}
                     className="w-full text-left px-2 py-1.5 rounded-lg text-xs text-gray-700 hover:bg-gray-100 transition-colors"
                   >
                     {item}
