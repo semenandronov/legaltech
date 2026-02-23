@@ -721,7 +721,7 @@ export default function PlaybooksPage() {
       try {
         setLoading(true)
         const [pb, ch] = await Promise.all([
-          playbooksApi.getPlaybooks(),
+          playbooksApi.getPlaybooks({ include_system: false, include_public: false }),
           playbooksApi.getChecks({ case_id: caseId, limit: 50 }),
         ])
         setPlaybooks(pb)
@@ -786,7 +786,9 @@ export default function PlaybooksPage() {
       await playbooksApi.deletePlaybook(p.id)
       toast.success('Удалено')
       setPlaybooks(prev => prev.filter(x => x.id !== p.id))
-    } catch { toast.error('Ошибка удаления') }
+    } catch (e: any) {
+      toast.error('Ошибка удаления: ' + (e.response?.data?.detail ?? e.message ?? 'Неизвестная ошибка'))
+    }
   }
 
   const startNew = () => {
