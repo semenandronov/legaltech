@@ -1,7 +1,7 @@
 /**
  * Playbooks Management Page
  */
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef, useLayoutEffect } from 'react'
 import { useParams } from 'react-router-dom'
 import {
   BookOpen,
@@ -56,7 +56,7 @@ interface HarveyFields {
 const EMPTY_HARVEY: HarveyFields = {
   standard_position: '',
   fallback_positions: [''],
-  unacceptable_deviations: [],
+  unacceptable_deviations: [''],
   internal_guidance: '',
   mark_missing_as_violation: false,
 }
@@ -72,7 +72,7 @@ const parseHarvey = (
       return {
         standard_position: suggested_clause_template || fo.standard_position || '',
         fallback_positions: Array.isArray(fo.fallbacks) && fo.fallbacks.length > 0 ? fo.fallbacks : [''],
-        unacceptable_deviations: Array.isArray(fo.unacceptable) ? fo.unacceptable : [],
+        unacceptable_deviations: Array.isArray(fo.unacceptable) && fo.unacceptable.length > 0 ? fo.unacceptable : [''],
         internal_guidance: description || fo.guidance || '',
         mark_missing_as_violation: fo.mark_missing ?? false,
       }
@@ -96,7 +96,7 @@ const parseHarvey = (
   return {
     standard_position: sections['СТАНДАРТ'] || suggested_clause_template || '',
     fallback_positions: sections['ЗАПАСНОЙ ВАРИАНТ'] ? [sections['ЗАПАСНОЙ ВАРИАНТ']] : [''],
-    unacceptable_deviations: sections['НЕДОПУСТИМО'] ? [sections['НЕДОПУСТИМО']] : [],
+    unacceptable_deviations: sections['НЕДОПУСТИМО'] ? [sections['НЕДОПУСТИМО']] : [''],
     internal_guidance: sections['ИНСТРУКЦИИ'] || '',
     mark_missing_as_violation: false,
   }
@@ -119,11 +119,48 @@ interface RuleAccordionProps {
 
 
 const inputCls = [
-  'w-full px-3 py-2 rounded border text-sm resize-none',
+  'w-full px-3 py-2 rounded border text-sm resize-none min-h-[2.5rem]',
   'focus:outline-none focus:ring-1 focus:ring-gray-400',
 ].join(' ')
 
 const inputStyle = { borderColor: C.border, color: C.body, backgroundColor: C.bg }
+
+function AutoResizeTextarea(
+  props: React.TextareaHTMLAttributes<HTMLTextAreaElement> & { minRows?: number }
+) {
+  const { minRows = 2, value, onChange, className, style, ...rest } = props
+  const ref = useRef<HTMLTextAreaElement>(null)
+
+  const syncHeight = () => {
+    const el = ref.current
+    if (!el) return
+    el.style.height = 'auto'
+    const lineHeight = 20
+    const minHeight = minRows * lineHeight
+    el.style.height = `${Math.max(minHeight, el.scrollHeight)}px`
+  }
+
+  useLayoutEffect(() => {
+    syncHeight()
+  }, [value])
+
+  const handleChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
+    onChange?.(e)
+    syncHeight()
+  }
+
+  return (
+    <textarea
+      ref={ref}
+      value={value}
+      onChange={handleChange}
+      className={className}
+      style={style}
+      rows={minRows}
+      {...rest}
+    />
+  )
+}
 
 function RuleAccordion({
   rule, isExpanded, onToggle, onDelete,
@@ -169,11 +206,11 @@ function RuleAccordion({
             <label className="block text-xs font-medium mb-1.5" style={{ color: C.label }}>
               Стандартная позиция
             </label>
-            <textarea
+            <AutoResizeTextarea
               value={harvey.standard_position}
               onChange={e => onUpdateHarvey('standard_position', e.target.value)}
-              placeholder="Идеальная формулировка условия..."
-              rows={3}
+              placeholder="Идеальная формулировка условия…"
+              minRows={3}
               className={inputCls}
               style={inputStyle}
             />
@@ -187,11 +224,11 @@ function RuleAccordion({
             <div className="space-y-2">
               {harvey.fallback_positions.map((pos, i) => (
                 <div key={i} className="flex gap-2 items-start">
-                  <textarea
+                  <AutoResizeTextarea
                     value={pos}
                     onChange={e => onUpdateItem('fallback_positions', i, e.target.value)}
-                    placeholder="Допустимая альтернатива..."
-                    rows={2}
+                    placeholder="Допустимая альтернатива…"
+                    minRows={2}
                     className={inputCls + ' flex-1'}
                     style={inputStyle}
                   />
@@ -231,24 +268,26 @@ function RuleAccordion({
             <div className="space-y-2">
               {harvey.unacceptable_deviations.map((dev, i) => (
                 <div key={i} className="flex gap-2 items-start">
-                  <textarea
+                  <AutoResizeTextarea
                     value={dev}
                     onChange={e => onUpdateItem('unacceptable_deviations', i, e.target.value)}
-                    placeholder="Неприемлемое условие..."
-                    rows={2}
+                    placeholder="Неприемлемое условие…"
+                    minRows={2}
                     className={inputCls + ' flex-1'}
                     style={inputStyle}
                   />
-                  <button
-                    type="button"
-                    onClick={() => onRemoveItem('unacceptable_deviations', i)}
-                    className="mt-1 p-1.5 rounded transition-colors"
-                    style={{ color: C.subtle }}
-                    onMouseEnter={e => (e.currentTarget as HTMLElement).style.backgroundColor = C.bgHover}
-                    onMouseLeave={e => (e.currentTarget as HTMLElement).style.backgroundColor = 'transparent'}
-                  >
-                    <X className="w-3.5 h-3.5" />
-                  </button>
+                  {harvey.unacceptable_deviations.length > 1 && (
+                    <button
+                      type="button"
+                      onClick={() => onRemoveItem('unacceptable_deviations', i)}
+                      className="mt-1 p-1.5 rounded transition-colors"
+                      style={{ color: C.subtle }}
+                      onMouseEnter={e => (e.currentTarget as HTMLElement).style.backgroundColor = C.bgHover}
+                      onMouseLeave={e => (e.currentTarget as HTMLElement).style.backgroundColor = 'transparent'}
+                    >
+                      <X className="w-3.5 h-3.5" />
+                    </button>
+                  )}
                 </div>
               ))}
             </div>
@@ -268,11 +307,11 @@ function RuleAccordion({
           {/* Guidance */}
           <div>
             <label className="block text-xs font-medium mb-1.5" style={{ color: C.label }}>Руководство</label>
-            <textarea
+            <AutoResizeTextarea
               value={harvey.internal_guidance}
               onChange={e => onUpdateHarvey('internal_guidance', e.target.value)}
-              placeholder="Инструкции и рекомендации для юриста..."
-              rows={3}
+              placeholder="Инструкции и рекомендации для юриста…"
+              minRows={3}
               className={inputCls}
               style={inputStyle}
             />
@@ -405,7 +444,8 @@ function PlaybookEditor({
     setHarveyMap(prev => {
       const cur = prev[ruleId] ?? EMPTY_HARVEY
       const arr = cur[field].filter((_, i) => i !== idx)
-      return { ...prev, [ruleId]: { ...cur, [field]: arr.length > 0 ? arr : field === 'fallback_positions' ? [''] : [] } }
+      const nextArr = arr.length > 0 ? arr : ['']
+      return { ...prev, [ruleId]: { ...cur, [field]: nextArr } }
     })
   }
 
@@ -476,23 +516,6 @@ function PlaybookEditor({
           style={{ color: C.heading }}
         />
 
-        <select
-          value={form.document_type}
-          onChange={e => setForm(f => ({ ...f, document_type: e.target.value }))}
-          className="px-3 py-1.5 rounded border text-sm focus:outline-none"
-          style={{ borderColor: C.border, color: C.label, backgroundColor: C.bg }}
-        >
-          <option value="contract">Контракт</option>
-          <option value="nda">NDA</option>
-          <option value="employment">Трудовой договор</option>
-          <option value="license">Лицензионное соглашение</option>
-          <option value="lease">Аренда</option>
-          <option value="loan">Кредит</option>
-          <option value="msa">MSA</option>
-          <option value="sow">SOW</option>
-          <option value="other">Другое</option>
-        </select>
-
         <button
           onClick={handleSave}
           className="flex items-center gap-2 px-4 py-2 rounded text-sm font-medium transition-opacity hover:opacity-80"
@@ -508,33 +531,23 @@ function PlaybookEditor({
         <div className="max-w-2xl mx-auto">
         {/* Rules toolbar */}
         <div
-          className="flex items-center justify-between px-6 py-3 border-b"
+          className="flex items-center px-6 py-3 border-b"
           style={{ borderColor: C.border }}
         >
-          <div className="flex items-center gap-3">
-            <span className="text-sm font-medium" style={{ color: C.heading }}>
-              Правила{form.rules.length > 0 ? ` (${form.rules.length})` : ''}
-            </span>
-            {expandedRules.size > 0 && (
-              <button
-                onClick={() => setExpandedRules(new Set())}
-                className="text-xs"
-                style={{ color: C.label }}
-                onMouseEnter={e => (e.currentTarget as HTMLElement).style.textDecoration = 'underline'}
-                onMouseLeave={e => (e.currentTarget as HTMLElement).style.textDecoration = 'none'}
-              >
-                Свернуть все
-              </button>
-            )}
-          </div>
-          <button
-            onClick={addRule}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded text-xs font-medium transition-opacity hover:opacity-80"
-            style={{ backgroundColor: C.btnBg, color: C.btnText }}
-          >
-            <Plus className="w-3.5 h-3.5" />
-            Добавить правило
-          </button>
+          <span className="text-sm font-medium" style={{ color: C.heading }}>
+            Правила{form.rules.length > 0 ? ` (${form.rules.length})` : ''}
+          </span>
+          {expandedRules.size > 0 && (
+            <button
+              onClick={() => setExpandedRules(new Set())}
+              className="ml-3 text-xs"
+              style={{ color: C.label }}
+              onMouseEnter={e => (e.currentTarget as HTMLElement).style.textDecoration = 'underline'}
+              onMouseLeave={e => (e.currentTarget as HTMLElement).style.textDecoration = 'none'}
+            >
+              Свернуть все
+            </button>
+          )}
         </div>
 
         {/* Empty state */}
