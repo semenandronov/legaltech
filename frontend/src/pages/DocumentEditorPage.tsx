@@ -316,7 +316,6 @@ const DocumentEditorPage = () => {
 
   // Загрузка playbooks при открытии модального окна
   const handleOpenPlaybookModal = async () => {
-    setShowChat(true)
     setShowPlaybookModal(true)
     setLoadingPlaybooks(true)
     setPlaybookResult(null)
