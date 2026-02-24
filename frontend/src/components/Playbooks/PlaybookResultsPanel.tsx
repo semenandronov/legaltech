@@ -82,21 +82,10 @@ export const PlaybookResultsPanel = ({
   onRerun,
   onDownloadReport
 }: PlaybookResultsPanelProps) => {
-  const [expandedRules, setExpandedRules] = useState<Set<string>>(new Set())
-  const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set(['needs_review', 'not_acceptable', 'acceptable']))
+  const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set())
   const [appliedRules, setAppliedRules] = useState<Set<string>>(new Set())
-
-  const toggleRule = (ruleId: string) => {
-    setExpandedRules(prev => {
-      const next = new Set(prev)
-      if (next.has(ruleId)) {
-        next.delete(ruleId)
-      } else {
-        next.add(ruleId)
-      }
-      return next
-    })
-  }
+  const [selectedRule, setSelectedRule] = useState<RuleResult | null>(null)
+  const [selectedGroupTitle, setSelectedGroupTitle] = useState<string | null>(null)
 
   /** Harvey-style classification for a rule result */
   const getHarveyClassification = (rule: RuleResult) => {
@@ -130,24 +119,22 @@ export const PlaybookResultsPanel = ({
     )
   }
 
-  const getScoreColor = (score: number) => {
-    if (score >= 80) return 'text-green-600'
-    if (score >= 50) return 'text-yellow-600'
-    return 'text-red-600'
-  }
-
-  const getScoreGradient = (score: number) => {
-    if (score >= 80) return 'from-green-500 to-emerald-500'
-    if (score >= 50) return 'from-yellow-500 to-orange-500'
-    return 'from-red-500 to-rose-500'
-  }
-
   const violations = result.results.filter(r =>
     r.status === 'violation' || r.status === 'not_found' || r.status === 'error'
   )
   const warnings = result.results.filter(r => r.status === 'warning' || r.rule_type === 'fallback')
   const passed = result.results.filter(r => r.status === 'passed')
   const totalForBar = violations.length + warnings.length + passed.length || 1
+
+  const openRuleDetails = (rule: RuleResult, groupTitle: string) => {
+    setSelectedRule(rule)
+    setSelectedGroupTitle(groupTitle)
+  }
+
+  const closeRuleDetails = () => {
+    setSelectedRule(null)
+    setSelectedGroupTitle(null)
+  }
 
   return (
     <div
@@ -251,96 +238,245 @@ export const PlaybookResultsPanel = ({
         </div>
       )}
 
-      {/* Группы правил: Требует проверки / Неприемлемо / Приемлемо */}
+      {/* Группы правил и детальный просмотр правила */}
       <div className="flex-1 overflow-y-auto">
-        {violations.length === 0 && warnings.length === 0 && passed.length === 0 ? (
-          <div className="text-center py-12">
-            <FileText className="w-10 h-10 mx-auto mb-3" style={{ color: 'var(--color-text-tertiary)' }} />
-            <p style={{ color: 'var(--color-text-secondary)' }}>
-              Нет результатов для отображения
-            </p>
+        {selectedRule ? (
+          /* Детальное окно по одному правилу, как на экране Harvey */
+          <div className="flex flex-col h-full">
+            <div className="px-4 py-3 border-b flex items-center justify-between" style={{ borderColor: 'var(--color-border)' }}>
+              <button
+                onClick={closeRuleDetails}
+                className="flex items-center gap-1.5 text-sm text-gray-600 hover:text-gray-800"
+              >
+                <ChevronLeft className="w-4 h-4" />
+                Назад к списку
+              </button>
+              <div className="text-sm font-medium" style={{ color: 'var(--color-text-secondary)' }}>
+                {selectedGroupTitle || 'Результат правила'}
+              </div>
+            </div>
+
+            <div className="p-4 space-y-4 overflow-y-auto">
+              {/* Название правила и краткое описание */}
+              <div>
+                <h2 className="text-base font-semibold mb-1" style={{ color: 'var(--color-text-primary)' }}>
+                  {selectedRule.rule_name}
+                </h2>
+                {selectedRule.issue_description && (
+                  <p className="text-sm" style={{ color: 'var(--color-text-secondary)' }}>
+                    {selectedRule.issue_description}
+                  </p>
+                )}
+              </div>
+
+              {/* Summary / Резюме — почему это правило сработало */}
+              {selectedRule.reasoning && (
+                <div className="p-3 rounded-lg" style={{ backgroundColor: 'var(--color-bg-secondary)' }}>
+                  <h3 className="text-xs font-semibold mb-1.5" style={{ color: 'var(--color-text-secondary)' }}>
+                    Резюме
+                  </h3>
+                  <p className="text-sm leading-relaxed" style={{ color: 'var(--color-text-primary)' }}>
+                    {selectedRule.reasoning}
+                  </p>
+                </div>
+              )}
+
+              {/* Guidance — как трактовать правило */}
+              {(selectedRule.suggestion || selectedRule.suggested_fix) && (
+                <div className="p-3 rounded-lg border" style={{ borderColor: 'var(--color-border)' }}>
+                  <h3 className="text-xs font-semibold mb-1.5" style={{ color: 'var(--color-text-secondary)' }}>
+                    Guidance
+                  </h3>
+                  <p className="text-sm" style={{ color: 'var(--color-text-primary)' }}>
+                    {selectedRule.suggestion || selectedRule.suggested_fix}
+                  </p>
+                </div>
+              )}
+
+              {/* Текст для проверки и предлагаемые изменения */}
+              {selectedRule.found_text && (selectedRule.suggestion || selectedRule.suggested_fix) && (
+                <div className="space-y-2">
+                  <h3 className="text-xs font-semibold" style={{ color: 'var(--color-text-secondary)' }}>
+                    Текст для проверки и предлагаемые изменения
+                  </h3>
+                  <div
+                    className="p-3 rounded-lg text-sm leading-relaxed space-y-2"
+                    style={{ background: 'var(--color-bg-primary)', border: '1px solid var(--color-border)' }}
+                  >
+                    <div>
+                      <span className="text-xs font-medium" style={{ color: '#dc2626' }}>Было:</span>
+                      <p className="line-through text-red-500 mt-0.5">
+                        {selectedRule.found_text.length > 250
+                          ? selectedRule.found_text.substring(0, 250) + '…'
+                          : selectedRule.found_text}
+                      </p>
+                    </div>
+                    <div>
+                      <span className="text-xs font-medium" style={{ color: '#2563eb' }}>Стало:</span>
+                      <p className="mt-0.5" style={{ color: '#2563eb', textDecoration: 'underline' }}>
+                        {(() => {
+                          const fix = selectedRule.suggestion || selectedRule.suggested_fix || ''
+                          return fix.length > 250 ? fix.substring(0, 250) + '…' : fix
+                        })()}
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="flex items-center gap-2 mt-1">
+                    {(onScrollToText || (onNavigateToIssue && (selectedRule.document_location || selectedRule.location))) && (
+                      <button
+                        onClick={() => {
+                          if (onScrollToText && selectedRule.found_text) {
+                            const found = onScrollToText(selectedRule.found_text)
+                            if (!found) toast.warning('Текст не найден в документе')
+                          } else if (onNavigateToIssue && (selectedRule.document_location || selectedRule.location)) {
+                            onNavigateToIssue(
+                              selectedRule.document_location ||
+                              { start: selectedRule.location?.start || 0, end: selectedRule.location?.end || 0 }
+                            )
+                          }
+                        }}
+                        className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium border transition-colors hover:bg-gray-50"
+                        style={{ color: 'var(--color-text-secondary)', borderColor: 'var(--color-border)' }}
+                      >
+                        <Eye className="w-3 h-3" />
+                        Перейти к тексту
+                      </button>
+                    )}
+
+                    {onApplyFix && selectedRule.found_text && (selectedRule.suggestion || selectedRule.suggested_fix) && (
+                      appliedRules.has(selectedRule.rule_id) ? (
+                        <span className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium text-green-600 bg-green-50">
+                          <CheckCheck className="w-3 h-3" />
+                          Применено
+                        </span>
+                      ) : (
+                        <button
+                          onClick={() => {
+                            const fix = selectedRule.suggestion || selectedRule.suggested_fix || ''
+                            const success = onApplyFix(selectedRule.found_text!, fix)
+                            if (success) {
+                              setAppliedRules(prev => new Set(prev).add(selectedRule.rule_id))
+                              toast.success('Правка применена')
+                            } else {
+                              toast.error('Не удалось найти текст в документе')
+                            }
+                          }}
+                          className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium text-white transition-colors hover:opacity-90"
+                          style={{ backgroundColor: 'var(--color-accent, #6366f1)' }}
+                        >
+                          Применить правку
+                        </button>
+                      )
+                    )}
+                  </div>
+                </div>
+              )}
+
+              {/* Рекомендация без конкретного текста */}
+              {!selectedRule.found_text && (selectedRule.suggestion || selectedRule.suggested_fix) && (
+                <div className="p-3 rounded-lg bg-blue-50 border border-blue-100">
+                  <h3 className="text-xs font-semibold text-blue-700 mb-1">Рекомендация</h3>
+                  <p className="text-sm text-blue-800">
+                    {selectedRule.suggestion || selectedRule.suggested_fix}
+                  </p>
+                </div>
+              )}
+            </div>
           </div>
         ) : (
-          <div style={{ borderColor: 'var(--color-border)' }}>
-            {[
-              { id: 'needs_review', title: 'Требует проверки', dotClass: 'bg-yellow-400', rules: warnings },
-              { id: 'not_acceptable', title: 'Неприемлемо', dotClass: 'bg-red-500', rules: violations },
-              { id: 'acceptable', title: 'Приемлемо', dotClass: 'bg-green-500', rules: passed },
-            ].map(group => {
-              if (group.rules.length === 0) return null
-              const open = expandedGroups.has(group.id)
-              return (
-                <div key={group.id} className="border-b" style={{ borderColor: 'var(--color-border)' }}>
-                  <button
-                    onClick={() => {
-                      setExpandedGroups(prev => {
-                        const next = new Set(prev)
-                        if (next.has(group.id)) next.delete(group.id)
-                        else next.add(group.id)
-                        return next
-                      })
-                    }}
-                    className="w-full flex items-center justify-between px-4 py-3 text-left hover:bg-gray-50"
-                  >
-                    <div className="flex items-center gap-2">
-                      <span className={`w-2 h-2 rounded-full ${group.dotClass}`} />
-                      <span className="text-sm font-semibold" style={{ color: 'var(--color-text-primary)' }}>
-                        {group.title}
-                      </span>
-                      <span className="text-xs" style={{ color: 'var(--color-text-secondary)' }}>
-                        {group.rules.length} правил
-                      </span>
-                    </div>
-                    {open ? (
-                      <ChevronDown className="w-4 h-4" style={{ color: 'var(--color-text-tertiary)' }} />
-                    ) : (
-                      <ChevronRight className="w-4 h-4" style={{ color: 'var(--color-text-tertiary)' }} />
-                    )}
-                  </button>
+          /* Сводный список групп и правил, как на первом экране Harvey */
+          <>
+            {violations.length === 0 && warnings.length === 0 && passed.length === 0 ? (
+              <div className="text-center py-12">
+                <FileText className="w-10 h-10 mx-auto mb-3" style={{ color: 'var(--color-text-tertiary)' }} />
+                <p style={{ color: 'var(--color-text-secondary)' }}>
+                  Нет результатов для отображения
+                </p>
+              </div>
+            ) : (
+              <div style={{ borderColor: 'var(--color-border)' }}>
+                {[
+                  { id: 'needs_review', title: 'Требует проверки', dotClass: 'bg-yellow-400', rules: warnings },
+                  { id: 'not_acceptable', title: 'Неприемлемо', dotClass: 'bg-red-500', rules: violations },
+                  { id: 'acceptable', title: 'Приемлемо', dotClass: 'bg-green-500', rules: passed },
+                ].map(group => {
+                  if (group.rules.length === 0) return null
+                  const open = expandedGroups.has(group.id)
+                  return (
+                    <div key={group.id} className="border-b" style={{ borderColor: 'var(--color-border)' }}>
+                      <button
+                        onClick={() => {
+                          setExpandedGroups(prev => {
+                            const next = new Set(prev)
+                            if (next.has(group.id)) next.delete(group.id)
+                            else next.add(group.id)
+                            return next
+                          })
+                        }}
+                        className="w-full flex items-center justify-between px-4 py-3 text-left hover:bg-gray-50"
+                      >
+                        <div className="flex items-center gap-2">
+                          <span className={`w-2 h-2 rounded-full ${group.dotClass}`} />
+                          <span className="text-sm font-semibold" style={{ color: 'var(--color-text-primary)' }}>
+                            {group.title}
+                          </span>
+                          <span className="text-xs" style={{ color: 'var(--color-text-secondary)' }}>
+                            {group.rules.length} правил
+                          </span>
+                        </div>
+                        {open ? (
+                          <ChevronDown className="w-4 h-4" style={{ color: 'var(--color-text-tertiary)' }} />
+                        ) : (
+                          <ChevronRight className="w-4 h-4" style={{ color: 'var(--color-text-tertiary)' }} />
+                        )}
+                      </button>
 
-                  {open && (
-                    <div className="divide-y" style={{ borderColor: 'var(--color-border)' }}>
-                      {group.rules.map((rule) => {
-                        const harvey = getHarveyClassification(rule)
-                        return (
-                          <div key={rule.rule_id} className="transition-colors hover:bg-gray-50/50">
-                            {/* Rule Header — краткий список как в Harvey */}
-                            <button
-                              onClick={() => openRuleDetails(rule, group.title)}
-                              className="w-full flex items-start gap-3 p-4 text-left"
-                            >
-                              <div className="flex-1 min-w-0">
-                                <div className="flex items-center gap-2 mb-1.5 flex-wrap">
-                                  <span
-                                    className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-xs font-semibold"
-                                    style={{ color: harvey.color, backgroundColor: harvey.bg, border: `1px solid ${harvey.border}` }}
-                                  >
-                                    {harvey.icon} {harvey.label}
-                                  </span>
-                                  {getRuleTypeBadge(rule.rule_type)}
-                                </div>
-                                <span className="font-medium text-sm" style={{ color: 'var(--color-text-primary)' }}>
-                                  {rule.rule_name}
-                                </span>
-                                {rule.issue_description && rule.status !== 'passed' && (
-                                  <p className="text-xs mt-1 line-clamp-2" style={{ color: 'var(--color-text-secondary)' }}>
-                                    {rule.issue_description}
-                                  </p>
-                                )}
+                      {open && (
+                        <div className="divide-y" style={{ borderColor: 'var(--color-border)' }}>
+                          {group.rules.map((rule) => {
+                            const harvey = getHarveyClassification(rule)
+                            return (
+                              <div key={rule.rule_id} className="transition-colors hover:bg-gray-50/50">
+                                {/* Rule Header — краткий список как в Harvey */}
+                                <button
+                                  onClick={() => openRuleDetails(rule, group.title)}
+                                  className="w-full flex items-start gap-3 p-4 text-left"
+                                >
+                                  <div className="flex-1 min-w-0">
+                                    <div className="flex items-center gap-2 mb-1.5 flex-wrap">
+                                      <span
+                                        className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-xs font-semibold"
+                                        style={{ color: harvey.color, backgroundColor: harvey.bg, border: `1px solid ${harvey.border}` }}
+                                      >
+                                        {harvey.icon} {harvey.label}
+                                      </span>
+                                      {getRuleTypeBadge(rule.rule_type)}
+                                    </div>
+                                    <span className="font-medium text-sm" style={{ color: 'var(--color-text-primary)' }}>
+                                      {rule.rule_name}
+                                    </span>
+                                    {rule.issue_description && rule.status !== 'passed' && (
+                                      <p className="text-xs mt-1 line-clamp-2" style={{ color: 'var(--color-text-secondary)' }}>
+                                        {rule.issue_description}
+                                      </p>
+                                    )}
+                                  </div>
+                                  <div className="shrink-0 mt-1">
+                                    <ChevronRight className="w-4 h-4" style={{ color: 'var(--color-text-tertiary)' }} />
+                                  </div>
+                                </button>
                               </div>
-                              <div className="shrink-0 mt-1">
-                                <ChevronRight className="w-4 h-4" style={{ color: 'var(--color-text-tertiary)' }} />
-                              </div>
-                            </button>
-                          </div>
-                        )
-                      })}
+                            )
+                          })}
+                        </div>
+                      )}
                     </div>
-                  )}
-                </div>
-              )
-            })}
-          </div>
+                  )
+                })}
+              </div>
+            )}
+          </>
         )}
       </div>
 
