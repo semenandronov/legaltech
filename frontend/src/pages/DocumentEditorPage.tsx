@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
-import { Save, Download, ArrowLeft, MessageSquare, FileText, Table, FileEdit, History, BookOpen, Workflow, Check } from 'lucide-react'
+import { Download, ArrowLeft, MessageSquare, FileText, Table, FileEdit, History, BookOpen, Workflow, ChevronDown } from 'lucide-react'
 import { toast } from 'sonner'
 import UnifiedSidebar from '../components/Layout/UnifiedSidebar'
 import { DocumentEditor, DocumentEditorRef } from '../components/Editor/DocumentEditor'
@@ -50,6 +50,21 @@ const DocumentEditorPage = () => {
   const [loadingDocuments, setLoadingDocuments] = useState(false)
   const saveTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const editorRef = useRef<DocumentEditorRef>(null)
+  const [showDownloadDropdown, setShowDownloadDropdown] = useState(false)
+  const downloadDropdownRef = useRef<HTMLDivElement>(null)
+
+  // Закрытие выпадающего списка «Скачать» при клике снаружи
+  useEffect(() => {
+    const handleClickOutside = (e: MouseEvent) => {
+      if (downloadDropdownRef.current && !downloadDropdownRef.current.contains(e.target as Node)) {
+        setShowDownloadDropdown(false)
+      }
+    }
+    if (showDownloadDropdown) {
+      document.addEventListener('mousedown', handleClickOutside)
+      return () => document.removeEventListener('mousedown', handleClickOutside)
+    }
+  }, [showDownloadDropdown])
 
   // Warn user about unsaved changes before leaving
   useEffect(() => {
@@ -457,46 +472,53 @@ const DocumentEditorPage = () => {
         </div>
 
         <div className="flex items-center gap-1.5 flex-shrink-0">
-          <button
-            onClick={() => handleSave()}
-            disabled={saving}
-            className={`flex items-center gap-1.5 px-3 py-2 text-sm rounded-lg transition-all duration-200 ${
-              saving
-                ? 'bg-blue-500 text-white opacity-80'
-                : justSaved
-                ? 'bg-emerald-600 text-white'
-                : hasUnsavedChanges
-                ? 'bg-blue-600 text-white hover:bg-blue-700 ring-2 ring-blue-300 ring-offset-1'
-                : 'bg-blue-600 text-white hover:bg-blue-700'
-            }`}
-          >
-            {saving ? (
-              <div className="animate-spin rounded-full h-4 w-4 border-2 border-white border-t-transparent" />
-            ) : justSaved ? (
-              <Check className="w-4 h-4" />
-            ) : (
-              <Save className="w-4 h-4" />
+          <div className="relative" ref={downloadDropdownRef}>
+            <button
+              onClick={() => setShowDownloadDropdown((v) => !v)}
+              disabled={!documentId || saving}
+              className="flex items-center gap-1.5 px-3 py-2 text-sm border rounded-lg hover:bg-gray-50 disabled:opacity-50 transition-colors"
+              style={{ borderColor: 'var(--color-border)' }}
+              aria-label="Скачать документ"
+              aria-expanded={showDownloadDropdown}
+              aria-haspopup="listbox"
+            >
+              <Download className="w-4 h-4" />
+              Скачать
+              <ChevronDown className="w-4 h-4" aria-hidden="true" />
+            </button>
+            {showDownloadDropdown && (
+              <div
+                className="absolute top-full left-0 mt-1 py-1 min-w-[120px] bg-white border rounded-lg shadow-lg z-50"
+                style={{ borderColor: 'var(--color-border)' }}
+                role="listbox"
+              >
+                <button
+                  role="option"
+                  onClick={() => {
+                    handleExportDocx()
+                    setShowDownloadDropdown(false)
+                  }}
+                  disabled={!documentId || saving}
+                  className="flex items-center gap-2 w-full px-3 py-2 text-sm text-left hover:bg-gray-100 disabled:opacity-50 transition-colors"
+                >
+                  <Download className="w-4 h-4" />
+                  DOCX
+                </button>
+                <button
+                  role="option"
+                  onClick={() => {
+                    handleExportPdf()
+                    setShowDownloadDropdown(false)
+                  }}
+                  disabled={!documentId || saving}
+                  className="flex items-center gap-2 w-full px-3 py-2 text-sm text-left hover:bg-gray-100 disabled:opacity-50 transition-colors"
+                >
+                  <Download className="w-4 h-4" />
+                  PDF
+                </button>
+              </div>
             )}
-            {saving ? 'Сохранение...' : justSaved ? 'Сохранено' : 'Сохранить'}
-          </button>
-          <button
-            onClick={handleExportDocx}
-            disabled={!documentId || saving}
-            className="flex items-center gap-1.5 px-3 py-2 text-sm border rounded-lg hover:bg-gray-50 disabled:opacity-50 transition-colors"
-            style={{ borderColor: 'var(--color-border)' }}
-          >
-            <Download className="w-4 h-4" />
-            DOCX
-          </button>
-          <button
-            onClick={handleExportPdf}
-            disabled={!documentId || saving}
-            className="flex items-center gap-1.5 px-3 py-2 text-sm border rounded-lg hover:bg-gray-50 disabled:opacity-50 transition-colors"
-            style={{ borderColor: 'var(--color-border)' }}
-          >
-            <Download className="w-4 h-4" />
-            PDF
-          </button>
+          </div>
           <button
             onClick={() => setShowChat(!showChat)}
             className={`flex items-center gap-1.5 px-3 py-2 text-sm rounded-lg transition-colors ${

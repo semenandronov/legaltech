@@ -66,8 +66,12 @@ const parseHarvey = (
   suggested_clause_template?: string,
   fallback_options?: any
 ): HarveyFields => {
-  if (fallback_options && typeof fallback_options === 'object' && !Array.isArray(fallback_options)) {
-    const fo = fallback_options as any
+  // API возвращает fallback_options как список; берём первый элемент
+  const foRaw = Array.isArray(fallback_options) && fallback_options.length > 0
+    ? fallback_options[0]
+    : fallback_options
+  if (foRaw && typeof foRaw === 'object' && !Array.isArray(foRaw)) {
+    const fo = foRaw as any
     if (fo.fallbacks !== undefined || fo.unacceptable !== undefined) {
       return {
         standard_position: suggested_clause_template || fo.standard_position || '',
@@ -467,17 +471,19 @@ function PlaybookEditor({
 
     const normalizedRules = form.rules.map(r => {
       const h = harveyMap[r.id] ?? EMPTY_HARVEY
+      const fallbackPayload = {
+        standard_position: h.standard_position,
+        fallbacks: h.fallback_positions.filter(Boolean),
+        unacceptable: h.unacceptable_deviations.filter(Boolean),
+        guidance: h.internal_guidance,
+        mark_missing: h.mark_missing_as_violation,
+      }
       return {
         ...r,
         description: h.internal_guidance || r.description,
         suggested_clause_template: h.standard_position || r.suggested_clause_template,
-        fallback_options: {
-          standard_position: h.standard_position,
-          fallbacks: h.fallback_positions.filter(Boolean),
-          unacceptable: h.unacceptable_deviations.filter(Boolean),
-          guidance: h.internal_guidance,
-          mark_missing: h.mark_missing_as_violation,
-        },
+        // API ожидает fallback_options как список (List[dict])
+        fallback_options: [fallbackPayload],
         clause_category: r.clause_category ||
           r.rule_name.toLowerCase().replace(/\s+/g, '_').replace(/[^a-z0-9_]/g, '').slice(0, 40) || 'general',
       }

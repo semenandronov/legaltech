@@ -14,17 +14,13 @@ import {
   Code,
   Quote,
   AlertTriangle,
-  Trash2,
-  Search,
-  Library
+  Trash2
 } from 'lucide-react'
 
 interface EditorToolbarProps {
   editor: Editor | null
   hasRisks?: boolean
   onClearRisks?: () => void
-  onOpenFindReplace?: () => void
-  onOpenClauseLibrary?: () => void
 }
 
 // Prevent toolbar buttons from stealing focus from the editor.
@@ -37,9 +33,7 @@ const preventFocusLoss = (e: React.MouseEvent) => {
 export const EditorToolbar = ({
   editor,
   hasRisks = false,
-  onClearRisks,
-  onOpenFindReplace,
-  onOpenClauseLibrary
+  onClearRisks
 }: EditorToolbarProps) => {
   if (!editor) {
     return null
@@ -192,30 +186,6 @@ export const EditorToolbar = ({
       </button>
 
       <div className="w-px h-6 bg-gray-300 mx-1"></div>
-
-      {/* Find & Replace */}
-      {onOpenFindReplace && (
-        <button
-          onMouseDown={preventFocusLoss}
-          onClick={onOpenFindReplace}
-          className="p-2 rounded hover:bg-gray-100 text-gray-700 transition-colors"
-          aria-label="Поиск и замена"
-        >
-          <Search className="w-4 h-4" aria-hidden="true" />
-        </button>
-      )}
-
-      {/* Clause Library */}
-      {onOpenClauseLibrary && (
-        <button
-          onMouseDown={preventFocusLoss}
-          onClick={onOpenClauseLibrary}
-          className="p-2 rounded hover:bg-gray-100 text-gray-700 transition-colors"
-          aria-label="Библиотека клауз"
-        >
-          <Library className="w-4 h-4" aria-hidden="true" />
-        </button>
-      )}
 
       {/* Spacer to push Track Changes and Risks to the right */}
       <div className="flex-1"></div>

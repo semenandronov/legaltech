@@ -17,7 +17,6 @@ import { Comment } from './extensions/Comment'
 import { RiskHighlight } from './extensions/RiskHighlight'
 import { AIKeyboardShortcuts } from './extensions/AIKeyboardShortcuts'
 import { SelectionHighlight } from './extensions/SelectionHighlight'
-import { Ruler } from './Ruler'
 import { FindReplace } from './FindReplace'
 import { ClauseLibrary } from './ClauseLibrary'
 import './Editor.css'
@@ -465,36 +464,16 @@ export const DocumentEditor = forwardRef<DocumentEditorRef, DocumentEditorProps>
         editor={editor}
         hasRisks={hasRisks}
         onClearRisks={handleClearRisks}
-        onOpenFindReplace={handleOpenFindReplace}
-        onOpenClauseLibrary={handleOpenClauseLibrary}
       />
       <div 
         className="flex-1 overflow-auto document-canvas"
         style={{ backgroundColor: '#f1f3f4' }}
       >
         <div className="flex justify-center py-8 px-4">
-          <div className="document-container" style={{ width: `${scaledWidth + 20}px` }}>
-            {/* Horizontal Ruler */}
-            <div style={{ marginLeft: '20px' }}>
-              <Ruler 
-                length={scaledWidth} 
-                orientation="horizontal" 
-                zoom={zoom} 
-              />
-            </div>
-            
-            {/* Document with vertical ruler */}
-            <div className="flex">
-              {/* Vertical Ruler */}
-              <Ruler 
-                length={scaledHeight} 
-                orientation="vertical" 
-                zoom={zoom} 
-              />
-              
-              {/* White document page */}
-              <div 
-                className="document-page bg-white"
+          <div className="document-container" style={{ width: `${scaledWidth}px` }}>
+            {/* White document page */}
+            <div 
+              className="document-page bg-white"
                 style={{
                   width: `${scaledWidth}px`,
                   minHeight: `${scaledHeight}px`,
@@ -519,7 +498,6 @@ export const DocumentEditor = forwardRef<DocumentEditorRef, DocumentEditorProps>
                   />
                 </div>
               </div>
-            </div>
           </div>
         </div>
       </div>
