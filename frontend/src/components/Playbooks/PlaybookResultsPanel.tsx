@@ -9,12 +9,12 @@ import {
   X,
   ChevronDown,
   ChevronRight,
+  ChevronLeft,
   FileText,
   Eye,
   Download,
   RefreshCw,
   Lightbulb,
-  ExternalLink,
   CheckCheck,
 } from 'lucide-react'
 import { toast } from 'sonner'
