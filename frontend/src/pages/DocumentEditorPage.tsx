@@ -44,7 +44,6 @@ const DocumentEditorPage = () => {
   const [showResultsPanel, setShowResultsPanel] = useState(false)
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
-  const [justSaved, setJustSaved] = useState(false)
   const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false)
   const [documentsList, setDocumentsList] = useState<Document[]>([])
   const [loadingDocuments, setLoadingDocuments] = useState(false)
@@ -61,8 +60,8 @@ const DocumentEditorPage = () => {
       }
     }
     if (showDownloadDropdown) {
-      document.addEventListener('mousedown', handleClickOutside)
-      return () => document.removeEventListener('mousedown', handleClickOutside)
+      window.addEventListener('mousedown', handleClickOutside)
+      return () => window.removeEventListener('mousedown', handleClickOutside)
     }
   }, [showDownloadDropdown])
 
@@ -175,8 +174,6 @@ const DocumentEditorPage = () => {
       toast.error(error.message || 'Ошибка при сохранении')
     } finally {
       setSaving(false)
-      setJustSaved(true)
-      setTimeout(() => setJustSaved(false), 2000)
     }
   }, [caseId, documentId, document, content, title, navigate])
 
