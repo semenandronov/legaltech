@@ -25,9 +25,10 @@ langchain-classic==1.0.0
 langgraph==1.0.5
 langgraph-checkpoint-postgres==3.0.2
 pgvector==0.3.4  # PostgreSQL vector extension Python bindings
-langdetect==1.0.9
-unstructured>=0.20.0  # Used via langchain_community UnstructuredWordDocumentLoader (DOCX fallback)
-# chromadb removed — not used in codebase, was pulling in huge ML stack (spacy, onnxruntime, numba, kubernetes...)
+# unstructured removed — pulled in spacy, onnxruntime, numba, llvmlite (huge ML stack, 8+ min pip install)
+# DOCX loading fallback: python-docx (primary) → mammoth (fallback), both already in requirements
+# langdetect removed — not directly used in codebase
+# chromadb removed — not used in codebase
 python-docx==1.2.0
 reportlab==4.4.6
 jsonlines>=4.0.0
