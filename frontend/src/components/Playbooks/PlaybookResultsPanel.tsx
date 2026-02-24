@@ -163,10 +163,11 @@ export const PlaybookResultsPanel = ({
 
   return (
     <div
-      className="fixed right-0 top-0 bottom-0 w-[450px] shadow-xl border-l flex flex-col z-40 animate-slideInRight"
+      className="h-full flex flex-col animate-slideInRight"
       style={{
         backgroundColor: 'var(--color-bg-primary)',
-        borderColor: 'var(--color-border)'
+        borderColor: 'var(--color-border)',
+        boxShadow: '0 0 0 1px var(--color-border)',
       }}
     >
       {/* Header */}
@@ -271,7 +272,7 @@ export const PlaybookResultsPanel = ({
           }`}
           style={{ color: activeFilter === 'all' ? undefined : 'var(--color-text-secondary)' }}
         >
-          Все ({result.results.length})
+          Все правила ({result.results.length})
         </button>
         <button
           onClick={() => setActiveFilter('violations')}
@@ -289,7 +290,7 @@ export const PlaybookResultsPanel = ({
           }`}
           style={{ color: activeFilter === 'warnings' ? undefined : 'var(--color-text-secondary)' }}
         >
-          🔍 На проверке ({warningsCount})
+          🔍 Требует проверки ({warningsCount})
         </button>
         <button
           onClick={() => setActiveFilter('passed')}

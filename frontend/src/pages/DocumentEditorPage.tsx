@@ -343,7 +343,12 @@ const DocumentEditorPage = () => {
       setShowResultsPanel(true)
       toast.success(`Проверка завершена! Соответствие: ${fullResult.compliance_score?.toFixed(1) || 0}%`)
     } catch (error: any) {
-      toast.error('Ошибка проверки: ' + (error.message || 'Неизвестная ошибка'))
+      const status = error?.response?.status
+      if (status === 500) {
+        toast.error('Ошибка проверки: внутренняя ошибка сервера при выполнении playbook. Сообщите администратору, что в БД может отсутствовать столбец files.folder_id.')
+      } else {
+        toast.error('Ошибка проверки: ' + (error.message || 'Неизвестная ошибка'))
+      }
     } finally {
       setRunningPlaybookId(null)
     }
@@ -548,29 +553,61 @@ const DocumentEditorPage = () => {
           />
         </div>
 
-        {/* Harvey AI панель справа — всегда открыта при наличии documentId */}
+        {/* Правая колонка: либо чат с ИИ, либо панель результатов playbook */}
         {documentId && (
           <div className="w-[480px] border-l border-border shrink-0 flex flex-col">
-            <DocumentEditorContextChat
-              documentId={documentId}
-              documentTitle={title}
-              documentContent={content}
-              onApplyEdit={handleApplyEdit}
-              onInsertText={handleInsertText}
-              onReplaceText={handleReplaceTextInDocument}
-              onRunPlaybook={handleOpenPlaybookModal}
-              caseId={caseId}
-              pendingPlaybookResult={playbookResult}
-              onPlaybookResultConsumed={() => setPlaybookResult(null)}
-              selectedText={selectedText}
-              selectionRange={selectionRange}
-              onClearSelection={() => {
-                setSelectedText('')
-                setSelectionRange(null)
-                editorRef.current?.clearSelectionHighlight()
-              }}
-              onReplaceRange={handleReplaceRange}
-            />
+            {showResultsPanel && playbookResult ? (
+              <PlaybookResultsPanel
+                result={{
+                  id: playbookResult.id || 'temp',
+                  playbook_id: playbookResult.playbook_id || '',
+                  playbook_name: playbookResult.playbook_name || 'Playbook',
+                  document_id: documentId || '',
+                  compliance_score: playbookResult.compliance_score || 0,
+                  total_rules: playbookResult.total_rules || (playbookResult.results?.length || 0),
+                  passed_rules: playbookResult.passed_rules || 0,
+                  red_line_violations: playbookResult.red_line_violations || 0,
+                  no_go_violations: playbookResult.no_go_violations || 0,
+                  fallback_issues: playbookResult.fallback_issues || 0,
+                  results: playbookResult.results || [],
+                  summary: playbookResult.summary,
+                  recommendations: playbookResult.recommendations,
+                  created_at: playbookResult.created_at || new Date().toISOString()
+                }}
+                onClose={() => {
+                  setShowResultsPanel(false)
+                  setPlaybookResult(null)
+                }}
+                onNavigateToIssue={handleNavigateToIssue}
+                onScrollToText={handleScrollToText}
+                onApplyFix={handleReplaceTextInDocument}
+                onRerun={() => {
+                  setShowResultsPanel(false)
+                  setShowPlaybookModal(true)
+                }}
+              />
+            ) : (
+              <DocumentEditorContextChat
+                documentId={documentId}
+                documentTitle={title}
+                documentContent={content}
+                onApplyEdit={handleApplyEdit}
+                onInsertText={handleInsertText}
+                onReplaceText={handleReplaceTextInDocument}
+                onRunPlaybook={handleOpenPlaybookModal}
+                caseId={caseId}
+                pendingPlaybookResult={null}
+                onPlaybookResultConsumed={() => {}}
+                selectedText={selectedText}
+                selectionRange={selectionRange}
+                onClearSelection={() => {
+                  setSelectedText('')
+                  setSelectionRange(null)
+                  editorRef.current?.clearSelectionHighlight()
+                }}
+                onReplaceRange={handleReplaceRange}
+              />
+            )}
           </div>
         )}
       </div>
@@ -681,38 +718,6 @@ const DocumentEditorPage = () => {
         </div>
       )}
 
-      {/* Playbook Results Panel */}
-      {showResultsPanel && playbookResult && (
-        <PlaybookResultsPanel
-          result={{
-            id: playbookResult.id || 'temp',
-            playbook_id: playbookResult.playbook_id || '',
-            playbook_name: playbookResult.playbook_name || 'Playbook',
-            document_id: documentId || '',
-            compliance_score: playbookResult.compliance_score || 0,
-            total_rules: playbookResult.total_rules || (playbookResult.results?.length || 0),
-            passed_rules: playbookResult.passed_rules || 0,
-            red_line_violations: playbookResult.red_line_violations || 0,
-            no_go_violations: playbookResult.no_go_violations || 0,
-            fallback_issues: playbookResult.fallback_issues || 0,
-            results: playbookResult.results || [],
-            summary: playbookResult.summary,
-            recommendations: playbookResult.recommendations,
-            created_at: playbookResult.created_at || new Date().toISOString()
-          }}
-          onClose={() => {
-            setShowResultsPanel(false)
-            setPlaybookResult(null)
-          }}
-          onNavigateToIssue={handleNavigateToIssue}
-          onScrollToText={handleScrollToText}
-          onApplyFix={handleReplaceTextInDocument}
-          onRerun={() => {
-            setShowResultsPanel(false)
-            setShowPlaybookModal(true)
-          }}
-        />
-      )}
     </div>
   )
 }
