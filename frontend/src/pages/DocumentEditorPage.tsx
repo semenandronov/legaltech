@@ -30,7 +30,6 @@ const DocumentEditorPage = () => {
   const [title, setTitle] = useState('Новый документ')
   const [selectedText, setSelectedText] = useState('')
   const [selectionRange, setSelectionRange] = useState<{ from: number; to: number } | null>(null)
-  const [showChat, setShowChat] = useState(false)
   const [showVersionHistory, setShowVersionHistory] = useState(false)
   // showComments removed — CommentsPanel was overlapping the chat sidebar
   const [showTemplateSelector, setShowTemplateSelector] = useState(false)
@@ -342,11 +341,7 @@ const DocumentEditorPage = () => {
       const fullResult = await getCheck(checkResponse.check_id)
       setPlaybookResult(fullResult)
       setShowPlaybookModal(false)
-      if (showChat) {
-        // Result will be injected into the chat sidebar as a message
-      } else {
-        setShowResultsPanel(true)
-      }
+      setShowResultsPanel(true)
       toast.success(`Проверка завершена! Соответствие: ${fullResult.compliance_score?.toFixed(1) || 0}%`)
     } catch (error: any) {
       toast.error('Ошибка проверки: ' + (error.message || 'Неизвестная ошибка'))
@@ -386,7 +381,7 @@ const DocumentEditorPage = () => {
   if (loading || loadingDocuments) {
     return (
       <div className="h-screen bg-bg-primary flex">
-        {caseId && <UnifiedSidebar navItems={navItems} title="Legal AI" forceCollapsed={showChat} />}
+        {caseId && <UnifiedSidebar navItems={navItems} title="Legal AI" forceCollapsed={true} />}
         <div className="flex-1 flex items-center justify-center">
           <div className="text-center">
             <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto mb-4"></div>
@@ -403,7 +398,7 @@ const DocumentEditorPage = () => {
   if (!documentId) {
     return (
       <div className="h-screen bg-bg-primary flex">
-        {caseId && <UnifiedSidebar navItems={navItems} title="Legal AI" forceCollapsed={showChat} />}
+        {caseId && <UnifiedSidebar navItems={navItems} title="Legal AI" forceCollapsed={true} />}
         <div className="flex-1 flex flex-col" style={{ backgroundColor: 'var(--color-bg-primary)' }}>
           <DocumentsList
             documents={documentsList}
@@ -426,7 +421,7 @@ const DocumentEditorPage = () => {
   // Show editor for specific document
   return (
     <div className="h-screen bg-bg-primary flex">
-      {caseId && <UnifiedSidebar navItems={navItems} title="Legal AI" forceCollapsed={showChat} />}
+      {caseId && <UnifiedSidebar navItems={navItems} title="Legal AI" forceCollapsed={true} />}
       <div className="flex-1 flex flex-col" style={{ backgroundColor: 'var(--color-bg-primary)' }}>
       {/* Toolbar */}
       <div className="flex items-center justify-between px-4 py-3 border-b gap-2" style={{ borderBottomColor: 'var(--color-border)' }}>
@@ -516,18 +511,6 @@ const DocumentEditorPage = () => {
               </div>
             )}
           </div>
-          <button
-            onClick={() => setShowChat(!showChat)}
-            className={`flex items-center gap-1.5 px-3 py-2 text-sm rounded-lg transition-colors ${
-              showChat
-                ? 'bg-blue-100 text-blue-700'
-                : 'border hover:bg-gray-50'
-            }`}
-            style={{ borderColor: showChat ? 'transparent' : 'var(--color-border)' }}
-          >
-            <MessageSquare className="w-4 h-4" />
-            Чат с ИИ
-          </button>
           {documentId && (
             <button
               onClick={() => setShowVersionHistory(true)}
@@ -566,8 +549,8 @@ const DocumentEditorPage = () => {
           />
         </div>
 
-        {/* Harvey AI панель справа */}
-        {showChat && documentId && (
+        {/* Harvey AI панель справа — всегда открыта при наличии documentId */}
+        {documentId && (
           <div className="w-[480px] border-l border-border shrink-0 flex flex-col">
             <DocumentEditorContextChat
               documentId={documentId}
