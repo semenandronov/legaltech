@@ -29,6 +29,7 @@ pgvector==0.3.4  # PostgreSQL vector extension Python bindings
 # DOCX loading fallback: python-docx (primary) → mammoth (fallback), both already in requirements
 # langdetect removed — not directly used in codebase
 # chromadb removed — not used in codebase
+python-dateutil>=2.8.2  # Used in date_validator.py (was transitive dep of removed packages)
 python-docx==1.2.0
 reportlab==4.4.6
 jsonlines>=4.0.0
