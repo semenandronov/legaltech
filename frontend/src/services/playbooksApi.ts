@@ -58,6 +58,9 @@ export interface RuleCheckResult {
   suggested_fix?: string
   confidence: number
   reasoning?: string
+  ui_status?: 'acceptable' | 'needs_review' | 'not_acceptable' | string
+  guidance?: string
+  suggested_options?: { label: string; type: 'standard' | 'fallback' | string; text: string }[]
 }
 
 export interface Redline {

@@ -25,13 +25,17 @@ class RuleCheckResult:
     rule_name: str
     rule_type: str  # red_line, fallback, no_go
     clause_category: str
-    status: str  # passed, violation, not_found, error
+    status: str  # passed, violation, warning, not_found, error
     found_text: str = ""
     location: Dict[str, Any] = field(default_factory=dict)
     issue_description: str = ""
     suggested_fix: str = ""
     confidence: float = 0.0
     reasoning: str = ""
+    # Harvey-style additions
+    ui_status: str = ""  # acceptable | needs_review | not_acceptable
+    guidance: str = ""
+    suggested_options: List[Dict[str, Any]] = field(default_factory=list)
 
 
 @dataclass
@@ -52,7 +56,7 @@ class PlaybookCheckResult:
     processing_time_seconds: int = 0
 
 
-# Промпт для проверки правила
+# Промпт для проверки правила (общий, без Harvey-структуры)
 RULE_CHECK_PROMPT = """Ты - эксперт по анализу юридических документов. Проверь соответствие пункта контракта правилу.
 
 ПРАВИЛО:
@@ -93,6 +97,52 @@ RULE_CHECK_PROMPT = """Ты - эксперт по анализу юридиче�
 - Будь строгим при проверке
 - Если пункт не содержит достаточно информации - статус "unclear"
 - Всегда объясняй reasoning"""
+
+
+# Harvey-подобный промпт с учётом стандартной позиции, fallback и недопустимых формулировок
+HARVEY_RULE_PROMPT = """Ты - эксперт по анализу юридических документов.
+
+Твоя задача — проанализировать, насколько приведённый пункт договора соответствует внутреннему правилу фирмы.
+
+ПРАВИЛО:
+- Название: {rule_name}
+- Тип правила: {rule_type}  // red_line, fallback, no_go
+- Категория пункта: {clause_category}
+- Описание / guidance: {guidance}
+
+СТАНДАРТНАЯ ПОЗИЦИЯ:
+\"\"\"{standard_position}\"\"\"
+
+ЗАПАСНЫЕ ВАРИАНТЫ (fallbacks):
+{fallback_positions}
+
+НЕДОПУСТИМЫЕ ФОРМУЛИРОВКИ:
+{unacceptable_phrases}
+
+ИЗВЛЕЧЁННЫЙ ПУНКТ КОНТРАКТА:
+\"\"\"{clause_text}\"\"\"
+
+ЗАДАЧА:
+1. Определи, соответствует ли пункт стандартной позиции, одному из запасных вариантов или недопустимым формулировкам.
+2. Если формулировка стандартная — это приемлемо.
+3. Если формулировка попадает в запасные варианты — это допустимо, но лучше привести к стандарту.
+4. Если формулировка попадает в недопустимые — это неприемлемо, нужно предложить изменения.
+5. Если пункт по смыслу относится к правилу, но не совпадает ни со стандартом, ни с fallback, ни с недопустимыми — пометь как неподтверждённый вариант, требующий проверки.
+6. Если соответствующий пункт в документе отсутствует — так и укажи.
+
+Верни результат ТОЛЬКО в виде одного JSON-объекта:
+{{
+  "classification": "standard|fallback|unacceptable|unknown|no_clause",
+  "status": "passed|violation|warning|not_found",
+  "confidence": 0.0,
+  "issue_description": "кратко, в чём проблема (или почему всё нормально)",
+  "reasoning": "подробное логическое объяснение на русском языке"
+}}
+
+ТРЕБОВАНИЯ:
+- Не добавляй никакого текста до или после JSON.
+- Если текста пункта нет или он явно не относится к правилу — используй classification = "no_clause".
+- Будь последовательным и консервативным: если есть сомнения, используй classification = "unknown" и status = "warning"."""
 
 
 class PlaybookChecker:
@@ -351,8 +401,14 @@ class PlaybookChecker:
                 document_text,
                 rule.clause_category
             )
-        
-        # Check based on condition type
+
+        # Harvey-style semantic check when есть стандарт/запасные/недопустимые формулировки.
+        # Используем для must_exist / text_match / text_not_match, чтобы вести себя как Harvey.
+        has_harvey_config = bool(rule.suggested_clause_template or rule.fallback_options)
+        if has_harvey_config and rule.condition_type in {"must_exist", "text_match", "text_not_match"}:
+            return await self._check_harvey_semantic(rule, matching_clause, document_text)
+
+        # Иначе — старая ветка по типу условия
         if rule.condition_type == "must_exist":
             return await self._check_must_exist(rule, matching_clause)
         elif rule.condition_type == "must_not_exist":
@@ -368,6 +424,295 @@ class PlaybookChecker:
         else:
             # Use LLM for general check
             return await self._check_with_llm(rule, matching_clause)
+
+    async def _check_harvey_semantic(
+        self,
+        rule: PlaybookRule,
+        clause: Optional[ExtractedClause],
+        document_text: str
+    ) -> RuleCheckResult:
+        """
+        Harvey-style semantic check using standard position, fallbacks and unacceptable phrases.
+        """
+        # Подготовим Harvey-конфигурацию из rule.fallback_options / suggested_clause_template / description
+        standard_position = rule.suggested_clause_template or ""
+        fallback_positions: List[str] = []
+        unacceptable_phrases: List[str] = []
+        guidance = ""
+        mark_missing = False
+
+        try:
+            fo = None
+            if isinstance(rule.fallback_options, list) and rule.fallback_options:
+                fo = rule.fallback_options[0] or {}
+            elif isinstance(rule.fallback_options, dict):
+                fo = rule.fallback_options
+
+            if fo:
+                if not standard_position:
+                    standard_position = fo.get("standard_position") or ""
+                fallback_positions = list(fo.get("fallbacks") or [])
+                unacceptable_phrases = list(fo.get("unacceptable") or [])
+                guidance = fo.get("guidance") or ""
+                mark_missing = bool(fo.get("mark_missing"))
+        except Exception:
+            # Не роняем проверку, даже если формат fallback_options неожиданен
+            logger.warning("Unexpected fallback_options format for rule %s", rule.id, exc_info=True)
+
+        if not guidance:
+            guidance = rule.description or ""
+
+        # Если LLM не инициализирован — делаем максимально простую эвристику
+        if not self.llm:
+            if clause is None:
+                status = "violation" if mark_missing else "not_found"
+                return RuleCheckResult(
+                    rule_id=rule.id,
+                    rule_name=rule.rule_name,
+                    rule_type=rule.rule_type,
+                    clause_category=rule.clause_category,
+                    status=status,
+                    issue_description="Соответствующий пункт не найден в документе",
+                    suggested_fix=standard_position or "",
+                    ui_status="not_acceptable" if status == "violation" else "needs_review",
+                    guidance=guidance,
+                )
+
+            text_lower = clause.text.lower()
+            std_lower = standard_position.lower()
+            fallbacks_lower = [f.lower() for f in fallback_positions]
+            unacc_lower = [u.lower() for u in unacceptable_phrases]
+
+            if std_lower and std_lower in text_lower:
+                return RuleCheckResult(
+                    rule_id=rule.id,
+                    rule_name=rule.rule_name,
+                    rule_type=rule.rule_type,
+                    clause_category=rule.clause_category,
+                    status="passed",
+                    found_text=clause.text[:500],
+                    location=clause.location,
+                    confidence=0.8,
+                    reasoning="Формулировка близка к стандартной позиции (по вхождению текста).",
+                    ui_status="acceptable",
+                    guidance=guidance,
+                )
+
+            if any(fb and fb in text_lower for fb in fallbacks_lower):
+                # Fallback — допустимо, но лучше стандарт
+                suggested_options: List[Dict[str, Any]] = []
+                if standard_position:
+                    suggested_options.append(
+                        {"label": "Standard position", "type": "standard", "text": standard_position}
+                    )
+                return RuleCheckResult(
+                    rule_id=rule.id,
+                    rule_name=rule.rule_name,
+                    rule_type=rule.rule_type,
+                    clause_category=rule.clause_category,
+                    status="warning",
+                    found_text=clause.text[:500],
+                    location=clause.location,
+                    issue_description="Формулировка соответствует запасному варианту. Лучше привести к стандарту.",
+                    suggested_fix=standard_position or "",
+                    confidence=0.7,
+                    reasoning="Текст совпадает с одним из запасных вариантов (по вхождению текста).",
+                    ui_status="needs_review",
+                    guidance=guidance,
+                    suggested_options=suggested_options,
+                )
+
+            if any(ua and ua in text_lower for ua in unacc_lower):
+                # Недопустимый текст
+                suggested_options: List[Dict[str, Any]] = []
+                if standard_position:
+                    suggested_options.append(
+                        {"label": "Standard position", "type": "standard", "text": standard_position}
+                    )
+                for idx, fb in enumerate(fallback_positions):
+                    if fb:
+                        suggested_options.append(
+                            {"label": f"Fallback {idx + 1}", "type": "fallback", "text": fb}
+                        )
+                return RuleCheckResult(
+                    rule_id=rule.id,
+                    rule_name=rule.rule_name,
+                    rule_type=rule.rule_type,
+                    clause_category=rule.clause_category,
+                    status="violation",
+                    found_text=clause.text[:500],
+                    location=clause.location,
+                    issue_description="Формулировка относится к недопустимым. Требуется замена.",
+                    suggested_fix=standard_position or (fallback_positions[0] if fallback_positions else ""),
+                    confidence=0.8,
+                    reasoning="Текст содержит одну из недопустимых формулировок (по вхождению текста).",
+                    ui_status="not_acceptable",
+                    guidance=guidance,
+                    suggested_options=suggested_options,
+                )
+
+            # Не попали ни в одну категорию — требуется ручная проверка
+            suggested_options: List[Dict[str, Any]] = []
+            if standard_position:
+                suggested_options.append(
+                    {"label": "Standard position", "type": "standard", "text": standard_position}
+                )
+            for idx, fb in enumerate(fallback_positions):
+                if fb:
+                    suggested_options.append(
+                        {"label": f"Fallback {idx + 1}", "type": "fallback", "text": fb}
+                    )
+            return RuleCheckResult(
+                rule_id=rule.id,
+                rule_name=rule.rule_name,
+                rule_type=rule.rule_type,
+                clause_category=rule.clause_category,
+                status="warning",
+                found_text=clause.text[:500] if clause else "",
+                location=clause.location if clause else {},
+                issue_description="Формулировка не совпадает ни со стандартом, ни с fallback, ни с недопустимыми. Требуется проверка.",
+                suggested_fix=standard_position or "",
+                confidence=0.6,
+                reasoning="Эвристическая проверка без LLM не смогла однозначно классифицировать формулировку.",
+                ui_status="needs_review",
+                guidance=guidance,
+                suggested_options=suggested_options,
+            )
+
+        # Если LLM инициализирован — используем HARVEY_RULE_PROMPT
+        if clause is None:
+            # Нет подходящего пункта в тексте
+            status = "violation" if mark_missing else "not_found"
+            ui_status = "not_acceptable" if status == "violation" else "needs_review"
+            issue = "Соответствующий пункт не найден в документе"
+            reasoning = "Клаузу нужной категории не удалось извлечь из текста договора."
+            suggested_options: List[Dict[str, Any]] = []
+            if standard_position:
+                suggested_options.append(
+                    {"label": "Standard position", "type": "standard", "text": standard_position}
+                )
+            for idx, fb in enumerate(fallback_positions):
+                if fb:
+                    suggested_options.append(
+                        {"label": f"Fallback {idx + 1}", "type": "fallback", "text": fb}
+                    )
+            return RuleCheckResult(
+                rule_id=rule.id,
+                rule_name=rule.rule_name,
+                rule_type=rule.rule_type,
+                clause_category=rule.clause_category,
+                status=status,
+                issue_description=issue,
+                suggested_fix=standard_position or "",
+                confidence=0.8,
+                reasoning=reasoning,
+                ui_status=ui_status,
+                guidance=guidance,
+                suggested_options=suggested_options,
+            )
+
+        try:
+            prompt = ChatPromptTemplate.from_template(HARVEY_RULE_PROMPT)
+            chain = prompt | self.llm
+
+            response = await chain.ainvoke(
+                {
+                    "rule_name": rule.rule_name,
+                    "rule_type": rule.rule_type,
+                    "clause_category": rule.clause_category,
+                    "guidance": guidance,
+                    "standard_position": standard_position,
+                    "fallback_positions": json.dumps(fallback_positions, ensure_ascii=False),
+                    "unacceptable_phrases": json.dumps(unacceptable_phrases, ensure_ascii=False),
+                    "clause_text": clause.text,
+                }
+            )
+
+            json_match = re.search(r"\{[\s\S]*\}", response.content)
+            if json_match:
+                data = json.loads(json_match.group())
+            else:
+                data = {}
+        except Exception as e:
+            logger.error("Harvey LLM check error for rule %s: %s", rule.id, e, exc_info=True)
+            data = {}
+
+        classification = data.get("classification", "unknown")
+        status = data.get("status", "warning")
+        confidence = float(data.get("confidence", 0.7) or 0.7)
+        issue_description = data.get("issue_description") or ""
+        reasoning = data.get("reasoning") or ""
+
+        ui_status = ""
+        suggested_options: List[Dict[str, Any]] = []
+
+        # Подготовим список вариантов замены
+        if standard_position:
+            suggested_options.append(
+                {"label": "Standard position", "type": "standard", "text": standard_position}
+            )
+        for idx, fb in enumerate(fallback_positions):
+            if fb:
+                suggested_options.append(
+                    {"label": f"Fallback {idx + 1}", "type": "fallback", "text": fb}
+                )
+
+        if classification == "standard":
+            status = "passed"
+            ui_status = "acceptable"
+            suggested_options = []  # правки не нужны
+        elif classification == "fallback":
+            status = "warning"
+            ui_status = "needs_review"
+            # оставляем только стандарт как целевую правку
+            suggested_options = (
+                [{"label": "Standard position", "type": "standard", "text": standard_position}]
+                if standard_position
+                else []
+            )
+            if not issue_description:
+                issue_description = "Формулировка соответствует запасному варианту. Можно улучшить до стандартной позиции."
+        elif classification == "unacceptable":
+            status = "violation"
+            ui_status = "not_acceptable"
+            if not issue_description:
+                issue_description = "Формулировка относится к списку недопустимых. Требуется замена."
+        elif classification == "no_clause":
+            if mark_missing:
+                status = "violation"
+                ui_status = "not_acceptable"
+                if not issue_description:
+                    issue_description = "Обязательный пункт отсутствует в документе."
+            else:
+                status = "not_found"
+                ui_status = "needs_review"
+                if not issue_description:
+                    issue_description = "Похожий пункт не найден, возможно, он отсутствует или сформулирован иначе."
+        else:  # unknown
+            status = "warning"
+            ui_status = "needs_review"
+            if not issue_description:
+                issue_description = "Формулировка не совпадает ни со стандартом, ни с fallback, ни с недопустимыми. Требуется проверка."
+
+        # suggested_fix по-прежнему используем как «главную» правку — стандарт
+        main_fix = standard_position or (fallback_positions[0] if fallback_positions else "")
+
+        return RuleCheckResult(
+            rule_id=rule.id,
+            rule_name=rule.rule_name,
+            rule_type=rule.rule_type,
+            clause_category=rule.clause_category,
+            status=status,
+            found_text=clause.text[:500],
+            location=clause.location,
+            issue_description=issue_description,
+            suggested_fix=main_fix,
+            confidence=confidence,
+            reasoning=reasoning,
+            ui_status=ui_status,
+            guidance=guidance,
+            suggested_options=suggested_options,
+        )
     
     async def _check_must_exist(
         self,
@@ -822,6 +1167,9 @@ class PlaybookChecker:
             "suggested_fix": result.suggested_fix,
             "confidence": result.confidence,
             "reasoning": result.reasoning,
+            "ui_status": result.ui_status,
+            "guidance": result.guidance,
+            "suggested_options": result.suggested_options,
         }
     
     async def batch_check(

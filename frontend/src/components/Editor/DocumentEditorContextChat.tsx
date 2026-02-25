@@ -25,6 +25,9 @@ interface RuleResult {
   suggested_fix?: string
   found_text?: string
   reasoning?: string
+  ui_status?: 'acceptable' | 'needs_review' | 'not_acceptable' | string
+  guidance?: string
+  suggested_options?: { label: string; type: 'standard' | 'fallback' | string; text: string }[]
 }
 
 interface PlaybookResult {

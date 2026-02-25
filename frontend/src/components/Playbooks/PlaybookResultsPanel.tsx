@@ -42,6 +42,9 @@ interface RuleResult {
   }
   confidence?: number
   reasoning?: string
+  ui_status?: 'acceptable' | 'needs_review' | 'not_acceptable' | string
+  guidance?: string
+  suggested_options?: { label: string; type: 'standard' | 'fallback' | string; text: string }[]
   citations?: string[]
 }
 
@@ -281,46 +284,90 @@ export const PlaybookResultsPanel = ({
                 </div>
               )}
 
-              {/* Guidance — как трактовать правило */}
-              {(selectedRule.suggestion || selectedRule.suggested_fix) && (
+              {/* Guidance — как трактовать правило (оригинальное правило и советы) */}
+              {(selectedRule.guidance || selectedRule.suggestion || selectedRule.suggested_fix) && (
                 <div className="p-3 rounded-lg border" style={{ borderColor: 'var(--color-border)' }}>
                   <h3 className="text-xs font-semibold mb-1.5" style={{ color: 'var(--color-text-secondary)' }}>
                     Guidance
                   </h3>
                   <p className="text-sm" style={{ color: 'var(--color-text-primary)' }}>
-                    {selectedRule.suggestion || selectedRule.suggested_fix}
+                    {selectedRule.guidance || selectedRule.suggestion || selectedRule.suggested_fix}
                   </p>
                 </div>
               )}
 
               {/* Текст для проверки и предлагаемые изменения */}
-              {selectedRule.found_text && (selectedRule.suggestion || selectedRule.suggested_fix) && (
-                <div className="space-y-2">
+              {selectedRule.found_text && (
+                <div className="space-y-3">
                   <h3 className="text-xs font-semibold" style={{ color: 'var(--color-text-secondary)' }}>
                     Текст для проверки и предлагаемые изменения
                   </h3>
+
+                  {/* Блок с исходным текстом */}
                   <div
-                    className="p-3 rounded-lg text-sm leading-relaxed space-y-2"
+                    className="p-3 rounded-lg text-sm leading-relaxed"
                     style={{ background: 'var(--color-bg-primary)', border: '1px solid var(--color-border)' }}
                   >
-                    <div>
-                      <span className="text-xs font-medium" style={{ color: '#dc2626' }}>Было:</span>
-                      <p className="line-through text-red-500 mt-0.5">
-                        {selectedRule.found_text.length > 250
-                          ? selectedRule.found_text.substring(0, 250) + '…'
-                          : selectedRule.found_text}
-                      </p>
-                    </div>
-                    <div>
-                      <span className="text-xs font-medium" style={{ color: '#2563eb' }}>Стало:</span>
-                      <p className="mt-0.5" style={{ color: '#2563eb', textDecoration: 'underline' }}>
-                        {(() => {
-                          const fix = selectedRule.suggestion || selectedRule.suggested_fix || ''
-                          return fix.length > 250 ? fix.substring(0, 250) + '…' : fix
-                        })()}
-                      </p>
-                    </div>
+                    <span className="text-xs font-medium" style={{ color: '#dc2626' }}>Исходный текст:</span>
+                    <p className="mt-0.5">
+                      {selectedRule.found_text.length > 400
+                        ? selectedRule.found_text.substring(0, 400) + '…'
+                        : selectedRule.found_text}
+                    </p>
                   </div>
+
+                  {/* Варианты правок (standard + fallbacks) */}
+                  {(selectedRule.suggested_options && selectedRule.suggested_options.length > 0
+                    ? selectedRule.suggested_options
+                    : (selectedRule.suggestion || selectedRule.suggested_fix)
+                      ? [{ label: 'Suggested fix', type: 'standard', text: selectedRule.suggestion || selectedRule.suggested_fix || '' }]
+                      : []
+                  ).map((opt, idx) => (
+                    <div
+                      key={idx}
+                      className="p-3 rounded-lg text-sm leading-relaxed space-y-2"
+                      style={{ background: 'var(--color-bg-primary)', border: '1px solid var(--color-border)' }}
+                    >
+                      <div className="flex items-center justify-between">
+                        <span className="text-xs font-semibold" style={{ color: 'var(--color-text-secondary)' }}>
+                          {opt.label || (opt.type === 'fallback' ? `Fallback ${idx}` : 'Standard position')}
+                        </span>
+                      </div>
+                      <div>
+                        <span className="text-xs font-medium" style={{ color: '#2563eb' }}>Предлагаемый текст:</span>
+                        <p className="mt-0.5" style={{ color: '#2563eb' }}>
+                          {opt.text.length > 400 ? opt.text.substring(0, 400) + '…' : opt.text}
+                        </p>
+                      </div>
+
+                      {onApplyFix && selectedRule.found_text && opt.text && (
+                        <div className="mt-2 flex items-center gap-2">
+                          {appliedRules.has(selectedRule.rule_id) ? (
+                            <span className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium text-green-600 bg-green-50">
+                              <CheckCheck className="w-3 h-3" />
+                              Применено
+                            </span>
+                          ) : (
+                            <button
+                              onClick={() => {
+                                const success = onApplyFix(selectedRule.found_text!, opt.text)
+                                if (success) {
+                                  setAppliedRules(prev => new Set(prev).add(selectedRule.rule_id))
+                                  toast.success('Правка применена')
+                                } else {
+                                  toast.error('Не удалось найти текст в документе')
+                                }
+                              }}
+                              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium text-white transition-colors hover:opacity-90"
+                              style={{ backgroundColor: 'var(--color-accent, #6366f1)' }}
+                            >
+                              Применить правку
+                            </button>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  ))}
 
                   <div className="flex items-center gap-2 mt-1">
                     {(onScrollToText || (onNavigateToIssue && (selectedRule.document_location || selectedRule.location))) && (
@@ -342,32 +389,6 @@ export const PlaybookResultsPanel = ({
                         <Eye className="w-3 h-3" />
                         Перейти к тексту
                       </button>
-                    )}
-
-                    {onApplyFix && selectedRule.found_text && (selectedRule.suggestion || selectedRule.suggested_fix) && (
-                      appliedRules.has(selectedRule.rule_id) ? (
-                        <span className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium text-green-600 bg-green-50">
-                          <CheckCheck className="w-3 h-3" />
-                          Применено
-                        </span>
-                      ) : (
-                        <button
-                          onClick={() => {
-                            const fix = selectedRule.suggestion || selectedRule.suggested_fix || ''
-                            const success = onApplyFix(selectedRule.found_text!, fix)
-                            if (success) {
-                              setAppliedRules(prev => new Set(prev).add(selectedRule.rule_id))
-                              toast.success('Правка применена')
-                            } else {
-                              toast.error('Не удалось найти текст в документе')
-                            }
-                          }}
-                          className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium text-white transition-colors hover:opacity-90"
-                          style={{ backgroundColor: 'var(--color-accent, #6366f1)' }}
-                        >
-                          Применить правку
-                        </button>
-                      )
                     )}
                   </div>
                 </div>
