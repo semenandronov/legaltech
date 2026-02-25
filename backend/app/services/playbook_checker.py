@@ -8,6 +8,7 @@ from app.models.case import File
 from app.models.document_editor import Document
 from app.services.clause_extractor import ClauseExtractor, ExtractedClause, ClauseExtractionResult
 from app.services.llm_factory import create_llm
+from app.services.pgvector_store import CaseVectorStore
 from langchain_core.prompts import ChatPromptTemplate
 from datetime import datetime
 import logging
@@ -164,6 +165,7 @@ class PlaybookChecker:
         self.db = db
         self.clause_extractor = ClauseExtractor()
         self.llm = None
+        self.vector_store: Optional[CaseVectorStore] = None
         self._init_llm()
     
     def _init_llm(self):
@@ -175,6 +177,19 @@ class PlaybookChecker:
         except Exception as e:
             logger.warning(f"PlaybookChecker: Failed to initialize LLM: {e}")
             self.llm = None
+
+    def _init_vector_store(self):
+        """
+        Lazy initialization of PGVector store for semantic search.
+        """
+        if self.vector_store is not None:
+            return
+        try:
+            self.vector_store = CaseVectorStore()
+            logger.info("PlaybookChecker: PGVector store initialized for semantic rule search")
+        except Exception as e:
+            logger.warning(f"PlaybookChecker: Failed to initialize PGVector store: {e}")
+            self.vector_store = None
     
     async def check_document(
         self,
@@ -218,13 +233,15 @@ class PlaybookChecker:
         if not file and not editor_doc:
             raise ValueError(f"Document {document_id} not found")
 
-        # Check document access
+        # Determine effective case_id and check document access
+        effective_case_id = case_id
         if file:
             if file.case_id:
                 from app.models.case import Case
                 case = self.db.query(Case).filter(Case.id == file.case_id).first()
                 if case and case.user_id != user_id:
                     raise ValueError(f"Access denied to document {document_id}")
+                effective_case_id = effective_case_id or file.case_id
             document_text = file.original_text or ""
             document_name = file.filename
         else:
@@ -233,6 +250,7 @@ class PlaybookChecker:
             case = self.db.query(Case).filter(Case.id == editor_doc.case_id).first()
             if case and case.user_id != user_id:
                 raise ValueError(f"Access denied to document {document_id}")
+            effective_case_id = effective_case_id or editor_doc.case_id
             document_text = editor_doc.content_plain or ""
             if not document_text and editor_doc.content:
                 # Strip HTML tags to get plain text
@@ -247,7 +265,7 @@ class PlaybookChecker:
         check = PlaybookCheck(
             playbook_id=playbook_id,
             document_id=document_id,
-            case_id=case_id,
+            case_id=effective_case_id,
             user_id=user_id,
             document_name=document_name,
             document_hash=hashlib.sha256(document_text.encode()).hexdigest()[:64],
@@ -268,7 +286,14 @@ class PlaybookChecker:
             
             for rule in active_rules:
                 try:
-                    result = await self._check_rule(rule, extraction_result, document_text)
+                    result = await self._check_rule(
+                        rule,
+                        extraction_result,
+                        document_text,
+                        file=file,
+                        editor_doc=editor_doc,
+                        case_id=effective_case_id,
+                    )
                     results.append(result)
                 except Exception as e:
                     logger.error(f"Error checking rule {rule.id}: {e}")
@@ -375,7 +400,10 @@ class PlaybookChecker:
         self,
         rule: PlaybookRule,
         extraction_result: ClauseExtractionResult,
-        document_text: str
+        document_text: str,
+        file: Optional[File] = None,
+        editor_doc: Optional[Document] = None,
+        case_id: Optional[str] = None,
     ) -> RuleCheckResult:
         """
         Check a single rule against extracted clauses
@@ -388,23 +416,40 @@ class PlaybookChecker:
         Returns:
             RuleCheckResult
         """
-        # Find matching clause by category
-        matching_clause = None
-        for clause in extraction_result.clauses:
-            if clause.category == rule.clause_category:
-                matching_clause = clause
-                break
-        
-        # If no clause found, try to extract specifically
-        if not matching_clause:
-            matching_clause = await self.clause_extractor.extract_clause_by_category(
-                document_text,
-                rule.clause_category
-            )
-
         # Harvey-style semantic check when есть стандарт/запасные/недопустимые формулировки.
         # Используем для must_exist / text_match / text_not_match, чтобы вести себя как Harvey.
         has_harvey_config = bool(rule.suggested_clause_template or rule.fallback_options)
+        matching_clause: Optional[ExtractedClause] = None
+
+        # 1. Если есть Harvey-конфигурация и доступен case_id/file — пробуем семантический поиск по эмбеддингам.
+        if has_harvey_config and case_id and file:
+            try:
+                matching_clause = await self._find_semantic_clause_for_rule(
+                    rule=rule,
+                    case_id=case_id,
+                    file_id=file.id,
+                )
+            except Exception as e:
+                logger.warning(
+                    "PlaybookChecker: semantic search failed for rule %s: %s",
+                    rule.id,
+                    e,
+                    exc_info=True,
+                )
+
+        # 2. Если семантический поиск не дал результата — используем старую схему по категории.
+        if not matching_clause:
+            for clause in extraction_result.clauses:
+                if clause.category == rule.clause_category:
+                    matching_clause = clause
+                    break
+
+        # 3. Если по категориям тоже не нашли — как крайний случай пробуем точечное извлечение по категории.
+        if not matching_clause and rule.clause_category:
+            matching_clause = await self.clause_extractor.extract_clause_by_category(
+                document_text,
+                rule.clause_category,
+            )
         if has_harvey_config and rule.condition_type in {"must_exist", "text_match", "text_not_match"}:
             return await self._check_harvey_semantic(rule, matching_clause, document_text)
 
@@ -425,16 +470,19 @@ class PlaybookChecker:
             # Use LLM for general check
             return await self._check_with_llm(rule, matching_clause)
 
-    async def _check_harvey_semantic(
+    def _extract_harvey_config_from_rule(
         self,
         rule: PlaybookRule,
-        clause: Optional[ExtractedClause],
-        document_text: str
-    ) -> RuleCheckResult:
+    ) -> Dict[str, Any]:
         """
-        Harvey-style semantic check using standard position, fallbacks and unacceptable phrases.
+        Унифицированное извлечение Harvey-конфигурации из PlaybookRule.
+        Возвращает словарь с ключами:
+        - standard_position
+        - fallback_positions
+        - unacceptable_phrases
+        - guidance
+        - mark_missing
         """
-        # Подготовим Harvey-конфигурацию из rule.fallback_options / suggested_clause_template / description
         standard_position = rule.suggested_clause_template or ""
         fallback_positions: List[str] = []
         unacceptable_phrases: List[str] = []
@@ -461,6 +509,130 @@ class PlaybookChecker:
 
         if not guidance:
             guidance = rule.description or ""
+
+        return {
+            "standard_position": standard_position,
+            "fallback_positions": fallback_positions,
+            "unacceptable_phrases": unacceptable_phrases,
+            "guidance": guidance,
+            "mark_missing": mark_missing,
+        }
+
+    def _build_rule_query_text(self, rule: PlaybookRule) -> str:
+        """
+        Собирает текст запроса для эмбеддингового поиска по документу
+        на основе имени правила, описания, стандартной позиции, fallback и недопустимых формулировок.
+        """
+        cfg = self._extract_harvey_config_from_rule(rule)
+        parts: List[str] = []
+
+        if rule.rule_name:
+            parts.append(f"Найди в договоре пункт, относящийся к правилу: {rule.rule_name}.")
+        if cfg["guidance"]:
+            parts.append(f"Описание правила: {cfg['guidance']}.")
+        if cfg["standard_position"]:
+            parts.append(f"Предпочтительная формулировка (стандартная позиция): {cfg['standard_position']}.")
+        if cfg["fallback_positions"]:
+            fallbacks_text = " ".join(cfg["fallback_positions"])
+            parts.append(f"Допустимые запасные формулировки: {fallbacks_text}.")
+        if cfg["unacceptable_phrases"]:
+            unacceptable_text = " ".join(cfg["unacceptable_phrases"])
+            parts.append(f"Недопустимые формулировки: {unacceptable_text}.")
+
+        # На всякий случай добавим тип правила
+        if rule.rule_type:
+            parts.append(f"Тип правила: {rule.rule_type}.")
+
+        return "\n".join(parts).strip()
+
+    async def _find_semantic_clause_for_rule(
+        self,
+        rule: PlaybookRule,
+        case_id: str,
+        file_id: str,
+        k: int = 5,
+    ) -> Optional[ExtractedClause]:
+        """
+        Ищет релевантный фрагмент в документе через PGVector по смыслу правила.
+
+        Возвращает искусственный ExtractedClause, чтобы дальше использовать общую Harvey-логику.
+        """
+        # Инициализируем vector store при первом обращении
+        self._init_vector_store()
+        if not self.vector_store:
+            return None
+
+        # Собираем текст запроса из правила
+        query_text = self._build_rule_query_text(rule)
+        if not query_text:
+            return None
+
+        try:
+            # Ищем только внутри конкретного файла по case_id + file_id
+            docs_with_scores = self.vector_store.similarity_search_with_score(
+                query=query_text,
+                case_id=case_id,
+                k=k,
+                filter={"file_id": file_id},
+            )
+        except Exception as e:
+            logger.warning(
+                "PlaybookChecker: similarity_search_with_score failed for rule %s: %s",
+                rule.id,
+                e,
+                exc_info=True,
+            )
+            return None
+
+        if not docs_with_scores:
+            return None
+
+        # Берём самый релевантный фрагмент
+        best_doc, best_score = docs_with_scores[0]
+        metadata = getattr(best_doc, "metadata", {}) or {}
+
+        # Формируем location с привязкой к исходному тексту.
+        # Дублируем char_start/char_end в start/end, чтобы фронт мог сразу подсветить диапазон.
+        char_start = metadata.get("char_start")
+        char_end = metadata.get("char_end")
+        location: Dict[str, Any] = {
+            "source": "semantic_embedding",
+            "file_id": metadata.get("file_id") or file_id,
+            "doc_id": metadata.get("doc_id"),
+            "char_start": char_start,
+            "char_end": char_end,
+            "start": char_start,
+            "end": char_end,
+            "chunk_index": metadata.get("chunk_index"),
+            "similarity_score": float(best_score) if best_score is not None else None,
+            "source_file": metadata.get("source_file") or metadata.get("source"),
+        }
+
+        # Создаём упрощённый ExtractedClause для дальнейшей проверки
+        return ExtractedClause(
+            category=rule.clause_category or metadata.get("category", "other"),
+            title=metadata.get("title", "") or rule.rule_name or "",
+            text=best_doc.page_content or "",
+            location=location,
+            summary=metadata.get("summary", ""),
+            key_values={},
+        )
+
+    async def _check_harvey_semantic(
+        self,
+        rule: PlaybookRule,
+        clause: Optional[ExtractedClause],
+        document_text: str
+    ) -> RuleCheckResult:
+        """
+        Harvey-style semantic check using standard position, fallbacks and unacceptable phrases.
+        """
+        cfg = self._extract_harvey_config_from_rule(rule)
+        standard_position = cfg["standard_position"]
+        fallback_positions = cfg["fallback_positions"]
+        unacceptable_phrases = cfg["unacceptable_phrases"]
+        guidance = cfg["guidance"]
+        mark_missing = cfg["mark_missing"]
 
         # Если LLM не инициализирован — делаем максимально простую эвристику
         if not self.llm:
