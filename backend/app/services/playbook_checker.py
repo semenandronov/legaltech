@@ -1071,12 +1071,40 @@ class PlaybookChecker:
             reasoning=f"Значение {extracted_value} в допустимых пределах"
         )
     
+    def _parse_duration_to_days(self, duration_str: str) -> Optional[float]:
+        """Parse a duration string to number of days.
+        Handles RU/EN: '3 года', '6 месяцев', '2 years', '30 дней', etc.
+        Returns None if can't parse.
+        """
+        if not duration_str:
+            return None
+        s = str(duration_str).lower().strip()
+        patterns = [
+            (r'(\d+(?:[.,]\d+)?)\s*(?:лет|год|года|г\.)', 365),
+            (r'(\d+(?:[.,]\d+)?)\s*(?:месяц|месяцев|месяца|мес\.?)', 30),
+            (r'(\d+(?:[.,]\d+)?)\s*(?:недел[ьяи]|нед\.?)', 7),
+            (r'(\d+(?:[.,]\d+)?)\s*(?:день|дней|дня|дн\.?)', 1),
+            (r'(\d+(?:[.,]\d+)?)\s*years?', 365),
+            (r'(\d+(?:[.,]\d+)?)\s*months?', 30),
+            (r'(\d+(?:[.,]\d+)?)\s*weeks?', 7),
+            (r'(\d+(?:[.,]\d+)?)\s*days?', 1),
+        ]
+        for pattern, multiplier in patterns:
+            match = re.search(pattern, s, re.IGNORECASE)
+            if match:
+                try:
+                    value = float(match.group(1).replace(',', '.'))
+                    return value * multiplier
+                except ValueError:
+                    continue
+        return None
+
     async def _check_duration(
         self,
         rule: PlaybookRule,
         clause: Optional[ExtractedClause]
     ) -> RuleCheckResult:
-        """Check duration_check condition"""
+        """Check duration_check condition with actual min/max comparison"""
         if clause is None:
             return RuleCheckResult(
                 rule_id=rule.id,
@@ -1087,30 +1115,30 @@ class PlaybookChecker:
                 issue_description="Пункт не найден для проверки срока",
                 confidence=0.8
             )
-        
+
         config = rule.condition_config or {}
-        min_duration = config.get("min_duration")  # e.g., "3 years", "2 года"
+        min_duration = config.get("min_duration")
         max_duration = config.get("max_duration")
-        
-        # Extract duration from clause
+
+        # Extract duration from clause key_values or via regex
         duration_value = clause.key_values.get("duration")
-        
+
         if duration_value is None:
-            # Try regex extraction for common duration patterns
             duration_patterns = [
-                r'(\d+)\s*(?:год|лет|года)',
-                r'(\d+)\s*(?:месяц|месяцев)',
-                r'(\d+)\s*(?:дней|день|дня)',
-                r'(\d+)\s*years?',
-                r'(\d+)\s*months?',
+                r'(\d+(?:[.,]\d+)?)\s*(?:лет|год|года|г\.)',
+                r'(\d+(?:[.,]\d+)?)\s*(?:месяц|месяцев|месяца|мес\.?)',
+                r'(\d+(?:[.,]\d+)?)\s*(?:недел[ьяи]|нед\.?)',
+                r'(\d+(?:[.,]\d+)?)\s*(?:день|дней|дня|дн\.?)',
+                r'(\d+(?:[.,]\d+)?)\s*years?',
+                r'(\d+(?:[.,]\d+)?)\s*months?',
+                r'(\d+(?:[.,]\d+)?)\s*days?',
             ]
-            
             for pattern in duration_patterns:
                 match = re.search(pattern, clause.text, re.IGNORECASE)
                 if match:
                     duration_value = match.group(0)
                     break
-        
+
         if duration_value is None:
             return RuleCheckResult(
                 rule_id=rule.id,
@@ -1123,9 +1151,56 @@ class PlaybookChecker:
                 issue_description="Не удалось извлечь срок из пункта",
                 confidence=0.6
             )
-        
-        # For now, just check if duration exists and return passed
-        # Full duration comparison would require parsing both values
+
+        # Parse to days for comparison
+        duration_days = self._parse_duration_to_days(str(duration_value))
+        min_days = self._parse_duration_to_days(str(min_duration)) if min_duration else None
+        max_days = self._parse_duration_to_days(str(max_duration)) if max_duration else None
+
+        if duration_days is None:
+            return RuleCheckResult(
+                rule_id=rule.id,
+                rule_name=rule.rule_name,
+                rule_type=rule.rule_type,
+                clause_category=rule.clause_category,
+                status="passed",
+                found_text=clause.text[:500],
+                location=clause.location,
+                confidence=0.6,
+                reasoning=f"Найден срок: {duration_value}. Не удалось привести к числу для сравнения."
+            )
+
+        violation = False
+        issue = ""
+
+        if min_days is not None and duration_days < min_days:
+            violation = True
+            issue = f"Срок {duration_value} меньше минимально допустимого ({min_duration})"
+
+        if max_days is not None and duration_days > max_days:
+            violation = True
+            issue = f"Срок {duration_value} превышает максимально допустимый ({max_duration})"
+
+        if violation:
+            fix_parts = []
+            if min_duration:
+                fix_parts.append(f"минимум: {min_duration}")
+            if max_duration:
+                fix_parts.append(f"максимум: {max_duration}")
+            return RuleCheckResult(
+                rule_id=rule.id,
+                rule_name=rule.rule_name,
+                rule_type=rule.rule_type,
+                clause_category=rule.clause_category,
+                status="violation",
+                found_text=clause.text[:500],
+                location=clause.location,
+                issue_description=issue,
+                suggested_fix=f"Изменить срок ({', '.join(fix_parts)})",
+                confidence=0.85,
+                reasoning=f"Найденный срок: {duration_value} (~{duration_days:.0f} дней)"
+            )
+
         return RuleCheckResult(
             rule_id=rule.id,
             rule_name=rule.rule_name,
@@ -1134,8 +1209,8 @@ class PlaybookChecker:
             status="passed",
             found_text=clause.text[:500],
             location=clause.location,
-            confidence=0.7,
-            reasoning=f"Найден срок: {duration_value}. Требуется ручная проверка соответствия."
+            confidence=0.85,
+            reasoning=f"Срок {duration_value} в допустимых пределах"
         )
     
     async def _check_text_match(
