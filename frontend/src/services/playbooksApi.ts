@@ -180,6 +180,10 @@ export const updatePlaybookWithRules = async (
           description: rule.description,
           condition_type: rule.condition_type,
           condition_config: rule.condition_config,
+          extraction_prompt: rule.extraction_prompt,
+          validation_prompt: rule.validation_prompt,
+          suggested_clause_template: rule.suggested_clause_template,
+          fallback_options: rule.fallback_options,
           priority: rule.priority,
           severity: rule.severity,
           is_active: rule.is_active
@@ -193,6 +197,10 @@ export const updatePlaybookWithRules = async (
           description: rule.description,
           condition_type: rule.condition_type,
           condition_config: rule.condition_config,
+          extraction_prompt: rule.extraction_prompt,
+          validation_prompt: rule.validation_prompt,
+          suggested_clause_template: rule.suggested_clause_template,
+          fallback_options: rule.fallback_options,
           priority: rule.priority,
           severity: rule.severity,
           is_active: rule.is_active
