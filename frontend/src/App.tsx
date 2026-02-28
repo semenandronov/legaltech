@@ -1,7 +1,7 @@
 import { lazy, Suspense } from 'react'
 import { Routes, Route, Navigate, useParams } from 'react-router-dom'
 import { Box, CircularProgress } from '@mui/material'
-import { MessageSquare, FileText, Table, FileEdit, BookOpen, Workflow } from 'lucide-react'
+import { MessageSquare, Table, FileEdit, BookOpen, Workflow } from 'lucide-react'
 import ProtectedRoute from './components/ProtectedRoute'
 import LoginPage from './pages/LoginPage'
 import RegisterPage from './pages/RegisterPage'
@@ -10,8 +10,8 @@ const AssistantChatPage = lazy(() => import('./pages/AssistantChatPage'))
 
 // Lazy load heavy pages
 const CasesListPage = lazy(() => import('./pages/CasesListPage'))
+const NewCasePage = lazy(() => import('./pages/NewCasePage'))
 const ContradictionsPage = lazy(() => import('./pages/ContradictionsPage'))
-const DocumentsPage = lazy(() => import('./pages/DocumentsPage'))
 const AnalysisPage = lazy(() => import('./pages/AnalysisPage'))
 const ReportsPage = lazy(() => import('./pages/ReportsPage'))
 const TabularReviewPage = lazy(() => import('./pages/TabularReviewPage'))
@@ -19,6 +19,7 @@ const DocumentEditorPage = lazy(() => import('./pages/DocumentEditorPage'))
 const PlaybooksPage = lazy(() => import('./pages/PlaybooksPage'))
 const WorkflowsPage = lazy(() => import('./pages/WorkflowsPage'))
 const GlobalAssistantPage = lazy(() => import('./pages/GlobalAssistantPage'))
+const CaseOverviewPage = lazy(() => import('./pages/CaseOverviewPage'))
 
 // Loading fallback
 const PageLoader = () => (
@@ -68,10 +69,22 @@ function App() {
         }
       />
       <Route
+        path="/cases/new"
+        element={
+          <ProtectedRoute>
+            <Suspense fallback={<PageLoader />}>
+              <NewCasePage />
+            </Suspense>
+          </ProtectedRoute>
+        }
+      />
+      <Route
         path="/cases/:caseId"
         element={
           <ProtectedRoute>
-            <CaseRedirect />
+            <Suspense fallback={<PageLoader />}>
+              <CaseOverviewPage />
+            </Suspense>
           </ProtectedRoute>
         }
       />
@@ -80,16 +93,6 @@ function App() {
         element={
           <ProtectedRoute>
             <CaseChatPage />
-          </ProtectedRoute>
-        }
-      />
-      <Route
-        path="/cases/:caseId/documents"
-        element={
-          <ProtectedRoute>
-            <Suspense fallback={<PageLoader />}>
-              <DocumentsPage />
-            </Suspense>
           </ProtectedRoute>
         }
       />
@@ -168,17 +171,11 @@ function App() {
   )
 }
 
-const CaseRedirect = () => {
-  const { caseId } = useParams<{ caseId: string }>()
-  return <Navigate to={`/cases/${caseId}/chat`} replace />
-}
-
 const CaseChatPage = () => {
   const { caseId } = useParams<{ caseId: string }>()
 
   const navItems = [
     { id: 'chat', label: 'Ассистент', icon: MessageSquare, path: `/cases/${caseId}/chat` },
-    { id: 'documents', label: 'Документы', icon: FileText, path: `/cases/${caseId}/documents` },
     { id: 'editor', label: 'Редактор', icon: FileEdit, path: `/cases/${caseId}/editor` },
     { id: 'tabular-review', label: 'Tabular Review', icon: Table, path: `/cases/${caseId}/tabular-review` },
     { id: 'playbooks', label: 'Playbooks', icon: BookOpen, path: `/cases/${caseId}/playbooks` },

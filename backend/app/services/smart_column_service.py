@@ -253,6 +253,10 @@ class SmartColumnService:
         Returns:
             List of ColumnDescription (column_label, column_type, prompt, column_config)
         """
+        import json
+        import re
+        import asyncio
+
         if not self.llm:
             raise ValueError("LLM not configured")
 
@@ -260,8 +264,7 @@ class SmartColumnService:
         if not text:
             return []
 
-        prompt = ChatPromptTemplate.from_messages([
-            ("system", """Ты эксперт по созданию колонок для извлечения информации из юридических документов.
+        system_msg = """Ты эксперт по созданию колонок для извлечения информации из юридических документов.
 
 Твоя задача: по тексту с несколькими вопросами/запросами разбить его на отдельные вопросы и для каждого создать определение колонки.
 
@@ -276,40 +279,72 @@ class SmartColumnService:
 - manual_input: ручной ввод (без AI)
 
 Для каждого вопроса определи:
-1. column_label: короткое название колонки (на английском, для заголовка таблицы)
+1. column_label: короткое название колонки (на русском или английском, для заголовка таблицы)
 2. column_type: наиболее подходящий тип из списка выше
-3. prompt: четкий промпт для AI-извлечения (на английском), формулировка вопроса
-4. column_config: только для type=tag — предложи options: [{label, color}]; иначе null
+3. prompt: четкий промпт для AI-извлечения (на русском), формулировка вопроса
+4. column_config: только для type=tag — предложи options: [{"label": "...", "color": "..."}]; иначе null
 
-Верни список колонок в том же порядке, в каком идут вопросы в тексте. Не объединяй и не пропускай вопросы."""),
-            ("human", "Обработай следующий текст и верни список определений колонок:\n\n{questions_text}"),
-        ])
+Верни список колонок в том же порядке, в каком идут вопросы в тексте. Не объединяй и не пропускай вопросы.
+
+ВАЖНО: ответь ТОЛЬКО валидным JSON без дополнительного текста, в формате:
+{"columns": [{"column_label": "...", "column_type": "...", "prompt": "...", "column_config": null}]}"""
+
+        human_msg = f"Обработай следующий текст и верни список определений колонок:\n\n{text}"
+
+        from langchain_core.messages import SystemMessage, HumanMessage
+
+        messages = [SystemMessage(content=system_msg), HumanMessage(content=human_msg)]
 
         try:
-            structured_llm = self.llm.with_structured_output(
-                ColumnDescriptionList,
-                method="json_schema",
-            )
-            chain = prompt | structured_llm
-            result = await chain.ainvoke({"questions_text": text})
-            columns = getattr(result, "columns", None) or []
-            if not isinstance(columns, list):
+            # Вызываем LLM напрямую, минуя with_structured_output (GigaChat не поддерживает)
+            loop = asyncio.get_event_loop()
+            result = await loop.run_in_executor(None, lambda: self.llm._generate(messages))
+            raw_content = result.generations[0].message.content
+            logger.info(f"[generate_columns_from_questions] Raw response length: {len(raw_content)}")
+            logger.debug(f"[generate_columns_from_questions] Raw response: {raw_content[:800]}")
+
+            # Извлекаем JSON из ответа
+            content = raw_content.strip()
+            if content.startswith("```"):
+                content = re.sub(r'^```(?:json)?\s*', '', content)
+                content = re.sub(r'\s*```$', '', content.strip())
+
+            # Ищем JSON объект
+            json_match = re.search(r'\{.*\}', content, re.DOTALL)
+            if json_match:
+                content = json_match.group(0)
+
+            json_data = json.loads(content)
+            raw_columns = json_data.get("columns", [])
+            if not isinstance(raw_columns, list):
+                logger.warning(f"[generate_columns_from_questions] 'columns' is not a list: {type(raw_columns)}")
                 return []
+
             out = []
-            for c in columns:
-                if isinstance(c, ColumnDescription):
-                    out.append(c)
-                elif isinstance(c, dict):
-                    out.append(ColumnDescription(
-                        column_label=c.get("column_label", ""),
-                        column_type=c.get("column_type", "text"),
-                        prompt=c.get("prompt", ""),
-                        column_config=c.get("column_config"),
-                        validation_rules=c.get("validation_rules"),
-                    ))
-            logger.info(f"Generated {len(out)} column suggestions from questions text")
+            for c in raw_columns:
+                if not isinstance(c, dict):
+                    continue
+                label = c.get("column_label", "").strip()
+                col_type = c.get("column_type", "text").strip()
+                col_prompt = c.get("prompt", "").strip()
+                if not label or not col_prompt:
+                    continue
+                # Validate column_type
+                valid_types = {"text", "number", "currency", "yes_no", "date", "tag", "verbatim", "manual_input"}
+                if col_type not in valid_types:
+                    col_type = "text"
+                out.append(ColumnDescription(
+                    column_label=label,
+                    column_type=col_type,
+                    prompt=col_prompt,
+                    column_config=c.get("column_config"),
+                ))
+            logger.info(f"[generate_columns_from_questions] Generated {len(out)} column suggestions")
             return out
+        except json.JSONDecodeError as e:
+            logger.error(f"[generate_columns_from_questions] JSON parse error: {e}. Raw: {raw_content[:500]}")
+            return []
         except Exception as e:
-            logger.error(f"Error generating columns from questions: {e}", exc_info=True)
+            logger.error(f"[generate_columns_from_questions] Error: {e}", exc_info=True)
             return []
 

@@ -37,6 +37,10 @@ interface ColumnBuilderProps {
   } | null
   /** Якорь для поповера — окно открывается внутри колонки (под кнопкой/заголовком) */
   anchorEl?: HTMLElement | null
+  /** Начать сразу со второго шага (промпт уже введён inline) */
+  startAtStep?: 1 | 2
+  /** Промпт, введённый на первом шаге (inline), передаётся сразу на шаг 2 */
+  initialPrompt?: string
 }
 
 const COLUMN_TYPES = [
@@ -78,7 +82,7 @@ const popoverProps = {
   PaperProps: { sx: { minWidth: 320, maxWidth: 380, p: 2, borderRadius: 2, boxShadow: 2 } },
 }
 
-export function ColumnBuilder({ isOpen, onClose, onSave, editingColumn, anchorEl }: ColumnBuilderProps) {
+export function ColumnBuilder({ isOpen, onClose, onSave, editingColumn, anchorEl, startAtStep, initialPrompt }: ColumnBuilderProps) {
   const [step, setStep] = useState<1 | 2>(1)
   const [columnLabel, setColumnLabel] = useState(editingColumn?.label || "")
   const [columnType, setColumnType] = useState(editingColumn?.type || "text")
@@ -108,9 +112,11 @@ export function ColumnBuilder({ isOpen, onClose, onSave, editingColumn, anchorEl
         { label: "Letter", color: TAG_COLORS[2] },
       ])
     } else {
-      setStep(1)
-      setPrompt("")
-      setColumnLabel("")
+      const effectiveStep = startAtStep || 1
+      const effectivePrompt = initialPrompt || ""
+      setStep(effectiveStep)
+      setPrompt(effectivePrompt)
+      setColumnLabel(effectiveStep === 2 && effectivePrompt ? suggestLabelFromPrompt(effectivePrompt) : "")
       setColumnType("verbatim")
       setTagOptions([
         { label: "Email", color: TAG_COLORS[0] },
@@ -118,7 +124,7 @@ export function ColumnBuilder({ isOpen, onClose, onSave, editingColumn, anchorEl
         { label: "Letter", color: TAG_COLORS[2] },
       ])
     }
-  }, [isOpen, editingColumn])
+  }, [isOpen, editingColumn, startAtStep, initialPrompt])
 
   const handleContinueToStep2 = () => {
     if (!prompt.trim()) {
@@ -287,9 +293,11 @@ export function ColumnBuilder({ isOpen, onClose, onSave, editingColumn, anchorEl
           </div>
         )}
         <div className="flex justify-end gap-2 pt-2">
-          <Button variant="ghost" onClick={handleBackToStep1} disabled={saving}>
-            Назад
-          </Button>
+          {!startAtStep || startAtStep < 2 ? (
+            <Button variant="ghost" onClick={handleBackToStep1} disabled={saving}>
+              Назад
+            </Button>
+          ) : null}
           <Button variant="outline" onClick={onClose} disabled={saving}>
             Отмена
           </Button>

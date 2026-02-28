@@ -1,6 +1,6 @@
 "use client"
 
-import { useState } from "react"
+import { useState, useEffect, useRef } from "react"
 import Modal from "@/components/UI/Modal"
 import { Button } from "@/components/UI/Button"
 import { Textarea } from "@/components/UI/Textarea"
@@ -14,7 +14,7 @@ import {
 } from "@/components/UI/Select"
 import { toast } from "sonner"
 import { Pencil, Trash2, Info } from "lucide-react"
-import type { ProposedColumn } from "@/services/tabularReviewApi"
+import type { ProposedColumn, TabularColumn } from "@/services/tabularReviewApi"
 import { tabularReviewApi } from "@/services/tabularReviewApi"
 
 const COLUMN_TYPES = [
@@ -40,7 +40,10 @@ export interface BulkColumnBuilderProps {
   isOpen: boolean
   onClose: () => void
   reviewId: string
-  onColumnsAdded: () => void
+  /** Вызывается после успешного добавления колонок; передаёт созданные колонки */
+  onColumnsAdded: (columns: TabularColumn[]) => void
+  /** Если передан — предзаполняет textarea и автоматически генерирует колонки при открытии */
+  initialQuestionsText?: string
 }
 
 export function BulkColumnBuilder({
@@ -48,6 +51,7 @@ export function BulkColumnBuilder({
   onClose,
   reviewId,
   onColumnsAdded,
+  initialQuestionsText,
 }: BulkColumnBuilderProps) {
   const [questionsText, setQuestionsText] = useState("")
   const [proposedColumns, setProposedColumns] = useState<ProposedColumn[]>([])
@@ -58,6 +62,26 @@ export function BulkColumnBuilder({
   const [editType, setEditType] = useState("text")
   const [editPrompt, setEditPrompt] = useState("")
   const [editClassifyOptions, setEditClassifyOptions] = useState<string[]>(["Да", "Нет"])
+
+  // Auto-fill and auto-generate when opened with an initial prompt from inline form
+  const didAutoGenerate = useRef(false)
+  useEffect(() => {
+    if (isOpen && initialQuestionsText && !didAutoGenerate.current) {
+      didAutoGenerate.current = true
+      setQuestionsText(initialQuestionsText)
+      setGenerating(true)
+      tabularReviewApi.generateColumnsFromQuestions(reviewId, initialQuestionsText.trim())
+        .then(({ columns }) => {
+          setProposedColumns(columns)
+          if (columns.length === 0) toast.info("Ни одной колонки не сгенерировано. Попробуйте переформулировать.")
+        })
+        .catch((e: unknown) => { toast.error(e instanceof Error ? e.message : "Ошибка генерации") })
+        .finally(() => setGenerating(false))
+    }
+    if (!isOpen) {
+      didAutoGenerate.current = false
+    }
+  }, [isOpen, initialQuestionsText, reviewId])
 
   const handleGenerate = async () => {
     const text = questionsText.trim()
@@ -140,9 +164,9 @@ export function BulkColumnBuilder({
     }
     setAdding(true)
     try {
-      await tabularReviewApi.addColumnsBulk(reviewId, proposedColumns)
+      const { columns: created } = await tabularReviewApi.addColumnsBulk(reviewId, proposedColumns)
       toast.success(`Добавлено колонок: ${proposedColumns.length}`)
-      onColumnsAdded()
+      onColumnsAdded(created)
       onClose()
       setQuestionsText("")
       setProposedColumns([])
@@ -156,14 +180,16 @@ export function BulkColumnBuilder({
 
   const handleClose = () => {
     setEditIndex(null)
+    setQuestionsText("")
+    setProposedColumns([])
     onClose()
   }
 
   return (
-    <Modal isOpen={isOpen} onClose={handleClose} title="Конструктор столбцов" size="lg">
+    <Modal isOpen={isOpen} onClose={handleClose} title="Column builder" size="lg">
       <div className="space-y-4">
-        <p className="text-sm text-foreground">
-          Попросите Harvey сгенерировать несколько столбцов на основе вашего запроса.
+        <p className="text-sm text-muted-foreground">
+          Попросите ИИ сгенерировать несколько столбцов на основе вашего запроса.
         </p>
         <Textarea
           value={questionsText}
@@ -231,10 +257,11 @@ export function BulkColumnBuilder({
                           </td>
                           <td className="p-3 align-top">
                             <div className="space-y-2">
-                              <Input
+                              <Textarea
                                 value={editPrompt}
                                 onChange={(e) => setEditPrompt(e.target.value)}
-                                className="h-9 w-full rounded-lg border border-input"
+                                rows={3}
+                                className="resize-none w-full rounded-lg border border-input text-sm"
                               />
                               {(editType === "yes_no" || editType === "tag") && (
                                 <div className="flex flex-wrap items-center gap-2 pt-1">
@@ -267,7 +294,7 @@ export function BulkColumnBuilder({
                               <Button
                                 size="sm"
                                 onClick={saveEdit}
-                                className="bg-[#E5E7EB] hover:bg-[#D1D5DB] text-[#374151] border-0"
+                                className="bg-[#374151] hover:bg-[#4B5563] text-white border-0"
                               >
                                 Сохранить
                               </Button>

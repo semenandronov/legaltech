@@ -290,6 +290,7 @@ interface AssistantUIChatProps {
   caseId?: string
   className?: string
   initialQuery?: string
+  autoSubmit?: boolean
   onQuerySelected?: () => void
   caseTitle?: string
   documentCount?: number
@@ -701,10 +702,11 @@ export interface AssistantUIChatRef {
   loadHistory: (sessionId?: string) => Promise<void>
 }
 
-export const AssistantUIChat = forwardRef<AssistantUIChatRef, AssistantUIChatProps>(({ 
-  caseId, 
-  className, 
-  initialQuery, 
+export const AssistantUIChat = forwardRef<AssistantUIChatRef, AssistantUIChatProps>(({
+  caseId,
+  className,
+  initialQuery,
+  autoSubmit = false,
   onQuerySelected,
   caseTitle,
   documentCount,
@@ -774,6 +776,7 @@ export const AssistantUIChat = forwardRef<AssistantUIChatRef, AssistantUIChatPro
     }
   }, [initialQuery, onQuerySelected])
 
+
   // Auto-scroll to bottom
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
@@ -782,7 +785,9 @@ export const AssistantUIChat = forwardRef<AssistantUIChatRef, AssistantUIChatPro
   const sendMessage = useCallback(async (userMessage: string, filesSnapshot: ExtendedFileUIPart[] = []) => {
     const hasText = userMessage.trim().length > 0
     const hasFiles = filesSnapshot.length > 0
-    if (!actualCaseId || isLoading || (!hasText && !hasFiles)) return
+    if (isLoading || (!hasText && !hasFiles)) return
+    // globalMode: no case → use /api/v2/assistant/global-chat
+    const globalMode = !actualCaseId
 
     const currentAttachments = filesSnapshot.length > 0 ? [...filesSnapshot] : []
 
@@ -902,13 +907,16 @@ export const AssistantUIChat = forwardRef<AssistantUIChatRef, AssistantUIChatPro
         }
       }
 
-      const response = await fetch(getApiUrl('/api/v2/assistant/chat'), {
+      const endpoint = globalMode
+        ? '/api/v2/assistant/global-chat'
+        : '/api/v2/assistant/chat'
+      const response = await fetch(getApiUrl(endpoint), {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${token}`,
         },
-        body: JSON.stringify(requestBody),
+        body: JSON.stringify(globalMode ? { messages: requestBody.messages } : requestBody),
         signal: abortControllerRef.current.signal,
       })
 
@@ -1258,6 +1266,16 @@ export const AssistantUIChat = forwardRef<AssistantUIChatRef, AssistantUIChatPro
       }
     }
   }, [actualCaseId, isLoading, messages, legalResearch, deepThink, draftMode, documentEditorMode, currentDocumentContent, currentDocumentId, selectedText])
+
+  // Auto-submit: when autoSubmit=true, fire initialQuery once after mount
+  const autoSubmittedRef = useRef(false)
+  useEffect(() => {
+    if (!autoSubmit || !initialQuery?.trim() || autoSubmittedRef.current) return
+    if (isLoading) return
+    autoSubmittedRef.current = true
+    const timer = setTimeout(() => sendMessage(initialQuery, []), 150)
+    return () => clearTimeout(timer)
+  }, [autoSubmit, initialQuery, actualCaseId, isLoading, sendMessage])
 
   const startPlanExecutionStream = useCallback(async (planId: string, messageId: string) => {
     try {

@@ -253,6 +253,19 @@ export const tabularReviewApi = {
     }
   },
 
+  // Update review (rename, change description, etc.)
+  async updateReview(
+    reviewId: string,
+    updates: { name?: string; description?: string }
+  ): Promise<{ id: string; name: string }> {
+    try {
+      const response = await apiClient.patch(`/api/tabular-review/${reviewId}`, updates)
+      return response.data
+    } catch (error) {
+      throw new Error(extractErrorMessage(error))
+    }
+  },
+
   // Delete a tabular review
   async deleteReview(reviewId: string): Promise<void> {
     try {
@@ -669,6 +682,20 @@ export const tabularReviewApi = {
     try {
       const response = await apiClient.post(
         `/api/tabular-review/${reviewId}/export/csv`,
+        {},
+        { responseType: 'blob' }
+      )
+      return response.data
+    } catch (error) {
+      throw new Error(extractErrorMessage(error))
+    }
+  },
+
+  // Export to Word
+  async exportToWord(reviewId: string): Promise<Blob> {
+    try {
+      const response = await apiClient.post(
+        `/api/tabular-review/${reviewId}/export/word`,
         {},
         { responseType: 'blob' }
       )

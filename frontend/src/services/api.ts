@@ -308,6 +308,25 @@ export const deleteChatSession = async (caseId: string, sessionId: string): Prom
   await apiClient.delete(getApiUrl(`/api/v2/assistant/chat/${caseId}/sessions/${sessionId}`))
 }
 
+export const getGlobalAssistantSessions = async (): Promise<Array<{
+  session_id: string
+  title: string
+  message_count: number
+  updated_at: string | null
+}>> => {
+  const response = await apiClient.get(getApiUrl('/api/v2/assistant/global-sessions'))
+  return response.data || []
+}
+
+export const getGlobalAssistantSession = async (sessionId: string): Promise<{
+  session_id: string
+  title: string
+  messages: Array<{ role: 'user' | 'assistant'; content: string }>
+}> => {
+  const response = await apiClient.get(getApiUrl(`/api/v2/assistant/global-sessions/${sessionId}`))
+  return response.data
+}
+
 // Dashboard API
 export interface DashboardStats {
   total_cases: number
@@ -398,6 +417,7 @@ export interface UploadedFile {
   file_type: string
   size?: number
   created_at?: string
+  folder_id?: string | null
 }
 
 export interface FilesResponse {
@@ -474,7 +494,7 @@ export interface FolderItem {
 export const getCaseFolders = async (caseId: string): Promise<FolderItem[]> => {
   try {
     const response = await apiClient.get(getApiUrl(`/api/cases/${caseId}/folders`))
-    return response.data?.folders ?? []
+    return Array.isArray(response.data) ? response.data : (response.data?.folders ?? [])
   } catch {
     return []
   }

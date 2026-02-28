@@ -445,11 +445,14 @@ class PlaybookChecker:
                     break
 
         # 3. Если по категориям тоже не нашли — как крайний случай пробуем точечное извлечение по категории.
-        if not matching_clause and rule.clause_category:
-            matching_clause = await self.clause_extractor.extract_clause_by_category(
-                document_text,
-                rule.clause_category,
-            )
+        # Используем rule_name как запасной идентификатор если clause_category пустой.
+        if not matching_clause:
+            category_for_extraction = rule.clause_category or rule.rule_name
+            if category_for_extraction:
+                matching_clause = await self.clause_extractor.extract_clause_by_category(
+                    document_text,
+                    category_for_extraction,
+                )
         if has_harvey_config and rule.condition_type in {"must_exist", "text_match", "text_not_match"}:
             return await self._check_harvey_semantic(rule, matching_clause, document_text)
 
@@ -753,35 +756,44 @@ class PlaybookChecker:
 
         # Если LLM инициализирован — используем HARVEY_RULE_PROMPT
         if clause is None:
-            # Нет подходящего пункта в тексте
-            status = "violation" if mark_missing else "not_found"
-            ui_status = "not_acceptable" if status == "violation" else "needs_review"
-            issue = "Соответствующий пункт не найден в документе"
-            reasoning = "Клаузу нужной категории не удалось извлечь из текста договора."
-            suggested_options: List[Dict[str, Any]] = []
-            if standard_position:
-                suggested_options.append(
-                    {"label": "Standard position", "type": "standard", "text": standard_position}
+            # Конкретный пункт не найден — используем весь текст документа,
+            # чтобы LLM сам нашёл нужный раздел и проверил правило.
+            if document_text:
+                doc_excerpt = document_text[:10000]
+                clause = ExtractedClause(
+                    category=rule.clause_category or "other",
+                    title=f"Полный текст документа (раздел «{rule.rule_name}» не был выделен отдельно)",
+                    text=doc_excerpt,
+                    location={},
                 )
-            for idx, fb in enumerate(fallback_positions):
-                if fb:
+            else:
+                # Текст документа недоступен — возвращаем not_found
+                status = "violation" if mark_missing else "not_found"
+                ui_status = "not_acceptable" if status == "violation" else "needs_review"
+                suggested_options: List[Dict[str, Any]] = []
+                if standard_position:
                     suggested_options.append(
-                        {"label": f"Fallback {idx + 1}", "type": "fallback", "text": fb}
+                        {"label": "Standard position", "type": "standard", "text": standard_position}
                     )
-            return RuleCheckResult(
-                rule_id=rule.id,
-                rule_name=rule.rule_name,
-                rule_type=rule.rule_type,
-                clause_category=rule.clause_category,
-                status=status,
-                issue_description=issue,
-                suggested_fix=standard_position or "",
-                confidence=0.8,
-                reasoning=reasoning,
-                ui_status=ui_status,
-                guidance=guidance,
-                suggested_options=suggested_options,
-            )
+                for idx, fb in enumerate(fallback_positions):
+                    if fb:
+                        suggested_options.append(
+                            {"label": f"Fallback {idx + 1}", "type": "fallback", "text": fb}
+                        )
+                return RuleCheckResult(
+                    rule_id=rule.id,
+                    rule_name=rule.rule_name,
+                    rule_type=rule.rule_type,
+                    clause_category=rule.clause_category,
+                    status=status,
+                    issue_description="Соответствующий пункт не найден в документе",
+                    suggested_fix=standard_position or "",
+                    confidence=0.8,
+                    reasoning="Клаузу нужной категории не удалось извлечь из текста договора.",
+                    ui_status=ui_status,
+                    guidance=guidance,
+                    suggested_options=suggested_options,
+                )
 
         try:
             prompt = ChatPromptTemplate.from_template(HARVEY_RULE_PROMPT)

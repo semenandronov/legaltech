@@ -1,15 +1,8 @@
-import { useState } from 'react'
-import { LayoutGrid, List, Table2, Plus } from 'lucide-react'
+import { useNavigate } from 'react-router-dom'
+import { Plus, Info } from 'lucide-react'
 import { CaseListItem } from '../../services/api'
 import CaseCard from './CaseCard'
 import Pagination from '../UI/Pagination'
-import { CasesTable } from './CasesTable'
-import {
-  Dialog,
-  DialogContent,
-  DialogTitle,
-} from '@mui/material'
-import UploadArea from '../UploadArea'
 
 interface CasesGridProps {
   cases: CaseListItem[]
@@ -20,7 +13,10 @@ interface CasesGridProps {
   viewMode: 'grid' | 'list' | 'table'
   onViewModeChange: (mode: 'grid' | 'list' | 'table') => void
   onDeleteCase?: (caseId: string) => void
+  reviewCounts?: Record<string, number>
 }
+
+const CASE_LIMIT = 20
 
 const CasesGrid = ({
   cases,
@@ -28,285 +24,103 @@ const CasesGrid = ({
   loading,
   currentPage,
   onPageChange,
-  viewMode,
-  onViewModeChange,
   onDeleteCase,
+  reviewCounts,
 }: CasesGridProps) => {
-  // Defensive: ensure cases is always an array
+  const navigate = useNavigate()
   const safeCases = cases || []
-  const [isUploadDialogOpen, setIsUploadDialogOpen] = useState(false)
-  const limit = 20
-  const totalPages = Math.ceil(total / limit)
+  const totalPages = Math.ceil(total / CASE_LIMIT)
 
-  const handleUploadComplete = (_caseId: string, _fileNames: string[]) => {
-    setIsUploadDialogOpen(false)
-    // Перезагрузить список дел можно через обновление страницы или callback
-    window.location.reload()
-  }
-  
-  if (loading && safeCases.length === 0) {
-    return (
-      <div className="flex-1 p-8" style={{ padding: 'var(--space-8)' }}>
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-          {[...Array(6)].map((_, i) => (
-            <div 
-              key={i} 
-              className="rounded-xl p-6 border h-[200px] animate-pulse"
-              style={{ 
-                backgroundColor: 'var(--color-bg-elevated)',
-                borderColor: 'var(--color-border)',
-                padding: 'var(--space-6)'
-              }}
-            >
-              <div 
-                className="h-6 rounded mb-4 w-3/4"
-                style={{ backgroundColor: 'var(--color-bg-tertiary)' }}
-              />
-              <div 
-                className="h-4 rounded mb-2 w-1/2"
-                style={{ backgroundColor: 'var(--color-bg-tertiary)' }}
-              />
-              <div 
-                className="h-4 rounded w-2/3"
-                style={{ backgroundColor: 'var(--color-bg-tertiary)' }}
-              />
-            </div>
-          ))}
-        </div>
-      </div>
-    )
-  }
-  
-  if (safeCases.length === 0) {
-    return (
-      <div className="flex-1 flex flex-col">
-        <div 
-          className="p-8 border-b flex items-center justify-between"
-          style={{ 
-            padding: 'var(--space-8)',
-            borderBottomColor: 'var(--color-border)',
-            backgroundColor: 'var(--color-bg-primary)'
-          }}
-        >
-          <div>
-            <h2 
-              className="text-3xl font-display mb-1 tracking-tight"
-              style={{ 
-                fontFamily: 'var(--font-display)',
-                color: 'var(--color-text-primary)',
-                letterSpacing: 'var(--tracking-tight)'
-              }}
-            >
-              Дела
-            </h2>
-            <p 
-              className="text-sm font-medium"
-              style={{ color: 'var(--color-text-secondary)' }}
-            >
-              Начните работу с первым делом
-            </p>
-          </div>
-          <button
-            onClick={() => setIsUploadDialogOpen(true)}
-            className="px-5 py-2.5 rounded-lg font-medium text-sm transition-all duration-150 flex items-center gap-2"
-            style={{
-              backgroundColor: 'var(--color-accent)',
-              color: 'var(--color-bg-primary)',
-            }}
-          >
-            <Plus className="w-4 h-4" />
-            Создать дело
-          </button>
-        </div>
-        <div className="flex-1 flex items-center justify-center fade-in">
-          <div className="text-center max-w-md">
-            <div className="text-7xl mb-6 scale-in" style={{ animationDelay: '0.1s' }}>📁</div>
-            <h3 className="text-2xl font-display text-[#0F1419] mb-3 tracking-tight">Нет дел</h3>
-            <p className="text-base text-[#666B78] mb-8 leading-relaxed">
-              Загрузите документы, чтобы создать первое дело и начать работу с AI-ассистентом
-            </p>
-            <button
-              onClick={() => setIsUploadDialogOpen(true)}
-              className="px-6 py-3 rounded-lg font-medium text-base transition-all duration-150 flex items-center gap-2 mx-auto"
-              style={{
-                backgroundColor: 'var(--color-accent)',
-                color: 'var(--color-bg-primary)',
-              }}
-            >
-              <Plus className="w-5 h-5" />
-              Создать первое дело
-            </button>
-          </div>
-        </div>
-        <Dialog 
-          open={isUploadDialogOpen} 
-          onClose={() => setIsUploadDialogOpen(false)}
-          maxWidth="lg"
-          fullWidth
-        >
-          <DialogTitle>Создать новое дело</DialogTitle>
-          <DialogContent sx={{ maxHeight: '90vh', overflowY: 'auto' }}>
-            <UploadArea onUpload={handleUploadComplete} onCancel={() => setIsUploadDialogOpen(false)} />
-          </DialogContent>
-        </Dialog>
-      </div>
-    )
-  }
-  
   return (
     <div className="flex-1 flex flex-col">
       {/* Header */}
-      <div 
-        className="p-8 border-b flex items-center justify-between"
-        style={{ 
-          padding: 'var(--space-8)',
-          borderBottomColor: 'var(--color-border)',
-          backgroundColor: 'var(--color-bg-primary)'
-        }}
+      <div
+        className="px-8 pt-8 pb-5 border-b"
+        style={{ borderBottomColor: 'var(--color-border)' }}
       >
-        <div>
-          <h2 
-            className="text-3xl font-display mb-1 tracking-tight"
-            style={{ 
-              fontFamily: 'var(--font-display)',
-              color: 'var(--color-text-primary)',
-              letterSpacing: 'var(--tracking-tight)'
-            }}
-          >
-            Дела
-          </h2>
-          <p 
-            className="text-sm font-medium"
-            style={{ color: 'var(--color-text-secondary)' }}
-          >
-            {total} {total === 1 ? 'результат' : total < 5 ? 'результата' : 'результатов'}
-          </p>
-        </div>
-        <div className="flex items-center gap-3">
-          <button
-            onClick={() => setIsUploadDialogOpen(true)}
-            className="px-4 py-2 rounded-lg font-medium text-sm transition-all duration-150 flex items-center gap-2"
-            style={{
-              backgroundColor: 'var(--color-accent)',
-              color: 'var(--color-bg-primary)',
-            }}
-          >
-            <Plus className="w-4 h-4" />
-            Создать дело
-          </button>
-          <div 
-            className="flex items-center gap-1 rounded-lg p-1 border"
-            style={{
-              backgroundColor: 'var(--color-bg-elevated)',
-              borderColor: 'var(--color-border)'
-            }}
-          >
-            <button
-              onClick={() => onViewModeChange('grid')}
-              className={`p-2 rounded-md transition-all duration-150 ${
-                viewMode === 'grid'
-                  ? 'text-text-primary'
-                  : 'text-text-secondary hover:text-text-primary hover:bg-bg-hover'
-              }`}
-              style={{
-                backgroundColor: viewMode === 'grid' ? 'var(--color-bg-active)' : 'transparent',
-                color: viewMode === 'grid' ? 'var(--color-text-primary)' : 'var(--color-text-secondary)',
-              }}
-            >
-              <LayoutGrid className="w-4 h-4" />
-            </button>
-            <button
-              onClick={() => onViewModeChange('list')}
-              className={`p-2 rounded-md transition-all duration-150 ${
-                viewMode === 'list'
-                  ? 'text-text-primary'
-                  : 'text-text-secondary hover:text-text-primary hover:bg-bg-hover'
-              }`}
-              style={{
-                backgroundColor: viewMode === 'list' ? 'var(--color-bg-active)' : 'transparent',
-                color: viewMode === 'list' ? 'var(--color-text-primary)' : 'var(--color-text-secondary)',
-              }}
-            >
-              <List className="w-4 h-4" />
-            </button>
-            <button
-              onClick={() => onViewModeChange('table')}
-              className={`p-2 rounded-md transition-all duration-150 ${
-                viewMode === 'table'
-                  ? 'text-text-primary'
-                  : 'text-text-secondary hover:text-text-primary hover:bg-bg-hover'
-              }`}
-              style={{
-                backgroundColor: viewMode === 'table' ? 'var(--color-bg-active)' : 'transparent',
-                color: viewMode === 'table' ? 'var(--color-text-primary)' : 'var(--color-text-secondary)',
-              }}
-            >
-              <Table2 className="w-4 h-4" />
-            </button>
-          </div>
-        </div>
+        <h1
+          className="text-2xl font-semibold tracking-tight mb-1"
+          style={{ color: 'var(--color-text-primary)' }}
+        >
+          Дела
+        </h1>
+        <p className="text-sm" style={{ color: 'var(--color-text-secondary)' }}>
+          Храните и анализируйте тысячи документов
+        </p>
       </div>
-      
-      {/* Grid/List/Table */}
-      <div className="flex-1 overflow-y-auto p-8">
-        {viewMode === 'table' ? (
-          <CasesTable data={safeCases} loading={loading} onDeleteCase={onDeleteCase} />
-        ) : viewMode === 'grid' ? (
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-            {safeCases.map((caseItem, index) => (
-              <div 
-                key={caseItem.id} 
-                className="stagger-item"
-                style={{ animationDelay: `${index * 0.05}s` }}
-              >
-                <CaseCard caseItem={caseItem} onDelete={onDeleteCase} />
-              </div>
+
+      {/* Counter */}
+      <div className="px-8 pt-4 pb-2 flex items-center gap-1.5">
+        <Info className="w-3.5 h-3.5" style={{ color: 'var(--color-text-muted)' }} />
+        <p className="text-xs" style={{ color: 'var(--color-text-muted)' }}>
+          {loading ? '…' : `${total} из ${CASE_LIMIT} дел`}
+        </p>
+      </div>
+
+      {/* Grid */}
+      <div className="flex-1 overflow-y-auto px-8 pb-8 pt-2">
+        {loading && safeCases.length === 0 ? (
+          <div className="grid gap-4" style={{ gridTemplateColumns: 'repeat(3, 1fr)', gridAutoRows: '220px' }}>
+            <div className="rounded-xl animate-pulse" style={{ border: '1.5px dashed #D1D5DB' }} />
+            {[...Array(5)].map((_, i) => (
+              <div
+                key={i}
+                className="rounded-xl border animate-pulse"
+                style={{
+                  backgroundColor: 'var(--color-bg-elevated)',
+                  borderColor: 'var(--color-border)',
+                }}
+              />
             ))}
           </div>
         ) : (
-          <div className="space-y-4">
-            {safeCases.map((caseItem, index) => (
-              <div 
-                key={caseItem.id}
-                className="stagger-item"
-                style={{ animationDelay: `${index * 0.03}s` }}
-              >
-                <CaseCard caseItem={caseItem} onDelete={onDeleteCase} />
+          <div
+            className="grid gap-4"
+            style={{ gridTemplateColumns: 'repeat(3, 1fr)', gridAutoRows: '220px' }}
+          >
+            {/* New case card — same size as case cards */}
+            <button
+              onClick={() => navigate('/cases/new')}
+              className="rounded-xl flex flex-col items-center justify-center gap-3 transition-all duration-150 hover:bg-gray-50 group"
+              style={{
+                border: '1.5px dashed #D1D5DB',
+                backgroundColor: 'transparent',
+              }}
+            >
+              <Plus className="w-6 h-6" style={{ color: '#9CA3AF' }} />
+              <div className="text-center px-6">
+                <p className="text-sm font-medium mb-1" style={{ color: '#374151' }}>
+                  Новое дело
+                </p>
+                <p className="text-xs leading-relaxed" style={{ color: '#9CA3AF' }}>
+                  Каждое дело может содержать до 10 000 файлов
+                </p>
               </div>
+            </button>
+
+            {/* Case cards */}
+            {safeCases.map((caseItem) => (
+              <CaseCard
+                key={caseItem.id}
+                caseItem={caseItem}
+                onDelete={onDeleteCase}
+                reviewCount={reviewCounts?.[caseItem.id] ?? 0}
+              />
             ))}
           </div>
         )}
-      </div>
-      
-      {/* Pagination */}
-      {totalPages > 1 && viewMode !== 'table' && (
-        <div 
-          className="p-6 border-t flex justify-center"
-          style={{ 
-            padding: 'var(--space-6)',
-            borderTopColor: 'var(--color-border)'
-          }}
-        >
-          <Pagination
-            currentPage={currentPage}
-            totalPages={totalPages}
-            onPageChange={onPageChange}
-          />
-        </div>
-      )}
 
-      {/* Upload Dialog */}
-      <Dialog 
-        open={isUploadDialogOpen} 
-        onClose={() => setIsUploadDialogOpen(false)}
-        maxWidth="lg"
-        fullWidth
-      >
-        <DialogTitle>Создать новое дело</DialogTitle>
-        <DialogContent sx={{ maxHeight: '90vh', overflowY: 'auto' }}>
-          <UploadArea onUpload={handleUploadComplete} onCancel={() => setIsUploadDialogOpen(false)} />
-        </DialogContent>
-      </Dialog>
+        {/* Pagination */}
+        {totalPages > 1 && (
+          <div className="mt-8 flex justify-center">
+            <Pagination
+              currentPage={currentPage}
+              totalPages={totalPages}
+              onPageChange={onPageChange}
+            />
+          </div>
+        )}
+      </div>
     </div>
   )
 }

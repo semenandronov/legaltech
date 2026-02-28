@@ -1538,6 +1538,28 @@ async def export_excel(
         raise HTTPException(status_code=500, detail="Failed to export Excel")
 
 
+@router.post("/{review_id}/export/word")
+async def export_word(
+    review_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """Export tabular review to Word (.docx)"""
+    try:
+        service = TabularReviewService(db)
+        word_content = service.export_to_word(review_id, current_user.id)
+        return Response(
+            content=word_content,
+            media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            headers={"Content-Disposition": f"attachment; filename=tabular_review_{review_id}.docx"}
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        logger.error(f"Error exporting Word: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Failed to export Word")
+
+
 @router.get("/")
 async def list_reviews(
     case_id: Optional[str] = Query(None, description="Filter by case_id"),

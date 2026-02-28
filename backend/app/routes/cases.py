@@ -480,18 +480,30 @@ async def get_case_files(
     if not case:
         raise HTTPException(status_code=404, detail="Дело не найдено")
     
+    from app.models.analysis import DocumentChunk
+    from sqlalchemy import func
+
     # Get all files for the case
     files = db.query(FileModel).filter(FileModel.case_id == case_id).all()
-    
+
     # Get classifications for all files
     file_ids = [file.id for file in files]
     classifications = db.query(DocumentClassification).filter(
         DocumentClassification.file_id.in_(file_ids)
     ).all() if file_ids else []
-    
+
     # Create mapping file_id -> classification
     classification_map = {c.file_id: c for c in classifications if c.file_id}
-    
+
+    # Get max page number per file (as page count approximation)
+    page_counts = db.query(
+        DocumentChunk.file_id,
+        func.max(DocumentChunk.source_page).label("page_count")
+    ).filter(
+        DocumentChunk.file_id.in_(file_ids)
+    ).group_by(DocumentChunk.file_id).all() if file_ids else []
+    page_count_map = {row.file_id: row.page_count for row in page_counts if row.page_count is not None}
+
     return {
         "documents": [
             {
@@ -500,6 +512,8 @@ async def get_case_files(
                 "file_type": file.file_type,
                 "folder_id": file.folder_id,
                 "created_at": file.created_at.isoformat() if file.created_at else None,
+                "size": len(file.file_content) if file.file_content else (len(file.original_text.encode("utf-8")) if file.original_text else None),
+                "page_count": page_count_map.get(file.id),
                 "doc_type": classification.doc_type if (classification := classification_map.get(file.id)) else None,
                 "classification": {
                     "doc_type": classification.doc_type,

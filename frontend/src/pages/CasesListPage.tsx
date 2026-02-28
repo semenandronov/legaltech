@@ -1,8 +1,9 @@
 import { useState, useEffect } from 'react'
 import { getCasesList, deleteCase, CasesListResponse } from '../services/api'
+import { tabularReviewApi } from '../services/tabularReviewApi'
 import CasesGrid from '../components/Cases/CasesGrid'
 import UnifiedSidebar from '../components/Layout/UnifiedSidebar'
-import { Home, FolderOpen, MessageSquare } from 'lucide-react'
+import { FolderOpen, MessageSquare } from 'lucide-react'
 import { toast } from 'sonner'
 
 const CasesListPage = () => {
@@ -10,13 +11,11 @@ const CasesListPage = () => {
   const [total, setTotal] = useState(0)
   const [loading, setLoading] = useState(true)
   const [currentPage, setCurrentPage] = useState(1)
-  const [viewMode, setViewMode] = useState<'grid' | 'list' | 'table'>('grid')
-  
+  const [reviewCounts, setReviewCounts] = useState<Record<string, number>>({})
   const limit = 20
   
   // Navigation items for main sidebar
   const mainNavItems = [
-    { id: 'home', label: 'Главная', icon: Home, path: '/' },
     { id: 'cases', label: 'Дела', icon: FolderOpen, path: '/cases' },
     { id: 'assistant', label: 'Ассистент', icon: MessageSquare, path: '/assistant' },
   ]
@@ -30,8 +29,19 @@ const CasesListPage = () => {
     try {
       const skip = (currentPage - 1) * limit
       const data = await getCasesList(skip, limit)
-      setCases(data.cases || [])
+      const fetchedCases = data.cases || []
+      setCases(fetchedCases)
       setTotal(data.total || 0)
+
+      // Fetch tabular review counts for all cases in parallel
+      const counts = await Promise.all(
+        fetchedCases.map(c =>
+          tabularReviewApi.listReviews(c.id, 0, 1)
+            .then(r => ({ id: c.id, count: r.total ?? r.reviews.length }))
+            .catch(() => ({ id: c.id, count: 0 }))
+        )
+      )
+      setReviewCounts(Object.fromEntries(counts.map(c => [c.id, c.count])))
     } catch (error: any) {
       console.error('Ошибка при загрузке дел:', error)
     } finally {
@@ -84,9 +94,10 @@ const CasesListPage = () => {
               loading={loading}
               currentPage={currentPage}
               onPageChange={handlePageChange}
-              viewMode={viewMode}
-              onViewModeChange={setViewMode}
+              viewMode="grid"
+              onViewModeChange={() => {}}
               onDeleteCase={handleDeleteCase}
+              reviewCounts={reviewCounts}
             />
           </div>
         </div>

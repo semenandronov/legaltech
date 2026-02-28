@@ -235,8 +235,8 @@ export const TabularDocumentViewer: React.FC<TabularDocumentViewerProps> = ({
 
   return (
     <Box sx={{ display: "flex", flexDirection: "column", height: "100%" }}>
-      {/* Header with tabs and actions */}
-      <Box sx={{ borderBottom: 1, borderColor: "divider", bgcolor: "background.paper" }}>
+      {/* Header with tabs and actions — hidden for PDFs since PDFViewer has its own toolbar */}
+      {fileType !== "pdf" && <Box sx={{ borderBottom: 1, borderColor: "divider", bgcolor: "background.paper" }}>
         {/* Tabs for multiple documents */}
         {documentTabs.length > 1 && (
           <Tabs
@@ -323,7 +323,7 @@ export const TabularDocumentViewer: React.FC<TabularDocumentViewerProps> = ({
             </Box>
           </MenuItem>
         </Menu>
-      </Box>
+      </Box>}
 
       {/* Document content */}
       <Box sx={{ flex: 1, overflow: "auto", position: "relative" }}>

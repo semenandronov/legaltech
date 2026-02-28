@@ -31,6 +31,8 @@ import {
   Chip,
   Tooltip,
   CircularProgress,
+  Popover,
+  Divider,
 } from '@mui/material'
 import {
   Description as FileTextIcon,
@@ -40,7 +42,91 @@ import {
   UnfoldMore as UnfoldMoreIcon,
   ArrowUpward as ArrowUpwardIcon,
   ArrowDownward as ArrowDownwardIcon,
+  ContentCopy as ContentCopyIcon,
 } from '@mui/icons-material'
+// ---------------------------------------------------------------------------
+// Inline column creation form (Harvey-style)
+// ---------------------------------------------------------------------------
+interface InlineColumnFormProps {
+  onContinue: (prompt: string) => void
+  onCancel: () => void
+}
+
+const InlineColumnForm = React.memo(({ onContinue, onCancel }: InlineColumnFormProps) => {
+  const [prompt, setPrompt] = React.useState("")
+  return (
+    <Box
+      sx={{ display: 'flex', flexDirection: 'column', gap: 1.5, width: '100%', py: 0.5 }}
+      onClick={(e) => e.stopPropagation()}
+    >
+      <Box>
+        <Typography sx={{ fontWeight: 600, fontSize: '0.9375rem', color: '#1F2937', mb: 0.25 }}>
+          Создать колонку
+        </Typography>
+        <Typography sx={{ fontSize: '0.8125rem', color: '#6B7280', lineHeight: 1.4 }}>
+          Задайте вопрос для извлечения данных из документов.
+        </Typography>
+      </Box>
+      <textarea
+        value={prompt}
+        onChange={(e) => setPrompt(e.target.value)}
+        placeholder="Например: какая дата подписания договора?"
+        rows={4}
+        style={{
+          width: '100%',
+          padding: '8px',
+          border: '1px solid #E5E7EB',
+          borderRadius: '6px',
+          fontSize: '0.8125rem',
+          color: '#1F2937',
+          resize: 'none',
+          outline: 'none',
+          fontFamily: 'inherit',
+          backgroundColor: 'white',
+          boxSizing: 'border-box',
+        }}
+        onFocus={(e) => { e.target.style.borderColor = '#3B82F6'; e.target.style.boxShadow = '0 0 0 2px rgba(59,130,246,0.15)' }}
+        onBlur={(e) => { e.target.style.borderColor = '#E5E7EB'; e.target.style.boxShadow = 'none' }}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
+            e.preventDefault()
+            if (prompt.trim()) onContinue(prompt)
+          }
+        }}
+      />
+      <Box sx={{ display: 'flex', justifyContent: 'flex-end', gap: 1 }}>
+        <Box
+          component="button"
+          type="button"
+          onClick={onCancel}
+          sx={{
+            px: 1.5, py: 0.75, border: '1px solid #E5E7EB', borderRadius: '6px',
+            background: 'white', fontSize: '0.8125rem', color: '#6B7280',
+            cursor: 'pointer', fontFamily: 'inherit',
+            '&:hover': { background: '#F3F4F6' },
+          }}
+        >
+          Отмена
+        </Box>
+        <Box
+          component="button"
+          type="button"
+          onClick={() => { if (prompt.trim()) onContinue(prompt) }}
+          sx={{
+            px: 1.5, py: 0.75, border: 'none', borderRadius: '6px',
+            background: prompt.trim() ? '#1F2937' : '#E5E7EB',
+            fontSize: '0.8125rem', color: prompt.trim() ? 'white' : '#9CA3AF',
+            cursor: prompt.trim() ? 'pointer' : 'not-allowed', fontFamily: 'inherit',
+          }}
+        >
+          Далее →
+        </Box>
+      </Box>
+    </Box>
+  )
+})
+InlineColumnForm.displayName = 'InlineColumnForm'
+
 import { TabularRow, TabularColumn, TabularCell, CellDetails } from "@/services/tabularReviewApi"
 import { tabularReviewApi } from "@/services/tabularReviewApi"
 import { TagCell } from "./TagCell"
@@ -84,15 +170,18 @@ interface TabularReviewTableProps {
   showAddColumnPopover?: boolean
   onCloseAddColumnPopover?: () => void
   onSaveNewColumn?: (column: { column_label: string; column_type: string; prompt: string; column_config?: { options?: Array<{ label: string; color: string }>; allow_custom?: boolean } }) => Promise<void>
+  /** Вызывается когда пользователь нажал "Далее →" в inline-форме — открывает BulkColumnBuilder */
+  onInlinePromptSubmit?: (prompt: string) => void
   filterPopoverOpen?: boolean
   filterAnchorEl?: HTMLElement | null
   onCloseFilterPopover?: () => void
-  /** ID колонки, которую сейчас заполняет ИИ — в ячейках этой колонки показывается индикатор */
-  runningColumnId?: string | null
+  /** Множество ID колонок, которые сейчас заполняет ИИ — показывается индикатор и скелетон */
+  runningColumnIds?: Set<string>
 }
 
-export const TabularReviewTable = React.memo(({ reviewId, tableData, onTableDataUpdate: _onTableDataUpdate, onCellClick, onCellEdit, onRemoveDocument, onRunColumn, onColumnEdit, onColumnDelete, onAddColumnClick, showAddColumnPopover, onCloseAddColumnPopover, onSaveNewColumn, filterPopoverOpen, filterAnchorEl, onCloseFilterPopover, runningColumnId }: TabularReviewTableProps) => {
+export const TabularReviewTable = React.memo(({ reviewId, tableData, onTableDataUpdate: _onTableDataUpdate, onCellClick, onCellEdit, onRemoveDocument, onRunColumn, onColumnEdit, onColumnDelete, onAddColumnClick, showAddColumnPopover, onCloseAddColumnPopover, onSaveNewColumn, onInlinePromptSubmit, filterPopoverOpen, filterAnchorEl, onCloseFilterPopover, runningColumnIds }: TabularReviewTableProps) => {
   const addColumnButtonRef = React.useRef<HTMLElement | null>(null)
+  const [addColAnchorPos, setAddColAnchorPos] = React.useState<{ top: number; left: number } | null>(null)
   const [sorting, setSorting] = React.useState<SortingState>([])
   const [columnFilters, setColumnFilters] = React.useState<ColumnFiltersState>([])
   const [columnVisibility, setColumnVisibility] = React.useState<VisibilityState>({})
@@ -100,6 +189,34 @@ export const TabularReviewTable = React.memo(({ reviewId, tableData, onTableData
   const [columnPinning, setColumnPinning] = React.useState<ColumnPinningState>({ left: ['row_index', 'file_name'], right: [] })
   const [globalFilter, setGlobalFilter] = React.useState("")
   const [_loadingCell, setLoadingCell] = React.useState(false)
+
+  // Step-2 state for inline column creation (step 1 is inline, step 2 is a modal)
+  const [showStep2, setShowStep2] = React.useState(false)
+  const [step2Prompt, setStep2Prompt] = React.useState("")
+
+  // Reset inline form when parent closes the popover
+  React.useEffect(() => {
+    if (!showAddColumnPopover) {
+      setShowStep2(false)
+      setStep2Prompt("")
+    }
+  }, [showAddColumnPopover])
+
+  const handleInlineContinue = React.useCallback((prompt: string) => {
+    if (onInlinePromptSubmit) {
+      // Redirect to BulkColumnBuilder (Harvey-style)
+      onCloseAddColumnPopover?.()
+      onInlinePromptSubmit(prompt)
+    } else {
+      // Fallback: single-column step 2 modal
+      setStep2Prompt(prompt)
+      setShowStep2(true)
+    }
+  }, [onInlinePromptSubmit, onCloseAddColumnPopover])
+
+  const handleInlineCancel = React.useCallback(() => {
+    onCloseAddColumnPopover?.()
+  }, [onCloseAddColumnPopover])
   const [historyPanelOpen, setHistoryPanelOpen] = React.useState(false)
   const [historyCellInfo, setHistoryCellInfo] = React.useState<{
     fileId: string
@@ -126,6 +243,18 @@ export const TabularReviewTable = React.memo(({ reviewId, tableData, onTableData
   const [filtersPanelOpen, setFiltersPanelOpen] = React.useState(false)
   
   const cellDetailsCache = React.useRef<Map<string, CellDetails>>(new Map())
+
+  // Popover state for Harvey-style cell detail popup
+  const [cellPopoverAnchor, setCellPopoverAnchor] = React.useState<HTMLElement | null>(null)
+  const [cellPopoverData, setCellPopoverData] = React.useState<{
+    cellValue: string
+    reasoning?: string | null
+    sourceDocName?: string
+    sourcePage?: number | null
+    sourceReferences?: Array<{ page?: number | null; section?: string | null; text: string }>
+    onViewSource: () => void
+  } | null>(null)
+
   // Debounced глобальный фильтр (оставлен для внутренней логики фильтрации)
 
   // Apply advanced filters to rows
@@ -435,20 +564,20 @@ export const TabularReviewTable = React.memo(({ reviewId, tableData, onTableData
               {col.column_label}
             </Typography>
           </Box>
-          {onRunColumn && (
+          {onRunColumn && col.column_type !== 'manual_input' && (
             <Tooltip title="Запустить ИИ для заполнения колонки">
               <IconButton
                 size="small"
                 onClick={(e) => {
                   e.stopPropagation()
-                  if (runningColumnId === col.id) return
+                  if (runningColumnIds?.has(col.id)) return
                   onRunColumn(col.id)
                 }}
-                disabled={runningColumnId === col.id}
+                disabled={runningColumnIds?.has(col.id)}
                 aria-label="Запустить ИИ для заполнения колонки"
                 sx={{ p: 0.25 }}
               >
-                {runningColumnId === col.id ? (
+                {runningColumnIds?.has(col.id) ? (
                   <CircularProgress size={18} color="inherit" />
                 ) : (
                   <PlayArrowIcon sx={{ fontSize: 18 }} />
@@ -459,21 +588,45 @@ export const TabularReviewTable = React.memo(({ reviewId, tableData, onTableData
         </Box>
       ),
       cell: ({ row }) => {
+        // Show skeleton while AI is filling this column
+        if (runningColumnIds?.has(col.id)) {
+          const widths = [55, 70, 45, 80, 60, 50, 75, 40, 65, 85]
+          const w = widths[row.index % widths.length]
+          return (
+            <Box sx={{ px: 1, py: 1 }}>
+              <Box sx={{
+                height: 13,
+                borderRadius: '4px',
+                bgcolor: '#E5E7EB',
+                width: `${w}%`,
+                '@keyframes shimmer': {
+                  '0%, 100%': { opacity: 1 },
+                  '50%': { opacity: 0.35 },
+                },
+                animation: 'shimmer 1.4s ease-in-out infinite',
+              }} />
+            </Box>
+          )
+        }
+
         const cell: TabularCell = row.getValue(col.id)
         let cellValue = cell?.cell_value || "-"
-        
-        // Parse JSON if cell_value is a JSON string
+
+        // Parse JSON if cell_value is a JSON string (backend may return structured extraction result)
         if (cellValue !== "-" && typeof cellValue === "string" && cellValue.trim().startsWith("{")) {
           try {
-            const parsed = JSON.parse(cellValue)
+            // Remove trailing commas before closing braces/brackets (LLM may produce non-standard JSON)
+            const cleanJson = cellValue.replace(/,\s*([}\]])/g, '$1')
+            const parsed = JSON.parse(cleanJson)
             if (parsed && typeof parsed === "object" && "cell_value" in parsed) {
-              cellValue = parsed.cell_value || cellValue
+              const inner = parsed.cell_value
+              cellValue = (inner !== null && inner !== undefined && inner !== "") ? String(inner) : "-"
             }
           } catch (e) {
             // Not valid JSON, keep original value
           }
         }
-        
+
         const cellStatus = cell?.status || "pending"
         const isTagType = col.column_type === "tag"
 
@@ -481,9 +634,9 @@ export const TabularReviewTable = React.memo(({ reviewId, tableData, onTableData
           <Box
             sx={{
                 cursor: cellValue !== "-" ? 'pointer' : 'default',
-                py: 1,
+                py: 0.25,
               px: 1,
-                minHeight: 40,
+                minHeight: 20,
               display: 'flex',
               alignItems: 'center',
               transition: (theme) => theme.transitions.create(['background-color', 'transform'], {
@@ -504,42 +657,54 @@ export const TabularReviewTable = React.memo(({ reviewId, tableData, onTableData
             }}
             onClick={async (e) => {
                 if (cellValue === "-") return
-                // Don't open document if double-clicking (editing)
+                // Don't trigger on double-click (editing)
                 if (e.detail === 2) return
-                
+
+              const anchor = e.currentTarget as HTMLElement
               const cacheKey = `${row.original.file_id}_${col.id}`
-              
-              // Проверяем кеш
-              if (cellDetailsCache.current.has(cacheKey)) {
-                const cachedDetails = cellDetailsCache.current.get(cacheKey)!
-                
-                // Определяем highlight mode из кеша
+
+              const openPopover = (details: CellDetails) => {
                 let highlightMode: 'verbatim' | 'page' | 'none' = 'none'
-                if (cachedDetails.verbatim_extract) {
+                if (details.verbatim_extract) {
                   highlightMode = 'verbatim'
-                } else if (cachedDetails.source_page || cachedDetails.source_section) {
+                } else if (details.source_page || details.source_section) {
                   highlightMode = 'page'
                 }
-                
-                // Call onCellClick callback to open document immediately (no modal)
-                if (onCellClick) {
-                  onCellClick(row.original.file_id, col.id, {
-                    verbatimExtract: cachedDetails.verbatim_extract,
-                    sourcePage: cachedDetails.source_page,
-                    sourceSection: cachedDetails.source_section,
-                    columnType: cachedDetails.column_type,
-                    highlightMode,
-                    sourceReferences: cachedDetails.source_references,
-                    // Phase 4: Deep link fields
-                    docId: cachedDetails.primary_source_doc_id || row.original.file_id,
-                    charStart: cachedDetails.primary_source_char_start || undefined,
-                    charEnd: cachedDetails.primary_source_char_end || undefined,
-                  })
+                const viewSourcePayload = {
+                  verbatimExtract: details.verbatim_extract,
+                  sourcePage: details.source_page,
+                  sourceSection: details.source_section,
+                  columnType: details.column_type,
+                  highlightMode,
+                  sourceReferences: details.source_references,
+                  docId: details.primary_source_doc_id || row.original.file_id,
+                  charStart: details.primary_source_char_start || undefined,
+                  charEnd: details.primary_source_char_end || undefined,
                 }
+                setCellPopoverAnchor(anchor)
+                setCellPopoverData({
+                  cellValue,
+                  reasoning: details.reasoning,
+                  sourceDocName: row.original.file_name,
+                  sourcePage: details.source_page,
+                  sourceReferences: details.source_references,
+                  onViewSource: () => {
+                    setCellPopoverAnchor(null)
+                    setCellPopoverData(null)
+                    if (onCellClick) {
+                      onCellClick(row.original.file_id, col.id, viewSourcePayload)
+                    }
+                  },
+                })
+              }
+
+              // Use cache if available
+              if (cellDetailsCache.current.has(cacheKey)) {
+                openPopover(cellDetailsCache.current.get(cacheKey)!)
                 return
               }
-              
-              // Load cell details and open document immediately
+
+              // Load from API
               setLoadingCell(true)
               try {
                 const details = await tabularReviewApi.getCellDetails(
@@ -547,33 +712,8 @@ export const TabularReviewTable = React.memo(({ reviewId, tableData, onTableData
                   row.original.file_id,
                   col.id
                 )
-                
-                // Сохраняем в кеш
                 cellDetailsCache.current.set(cacheKey, details)
-                
-                // Determine highlight mode
-                let highlightMode: 'verbatim' | 'page' | 'none' = 'none'
-                if (details.verbatim_extract) {
-                  highlightMode = 'verbatim'
-                } else if (details.source_page || details.source_section) {
-                  highlightMode = 'page'
-                }
-                
-                // Call onCellClick callback to open document immediately (no modal)
-                if (onCellClick) {
-                  onCellClick(row.original.file_id, col.id, {
-                    verbatimExtract: details.verbatim_extract,
-                    sourcePage: details.source_page,
-                    sourceSection: details.source_section,
-                    columnType: details.column_type,
-                    highlightMode,
-                    sourceReferences: details.source_references,
-                    // Phase 4: Deep link fields
-                    docId: details.primary_source_doc_id || row.original.file_id,
-                    charStart: details.primary_source_char_start || undefined,
-                    charEnd: details.primary_source_char_end || undefined,
-                  })
-                }
+                openPopover(details)
               } catch (error) {
                 console.error("Error loading cell details:", error)
               } finally {
@@ -649,40 +789,40 @@ export const TabularReviewTable = React.memo(({ reviewId, tableData, onTableData
       enableResizing: false,
       enableSorting: false,
       enableHiding: false,
-      header: () =>
-        onAddColumnClick ? (
-          <Box
-            component="button"
-            type="button"
-            ref={(el) => { addColumnButtonRef.current = el as HTMLElement | null }}
-            onClick={(e) => {
-              e.stopPropagation()
-              addColumnButtonRef.current = e.currentTarget as HTMLElement
-              onAddColumnClick?.()
-            }}
-            sx={{
-              display: 'flex',
-              alignItems: 'center',
-              gap: 0.5,
-              border: 'none',
-              background: 'none',
-              cursor: 'pointer',
-              fontSize: '0.875rem',
-              color: '#6B7280',
-              fontWeight: 500,
-              '&:hover': { color: '#1F2937' },
-            }}
-          >
-            <AddIcon sx={{ fontSize: 18 }} />
-            Add column
-          </Box>
-        ) : null,
+      header: () => onAddColumnClick ? (
+        <Box
+          component="button"
+          type="button"
+          ref={(el) => { addColumnButtonRef.current = el as HTMLElement | null }}
+          onClick={(e) => {
+            e.stopPropagation()
+            const rect = (e.currentTarget as HTMLElement).getBoundingClientRect()
+            setAddColAnchorPos({ top: rect.bottom, left: rect.left })
+            onAddColumnClick?.()
+          }}
+          sx={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: 0.5,
+            border: 'none',
+            background: 'none',
+            cursor: 'pointer',
+            fontSize: '0.875rem',
+            color: '#6B7280',
+            fontWeight: 500,
+            '&:hover': { color: '#1F2937' },
+          }}
+        >
+          <AddIcon sx={{ fontSize: 18 }} />
+          Add column
+        </Box>
+      ) : null,
       cell: () => null,
     }
 
     const baseColumns = [rowIndexColumn, fileColumn, ...dynamicColumns]
     return onAddColumnClick ? [...baseColumns, addColumnColumn] : baseColumns
-  }, [tableData.columns, reviewId, onCellClick, onRemoveDocument, onColumnEdit, onColumnDelete, onAddColumnClick, onRunColumn, runningColumnId])
+  }, [tableData.columns, reviewId, onCellClick, onRemoveDocument, onColumnEdit, onColumnDelete, onAddColumnClick, onRunColumn, runningColumnIds, handleInlineContinue, handleInlineCancel])
 
   const table = useReactTable({
     data: tableRows,
@@ -812,40 +952,49 @@ export const TabularReviewTable = React.memo(({ reviewId, tableData, onTableData
           },
         }}
       >
-        <Table sx={{ borderCollapse: 'collapse', minWidth: 'max-content', width: '100%' }}>
-          <TableHead sx={{ position: 'sticky', top: 0, zIndex: 10, bgcolor: 'var(--bg-primary)' }}>
+        <Table sx={{ borderCollapse: 'separate', borderSpacing: 0 }} style={{ width: table.getTotalSize(), minWidth: 'max-content' }}>
+          <TableHead>
             {table.getHeaderGroups().map((headerGroup) => (
-              <TableRow 
+              <TableRow
                 key={headerGroup.id}
                 sx={{
                   bgcolor: 'var(--bg-primary)',
                   '& th': {
+                    position: 'sticky',
+                    top: 0,
+                    zIndex: 10,
+                    bgcolor: 'var(--bg-primary)',
+                    borderTop: '1px solid var(--border, #E5E7EB)',
                     borderBottom: '1px solid var(--border, #E5E7EB)',
                     borderRight: '1px solid #D1D5DB',
+                    borderLeft: 'none',
                     fontWeight: 600,
                     fontSize: '0.875rem',
                     color: 'var(--text-primary, #1F2937)',
-                    py: '12px',
-                    px: '16px',
+                    py: '6px',
+                    px: '12px',
                   },
-                  '& th:last-child': { borderRight: 'none' },
+                  '& th:first-of-type': { borderLeft: '1px solid #D1D5DB' },
+                  '& th:last-child': { borderRight: '1px solid #D1D5DB' },
                 }}
               >
                 {headerGroup.headers.map((header) => (
                   <TableCell
                     key={header.id}
                     sx={{
-                      bgcolor: header.column.id === 'add_column' ? 'var(--bg-secondary)' : 'var(--bg-primary)',
+                      bgcolor: header.column.id === 'add_column'
+                        ? (showAddColumnPopover ? 'var(--bg-primary)' : 'var(--bg-secondary)')
+                        : 'var(--bg-primary)',
                       width: header.getSize(),
-                      position: header.column.getIsPinned() ? 'sticky' : 'relative',
-                      left: header.column.getIsPinned() === 'left' 
-                        ? `${header.getStart('left')}px` 
-                        : undefined,
-                      right: header.column.getIsPinned() === 'right' 
-                        ? `${header.getStart('right')}px` 
-                        : undefined,
-                      zIndex: header.column.getIsPinned() ? 15 : 1,
-                      boxShadow: header.column.getIsPinned() === 'left' ? '2px 0 6px -2px rgba(0,0,0,0.1)' : 'none',
+                      // When inline form is active: zero padding so the form controls its own spacing
+                      verticalAlign: 'middle',
+                    }}
+                    style={{
+                      // Use inline style for sticky positioning to override any cascade issues
+                      left: header.column.getIsPinned() === 'left' ? `${header.getStart('left')}px` : undefined,
+                      right: header.column.getIsPinned() === 'right' ? `${header.getStart('right')}px` : undefined,
+                      zIndex: header.column.getIsPinned() ? 20 : 10,
+                      boxShadow: header.column.getIsPinned() === 'left' ? '2px 0 6px -2px rgba(0,0,0,0.1)' : undefined,
                     }}
                   >
                     {header.isPlaceholder
@@ -898,12 +1047,13 @@ export const TabularReviewTable = React.memo(({ reviewId, tableData, onTableData
                           '& td': {
                             borderBottom: '1px solid var(--border, #F0F0F0)',
                             borderRight: '1px solid #D1D5DB',
-                            py: '12px',
-                            px: '16px',
+                            borderLeft: 'none',
+                            py: '1px',
+                            px: '12px',
                             fontSize: '0.875rem',
                             color: '#1F2937',
                           },
-                          '& td:last-child': { borderRight: 'none' },
+                          '& td:first-of-type': { borderLeft: '1px solid #D1D5DB' },
                         }}
                       >
                     {row.getVisibleCells().map((cell) => (
@@ -911,16 +1061,15 @@ export const TabularReviewTable = React.memo(({ reviewId, tableData, onTableData
                         key={cell.id}
                         sx={{
                           width: cell.column.getSize(),
-                          position: cell.column.getIsPinned() ? 'sticky' : 'static',
-                          left: cell.column.getIsPinned() === 'left' 
-                            ? `${cell.column.getStart('left')}px` 
-                            : undefined,
-                          right: cell.column.getIsPinned() === 'right' 
-                            ? `${cell.column.getStart('right')}px` 
-                            : undefined,
-                          zIndex: cell.column.getIsPinned() ? 10 : 1,
                           bgcolor: cell.column.getIsPinned() === 'left' ? 'var(--bg-primary)' : (cell.column.id === 'add_column' ? 'var(--bg-secondary)' : 'transparent'),
-                          boxShadow: cell.column.getIsPinned() === 'left' ? '2px 0 6px -2px rgba(0,0,0,0.1)' : 'none',
+                        }}
+                        style={{
+                          position: cell.column.getIsPinned() ? 'sticky' : undefined,
+                          left: cell.column.getIsPinned() === 'left' ? `${cell.column.getStart('left')}px` : undefined,
+                          right: cell.column.getIsPinned() === 'right' ? `${cell.column.getStart('right')}px` : undefined,
+                          zIndex: cell.column.getIsPinned() ? 10 : undefined,
+                          backgroundColor: cell.column.getIsPinned() === 'left' ? 'var(--bg-primary, #ffffff)' : undefined,
+                          boxShadow: cell.column.getIsPinned() === 'left' ? '2px 0 6px -2px rgba(0,0,0,0.1)' : undefined,
                         }}
                       >
                         {flexRender(
@@ -944,12 +1093,13 @@ export const TabularReviewTable = React.memo(({ reviewId, tableData, onTableData
                       '& td': {
                         borderBottom: '1px solid var(--border, #F0F0F0)',
                         borderRight: '1px solid #D1D5DB',
-                        py: '12px',
-                        px: '16px',
+                        borderLeft: 'none',
+                        py: '6px',
+                        px: '12px',
                         fontSize: '0.875rem',
                         color: '#1F2937',
                       },
-                      '& td:last-child': { borderRight: 'none' },
+                      '& td:first-of-type': { borderLeft: '1px solid #D1D5DB' },
                     }}
                   >
                     {row.getVisibleCells().map((cell) => (
@@ -957,16 +1107,15 @@ export const TabularReviewTable = React.memo(({ reviewId, tableData, onTableData
                         key={cell.id}
                         sx={{
                           width: cell.column.getSize(),
-                          position: cell.column.getIsPinned() ? 'sticky' : 'static',
-                          left: cell.column.getIsPinned() === 'left' 
-                            ? `${cell.column.getStart('left')}px` 
-                            : undefined,
-                          right: cell.column.getIsPinned() === 'right' 
-                            ? `${cell.column.getStart('right')}px` 
-                            : undefined,
-                          zIndex: cell.column.getIsPinned() ? 10 : 1,
                           bgcolor: cell.column.getIsPinned() === 'left' ? 'var(--bg-primary)' : (cell.column.id === 'add_column' ? 'var(--bg-secondary)' : 'transparent'),
-                          boxShadow: cell.column.getIsPinned() === 'left' ? '2px 0 6px -2px rgba(0,0,0,0.1)' : 'none',
+                        }}
+                        style={{
+                          position: cell.column.getIsPinned() ? 'sticky' : undefined,
+                          left: cell.column.getIsPinned() === 'left' ? `${cell.column.getStart('left')}px` : undefined,
+                          right: cell.column.getIsPinned() === 'right' ? `${cell.column.getStart('right')}px` : undefined,
+                          zIndex: cell.column.getIsPinned() ? 10 : undefined,
+                          backgroundColor: cell.column.getIsPinned() === 'left' ? 'var(--bg-primary, #ffffff)' : undefined,
+                          boxShadow: cell.column.getIsPinned() === 'left' ? '2px 0 6px -2px rgba(0,0,0,0.1)' : undefined,
                         }}
                       >
                         {flexRender(
@@ -1012,12 +1161,22 @@ export const TabularReviewTable = React.memo(({ reviewId, tableData, onTableData
         }}
       />
 
-      {showAddColumnPopover && onCloseAddColumnPopover && onSaveNewColumn && addColumnButtonRef.current && (
+      {/* Step 2 modal: shown after user enters prompt in the inline form (fallback when onInlinePromptSubmit is not set) */}
+      {showStep2 && onSaveNewColumn && (
         <ColumnBuilder
           isOpen={true}
-          onClose={onCloseAddColumnPopover}
-          onSave={onSaveNewColumn}
-          anchorEl={addColumnButtonRef.current}
+          onClose={() => {
+            setShowStep2(false)
+            setStep2Prompt("")
+            onCloseAddColumnPopover?.()
+          }}
+          onSave={async (column) => {
+            await onSaveNewColumn(column)
+            setShowStep2(false)
+            setStep2Prompt("")
+          }}
+          startAtStep={2}
+          initialPrompt={step2Prompt}
         />
       )}
 
@@ -1043,6 +1202,128 @@ export const TabularReviewTable = React.memo(({ reviewId, tableData, onTableData
         onFiltersChange={setAdvancedFilters}
         columns={tableData.columns}
       />
+
+      {/* Add column popover — floating form, Harvey-style */}
+      <Popover
+        open={Boolean(addColAnchorPos) && Boolean(showAddColumnPopover)}
+        anchorReference="anchorPosition"
+        anchorPosition={addColAnchorPos ?? undefined}
+        transformOrigin={{ vertical: 'top', horizontal: 'left' }}
+        onClose={() => { setAddColAnchorPos(null); onCloseAddColumnPopover?.() }}
+        slotProps={{ paper: { sx: { width: 380, borderRadius: '10px', boxShadow: '0 8px 32px rgba(0,0,0,0.15)', p: 2.5 } } }}
+      >
+        <InlineColumnForm
+          onContinue={(prompt) => { setAddColAnchorPos(null); handleInlineContinue(prompt) }}
+          onCancel={() => { setAddColAnchorPos(null); handleInlineCancel() }}
+        />
+      </Popover>
+
+      {/* Cell detail popover — Harvey-style */}
+      <Popover
+        open={Boolean(cellPopoverAnchor)}
+        anchorEl={cellPopoverAnchor}
+        onClose={() => { setCellPopoverAnchor(null); setCellPopoverData(null) }}
+        anchorOrigin={{ vertical: 'bottom', horizontal: 'left' }}
+        transformOrigin={{ vertical: 'top', horizontal: 'left' }}
+        slotProps={{ paper: { sx: { width: 340, borderRadius: '12px', boxShadow: '0 8px 32px rgba(0,0,0,0.15)', p: 2.5, display: 'flex', flexDirection: 'column', gap: 2 } } }}
+      >
+        {cellPopoverData && (
+          <>
+            {/* Summary */}
+            <Box>
+              <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 1 }}>
+                <Typography sx={{ fontSize: '0.6875rem', fontWeight: 600, color: '#9CA3AF', textTransform: 'uppercase', letterSpacing: '0.07em' }}>
+                  Summary
+                </Typography>
+                <IconButton
+                  size="small"
+                  onClick={() => navigator.clipboard.writeText(cellPopoverData.cellValue)}
+                  sx={{ p: 0.5 }}
+                  title="Копировать"
+                >
+                  <ContentCopyIcon sx={{ fontSize: 13, color: '#9CA3AF' }} />
+                </IconButton>
+              </Box>
+              <Chip
+                label={cellPopoverData.cellValue}
+                size="small"
+                sx={{ bgcolor: '#F3F4F6', color: '#1F2937', fontWeight: 500, fontSize: '0.8125rem', height: 26, borderRadius: '6px' }}
+              />
+            </Box>
+
+            {/* Additional Context */}
+            {cellPopoverData.reasoning && (
+              <Box>
+                <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 0.75 }}>
+                  <Typography sx={{ fontSize: '0.6875rem', fontWeight: 600, color: '#9CA3AF', textTransform: 'uppercase', letterSpacing: '0.07em' }}>
+                    Additional Context
+                  </Typography>
+                  <IconButton
+                    size="small"
+                    onClick={() => navigator.clipboard.writeText(cellPopoverData.reasoning!)}
+                    sx={{ p: 0.5 }}
+                    title="Копировать"
+                  >
+                    <ContentCopyIcon sx={{ fontSize: 13, color: '#9CA3AF' }} />
+                  </IconButton>
+                </Box>
+                <Typography sx={{ fontSize: '0.8125rem', color: '#374151', lineHeight: 1.55 }}>
+                  {cellPopoverData.reasoning}
+                </Typography>
+              </Box>
+            )}
+
+            {/* Source */}
+            {(cellPopoverData.sourceDocName || cellPopoverData.sourcePage) && (
+              <Box>
+                <Typography sx={{ fontSize: '0.6875rem', fontWeight: 600, color: '#9CA3AF', textTransform: 'uppercase', letterSpacing: '0.07em', mb: 0.75 }}>
+                  Source
+                </Typography>
+                {cellPopoverData.sourceDocName && (
+                  <Box sx={{ display: 'flex', alignItems: 'flex-start', gap: 0.75 }}>
+                    <FileTextIcon sx={{ fontSize: 14, color: '#6B7280', mt: '2px', flexShrink: 0 }} />
+                    <Typography sx={{ fontSize: '0.8125rem', color: '#374151', lineHeight: 1.4 }}>
+                      {cellPopoverData.sourceDocName}
+                    </Typography>
+                  </Box>
+                )}
+                {cellPopoverData.sourcePage && (
+                  <Typography sx={{ fontSize: '0.8125rem', color: '#6B7280', mt: 0.5, pl: 2.75 }}>
+                    Стр. {cellPopoverData.sourcePage}
+                  </Typography>
+                )}
+              </Box>
+            )}
+
+            {/* View Source button */}
+            {onCellClick && (
+              <>
+                <Divider />
+                <Box
+                  component="button"
+                  type="button"
+                  onClick={cellPopoverData.onViewSource}
+                  sx={{
+                    width: '100%',
+                    py: 1,
+                    border: '1px solid #E5E7EB',
+                    borderRadius: '8px',
+                    background: 'white',
+                    fontSize: '0.875rem',
+                    color: '#374151',
+                    fontWeight: 500,
+                    cursor: 'pointer',
+                    fontFamily: 'inherit',
+                    '&:hover': { bgcolor: '#F9FAFB' },
+                  }}
+                >
+                  View Source
+                </Box>
+              </>
+            )}
+          </>
+        )}
+      </Popover>
     </Box>
   )
 })

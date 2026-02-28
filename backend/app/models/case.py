@@ -59,6 +59,34 @@ class ChatMessage(Base):
     case = relationship("Case", back_populates="chat_messages")
 
 
+class GlobalAssistantSession(Base):
+    """Session for the global (case-free) assistant chat"""
+    __tablename__ = "global_assistant_sessions"
+
+    id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    user_id = Column(String, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    title = Column(String(500), nullable=True)   # first user message preview
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    messages = relationship("GlobalAssistantMessage", back_populates="session",
+                            cascade="all, delete-orphan", order_by="GlobalAssistantMessage.created_at")
+
+
+class GlobalAssistantMessage(Base):
+    """Message in a global assistant session"""
+    __tablename__ = "global_assistant_messages"
+
+    id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    session_id = Column(String, ForeignKey("global_assistant_sessions.id", ondelete="CASCADE"),
+                        nullable=False, index=True)
+    role = Column(String(20), nullable=False)   # "user" or "assistant"
+    content = Column(Text, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    session = relationship("GlobalAssistantSession", back_populates="messages")
+
+
 class File(Base):
     """File model - stores per-document data for a case"""
     __tablename__ = "files"

@@ -1843,7 +1843,17 @@ class TabularReviewService:
         
         if not column:
             raise ValueError(f"Column {column_id} not found in review {review_id}")
-        
+
+        # manual_input columns are filled by hand — skip AI extraction
+        if column.column_type == 'manual_input':
+            return {
+                "status": "skipped",
+                "saved_count": 0,
+                "error_count": 0,
+                "total_tasks": 0,
+                "column_id": column_id,
+            }
+
         # Get files - filter by selected_file_ids if specified
         files_query = self.db.query(File).filter(File.case_id == review.case_id)
         if review.selected_file_ids:
@@ -2479,6 +2489,61 @@ class TabularReviewService:
             csv_content = self.export_to_csv(review_id, user_id)
             return csv_content.encode('utf-8')
     
+    def export_to_word(self, review_id: str, user_id: str) -> bytes:
+        """Export tabular review to Word (.docx) format"""
+        from docx import Document
+        from docx.shared import Pt, Inches
+        from docx.oxml.ns import qn
+        import io
+
+        data = self.get_table_data(review_id, user_id)
+        columns = data["columns"]
+        rows = data["rows"]
+
+        doc = Document()
+
+        # Title
+        doc.add_heading(data["review"]["name"], level=1)
+
+        # Table: 1 header row + data rows, 1 col for doc name + columns
+        num_cols = len(columns) + 1
+        num_rows = len(rows) + 1
+
+        table = doc.add_table(rows=num_rows, cols=num_cols)
+        table.style = "Table Grid"
+
+        # Header row
+        hdr_cells = table.rows[0].cells
+        hdr_cells[0].text = "Document"
+        for i, col in enumerate(columns):
+            hdr_cells[i + 1].text = col["column_label"]
+
+        # Bold header cells
+        for cell in hdr_cells:
+            for para in cell.paragraphs:
+                for run in para.runs:
+                    run.bold = True
+                    run.font.size = Pt(10)
+
+        # Data rows
+        for row_idx, row in enumerate(rows, start=1):
+            row_cells = table.rows[row_idx].cells
+            row_cells[0].text = row["file_name"]
+            for col_idx, col in enumerate(columns):
+                cell_data = row["cells"].get(col["id"], {})
+                row_cells[col_idx + 1].text = cell_data.get("cell_value") or ""
+
+        # Set narrow column widths so table fits on page
+        col_width = Inches(1.5)
+        for row in table.rows:
+            for cell in row.cells:
+                cell.width = col_width
+
+        output = io.BytesIO()
+        doc.save(output)
+        output.seek(0)
+        return output.read()
+
     def create_timeline_table_from_results(
         self,
         case_id: str,

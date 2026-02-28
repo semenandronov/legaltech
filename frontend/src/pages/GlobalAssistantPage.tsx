@@ -1,300 +1,252 @@
-import { useState, useEffect, useRef, useCallback } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
 import UnifiedSidebar from '../components/Layout/UnifiedSidebar'
-import { AssistantUIChat } from '../components/Chat/AssistantUIChat'
-import { Home, FolderOpen, MessageSquare, Upload, ArrowLeft, Clock, FileText, ChevronRight, X } from 'lucide-react'
-import { getChatSessions } from '../services/api'
+import {
+  FolderOpen, MessageSquare, FileText, X, Plus,
+  AlignJustify, SlidersHorizontal, Sparkles, Search, ChevronDown, Loader2, Download,
+} from 'lucide-react'
+import { getApiUrl } from '../services/api'
 
-type AssistMode = 'assist' | 'draft'
+interface ChatMessage {
+  role: 'user' | 'assistant'
+  content: string
+}
 
-interface HistoryItem {
-  case_id: string
-  case_name: string
-  last_message: string
-  last_message_at: string
-  message_count: number
+interface FileContext {
+  filename: string
+  text: string
+  charCount: number
+}
+
+interface DraftDocument {
+  title: string
+  content: string
 }
 
 const navItems = [
-  { id: 'home', label: 'Главная', icon: Home, path: '/' },
   { id: 'cases', label: 'Дела', icon: FolderOpen, path: '/cases' },
   { id: 'assistant', label: 'Ассистент', icon: MessageSquare, path: '/assistant' },
 ]
 
-function formatRelativeTime(dateStr: string): string {
-  if (!dateStr) return '—'
-  const date = new Date(dateStr)
-  const now = new Date()
-  const diff = Math.floor((now.getTime() - date.getTime()) / 1000)
-  if (diff < 60) return 'только что'
-  if (diff < 3600) return `${Math.floor(diff / 60)} мин назад`
-  if (diff < 86400) return `${Math.floor(diff / 3600)} ч назад`
-  if (diff < 604800) return `${Math.floor(diff / 86400)} дн назад`
-  return date.toLocaleDateString('ru-RU')
-}
+const WORKFLOWS = [
+  {
+    id: 1,
+    title: 'Compare Document with Standard',
+    description: 'Upload a document and analyze it against a legal standard or regulation to identify compliance gaps.',
+    outputType: 'Output',
+    steps: 2,
+    prompt: 'Compare this document against the relevant legal standard and identify compliance gaps:',
+  },
+  {
+    id: 2,
+    title: 'Contract Review',
+    description: 'Upload a contract and extract key terms, obligations, risks, and actionable recommendations.',
+    outputType: 'Output',
+    steps: 3,
+    prompt: 'Review this contract and extract key terms, obligations, risks, and recommendations:',
+  },
+  {
+    id: 3,
+    title: 'Draft a Legal Document',
+    description: 'Describe the document you need and provide context for AI-assisted drafting.',
+    outputType: 'Draft',
+    steps: 2,
+    prompt: 'Draft a legal document based on the following description and context:',
+  },
+  {
+    id: 4,
+    title: 'Due Diligence Checklist',
+    description: 'Create a comprehensive due diligence checklist tailored to your transaction type and jurisdiction.',
+    outputType: 'Output',
+    steps: 4,
+    prompt: 'Create a comprehensive due diligence checklist for the following transaction:',
+  },
+  {
+    id: 5,
+    title: 'Legal Research Memo',
+    description: 'Research a legal question and generate a structured memorandum with citations and analysis.',
+    outputType: 'Output',
+    steps: 5,
+    prompt: 'Research the following legal question and produce a structured memorandum with citations:',
+  },
+  {
+    id: 6,
+    title: 'Document Summarization',
+    description: 'Upload multiple documents and receive concise summaries highlighting the key points.',
+    outputType: 'Output',
+    steps: 2,
+    prompt: 'Summarize the following document and highlight the key points:',
+  },
+]
+
+const SOURCES = [
+  { label: 'Web search', color: '#22C55E' },
+  { label: 'Case documents', color: '#3B82F6' },
+  { label: 'Uploaded files', color: '#F97316' },
+  { label: 'Contract templates', color: '#8B5CF6' },
+]
 
 // ─────────────────────────────────────────────────────────
-// Landing page (before chat starts)
+// Harvey-style input card
 // ─────────────────────────────────────────────────────────
-interface LandingViewProps {
-  mode: AssistMode
-  onModeChange: (m: AssistMode) => void
-  question: string
-  onQuestionChange: (v: string) => void
+interface HarveyInputProps {
+  value: string
+  onChange: (v: string) => void
   onSubmit: () => void
-  files: File[]
-  onFilesChange: (files: File[]) => void
-  history: HistoryItem[]
-  historyLoading: boolean
-  onHistorySelect: (item: HistoryItem) => void
+  fileContexts: FileContext[]
+  uploadingFiles: string[]
+  onAddFiles: (files: File[]) => void
+  onRemoveContext: (idx: number) => void
+  isStreaming: boolean
+  placeholder?: string
 }
 
-function LandingView({
-  mode,
-  onModeChange,
-  question,
-  onQuestionChange,
-  onSubmit,
-  files,
-  onFilesChange,
-  history,
-  historyLoading,
-  onHistorySelect,
-}: LandingViewProps) {
+function HarveyInput({
+  value, onChange, onSubmit,
+  fileContexts, uploadingFiles, onAddFiles, onRemoveContext,
+  isStreaming, placeholder = 'Ask anything...',
+}: HarveyInputProps) {
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
-  const [dragging, setDragging] = useState(false)
 
   useEffect(() => {
     const el = textareaRef.current
     if (!el) return
     el.style.height = 'auto'
     el.style.height = `${Math.min(el.scrollHeight, 200)}px`
-  }, [question])
+  }, [value])
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault()
-      if (question.trim()) onSubmit()
+      if (value.trim() && !isStreaming) onSubmit()
     }
   }
 
-  const handleDragOver = useCallback((e: React.DragEvent) => {
-    e.preventDefault()
-    setDragging(true)
-  }, [])
-
-  const handleDragLeave = useCallback(() => setDragging(false), [])
-
-  const handleDrop = useCallback((e: React.DragEvent) => {
-    e.preventDefault()
-    setDragging(false)
-    const newFiles = Array.from(e.dataTransfer.files)
-    onFilesChange([...files, ...newFiles])
-  }, [files, onFilesChange])
-
-  const handleFileInput = (e: React.ChangeEvent<HTMLInputElement>) => {
-    if (e.target.files) {
-      onFilesChange([...files, ...Array.from(e.target.files)])
-    }
-  }
-
-  const removeFile = (idx: number) => {
-    onFilesChange(files.filter((_, i) => i !== idx))
-  }
+  const hasFiles = fileContexts.length > 0 || uploadingFiles.length > 0
 
   return (
-    <div className="flex-1 overflow-y-auto" style={{ backgroundColor: 'var(--color-bg-primary)' }}>
-      <div className="max-w-3xl mx-auto px-6 py-12">
+    <div className="rounded-xl border border-gray-200 bg-white overflow-hidden" style={{ boxShadow: '0 1px 6px rgba(0,0,0,0.06)' }}>
+      {/* Textarea */}
+      <div className="px-4 pt-4 pb-2">
+        <textarea
+          ref={textareaRef}
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+          onKeyDown={handleKeyDown}
+          placeholder={placeholder}
+          rows={3}
+          className="w-full resize-none outline-none bg-transparent"
+          style={{
+            minHeight: '80px',
+            fontSize: '15px',
+            lineHeight: '1.6',
+            color: '#111827',
+            fontFamily: 'inherit',
+          }}
+        />
+      </div>
 
-        {/* Mode tabs */}
-        <div className="flex items-center gap-2 mb-8">
-          {(['assist', 'draft'] as AssistMode[]).map((m) => (
-            <button
-              key={m}
-              onClick={() => onModeChange(m)}
-              className="px-5 py-2 text-sm font-medium rounded-full transition-all duration-150"
-              style={{
-                backgroundColor: mode === m ? 'var(--color-text-primary)' : 'transparent',
-                color: mode === m ? 'var(--color-bg-primary)' : 'var(--color-text-secondary)',
-                border: `1px solid ${mode === m ? 'var(--color-text-primary)' : 'var(--color-border)'}`,
-              }}
+      {/* Attached files */}
+      {hasFiles && (
+        <div className="px-4 pb-2 flex flex-wrap gap-2">
+          {uploadingFiles.map((name) => (
+            <div
+              key={`uploading-${name}`}
+              className="flex items-center gap-1.5 px-3 py-1 rounded-full text-xs border border-blue-200 bg-blue-50"
+              style={{ color: '#2563EB' }}
             >
-              {m === 'assist' ? 'Ассистент' : 'Черновик'}
-            </button>
+              <Loader2 className="w-3 h-3 animate-spin" />
+              <span className="max-w-[140px] truncate">{name}</span>
+            </div>
+          ))}
+          {fileContexts.map((fc, i) => (
+            <div
+              key={`ctx-${i}`}
+              className="flex items-center gap-1.5 px-3 py-1 rounded-full text-xs border border-gray-200 bg-gray-50"
+              style={{ color: '#374151' }}
+            >
+              <FileText className="w-3 h-3" style={{ color: '#22C55E' }} />
+              <span className="max-w-[140px] truncate">{fc.filename}</span>
+              <span className="text-gray-400 ml-0.5">{Math.round(fc.charCount / 1000)}k</span>
+              <button onClick={() => onRemoveContext(i)} className="ml-0.5 hover:text-red-500 transition-colors">
+                <X className="w-3 h-3" />
+              </button>
+            </div>
           ))}
         </div>
+      )}
 
-        {/* Input card */}
-        <div
-          className="rounded-2xl border overflow-hidden mb-4"
-          style={{
-            backgroundColor: 'var(--color-bg-elevated)',
-            borderColor: 'var(--color-border)',
-            boxShadow: '0 1px 4px 0 rgba(0,0,0,0.06)',
-          }}
-        >
-          <div className="px-5 pt-5 pb-3">
-            <textarea
-              ref={textareaRef}
-              value={question}
-              onChange={(e) => onQuestionChange(e.target.value)}
-              onKeyDown={handleKeyDown}
-              placeholder={
-                mode === 'assist'
-                  ? 'Задайте вопрос по документам или базе знаний...'
-                  : 'Опишите, какой документ нужно составить...'
-              }
-              rows={3}
-              className="w-full resize-none outline-none text-base leading-relaxed bg-transparent"
-              style={{
-                color: 'var(--color-text-primary)',
-                fontFamily: 'var(--font-body)',
-                minHeight: '80px',
-              }}
-            />
-          </div>
-
-          {/* Attached files */}
-          {files.length > 0 && (
-            <div className="px-5 pb-3 flex flex-wrap gap-2">
-              {files.map((f, i) => (
-                <div
-                  key={i}
-                  className="flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-medium border"
-                  style={{
-                    backgroundColor: 'var(--color-bg-tertiary)',
-                    borderColor: 'var(--color-border)',
-                    color: 'var(--color-text-secondary)',
-                  }}
-                >
-                  <FileText className="w-3 h-3" />
-                  <span className="max-w-[140px] truncate">{f.name}</span>
-                  <button onClick={() => removeFile(i)} className="ml-0.5 hover:text-red-500 transition-colors">
-                    <X className="w-3 h-3" />
-                  </button>
-                </div>
-              ))}
-            </div>
-          )}
-
-          {/* Footer */}
-          <div
-            className="flex items-center justify-between px-5 py-3 border-t"
-            style={{ borderTopColor: 'var(--color-border)' }}
-          >
-            <button
-              onClick={() => fileInputRef.current?.click()}
-              className="flex items-center gap-2 text-sm font-medium transition-colors duration-150 hover:opacity-70"
-              style={{ color: 'var(--color-text-secondary)' }}
-            >
-              <Upload className="w-4 h-4" />
-              Прикрепить файлы
-            </button>
-            <input ref={fileInputRef} type="file" multiple className="hidden" onChange={handleFileInput} />
-
-            <button
-              onClick={onSubmit}
-              disabled={!question.trim()}
-              className="px-5 py-2 rounded-lg text-sm font-medium transition-all duration-150 disabled:opacity-40"
-              style={{
-                backgroundColor: 'var(--color-text-primary)',
-                color: 'var(--color-bg-primary)',
-              }}
-            >
-              {mode === 'assist' ? 'Спросить' : 'Составить'}
-            </button>
-          </div>
-        </div>
-
-        {/* Drag-and-drop zone */}
-        <div
-          onDragOver={handleDragOver}
-          onDragLeave={handleDragLeave}
-          onDrop={handleDrop}
+      {/* Toolbar */}
+      <div className="flex items-center px-3 py-2 border-t border-gray-100 gap-0.5">
+        <button
+          type="button"
           onClick={() => fileInputRef.current?.click()}
-          className="flex flex-col items-center justify-center gap-2 py-6 rounded-xl border-2 border-dashed cursor-pointer transition-all duration-150 mb-10"
-          style={{
-            borderColor: dragging ? 'var(--color-text-primary)' : 'var(--color-border)',
-            backgroundColor: dragging ? 'var(--color-bg-hover)' : 'transparent',
-            color: 'var(--color-text-secondary)',
-          }}
+          className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-sm transition-colors hover:bg-gray-50"
+          style={{ color: '#6B7280' }}
         >
-          <Upload className="w-5 h-5" style={{ color: 'var(--color-text-muted)' }} />
-          <p className="text-sm font-medium">Перетащите файлы или нажмите для загрузки</p>
-          <p className="text-xs" style={{ color: 'var(--color-text-muted)' }}>
-            Выберите файлы с компьютера или из дел — PDF, DOCX, TXT до 30 МБ
-          </p>
-        </div>
+          <Plus className="w-3.5 h-3.5" />
+          Files and sources
+        </button>
+        <input
+          ref={fileInputRef}
+          type="file"
+          multiple
+          accept=".pdf,.docx,.txt,.csv,.xlsx"
+          className="hidden"
+          onChange={(e) => {
+            if (e.target.files) {
+              onAddFiles(Array.from(e.target.files))
+              e.target.value = ''
+            }
+          }}
+        />
 
-        {/* History */}
-        <div>
-          <h3
-            className="text-xs font-semibold mb-4 uppercase"
-            style={{ color: 'var(--color-text-muted)', letterSpacing: '0.08em' }}
+        <button
+          type="button"
+          className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-sm transition-colors hover:bg-gray-50"
+          style={{ color: '#6B7280' }}
+        >
+          <AlignJustify className="w-3.5 h-3.5" />
+          Prompts
+        </button>
+
+        <button
+          type="button"
+          className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-sm transition-colors hover:bg-gray-50"
+          style={{ color: '#6B7280' }}
+        >
+          <SlidersHorizontal className="w-3.5 h-3.5" />
+          Customize
+        </button>
+
+        <button
+          type="button"
+          disabled
+          className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-sm opacity-40 cursor-not-allowed"
+          style={{ color: '#6B7280' }}
+        >
+          <Sparkles className="w-3.5 h-3.5" />
+          Improve
+        </button>
+
+        <div className="ml-auto">
+          <button
+            type="button"
+            onClick={onSubmit}
+            disabled={!value.trim() || isStreaming}
+            className="flex items-center justify-center px-4 py-1.5 text-sm font-medium text-white rounded-lg transition-all disabled:opacity-40"
+            style={{ backgroundColor: '#111827', minWidth: '68px' }}
           >
-            История
-          </h3>
-
-          {historyLoading ? (
-            <div className="flex items-center justify-center py-12">
+            {isStreaming ? (
               <div
-                className="w-5 h-5 border-2 rounded-full animate-spin"
-                style={{ borderColor: 'var(--color-border)', borderTopColor: 'var(--color-text-primary)' }}
+                className="w-4 h-4 border-2 rounded-full animate-spin"
+                style={{ borderColor: 'rgba(255,255,255,0.3)', borderTopColor: '#fff' }}
               />
-            </div>
-          ) : history.length === 0 ? (
-            <div className="flex flex-col items-center justify-center py-12 text-center" style={{ color: 'var(--color-text-muted)' }}>
-              <Clock className="w-8 h-8 mb-3 opacity-40" />
-              <p className="text-sm">История пуста — задайте первый вопрос</p>
-            </div>
-          ) : (
-            <div
-              className="rounded-xl border overflow-hidden"
-              style={{ backgroundColor: 'var(--color-bg-elevated)', borderColor: 'var(--color-border)' }}
-            >
-              {/* Header */}
-              <div
-                className="grid text-xs font-semibold uppercase px-5 py-3 border-b"
-                style={{
-                  gridTemplateColumns: '1fr 120px 80px 110px 20px',
-                  borderBottomColor: 'var(--color-border)',
-                  color: 'var(--color-text-muted)',
-                  letterSpacing: '0.07em',
-                }}
-              >
-                <span>Название</span>
-                <span>Дело</span>
-                <span className="text-center">Сообщ.</span>
-                <span>Дата</span>
-                <span />
-              </div>
-
-              {/* Rows */}
-              {history.map((item, idx) => (
-                <button
-                  key={idx}
-                  onClick={() => onHistorySelect(item)}
-                  className="w-full grid text-sm px-5 py-3.5 text-left transition-colors duration-100 border-b last:border-0 hover:bg-[var(--color-bg-hover)]"
-                  style={{ gridTemplateColumns: '1fr 120px 80px 110px 20px', borderBottomColor: 'var(--color-border)' }}
-                >
-                  <span className="truncate pr-4 font-medium" style={{ color: 'var(--color-text-primary)' }}>
-                    {item.last_message || 'Без названия'}
-                  </span>
-                  <span className="truncate pr-2 text-xs" style={{ color: 'var(--color-text-secondary)' }}>
-                    {item.case_name || '—'}
-                  </span>
-                  <span className="text-center text-xs" style={{ color: 'var(--color-text-secondary)' }}>
-                    {item.message_count}
-                  </span>
-                  <span className="text-xs" style={{ color: 'var(--color-text-muted)' }}>
-                    {formatRelativeTime(item.last_message_at)}
-                  </span>
-                  <ChevronRight className="w-4 h-4" style={{ color: 'var(--color-text-muted)' }} />
-                </button>
-              ))}
-            </div>
-          )}
+            ) : (
+              'Ask'
+            )}
+          </button>
         </div>
       </div>
     </div>
@@ -306,82 +258,472 @@ function LandingView({
 // ─────────────────────────────────────────────────────────
 const GlobalAssistantPage = () => {
   const navigate = useNavigate()
-  const [mode, setMode] = useState<AssistMode>('assist')
   const [question, setQuestion] = useState('')
-  const [files, setFiles] = useState<File[]>([])
-  const [chatActive, setChatActive] = useState(false)
-  const [activeQuery, setActiveQuery] = useState('')
-  const [history, setHistory] = useState<HistoryItem[]>([])
-  const [historyLoading, setHistoryLoading] = useState(true)
+  const [fileContexts, setFileContexts] = useState<FileContext[]>([])
+  const [uploadingFiles, setUploadingFiles] = useState<string[]>([])
+  const [messages, setMessages] = useState<ChatMessage[]>([])
+  const [sessionId, setSessionId] = useState<string | null>(null)
+  const [isStreaming, setIsStreaming] = useState(false)
+  const [isDraftMode, setIsDraftMode] = useState(false)
+  const [draftDocument, setDraftDocument] = useState<DraftDocument | null>(null)
+  const messagesEndRef = useRef<HTMLDivElement>(null)
+  const abortRef = useRef<AbortController | null>(null)
 
   useEffect(() => {
-    getChatSessions()
-      .then((data) => setHistory(Array.isArray(data) ? data : []))
-      .catch(() => setHistory([]))
-      .finally(() => setHistoryLoading(false))
-  }, [])
+    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
+  }, [messages])
 
-  const handleSubmit = () => {
-    if (!question.trim()) return
-    setActiveQuery(question)
-    setChatActive(true)
+  const handleAddFiles = async (newFiles: File[]) => {
+    const token = localStorage.getItem('access_token')
+    for (const file of newFiles) {
+      setUploadingFiles((prev) => [...prev, file.name])
+      try {
+        const formData = new FormData()
+        formData.append('file', file)
+        const res = await fetch(getApiUrl('/api/v2/assistant/upload-file'), {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${token}` },
+          body: formData,
+        })
+        if (!res.ok) throw new Error(`Upload failed: ${res.status}`)
+        const data: FileContext = await res.json()
+        setFileContexts((prev) => [...prev, data])
+      } catch (err) {
+        console.error('File upload error:', err)
+      } finally {
+        setUploadingFiles((prev) => prev.filter((n) => n !== file.name))
+      }
+    }
   }
 
-  const handleHistorySelect = (item: HistoryItem) => {
-    if (item.case_id) navigate(`/cases/${item.case_id}/chat`)
+  const handleRemoveContext = (idx: number) => {
+    setFileContexts((prev) => prev.filter((_, i) => i !== idx))
   }
 
-  const handleBack = () => {
-    setChatActive(false)
+  const handleSubmit = async () => {
+    const text = question.trim()
+    if (!text || isStreaming) return
+
+    const contextsToSend = [...fileContexts]
+    const currentDraft = draftDocument
     setQuestion('')
-    setActiveQuery('')
+    setFileContexts([])
+
+    const userMsg: ChatMessage = { role: 'user', content: text }
+    const allMessages = [...messages, userMsg]
+    setMessages([...allMessages, { role: 'assistant', content: '' }])
+    setIsStreaming(true)
+
+    abortRef.current?.abort()
+    abortRef.current = new AbortController()
+
+    try {
+      const token = localStorage.getItem('access_token')
+      const response = await fetch(getApiUrl('/api/v2/assistant/global-chat'), {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          messages: allMessages.map((m) => ({ role: m.role, content: m.content })),
+          session_id: sessionId,
+          file_contexts: contextsToSend.map((fc) => ({ filename: fc.filename, text: fc.text })),
+          draft_mode: isDraftMode,
+          document_context: isDraftMode && currentDraft ? currentDraft.content : undefined,
+        }),
+        signal: abortRef.current.signal,
+      })
+
+      if (!response.ok) throw new Error(`Server error: ${response.status}`)
+
+      const reader = response.body!.getReader()
+      const decoder = new TextDecoder()
+      let assistantContent = ''
+      let buffer = ''
+
+      while (true) {
+        const { done, value } = await reader.read()
+        if (done) break
+        buffer += decoder.decode(value, { stream: true })
+        const lines = buffer.split('\n')
+        buffer = lines.pop() ?? ''
+        for (const line of lines) {
+          if (!line.startsWith('data: ')) continue
+          const raw = line.slice(6).trim()
+          if (!raw) continue
+          try {
+            const data = JSON.parse(raw)
+            if (data.session_id && !sessionId) {
+              setSessionId(data.session_id)
+            } else if (data.textDelta) {
+              assistantContent += data.textDelta
+              setMessages((prev) => [
+                ...prev.slice(0, -1),
+                { role: 'assistant', content: assistantContent },
+              ])
+            }
+          } catch {}
+        }
+      }
+
+      // Extract document for draft mode
+      if (isDraftMode && assistantContent) {
+        const lines = assistantContent.trim().split('\n')
+        let title = currentDraft?.title ?? 'Документ'
+        let content = assistantContent.trim()
+        // Try to extract title from first line (bold or heading)
+        const firstLine = lines[0].trim()
+        const boldMatch = firstLine.match(/^\*\*(.+?)\*\*$/)
+        const headingMatch = firstLine.match(/^#+\s+(.+)$/)
+        if (boldMatch) {
+          title = boldMatch[1]
+          content = lines.slice(1).join('\n').trim()
+        } else if (headingMatch) {
+          title = headingMatch[1]
+          content = lines.slice(1).join('\n').trim()
+        }
+        setDraftDocument({ title, content })
+      }
+    } catch (err: any) {
+      if (err?.name !== 'AbortError') {
+        setMessages((prev) => [
+          ...prev.slice(0, -1),
+          { role: 'assistant', content: 'An error occurred. Please try again.' },
+        ])
+      }
+    } finally {
+      setIsStreaming(false)
+    }
   }
+
+  const handleDownloadDocx = async () => {
+    if (!draftDocument) return
+    try {
+      const token = localStorage.getItem('access_token')
+      const res = await fetch(getApiUrl('/api/v2/assistant/download-docx'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ title: draftDocument.title, content: draftDocument.content }),
+      })
+      if (!res.ok) throw new Error('Download failed')
+      const blob = await res.blob()
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = `${draftDocument.title}.docx`
+      document.body.appendChild(a)
+      a.click()
+      document.body.removeChild(a)
+      URL.revokeObjectURL(url)
+    } catch (err) {
+      console.error('Download error:', err)
+    }
+  }
+
+  const handleNewChat = () => {
+    abortRef.current?.abort()
+    setMessages([])
+    setQuestion('')
+    setFileContexts([])
+    setSessionId(null)
+    setIsDraftMode(false)
+    setDraftDocument(null)
+  }
+
+  const chatActive = messages.length > 0
 
   return (
-    <div className="h-screen flex overflow-hidden" style={{ backgroundColor: 'var(--color-bg-primary)' }}>
+    <div className="h-screen flex overflow-hidden bg-white">
       <UnifiedSidebar navItems={navItems} title="Legal AI" />
 
       <div className="flex-1 flex flex-col overflow-hidden">
         {chatActive ? (
+          // ── Chat view (with optional split-view document panel) ──
           <>
-            {/* Chat header */}
+            {/* Header */}
             <div
-              className="flex items-center gap-3 px-6 py-4 border-b shrink-0"
-              style={{ borderBottomColor: 'var(--color-border)' }}
+              className="flex items-center justify-between px-6 py-3 border-b shrink-0"
+              style={{ borderBottomColor: '#E5E7EB' }}
             >
+              <div className="flex items-center gap-3">
+                <span className="text-sm font-medium" style={{ color: '#6B7280' }}>
+                  Assistant
+                </span>
+                {isDraftMode && (
+                  <span
+                    className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-xs font-medium"
+                    style={{ backgroundColor: '#EEF2FF', color: '#4F46E5', border: '1px solid #C7D2FE' }}
+                  >
+                    <span className="w-1.5 h-1.5 rounded-full bg-indigo-500 inline-block" />
+                    Draft mode
+                  </span>
+                )}
+              </div>
               <button
-                onClick={handleBack}
-                className="flex items-center gap-2 text-sm font-medium transition-opacity hover:opacity-70"
-                style={{ color: 'var(--color-text-secondary)' }}
+                onClick={handleNewChat}
+                className="flex items-center gap-1.5 text-sm font-medium transition-opacity hover:opacity-70"
+                style={{ color: '#6B7280' }}
               >
-                <ArrowLeft className="w-4 h-4" />
-                Назад
+                <Plus className="w-4 h-4" />
+                New chat
               </button>
-              <span
-                className="text-sm truncate max-w-sm"
-                style={{ color: 'var(--color-text-muted)' }}
-                title={activeQuery}
-              >
-                {activeQuery}
-              </span>
             </div>
-            <div className="flex-1 overflow-hidden">
-              <AssistantUIChat initialQuery={activeQuery} />
+
+            {/* Body: chat + optional document panel */}
+            <div className="flex-1 flex overflow-hidden">
+              {/* Chat column */}
+              <div className="flex flex-col overflow-hidden" style={{ width: draftDocument ? '45%' : '100%', transition: 'width 0.2s ease' }}>
+                <div className="flex-1 overflow-y-auto">
+                  <div className="max-w-2xl mx-auto px-6 py-8 space-y-6">
+                    {messages.map((msg, idx) => (
+                      <div key={idx} className={msg.role === 'user' ? 'flex justify-end' : 'flex justify-start'}>
+                        {msg.role === 'user' ? (
+                          <div
+                            className="max-w-[75%] px-4 py-3 rounded-2xl text-sm leading-relaxed"
+                            style={{ backgroundColor: '#111827', color: '#fff' }}
+                          >
+                            {msg.content}
+                          </div>
+                        ) : (
+                          <div
+                            className="max-w-[90%] text-sm leading-relaxed whitespace-pre-wrap"
+                            style={{ color: '#111827' }}
+                          >
+                            {msg.content || (
+                              <div className="flex gap-1">
+                                {[0, 1, 2].map((i) => (
+                                  <div
+                                    key={i}
+                                    className="w-1.5 h-1.5 rounded-full animate-bounce"
+                                    style={{ backgroundColor: '#9CA3AF', animationDelay: `${i * 150}ms` }}
+                                  />
+                                ))}
+                              </div>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                    <div ref={messagesEndRef} />
+                  </div>
+                </div>
+
+                <div className="shrink-0 px-6 py-4 border-t" style={{ borderTopColor: '#E5E7EB' }}>
+                  <HarveyInput
+                    value={question}
+                    onChange={setQuestion}
+                    onSubmit={handleSubmit}
+                    fileContexts={fileContexts}
+                    uploadingFiles={uploadingFiles}
+                    onAddFiles={handleAddFiles}
+                    onRemoveContext={handleRemoveContext}
+                    isStreaming={isStreaming}
+                  />
+                </div>
+              </div>
+
+              {/* Document panel */}
+              {draftDocument && (
+                <div
+                  className="flex flex-col border-l overflow-hidden"
+                  style={{ width: '55%', borderLeftColor: '#E5E7EB', backgroundColor: '#FAFAFA' }}
+                >
+                  {/* Panel header */}
+                  <div
+                    className="flex items-center gap-3 px-5 py-3 border-b bg-white shrink-0"
+                    style={{ borderBottomColor: '#E5E7EB' }}
+                  >
+                    <input
+                      value={draftDocument.title}
+                      onChange={(e) => setDraftDocument((prev) => prev ? { ...prev, title: e.target.value } : null)}
+                      className="flex-1 text-sm font-semibold outline-none bg-transparent"
+                      style={{ color: '#111827' }}
+                    />
+                    <button
+                      onClick={handleDownloadDocx}
+                      className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-xs font-medium transition-colors hover:bg-gray-50"
+                      style={{ borderColor: '#E5E7EB', color: '#374151' }}
+                    >
+                      <Download className="w-3.5 h-3.5" />
+                      Download .docx
+                    </button>
+                    <button
+                      onClick={() => setDraftDocument(null)}
+                      className="p-1 rounded-md transition-colors hover:bg-gray-100"
+                      style={{ color: '#9CA3AF' }}
+                    >
+                      <X className="w-4 h-4" />
+                    </button>
+                  </div>
+
+                  {/* Editable content */}
+                  <div className="flex-1 overflow-y-auto p-6">
+                    <textarea
+                      value={draftDocument.content}
+                      onChange={(e) => setDraftDocument((prev) => prev ? { ...prev, content: e.target.value } : null)}
+                      className="w-full h-full resize-none outline-none text-sm leading-relaxed bg-transparent"
+                      style={{ color: '#111827', fontFamily: 'inherit', minHeight: '400px' }}
+                    />
+                  </div>
+                </div>
+              )}
             </div>
           </>
         ) : (
-          <LandingView
-            mode={mode}
-            onModeChange={setMode}
-            question={question}
-            onQuestionChange={setQuestion}
-            onSubmit={handleSubmit}
-            files={files}
-            onFilesChange={setFiles}
-            history={history}
-            historyLoading={historyLoading}
-            onHistorySelect={handleHistorySelect}
-          />
+          // ── Harvey-style landing ─────────────────────────
+          <div className="flex-1 overflow-y-auto" style={{ backgroundColor: '#FAFAFA' }}>
+            <div className="max-w-[960px] mx-auto px-6 pt-12 pb-12">
+
+              {/* Client matter selector */}
+              <div className="mb-8">
+                <button
+                  onClick={() => navigate('/cases')}
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-md border text-sm transition-colors hover:bg-white"
+                  style={{ borderColor: '#E5E7EB', color: '#6B7280', backgroundColor: 'transparent' }}
+                >
+                  <FolderOpen className="w-3.5 h-3.5" />
+                  Client matter
+                  <ChevronDown className="w-3 h-3 ml-0.5" style={{ color: '#9CA3AF' }} />
+                </button>
+              </div>
+
+              {/* Title */}
+              <h1
+                className="text-center mb-8"
+                style={{
+                  fontSize: '52px',
+                  fontFamily: 'Georgia, "Times New Roman", serif',
+                  fontWeight: 400,
+                  color: '#111827',
+                  letterSpacing: '-0.5px',
+                  lineHeight: 1.15,
+                }}
+              >
+                Legal AI
+              </h1>
+
+              {/* Input card */}
+              <div className="mb-4">
+                {isDraftMode && (
+                  <div className="flex items-center gap-2 mb-2">
+                    <span
+                      className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium"
+                      style={{ backgroundColor: '#EEF2FF', color: '#4F46E5', border: '1px solid #C7D2FE' }}
+                    >
+                      <span className="w-1.5 h-1.5 rounded-full bg-indigo-500 inline-block" />
+                      Draft mode
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => setIsDraftMode(false)}
+                      className="text-xs transition-colors hover:text-gray-700"
+                      style={{ color: '#9CA3AF' }}
+                    >
+                      ✕ Disable
+                    </button>
+                  </div>
+                )}
+                <HarveyInput
+                  value={question}
+                  onChange={setQuestion}
+                  onSubmit={handleSubmit}
+                  fileContexts={fileContexts}
+                  uploadingFiles={uploadingFiles}
+                  onAddFiles={handleAddFiles}
+                  onRemoveContext={handleRemoveContext}
+                  isStreaming={isStreaming}
+                />
+              </div>
+
+              {/* Source pills */}
+              <div className="flex flex-wrap justify-center gap-2 mb-10">
+                {SOURCES.map((source) => (
+                  <button
+                    key={source.label}
+                    type="button"
+                    className="flex items-center gap-2 px-3 py-1.5 rounded-full border text-xs transition-colors hover:bg-white"
+                    style={{ borderColor: '#E5E7EB', color: '#6B7280', backgroundColor: 'transparent' }}
+                  >
+                    <span
+                      className="w-2 h-2 rounded-full flex-shrink-0"
+                      style={{ backgroundColor: source.color }}
+                    />
+                    {source.label}
+                    <Plus className="w-3 h-3" style={{ color: '#9CA3AF' }} />
+                  </button>
+                ))}
+              </div>
+
+              {/* Recommended workflows */}
+              <div>
+                <div className="flex items-center justify-between mb-4">
+                  <h3 className="text-sm font-medium" style={{ color: '#111827' }}>
+                    Recommended workflows
+                  </h3>
+                  <div className="flex items-center gap-3">
+                    <button
+                      type="button"
+                      className="flex items-center gap-1.5 text-sm transition-colors hover:text-gray-900"
+                      style={{ color: '#6B7280' }}
+                    >
+                      <Search className="w-3.5 h-3.5" />
+                      Search
+                    </button>
+                    <button
+                      type="button"
+                      className="text-sm transition-colors hover:text-gray-900"
+                      style={{ color: '#6B7280' }}
+                    >
+                      View all
+                    </button>
+                  </div>
+                </div>
+
+                <div className="grid gap-4" style={{ gridTemplateColumns: 'repeat(3, 1fr)' }}>
+                  {WORKFLOWS.map((w) => (
+                    <button
+                      key={w.id}
+                      type="button"
+                      onClick={() => {
+                        setQuestion(w.prompt)
+                        setIsDraftMode(w.outputType === 'Draft')
+                      }}
+                      className="text-left p-4 rounded-xl border bg-white transition-all duration-150 hover:shadow-md hover:border-gray-300"
+                      style={{ borderColor: '#E5E7EB' }}
+                    >
+                      <h4 className="text-sm font-medium mb-2 leading-snug" style={{ color: '#111827' }}>
+                        {w.title}
+                      </h4>
+                      <p
+                        className="text-xs leading-relaxed mb-4"
+                        style={{
+                          color: '#6B7280',
+                          display: '-webkit-box',
+                          WebkitLineClamp: 2,
+                          WebkitBoxOrient: 'vertical' as const,
+                          overflow: 'hidden',
+                        }}
+                      >
+                        {w.description}
+                      </p>
+                      <div className="flex items-center justify-between">
+                        <span className="text-xs" style={{ color: '#9CA3AF' }}>
+                          {w.outputType} · {w.steps} steps
+                        </span>
+                        <div
+                          className="w-6 h-6 rounded flex items-center justify-center flex-shrink-0"
+                          style={{ backgroundColor: '#111827' }}
+                        >
+                          <span className="text-white font-bold" style={{ fontSize: '11px' }}>L</span>
+                        </div>
+                      </div>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </div>
+          </div>
         )}
       </div>
     </div>

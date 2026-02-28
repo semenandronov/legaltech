@@ -69,7 +69,7 @@ const PDFViewer: React.FC<PDFViewerProps> = ({
   const [pdfUrl, setPdfUrl] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
-  const [scale, setScale] = useState(1.0)
+  const [zoomFactor, setZoomFactor] = useState(1.0)
   const [searchQuery, setSearchQuery] = useState('')
   const [searchResults, setSearchResults] = useState<number[]>([])
   const [currentSearchIndex, setCurrentSearchIndex] = useState(0)
@@ -246,11 +246,11 @@ const PDFViewer: React.FC<PDFViewerProps> = ({
   }
 
   const handleZoomIn = () => {
-    setScale(prev => Math.min(3, prev + 0.2))
+    setZoomFactor(prev => Math.min(3, prev + 0.2))
   }
 
   const handleZoomOut = () => {
-    setScale(prev => Math.max(0.5, prev - 0.2))
+    setZoomFactor(prev => Math.max(0.3, prev - 0.2))
   }
 
 
@@ -446,7 +446,7 @@ const PDFViewer: React.FC<PDFViewerProps> = ({
             <ZoomOutIcon />
           </IconButton>
           <Typography variant="body2" sx={{ minWidth: 50, textAlign: 'center' }}>
-            {Math.round(scale * 100)}%
+            {Math.round(zoomFactor * 100)}%
           </Typography>
           <IconButton size="small" onClick={handleZoomIn} aria-label="Увеличить">
             <ZoomInIcon />
@@ -497,7 +497,7 @@ const PDFViewer: React.FC<PDFViewerProps> = ({
         >
           <Page
             pageNumber={pageNumber}
-            scale={scale}
+            scale={zoomFactor}
             renderTextLayer={true}
             renderAnnotationLayer={true}
           />

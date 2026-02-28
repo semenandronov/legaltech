@@ -62,12 +62,13 @@ const UnifiedSidebar = ({ navItems, title = 'Legal AI', showBackButton = true, f
             }}
           >
             {!isCollapsed && (
-              <h1 
+              <h1
                 className="text-xl font-display text-text-primary tracking-tight flex-1"
-                style={{ 
+                style={{
                   fontFamily: 'var(--font-display)',
                   color: 'var(--color-text-primary)',
-                  letterSpacing: 'var(--tracking-tight)'
+                  letterSpacing: 'var(--tracking-tight)',
+                  fontWeight: 700,
                 }}
               >
                 {title}

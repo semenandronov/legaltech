@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react'
-import { useParams, useNavigate, useSearchParams } from 'react-router-dom'
+import { useParams, useNavigate, useSearchParams, useLocation } from 'react-router-dom'
 import { AssistantUIChat, AssistantUIChatRef } from '../components/Chat/AssistantUIChat'
 import { ChatHistoryPanel } from '../components/Chat/ChatHistoryPanel'
 import { DocumentsPanel } from '../components/Chat/DocumentsPanel'
@@ -15,9 +15,12 @@ import {
 const AssistantChatPage = () => {
   const { caseId } = useParams<{ caseId: string }>()
   const navigate = useNavigate()
+  const location = useLocation()
   const [searchParams] = useSearchParams()
   const [historyPanelOpen, setHistoryPanelOpen] = useState(false)
   const [documentsPanelOpen, setDocumentsPanelOpen] = useState(false)
+  // autoQuery comes from GlobalAssistantPage navigation (location.state.autoQuery)
+  const autoQuery: string = (location.state as any)?.autoQuery || ''
   const [selectedQuery, setSelectedQuery] = useState<string>('')
   const [caseInfo, setCaseInfo] = useState<{ title?: string; documentCount?: number } | null>(null)
   const [isLoadingCaseInfo, setIsLoadingCaseInfo] = useState(true)
@@ -172,10 +175,11 @@ const AssistantChatPage = () => {
       {/* Main chat area with documents panel */}
       <div className="flex-1 overflow-hidden flex relative">
         <div className={`flex-1 transition-all duration-300 ${documentsPanelOpen ? 'mr-80' : ''}`}>
-          <AssistantUIChat 
-            caseId={caseId} 
+          <AssistantUIChat
+            caseId={caseId}
             className="h-full"
-            initialQuery={selectedQuery}
+            initialQuery={selectedQuery || autoQuery}
+            autoSubmit={!!autoQuery && !selectedQuery}
             onQuerySelected={() => setSelectedQuery('')}
             caseTitle={caseInfo?.title}
             documentCount={caseInfo?.documentCount}
