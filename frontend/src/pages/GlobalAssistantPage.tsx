@@ -317,6 +317,11 @@ const GlobalAssistantPage = () => {
     abortRef.current?.abort()
     abortRef.current = new AbortController()
 
+    // Show document panel immediately in draft mode
+    if (isDraftMode) {
+      setDraftDocument((prev) => prev ?? { title: 'Документ', content: '' })
+    }
+
     try {
       const token = localStorage.getItem('access_token')
       const response = await fetch(getApiUrl('/api/v2/assistant/global-chat'), {
@@ -362,28 +367,23 @@ const GlobalAssistantPage = () => {
                 ...prev.slice(0, -1),
                 { role: 'assistant', content: assistantContent },
               ])
+              // Update document panel live during streaming
+              if (isDraftMode) {
+                const draftLines = assistantContent.trim().split('\n')
+                const firstLine = draftLines[0].trim()
+                const boldMatch = firstLine.match(/^\*\*(.+?)\*\*$/)
+                const headingMatch = firstLine.match(/^#+\s+(.+)$/)
+                if (boldMatch) {
+                  setDraftDocument({ title: boldMatch[1], content: draftLines.slice(1).join('\n').trimStart() })
+                } else if (headingMatch) {
+                  setDraftDocument({ title: headingMatch[1], content: draftLines.slice(1).join('\n').trimStart() })
+                } else {
+                  setDraftDocument((prev) => ({ title: prev?.title ?? 'Документ', content: assistantContent.trim() }))
+                }
+              }
             }
           } catch {}
         }
-      }
-
-      // Extract document for draft mode
-      if (isDraftMode && assistantContent) {
-        const lines = assistantContent.trim().split('\n')
-        let title = currentDraft?.title ?? 'Документ'
-        let content = assistantContent.trim()
-        // Try to extract title from first line (bold or heading)
-        const firstLine = lines[0].trim()
-        const boldMatch = firstLine.match(/^\*\*(.+?)\*\*$/)
-        const headingMatch = firstLine.match(/^#+\s+(.+)$/)
-        if (boldMatch) {
-          title = boldMatch[1]
-          content = lines.slice(1).join('\n').trim()
-        } else if (headingMatch) {
-          title = headingMatch[1]
-          content = lines.slice(1).join('\n').trim()
-        }
-        setDraftDocument({ title, content })
       }
     } catch (err: any) {
       if (err?.name !== 'AbortError') {
@@ -475,7 +475,7 @@ const GlobalAssistantPage = () => {
               {/* Chat column */}
               <div className="flex flex-col overflow-hidden" style={{ width: draftDocument ? '45%' : '100%', transition: 'width 0.2s ease' }}>
                 <div className="flex-1 overflow-y-auto">
-                  <div className="max-w-2xl mx-auto px-6 py-8 space-y-6">
+                  <div style={{ maxWidth: '960px', margin: '0 auto' }} className="px-6 py-8 space-y-6">
                     {messages.map((msg, idx) => (
                       <div key={idx} className={msg.role === 'user' ? 'flex justify-end' : 'flex justify-start'}>
                         {msg.role === 'user' ? (
@@ -510,16 +510,18 @@ const GlobalAssistantPage = () => {
                 </div>
 
                 <div className="shrink-0 px-6 py-4 border-t" style={{ borderTopColor: '#E5E7EB' }}>
-                  <HarveyInput
-                    value={question}
-                    onChange={setQuestion}
-                    onSubmit={handleSubmit}
-                    fileContexts={fileContexts}
-                    uploadingFiles={uploadingFiles}
-                    onAddFiles={handleAddFiles}
-                    onRemoveContext={handleRemoveContext}
-                    isStreaming={isStreaming}
-                  />
+                  <div style={{ maxWidth: '960px', margin: '0 auto' }}>
+                    <HarveyInput
+                      value={question}
+                      onChange={setQuestion}
+                      onSubmit={handleSubmit}
+                      fileContexts={fileContexts}
+                      uploadingFiles={uploadingFiles}
+                      onAddFiles={handleAddFiles}
+                      onRemoveContext={handleRemoveContext}
+                      isStreaming={isStreaming}
+                    />
+                  </div>
                 </div>
               </div>
 
