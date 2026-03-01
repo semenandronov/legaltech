@@ -184,65 +184,69 @@ function HarveyInput({
       )}
 
       {/* Toolbar */}
-      <div className="flex items-center px-3 py-2 border-t border-gray-100 gap-0.5">
-        <button
-          type="button"
-          onClick={() => fileInputRef.current?.click()}
-          className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-sm transition-colors hover:bg-gray-50"
-          style={{ color: '#6B7280' }}
-        >
-          <Plus className="w-3.5 h-3.5" />
-          Файлы и источники
-        </button>
-        <input
-          ref={fileInputRef}
-          type="file"
-          multiple
-          accept=".pdf,.docx,.txt,.csv,.xlsx"
-          className="hidden"
-          onChange={(e) => {
-            if (e.target.files) {
-              onAddFiles(Array.from(e.target.files))
-              e.target.value = ''
-            }
-          }}
-        />
+      <div className="flex items-center px-3 py-2 border-t border-gray-100" style={{ gap: '2px' }}>
+        {/* Left tools — can overflow-hidden so they don't push the send button */}
+        <div className="flex items-center min-w-0 flex-1 overflow-hidden" style={{ gap: '2px' }}>
+          <button
+            type="button"
+            onClick={() => fileInputRef.current?.click()}
+            className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-sm transition-colors hover:bg-gray-50 flex-shrink-0 whitespace-nowrap"
+            style={{ color: '#6B7280' }}
+          >
+            <Plus className="w-3.5 h-3.5" />
+            Файлы
+          </button>
+          <input
+            ref={fileInputRef}
+            type="file"
+            multiple
+            accept=".pdf,.docx,.txt,.csv,.xlsx"
+            className="hidden"
+            onChange={(e) => {
+              if (e.target.files) {
+                onAddFiles(Array.from(e.target.files))
+                e.target.value = ''
+              }
+            }}
+          />
 
-        <button
-          type="button"
-          className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-sm transition-colors hover:bg-gray-50"
-          style={{ color: '#6B7280' }}
-        >
-          <AlignJustify className="w-3.5 h-3.5" />
-          Промпты
-        </button>
+          <button
+            type="button"
+            className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-sm transition-colors hover:bg-gray-50 flex-shrink-0 whitespace-nowrap"
+            style={{ color: '#6B7280' }}
+          >
+            <AlignJustify className="w-3.5 h-3.5" />
+            Промпты
+          </button>
 
-        <button
-          type="button"
-          className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-sm transition-colors hover:bg-gray-50"
-          style={{ color: '#6B7280' }}
-        >
-          <SlidersHorizontal className="w-3.5 h-3.5" />
-          Настройки
-        </button>
+          <button
+            type="button"
+            className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-sm transition-colors hover:bg-gray-50 flex-shrink-0 whitespace-nowrap"
+            style={{ color: '#6B7280' }}
+          >
+            <SlidersHorizontal className="w-3.5 h-3.5" />
+            Настройки
+          </button>
 
-        <button
-          type="button"
-          disabled
-          className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-sm opacity-40 cursor-not-allowed"
-          style={{ color: '#6B7280' }}
-        >
-          <Sparkles className="w-3.5 h-3.5" />
-          Улучшить
-        </button>
+          <button
+            type="button"
+            disabled
+            className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-sm opacity-40 cursor-not-allowed flex-shrink-0 whitespace-nowrap"
+            style={{ color: '#6B7280' }}
+          >
+            <Sparkles className="w-3.5 h-3.5" />
+            Улучшить
+          </button>
+        </div>
 
-        <div className="ml-auto">
+        {/* Send button — always visible */}
+        <div className="flex-shrink-0 ml-2">
           <button
             type="button"
             onClick={onSubmit}
             disabled={!value.trim() || isStreaming}
             className="flex items-center justify-center px-4 py-1.5 text-sm font-medium text-white rounded-lg transition-all disabled:opacity-40"
-            style={{ backgroundColor: '#111827', minWidth: '68px' }}
+            style={{ backgroundColor: '#111827', minWidth: '80px' }}
           >
             {isStreaming ? (
               <div

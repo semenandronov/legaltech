@@ -397,7 +397,8 @@ async def assistant_global_chat(
         db.commit()
 
         # Build LLM messages
-        llm = create_legal_llm()
+        # use_rate_limiting=False for streaming SSE — avoids semaphore wait latency
+        llm = create_legal_llm(use_rate_limiting=False)
         if draft_mode:
             system_content = (
                 "Ты — профессиональный юридический составитель документов. "
