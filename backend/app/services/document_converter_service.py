@@ -102,55 +102,106 @@ class DocumentConverterService:
     
     def _convert_pdf(self, file_content: bytes) -> str:
         """
-        Convert PDF to HTML using pypdf
-        
-        Args:
-            file_content: PDF file content as bytes
-            
-        Returns:
-            HTML string
+        Convert PDF to HTML using pypdf with improved paragraph detection.
+
+        pypdf returns text with single \\n between lines (not double \\n),
+        so splitting by \\n\\n rarely works. Instead we group lines into
+        paragraphs using sentence-boundary heuristics.
         """
         try:
             from pypdf import PdfReader
-            
-            # Read PDF
+
             pdf_reader = PdfReader(BytesIO(file_content))
-            
-            # Extract text from all pages
             html_parts = ['<div class="pdf-content">']
-            
+
             for page_num, page in enumerate(pdf_reader.pages, 1):
                 try:
                     text = page.extract_text()
-                    if text:
-                        # Split text into paragraphs (double newlines)
-                        paragraphs = [p.strip() for p in text.split('\n\n') if p.strip()]
-                        
-                        html_parts.append(f'<div class="pdf-page" data-page="{page_num}">')
-                        for para in paragraphs:
-                            # Replace single newlines with <br> within paragraphs
-                            para_html = para.replace('\n', '<br/>')
-                            html_parts.append(f'<p>{para_html}</p>')
-                        html_parts.append('</div>')
+                    if not text:
+                        continue
+
+                    html_parts.append(f'<div class="pdf-page" data-page="{page_num}">')
+
+                    raw_lines = text.split('\n')
+                    paragraphs = self._group_pdf_lines(raw_lines)
+
+                    for para in paragraphs:
+                        if para.strip():
+                            # Escape stray HTML in extracted text
+                            safe = para.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
+                            html_parts.append(f'<p>{safe}</p>')
+
+                    html_parts.append('</div>')
+
                 except Exception as e:
                     logger.warning(f"Error extracting text from page {page_num}: {e}")
-                    html_parts.append(f'<div class="pdf-page" data-page="{page_num}"><p class="error">Не удалось извлечь текст со страницы {page_num}</p></div>')
-            
+                    html_parts.append(
+                        f'<div class="pdf-page" data-page="{page_num}">'
+                        f'<p>Не удалось извлечь текст со страницы {page_num}</p></div>'
+                    )
+
             html_parts.append('</div>')
-            
             html = '\n'.join(html_parts)
-            
-            if not html or html == '<div class="pdf-content"></div>':
+
+            if html == '<div class="pdf-content">\n</div>':
                 raise ValueError("Не удалось извлечь текст из PDF файла")
-            
+
             logger.info(f"Successfully converted PDF to HTML ({len(pdf_reader.pages)} pages)")
             return html
+
         except ImportError:
             logger.error("pypdf library not installed")
             raise ValueError("Библиотека для конвертации PDF не установлена")
+        except ValueError:
+            raise
         except Exception as e:
             logger.error(f"Error converting PDF: {e}", exc_info=True)
             raise ValueError(f"Ошибка конвертации PDF: {str(e)}")
+
+    @staticmethod
+    def _group_pdf_lines(raw_lines: list) -> list:
+        """
+        Group raw PDF text lines into logical paragraphs.
+
+        pypdf extracts text line-by-line without reliable paragraph markers.
+        Heuristics used:
+          - Empty line  → paragraph break
+          - Line ending in sentence-terminal punctuation (.!?:;)
+            followed by a line that starts with an uppercase letter or digit
+            → paragraph break (next line starts a new paragraph)
+          - Otherwise   → lines are joined with a space
+        """
+        SENTENCE_END = frozenset('.!?;:»)')
+        paragraphs: list = []
+        current: list = []
+
+        def flush():
+            if current:
+                paragraphs.append(' '.join(current))
+                current.clear()
+
+        for line in raw_lines:
+            stripped = line.strip()
+
+            # Empty line is an explicit paragraph separator
+            if not stripped:
+                flush()
+                continue
+
+            if current:
+                prev = current[-1]
+                # Detect sentence boundary: previous line ends with terminal punctuation
+                # and this line starts a new "unit" (uppercase / digit)
+                prev_ends_sentence = prev and prev[-1] in SENTENCE_END
+                line_starts_new = stripped and (stripped[0].isupper() or stripped[0].isdigit())
+
+                if prev_ends_sentence and line_starts_new:
+                    flush()
+
+            current.append(stripped)
+
+        flush()
+        return paragraphs
     
     def _convert_xlsx(self, file_content: bytes, filename: str) -> str:
         """
