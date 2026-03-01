@@ -104,16 +104,21 @@ interface HarveyInputProps {
   onAddFiles: (files: File[]) => void
   onRemoveContext: (idx: number) => void
   isStreaming: boolean
+  isDraftMode: boolean
+  onSetDraftMode: (draft: boolean) => void
   placeholder?: string
 }
 
 function HarveyInput({
   value, onChange, onSubmit,
   fileContexts, uploadingFiles, onAddFiles, onRemoveContext,
-  isStreaming, placeholder = 'Спросите что угодно...',
+  isStreaming, isDraftMode, onSetDraftMode,
+  placeholder = 'Спросите что угодно...',
 }: HarveyInputProps) {
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
+  const settingsRef = useRef<HTMLDivElement>(null)
+  const [settingsOpen, setSettingsOpen] = useState(false)
 
   useEffect(() => {
     const el = textareaRef.current
@@ -121,6 +126,16 @@ function HarveyInput({
     el.style.height = 'auto'
     el.style.height = `${Math.min(el.scrollHeight, 200)}px`
   }, [value])
+
+  useEffect(() => {
+    const handleClickOutside = (e: MouseEvent) => {
+      if (settingsRef.current && !settingsRef.current.contains(e.target as Node)) {
+        setSettingsOpen(false)
+      }
+    }
+    if (settingsOpen) document.addEventListener('mousedown', handleClickOutside)
+    return () => document.removeEventListener('mousedown', handleClickOutside)
+  }, [settingsOpen])
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === 'Enter' && !e.shiftKey) {
@@ -219,14 +234,67 @@ function HarveyInput({
             Промпты
           </button>
 
-          <button
-            type="button"
-            className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-sm transition-colors hover:bg-gray-50 flex-shrink-0 whitespace-nowrap"
-            style={{ color: '#6B7280' }}
-          >
-            <SlidersHorizontal className="w-3.5 h-3.5" />
-            Настройки
-          </button>
+          {/* Settings dropdown with Ask / Draft mode selector */}
+          <div ref={settingsRef} className="relative flex-shrink-0">
+            <button
+              type="button"
+              onClick={() => setSettingsOpen((o) => !o)}
+              className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-sm transition-colors whitespace-nowrap"
+              style={{
+                color: isDraftMode ? '#4F46E5' : '#6B7280',
+                backgroundColor: settingsOpen ? '#F3F4F6' : undefined,
+              }}
+            >
+              <SlidersHorizontal className="w-3.5 h-3.5" />
+              Настройки
+              {isDraftMode && (
+                <span className="w-1.5 h-1.5 rounded-full bg-indigo-500 ml-0.5 flex-shrink-0" />
+              )}
+            </button>
+
+            {settingsOpen && (
+              <div
+                className="absolute bottom-full mb-1.5 left-0 bg-white rounded-lg border border-gray-200 overflow-hidden z-50"
+                style={{ minWidth: '130px', boxShadow: '0 4px 16px rgba(0,0,0,0.10)' }}
+              >
+                <div className="px-2.5 py-1.5 text-xs font-medium border-b border-gray-100" style={{ color: '#9CA3AF' }}>
+                  Режим
+                </div>
+                <button
+                  type="button"
+                  onClick={() => { onSetDraftMode(false); setSettingsOpen(false) }}
+                  className="w-full flex items-center gap-2 px-2.5 py-2 text-sm transition-colors"
+                  style={{
+                    color: !isDraftMode ? '#111827' : '#6B7280',
+                    backgroundColor: !isDraftMode ? '#F9FAFB' : 'transparent',
+                    fontWeight: !isDraftMode ? 500 : 400,
+                  }}
+                >
+                  <span
+                    className="w-2 h-2 rounded-full flex-shrink-0"
+                    style={{ backgroundColor: !isDraftMode ? '#111827' : '#D1D5DB' }}
+                  />
+                  Ask
+                </button>
+                <button
+                  type="button"
+                  onClick={() => { onSetDraftMode(true); setSettingsOpen(false) }}
+                  className="w-full flex items-center gap-2 px-2.5 py-2 text-sm transition-colors"
+                  style={{
+                    color: isDraftMode ? '#4F46E5' : '#6B7280',
+                    backgroundColor: isDraftMode ? '#EEF2FF' : 'transparent',
+                    fontWeight: isDraftMode ? 500 : 400,
+                  }}
+                >
+                  <span
+                    className="w-2 h-2 rounded-full flex-shrink-0"
+                    style={{ backgroundColor: isDraftMode ? '#4F46E5' : '#D1D5DB' }}
+                  />
+                  Draft
+                </button>
+              </div>
+            )}
+          </div>
 
           <button
             type="button"
@@ -530,6 +598,8 @@ const GlobalAssistantPage = () => {
                       onAddFiles={handleAddFiles}
                       onRemoveContext={handleRemoveContext}
                       isStreaming={isStreaming}
+                      isDraftMode={isDraftMode}
+                      onSetDraftMode={setIsDraftMode}
                     />
                   </div>
                 </div>
@@ -645,6 +715,8 @@ const GlobalAssistantPage = () => {
                   onAddFiles={handleAddFiles}
                   onRemoveContext={handleRemoveContext}
                   isStreaming={isStreaming}
+                  isDraftMode={isDraftMode}
+                  onSetDraftMode={setIsDraftMode}
                 />
               </div>
 
