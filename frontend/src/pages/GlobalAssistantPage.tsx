@@ -31,59 +31,65 @@ const navItems = [
 const WORKFLOWS = [
   {
     id: 1,
-    title: 'Compare Document with Standard',
-    description: 'Upload a document and analyze it against a legal standard or regulation to identify compliance gaps.',
+    title: 'Сравнение с правовым стандартом',
+    description: 'Загрузите документ и проверьте его на соответствие правовому стандарту или регламенту.',
     outputType: 'Output',
+    outputLabel: 'Результат',
     steps: 2,
-    prompt: 'Compare this document against the relevant legal standard and identify compliance gaps:',
+    prompt: 'Сравни этот документ с соответствующим правовым стандартом и выяви несоответствия:',
   },
   {
     id: 2,
-    title: 'Contract Review',
-    description: 'Upload a contract and extract key terms, obligations, risks, and actionable recommendations.',
+    title: 'Анализ договора',
+    description: 'Загрузите договор и извлеките ключевые условия, обязательства, риски и рекомендации.',
     outputType: 'Output',
+    outputLabel: 'Результат',
     steps: 3,
-    prompt: 'Review this contract and extract key terms, obligations, risks, and recommendations:',
+    prompt: 'Проанализируй этот договор и выдели ключевые условия, обязательства, риски и рекомендации:',
   },
   {
     id: 3,
-    title: 'Draft a Legal Document',
-    description: 'Describe the document you need and provide context for AI-assisted drafting.',
+    title: 'Составление юридического документа',
+    description: 'Опишите нужный документ и предоставьте контекст для составления с помощью AI.',
     outputType: 'Draft',
+    outputLabel: 'Черновик',
     steps: 2,
-    prompt: 'Draft a legal document based on the following description and context:',
+    prompt: 'Составь юридический документ на основе следующего описания и контекста:',
   },
   {
     id: 4,
-    title: 'Due Diligence Checklist',
-    description: 'Create a comprehensive due diligence checklist tailored to your transaction type and jurisdiction.',
+    title: 'Чек-лист Due Diligence',
+    description: 'Создайте комплексный чек-лист due diligence для вашего типа сделки и юрисдикции.',
     outputType: 'Output',
+    outputLabel: 'Результат',
     steps: 4,
-    prompt: 'Create a comprehensive due diligence checklist for the following transaction:',
+    prompt: 'Составь комплексный чек-лист due diligence для следующей сделки:',
   },
   {
     id: 5,
-    title: 'Legal Research Memo',
-    description: 'Research a legal question and generate a structured memorandum with citations and analysis.',
+    title: 'Правовое заключение',
+    description: 'Исследуйте правовой вопрос и получите структурированное заключение со ссылками и анализом.',
     outputType: 'Output',
+    outputLabel: 'Результат',
     steps: 5,
-    prompt: 'Research the following legal question and produce a structured memorandum with citations:',
+    prompt: 'Исследуй следующий правовой вопрос и подготовь структурированное заключение со ссылками:',
   },
   {
     id: 6,
-    title: 'Document Summarization',
-    description: 'Upload multiple documents and receive concise summaries highlighting the key points.',
+    title: 'Краткое изложение документов',
+    description: 'Загрузите несколько документов и получите краткие резюме с ключевыми выводами.',
     outputType: 'Output',
+    outputLabel: 'Результат',
     steps: 2,
-    prompt: 'Summarize the following document and highlight the key points:',
+    prompt: 'Сделай краткое изложение следующего документа и выдели ключевые моменты:',
   },
 ]
 
 const SOURCES = [
-  { label: 'Web search', color: '#22C55E' },
-  { label: 'Case documents', color: '#3B82F6' },
-  { label: 'Uploaded files', color: '#F97316' },
-  { label: 'Contract templates', color: '#8B5CF6' },
+  { label: 'Веб-поиск', color: '#22C55E' },
+  { label: 'Документы дела', color: '#3B82F6' },
+  { label: 'Загруженные файлы', color: '#F97316' },
+  { label: 'Шаблоны договоров', color: '#8B5CF6' },
 ]
 
 // ─────────────────────────────────────────────────────────
@@ -104,7 +110,7 @@ interface HarveyInputProps {
 function HarveyInput({
   value, onChange, onSubmit,
   fileContexts, uploadingFiles, onAddFiles, onRemoveContext,
-  isStreaming, placeholder = 'Ask anything...',
+  isStreaming, placeholder = 'Спросите что угодно...',
 }: HarveyInputProps) {
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
@@ -186,7 +192,7 @@ function HarveyInput({
           style={{ color: '#6B7280' }}
         >
           <Plus className="w-3.5 h-3.5" />
-          Files and sources
+          Файлы и источники
         </button>
         <input
           ref={fileInputRef}
@@ -208,7 +214,7 @@ function HarveyInput({
           style={{ color: '#6B7280' }}
         >
           <AlignJustify className="w-3.5 h-3.5" />
-          Prompts
+          Промпты
         </button>
 
         <button
@@ -217,7 +223,7 @@ function HarveyInput({
           style={{ color: '#6B7280' }}
         >
           <SlidersHorizontal className="w-3.5 h-3.5" />
-          Customize
+          Настройки
         </button>
 
         <button
@@ -227,7 +233,7 @@ function HarveyInput({
           style={{ color: '#6B7280' }}
         >
           <Sparkles className="w-3.5 h-3.5" />
-          Improve
+          Улучшить
         </button>
 
         <div className="ml-auto">
@@ -244,7 +250,7 @@ function HarveyInput({
                 style={{ borderColor: 'rgba(255,255,255,0.3)', borderTopColor: '#fff' }}
               />
             ) : (
-              'Ask'
+              'Отправить'
             )}
           </button>
         </div>
@@ -319,7 +325,7 @@ const GlobalAssistantPage = () => {
 
     // Show document panel immediately in draft mode
     if (isDraftMode) {
-      setDraftDocument((prev) => prev ?? { title: 'Документ', content: '' })
+      setDraftDocument((prev) => prev ?? { title: 'Черновик', content: '' })
     }
 
     try {
@@ -448,7 +454,7 @@ const GlobalAssistantPage = () => {
             >
               <div className="flex items-center gap-3">
                 <span className="text-sm font-medium" style={{ color: '#6B7280' }}>
-                  Assistant
+                  Ассистент
                 </span>
                 {isDraftMode && (
                   <span
@@ -456,7 +462,7 @@ const GlobalAssistantPage = () => {
                     style={{ backgroundColor: '#EEF2FF', color: '#4F46E5', border: '1px solid #C7D2FE' }}
                   >
                     <span className="w-1.5 h-1.5 rounded-full bg-indigo-500 inline-block" />
-                    Draft mode
+                    Режим черновика
                   </span>
                 )}
               </div>
@@ -466,7 +472,7 @@ const GlobalAssistantPage = () => {
                 style={{ color: '#6B7280' }}
               >
                 <Plus className="w-4 h-4" />
-                New chat
+                Новый чат
               </button>
             </div>
 
@@ -548,7 +554,7 @@ const GlobalAssistantPage = () => {
                       style={{ borderColor: '#E5E7EB', color: '#374151' }}
                     >
                       <Download className="w-3.5 h-3.5" />
-                      Download .docx
+                      Скачать .docx
                     </button>
                     <button
                       onClick={() => setDraftDocument(null)}
@@ -585,7 +591,7 @@ const GlobalAssistantPage = () => {
                   style={{ borderColor: '#E5E7EB', color: '#6B7280', backgroundColor: 'transparent' }}
                 >
                   <FolderOpen className="w-3.5 h-3.5" />
-                  Client matter
+                  Выбрать дело
                   <ChevronDown className="w-3 h-3 ml-0.5" style={{ color: '#9CA3AF' }} />
                 </button>
               </div>
@@ -614,7 +620,7 @@ const GlobalAssistantPage = () => {
                       style={{ backgroundColor: '#EEF2FF', color: '#4F46E5', border: '1px solid #C7D2FE' }}
                     >
                       <span className="w-1.5 h-1.5 rounded-full bg-indigo-500 inline-block" />
-                      Draft mode
+                      Режим черновика
                     </span>
                     <button
                       type="button"
@@ -622,7 +628,7 @@ const GlobalAssistantPage = () => {
                       className="text-xs transition-colors hover:text-gray-700"
                       style={{ color: '#9CA3AF' }}
                     >
-                      ✕ Disable
+                      ✕ Отключить
                     </button>
                   </div>
                 )}
@@ -661,7 +667,7 @@ const GlobalAssistantPage = () => {
               <div>
                 <div className="flex items-center justify-between mb-4">
                   <h3 className="text-sm font-medium" style={{ color: '#111827' }}>
-                    Recommended workflows
+                    Рекомендуемые сценарии
                   </h3>
                   <div className="flex items-center gap-3">
                     <button
@@ -670,14 +676,14 @@ const GlobalAssistantPage = () => {
                       style={{ color: '#6B7280' }}
                     >
                       <Search className="w-3.5 h-3.5" />
-                      Search
+                      Поиск
                     </button>
                     <button
                       type="button"
                       className="text-sm transition-colors hover:text-gray-900"
                       style={{ color: '#6B7280' }}
                     >
-                      View all
+                      Все сценарии
                     </button>
                   </div>
                 </div>
@@ -711,7 +717,7 @@ const GlobalAssistantPage = () => {
                       </p>
                       <div className="flex items-center justify-between">
                         <span className="text-xs" style={{ color: '#9CA3AF' }}>
-                          {w.outputType} · {w.steps} steps
+                          {w.outputLabel} · {w.steps} шагов
                         </span>
                         <div
                           className="w-6 h-6 rounded flex items-center justify-center flex-shrink-0"
