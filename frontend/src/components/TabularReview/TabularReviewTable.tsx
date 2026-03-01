@@ -400,7 +400,7 @@ export const TabularReviewTable = React.memo(({ reviewId, tableData, onTableData
       enableHiding: false,
       header: () => null,
       cell: ({ row }) => (
-        <Typography component="span" sx={{ fontSize: '0.875rem', color: '#6B7280' }}>
+        <Typography component="span" sx={{ fontSize: '0.75rem', color: '#9CA3AF', userSelect: 'none' }}>
           {row.index + 1}
         </Typography>
       ),
@@ -422,7 +422,7 @@ export const TabularReviewTable = React.memo(({ reviewId, tableData, onTableData
             sx={{ display: 'flex', alignItems: 'center', gap: 0.5, cursor: column.getCanSort() ? 'pointer' : 'default' }}
             onClick={column.getToggleSortingHandler()}
           >
-            <Typography sx={{ fontWeight: 600, fontSize: '0.875rem', color: '#1F2937' }}>
+            <Typography sx={{ fontWeight: 600, fontSize: '0.75rem', letterSpacing: '0.04em', textTransform: 'uppercase', color: 'var(--text-secondary, #6B7280)' }}>
               Name
             </Typography>
             {sortDir === 'asc' && <ArrowUpwardIcon sx={{ fontSize: 16, color: '#6B7280' }} />}
@@ -432,13 +432,14 @@ export const TabularReviewTable = React.memo(({ reviewId, tableData, onTableData
         )
       },
       cell: ({ row }) => (
-        <Stack 
-          direction="row" 
-          spacing={1} 
-          alignItems="center" 
-          sx={{ 
+        <Stack
+          direction="row"
+          spacing={0.75}
+          alignItems="center"
+          sx={{
             cursor: 'pointer',
-            '&:hover': { bgcolor: 'transparent' },
+            overflow: 'hidden',
+            '&:hover .file-name-text': { color: '#2563EB' },
           }}
           onClick={async () => {
             if (onCellClick) {
@@ -448,16 +449,19 @@ export const TabularReviewTable = React.memo(({ reviewId, tableData, onTableData
             }
           }}
         >
-          <FileTextIcon fontSize="small" sx={{ color: '#6B7280', flexShrink: 0 }} />
+          <FileTextIcon sx={{ fontSize: 15, color: '#9CA3AF', flexShrink: 0 }} />
           <Typography
+            className="file-name-text"
             variant="body2"
             sx={{
-              fontSize: '0.875rem',
+              fontSize: '0.8125rem',
               color: '#374151',
               flex: 1,
               minWidth: 0,
               overflow: 'hidden',
               textOverflow: 'ellipsis',
+              whiteSpace: 'nowrap',
+              transition: 'color 0.15s',
             }}
           >
             {row.getValue("file_name")}
@@ -560,7 +564,7 @@ export const TabularReviewTable = React.memo(({ reviewId, tableData, onTableData
               '&:hover': onColumnEdit ? { opacity: 0.8 } : {},
             }}
           >
-            <Typography sx={{ fontWeight: 600, color: '#1F2937' }}>
+            <Typography sx={{ fontWeight: 600, fontSize: '0.75rem', letterSpacing: '0.04em', textTransform: 'uppercase', color: 'var(--text-secondary, #6B7280)' }}>
               {col.column_label}
             </Typography>
           </Box>
@@ -623,7 +627,28 @@ export const TabularReviewTable = React.memo(({ reviewId, tableData, onTableData
               cellValue = (inner !== null && inner !== undefined && inner !== "") ? String(inner) : "-"
             }
           } catch (e) {
-            // Not valid JSON, keep original value
+            // JSON.parse failed — try regex fallback to extract cell_value
+            const match = cellValue.match(/"cell_value"\s*:\s*"([^"]*)"/)
+            if (match && match[1] !== undefined) {
+              cellValue = match[1] || "-"
+            } else {
+              // Cannot extract — treat as not found
+              cellValue = "-"
+            }
+          }
+        }
+
+        // Normalize empty/placeholder values to "-" (not found)
+        if (typeof cellValue === "string") {
+          const v = cellValue.trim()
+          if (
+            !v ||
+            v.toUpperCase() === "N/A" ||
+            v === "—" || v === "-" || v === "–" ||
+            /^[_\s\-.]+$/.test(v) ||       // pure underscores/dashes
+            /_{2,}/.test(v)                // contains unfilled template blanks like «___» ____20__г.
+          ) {
+            cellValue = "-"
           }
         }
 
@@ -633,19 +658,20 @@ export const TabularReviewTable = React.memo(({ reviewId, tableData, onTableData
         return (
           <Box
             sx={{
-                cursor: cellValue !== "-" ? 'pointer' : 'default',
-                py: 0.25,
-              px: 1,
-                minHeight: 20,
+              cursor: cellValue !== "-" ? 'pointer' : 'default',
+              py: 0,
+              px: 0,
+              minHeight: 20,
               display: 'flex',
               alignItems: 'center',
-              transition: (theme) => theme.transitions.create(['background-color', 'transform'], {
+              overflow: 'hidden',
+              width: '100%',
+              transition: (theme) => theme.transitions.create(['background-color'], {
                 duration: theme.transitions.duration.shorter,
               }),
-                '&:hover': cellValue !== "-" ? {
-                bgcolor: 'action.hover',
-                transform: 'translateX(2px)',
-                } : {},
+              '&:hover': cellValue !== "-" ? {
+                opacity: 0.85,
+              } : {},
               position: 'relative',
             }}
             onDoubleClick={(e) => {
@@ -751,8 +777,11 @@ export const TabularReviewTable = React.memo(({ reviewId, tableData, onTableData
                   sx={{
                     flex: 1,
                     fontStyle: cellValue === "-" ? 'italic' : 'normal',
-                  color: cellValue === "-" ? '#6B7280' : '#1F2937',
-                  whiteSpace: "normal",
+                    color: cellValue === "-" ? '#9CA3AF' : '#1F2937',
+                    whiteSpace: 'nowrap',
+                    overflow: 'hidden',
+                    textOverflow: 'ellipsis',
+                    minWidth: 0,
                   }}
                 >
                   {cellValue === "-" ? "—" : cellValue}
@@ -952,41 +981,37 @@ export const TabularReviewTable = React.memo(({ reviewId, tableData, onTableData
           },
         }}
       >
-        <Table sx={{ borderCollapse: 'separate', borderSpacing: 0 }} style={{ width: table.getTotalSize(), minWidth: 'max-content' }}>
+        <Table sx={{ borderCollapse: 'separate', borderSpacing: 0, tableLayout: 'fixed' }} style={{ width: table.getTotalSize() }}>
           <TableHead>
             {table.getHeaderGroups().map((headerGroup) => (
               <TableRow
                 key={headerGroup.id}
                 sx={{
-                  bgcolor: 'var(--bg-primary)',
                   '& th': {
                     position: 'sticky',
                     top: 0,
                     zIndex: 10,
-                    bgcolor: 'var(--bg-primary)',
-                    borderTop: '1px solid var(--border, #E5E7EB)',
-                    borderBottom: '1px solid var(--border, #E5E7EB)',
-                    borderRight: '1px solid #D1D5DB',
+                    bgcolor: 'var(--bg-secondary, #F9FAFB)',
+                    borderTop: 'none',
+                    borderBottom: '1px solid var(--border, #D1D5DB)',
+                    borderRight: '1px solid var(--border, #E5E7EB)',
                     borderLeft: 'none',
                     fontWeight: 600,
-                    fontSize: '0.875rem',
-                    color: 'var(--text-primary, #1F2937)',
-                    py: '6px',
-                    px: '12px',
+                    fontSize: '0.75rem',
+                    letterSpacing: '0.04em',
+                    textTransform: 'uppercase',
+                    color: 'var(--text-secondary, #6B7280)',
+                    py: '7px',
+                    px: '14px',
                   },
-                  '& th:first-of-type': { borderLeft: '1px solid #D1D5DB' },
-                  '& th:last-child': { borderRight: '1px solid #D1D5DB' },
                 }}
               >
                 {headerGroup.headers.map((header) => (
                   <TableCell
                     key={header.id}
                     sx={{
-                      bgcolor: header.column.id === 'add_column'
-                        ? (showAddColumnPopover ? 'var(--bg-primary)' : 'var(--bg-secondary)')
-                        : 'var(--bg-primary)',
+                      bgcolor: 'var(--bg-secondary, #F9FAFB)',
                       width: header.getSize(),
-                      // When inline form is active: zero padding so the form controls its own spacing
                       verticalAlign: 'middle',
                     }}
                     style={{
@@ -1043,17 +1068,16 @@ export const TabularReviewTable = React.memo(({ reviewId, tableData, onTableData
                         }}
                         sx={{
                           bgcolor: 'var(--bg-primary)',
-                          '&:hover': { bgcolor: 'var(--bg-secondary)' },
+                          '&:hover': { bgcolor: 'var(--bg-hover, rgba(0,0,0,0.02))' },
                           '& td': {
-                            borderBottom: '1px solid var(--border, #F0F0F0)',
-                            borderRight: '1px solid #D1D5DB',
+                            borderBottom: '1px solid var(--border, #E5E7EB)',
+                            borderRight: '1px solid var(--border, #E5E7EB)',
                             borderLeft: 'none',
-                            py: '1px',
-                            px: '12px',
+                            py: '6px',
+                            px: '14px',
                             fontSize: '0.875rem',
-                            color: '#1F2937',
+                            color: 'var(--text-primary, #1F2937)',
                           },
-                          '& td:first-of-type': { borderLeft: '1px solid #D1D5DB' },
                         }}
                       >
                     {row.getVisibleCells().map((cell) => (
@@ -1061,7 +1085,9 @@ export const TabularReviewTable = React.memo(({ reviewId, tableData, onTableData
                         key={cell.id}
                         sx={{
                           width: cell.column.getSize(),
-                          bgcolor: cell.column.getIsPinned() === 'left' ? 'var(--bg-primary)' : (cell.column.id === 'add_column' ? 'var(--bg-secondary)' : 'transparent'),
+                          maxWidth: cell.column.getSize(),
+                          overflow: 'hidden',
+                          bgcolor: cell.column.getIsPinned() === 'left' ? 'var(--bg-primary)' : 'transparent',
                         }}
                         style={{
                           position: cell.column.getIsPinned() ? 'sticky' : undefined,
@@ -1089,17 +1115,16 @@ export const TabularReviewTable = React.memo(({ reviewId, tableData, onTableData
                     key={row.id}
                     sx={{
                       bgcolor: 'var(--bg-primary)',
-                      '&:hover': { bgcolor: 'var(--bg-secondary)' },
+                      '&:hover': { bgcolor: 'var(--bg-hover, rgba(0,0,0,0.02))' },
                       '& td': {
-                        borderBottom: '1px solid var(--border, #F0F0F0)',
-                        borderRight: '1px solid #D1D5DB',
+                        borderBottom: '1px solid var(--border, #E5E7EB)',
+                        borderRight: '1px solid var(--border, #E5E7EB)',
                         borderLeft: 'none',
                         py: '6px',
-                        px: '12px',
+                        px: '14px',
                         fontSize: '0.875rem',
-                        color: '#1F2937',
+                        color: 'var(--text-primary, #1F2937)',
                       },
-                      '& td:first-of-type': { borderLeft: '1px solid #D1D5DB' },
                     }}
                   >
                     {row.getVisibleCells().map((cell) => (
@@ -1107,7 +1132,9 @@ export const TabularReviewTable = React.memo(({ reviewId, tableData, onTableData
                         key={cell.id}
                         sx={{
                           width: cell.column.getSize(),
-                          bgcolor: cell.column.getIsPinned() === 'left' ? 'var(--bg-primary)' : (cell.column.id === 'add_column' ? 'var(--bg-secondary)' : 'transparent'),
+                          maxWidth: cell.column.getSize(),
+                          overflow: 'hidden',
+                          bgcolor: cell.column.getIsPinned() === 'left' ? 'var(--bg-primary)' : 'transparent',
                         }}
                         style={{
                           position: cell.column.getIsPinned() ? 'sticky' : undefined,

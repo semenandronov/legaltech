@@ -26,15 +26,13 @@ const UnifiedSidebar = ({ navItems, title = 'Legal AI', showBackButton = true, f
     return saved === 'true'
   })
   const isCollapsed = forceCollapsed || userCollapsed
-  
+
   const isActive = (path: string) => {
     return location.pathname === path || location.pathname.startsWith(path + '/')
   }
-  
-  // Определяем, нужно ли показывать кнопку "Дела" (если мы на странице с делом)
+
   const shouldShowBackButton = showBackButton && location.pathname.includes('/cases/') && location.pathname !== '/cases'
-  
-  // Сохраняем состояние в localStorage
+
   useEffect(() => {
     localStorage.setItem(SIDEBAR_STATE_KEY, String(userCollapsed))
   }, [userCollapsed])
@@ -42,21 +40,20 @@ const UnifiedSidebar = ({ navItems, title = 'Legal AI', showBackButton = true, f
   const toggleCollapse = () => {
     setUserCollapsed((prev: boolean) => !prev)
   }
-  
+
   return (
-    <div 
+    <div
       className={`h-screen bg-bg-secondary border-r border-border flex flex-col relative overflow-hidden transition-all duration-200 ease-in-out ${
         isCollapsed ? 'w-[70px]' : 'w-[250px]'
       }`}
       style={{ backgroundColor: 'var(--color-bg-secondary)' }}
     >
-      {/* Content */}
       <div className="relative z-10 flex flex-col h-full">
         {/* Header */}
         {title && (
-          <div 
+          <div
             className="border-b border-border flex items-center justify-between"
-            style={{ 
+            style={{
               padding: 'var(--space-4)',
               borderBottomColor: 'var(--color-border)'
             }}
@@ -95,10 +92,9 @@ const UnifiedSidebar = ({ navItems, title = 'Legal AI', showBackButton = true, f
             </button>
           </div>
         )}
-        
+
         {/* Navigation */}
         <nav className="flex-1 p-4 space-y-1 overflow-y-auto overflow-x-hidden" style={{ padding: isCollapsed ? 'var(--space-2)' : 'var(--space-4)' }}>
-          {/* Back button - показать если мы на странице с делом */}
           {shouldShowBackButton && (
             <button
               onClick={() => navigate('/cases')}
@@ -113,22 +109,19 @@ const UnifiedSidebar = ({ navItems, title = 'Legal AI', showBackButton = true, f
                 backgroundColor: 'transparent',
                 color: 'var(--color-text-secondary)',
               }}
-              title={undefined}
             >
-              <FolderOpen 
+              <FolderOpen
                 className="w-5 h-5 flex-shrink-0"
-                style={{ 
-                  color: 'var(--color-text-secondary)'
-                }}
+                style={{ color: 'var(--color-text-secondary)' }}
               />
               {!isCollapsed && <span className="flex-1 text-left">Дела</span>}
             </button>
           )}
-          
+
           {navItems.map((item) => {
             const Icon = item.icon
             const active = isActive(item.path)
-            
+
             return (
               <button
                 key={item.id}
@@ -148,25 +141,19 @@ const UnifiedSidebar = ({ navItems, title = 'Legal AI', showBackButton = true, f
                   backgroundColor: active ? 'var(--color-bg-active)' : 'transparent',
                   color: active ? 'var(--color-text-primary)' : 'var(--color-text-secondary)',
                 }}
-                title={undefined}
               >
-                {/* Active indicator - subtle left border */}
                 {active && (
-                  <div 
+                  <div
                     className="absolute left-0 top-0 bottom-0 w-0.5 bg-accent rounded-r-full"
                     style={{ backgroundColor: 'var(--color-accent)' }}
                   />
                 )}
-                
-                {/* Icon */}
-                <Icon 
+                <Icon
                   className="w-5 h-5 flex-shrink-0"
-                  style={{ 
+                  style={{
                     color: active ? 'var(--color-text-primary)' : 'var(--color-text-secondary)'
                   }}
                 />
-                
-                {/* Label - скрываем в collapsed режиме */}
                 {!isCollapsed && <span className="flex-1 text-left">{item.label}</span>}
               </button>
             )
@@ -178,5 +165,3 @@ const UnifiedSidebar = ({ navItems, title = 'Legal AI', showBackButton = true, f
 }
 
 export default UnifiedSidebar
-
-

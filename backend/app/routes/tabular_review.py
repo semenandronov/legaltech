@@ -179,6 +179,35 @@ async def delete_review(
         raise HTTPException(status_code=500, detail="Failed to delete tabular review")
 
 
+class TabularReviewUpdateRequest(BaseModel):
+    name: Optional[str] = None
+    description: Optional[str] = None
+
+
+@router.patch("/{review_id}")
+async def update_review(
+    review_id: str,
+    request: TabularReviewUpdateRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """Update tabular review name or description"""
+    try:
+        service = TabularReviewService(db)
+        review = service.update_review(
+            review_id=review_id,
+            user_id=current_user.id,
+            name=request.name,
+            description=request.description,
+        )
+        return {"id": review.id, "name": review.name, "description": review.description}
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        logger.error(f"Error updating tabular review: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Failed to update tabular review")
+
+
 @router.get("/templates")
 async def get_templates(
     category: Optional[str] = Query(None),

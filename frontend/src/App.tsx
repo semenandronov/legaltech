@@ -20,6 +20,7 @@ const PlaybooksPage = lazy(() => import('./pages/PlaybooksPage'))
 const WorkflowsPage = lazy(() => import('./pages/WorkflowsPage'))
 const GlobalAssistantPage = lazy(() => import('./pages/GlobalAssistantPage'))
 const CaseOverviewPage = lazy(() => import('./pages/CaseOverviewPage'))
+const HistoryPage = lazy(() => import('./pages/HistoryPage'))
 
 // Loading fallback
 const PageLoader = () => (
@@ -64,6 +65,16 @@ function App() {
           <ProtectedRoute>
             <Suspense fallback={<PageLoader />}>
               <GlobalAssistantPage />
+            </Suspense>
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/history"
+        element={
+          <ProtectedRoute>
+            <Suspense fallback={<PageLoader />}>
+              <HistoryPage />
             </Suspense>
           </ProtectedRoute>
         }

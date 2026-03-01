@@ -1,11 +1,11 @@
 import { useState, useEffect, useRef } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate, useLocation } from 'react-router-dom'
 import UnifiedSidebar from '../components/Layout/UnifiedSidebar'
 import {
   FolderOpen, MessageSquare, FileText, X, Plus,
-  AlignJustify, SlidersHorizontal, Sparkles, Search, ChevronDown, Loader2, Download,
+  AlignJustify, SlidersHorizontal, Sparkles, Search, ChevronDown, Loader2, Download, Clock,
 } from 'lucide-react'
-import { getApiUrl } from '../services/api'
+import { getApiUrl, getGlobalAssistantSession } from '../services/api'
 
 interface ChatMessage {
   role: 'user' | 'assistant'
@@ -26,6 +26,7 @@ interface DraftDocument {
 const navItems = [
   { id: 'cases', label: 'Дела', icon: FolderOpen, path: '/cases' },
   { id: 'assistant', label: 'Ассистент', icon: MessageSquare, path: '/assistant' },
+  { id: 'history', label: 'История', icon: Clock, path: '/history' },
 ]
 
 const WORKFLOWS = [
@@ -200,8 +201,8 @@ function HarveyInput({
 
       {/* Toolbar */}
       <div className="flex items-center px-3 py-2 border-t border-gray-100" style={{ gap: '2px' }}>
-        {/* Left tools — can overflow-hidden so they don't push the send button */}
-        <div className="flex items-center min-w-0 flex-1 overflow-hidden" style={{ gap: '2px' }}>
+        {/* Left tools (overflow-hidden to prevent pushing send button) */}
+        <div className="flex items-center min-w-0 overflow-hidden" style={{ gap: '2px' }}>
           <button
             type="button"
             onClick={() => fileInputRef.current?.click()}
@@ -234,68 +235,6 @@ function HarveyInput({
             Промпты
           </button>
 
-          {/* Settings dropdown with Ask / Draft mode selector */}
-          <div ref={settingsRef} className="relative flex-shrink-0">
-            <button
-              type="button"
-              onClick={() => setSettingsOpen((o) => !o)}
-              className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-sm transition-colors whitespace-nowrap"
-              style={{
-                color: isDraftMode ? '#4F46E5' : '#6B7280',
-                backgroundColor: settingsOpen ? '#F3F4F6' : undefined,
-              }}
-            >
-              <SlidersHorizontal className="w-3.5 h-3.5" />
-              Настройки
-              {isDraftMode && (
-                <span className="w-1.5 h-1.5 rounded-full bg-indigo-500 ml-0.5 flex-shrink-0" />
-              )}
-            </button>
-
-            {settingsOpen && (
-              <div
-                className="absolute bottom-full mb-1.5 left-0 bg-white rounded-lg border border-gray-200 overflow-hidden z-50"
-                style={{ minWidth: '130px', boxShadow: '0 4px 16px rgba(0,0,0,0.10)' }}
-              >
-                <div className="px-2.5 py-1.5 text-xs font-medium border-b border-gray-100" style={{ color: '#9CA3AF' }}>
-                  Режим
-                </div>
-                <button
-                  type="button"
-                  onClick={() => { onSetDraftMode(false); setSettingsOpen(false) }}
-                  className="w-full flex items-center gap-2 px-2.5 py-2 text-sm transition-colors"
-                  style={{
-                    color: !isDraftMode ? '#111827' : '#6B7280',
-                    backgroundColor: !isDraftMode ? '#F9FAFB' : 'transparent',
-                    fontWeight: !isDraftMode ? 500 : 400,
-                  }}
-                >
-                  <span
-                    className="w-2 h-2 rounded-full flex-shrink-0"
-                    style={{ backgroundColor: !isDraftMode ? '#111827' : '#D1D5DB' }}
-                  />
-                  Ask
-                </button>
-                <button
-                  type="button"
-                  onClick={() => { onSetDraftMode(true); setSettingsOpen(false) }}
-                  className="w-full flex items-center gap-2 px-2.5 py-2 text-sm transition-colors"
-                  style={{
-                    color: isDraftMode ? '#4F46E5' : '#6B7280',
-                    backgroundColor: isDraftMode ? '#EEF2FF' : 'transparent',
-                    fontWeight: isDraftMode ? 500 : 400,
-                  }}
-                >
-                  <span
-                    className="w-2 h-2 rounded-full flex-shrink-0"
-                    style={{ backgroundColor: isDraftMode ? '#4F46E5' : '#D1D5DB' }}
-                  />
-                  Draft
-                </button>
-              </div>
-            )}
-          </div>
-
           <button
             type="button"
             disabled
@@ -307,8 +246,73 @@ function HarveyInput({
           </button>
         </div>
 
+        {/* Settings dropdown — outside overflow-hidden so the popup is not clipped */}
+        <div ref={settingsRef} className="relative flex-shrink-0">
+          <button
+            type="button"
+            onClick={() => setSettingsOpen((o) => !o)}
+            className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-sm transition-colors whitespace-nowrap"
+            style={{
+              color: isDraftMode ? '#4F46E5' : '#6B7280',
+              backgroundColor: settingsOpen ? '#F3F4F6' : undefined,
+            }}
+          >
+            <SlidersHorizontal className="w-3.5 h-3.5" />
+            Настройки
+            {isDraftMode && (
+              <span className="w-1.5 h-1.5 rounded-full bg-indigo-500 ml-0.5 flex-shrink-0" />
+            )}
+          </button>
+
+          {settingsOpen && (
+            <div
+              className="absolute bottom-full mb-1.5 left-0 bg-white rounded-lg border border-gray-200 overflow-hidden z-50"
+              style={{ minWidth: '130px', boxShadow: '0 4px 16px rgba(0,0,0,0.10)' }}
+            >
+              <div className="px-2.5 py-1.5 text-xs font-medium border-b border-gray-100" style={{ color: '#9CA3AF' }}>
+                Режим
+              </div>
+              <button
+                type="button"
+                onClick={() => { onSetDraftMode(false); setSettingsOpen(false) }}
+                className="w-full flex items-center gap-2 px-2.5 py-2 text-sm transition-colors"
+                style={{
+                  color: !isDraftMode ? '#111827' : '#6B7280',
+                  backgroundColor: !isDraftMode ? '#F9FAFB' : 'transparent',
+                  fontWeight: !isDraftMode ? 500 : 400,
+                }}
+              >
+                <span
+                  className="w-2 h-2 rounded-full flex-shrink-0"
+                  style={{ backgroundColor: !isDraftMode ? '#111827' : '#D1D5DB' }}
+                />
+                Ask
+              </button>
+              <button
+                type="button"
+                onClick={() => { onSetDraftMode(true); setSettingsOpen(false) }}
+                className="w-full flex items-center gap-2 px-2.5 py-2 text-sm transition-colors"
+                style={{
+                  color: isDraftMode ? '#4F46E5' : '#6B7280',
+                  backgroundColor: isDraftMode ? '#EEF2FF' : 'transparent',
+                  fontWeight: isDraftMode ? 500 : 400,
+                }}
+              >
+                <span
+                  className="w-2 h-2 rounded-full flex-shrink-0"
+                  style={{ backgroundColor: isDraftMode ? '#4F46E5' : '#D1D5DB' }}
+                />
+                Draft
+              </button>
+            </div>
+          )}
+        </div>
+
+        {/* Spacer */}
+        <div className="flex-1" />
+
         {/* Send button — always visible */}
-        <div className="flex-shrink-0 ml-2">
+        <div className="flex-shrink-0">
           <button
             type="button"
             onClick={onSubmit}
@@ -336,6 +340,7 @@ function HarveyInput({
 // ─────────────────────────────────────────────────────────
 const GlobalAssistantPage = () => {
   const navigate = useNavigate()
+  const location = useLocation()
   const [question, setQuestion] = useState('')
   const [fileContexts, setFileContexts] = useState<FileContext[]>([])
   const [uploadingFiles, setUploadingFiles] = useState<string[]>([])
@@ -350,6 +355,19 @@ const GlobalAssistantPage = () => {
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [messages])
+
+  // Load session from ?session= URL param
+  useEffect(() => {
+    const params = new URLSearchParams(location.search)
+    const sessionParam = params.get('session')
+    if (!sessionParam) return
+    getGlobalAssistantSession(sessionParam)
+      .then((data) => {
+        setMessages(data.messages.map((m) => ({ role: m.role as 'user' | 'assistant', content: m.content })))
+        setSessionId(sessionParam)
+      })
+      .catch(() => {})
+  }, [location.search])
 
   const handleAddFiles = async (newFiles: File[]) => {
     const token = localStorage.getItem('access_token')

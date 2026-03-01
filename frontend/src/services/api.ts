@@ -308,6 +308,20 @@ export const deleteChatSession = async (caseId: string, sessionId: string): Prom
   await apiClient.delete(getApiUrl(`/api/v2/assistant/chat/${caseId}/sessions/${sessionId}`))
 }
 
+export interface RecentActivityItem {
+  type: 'case_chat' | 'global_chat' | 'tabular_review'
+  id: string
+  title: string
+  case_id: string | null
+  case_name: string | null
+  updated_at: string | null
+}
+
+export const getRecentActivity = async (limit = 15): Promise<RecentActivityItem[]> => {
+  const response = await apiClient.get(getApiUrl(`/api/v2/recent-activity?limit=${limit}`))
+  return response.data.items || []
+}
+
 export const getGlobalAssistantSessions = async (): Promise<Array<{
   session_id: string
   title: string

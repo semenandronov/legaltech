@@ -620,3 +620,116 @@ async def get_global_session_messages(
         "title": session.title,
         "messages": [{"role": m.role, "content": m.content} for m in messages],
     }
+
+
+@router.get("/api/v2/recent-activity")
+async def get_recent_activity(
+    limit: int = 20,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """
+    Return aggregated recent activity across all entity types for the current user,
+    sorted by last-activity date (newest first).
+
+    Entity types:
+    - case_chat: in-case assistant session
+    - global_chat: global (case-free) assistant session
+    - tabular_review: tabular review project
+    """
+    from app.models.case import Case, ChatMessage, GlobalAssistantSession
+    from app.models.tabular_review import TabularReview
+    from sqlalchemy import func, desc
+
+    PREVIEW = 80
+    items = []
+
+    # ── 1. Case chat sessions ──
+    session_agg = (
+        db.query(
+            ChatMessage.case_id,
+            ChatMessage.session_id,
+            func.max(ChatMessage.created_at).label("last_at"),
+        )
+        .join(Case, Case.id == ChatMessage.case_id)
+        .filter(
+            Case.user_id == current_user.id,
+            ChatMessage.session_id.isnot(None),
+            ChatMessage.content.isnot(None),
+            ChatMessage.content != "",
+        )
+        .group_by(ChatMessage.case_id, ChatMessage.session_id)
+        .order_by(desc("last_at"))
+        .limit(limit)
+        .all()
+    )
+
+    if session_agg:
+        case_ids = list({r.case_id for r in session_agg})
+        cases_map = {
+            c.id: (c.title or "Дело")
+            for c in db.query(Case).filter(Case.id.in_(case_ids)).all()
+        }
+        for row in session_agg:
+            first_msg = (
+                db.query(ChatMessage)
+                .filter(
+                    ChatMessage.case_id == row.case_id,
+                    ChatMessage.session_id == row.session_id,
+                    ChatMessage.role == "user",
+                    ChatMessage.content.isnot(None),
+                    ChatMessage.content != "",
+                )
+                .order_by(ChatMessage.created_at.asc())
+                .first()
+            )
+            content = first_msg.content if first_msg else ""
+            title = content[:PREVIEW] + ("…" if len(content) > PREVIEW else "")
+            items.append({
+                "type": "case_chat",
+                "id": row.session_id,
+                "title": title or "Чат",
+                "case_id": row.case_id,
+                "case_name": cases_map.get(row.case_id, "Дело"),
+                "updated_at": row.last_at.isoformat() if row.last_at else None,
+            })
+
+    # ── 2. Global assistant sessions ──
+    global_sessions = (
+        db.query(GlobalAssistantSession)
+        .filter(GlobalAssistantSession.user_id == current_user.id)
+        .order_by(desc(GlobalAssistantSession.updated_at))
+        .limit(limit)
+        .all()
+    )
+    for s in global_sessions:
+        items.append({
+            "type": "global_chat",
+            "id": s.id,
+            "title": s.title or "Новый чат",
+            "case_id": None,
+            "case_name": None,
+            "updated_at": s.updated_at.isoformat() if s.updated_at else None,
+        })
+
+    # ── 3. Tabular reviews ──
+    reviews_q = (
+        db.query(TabularReview, Case.title.label("case_title"))
+        .join(Case, Case.id == TabularReview.case_id)
+        .filter(TabularReview.user_id == current_user.id)
+        .order_by(desc(TabularReview.updated_at))
+        .limit(limit)
+        .all()
+    )
+    for review, case_title in reviews_q:
+        items.append({
+            "type": "tabular_review",
+            "id": review.id,
+            "title": review.name or "Таблица",
+            "case_id": review.case_id,
+            "case_name": case_title or "Дело",
+            "updated_at": review.updated_at.isoformat() if review.updated_at else None,
+        })
+
+    items.sort(key=lambda x: x.get("updated_at") or "", reverse=True)
+    return {"items": items[:limit]}

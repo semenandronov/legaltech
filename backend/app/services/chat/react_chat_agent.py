@@ -53,6 +53,8 @@ _SEARCH_RESULTS_HEADER = re.compile(
     r'^\s*Результаты поиска:\s*$',
     re.MULTILINE
 )
+# GigaChat section headers like [# Анализ вопроса пользователя], [# Выбор инструмента], [# Ответ]
+_SECTION_HEADER_RE = re.compile(r'^\s*\[#[^\]]+\]\s*$', re.MULTILINE)
 
 
 # Задержка между «словами» при эффекте печати (секунды)
@@ -80,11 +82,29 @@ def _clean_response_text(text: str) -> str:
     cleaned = _TOOL_CALL_PATTERN.sub('', text)
     cleaned = _RESULT_PREFIX_PATTERN.sub('', cleaned)
     cleaned = _SEARCH_RESULTS_HEADER.sub('', cleaned)
+    # Remove [# Section Header] lines (GigaChat chain-of-thought markers)
+    cleaned = _SECTION_HEADER_RE.sub('', cleaned)
     # Remove "Улучшенный ответ:" prefix from reflection
     cleaned = re.sub(r'^\s*Улучшенный ответ:\s*', '', cleaned, flags=re.MULTILINE)
     # Collapse excessive blank lines
     cleaned = re.sub(r'\n{3,}', '\n\n', cleaned)
     return cleaned.strip()
+
+
+def _filter_section_headers_streaming(token: str, line_buf: str) -> tuple:
+    """
+    Buffer tokens line-by-line and filter out [# ...] section header lines during streaming.
+    Returns (text_to_emit, remaining_line_buf).
+    """
+    combined = line_buf + token
+    parts = combined.split('\n')
+    emit_parts = []
+    # All parts except the last are complete lines (they ended with \n)
+    for part in parts[:-1]:
+        if not _SECTION_HEADER_RE.match(part):
+            emit_parts.append(part + '\n')
+    # Last part is an incomplete line — buffer it
+    return ''.join(emit_parts), parts[-1]
 
 
 class ReActChatAgent:
@@ -185,7 +205,8 @@ class ReActChatAgent:
 - ВСЕГДА ставь номерные сноски [1], [2], [3] после утверждений, основанных на документах
 - НЕ используй формат [название](ссылка) — используй ТОЛЬКО [число]
 - Для списков используй маркеры
-- Для важного используй **жирный** текст"""
+- Для важного используй **жирный** текст
+- НЕ включай в ответ внутренние заголовки разделов вида [# Анализ вопроса], [# Выбор инструмента], [# Ответ] и подобные. Пиши ответ сразу без таких маркеров."""
     
     def __init__(
         self,
@@ -764,6 +785,7 @@ ID дела: {self.case_id}
                     has_tool_call_in_current_step = False
                     has_seen_tool_execution = False  # True after first on_tool_end event
                     step_tokens_streamed = False  # True if current step's tokens were streamed live
+                    stream_line_buf = ""  # Line buffer for filtering section headers in real-time
 
                     async for event in self.agent.astream_events(input_data, version="v2"):
                         kind = event.get("event", "")
@@ -779,10 +801,13 @@ ID дела: {self.case_id}
                                         # Already saw a tool call in this step, skip reasoning text
                                         pass
                                     elif has_seen_tool_execution:
-                                        # Post-tools final response: stream token in real-time!
+                                        # Post-tools final response: stream token in real-time,
+                                        # filtering out [# Section Header] lines.
                                         text_buffer += token
                                         step_tokens_streamed = True
-                                        yield SSESerializer.text_delta(token)
+                                        emit, stream_line_buf = _filter_section_headers_streaming(token, stream_line_buf)
+                                        if emit:
+                                            yield SSESerializer.text_delta(emit)
                                     else:
                                         # First LLM call: buffer to avoid GigaChat tool-echo artifacts
                                         text_buffer += token
@@ -813,6 +838,11 @@ ID дела: {self.case_id}
 
                         # LLM call ended
                         elif kind == "on_chat_model_end":
+                            # Flush any incomplete line remaining in the streaming line buffer
+                            if stream_line_buf and step_tokens_streamed:
+                                if not _SECTION_HEADER_RE.match(stream_line_buf.strip()):
+                                    yield SSESerializer.text_delta(stream_line_buf)
+                                stream_line_buf = ""
                             if text_buffer and not has_tool_call_in_current_step:
                                 if step_tokens_streamed:
                                     # Already streamed in real-time — just accumulate for post-processing

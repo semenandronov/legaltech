@@ -13,6 +13,7 @@ from app.config import config
 from app.services.tabular_review_models import TabularCellExtractionModel
 from langchain_core.documents import Document
 from langchain_core.prompts import ChatPromptTemplate
+import json
 import logging
 import asyncio
 import re
@@ -145,6 +146,31 @@ class TabularReviewService:
         logger.info(f"Deleted tabular review {review_id}")
         return True
     
+    def update_review(
+        self,
+        review_id: str,
+        user_id: str,
+        name: Optional[str] = None,
+        description: Optional[str] = None
+    ) -> TabularReview:
+        """Update review name/description"""
+        review = self.db.query(TabularReview).filter(
+            and_(TabularReview.id == review_id, TabularReview.user_id == user_id)
+        ).first()
+
+        if not review:
+            raise ValueError(f"Tabular review {review_id} not found or access denied")
+
+        if name is not None:
+            review.name = name.strip()
+        if description is not None:
+            review.description = description
+
+        self.db.commit()
+        self.db.refresh(review)
+        logger.info(f"Updated tabular review {review_id}")
+        return review
+
     def add_column(
         self,
         review_id: str,
@@ -556,6 +582,20 @@ class TabularReviewService:
         """
         normalized = {}
         
+        import re as _re
+
+        def _is_blank_placeholder(val: str) -> bool:
+            """Return True if val is a template placeholder rather than a real value.
+            E.g. '___', '__ ___20__г.', '—', '-', '....', 'N/A', blank string.
+            """
+            stripped = val.strip()
+            if not stripped or stripped.upper() in ('N/A', 'НЕТ ДАННЫХ', 'ОТСУТСТВУЕТ', 'НЕ УКАЗАНО', '-', '—', '–'):
+                return True
+            # Only underscores, dashes, dots, spaces, digits, 'г', 'г.' — typical blank date template
+            if _re.match(r'^[_\-\.\s\d«»«»гГ\.]+$', stripped) and _re.search(r'_{2,}', stripped):
+                return True
+            return False
+
         # Map cell_value (primary field)
         if 'cell_value' in result_dict and result_dict['cell_value']:
             normalized['cell_value'] = result_dict['cell_value']
@@ -575,6 +615,27 @@ class TabularReviewService:
                     break
             if 'cell_value' not in normalized:
                 normalized['cell_value'] = "N/A"
+
+        # ── Post-extraction validation ──────────────────────────────────────
+        # Normalize blank placeholders across all column types
+        raw_val = str(normalized.get('cell_value', '')).strip()
+        if _is_blank_placeholder(raw_val):
+            normalized['cell_value'] = 'N/A'
+            if not normalized.get('reasoning'):
+                normalized['reasoning'] = (
+                    'В документе найдено только пустое поле-шаблон (прочерки, подчёркивания). '
+                    'Конкретная информация не указана.'
+                )
+
+        # For date columns: value must be YYYY-MM-DD; anything else → N/A
+        if column.column_type == 'date' and normalized.get('cell_value') not in ('N/A', ''):
+            date_val = normalized['cell_value'].strip()
+            if not _re.match(r'^\d{4}-\d{2}-\d{2}$', date_val):
+                normalized['reasoning'] = (
+                    f'Значение "{date_val}" не является датой в формате YYYY-MM-DD. '
+                    + (normalized.get('reasoning') or 'Дата не найдена в документе.')
+                )
+                normalized['cell_value'] = 'N/A'
         
         # Map reasoning
         if 'reasoning' in result_dict and result_dict['reasoning']:
@@ -1184,24 +1245,21 @@ class TabularReviewService:
         doc_length = len(file.original_text or "")
         is_complex = self._is_complex_question(column.prompt)
         
-        # Simple types (date, currency, number, yes_no) - use simpler approach
-        if column.column_type in ['date', 'currency', 'number', 'yes_no']:
-            if doc_length < 10000:
-                return 'multi_query'  # Short document - use multi-query retriever
-            else:
-                return 'compression'  # Long document - use compression retriever
-        
-        # Complex types (text, verbatim) - use advanced approach
+        # Simple types (date, currency, number, yes_no, tag) - direct local chunking, no LLM retriever
+        if column.column_type in ['date', 'currency', 'number', 'yes_no', 'tag']:
+            return 'direct'
+
+        # Complex types (text, verbatim) - use advanced approach only for long/complex docs
         elif column.column_type in ['text', 'verbatim']:
-            if is_complex:
-                return 'iterative'  # Complex question - use iterative RAG
+            if is_complex and doc_length > 20000:
+                return 'iterative'
             elif doc_length > 50000:
-                return 'compression'  # Very long document - use compression
+                return 'compression'
             else:
-                return 'multi_query'  # Medium case - use multi-query
-        
-        # Default - multi-query
-        return 'multi_query'
+                return 'direct'  # Fast path for short docs
+
+        # Default - direct local chunking (no extra LLM call)
+        return 'direct'
     
     def _detect_conflicts(
         self,
@@ -1319,59 +1377,70 @@ class TabularReviewService:
             # Retrieve relevant chunks based on strategy
             relevant_chunks = []
             
-            try:
-                if strategy == 'iterative':
-                    # Use IterativeRAGService for complex questions
-                    rag_service = RAGService()
-                    iterative_rag = IterativeRAGService(rag_service)
-                    relevant_chunks = iterative_rag.retrieve_iteratively(
-                        case_id=file.case_id,
-                        query=query,
-                        max_iterations=3,
-                        initial_k=5
-                    )
-                elif strategy == 'compression':
-                    # Use compression retriever for long documents
-                    relevant_chunks = retriever_service.retrieve_with_compression(
-                        case_id=file.case_id,
-                        query=query,
-                        k=5
-                    )
-                else:
-                    # Default: multi-query retriever
-                    relevant_chunks = retriever_service.retrieve_with_multi_query(
-                        case_id=file.case_id,
-                        query=query,
-                        k=5
-                    )
-            except Exception as e:
-                logger.warning(f"Error retrieving chunks with strategy '{strategy}': {e}, falling back to document chunking")
-                relevant_chunks = []
-            
-            # Filter chunks for this specific file
-            file_chunks = [
-                chunk for chunk in relevant_chunks
-                if (chunk.metadata.get('file_id') == file.id or
-                    chunk.metadata.get('source_file') == file.filename or
-                    chunk.metadata.get('source_file', '').endswith(file.filename))
-            ]
-            
-            # If no chunks found through retriever, use document chunking as fallback
-            if not file_chunks:
-                logger.debug(f"No chunks found via retriever for file {file.id}, using document chunking")
-                splitter = LegalTextSplitter(chunk_size=1200, chunk_overlap=300)
-                all_chunks = splitter.split_text(document_text)
+            if strategy == 'direct':
+                # Fast path: split document locally, no LLM retriever overhead
+                splitter = LegalTextSplitter(chunk_size=1200, chunk_overlap=200)
+                raw_chunks = splitter.split_text(document_text)
+                # Pick most relevant chunks by keyword overlap
+                query_words = set(query.lower().split())
+                def relevance(chunk_text: str) -> int:
+                    words = set(chunk_text.lower().split())
+                    return len(query_words & words)
+                ranked = sorted(enumerate(raw_chunks), key=lambda t: relevance(t[1]), reverse=True)
                 file_chunks = [
                     Document(
-                        page_content=chunk,
-                        metadata={
-                            "chunk_index": i,
-                            "file_id": file.id,
-                            "source_file": file.filename
-                        }
+                        page_content=raw_chunks[i],
+                        metadata={"chunk_index": i, "file_id": file.id, "source_file": file.filename}
                     )
-                    for i, chunk in enumerate(all_chunks)
+                    for i, _ in ranked[:3]
                 ]
+            else:
+                try:
+                    if strategy == 'iterative':
+                        rag_service = RAGService()
+                        iterative_rag = IterativeRAGService(rag_service)
+                        relevant_chunks = iterative_rag.retrieve_iteratively(
+                            case_id=file.case_id,
+                            query=query,
+                            max_iterations=3,
+                            initial_k=5
+                        )
+                    elif strategy == 'compression':
+                        relevant_chunks = retriever_service.retrieve_with_compression(
+                            case_id=file.case_id,
+                            query=query,
+                            k=5
+                        )
+                    else:
+                        relevant_chunks = retriever_service.retrieve_with_multi_query(
+                            case_id=file.case_id,
+                            query=query,
+                            k=5
+                        )
+                except Exception as e:
+                    logger.warning(f"Error retrieving chunks with strategy '{strategy}': {e}, falling back to document chunking")
+                    relevant_chunks = []
+
+                # Filter chunks for this specific file
+                file_chunks = [
+                    chunk for chunk in relevant_chunks
+                    if (chunk.metadata.get('file_id') == file.id or
+                        chunk.metadata.get('source_file') == file.filename or
+                        chunk.metadata.get('source_file', '').endswith(file.filename))
+                ]
+
+                # If no chunks found through retriever, use document chunking as fallback
+                if not file_chunks:
+                    logger.debug(f"No chunks found via retriever for file {file.id}, using document chunking")
+                    splitter = LegalTextSplitter(chunk_size=1200, chunk_overlap=200)
+                    all_chunks = splitter.split_text(document_text)
+                    file_chunks = [
+                        Document(
+                            page_content=chunk,
+                            metadata={"chunk_index": i, "file_id": file.id, "source_file": file.filename}
+                        )
+                        for i, chunk in enumerate(all_chunks)
+                    ]
             
             if not file_chunks:
                 return {
@@ -1386,8 +1455,11 @@ class TabularReviewService:
             best_result = None
             best_confidence = 0.0
             
-            # Process top 3 chunks
-            for chunk in file_chunks[:3]:
+            # Simple types need only 1 chunk; complex types up to 3
+            simple_types = {'date', 'currency', 'number', 'yes_no', 'tag'}
+            max_chunks = 1 if column.column_type in simple_types else 3
+            # Process top chunks
+            for chunk in file_chunks[:max_chunks]:
                 try:
                     # Build type descriptions
                     column_type_descriptions = {
@@ -2412,26 +2484,50 @@ class TabularReviewService:
         logger.info(f"Bulk deleted {len(file_ids)} rows from review {review_id} (removed {deleted_cells} cells, {deleted_statuses} statuses)")
         return len(file_ids)
     
+    @staticmethod
+    def _clean_export_value(raw: str | None) -> str:
+        """Parse cell_value that may be a raw JSON string from the LLM."""
+        if not raw:
+            return ""
+        v = raw.strip()
+        # Try JSON parse first
+        if v.startswith("{"):
+            try:
+                parsed = json.loads(v)
+                v = parsed.get("cell_value", "") or ""
+            except Exception:
+                m = re.search(r'"cell_value"\s*:\s*"([^"]*)"', v)
+                v = m.group(1) if m else ""
+        # Normalize blanks
+        stripped = v.strip()
+        if not stripped or stripped.upper() in ("N/A", "НЕТ ДАННЫХ", "ОТСУТСТВУЕТ", "НЕ УКАЗАНО", "-", "—", "–"):
+            return ""
+        if re.match(r'^[_\-\.\s]+$', stripped):
+            return ""
+        if re.search(r'_{2,}', stripped):   # unfilled template blanks like «___» ____20__г.
+            return ""
+        return stripped
+
     def export_to_csv(self, review_id: str, user_id: str) -> str:
         """Export tabular review to CSV format"""
         import csv
         import io
-        
+
         data = self.get_table_data(review_id, user_id)
-        
+
         output = io.StringIO()
         writer = csv.writer(output)
-        
+
         # Write header
         header = ["Document"] + [col["column_label"] for col in data["columns"]]
         writer.writerow(header)
-        
+
         # Write rows
         for row in data["rows"]:
             csv_row = [row["file_name"]]
             for col in data["columns"]:
                 cell = row["cells"].get(col["id"], {})
-                csv_row.append(cell.get("cell_value") or "")
+                csv_row.append(self._clean_export_value(cell.get("cell_value")))
             writer.writerow(csv_row)
         
         return output.getvalue()
@@ -2462,7 +2558,7 @@ class TabularReviewService:
                 ws.cell(row=row_num, column=1, value=row["file_name"])
                 for col_num, col in enumerate(data["columns"], start=2):
                     cell = row["cells"].get(col["id"], {})
-                    ws.cell(row=row_num, column=col_num, value=cell.get("cell_value") or "")
+                    ws.cell(row=row_num, column=col_num, value=self._clean_export_value(cell.get("cell_value")))
             
             # Auto-adjust column widths
             for column in ws.columns:

@@ -18,7 +18,7 @@ import { getCase } from "../services/api"
 import { Card } from "../components/UI/Card"
 import Spinner from "../components/UI/Spinner"
 import { toast } from "sonner"
-import { ArrowLeft, Edit2, X, Trash2 } from "lucide-react"
+import { ArrowLeft, Edit2, X, Trash2, Check } from "lucide-react"
 import {
   Dialog,
   DialogContent,
@@ -778,18 +778,35 @@ const TabularReviewPage: React.FC = () => {
             <div>
               <div className="flex items-center gap-2">
                 {isEditingName ? (
-                  <input
-                    autoFocus
-                    value={editNameValue}
-                    onChange={(e) => setEditNameValue(e.target.value)}
-                    onBlur={handleSaveRename}
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter') { e.preventDefault(); handleSaveRename() }
-                      if (e.key === 'Escape') setIsEditingName(false)
-                    }}
-                    className="text-2xl font-semibold tracking-tight bg-transparent border-b-2 outline-none"
-                    style={{ color: 'var(--color-text-primary)', borderColor: 'var(--color-accent)', minWidth: 200 }}
-                  />
+                  <>
+                    <input
+                      autoFocus
+                      value={editNameValue}
+                      onChange={(e) => setEditNameValue(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') { e.preventDefault(); handleSaveRename() }
+                        if (e.key === 'Escape') setIsEditingName(false)
+                      }}
+                      className="text-2xl font-semibold tracking-tight bg-transparent border-b-2 outline-none"
+                      style={{ color: 'var(--color-text-primary)', borderColor: 'var(--color-accent)', minWidth: 200 }}
+                    />
+                    <button
+                      onMouseDown={(e) => { e.preventDefault(); handleSaveRename() }}
+                      className="p-1.5 rounded-md transition-colors"
+                      style={{ color: 'white', backgroundColor: 'var(--color-accent)' }}
+                      title="Сохранить (Enter)"
+                    >
+                      <Check className="w-4 h-4" />
+                    </button>
+                    <button
+                      onMouseDown={(e) => { e.preventDefault(); setIsEditingName(false) }}
+                      className="p-1.5 rounded-md transition-colors hover:bg-[var(--color-bg-hover)]"
+                      style={{ color: 'var(--color-text-muted)' }}
+                      title="Отмена (Esc)"
+                    >
+                      <X className="w-4 h-4" />
+                    </button>
+                  </>
                 ) : (
                   <>
                     <h1 className="text-2xl font-semibold tracking-tight" style={{ color: 'var(--color-text-primary)' }}>
@@ -844,10 +861,29 @@ const TabularReviewPage: React.FC = () => {
                   showAddColumnPopover={showTableAddColumn}
                   onCloseAddColumnPopover={() => setShowTableAddColumn(false)}
                   onSaveNewColumn={handleAddColumn}
-                  onInlinePromptSubmit={(prompt) => {
+                  onInlinePromptSubmit={async (prompt) => {
                     setShowTableAddColumn(false)
-                    setBulkBuilderInitialPrompt(prompt)
-                    setShowColumnBuilder(true)
+                    if (!reviewId) return
+                    const label = prompt.trim().slice(0, 60) || 'Новая колонка'
+                    try {
+                      const newCol = await tabularReviewApi.addColumn(reviewId, label, 'ai_extraction', prompt)
+                      toast.success('Колонка добавлена')
+                      await loadReviewData()
+                      setProcessing(true)
+                      setRunningColumnIds((prev) => new Set([...prev, newCol.id]))
+                      try {
+                        const result = await tabularReviewApi.runColumnExtraction(reviewId, newCol.id)
+                        toast.success(`Извлечено: ${result.saved_count} ячеек`)
+                        await loadReviewData()
+                      } catch (err: any) {
+                        toast.error('Ошибка извлечения: ' + (err.message || ''))
+                      } finally {
+                        setRunningColumnIds((prev) => { const s = new Set(prev); s.delete(newCol.id); return s })
+                        setProcessing(false)
+                      }
+                    } catch (err: any) {
+                      toast.error('Не удалось добавить колонку: ' + (err.message || ''))
+                    }
                   }}
                   onTableDataUpdate={(updater) => {
                     if (tableData) {

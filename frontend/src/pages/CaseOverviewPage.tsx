@@ -131,6 +131,7 @@ const CaseOverviewPage = () => {
   const [moveFileIds, setMoveFileIds] = useState<string[]>([])
   const [moveDestFolderId, setMoveDestFolderId] = useState<string | null | undefined>(undefined)
   const [activeMenu, setActiveMenu] = useState<string | null>(null)
+  const [menuAnchor, setMenuAnchor] = useState<{ top?: number; bottom?: number; right: number } | null>(null)
   const menuRef = useRef<HTMLDivElement>(null)
 
   // Document viewer
@@ -162,6 +163,18 @@ const CaseOverviewPage = () => {
     document.addEventListener('mousedown', handler)
     return () => document.removeEventListener('mousedown', handler)
   }, [])
+
+  const openMenu = (id: string, e: React.MouseEvent) => {
+    if (activeMenu === id) { setActiveMenu(null); return }
+    const rect = (e.currentTarget as HTMLElement).getBoundingClientRect()
+    const right = window.innerWidth - rect.right
+    if (window.innerHeight - rect.bottom > 200) {
+      setMenuAnchor({ top: rect.bottom + 4, right })
+    } else {
+      setMenuAnchor({ bottom: window.innerHeight - rect.top + 4, right })
+    }
+    setActiveMenu(id)
+  }
 
   const loadAll = async () => {
     if (!caseId) return
@@ -536,7 +549,7 @@ const CaseOverviewPage = () => {
                       <button
                         key={item.kind === 'chat' ? `chat-${item.session_id}` : `review-${item.id}`}
                         onClick={() => {
-                          if (item.kind === 'chat') navigate(`/cases/${caseId}/chat`)
+                          if (item.kind === 'chat') navigate(`/cases/${caseId}/chat?session=${item.session_id}`)
                           else navigate(`/cases/${caseId}/tabular-review/${item.id}`)
                         }}
                         className="w-full flex items-center justify-between px-4 py-3 text-left hover:bg-[var(--color-bg-hover)] transition-colors"
@@ -554,17 +567,16 @@ const CaseOverviewPage = () => {
                             {item.kind === 'chat' ? (item.first_message || 'Сессия') : item.name}
                           </span>
                         </div>
-                        <div className="flex items-center gap-4 flex-shrink-0 ml-4">
-                          {item.kind === 'chat' && (
-                            <span className="text-xs" style={{ color: 'var(--color-text-muted)' }}>
-                              {item.message_count} сообщ.
-                            </span>
-                          )}
-                          {item.kind === 'review' && (
-                            <span className="text-xs" style={{ color: 'var(--color-text-muted)' }}>
-                              Таблица
-                            </span>
-                          )}
+                        <div className="flex items-center gap-3 flex-shrink-0 ml-4">
+                          <span
+                            className="text-xs px-1.5 py-0.5 rounded"
+                            style={{
+                              color: item.kind === 'chat' ? 'var(--color-accent)' : 'rgba(16,185,129,0.9)',
+                              backgroundColor: item.kind === 'chat' ? 'var(--color-accent-subtle, rgba(99,102,241,0.08))' : 'rgba(16,185,129,0.08)',
+                            }}
+                          >
+                            {item.kind === 'chat' ? 'Ассистент' : 'Таблица'}
+                          </span>
                           <span className="text-xs" style={{ color: 'var(--color-text-muted)' }}>
                             {item.kind === 'chat' ? formatDate(item.last_message_at) : formatDate(item.date ? new Date(item.date).toISOString() : undefined)}
                           </span>
@@ -813,7 +825,7 @@ const CaseOverviewPage = () => {
                           <span className="text-xs" style={{ color: 'var(--color-text-muted)' }}>—</span>
                           <div className="relative flex justify-center" onClick={e => e.stopPropagation()}>
                             <button
-                              onClick={() => setActiveMenu(menuOpen ? null : rowId)}
+                              onClick={(e) => openMenu(rowId, e)}
                               className="p-1 rounded transition-colors hover:bg-[var(--color-bg-hover)]"
                               style={{ color: 'var(--color-text-muted)' }}
                             >
@@ -822,10 +834,15 @@ const CaseOverviewPage = () => {
                             {menuOpen && (
                               <div
                                 ref={menuRef}
-                                className="absolute right-6 top-0 z-50 rounded-xl shadow-lg py-1 w-44"
+                                className="rounded-xl shadow-lg py-1 w-44"
                                 style={{
+                                  position: 'fixed',
+                                  top: menuAnchor?.top,
+                                  bottom: menuAnchor?.bottom,
+                                  right: menuAnchor?.right ?? 0,
                                   backgroundColor: 'var(--color-bg-elevated)',
                                   border: '1px solid var(--color-border)',
+                                  zIndex: 9999,
                                 }}
                               >
                                 <button
@@ -900,7 +917,7 @@ const CaseOverviewPage = () => {
                                   <span className="text-xs" style={{ color: 'var(--color-text-muted)' }}>{formatSize(file.size)}</span>
                                   <div className="relative flex justify-center" onClick={e => e.stopPropagation()}>
                                     <button
-                                      onClick={() => setActiveMenu(fileMenuOpen ? null : file.id)}
+                                      onClick={(e) => openMenu(file.id, e)}
                                       className="p-1 rounded transition-colors hover:bg-[var(--color-bg-hover)]"
                                       style={{ color: 'var(--color-text-muted)' }}
                                     >
@@ -909,8 +926,16 @@ const CaseOverviewPage = () => {
                                     {fileMenuOpen && (
                                       <div
                                         ref={menuRef}
-                                        className="absolute right-6 top-0 z-50 rounded-xl shadow-lg py-1 w-48"
-                                        style={{ backgroundColor: 'var(--color-bg-elevated)', border: '1px solid var(--color-border)' }}
+                                        className="rounded-xl shadow-lg py-1 w-48"
+                                        style={{
+                                          position: 'fixed',
+                                          top: menuAnchor?.top,
+                                          bottom: menuAnchor?.bottom,
+                                          right: menuAnchor?.right ?? 0,
+                                          backgroundColor: 'var(--color-bg-elevated)',
+                                          border: '1px solid var(--color-border)',
+                                          zIndex: 9999,
+                                        }}
                                       >
                                         <button
                                           onClick={() => { setViewerDoc({ id: file.id, filename: file.filename, file_type: file.file_type || '', created_at: file.created_at || '', classification: file.classification }); setActiveMenu(null) }}
@@ -999,7 +1024,7 @@ const CaseOverviewPage = () => {
                         </span>
                         <div className="relative flex justify-center" onClick={e => e.stopPropagation()}>
                           <button
-                            onClick={() => setActiveMenu(menuOpen ? null : file.id)}
+                            onClick={(e) => openMenu(file.id, e)}
                             className="p-1 rounded transition-colors hover:bg-[var(--color-bg-hover)]"
                             style={{ color: 'var(--color-text-muted)' }}
                           >
@@ -1008,10 +1033,15 @@ const CaseOverviewPage = () => {
                           {menuOpen && (
                             <div
                               ref={menuRef}
-                              className="absolute right-6 top-0 z-50 rounded-xl shadow-lg py-1 w-48"
+                              className="rounded-xl shadow-lg py-1 w-48"
                               style={{
+                                position: 'fixed',
+                                top: menuAnchor?.top,
+                                bottom: menuAnchor?.bottom,
+                                right: menuAnchor?.right ?? 0,
                                 backgroundColor: 'var(--color-bg-elevated)',
                                 border: '1px solid var(--color-border)',
+                                zIndex: 9999,
                               }}
                             >
                               <button
