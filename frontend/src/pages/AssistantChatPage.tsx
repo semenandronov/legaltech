@@ -953,7 +953,7 @@ const AssistantChatPage = () => {
         isOpen={historyPanelOpen}
         onClose={() => setHistoryPanelOpen(false)}
         currentCaseId={caseId}
-        onSelectQuery={(query, sId) => {
+        onSelectQuery={(query, _sId) => {
           setQuestion(query)
           setHistoryPanelOpen(false)
         }}
