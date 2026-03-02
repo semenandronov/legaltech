@@ -1126,7 +1126,7 @@ export const TabularReviewTable = React.memo(({ reviewId, tableData, onTableData
                             cell.getContext()
                           )}
 
-                          {isOverlayHost && (
+                          {isOverlayHost && onSaveNewColumn && onCloseAddColumnPopover && (
                             <Box
                               sx={{
                                 position: 'absolute',
@@ -1154,13 +1154,14 @@ export const TabularReviewTable = React.memo(({ reviewId, tableData, onTableData
                                 }}
                                 onClick={(e) => e.stopPropagation()}
                               >
-                                <InlineColumnForm
-                                  onContinue={(prompt) => {
-                                    handleInlineContinue(prompt)
+                                <ColumnBuilder
+                                  isOpen={showAddColumnPopover}
+                                  onClose={handleInlineCancel}
+                                  onSave={async (column) => {
+                                    await onSaveNewColumn(column)
+                                    onCloseAddColumnPopover()
                                   }}
-                                  onCancel={() => {
-                                    handleInlineCancel()
-                                  }}
+                                  mode="inline"
                                 />
                               </Box>
                             </Box>
