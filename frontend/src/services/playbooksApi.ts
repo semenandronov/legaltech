@@ -257,6 +257,7 @@ export interface CheckDocumentResponse {
   check_id: string
   playbook_id: string
   document_id: string
+  playbook_name?: string
   overall_status: string
   compliance_score: number
   red_line_violations: number
