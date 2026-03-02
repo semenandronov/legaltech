@@ -136,6 +136,11 @@ import { useKeyboardNavigation } from "@/hooks/useKeyboardNavigation"
 import { ColumnBuilder } from "./ColumnBuilder"
 import { FilterPopover } from "./FilterPopover"
 
+// Approximate row height used for virtualization and overlay sizing
+const ROW_HEIGHT_ESTIMATE = 50
+const ADD_COLUMN_OVERLAY_ROWS = 7
+const ADD_COLUMN_OVERLAY_WIDTH = 380
+
 interface TabularReviewTableProps {
   reviewId: string
   tableData: {
@@ -181,7 +186,6 @@ interface TabularReviewTableProps {
 
 export const TabularReviewTable = React.memo(({ reviewId, tableData, onTableDataUpdate: _onTableDataUpdate, onCellClick, onCellEdit, onRemoveDocument, onRunColumn, onColumnEdit, onColumnDelete, onAddColumnClick, showAddColumnPopover, onCloseAddColumnPopover, onSaveNewColumn, onInlinePromptSubmit, filterPopoverOpen, filterAnchorEl, onCloseFilterPopover, runningColumnIds }: TabularReviewTableProps) => {
   const addColumnButtonRef = React.useRef<HTMLElement | null>(null)
-  const [addColAnchorPos, setAddColAnchorPos] = React.useState<{ top: number; left: number } | null>(null)
   const [sorting, setSorting] = React.useState<SortingState>([])
   const [columnFilters, setColumnFilters] = React.useState<ColumnFiltersState>([])
   const [columnVisibility, setColumnVisibility] = React.useState<VisibilityState>({})
@@ -812,9 +816,9 @@ export const TabularReviewTable = React.memo(({ reviewId, tableData, onTableData
     // "+ Add column" column (last, header only)
     const addColumnColumn: ColumnDef<any> = {
       id: "add_column",
-      size: 140,
-      minSize: 120,
-      maxSize: 160,
+      size: showAddColumnPopover ? ADD_COLUMN_OVERLAY_WIDTH : 140,
+      minSize: showAddColumnPopover ? ADD_COLUMN_OVERLAY_WIDTH : 120,
+      maxSize: showAddColumnPopover ? ADD_COLUMN_OVERLAY_WIDTH : 160,
       enableResizing: false,
       enableSorting: false,
       enableHiding: false,
@@ -825,8 +829,11 @@ export const TabularReviewTable = React.memo(({ reviewId, tableData, onTableData
           ref={(el) => { addColumnButtonRef.current = el as HTMLElement | null }}
           onClick={(e) => {
             e.stopPropagation()
-            const rect = (e.currentTarget as HTMLElement).getBoundingClientRect()
-            setAddColAnchorPos({ top: rect.bottom, left: rect.left })
+            // Расширяем колонку под ширину модального окна и открываем форму
+            setColumnSizing((prev) => ({
+              ...prev,
+              add_column: ADD_COLUMN_OVERLAY_WIDTH,
+            }))
             onAddColumnClick?.()
           }}
           sx={{
@@ -851,7 +858,7 @@ export const TabularReviewTable = React.memo(({ reviewId, tableData, onTableData
 
     const baseColumns = [rowIndexColumn, fileColumn, ...dynamicColumns]
     return onAddColumnClick ? [...baseColumns, addColumnColumn] : baseColumns
-  }, [tableData.columns, reviewId, onCellClick, onRemoveDocument, onColumnEdit, onColumnDelete, onAddColumnClick, onRunColumn, runningColumnIds, handleInlineContinue, handleInlineCancel])
+  }, [tableData.columns, reviewId, onCellClick, onRemoveDocument, onColumnEdit, onColumnDelete, onAddColumnClick, onRunColumn, runningColumnIds, handleInlineContinue, handleInlineCancel, showAddColumnPopover])
 
   const table = useReactTable({
     data: tableRows,
@@ -1230,20 +1237,42 @@ export const TabularReviewTable = React.memo(({ reviewId, tableData, onTableData
         columns={tableData.columns}
       />
 
-      {/* Add column popover — floating form, Harvey-style */}
-      <Popover
-        open={Boolean(addColAnchorPos) && Boolean(showAddColumnPopover)}
-        anchorReference="anchorPosition"
-        anchorPosition={addColAnchorPos ?? undefined}
-        transformOrigin={{ vertical: 'top', horizontal: 'left' }}
-        onClose={() => { setAddColAnchorPos(null); onCloseAddColumnPopover?.() }}
-        slotProps={{ paper: { sx: { width: 380, borderRadius: '10px', boxShadow: '0 8px 32px rgba(0,0,0,0.15)', p: 2.5 } } }}
-      >
-        <InlineColumnForm
-          onContinue={(prompt) => { setAddColAnchorPos(null); handleInlineContinue(prompt) }}
-          onCancel={() => { setAddColAnchorPos(null); handleInlineCancel() }}
-        />
-      </Popover>
+      {/* Add column popover — модальное окно строго в рамках колонки, перекрывающее ~7 строк */}
+      {onAddColumnClick && (
+        <Popover
+          open={Boolean(showAddColumnPopover && addColumnButtonRef.current)}
+          anchorEl={addColumnButtonRef.current}
+          onClose={() => {
+            onCloseAddColumnPopover?.()
+          }}
+          anchorOrigin={{ vertical: 'bottom', horizontal: 'left' }}
+          transformOrigin={{ vertical: 'top', horizontal: 'left' }}
+          slotProps={{
+            paper: {
+              sx: {
+                width: ADD_COLUMN_OVERLAY_WIDTH,
+                maxWidth: ADD_COLUMN_OVERLAY_WIDTH,
+                borderRadius: '10px',
+                boxShadow: '0 8px 32px rgba(0,0,0,0.15)',
+                p: 2.5,
+                height: ROW_HEIGHT_ESTIMATE * ADD_COLUMN_OVERLAY_ROWS,
+                display: 'flex',
+                flexDirection: 'column',
+                overflowY: 'auto',
+              },
+            },
+          }}
+        >
+          <InlineColumnForm
+            onContinue={(prompt) => {
+              handleInlineContinue(prompt)
+            }}
+            onCancel={() => {
+              handleInlineCancel()
+            }}
+          />
+        </Popover>
+      )}
 
       {/* Cell detail popover — Harvey-style */}
       <Popover
