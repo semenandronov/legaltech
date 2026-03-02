@@ -861,30 +861,6 @@ const TabularReviewPage: React.FC = () => {
                   showAddColumnPopover={showTableAddColumn}
                   onCloseAddColumnPopover={() => setShowTableAddColumn(false)}
                   onSaveNewColumn={handleAddColumn}
-                  onInlinePromptSubmit={async (prompt) => {
-                    setShowTableAddColumn(false)
-                    if (!reviewId) return
-                    const label = prompt.trim().slice(0, 60) || 'Новая колонка'
-                    try {
-                      const newCol = await tabularReviewApi.addColumn(reviewId, label, 'ai_extraction', prompt)
-                      toast.success('Колонка добавлена')
-                      await loadReviewData()
-                      setProcessing(true)
-                      setRunningColumnIds((prev) => new Set([...prev, newCol.id]))
-                      try {
-                        const result = await tabularReviewApi.runColumnExtraction(reviewId, newCol.id)
-                        toast.success(`Извлечено: ${result.saved_count} ячеек`)
-                        await loadReviewData()
-                      } catch (err: any) {
-                        toast.error('Ошибка извлечения: ' + (err.message || ''))
-                      } finally {
-                        setRunningColumnIds((prev) => { const s = new Set(prev); s.delete(newCol.id); return s })
-                        setProcessing(false)
-                      }
-                    } catch (err: any) {
-                      toast.error('Не удалось добавить колонку: ' + (err.message || ''))
-                    }
-                  }}
                   onTableDataUpdate={(updater) => {
                     if (tableData) {
                       setTableData(updater(tableData))

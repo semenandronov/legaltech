@@ -44,89 +44,6 @@ import {
   ArrowDownward as ArrowDownwardIcon,
   ContentCopy as ContentCopyIcon,
 } from '@mui/icons-material'
-// ---------------------------------------------------------------------------
-// Inline column creation form (Harvey-style)
-// ---------------------------------------------------------------------------
-interface InlineColumnFormProps {
-  onContinue: (prompt: string) => void
-  onCancel: () => void
-}
-
-const InlineColumnForm = React.memo(({ onContinue, onCancel }: InlineColumnFormProps) => {
-  const [prompt, setPrompt] = React.useState("")
-  return (
-    <Box
-      sx={{ display: 'flex', flexDirection: 'column', gap: 1.5, width: '100%', py: 0.5 }}
-      onClick={(e) => e.stopPropagation()}
-    >
-      <Box>
-        <Typography sx={{ fontWeight: 600, fontSize: '0.9375rem', color: '#1F2937', mb: 0.25 }}>
-          Создать колонку
-        </Typography>
-        <Typography sx={{ fontSize: '0.8125rem', color: '#6B7280', lineHeight: 1.4 }}>
-          Задайте вопрос для извлечения данных из документов.
-        </Typography>
-      </Box>
-      <textarea
-        value={prompt}
-        onChange={(e) => setPrompt(e.target.value)}
-        placeholder="Например: какая дата подписания договора?"
-        rows={4}
-        style={{
-          width: '100%',
-          padding: '8px',
-          border: '1px solid #E5E7EB',
-          borderRadius: '6px',
-          fontSize: '0.8125rem',
-          color: '#1F2937',
-          resize: 'none',
-          outline: 'none',
-          fontFamily: 'inherit',
-          backgroundColor: 'white',
-          boxSizing: 'border-box',
-        }}
-        onFocus={(e) => { e.target.style.borderColor = '#3B82F6'; e.target.style.boxShadow = '0 0 0 2px rgba(59,130,246,0.15)' }}
-        onBlur={(e) => { e.target.style.borderColor = '#E5E7EB'; e.target.style.boxShadow = 'none' }}
-        onKeyDown={(e) => {
-          if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
-            e.preventDefault()
-            if (prompt.trim()) onContinue(prompt)
-          }
-        }}
-      />
-      <Box sx={{ display: 'flex', justifyContent: 'flex-end', gap: 1 }}>
-        <Box
-          component="button"
-          type="button"
-          onClick={onCancel}
-          sx={{
-            px: 1.5, py: 0.75, border: '1px solid #E5E7EB', borderRadius: '6px',
-            background: 'white', fontSize: '0.8125rem', color: '#6B7280',
-            cursor: 'pointer', fontFamily: 'inherit',
-            '&:hover': { background: '#F3F4F6' },
-          }}
-        >
-          Отмена
-        </Box>
-        <Box
-          component="button"
-          type="button"
-          onClick={() => { if (prompt.trim()) onContinue(prompt) }}
-          sx={{
-            px: 1.5, py: 0.75, border: 'none', borderRadius: '6px',
-            background: prompt.trim() ? '#1F2937' : '#E5E7EB',
-            fontSize: '0.8125rem', color: prompt.trim() ? 'white' : '#9CA3AF',
-            cursor: prompt.trim() ? 'pointer' : 'not-allowed', fontFamily: 'inherit',
-          }}
-        >
-          Далее →
-        </Box>
-      </Box>
-    </Box>
-  )
-})
-InlineColumnForm.displayName = 'InlineColumnForm'
-
 import { TabularRow, TabularColumn, TabularCell, CellDetails } from "@/services/tabularReviewApi"
 import { tabularReviewApi } from "@/services/tabularReviewApi"
 import { TagCell } from "./TagCell"
@@ -139,7 +56,6 @@ import { FilterPopover } from "./FilterPopover"
 // Approximate row height used for virtualization and overlay sizing
 const ROW_HEIGHT_ESTIMATE = 50
 const ADD_COLUMN_OVERLAY_ROWS = 7
-const ADD_COLUMN_OVERLAY_WIDTH = 380
 
 interface TabularReviewTableProps {
   reviewId: string
@@ -175,8 +91,6 @@ interface TabularReviewTableProps {
   showAddColumnPopover?: boolean
   onCloseAddColumnPopover?: () => void
   onSaveNewColumn?: (column: { column_label: string; column_type: string; prompt: string; column_config?: { options?: Array<{ label: string; color: string }>; allow_custom?: boolean } }) => Promise<void>
-  /** Вызывается когда пользователь нажал "Далее →" в inline-форме — открывает BulkColumnBuilder */
-  onInlinePromptSubmit?: (prompt: string) => void
   filterPopoverOpen?: boolean
   filterAnchorEl?: HTMLElement | null
   onCloseFilterPopover?: () => void
@@ -184,7 +98,7 @@ interface TabularReviewTableProps {
   runningColumnIds?: Set<string>
 }
 
-export const TabularReviewTable = React.memo(({ reviewId, tableData, onTableDataUpdate: _onTableDataUpdate, onCellClick, onCellEdit, onRemoveDocument, onRunColumn, onColumnEdit, onColumnDelete, onAddColumnClick, showAddColumnPopover, onCloseAddColumnPopover, onSaveNewColumn, onInlinePromptSubmit, filterPopoverOpen, filterAnchorEl, onCloseFilterPopover, runningColumnIds }: TabularReviewTableProps) => {
+export const TabularReviewTable = React.memo(({ reviewId, tableData, onTableDataUpdate: _onTableDataUpdate, onCellClick, onCellEdit, onRemoveDocument, onRunColumn, onColumnEdit, onColumnDelete, onAddColumnClick, showAddColumnPopover, onCloseAddColumnPopover, onSaveNewColumn, filterPopoverOpen, filterAnchorEl, onCloseFilterPopover, runningColumnIds }: TabularReviewTableProps) => {
   const addColumnButtonRef = React.useRef<HTMLElement | null>(null)
   const [sorting, setSorting] = React.useState<SortingState>([])
   const [columnFilters, setColumnFilters] = React.useState<ColumnFiltersState>([])
@@ -193,30 +107,6 @@ export const TabularReviewTable = React.memo(({ reviewId, tableData, onTableData
   const [columnPinning, setColumnPinning] = React.useState<ColumnPinningState>({ left: ['row_index', 'file_name'], right: [] })
   const [globalFilter, setGlobalFilter] = React.useState("")
   const [_loadingCell, setLoadingCell] = React.useState(false)
-
-  // Step-2 state for inline column creation (step 1 is inline, step 2 is a modal)
-  const [showStep2, setShowStep2] = React.useState(false)
-  const [step2Prompt, setStep2Prompt] = React.useState("")
-
-  // Reset inline form when parent closes the popover
-  React.useEffect(() => {
-    if (!showAddColumnPopover) {
-      setShowStep2(false)
-      setStep2Prompt("")
-    }
-  }, [showAddColumnPopover])
-
-  const handleInlineContinue = React.useCallback((prompt: string) => {
-    if (onInlinePromptSubmit) {
-      // Redirect to BulkColumnBuilder (Harvey-style)
-      onCloseAddColumnPopover?.()
-      onInlinePromptSubmit(prompt)
-    } else {
-      // Fallback: single-column step 2 modal
-      setStep2Prompt(prompt)
-      setShowStep2(true)
-    }
-  }, [onInlinePromptSubmit, onCloseAddColumnPopover])
 
   const handleInlineCancel = React.useCallback(() => {
     onCloseAddColumnPopover?.()
@@ -816,9 +706,9 @@ export const TabularReviewTable = React.memo(({ reviewId, tableData, onTableData
     // "+ Add column" column (last, header only)
     const addColumnColumn: ColumnDef<any> = {
       id: "add_column",
-      size: showAddColumnPopover ? ADD_COLUMN_OVERLAY_WIDTH : 140,
-      minSize: showAddColumnPopover ? ADD_COLUMN_OVERLAY_WIDTH : 120,
-      maxSize: showAddColumnPopover ? ADD_COLUMN_OVERLAY_WIDTH : 160,
+      size: 140,
+      minSize: 120,
+      maxSize: 160,
       enableResizing: false,
       enableSorting: false,
       enableHiding: false,
@@ -829,11 +719,6 @@ export const TabularReviewTable = React.memo(({ reviewId, tableData, onTableData
           ref={(el) => { addColumnButtonRef.current = el as HTMLElement | null }}
           onClick={(e) => {
             e.stopPropagation()
-            // Расширяем колонку под ширину модального окна и открываем форму
-            setColumnSizing((prev) => ({
-              ...prev,
-              add_column: ADD_COLUMN_OVERLAY_WIDTH,
-            }))
             onAddColumnClick?.()
           }}
           sx={{
@@ -858,7 +743,7 @@ export const TabularReviewTable = React.memo(({ reviewId, tableData, onTableData
 
     const baseColumns = [rowIndexColumn, fileColumn, ...dynamicColumns]
     return onAddColumnClick ? [...baseColumns, addColumnColumn] : baseColumns
-  }, [tableData.columns, reviewId, onCellClick, onRemoveDocument, onColumnEdit, onColumnDelete, onAddColumnClick, onRunColumn, runningColumnIds, handleInlineContinue, handleInlineCancel, showAddColumnPopover])
+  }, [tableData.columns, reviewId, onCellClick, onRemoveDocument, onColumnEdit, onColumnDelete, onAddColumnClick, onRunColumn, runningColumnIds, handleInlineCancel, showAddColumnPopover])
 
   const table = useReactTable({
     data: tableRows,
@@ -1131,7 +1016,7 @@ export const TabularReviewTable = React.memo(({ reviewId, tableData, onTableData
                                 cell.getContext()
                               )}
 
-                              {isOverlayHost && (
+                              {isOverlayHost && onSaveNewColumn && onCloseAddColumnPopover && (
                                 <Box
                                   sx={{
                                     position: 'absolute',
@@ -1159,13 +1044,14 @@ export const TabularReviewTable = React.memo(({ reviewId, tableData, onTableData
                                     }}
                                     onClick={(e) => e.stopPropagation()}
                                   >
-                                    <InlineColumnForm
-                                      onContinue={(prompt) => {
-                                        handleInlineContinue(prompt)
+                                    <ColumnBuilder
+                                      isOpen={showAddColumnPopover}
+                                      onClose={handleInlineCancel}
+                                      onSave={async (column) => {
+                                        await onSaveNewColumn(column)
+                                        onCloseAddColumnPopover()
                                       }}
-                                      onCancel={() => {
-                                        handleInlineCancel()
-                                      }}
+                                      mode="inline"
                                     />
                                   </Box>
                                 </Box>
@@ -1318,25 +1204,6 @@ export const TabularReviewTable = React.memo(({ reviewId, tableData, onTableData
           // This would typically trigger a data refresh
         }}
       />
-
-      {/* Step 2 modal: shown after user enters prompt in the inline form (fallback when onInlinePromptSubmit is not set) */}
-      {showStep2 && onSaveNewColumn && (
-        <ColumnBuilder
-          isOpen={true}
-          onClose={() => {
-            setShowStep2(false)
-            setStep2Prompt("")
-            onCloseAddColumnPopover?.()
-          }}
-          onSave={async (column) => {
-            await onSaveNewColumn(column)
-            setShowStep2(false)
-            setStep2Prompt("")
-          }}
-          startAtStep={2}
-          initialPrompt={step2Prompt}
-        />
-      )}
 
       {filterPopoverOpen && filterAnchorEl && onCloseFilterPopover && (
         <FilterPopover

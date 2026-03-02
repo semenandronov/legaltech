@@ -41,6 +41,8 @@ interface ColumnBuilderProps {
   startAtStep?: 1 | 2
   /** Промпт, введённый на первом шаге (inline), передаётся сразу на шаг 2 */
   initialPrompt?: string
+  /** Режим отображения: модалка / поповер / inline внутри таблицы */
+  mode?: 'modal' | 'popover' | 'inline'
 }
 
 const COLUMN_TYPES = [
@@ -82,7 +84,7 @@ const popoverProps = {
   PaperProps: { sx: { minWidth: 320, maxWidth: 380, p: 2, borderRadius: 2, boxShadow: 2 } },
 }
 
-export function ColumnBuilder({ isOpen, onClose, onSave, editingColumn, anchorEl, startAtStep, initialPrompt }: ColumnBuilderProps) {
+export function ColumnBuilder({ isOpen, onClose, onSave, editingColumn, anchorEl, startAtStep, initialPrompt, mode = 'modal' }: ColumnBuilderProps) {
   const [step, setStep] = useState<1 | 2>(1)
   const [columnLabel, setColumnLabel] = useState(editingColumn?.label || "")
   const [columnType, setColumnType] = useState(editingColumn?.type || "text")
@@ -324,8 +326,20 @@ export function ColumnBuilder({ isOpen, onClose, onSave, editingColumn, anchorEl
     container: popoverContainer,
   }
 
+  // Inline-режим: оба шага рендерятся как обычный контент без Modal/Popover
+  if (mode === 'inline') {
+    return (
+      <div className="px-1">
+        <h3 className="text-sm font-semibold mb-3">
+          {step === 1 ? 'Промпт' : 'Название и тип колонки'}
+        </h3>
+        {step === 1 ? step1Content : step2Content}
+      </div>
+    )
+  }
+
   if (step === 1) {
-    if (usePopover) {
+    if (usePopover && mode === 'popover') {
       return (
         <Popover open={isOpen} anchorEl={anchorEl} onClose={onClose} {...popoverPropsWithContainer}>
           <div className="px-1"><h3 className="text-sm font-semibold mb-3">Промпт</h3>{step1Content}</div>
@@ -339,7 +353,7 @@ export function ColumnBuilder({ isOpen, onClose, onSave, editingColumn, anchorEl
     )
   }
 
-  if (usePopover) {
+  if (usePopover && mode === 'popover') {
     return (
       <Popover open={isOpen} anchorEl={anchorEl} onClose={onClose} {...popoverPropsWithContainer}>
         <div className="px-1"><h3 className="text-sm font-semibold mb-3">Название и тип колонки</h3>{step2Content}</div>
