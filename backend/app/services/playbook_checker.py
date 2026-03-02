@@ -421,13 +421,14 @@ class PlaybookChecker:
         has_harvey_config = bool(rule.suggested_clause_template or rule.fallback_options)
         matching_clause: Optional[ExtractedClause] = None
 
-        # 1. Если есть Harvey-конфигурация и доступен case_id/file — пробуем семантический поиск по эмбеддингам.
-        if has_harvey_config and case_id and file:
+        # 1. Если есть Harvey-конфигурация и доступен case_id — пробуем семантический поиск по эмбеддингам.
+        #    Для файлов фильтруем по конкретному file_id, для редакторских документов ищем по всему делу.
+        if has_harvey_config and case_id:
             try:
                 matching_clause = await self._find_semantic_clause_for_rule(
                     rule=rule,
                     case_id=case_id,
-                    file_id=file.id,
+                    file_id=file.id if file else None,
                 )
             except Exception as e:
                 logger.warning(
@@ -552,7 +553,7 @@ class PlaybookChecker:
         self,
         rule: PlaybookRule,
         case_id: str,
-        file_id: str,
+        file_id: Optional[str] = None,
         k: int = 5,
     ) -> Optional[ExtractedClause]:
         """
@@ -571,12 +572,18 @@ class PlaybookChecker:
             return None
 
         try:
+            # Фильтр по file_id используем только если он есть; для редакторских документов
+            # ищем по всему делу без ограничения по файлу.
+            search_filter: Dict[str, Any] = {}
+            if file_id:
+                search_filter["file_id"] = file_id
+
             # Ищем только внутри конкретного файла по case_id + file_id
             docs_with_scores = self.vector_store.similarity_search_with_score(
                 query=query_text,
                 case_id=case_id,
                 k=k,
-                filter={"file_id": file_id},
+                filter=search_filter or None,
             )
         except Exception as e:
             logger.warning(

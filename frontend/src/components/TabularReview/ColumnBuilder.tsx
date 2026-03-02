@@ -76,8 +76,8 @@ function suggestLabelFromPrompt(promptText: string): string {
 
 const popoverProps = {
   anchorReference: "anchorEl" as const,
-  anchorOrigin: { vertical: "bottom" as const, horizontal: "left" as const },
-  transformOrigin: { vertical: "top" as const, horizontal: "left" as const },
+  anchorOrigin: { vertical: "bottom" as const, horizontal: "right" as const },
+  transformOrigin: { vertical: "top" as const, horizontal: "right" as const },
   slotProps: { root: { disableScrollLock: true }, backdrop: { sx: { backgroundColor: "transparent" } } },
   PaperProps: { sx: { minWidth: 320, maxWidth: 380, p: 2, borderRadius: 2, boxShadow: 2 } },
 }
@@ -311,10 +311,23 @@ export function ColumnBuilder({ isOpen, onClose, onSave, editingColumn, anchorEl
 
   const usePopover = anchorEl && typeof anchorEl.isConnected === 'boolean' && anchorEl.isConnected
 
+  // Привязываем поповер к DOM-дереву колонки, чтобы он визуально жил "внутри" хедера
+  const popoverContainer = anchorEl
+    ? (anchorEl.closest('th') as HTMLElement | null) ??
+      (anchorEl.closest('.MuiTableCell-root') as HTMLElement | null) ??
+      undefined
+    : undefined
+
+  const popoverPropsWithContainer = {
+    ...popoverProps,
+    disablePortal: true,
+    container: popoverContainer,
+  }
+
   if (step === 1) {
     if (usePopover) {
       return (
-        <Popover open={isOpen} anchorEl={anchorEl} onClose={onClose} {...popoverProps}>
+        <Popover open={isOpen} anchorEl={anchorEl} onClose={onClose} {...popoverPropsWithContainer}>
           <div className="px-1"><h3 className="text-sm font-semibold mb-3">Промпт</h3>{step1Content}</div>
         </Popover>
       )
@@ -328,7 +341,7 @@ export function ColumnBuilder({ isOpen, onClose, onSave, editingColumn, anchorEl
 
   if (usePopover) {
     return (
-      <Popover open={isOpen} anchorEl={anchorEl} onClose={onClose} {...popoverProps}>
+      <Popover open={isOpen} anchorEl={anchorEl} onClose={onClose} {...popoverPropsWithContainer}>
         <div className="px-1"><h3 className="text-sm font-semibold mb-3">Название и тип колонки</h3>{step2Content}</div>
       </Popover>
     )

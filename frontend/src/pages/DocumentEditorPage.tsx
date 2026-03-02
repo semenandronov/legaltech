@@ -40,7 +40,9 @@ const DocumentEditorPage = () => {
   const [loadingPlaybooks, setLoadingPlaybooks] = useState(false)
   const [runningPlaybookId, setRunningPlaybookId] = useState<string | null>(null)
   const [playbookResult, setPlaybookResult] = useState<any>(null)
-  const [showResultsPanel, setShowResultsPanel] = useState(false)
+  const [selectedPlaybookId, setSelectedPlaybookId] = useState<string | null>(null)
+  const [selectedPlaybookName, setSelectedPlaybookName] = useState<string | null>(null)
+  const [playbookError, setPlaybookError] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false)
@@ -318,7 +320,7 @@ const DocumentEditorPage = () => {
   const handleOpenPlaybookModal = async () => {
     setShowPlaybookModal(true)
     setLoadingPlaybooks(true)
-    setPlaybookResult(null)
+    setPlaybookError(null)
     try {
       const data = await getPlaybooks()
       setPlaybooks(data)
@@ -330,25 +332,38 @@ const DocumentEditorPage = () => {
   }
 
   // Запуск проверки документа с playbook
-  const handleRunPlaybook = async (playbookId: string) => {
+  const handleRunPlaybook = async (playbookId: string, playbookName?: string) => {
     if (!documentId || !caseId) return
     
     setRunningPlaybookId(playbookId)
+    setPlaybookError(null)
+    setSelectedPlaybookId(playbookId)
+    if (playbookName) {
+      setSelectedPlaybookName(playbookName)
+    }
     try {
       const checkResponse = await runPlaybookCheck(playbookId, documentId, caseId)
       // Get full check result using check_id
       const fullResult = await getCheck(checkResponse.check_id)
       setPlaybookResult(fullResult)
       setShowPlaybookModal(false)
-      setShowResultsPanel(true)
+      setSelectedPlaybookName(
+        playbookName ||
+        fullResult.playbook_name ||
+        checkResponse.playbook_name ||
+        'Playbook'
+      )
       toast.success(`Проверка завершена! Соответствие: ${fullResult.compliance_score?.toFixed(1) || 0}%`)
     } catch (error: any) {
       const status = error?.response?.status
+      let message: string
       if (status === 500) {
-        toast.error('Ошибка проверки: внутренняя ошибка сервера при выполнении playbook. Сообщите администратору, что в БД может отсутствовать столбец files.folder_id.')
+        message = 'Ошибка проверки: внутренняя ошибка сервера при выполнении playbook. Сообщите администратору, что в БД может отсутствовать столбец files.folder_id.'
       } else {
-        toast.error('Ошибка проверки: ' + (error.message || 'Неизвестная ошибка'))
+        message = 'Ошибка проверки: ' + (error.message || 'Неизвестная ошибка')
       }
+      setPlaybookError(message)
+      toast.error(message)
     } finally {
       setRunningPlaybookId(null)
     }
@@ -517,6 +532,16 @@ const DocumentEditorPage = () => {
           </div>
           {documentId && (
             <button
+              onClick={handleOpenPlaybookModal}
+              className="flex items-center gap-1.5 px-3 py-2 text-sm border rounded-lg hover:bg-gray-50 transition-colors"
+              style={{ borderColor: 'var(--color-border)' }}
+            >
+              <BookOpen className="w-4 h-4" />
+              Проверить playbook
+            </button>
+          )}
+          {documentId && (
+            <button
               onClick={() => setShowVersionHistory(true)}
               className="flex items-center gap-1.5 px-3 py-2 text-sm border rounded-lg hover:bg-gray-50 transition-colors"
               style={{ borderColor: 'var(--color-border)' }}
@@ -553,40 +578,55 @@ const DocumentEditorPage = () => {
           />
         </div>
 
-        {/* Правая колонка: либо чат с ИИ, либо панель результатов playbook */}
+        {/* Правая часть: постоянная панель Playbook + чат ассистента */}
         {documentId && (
-          <div className="w-[480px] border-l border-border shrink-0 flex flex-col">
-            {showResultsPanel && playbookResult ? (
+          <div className="shrink-0 flex border-l border-border">
+            {/* Панель результатов Playbook */}
+            <div className="w-[420px] shrink-0 flex flex-col" style={{ backgroundColor: 'var(--color-bg-primary)' }}>
               <PlaybookResultsPanel
-                result={{
-                  id: playbookResult.id || 'temp',
-                  playbook_id: playbookResult.playbook_id || '',
-                  playbook_name: playbookResult.playbook_name || 'Playbook',
-                  document_id: documentId || '',
-                  compliance_score: playbookResult.compliance_score || 0,
-                  total_rules: playbookResult.total_rules || (playbookResult.results?.length || 0),
-                  passed_rules: playbookResult.passed_rules || 0,
-                  red_line_violations: playbookResult.red_line_violations || 0,
-                  no_go_violations: playbookResult.no_go_violations || 0,
-                  fallback_issues: playbookResult.fallback_issues || 0,
-                  results: playbookResult.results || [],
-                  summary: playbookResult.summary,
-                  recommendations: playbookResult.recommendations,
-                  created_at: playbookResult.created_at || new Date().toISOString()
-                }}
+                result={
+                  playbookResult
+                    ? {
+                        id: playbookResult.id || 'temp',
+                        playbook_id: playbookResult.playbook_id || '',
+                        playbook_name: playbookResult.playbook_name || 'Playbook',
+                        document_id: documentId || '',
+                        compliance_score: playbookResult.compliance_score || 0,
+                        total_rules: playbookResult.total_rules || (playbookResult.results?.length || 0),
+                        passed_rules: playbookResult.passed_rules || 0,
+                        red_line_violations: playbookResult.red_line_violations || 0,
+                        no_go_violations: playbookResult.no_go_violations || 0,
+                        fallback_issues: playbookResult.fallback_issues || 0,
+                        results: playbookResult.results || [],
+                        summary: playbookResult.summary,
+                        recommendations: playbookResult.recommendations,
+                        created_at: playbookResult.created_at || new Date().toISOString()
+                      }
+                    : null
+                }
                 onClose={() => {
-                  setShowResultsPanel(false)
                   setPlaybookResult(null)
+                  setPlaybookError(null)
                 }}
                 onNavigateToIssue={handleNavigateToIssue}
                 onScrollToText={handleScrollToText}
                 onApplyFix={handleReplaceTextInDocument}
                 onRerun={() => {
-                  setShowResultsPanel(false)
-                  setShowPlaybookModal(true)
+                  if (selectedPlaybookId) {
+                    handleRunPlaybook(selectedPlaybookId, selectedPlaybookName || undefined)
+                  } else {
+                    handleOpenPlaybookModal()
+                  }
                 }}
+                isChecking={!!runningPlaybookId}
+                selectedPlaybookName={selectedPlaybookName || playbookResult?.playbook_name}
+                errorMessage={playbookError}
+                onSelectPlaybook={handleOpenPlaybookModal}
               />
-            ) : (
+            </div>
+
+            {/* Чат ассистента */}
+            <div className="w-[480px] border-l border-border shrink-0 flex flex-col">
               <DocumentEditorContextChat
                 documentId={documentId}
                 documentTitle={title}
@@ -607,7 +647,7 @@ const DocumentEditorPage = () => {
                 }}
                 onReplaceRange={handleReplaceRange}
               />
-            )}
+            </div>
           </div>
         )}
       </div>

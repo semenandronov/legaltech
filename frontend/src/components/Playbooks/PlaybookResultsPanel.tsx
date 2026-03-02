@@ -67,13 +67,17 @@ interface PlaybookResult {
 }
 
 interface PlaybookResultsPanelProps {
-  result: PlaybookResult
+  result?: PlaybookResult | null
   onClose: () => void
   onNavigateToIssue?: (location: { start: number; end: number }) => void
   onScrollToText?: (text: string) => boolean
   onApplyFix?: (foundText: string, fixedText: string) => boolean
   onRerun?: () => void
   onDownloadReport?: () => void
+  isChecking?: boolean
+  selectedPlaybookName?: string | null
+  errorMessage?: string | null
+  onSelectPlaybook?: () => void
 }
 
 export const PlaybookResultsPanel = ({
@@ -83,12 +87,21 @@ export const PlaybookResultsPanel = ({
   onScrollToText,
   onApplyFix,
   onRerun,
-  onDownloadReport
+  onDownloadReport,
+  isChecking = false,
+  selectedPlaybookName,
+  errorMessage,
+  onSelectPlaybook
 }: PlaybookResultsPanelProps) => {
   const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set())
   const [appliedRules, setAppliedRules] = useState<Set<string>>(new Set())
   const [selectedRule, setSelectedRule] = useState<RuleResult | null>(null)
   const [selectedGroupTitle, setSelectedGroupTitle] = useState<string | null>(null)
+
+  const effectivePlaybookName =
+    result?.playbook_name ||
+    selectedPlaybookName ||
+    'Проверка по playbook'
 
   /** Harvey-style classification for a rule result */
   const getHarveyClassification = (rule: RuleResult) => {
@@ -122,12 +135,12 @@ export const PlaybookResultsPanel = ({
     )
   }
 
-  const violations = result.results.filter(r =>
+  const violations = (result?.results || []).filter(r =>
     r.status === 'violation' || r.status === 'not_found' || r.status === 'error'
   )
-  const warnings = result.results.filter(r => r.status === 'warning' || r.rule_type === 'fallback')
-  const passed = result.results.filter(r => r.status === 'passed')
-  const totalForBar = violations.length + warnings.length + passed.length || 1
+  const warnings = (result?.results || []).filter(r => r.status === 'warning' || r.rule_type === 'fallback')
+  const passed = (result?.results || []).filter(r => r.status === 'passed')
+  const totalForBar = (result?.results || []).length || 1
 
   const openRuleDetails = (rule: RuleResult, groupTitle: string) => {
     setSelectedRule(rule)
@@ -158,7 +171,7 @@ export const PlaybookResultsPanel = ({
             Результаты проверки
           </h2>
           <p className="text-sm" style={{ color: 'var(--color-text-secondary)' }}>
-            {result.playbook_name}
+            {effectivePlaybookName}
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -190,47 +203,49 @@ export const PlaybookResultsPanel = ({
       </div>
 
       {/* Score Section */}
-      <div className="p-4 border-b" style={{ borderColor: 'var(--color-border)' }}>
-        <div className="flex items-center justify-between mb-3">
-          <span className="text-sm font-medium" style={{ color: 'var(--color-text-secondary)' }}>
-            Соответствие
-          </span>
+      {result && (
+        <div className="p-4 border-b" style={{ borderColor: 'var(--color-border)' }}>
+          <div className="flex items-center justify-between mb-3">
+            <span className="text-sm font-medium" style={{ color: 'var(--color-text-secondary)' }}>
+              Соответствие
+            </span>
+          </div>
+          
+          {/* Многосегментная линия соответствия: зелёный / жёлтый / красный */}
+          <div className="h-2 rounded-full bg-gray-200 overflow-hidden flex">
+            {passed.length > 0 && (
+              <div
+                style={{
+                  width: `${(passed.length / totalForBar) * 100}%`,
+                  backgroundColor: '#22c55e',
+                  transition: 'width 0.5s',
+                }}
+              />
+            )}
+            {warnings.length > 0 && (
+              <div
+                style={{
+                  width: `${(warnings.length / totalForBar) * 100}%`,
+                  backgroundColor: '#facc15',
+                  transition: 'width 0.5s',
+                }}
+              />
+            )}
+            {violations.length > 0 && (
+              <div
+                style={{
+                  width: `${(violations.length / totalForBar) * 100}%`,
+                  backgroundColor: '#ef4444',
+                  transition: 'width 0.5s',
+                }}
+              />
+            )}
+          </div>
         </div>
-        
-        {/* Многосегментная линия соответствия: зелёный / жёлтый / красный */}
-        <div className="h-2 rounded-full bg-gray-200 overflow-hidden flex">
-          {passed.length > 0 && (
-            <div
-              style={{
-                width: `${(passed.length / totalForBar) * 100}%`,
-                backgroundColor: '#22c55e',
-                transition: 'width 0.5s',
-              }}
-            />
-          )}
-          {warnings.length > 0 && (
-            <div
-              style={{
-                width: `${(warnings.length / totalForBar) * 100}%`,
-                backgroundColor: '#facc15',
-                transition: 'width 0.5s',
-              }}
-            />
-          )}
-          {violations.length > 0 && (
-            <div
-              style={{
-                width: `${(violations.length / totalForBar) * 100}%`,
-                backgroundColor: '#ef4444',
-                transition: 'width 0.5s',
-              }}
-            />
-          )}
-        </div>
-      </div>
+      )}
 
       {/* Summary */}
-      {result.summary && (
+      {result?.summary && (
         <div className="px-4 py-3 border-b" style={{ borderColor: 'var(--color-border)' }}>
           <div className="flex items-start gap-2">
             <Lightbulb className="w-4 h-4 mt-0.5 shrink-0" style={{ color: 'var(--color-accent)' }} />
@@ -243,7 +258,57 @@ export const PlaybookResultsPanel = ({
 
       {/* Группы правил и детальный просмотр правила */}
       <div className="flex-1 overflow-y-auto">
-        {selectedRule ? (
+        {!result ? (
+          <div className="h-full flex flex-col items-center justify-center px-4 text-center">
+            {isChecking ? (
+              <>
+                <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600 mb-3" />
+                <p className="text-sm" style={{ color: 'var(--color-text-secondary)' }}>
+                  Идёт проверка документа по playbook…
+                </p>
+              </>
+            ) : errorMessage ? (
+              <>
+                <FileText className="w-10 h-10 mx-auto mb-3" style={{ color: 'var(--color-text-tertiary)' }} />
+                <p className="text-sm mb-3" style={{ color: 'var(--color-text-secondary)' }}>
+                  Не удалось выполнить проверку.
+                </p>
+                <p className="text-xs mb-4 max-w-sm" style={{ color: 'var(--color-text-tertiary)' }}>
+                  {errorMessage}
+                </p>
+                {(onRerun || onSelectPlaybook) && (
+                  <button
+                    onClick={onRerun || onSelectPlaybook}
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium text-white transition-colors hover:opacity-90"
+                    style={{ backgroundColor: 'var(--color-accent, #6366f1)' }}
+                  >
+                    <RefreshCw className="w-3 h-3" />
+                    Повторить
+                  </button>
+                )}
+              </>
+            ) : (
+              <>
+                <FileText className="w-10 h-10 mx-auto mb-3" style={{ color: 'var(--color-text-tertiary)' }} />
+                <p className="text-sm mb-2" style={{ color: 'var(--color-text-secondary)' }}>
+                  {selectedPlaybookName
+                    ? `Запустите проверку по playbook «${selectedPlaybookName}».`
+                    : 'Выберите playbook, чтобы проверить документ.'}
+                </p>
+                {onSelectPlaybook && (
+                  <button
+                    onClick={onSelectPlaybook}
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium border transition-colors hover:bg-gray-50"
+                    style={{ borderColor: 'var(--color-border)', color: 'var(--color-text-primary)' }}
+                  >
+                    <FileText className="w-3 h-3" />
+                    Выбрать playbook
+                  </button>
+                )}
+              </>
+            )}
+          </div>
+        ) : selectedRule ? (
           /* Детальное окно по одному правилу, как на экране Harvey */
           <div className="flex flex-col h-full">
             <div className="px-4 py-3 border-b flex items-center justify-between" style={{ borderColor: 'var(--color-border)' }}>
@@ -502,7 +567,7 @@ export const PlaybookResultsPanel = ({
       </div>
 
       {/* Recommendations */}
-      {result.recommendations && result.recommendations.length > 0 && (
+      {result?.recommendations && result.recommendations.length > 0 && (
         <div className="p-4 border-t shrink-0" style={{ borderColor: 'var(--color-border)' }}>
           <h3 className="text-sm font-medium mb-2" style={{ color: 'var(--color-text-primary)' }}>
             Общие рекомендации
