@@ -1087,30 +1087,92 @@ export const TabularReviewTable = React.memo(({ reviewId, tableData, onTableData
                           },
                         }}
                       >
-                    {row.getVisibleCells().map((cell) => (
-                      <TableCell
-                        key={cell.id}
-                        sx={{
-                          width: cell.column.getSize(),
-                          maxWidth: cell.column.getSize(),
-                          overflow: 'hidden',
-                          bgcolor: cell.column.getIsPinned() === 'left' ? 'var(--bg-primary)' : 'transparent',
-                        }}
-                        style={{
-                          position: cell.column.getIsPinned() ? 'sticky' : undefined,
-                          left: cell.column.getIsPinned() === 'left' ? `${cell.column.getStart('left')}px` : undefined,
-                          right: cell.column.getIsPinned() === 'right' ? `${cell.column.getStart('right')}px` : undefined,
-                          zIndex: cell.column.getIsPinned() ? 10 : undefined,
-                          backgroundColor: cell.column.getIsPinned() === 'left' ? 'var(--bg-primary, #ffffff)' : undefined,
-                          boxShadow: cell.column.getIsPinned() === 'left' ? '2px 0 6px -2px rgba(0,0,0,0.1)' : undefined,
-                        }}
-                      >
-                        {flexRender(
-                          cell.column.columnDef.cell,
-                          cell.getContext()
-                        )}
-                      </TableCell>
-                    ))}
+                        {row.getVisibleCells().map((cell) => {
+                          const isAddColumnCell = cell.column.id === 'add_column'
+                          const isOverlayHost =
+                            isAddColumnCell && !!showAddColumnPopover && row.index === 0
+
+                          return (
+                            <TableCell
+                              key={cell.id}
+                              sx={{
+                                width: cell.column.getSize(),
+                                maxWidth: cell.column.getSize(),
+                                overflow: isAddColumnCell ? 'visible' : 'hidden',
+                                bgcolor:
+                                  cell.column.getIsPinned() === 'left'
+                                    ? 'var(--bg-primary)'
+                                    : 'transparent',
+                                position: isAddColumnCell ? 'relative' : undefined,
+                              }}
+                              style={{
+                                position: cell.column.getIsPinned() ? 'sticky' : undefined,
+                                left:
+                                  cell.column.getIsPinned() === 'left'
+                                    ? `${cell.column.getStart('left')}px`
+                                    : undefined,
+                                right:
+                                  cell.column.getIsPinned() === 'right'
+                                    ? `${cell.column.getStart('right')}px`
+                                    : undefined,
+                                zIndex: cell.column.getIsPinned() ? 10 : undefined,
+                                backgroundColor:
+                                  cell.column.getIsPinned() === 'left'
+                                    ? 'var(--bg-primary, #ffffff)'
+                                    : undefined,
+                                boxShadow:
+                                  cell.column.getIsPinned() === 'left'
+                                    ? '2px 0 6px -2px rgba(0,0,0,0.1)'
+                                    : undefined,
+                              }}
+                            >
+                              {flexRender(
+                                cell.column.columnDef.cell,
+                                cell.getContext()
+                              )}
+
+                              {isOverlayHost && (
+                                <Box
+                                  sx={{
+                                    position: 'absolute',
+                                    top: 0,
+                                    left: 0,
+                                    width: '100%',
+                                    height:
+                                      ROW_HEIGHT_ESTIMATE * ADD_COLUMN_OVERLAY_ROWS,
+                                    zIndex: 50,
+                                    pointerEvents: 'auto',
+                                  }}
+                                >
+                                  <Box
+                                    sx={{
+                                      width: '100%',
+                                      height: '100%',
+                                      borderRadius: '10px',
+                                      boxShadow:
+                                        '0 8px 32px rgba(0,0,0,0.15)',
+                                      bgcolor: '#FFFFFF',
+                                      p: 2.5,
+                                      display: 'flex',
+                                      flexDirection: 'column',
+                                      overflowY: 'auto',
+                                    }}
+                                    onClick={(e) => e.stopPropagation()}
+                                  >
+                                    <InlineColumnForm
+                                      onContinue={(prompt) => {
+                                        handleInlineContinue(prompt)
+                                      }}
+                                      onCancel={() => {
+                                        handleInlineCancel()
+                                      }}
+                                    />
+                                  </Box>
+                                </Box>
+                              )}
+                            </TableCell>
+                          )
+                        })}
                       </TableRow>
                     )
                   })}
@@ -1134,30 +1196,92 @@ export const TabularReviewTable = React.memo(({ reviewId, tableData, onTableData
                       },
                     }}
                   >
-                    {row.getVisibleCells().map((cell) => (
-                      <TableCell
-                        key={cell.id}
-                        sx={{
-                          width: cell.column.getSize(),
-                          maxWidth: cell.column.getSize(),
-                          overflow: 'hidden',
-                          bgcolor: cell.column.getIsPinned() === 'left' ? 'var(--bg-primary)' : 'transparent',
-                        }}
-                        style={{
-                          position: cell.column.getIsPinned() ? 'sticky' : undefined,
-                          left: cell.column.getIsPinned() === 'left' ? `${cell.column.getStart('left')}px` : undefined,
-                          right: cell.column.getIsPinned() === 'right' ? `${cell.column.getStart('right')}px` : undefined,
-                          zIndex: cell.column.getIsPinned() ? 10 : undefined,
-                          backgroundColor: cell.column.getIsPinned() === 'left' ? 'var(--bg-primary, #ffffff)' : undefined,
-                          boxShadow: cell.column.getIsPinned() === 'left' ? '2px 0 6px -2px rgba(0,0,0,0.1)' : undefined,
-                        }}
-                      >
-                        {flexRender(
-                          cell.column.columnDef.cell,
-                          cell.getContext()
-                        )}
-                      </TableCell>
-                    ))}
+                    {row.getVisibleCells().map((cell) => {
+                      const isAddColumnCell = cell.column.id === 'add_column'
+                      const isOverlayHost =
+                        isAddColumnCell && !!showAddColumnPopover && row.index === 0
+
+                      return (
+                        <TableCell
+                          key={cell.id}
+                          sx={{
+                            width: cell.column.getSize(),
+                            maxWidth: cell.column.getSize(),
+                            overflow: isAddColumnCell ? 'visible' : 'hidden',
+                            bgcolor:
+                              cell.column.getIsPinned() === 'left'
+                                ? 'var(--bg-primary)'
+                                : 'transparent',
+                            position: isAddColumnCell ? 'relative' : undefined,
+                          }}
+                          style={{
+                            position: cell.column.getIsPinned() ? 'sticky' : undefined,
+                            left:
+                              cell.column.getIsPinned() === 'left'
+                                ? `${cell.column.getStart('left')}px`
+                                : undefined,
+                            right:
+                              cell.column.getIsPinned() === 'right'
+                                ? `${cell.column.getStart('right')}px`
+                                : undefined,
+                            zIndex: cell.column.getIsPinned() ? 10 : undefined,
+                            backgroundColor:
+                              cell.column.getIsPinned() === 'left'
+                                ? 'var(--bg-primary, #ffffff)'
+                                : undefined,
+                            boxShadow:
+                              cell.column.getIsPinned() === 'left'
+                                ? '2px 0 6px -2px rgba(0,0,0,0.1)'
+                                : undefined,
+                          }}
+                        >
+                          {flexRender(
+                            cell.column.columnDef.cell,
+                            cell.getContext()
+                          )}
+
+                          {isOverlayHost && (
+                            <Box
+                              sx={{
+                                position: 'absolute',
+                                top: 0,
+                                left: 0,
+                                width: '100%',
+                                height:
+                                  ROW_HEIGHT_ESTIMATE * ADD_COLUMN_OVERLAY_ROWS,
+                                zIndex: 50,
+                                pointerEvents: 'auto',
+                              }}
+                            >
+                              <Box
+                                sx={{
+                                  width: '100%',
+                                  height: '100%',
+                                  borderRadius: '10px',
+                                  boxShadow:
+                                    '0 8px 32px rgba(0,0,0,0.15)',
+                                  bgcolor: '#FFFFFF',
+                                  p: 2.5,
+                                  display: 'flex',
+                                  flexDirection: 'column',
+                                  overflowY: 'auto',
+                                }}
+                                onClick={(e) => e.stopPropagation()}
+                              >
+                                <InlineColumnForm
+                                  onContinue={(prompt) => {
+                                    handleInlineContinue(prompt)
+                                  }}
+                                  onCancel={() => {
+                                    handleInlineCancel()
+                                  }}
+                                />
+                              </Box>
+                            </Box>
+                          )}
+                        </TableCell>
+                      )
+                    })}
                   </TableRow>
                 ))
               )
@@ -1236,43 +1360,6 @@ export const TabularReviewTable = React.memo(({ reviewId, tableData, onTableData
         onFiltersChange={setAdvancedFilters}
         columns={tableData.columns}
       />
-
-      {/* Add column popover — модальное окно строго в рамках колонки, перекрывающее ~7 строк */}
-      {onAddColumnClick && (
-        <Popover
-          open={Boolean(showAddColumnPopover && addColumnButtonRef.current)}
-          anchorEl={addColumnButtonRef.current}
-          onClose={() => {
-            onCloseAddColumnPopover?.()
-          }}
-          anchorOrigin={{ vertical: 'bottom', horizontal: 'left' }}
-          transformOrigin={{ vertical: 'top', horizontal: 'left' }}
-          slotProps={{
-            paper: {
-              sx: {
-                width: ADD_COLUMN_OVERLAY_WIDTH,
-                maxWidth: ADD_COLUMN_OVERLAY_WIDTH,
-                borderRadius: '10px',
-                boxShadow: '0 8px 32px rgba(0,0,0,0.15)',
-                p: 2.5,
-                height: ROW_HEIGHT_ESTIMATE * ADD_COLUMN_OVERLAY_ROWS,
-                display: 'flex',
-                flexDirection: 'column',
-                overflowY: 'auto',
-              },
-            },
-          }}
-        >
-          <InlineColumnForm
-            onContinue={(prompt) => {
-              handleInlineContinue(prompt)
-            }}
-            onCancel={() => {
-              handleInlineCancel()
-            }}
-          />
-        </Popover>
-      )}
 
       {/* Cell detail popover — Harvey-style */}
       <Popover
