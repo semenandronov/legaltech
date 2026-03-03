@@ -56,6 +56,8 @@ import { FilterPopover } from "./FilterPopover"
 // Approximate row height used for virtualization and overlay sizing
 const ROW_HEIGHT_ESTIMATE = 50
 const ADD_COLUMN_OVERLAY_ROWS = 7
+// Базовая ширина колонок (подогнана под ширину модального окна ColumnBuilder)
+const DEFAULT_COLUMN_WIDTH = 380
 
 interface TabularReviewTableProps {
   reviewId: string
@@ -304,9 +306,9 @@ export const TabularReviewTable = React.memo(({ reviewId, tableData, onTableData
     const fileColumn: ColumnDef<any> = {
       id: "file_name",
       accessorKey: "file_name",
-      size: 250,
-      minSize: 150,
-      maxSize: 500,
+      size: DEFAULT_COLUMN_WIDTH,
+      minSize: DEFAULT_COLUMN_WIDTH,
+      maxSize: DEFAULT_COLUMN_WIDTH,
       enableSorting: true,
       meta: { columnLabel: "Name" },
       header: ({ column }) => {
@@ -384,9 +386,9 @@ export const TabularReviewTable = React.memo(({ reviewId, tableData, onTableData
     const dynamicColumns: ColumnDef<any>[] = tableData.columns.map((col) => ({
       id: col.id, // Explicitly set id to column.id
       accessorKey: col.id,
-      size: 200, // Default column width
-      minSize: 100,
-      maxSize: 800,
+      size: DEFAULT_COLUMN_WIDTH,
+      minSize: DEFAULT_COLUMN_WIDTH,
+      maxSize: DEFAULT_COLUMN_WIDTH,
       meta: {
         columnLabel: col.column_label, // Store column label in meta for dropdown
       },
@@ -666,20 +668,20 @@ export const TabularReviewTable = React.memo(({ reviewId, tableData, onTableData
             {isTagType ? (
               <TagCell value={cellValue} column={col} />
             ) : (
-                <Typography
-                  variant="body2"
-                  sx={{
-                    flex: 1,
-                    fontStyle: cellValue === "-" ? 'italic' : 'normal',
-                    color: cellValue === "-" ? '#9CA3AF' : '#1F2937',
-                    whiteSpace: 'nowrap',
-                    overflow: 'hidden',
-                    textOverflow: 'ellipsis',
-                    minWidth: 0,
-                  }}
-                >
-                  {cellValue === "-" ? "—" : cellValue}
-                </Typography>
+              <Typography
+                variant="body2"
+                sx={{
+                  flex: 1,
+                  fontStyle: cellValue === "-" ? 'italic' : 'normal',
+                  color: cellValue === "-" ? '#9CA3AF' : '#1F2937',
+                  whiteSpace: 'normal',
+                  overflowWrap: 'anywhere',
+                  wordBreak: 'break-word',
+                  minWidth: 0,
+                }}
+              >
+                {cellValue === "-" ? "—" : cellValue}
+              </Typography>
             )}
             
             {/* Status badge */}
@@ -706,9 +708,9 @@ export const TabularReviewTable = React.memo(({ reviewId, tableData, onTableData
     // "+ Add column" column (last, header only)
     const addColumnColumn: ColumnDef<any> = {
       id: "add_column",
-      size: 140,
-      minSize: 120,
-      maxSize: 160,
+      size: DEFAULT_COLUMN_WIDTH,
+      minSize: DEFAULT_COLUMN_WIDTH,
+      maxSize: DEFAULT_COLUMN_WIDTH,
       enableResizing: false,
       enableSorting: false,
       enableHiding: false,
