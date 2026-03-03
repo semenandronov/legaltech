@@ -1006,7 +1006,7 @@ const TabularReviewPage: React.FC = () => {
           )}
         </Drawer>
 
-        {/* Edit column: single-column wizard */}
+        {/* Edit column: single-column wizard (2-step, anchored to column header) */}
         {editingColumn != null && (
           <ColumnBuilder
             isOpen={true}
@@ -1014,9 +1014,13 @@ const TabularReviewPage: React.FC = () => {
               setEditingColumn(null)
               setEditColumnAnchorEl(null)
             }}
-            onSave={handleUpdateColumn}
+            onSave={async (column) => {
+              await handleUpdateColumn(column)
+              setEditColumnAnchorEl(null)
+            }}
             editingColumn={editingColumn}
             anchorEl={editColumnAnchorEl}
+            mode="popover"
           />
         )}
         {/* Column builder: bulk generate from questions (toolbar button or empty table) */}
