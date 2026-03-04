@@ -5,6 +5,7 @@
   padding: 32px 16px;
   display: flex;
   justify-content: center;
+  align-items: flex-start; /* allow pages to grow beyond viewport height */
 }
 
 .document-container {

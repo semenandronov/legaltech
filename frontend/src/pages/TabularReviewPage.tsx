@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from "react"
 import { useParams, useNavigate } from "react-router-dom"
-import { MessageSquare, Table, FileEdit, BookOpen, Workflow, FolderOpen } from "lucide-react"
+import { MessageSquare, FileEdit, BookOpen, Workflow, FolderOpen } from "lucide-react"
 import UnifiedSidebar from "../components/Layout/UnifiedSidebar"
 import { TabularReviewTable } from "../components/TabularReview/TabularReviewTable"
 import { TabularReviewToolbar } from "../components/TabularReview/TabularReviewToolbar"
@@ -390,7 +390,6 @@ const TabularReviewPage: React.FC = () => {
     { id: 'cases', label: 'Дела', icon: FolderOpen, path: '/cases' },
     { id: 'chat', label: 'Ассистент', icon: MessageSquare, path: caseId ? `/cases/${caseId}/chat` : '/cases' },
     { id: 'editor', label: 'Редактор', icon: FileEdit, path: caseId ? `/cases/${caseId}/editor` : '/cases' },
-    { id: 'tabular-review', label: 'Tabular Review', icon: Table, path: caseId ? `/cases/${caseId}/tabular-review` : '/cases' },
     { id: 'playbooks', label: 'Playbooks', icon: BookOpen, path: caseId ? `/cases/${caseId}/playbooks` : '/cases' },
     { id: 'workflows', label: 'Workflows', icon: Workflow, path: caseId ? `/cases/${caseId}/workflows` : '/cases' },
   ]
@@ -755,7 +754,7 @@ const TabularReviewPage: React.FC = () => {
         {/* Header */}
         <div className="border-b border-border px-6 pt-5 pb-5" style={{ backgroundColor: 'var(--color-bg-primary)' }}>
           {/* Breadcrumb */}
-          <div className="flex items-center gap-1 text-xs mb-3" style={{ color: 'var(--color-text-muted)' }}>
+          <div className="flex items-center gap-1.5 text-sm mb-3" style={{ color: 'var(--color-text-muted)' }}>
             <button
               onClick={() => navigate('/cases')}
               className="hover:underline transition-colors"
@@ -905,6 +904,7 @@ const TabularReviewPage: React.FC = () => {
                     // Use details from API if available (more complete), otherwise use cellData from table
                     const finalCellData = details ? {
                       verbatimExtract: details.verbatim_extract,
+                      cellValue: details.cell_value,
                       sourcePage: details.source_page,
                       sourceSection: details.source_section,
                       columnType: details.column_type,

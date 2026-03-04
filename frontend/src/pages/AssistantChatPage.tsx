@@ -1,12 +1,13 @@
 import { useState, useEffect, useRef } from 'react'
-import { useParams, useLocation } from 'react-router-dom'
+import { useParams, useLocation, useNavigate } from 'react-router-dom'
 import {
   FileText, X, Plus, AlignJustify, SlidersHorizontal, Sparkles,
-  Search, Loader2, Download, History,
+  Search, Loader2, FolderOpen, Upload, Check, ExternalLink,
 } from 'lucide-react'
-import { getCase, getApiUrl } from '../services/api'
+import { getCase, getApiUrl, SourceInfo, getCaseFiles } from '../services/api'
 import { ChatHistoryPanel } from '../components/Chat/ChatHistoryPanel'
 import { loadChatHistory } from '../services/chatHistoryService'
+import MessageContent from '../components/Chat/MessageContent'
 import {
   consumePendingWorkflowResult,
   createWorkflowResultChatMessage,
@@ -20,6 +21,7 @@ import { toast } from 'sonner'
 interface ChatMessage {
   role: 'user' | 'assistant'
   content: string
+  sources?: SourceInfo[]
 }
 
 interface FileContext {
@@ -31,6 +33,172 @@ interface FileContext {
 interface DraftDocument {
   title: string
   content: string
+}
+
+interface CaseFileItem {
+  id: string
+  filename: string
+  file_type: string
+}
+
+// ─────────────────────────────────────────────────────────
+// Case file picker modal
+// ─────────────────────────────────────────────────────────
+function CaseFilePickerModal({
+  isOpen,
+  files,
+  loading,
+  initialSelectedIds,
+  onApply,
+  onClose,
+}: {
+  isOpen: boolean
+  files: CaseFileItem[]
+  loading: boolean
+  initialSelectedIds: string[]
+  onApply: (ids: string[]) => void
+  onClose: () => void
+}) {
+  const [search, setSearch] = useState('')
+  const [tempSelected, setTempSelected] = useState<string[]>(initialSelectedIds)
+
+  useEffect(() => {
+    if (isOpen) {
+      setTempSelected(initialSelectedIds)
+      setSearch('')
+    }
+  }, [isOpen])
+
+  if (!isOpen) return null
+
+  const filtered = files.filter((f) =>
+    f.filename.toLowerCase().includes(search.toLowerCase())
+  )
+
+  const toggle = (id: string) => {
+    setTempSelected((prev) =>
+      prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]
+    )
+  }
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center"
+      style={{ backgroundColor: 'rgba(0,0,0,0.4)' }}
+      onMouseDown={(e) => { if (e.target === e.currentTarget) onClose() }}
+    >
+      <div
+        className="bg-white rounded-xl overflow-hidden flex flex-col"
+        style={{ width: '480px', maxHeight: '580px', boxShadow: '0 20px 40px rgba(0,0,0,0.15)' }}
+      >
+        {/* Header */}
+        <div className="flex items-center justify-between px-5 py-4 border-b border-gray-100">
+          <div>
+            <h2 className="text-sm font-semibold" style={{ color: '#111827' }}>Документы дела</h2>
+            <p className="text-xs mt-0.5" style={{ color: '#9CA3AF' }}>
+              Выберите документы для анализа в этом чате
+            </p>
+          </div>
+          <button onClick={onClose} className="p-1 rounded-md hover:bg-gray-100 transition-colors">
+            <X className="w-4 h-4 text-gray-400" />
+          </button>
+        </div>
+
+        {/* Search */}
+        <div className="px-5 py-3 border-b border-gray-100">
+          <div
+            className="flex items-center gap-2 px-3 py-2 rounded-lg"
+            style={{ backgroundColor: '#F9FAFB', border: '1px solid #E5E7EB' }}
+          >
+            <Search className="w-3.5 h-3.5 flex-shrink-0" style={{ color: '#9CA3AF' }} />
+            <input
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="Поиск по названию..."
+              className="flex-1 text-sm outline-none bg-transparent"
+              style={{ color: '#111827' }}
+            />
+          </div>
+        </div>
+
+        {/* File list */}
+        <div className="flex-1 overflow-y-auto px-2 py-2">
+          {loading ? (
+            <div className="flex items-center justify-center py-12">
+              <Loader2 className="w-5 h-5 animate-spin" style={{ color: '#9CA3AF' }} />
+            </div>
+          ) : filtered.length === 0 ? (
+            <div className="text-center py-12">
+              <p className="text-sm" style={{ color: '#9CA3AF' }}>
+                {files.length === 0 ? 'Нет документов в деле' : 'Ничего не найдено'}
+              </p>
+            </div>
+          ) : (
+            filtered.map((f) => {
+              const isSelected = tempSelected.includes(f.id)
+              return (
+                <button
+                  key={f.id}
+                  type="button"
+                  onClick={() => toggle(f.id)}
+                  className="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-left transition-colors"
+                  style={{ backgroundColor: isSelected ? '#EEF2FF' : 'transparent' }}
+                >
+                  <span
+                    className="w-4 h-4 rounded border flex items-center justify-center flex-shrink-0"
+                    style={{
+                      borderColor: isSelected ? '#4F46E5' : '#D1D5DB',
+                      backgroundColor: isSelected ? '#4F46E5' : 'transparent',
+                    }}
+                  >
+                    {isSelected && <Check className="w-2.5 h-2.5 text-white" />}
+                  </span>
+                  <FileText
+                    className="w-4 h-4 flex-shrink-0"
+                    style={{ color: isSelected ? '#4F46E5' : '#9CA3AF' }}
+                  />
+                  <span
+                    className="flex-1 text-sm truncate"
+                    style={{ color: isSelected ? '#312E81' : '#374151' }}
+                  >
+                    {f.filename}
+                  </span>
+                  <span className="text-xs flex-shrink-0 uppercase" style={{ color: '#9CA3AF' }}>
+                    {f.file_type}
+                  </span>
+                </button>
+              )
+            })
+          )}
+        </div>
+
+        {/* Footer */}
+        <div className="flex items-center justify-between px-5 py-4 border-t border-gray-100">
+          <span className="text-xs" style={{ color: '#9CA3AF' }}>
+            {tempSelected.length > 0 ? `Выбрано: ${tempSelected.length}` : 'Не выбрано'}
+          </span>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={onClose}
+              className="px-4 py-2 text-sm rounded-lg border transition-colors hover:bg-gray-50"
+              style={{ borderColor: '#E5E7EB', color: '#6B7280' }}
+            >
+              Отмена
+            </button>
+            <button
+              type="button"
+              onClick={() => onApply(tempSelected)}
+              className="px-4 py-2 text-sm rounded-lg font-medium text-white transition-all"
+              style={{ backgroundColor: '#111827' }}
+            >
+              {tempSelected.length > 0 ? `Применить (${tempSelected.length})` : 'Применить'}
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  )
 }
 
 // ─────────────────────────────────────────────────────────
@@ -88,6 +256,34 @@ const WORKFLOWS = [
   },
 ]
 
+const LEGAL_PROMPTS = [
+  {
+    category: 'Анализ документа',
+    prompts: [
+      'Проанализируй ключевые условия этого документа и выяви потенциальные риски',
+      'Извлеки все важные даты, сроки и дедлайны',
+      'Перечисли права и обязанности каждой из сторон',
+      'Найди неоднозначные или противоречивые формулировки в тексте',
+    ],
+  },
+  {
+    category: 'Составление',
+    prompts: [
+      'Составь проект договора об оказании юридических услуг',
+      'Напиши претензионное письмо в связи с нарушением условий договора',
+      'Составь соглашение о конфиденциальности (NDA)',
+    ],
+  },
+  {
+    category: 'Резюме',
+    prompts: [
+      'Сделай краткое резюме дела с ключевыми выводами',
+      'Определи ключевые стороны и их позиции',
+      'Выдели основные риски и рекомендации',
+    ],
+  },
+]
+
 // ─────────────────────────────────────────────────────────
 // HarveyInput — input card with case-specific settings
 // ─────────────────────────────────────────────────────────
@@ -99,6 +295,9 @@ interface HarveyInputProps {
   uploadingFiles: string[]
   onAddFiles: (files: File[]) => void
   onRemoveContext: (idx: number) => void
+  selectedCaseFiles: CaseFileItem[]
+  onOpenCaseFilePicker: () => void
+  onRemoveCaseFile: (id: string) => void
   isStreaming: boolean
   isDraftMode: boolean
   onSetDraftMode: (draft: boolean) => void
@@ -112,6 +311,7 @@ interface HarveyInputProps {
 function HarveyInput({
   value, onChange, onSubmit,
   fileContexts, uploadingFiles, onAddFiles, onRemoveContext,
+  selectedCaseFiles, onOpenCaseFilePicker, onRemoveCaseFile,
   isStreaming, isDraftMode, onSetDraftMode,
   isLegalResearch, onSetLegalResearch,
   isDeepThink, onSetDeepThink,
@@ -120,7 +320,31 @@ function HarveyInput({
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const settingsRef = useRef<HTMLDivElement>(null)
+  const filesDropdownRef = useRef<HTMLDivElement>(null)
+  const promptsRef = useRef<HTMLDivElement>(null)
   const [settingsOpen, setSettingsOpen] = useState(false)
+  const [filesDropdownOpen, setFilesDropdownOpen] = useState(false)
+  const [promptsOpen, setPromptsOpen] = useState(false)
+
+  useEffect(() => {
+    const handleClickOutside = (e: MouseEvent) => {
+      if (filesDropdownRef.current && !filesDropdownRef.current.contains(e.target as Node)) {
+        setFilesDropdownOpen(false)
+      }
+    }
+    if (filesDropdownOpen) document.addEventListener('mousedown', handleClickOutside)
+    return () => document.removeEventListener('mousedown', handleClickOutside)
+  }, [filesDropdownOpen])
+
+  useEffect(() => {
+    const handleClickOutside = (e: MouseEvent) => {
+      if (promptsRef.current && !promptsRef.current.contains(e.target as Node)) {
+        setPromptsOpen(false)
+      }
+    }
+    if (promptsOpen) document.addEventListener('mousedown', handleClickOutside)
+    return () => document.removeEventListener('mousedown', handleClickOutside)
+  }, [promptsOpen])
 
   useEffect(() => {
     const el = textareaRef.current
@@ -146,11 +370,11 @@ function HarveyInput({
     }
   }
 
-  const hasFiles = fileContexts.length > 0 || uploadingFiles.length > 0
+  const hasFiles = fileContexts.length > 0 || uploadingFiles.length > 0 || selectedCaseFiles.length > 0
   const hasActiveSettings = isDraftMode || isLegalResearch || isDeepThink
 
   return (
-    <div className="rounded-xl border border-gray-200 bg-white overflow-hidden" style={{ boxShadow: '0 1px 6px rgba(0,0,0,0.06)' }}>
+    <div className="rounded-xl border border-gray-200 bg-white" style={{ boxShadow: '0 1px 6px rgba(0,0,0,0.06)' }}>
       {/* Textarea */}
       <div className="px-4 pt-4 pb-2">
         <textarea
@@ -198,6 +422,19 @@ function HarveyInput({
               </button>
             </div>
           ))}
+          {selectedCaseFiles.map((f) => (
+            <div
+              key={`case-${f.id}`}
+              className="flex items-center gap-1.5 px-3 py-1 rounded-full text-xs border"
+              style={{ borderColor: '#C7D2FE', backgroundColor: '#EEF2FF', color: '#4338CA' }}
+            >
+              <FolderOpen className="w-3 h-3" />
+              <span className="max-w-[140px] truncate">{f.filename}</span>
+              <button onClick={() => onRemoveCaseFile(f.id)} className="ml-0.5 hover:text-red-500 transition-colors">
+                <X className="w-3 h-3" />
+              </button>
+            </div>
+          ))}
         </div>
       )}
 
@@ -205,15 +442,51 @@ function HarveyInput({
       <div className="flex items-center px-3 py-2 border-t border-gray-100" style={{ gap: '2px' }}>
         {/* Left tools */}
         <div className="flex items-center min-w-0 overflow-hidden" style={{ gap: '2px' }}>
-          <button
-            type="button"
-            onClick={() => fileInputRef.current?.click()}
-            className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-sm transition-colors hover:bg-gray-50 flex-shrink-0 whitespace-nowrap"
-            style={{ color: '#6B7280' }}
-          >
-            <Plus className="w-3.5 h-3.5" />
-            Файлы
-          </button>
+          {/* Files dropdown */}
+          <div ref={filesDropdownRef} className="relative flex-shrink-0">
+            <button
+              type="button"
+              onClick={() => setFilesDropdownOpen((o) => !o)}
+              className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-sm transition-colors hover:bg-gray-50 whitespace-nowrap"
+              style={{ color: selectedCaseFiles.length > 0 ? '#4338CA' : '#6B7280' }}
+            >
+              <Plus className="w-3.5 h-3.5" />
+              Файлы
+              {selectedCaseFiles.length > 0 && (
+                <span
+                  className="ml-0.5 px-1.5 py-0.5 rounded-full text-xs font-medium"
+                  style={{ backgroundColor: '#EEF2FF', color: '#4338CA' }}
+                >
+                  {selectedCaseFiles.length}
+                </span>
+              )}
+            </button>
+            {filesDropdownOpen && (
+              <div
+                className="absolute bottom-full mb-1 left-0 bg-white rounded-lg border border-gray-200 overflow-hidden z-50"
+                style={{ minWidth: '210px', boxShadow: '0 4px 16px rgba(0,0,0,0.10)' }}
+              >
+                <button
+                  type="button"
+                  onClick={() => { fileInputRef.current?.click(); setFilesDropdownOpen(false) }}
+                  className="w-full flex items-center gap-2.5 px-3 py-2.5 text-sm hover:bg-gray-50 transition-colors text-left"
+                  style={{ color: '#374151' }}
+                >
+                  <Upload className="w-4 h-4 flex-shrink-0" style={{ color: '#9CA3AF' }} />
+                  Загрузить с компьютера
+                </button>
+                <button
+                  type="button"
+                  onClick={() => { onOpenCaseFilePicker(); setFilesDropdownOpen(false) }}
+                  className="w-full flex items-center gap-2.5 px-3 py-2.5 text-sm hover:bg-gray-50 transition-colors text-left"
+                  style={{ color: '#374151' }}
+                >
+                  <FolderOpen className="w-4 h-4 flex-shrink-0" style={{ color: '#9CA3AF' }} />
+                  Из документов дела
+                </button>
+              </div>
+            )}
+          </div>
           <input
             ref={fileInputRef}
             type="file"
@@ -230,15 +503,6 @@ function HarveyInput({
 
           <button
             type="button"
-            className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-sm transition-colors hover:bg-gray-50 flex-shrink-0 whitespace-nowrap"
-            style={{ color: '#6B7280' }}
-          >
-            <AlignJustify className="w-3.5 h-3.5" />
-            Промпты
-          </button>
-
-          <button
-            type="button"
             disabled
             className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-sm opacity-40 cursor-not-allowed flex-shrink-0 whitespace-nowrap"
             style={{ color: '#6B7280' }}
@@ -246,6 +510,54 @@ function HarveyInput({
             <Sparkles className="w-3.5 h-3.5" />
             Улучшить
           </button>
+        </div>
+
+        {/* Prompts dropdown — outside overflow-hidden so popup is not clipped */}
+        <div ref={promptsRef} className="relative flex-shrink-0">
+          <button
+            type="button"
+            onClick={() => setPromptsOpen((o) => !o)}
+            className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-sm transition-colors whitespace-nowrap"
+            style={{
+              color: '#6B7280',
+              backgroundColor: promptsOpen ? '#F3F4F6' : undefined,
+            }}
+          >
+            <AlignJustify className="w-3.5 h-3.5" />
+            Промпты
+          </button>
+
+          {promptsOpen && (
+            <div
+              className="absolute bottom-full mb-1.5 left-0 bg-white rounded-lg border border-gray-200 z-50 overflow-y-auto"
+              style={{ width: '300px', maxHeight: '220px', boxShadow: '0 4px 16px rgba(0,0,0,0.10)' }}
+            >
+              {LEGAL_PROMPTS.map((group) => (
+                <div key={group.category}>
+                  <div
+                    className="px-3 py-1 text-xs font-medium border-b border-gray-100"
+                    style={{ color: '#9CA3AF', backgroundColor: '#FAFAFA' }}
+                  >
+                    {group.category}
+                  </div>
+                  {group.prompts.map((prompt) => (
+                    <button
+                      key={prompt}
+                      type="button"
+                      onClick={() => {
+                        onChange(prompt)
+                        setPromptsOpen(false)
+                      }}
+                      className="w-full text-left px-3 py-1.5 text-sm hover:bg-gray-50 transition-colors border-b border-gray-50"
+                      style={{ color: '#374151' }}
+                    >
+                      {prompt}
+                    </button>
+                  ))}
+                </div>
+              ))}
+            </div>
+          )}
         </div>
 
         {/* Settings dropdown — outside overflow-hidden */}
@@ -383,6 +695,7 @@ function HarveyInput({
 const AssistantChatPage = () => {
   const { caseId } = useParams<{ caseId: string }>()
   const location = useLocation()
+  const navigate = useNavigate()
 
   const [question, setQuestion] = useState('')
   const [fileContexts, setFileContexts] = useState<FileContext[]>([])
@@ -394,8 +707,18 @@ const AssistantChatPage = () => {
   const [isLegalResearch, setIsLegalResearch] = useState(false)
   const [isDeepThink, setIsDeepThink] = useState(false)
   const [draftDocument, setDraftDocument] = useState<DraftDocument | null>(null)
+  const [draftDocId, setDraftDocId] = useState<string | null>(null)
+
   const [historyPanelOpen, setHistoryPanelOpen] = useState(false)
   const [caseTitle, setCaseTitle] = useState<string>('')
+  const [loadingSession, setLoadingSession] = useState(false)
+
+  // Case file picker
+  const [selectedCaseFileIds, setSelectedCaseFileIds] = useState<string[]>([])
+  const [availableCaseFiles, setAvailableCaseFiles] = useState<CaseFileItem[]>([])
+  const [caseFilesLoaded, setCaseFilesLoaded] = useState(false)
+  const [showCaseFilePicker, setShowCaseFilePicker] = useState(false)
+  const [loadingCaseFiles, setLoadingCaseFiles] = useState(false)
 
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const abortRef = useRef<AbortController | null>(null)
@@ -456,12 +779,14 @@ const AssistantChatPage = () => {
     const params = new URLSearchParams(location.search)
     const sessionParam = params.get('session')
     if (sessionParam) {
+      setLoadingSession(true)
       loadChatHistory(caseId, sessionParam)
         .then((history) => {
           setMessages(history.map((m) => ({ role: m.role, content: m.content })))
           setSessionId(sessionParam)
         })
         .catch(() => {})
+        .finally(() => setLoadingSession(false))
     }
   }, [caseId, location.search])
 
@@ -494,6 +819,30 @@ const AssistantChatPage = () => {
     setFileContexts((prev) => prev.filter((_, i) => i !== idx))
   }
 
+  // ── Case file picker ──
+  const handleOpenCaseFilePicker = async () => {
+    setShowCaseFilePicker(true)
+    if (!caseFilesLoaded && caseId) {
+      setLoadingCaseFiles(true)
+      try {
+        const result = await getCaseFiles(caseId)
+        setAvailableCaseFiles(
+          result.files.map((f) => ({
+            id: f.id,
+            filename: f.filename,
+            file_type: f.file_type || '',
+          }))
+        )
+        setCaseFilesLoaded(true)
+      } catch {}
+      setLoadingCaseFiles(false)
+    }
+  }
+
+  const selectedCaseFiles: CaseFileItem[] = availableCaseFiles.filter((f) =>
+    selectedCaseFileIds.includes(f.id)
+  )
+
   // ── Send message ──
   const handleSubmit = async () => {
     const text = question.trim()
@@ -514,6 +863,7 @@ const AssistantChatPage = () => {
 
     if (isDraftMode) {
       setDraftDocument((prev) => prev ?? { title: 'Черновик', content: '' })
+      setDraftDocId(null)
     }
 
     try {
@@ -534,6 +884,7 @@ const AssistantChatPage = () => {
           deep_think: isDeepThink,
           draft_mode: isDraftMode,
           document_context: isDraftMode && currentDraft ? currentDraft.content : undefined,
+          attached_file_ids: selectedCaseFileIds.length > 0 ? selectedCaseFileIds : undefined,
         }),
         signal: abortRef.current.signal,
       })
@@ -559,25 +910,39 @@ const AssistantChatPage = () => {
             const data = JSON.parse(raw)
             if (data.session_id && !sessionId) {
               setSessionId(data.session_id)
-            } else if (data.textDelta) {
-              assistantContent += data.textDelta
+            } else if (data.type === 'citations' && Array.isArray(data.citations)) {
+              const sources: SourceInfo[] = data.citations.map((c: any) => ({
+                file: c.file_name || c.file || '',
+                title: c.file_name || c.file,
+                page: c.page ?? undefined,
+                text_preview: c.quote,
+              }))
+              setMessages((prev) => {
+                const last = prev[prev.length - 1]
+                return [...prev.slice(0, -1), { ...last, sources }]
+              })
+            } else if (data.error) {
+              assistantContent = `Ошибка: ${data.error}`
               setMessages((prev) => [
                 ...prev.slice(0, -1),
                 { role: 'assistant', content: assistantContent },
               ])
-              if (isDraftMode) {
-                const draftLines = assistantContent.trim().split('\n')
-                const firstLine = draftLines[0].trim()
-                const boldMatch = firstLine.match(/^\*\*(.+?)\*\*$/)
-                const headingMatch = firstLine.match(/^#+\s+(.+)$/)
-                if (boldMatch) {
-                  setDraftDocument({ title: boldMatch[1], content: draftLines.slice(1).join('\n').trimStart() })
-                } else if (headingMatch) {
-                  setDraftDocument({ title: headingMatch[1], content: draftLines.slice(1).join('\n').trimStart() })
-                } else {
-                  setDraftDocument((prev) => ({ title: prev?.title ?? 'Документ', content: assistantContent.trim() }))
-                }
+            } else if (data.type === 'document_created' && data.document) {
+              // Backend already created the document — just store the id and title
+              const docId = data.document.id
+              const docTitle = data.document.title || 'Черновик'
+              setDraftDocId(docId)
+              setDraftDocument({ title: docTitle, content: '' })
+            } else if (data.textDelta) {
+              assistantContent += data.textDelta
+              if (!isDraftMode) {
+                // Normal mode: show full response in chat
+                setMessages((prev) => [
+                  ...prev.slice(0, -1),
+                  { role: 'assistant', content: assistantContent },
+                ])
               }
+              // Draft mode: textDelta is just a confirmation message — ignore it
             }
           } catch {}
         }
@@ -594,30 +959,16 @@ const AssistantChatPage = () => {
     }
   }
 
-  // ── DOCX download ──
-  const handleDownloadDocx = async () => {
-    if (!draftDocument) return
-    try {
-      const token = localStorage.getItem('access_token')
-      const res = await fetch(getApiUrl('/api/v2/assistant/download-docx'), {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ title: draftDocument.title, content: draftDocument.content }),
-      })
-      if (!res.ok) throw new Error('Download failed')
-      const blob = await res.blob()
-      const url = URL.createObjectURL(blob)
-      const a = document.createElement('a')
-      a.href = url
-      a.download = `${draftDocument.title}.docx`
-      document.body.appendChild(a)
-      a.click()
-      document.body.removeChild(a)
-      URL.revokeObjectURL(url)
-    } catch (err) {
-      console.error('Download error:', err)
-      toast.error('Не удалось скачать документ')
+  // ── Open draft in case document editor ──
+  const handleOpenInEditor = async () => {
+    if (!caseId) return
+    // If backend already created the document, navigate directly
+    if (draftDocId) {
+      navigate(`/cases/${caseId}/editor/${draftDocId}`)
+      return
     }
+    // Fallback: shouldn't happen, but handle gracefully
+    toast.error('Документ ещё не готов')
   }
 
   // ── New chat ──
@@ -626,9 +977,11 @@ const AssistantChatPage = () => {
     setMessages([])
     setQuestion('')
     setFileContexts([])
+    setSelectedCaseFileIds([])
     setSessionId(null)
     setIsDraftMode(false)
     setDraftDocument(null)
+    setDraftDocId(null)
   }
 
   // ── Load history session ──
@@ -651,10 +1004,23 @@ const AssistantChatPage = () => {
     )
   }
 
-  const chatActive = messages.length > 0
+  const sessionParam = new URLSearchParams(location.search).get('session')
+  const chatActive = messages.length > 0 || loadingSession || !!sessionParam
 
   return (
-    <div className="h-full flex flex-col overflow-hidden bg-white">
+    <div className="h-full flex flex-col overflow-hidden">
+      {/* Breadcrumb — always visible */}
+      <div
+        className="flex items-center gap-1.5 text-sm px-6 pt-3 pb-1 shrink-0"
+        style={{ color: 'var(--color-text-muted)', backgroundColor: chatActive ? 'white' : '#FAFAFA' }}
+      >
+        <button onClick={() => navigate('/cases')} className="hover:underline transition-colors" style={{ color: 'var(--color-text-muted)' }}>Дела</button>
+        <span>/</span>
+        <button onClick={() => navigate(`/cases/${caseId}`)} className="hover:underline transition-colors" style={{ color: 'var(--color-text-muted)' }}>{caseTitle || '...'}</button>
+        <span>/</span>
+        <span>Ассистент</span>
+      </div>
+
       {chatActive ? (
         // ── Chat view ──
         <>
@@ -700,14 +1066,6 @@ const AssistantChatPage = () => {
             </div>
             <div className="flex items-center gap-3">
               <button
-                onClick={() => setHistoryPanelOpen(true)}
-                className="flex items-center gap-1.5 text-sm transition-opacity hover:opacity-70"
-                style={{ color: '#6B7280' }}
-              >
-                <History className="w-4 h-4" />
-                История
-              </button>
-              <button
                 onClick={handleNewChat}
                 className="flex items-center gap-1.5 text-sm font-medium transition-opacity hover:opacity-70"
                 style={{ color: '#6B7280' }}
@@ -721,12 +1079,22 @@ const AssistantChatPage = () => {
           {/* Body: chat + optional document panel */}
           <div className="flex-1 flex overflow-hidden">
             {/* Chat column */}
-            <div
-              className="flex flex-col overflow-hidden"
-              style={{ width: draftDocument ? '45%' : '100%', transition: 'width 0.2s ease' }}
-            >
+            <div className="flex flex-col overflow-hidden" style={{ width: '100%' }}>
               <div className="flex-1 overflow-y-auto">
                 <div style={{ maxWidth: '960px', margin: '0 auto' }} className="px-6 py-8 space-y-6">
+                  {loadingSession && messages.length === 0 && (
+                    <div className="flex items-center justify-center py-16">
+                      <div className="flex gap-1">
+                        {[0, 1, 2].map((i) => (
+                          <div
+                            key={i}
+                            className="w-2 h-2 rounded-full animate-bounce"
+                            style={{ backgroundColor: '#9CA3AF', animationDelay: `${i * 150}ms` }}
+                          />
+                        ))}
+                      </div>
+                    </div>
+                  )}
                   {messages.map((msg, idx) => (
                     <div key={idx} className={msg.role === 'user' ? 'flex justify-end' : 'flex justify-start'}>
                       {msg.role === 'user' ? (
@@ -738,19 +1106,51 @@ const AssistantChatPage = () => {
                         </div>
                       ) : (
                         <div
-                          className="max-w-[90%] text-sm leading-relaxed whitespace-pre-wrap"
+                          className="max-w-[90%] text-sm"
                           style={{ color: '#111827' }}
                         >
-                          {msg.content || (
-                            <div className="flex gap-1">
-                              {[0, 1, 2].map((i) => (
-                                <div
-                                  key={i}
-                                  className="w-1.5 h-1.5 rounded-full animate-bounce"
-                                  style={{ backgroundColor: '#9CA3AF', animationDelay: `${i * 150}ms` }}
-                                />
-                              ))}
-                            </div>
+                          {msg.content ? (
+                            <MessageContent
+                              content={msg.content}
+                              sources={msg.sources || []}
+                              isStreaming={isStreaming && idx === messages.length - 1}
+                            />
+                          ) : (
+                            // Dots only during active streaming (not in draft mode after completion)
+                            isStreaming && idx === messages.length - 1 && !isDraftMode && (
+                              <div className="flex gap-1">
+                                {[0, 1, 2].map((i) => (
+                                  <div
+                                    key={i}
+                                    className="w-1.5 h-1.5 rounded-full animate-bounce"
+                                    style={{ backgroundColor: '#9CA3AF', animationDelay: `${i * 150}ms` }}
+                                  />
+                                ))}
+                              </div>
+                            )
+                          )}
+                          {/* Draft indicator */}
+                          {isDraftMode && idx === messages.length - 1 && (
+                            isStreaming ? (
+                              <div className="flex items-center gap-2 mt-1">
+                                <Loader2 className="w-3.5 h-3.5 animate-spin" style={{ color: '#4338CA' }} />
+                                <span className="text-sm" style={{ color: '#374151' }}>Создаю документ...</span>
+                              </div>
+                            ) : draftDocument ? (
+                              <div className="flex flex-col gap-2 mt-1">
+                                <p className="text-sm" style={{ color: '#374151' }}>
+                                  Готово! Документ{draftDocument.title ? ` «${draftDocument.title}»` : ''} создан.
+                                </p>
+                                <button
+                                  onClick={handleOpenInEditor}
+                                  className="flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-medium transition-colors self-start"
+                                  style={{ border: '1px solid #C7D2FE', backgroundColor: '#EEF2FF', color: '#4338CA' }}
+                                >
+                                  <ExternalLink className="w-3.5 h-3.5" />
+                                  Перейти в редактор
+                                </button>
+                              </div>
+                            ) : null
                           )}
                         </div>
                       )}
@@ -770,6 +1170,9 @@ const AssistantChatPage = () => {
                     uploadingFiles={uploadingFiles}
                     onAddFiles={handleAddFiles}
                     onRemoveContext={handleRemoveContext}
+                    selectedCaseFiles={selectedCaseFiles}
+                    onOpenCaseFilePicker={handleOpenCaseFilePicker}
+                    onRemoveCaseFile={(id) => setSelectedCaseFileIds((prev) => prev.filter((x) => x !== id))}
                     isStreaming={isStreaming}
                     isDraftMode={isDraftMode}
                     onSetDraftMode={setIsDraftMode}
@@ -782,54 +1185,12 @@ const AssistantChatPage = () => {
               </div>
             </div>
 
-            {/* Document panel */}
-            {draftDocument && (
-              <div
-                className="flex flex-col border-l overflow-hidden"
-                style={{ width: '55%', borderLeftColor: '#E5E7EB', backgroundColor: '#FAFAFA' }}
-              >
-                <div
-                  className="flex items-center gap-3 px-5 py-3 border-b bg-white shrink-0"
-                  style={{ borderBottomColor: '#E5E7EB' }}
-                >
-                  <input
-                    value={draftDocument.title}
-                    onChange={(e) => setDraftDocument((prev) => prev ? { ...prev, title: e.target.value } : null)}
-                    className="flex-1 text-sm font-semibold outline-none bg-transparent"
-                    style={{ color: '#111827' }}
-                  />
-                  <button
-                    onClick={handleDownloadDocx}
-                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-xs font-medium transition-colors hover:bg-gray-50"
-                    style={{ borderColor: '#E5E7EB', color: '#374151' }}
-                  >
-                    <Download className="w-3.5 h-3.5" />
-                    Скачать .docx
-                  </button>
-                  <button
-                    onClick={() => setDraftDocument(null)}
-                    className="p-1 rounded-md transition-colors hover:bg-gray-100"
-                    style={{ color: '#9CA3AF' }}
-                  >
-                    <X className="w-4 h-4" />
-                  </button>
-                </div>
-                <div className="flex-1 overflow-y-auto p-6">
-                  <textarea
-                    value={draftDocument.content}
-                    onChange={(e) => setDraftDocument((prev) => prev ? { ...prev, content: e.target.value } : null)}
-                    className="w-full h-full resize-none outline-none text-sm leading-relaxed bg-transparent"
-                    style={{ color: '#111827', fontFamily: 'inherit', minHeight: '400px' }}
-                  />
-                </div>
-              </div>
-            )}
           </div>
         </>
       ) : (
         // ── Landing ──
         <div className="flex-1 overflow-y-auto" style={{ backgroundColor: '#FAFAFA' }}>
-          <div className="max-w-[960px] mx-auto px-6 pt-12 pb-12">
+          <div className="max-w-[960px] mx-auto px-6 pt-6 pb-12">
 
             {/* Case badge */}
             <div className="mb-8 flex items-center justify-between">
@@ -840,14 +1201,6 @@ const AssistantChatPage = () => {
                 <FileText className="w-3.5 h-3.5" />
                 {caseTitle || 'Загрузка...'}
               </div>
-              <button
-                onClick={() => setHistoryPanelOpen(true)}
-                className="flex items-center gap-1.5 px-3 py-1.5 rounded-md border text-sm transition-colors hover:bg-white"
-                style={{ borderColor: '#E5E7EB', color: '#6B7280', backgroundColor: 'transparent' }}
-              >
-                <History className="w-3.5 h-3.5" />
-                История
-              </button>
             </div>
 
             {/* Title */}
@@ -875,6 +1228,9 @@ const AssistantChatPage = () => {
                 uploadingFiles={uploadingFiles}
                 onAddFiles={handleAddFiles}
                 onRemoveContext={handleRemoveContext}
+                selectedCaseFiles={selectedCaseFiles}
+                onOpenCaseFilePicker={handleOpenCaseFilePicker}
+                onRemoveCaseFile={(id) => setSelectedCaseFileIds((prev) => prev.filter((x) => x !== id))}
                 isStreaming={isStreaming}
                 isDraftMode={isDraftMode}
                 onSetDraftMode={setIsDraftMode}
@@ -958,6 +1314,19 @@ const AssistantChatPage = () => {
           setHistoryPanelOpen(false)
         }}
         onLoadHistory={handleLoadHistory}
+      />
+
+      {/* Case file picker modal */}
+      <CaseFilePickerModal
+        isOpen={showCaseFilePicker}
+        files={availableCaseFiles}
+        loading={loadingCaseFiles}
+        initialSelectedIds={selectedCaseFileIds}
+        onApply={(ids) => {
+          setSelectedCaseFileIds(ids)
+          setShowCaseFilePicker(false)
+        }}
+        onClose={() => setShowCaseFilePicker(false)}
       />
     </div>
   )

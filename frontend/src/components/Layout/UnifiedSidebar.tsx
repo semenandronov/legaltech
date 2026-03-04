@@ -43,7 +43,7 @@ const UnifiedSidebar = ({ navItems, title = 'Legal AI', showBackButton = true, f
 
   return (
     <div
-      className={`h-screen bg-bg-secondary border-r border-border flex flex-col relative overflow-hidden transition-all duration-200 ease-in-out ${
+      className={`h-screen bg-bg-secondary border-r border-border flex flex-col relative overflow-hidden transition-all duration-200 ease-in-out shrink-0 ${
         isCollapsed ? 'w-[70px]' : 'w-[250px]'
       }`}
       style={{ backgroundColor: 'var(--color-bg-secondary)' }}

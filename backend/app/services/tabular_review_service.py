@@ -779,10 +779,12 @@ class TabularReviewService:
 5. Для tag: используй ТОЛЬКО опции из списка выше
 6. ВСЕГДА указывай reasoning - подробное объяснение, откуда взялась информация
 7. ВСЕГДА указывай source_references - конкретные места в документе (страницы, разделы, цитаты)
+8. ВСЕГДА указывай verbatim_extract - дословная цитата из документа (5-25 слов), которая БУКВАЛЬНО содержит ответ, без изменений и перефразирования
 
 Формат ответа (JSON):
 {{
     "cell_value": "извлеченное значение (СТРОГО по формату типа {column.column_type})",
+    "verbatim_extract": "дословная цитата из документа, буквально содержащая ответ (5-25 слов, точно как в тексте)",
     "reasoning": "подробное объяснение, почему именно такой ответ, с указанием конкретных мест в документе",
     "source_references": [
         {{"page": 1, "section": "Раздел 3.1", "text": "цитата из документа"}},
@@ -796,7 +798,7 @@ class TabularReviewService:
 Документ ({file.filename}):
 {limited_text}
 
-Извлеки информацию согласно типу {column.column_type} и верни JSON с cell_value, reasoning и source_references."""
+Извлеки информацию согласно типу {column.column_type} и верни JSON с cell_value, verbatim_extract, reasoning и source_references."""
             
             if not self.llm:
                 raise ValueError("LLM not configured")

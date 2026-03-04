@@ -1,5 +1,5 @@
 import { useEditor, EditorContent } from '@tiptap/react'
-import { useEffect, useImperativeHandle, forwardRef, useState, useCallback } from 'react'
+import { useEffect, useImperativeHandle, forwardRef, useState, useCallback, useRef } from 'react'
 import { useDebouncedCallback } from 'use-debounce'
 import StarterKit from '@tiptap/starter-kit'
 import Placeholder from '@tiptap/extension-placeholder'
@@ -67,6 +67,7 @@ export const DocumentEditor = forwardRef<DocumentEditorRef, DocumentEditorProps>
   const [hasRisks, setHasRisks] = useState(false)
   const [showFindReplace, setShowFindReplace] = useState(false)
   const [showClauseLibrary, setShowClauseLibrary] = useState(false)
+  const editorContentRef = useRef<HTMLDivElement>(null)
 
   // Memoized callbacks for keyboard shortcuts
   const handleOpenFindReplace = useCallback(() => {
@@ -297,56 +298,56 @@ export const DocumentEditor = forwardRef<DocumentEditorRef, DocumentEditorProps>
     },
     scrollToText: (text: string) => {
       if (!editor || !text) return false
-      
-      // Получаем текстовое содержимое документа
+
       const docText = editor.state.doc.textContent
       const searchText = text.trim()
-      
-      // Ищем позицию текста в документе
-      const index = docText.indexOf(searchText)
-      if (index === -1) {
-        // Пробуем найти частичное совпадение (первые 50 символов)
-        const shortText = searchText.slice(0, 50)
-        const shortIndex = docText.indexOf(shortText)
-        if (shortIndex === -1) return false
+
+      // Try progressively shorter strings until we find a match in the full doc text
+      let matchText = searchText
+      let charIndex = docText.indexOf(matchText)
+      if (charIndex === -1) {
+        matchText = searchText.slice(0, 100)
+        charIndex = docText.indexOf(matchText)
       }
-      
-      // Ищем позицию в ProseMirror документе
+      if (charIndex === -1) {
+        matchText = searchText.slice(0, 50)
+        charIndex = docText.indexOf(matchText)
+      }
+      if (charIndex === -1) {
+        // Try first 5 words
+        matchText = searchText.split(/\s+/).slice(0, 5).join(' ')
+        charIndex = docText.indexOf(matchText)
+      }
+      if (charIndex === -1) return false
+
+      // Convert docText char offset → ProseMirror position by walking nodes
+      // (text may span multiple nodes due to marks/formatting, so per-node indexOf fails)
+      let charCount = 0
       let foundPos = -1
       editor.state.doc.descendants((node, pos) => {
         if (foundPos !== -1) return false
         if (node.isText && node.text) {
-          const nodeIndex = node.text.indexOf(searchText)
-          if (nodeIndex !== -1) {
-            foundPos = pos + nodeIndex
+          const nodeLen = node.text.length
+          if (charCount + nodeLen > charIndex) {
+            foundPos = pos + (charIndex - charCount)
             return false
           }
-          // Частичное совпадение
-          const shortText = searchText.slice(0, Math.min(50, searchText.length))
-          const shortIndex = node.text.indexOf(shortText)
-          if (shortIndex !== -1) {
-            foundPos = pos + shortIndex
-            return false
-          }
+          charCount += nodeLen
         }
         return true
       })
-      
+
       if (foundPos === -1) return false
-      
-      // Устанавливаем выделение и скроллим
-      const endPos = Math.min(foundPos + searchText.length, editor.state.doc.content.size)
-      
+
+      const endPos = Math.min(foundPos + matchText.length, editor.state.doc.content.size)
+
       editor.chain()
         .focus()
         .setTextSelection({ from: foundPos, to: endPos })
         .run()
-      
-      // Скроллим к выделенному тексту
+
       const { view } = editor
       const coords = view.coordsAtPos(foundPos)
-      
-      // Находим контейнер редактора и скроллим
       const editorElement = view.dom.closest('.document-canvas')
       if (editorElement && coords) {
         const containerRect = editorElement.getBoundingClientRect()
@@ -356,39 +357,57 @@ export const DocumentEditor = forwardRef<DocumentEditorRef, DocumentEditorProps>
           behavior: 'smooth'
         })
       }
-      
+
       return true
     },
     replaceText: (originalText: string, newText: string) => {
       if (!editor || !originalText) return false
-      
-      // Ищем позицию текста в ProseMirror документе
-      let foundPos = -1
-      let foundEndPos = -1
-      
-      editor.state.doc.descendants((node, pos) => {
-        if (foundPos !== -1) return false
-        if (node.isText && node.text) {
-          const nodeIndex = node.text.indexOf(originalText)
-          if (nodeIndex !== -1) {
-            foundPos = pos + nodeIndex
-            foundEndPos = foundPos + originalText.length
-            return false
+
+      const docText = editor.state.doc.textContent
+
+      // Collect ALL occurrences (char offsets in docText)
+      const charIndices: number[] = []
+      let searchFrom = 0
+      while (true) {
+        const idx = docText.indexOf(originalText, searchFrom)
+        if (idx === -1) break
+        charIndices.push(idx)
+        searchFrom = idx + originalText.length
+      }
+      if (charIndices.length === 0) return false
+
+      // Convert docText char offset → ProseMirror position
+      const charToPmPos = (charIndex: number): number => {
+        let charCount = 0
+        let foundPos = -1
+        editor.state.doc.descendants((node, pos) => {
+          if (foundPos !== -1) return false
+          if (node.isText && node.text) {
+            const nodeLen = node.text.length
+            if (charCount + nodeLen > charIndex) {
+              foundPos = pos + (charIndex - charCount)
+              return false
+            }
+            charCount += nodeLen
           }
-        }
-        return true
-      })
-      
-      if (foundPos === -1) return false
-      
-      // Заменяем текст
-      editor.chain()
-        .focus()
-        .setTextSelection({ from: foundPos, to: foundEndPos })
-        .deleteSelection()
-        .insertContent(newText)
-        .run()
-      
+          return true
+        })
+        return foundPos
+      }
+
+      // Apply from LAST to FIRST so earlier positions stay stable
+      charIndices.reverse()
+
+      let tr = editor.state.tr
+      for (const charIndex of charIndices) {
+        const from = charToPmPos(charIndex)
+        const to = charToPmPos(charIndex + originalText.length)
+        if (from === -1 || to === -1) continue
+        tr = tr.replaceWith(from, to, editor.state.schema.text(newText))
+      }
+
+      editor.view.dispatch(tr)
+      editor.commands.focus()
       onChange(editor.getHTML())
       return true
     },
@@ -399,29 +418,55 @@ export const DocumentEditor = forwardRef<DocumentEditorRef, DocumentEditorProps>
     },
     replaceMultipleTexts: (replacements: Array<{ original: string; replacement: string }>) => {
       if (!editor) return 0
-      let applied = 0
-      for (const { original, replacement } of replacements) {
+
+      const charToPmPos = (_docText: string, charIndex: number): number => {
+        let charCount = 0
         let foundPos = -1
-        let foundEnd = -1
         editor.state.doc.descendants((node, pos) => {
           if (foundPos !== -1) return false
           if (node.isText && node.text) {
-            const idx = node.text.indexOf(original)
-            if (idx !== -1) {
-              foundPos = pos + idx
-              foundEnd = foundPos + original.length
+            const nodeLen = node.text.length
+            if (charCount + nodeLen > charIndex) {
+              foundPos = pos + (charIndex - charCount)
               return false
             }
+            charCount += nodeLen
           }
           return true
         })
-        if (foundPos !== -1) {
-          editor.chain().focus().deleteRange({ from: foundPos, to: foundEnd }).insertContent(replacement).run()
-          applied++
+        return foundPos
+      }
+
+      // Collect all (from, to, replacement) pairs from original doc, then apply last→first
+      const docText = editor.state.doc.textContent
+      const ops: { from: number; to: number; text: string }[] = []
+
+      for (const { original, replacement } of replacements) {
+        let searchFrom = 0
+        while (true) {
+          const idx = docText.indexOf(original, searchFrom)
+          if (idx === -1) break
+          const from = charToPmPos(docText, idx)
+          const to = charToPmPos(docText, idx + original.length)
+          if (from !== -1 && to !== -1) ops.push({ from, to, text: replacement })
+          searchFrom = idx + original.length
         }
       }
-      if (applied > 0) onChange(editor.getHTML())
-      return applied
+
+      if (ops.length === 0) return 0
+
+      // Sort descending by position so replacements don't shift earlier positions
+      ops.sort((a, b) => b.from - a.from)
+
+      let tr = editor.state.tr
+      for (const { from, to, text } of ops) {
+        tr = tr.replaceWith(from, to, editor.state.schema.text(text))
+      }
+
+      editor.view.dispatch(tr)
+      editor.commands.focus()
+      onChange(editor.getHTML())
+      return ops.length
     },
     setSelectionHighlight: (from: number, to: number) => {
       editor?.commands.setSelectionHighlight(from, to)
@@ -465,39 +510,29 @@ export const DocumentEditor = forwardRef<DocumentEditorRef, DocumentEditorProps>
         hasRisks={hasRisks}
         onClearRisks={handleClearRisks}
       />
-      <div 
+      <div
         className="flex-1 overflow-auto document-canvas"
         style={{ backgroundColor: '#f1f3f4' }}
       >
         <div className="flex justify-center py-8 px-4">
-          <div className="document-container" style={{ width: `${scaledWidth}px` }}>
-            {/* White document page */}
-            <div 
-              className="document-page bg-white"
-                style={{
-                  width: `${scaledWidth}px`,
-                  minHeight: `${scaledHeight}px`,
-                  boxShadow: '0 1px 3px 0 rgba(60, 64, 67, 0.3), 0 4px 8px 3px rgba(60, 64, 67, 0.15)',
-                }}
-              >
-                {/* Document content area with margins */}
-                <div
-                  className="editor-content"
-                  style={{
-                    padding: `${scaledMargin}px`,
-                    minHeight: `${scaledHeight - (scaledMargin * 2)}px`,
-                  }}
-                >
-                  <EditorContent editor={editor} />
-                  {/* Selection bubble menu for AI actions */}
-                  {/* Find and Replace panel */}
-                  <FindReplace
-                    editor={editor}
-                    isOpen={showFindReplace}
-                    onClose={() => setShowFindReplace(false)}
-                  />
-                </div>
-              </div>
+          <div
+            ref={editorContentRef}
+            className="editor-content"
+            style={{
+              width: '100%',
+              maxWidth: `${scaledWidth}px`,
+              minHeight: `${scaledHeight}px`,
+              backgroundColor: 'white',
+              boxShadow: '0 1px 3px 0 rgba(60, 64, 67, 0.3), 0 4px 8px 3px rgba(60, 64, 67, 0.15)',
+              padding: `${scaledMargin}px`,
+            }}
+          >
+            <EditorContent editor={editor} />
+            <FindReplace
+              editor={editor}
+              isOpen={showFindReplace}
+              onClose={() => setShowFindReplace(false)}
+            />
           </div>
         </div>
       </div>

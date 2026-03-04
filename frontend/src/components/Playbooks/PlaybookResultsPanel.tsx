@@ -375,14 +375,14 @@ export const PlaybookResultsPanel = ({
                   >
                     <span className="text-xs font-medium" style={{ color: '#dc2626' }}>Исходный текст:</span>
                     <p className="mt-0.5">
-                      {selectedRule.found_text.length > 400
-                        ? selectedRule.found_text.substring(0, 400) + '…'
+                      {selectedRule.found_text.length > 250
+                        ? selectedRule.found_text.substring(0, 250) + '…'
                         : selectedRule.found_text}
                     </p>
                   </div>
 
-                  {/* Варианты правок (standard + fallbacks) */}
-                  {(selectedRule.suggested_options && selectedRule.suggested_options.length > 0
+                  {/* Варианты правок (standard + fallbacks) — только если статус не passed */}
+                  {selectedRule.status !== 'passed' && (selectedRule.suggested_options && selectedRule.suggested_options.length > 0
                     ? selectedRule.suggested_options
                     : (selectedRule.suggestion || selectedRule.suggested_fix)
                       ? [{ label: 'Suggested fix', type: 'standard', text: selectedRule.suggestion || selectedRule.suggested_fix || '' }]

@@ -74,12 +74,6 @@ const PRESETS = [
     description: 'Структурированный анализ в табличном формате',
     path: (id: string) => `/cases/${id}/tabular-review`,
   },
-  {
-    id: 'playbooks',
-    title: 'Playbooks',
-    description: 'Проверка документов по чеклистам',
-    path: (id: string) => `/cases/${id}/playbooks`,
-  },
 ]
 
 const CaseOverviewPage = () => {
@@ -369,10 +363,8 @@ const CaseOverviewPage = () => {
   }
 
   const navItems = [
-    { id: 'cases', label: 'Дела', icon: FolderOpen, path: '/cases' },
     { id: 'chat', label: 'Ассистент', icon: MessageSquare, path: `/cases/${caseId}/chat` },
     { id: 'editor', label: 'Редактор', icon: FileEdit, path: `/cases/${caseId}/editor` },
-    { id: 'tabular-review', label: 'Tabular Review', icon: Table, path: `/cases/${caseId}/tabular-review` },
     { id: 'playbooks', label: 'Playbooks', icon: BookOpen, path: `/cases/${caseId}/playbooks` },
     { id: 'workflows', label: 'Workflows', icon: Workflow, path: `/cases/${caseId}/workflows` },
   ]

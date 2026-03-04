@@ -335,10 +335,19 @@ export const getGlobalAssistantSessions = async (): Promise<Array<{
 export const getGlobalAssistantSession = async (sessionId: string): Promise<{
   session_id: string
   title: string
+  draft_title?: string
+  draft_content?: string
   messages: Array<{ role: 'user' | 'assistant'; content: string }>
 }> => {
   const response = await apiClient.get(getApiUrl(`/api/v2/assistant/global-sessions/${sessionId}`))
   return response.data
+}
+
+export const saveSessionDraft = async (sessionId: string, draftTitle: string, draftContent: string): Promise<void> => {
+  await apiClient.patch(getApiUrl(`/api/v2/assistant/global-sessions/${sessionId}/draft`), {
+    draft_title: draftTitle,
+    draft_content: draftContent,
+  })
 }
 
 // Dashboard API

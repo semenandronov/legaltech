@@ -53,8 +53,19 @@ _SEARCH_RESULTS_HEADER = re.compile(
     r'^\s*Результаты поиска:\s*$',
     re.MULTILINE
 )
-# GigaChat section headers like [# Анализ вопроса пользователя], [# Выбор инструмента], [# Ответ]
-_SECTION_HEADER_RE = re.compile(r'^\s*\[#[^\]]+\]\s*$', re.MULTILINE)
+# Chain-of-thought section headers: both [# Header] and bare # Header markdown variants
+_SECTION_HEADER_RE = re.compile(
+    r'^\s*(?:\[#[^\]]+\]|# (?:Анализ вопроса|Выбор инструмента|Ответ|Шаг \d+|Итог)(?:[^\n]*)?)\s*$',
+    re.MULTILINE
+)
+# [Single-line bracket notes] like [Приветствие удалено из вопроса пользователя]
+_BRACKET_NOTE_RE = re.compile(r'^\s*\[[^\]#\n]{8,}\]\s*$', re.MULTILINE)
+# Sentences/phrases that mention internal tool function names in user-facing text
+# e.g. "Подробный обзор можно найти в выводе функции `analyze_all_documents`."
+_TOOL_NAME_MENTION_RE = re.compile(
+    r'[^\n.!?]*(?:' + '|'.join(re.escape(t) for t in _TOOL_NAMES) + r')[^\n.!?]*[.!?]?\n?',
+    re.IGNORECASE,
+)
 
 
 # Задержка между «словами» при эффекте печати (секунды)
@@ -82,8 +93,13 @@ def _clean_response_text(text: str) -> str:
     cleaned = _TOOL_CALL_PATTERN.sub('', text)
     cleaned = _RESULT_PREFIX_PATTERN.sub('', cleaned)
     cleaned = _SEARCH_RESULTS_HEADER.sub('', cleaned)
-    # Remove [# Section Header] lines (GigaChat chain-of-thought markers)
+    # Remove chain-of-thought section header lines
     cleaned = _SECTION_HEADER_RE.sub('', cleaned)
+    # Remove [bracket note] lines (preprocessing notes like [Приветствие удалено...])
+    cleaned = _BRACKET_NOTE_RE.sub('', cleaned)
+    # Remove sentences that mention internal tool function names
+    # (e.g. "Подробный обзор можно найти в выводе функции analyze_all_documents.")
+    cleaned = _TOOL_NAME_MENTION_RE.sub('', cleaned)
     # Remove "Улучшенный ответ:" prefix from reflection
     cleaned = re.sub(r'^\s*Улучшенный ответ:\s*', '', cleaned, flags=re.MULTILINE)
     # Collapse excessive blank lines
@@ -101,7 +117,7 @@ def _filter_section_headers_streaming(token: str, line_buf: str) -> tuple:
     emit_parts = []
     # All parts except the last are complete lines (they ended with \n)
     for part in parts[:-1]:
-        if not _SECTION_HEADER_RE.match(part):
+        if not _SECTION_HEADER_RE.match(part) and not _BRACKET_NOTE_RE.match(part):
             emit_parts.append(part + '\n')
     # Last part is an incomplete line — buffer it
     return ''.join(emit_parts), parts[-1]
@@ -186,15 +202,16 @@ class ReActChatAgent:
                               ПРАВИЛА РАБОТЫ
 ═══════════════════════════════════════════════════════════════════════════════
 
-1. ВСЕГДА используй инструменты для получения информации
-2. НЕ придумывай информацию - только то, что нашёл в документах
-3. Для обзорных вопросов ("о чём дело?") используй analyze_all_documents
-4. Для конкретных вопросов используй search_in_documents
-5. Можешь вызывать несколько инструментов для полного ответа
-6. ОБЯЗАТЕЛЬНО ссылайся на источники через НОМЕРНЫЕ СНОСКИ: [1], [2], [3] и т.д.
+1. На приветствия и светские реплики ("привет", "здравствуйте", "как дела?") отвечай коротко и дружелюбно — без использования инструментов. Например: "Здравствуйте! Чем могу помочь?"
+2. ВСЕГДА используй инструменты для получения информации по документам
+3. НЕ придумывай информацию - только то, что нашёл в документах
+4. Для обзорных вопросов ("о чём дело?") используй analyze_all_documents
+5. Для конкретных вопросов используй search_in_documents
+6. Можешь вызывать несколько инструментов для полного ответа
+7. ОБЯЗАТЕЛЬНО ссылайся на источники через НОМЕРНЫЕ СНОСКИ: [1], [2], [3] и т.д.
    Номера соответствуют номерам фрагментов из результатов search_in_documents.
    Пример: "Срок договора составляет 1 год [1]. Штраф за нарушение — 10% [3]."
-7. Если информация не найдена - честно скажи об этом
+8. Если информация не найдена - честно скажи об этом
 
 ═══════════════════════════════════════════════════════════════════════════════
                               ФОРМАТ ОТВЕТА
@@ -206,7 +223,8 @@ class ReActChatAgent:
 - НЕ используй формат [название](ссылка) — используй ТОЛЬКО [число]
 - Для списков используй маркеры
 - Для важного используй **жирный** текст
-- НЕ включай в ответ внутренние заголовки разделов вида [# Анализ вопроса], [# Выбор инструмента], [# Ответ] и подобные. Пиши ответ сразу без таких маркеров."""
+- НЕ включай в ответ внутренние заголовки разделов вида [# Анализ вопроса], [# Выбор инструмента], [# Ответ] и подобные. Пиши ответ сразу без таких маркеров.
+- НЕ упоминай названия инструментов/функций (analyze_all_documents, search_in_documents и т.д.) в тексте ответа пользователю. Пользователь не видит и не должен видеть эти названия."""
     
     def __init__(
         self,
@@ -721,11 +739,33 @@ class ReActChatAgent:
                         yield (SSESerializer.text_delta(delta), delta)
                         response_text += delta
     
+    _GREETING_PHRASES = frozenset([
+        "привет", "здравствуйте", "здравствуй", "добрый день", "добрый вечер",
+        "доброе утро", "добрый", "хай", "hi", "hello", "салют", "как дела",
+        "как дела?", "как вы?", "как ты?", "приветствую",
+    ])
+
+    def _is_greeting(self, question: str) -> bool:
+        """Проверяет, является ли вопрос приветствием/светской репликой."""
+        q = question.strip().lower().rstrip("!?,.")
+        return q in self._GREETING_PHRASES or len(q) <= 20 and any(
+            q.startswith(p) for p in self._GREETING_PHRASES
+        )
+
     async def _run_agent(self, question: str) -> AsyncGenerator[str, None]:
         """Запустить ReAct агента с Reflection и Citation Verification"""
         try:
             from langchain_core.messages import HumanMessage, AIMessage, SystemMessage
-            
+
+            # Shortcut: greetings don't need tools — reply directly
+            if self._is_greeting(question):
+                logger.info("[ReActChatAgent] Greeting detected, skipping agent")
+                async for chunk in _stream_text_with_typing_effect(
+                    "Здравствуйте! Чем могу помочь?"
+                ):
+                    yield chunk
+                return
+
             # Формируем системный промпт
             system_prompt = self._build_system_prompt()
             

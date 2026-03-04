@@ -77,113 +77,132 @@ const PDFViewer: React.FC<PDFViewerProps> = ({
   const [showAboutPanel, setShowAboutPanel] = useState(showAbout)
   const searchInputRef = useRef<HTMLInputElement>(null)
   const containerRef = useRef<HTMLDivElement>(null)
-  const [highlightApplied, setHighlightApplied] = useState(false)
+  // customTextRenderer approach: work with pdf.js text items directly
+  const [pageTextItems, setPageTextItems] = useState<any[]>([])
+  const [highlightItemIndices, setHighlightItemIndices] = useState<number[]>([])
 
   useEffect(() => {
     loadPDF()
-    setHighlightApplied(false) // Reset highlight when file changes
     return () => {
-      // Cleanup: revoke object URL if it exists
       if (pdfUrl && pdfUrl.startsWith('blob:')) {
         URL.revokeObjectURL(pdfUrl)
       }
     }
   }, [fileId, caseId])
-  
-  // Автоматическая подсветка текста в PDF (для citations)
+
+  // Reset text items when page changes
   useEffect(() => {
-    if (!highlightText || highlightApplied) return
-    
-    let attempts = 0
-    const maxAttempts = 10
-    
-    const tryHighlight = () => {
-      attempts++
-      const textLayer = containerRef.current?.querySelector('.react-pdf__Page__textContent')
-      
-      if (!textLayer) {
-        if (attempts < maxAttempts) {
-          console.log(`[PDFViewer] Text layer not found, attempt ${attempts}/${maxAttempts}`)
-          setTimeout(tryHighlight, 300)
+    setPageTextItems([])
+    setHighlightItemIndices([])
+  }, [pageNumber, fileId])
+
+  // Called by react-pdf when page text content is ready
+  const handleGetTextSuccess = (textContent: any) => {
+    // Keep ALL TextItems (with 'str' property) to preserve index alignment with
+    // customTextRenderer's itemIndex, which counts all str-items including empty ones
+    const items = (textContent.items as any[]).filter(item => 'str' in item)
+    setPageTextItems(items)
+  }
+
+  // Normalize text: lowercase, strip punctuation/quotes, collapse spaces
+  const normText = (s: string) =>
+    s.toLowerCase()
+      .replace(/[«»""„''‟]/g, ' ')
+      .replace(/[^\p{L}\p{N}\s]/gu, ' ')
+      .replace(/\s+/g, ' ')
+      .trim()
+
+  // Compute which item indices to highlight
+  useEffect(() => {
+    if (!highlightText || pageTextItems.length === 0) {
+      setHighlightItemIndices([])
+      return
+    }
+
+    const hlNorm = normText(highlightText)
+
+    // Build normalized full text with per-item positions
+    // Sort by reading order (y DESC = top-of-page first, then x ASC = left-to-right)
+    // PDF items are NOT guaranteed to be in reading order — sorting fixes multi-word matches
+    type RawItem = { origIdx: number; str: string; tx: number; ty: number }
+    const rawItems: RawItem[] = []
+    pageTextItems.forEach((item, origIdx) => {
+      if (!item.str.trim()) return // skip empty items (origIdx still tracks for itemIndex alignment)
+      const [,,,, tx, ty] = item.transform || [1, 0, 0, 1, 0, 0]
+      if (Math.abs(tx) < 1 && Math.abs(ty) < 1) return // skip ghost items at PDF origin
+      rawItems.push({ origIdx, str: item.str, tx, ty })
+    })
+    // Sort: higher ty = higher on page (PDF y=0 is bottom); same line → left to right by tx
+    // Use 8pt threshold — font baseline shifts (superscripts, quotes) can differ by a few units
+    rawItems.sort((a, b) => {
+      const tyDiff = b.ty - a.ty
+      if (Math.abs(tyDiff) > 8) return tyDiff
+      return a.tx - b.tx
+    })
+
+    let pos = 0
+    const itemPositions: { origIdx: number; normStart: number; normEnd: number; str: string }[] = []
+    rawItems.forEach(({ origIdx, str }) => {
+      const normalized = normText(str)
+      itemPositions.push({ origIdx, normStart: pos, normEnd: pos + normalized.length, str })
+      pos += normalized.length + 1
+    })
+    const normFullText = itemPositions.map(ip => normText(ip.str)).join(' ')
+
+    const variants = [
+      hlNorm,
+      hlNorm.substring(0, 100),
+      hlNorm.substring(0, 60),
+      hlNorm.split(/\s+/).slice(0, 6).join(' '),
+      hlNorm.split(/\s+/).slice(0, 4).join(' '),
+      hlNorm.split(/\s+/).slice(0, 3).join(' '),
+    ].filter(v => v.length > 5)
+
+    for (const text of variants) {
+      const idx = normFullText.indexOf(text)
+      if (idx === -1) continue
+      const matched = itemPositions.filter(ip => ip.normEnd > idx && ip.normStart < idx + text.length)
+      if (matched.length > 0) {
+        const indices = matched.map(ip => ip.origIdx)
+
+        // Spatial extension: also highlight hlNorm words on the same visual line(s)
+        // This handles cases where item ty differs slightly (e.g. quoted numbers «28»)
+        const matchedTys = indices.map(oi => {
+          const [,,,, , ty] = (pageTextItems[oi].transform || [1,0,0,1,0,0])
+          return ty as number
+        })
+        const minTy = Math.min(...matchedTys)
+        const maxTy = Math.max(...matchedTys)
+        for (const ri of rawItems) {
+          if (indices.includes(ri.origIdx)) continue
+          if (ri.ty < minTy - 8 || ri.ty > maxTy + 8) continue
+          const norm = normText(ri.str)
+          // Check if item text (single or multi-word) is contained in hlNorm
+          // min length 1 to catch abbreviated suffixes like "г." (год), "р." (рублей)
+          if (norm.length >= 1 && hlNorm.includes(norm)) indices.push(ri.origIdx)
         }
+
+        setHighlightItemIndices(indices)
+        // Scroll to first highlighted element after render
+        setTimeout(() => {
+          const mark = containerRef.current?.querySelector('[data-pdf-mark]')
+          if (mark) mark.scrollIntoView({ behavior: 'smooth', block: 'center' })
+        }, 300)
         return
       }
-      
-      // Собираем весь текст страницы для поиска
-      const textSpans = Array.from(textLayer.querySelectorAll('span'))
-      const fullPageText = textSpans.map(s => s.textContent || '').join(' ').toLowerCase()
-      
-      // Подготавливаем варианты поиска (от длинного к короткому)
-      const searchVariants = [
-        highlightText.toLowerCase(),
-        highlightText.toLowerCase().substring(0, 100),
-        highlightText.toLowerCase().substring(0, 50),
-        highlightText.toLowerCase().split(' ').slice(0, 5).join(' '), // Первые 5 слов
-        highlightText.toLowerCase().split(' ').slice(0, 3).join(' '), // Первые 3 слова
-      ].filter(s => s.length > 5)
-      
-      let found = false
-      let matchedSpans: Element[] = []
-      
-      // Пробуем найти по каждому варианту
-      for (const searchText of searchVariants) {
-        if (found) break
-        
-        // Проверяем есть ли текст на странице вообще
-        if (!fullPageText.includes(searchText.substring(0, 20))) {
-          continue
-        }
-        
-        // Ищем span'ы которые содержат части искомого текста
-        const searchWords = searchText.split(/\s+/).filter(w => w.length > 2)
-        
-        textSpans.forEach((span) => {
-          const spanText = (span.textContent || '').toLowerCase()
-          
-          // Проверяем совпадение по словам
-          const matchCount = searchWords.filter(word => spanText.includes(word)).length
-          
-          if (matchCount >= Math.min(2, searchWords.length) || 
-              spanText.includes(searchText.substring(0, 15)) ||
-              searchText.includes(spanText) && spanText.length > 10) {
-            matchedSpans.push(span)
-            found = true
-          }
-        })
-      }
-      
-      if (found && matchedSpans.length > 0) {
-        console.log(`[PDFViewer] Found ${matchedSpans.length} matching spans`)
-        
-        // Подсвечиваем найденные span'ы
-        matchedSpans.forEach((span, idx) => {
-          const el = span as HTMLElement
-          el.style.backgroundColor = '#fef08a'
-          el.style.borderRadius = '2px'
-          el.style.boxShadow = '0 0 0 2px #fef08a'
-          
-          // Скроллим к первому
-          if (idx === 0) {
-            setTimeout(() => {
-              el.scrollIntoView({ behavior: 'smooth', block: 'center' })
-            }, 100)
-          }
-        })
-        
-        setHighlightApplied(true)
-      } else if (attempts < maxAttempts) {
-        console.log(`[PDFViewer] Text not found, attempt ${attempts}/${maxAttempts}`)
-        setTimeout(tryHighlight, 300)
-      } else {
-        console.log('[PDFViewer] Highlight text not found after all attempts')
-      }
     }
-    
-    // Начинаем поиск после небольшой задержки
-    const timer = setTimeout(tryHighlight, 500)
-    
-    return () => clearTimeout(timer)
-  }, [highlightText, pageNumber, highlightApplied, loading])
+    setHighlightItemIndices([])
+  }, [highlightText, pageTextItems])
+
+  // customTextRenderer: wrap matching items in a highlighted mark
+  const customTextRenderer = ({ str, itemIndex }: { str: string; itemIndex: number }) => {
+    if (!highlightItemIndices.includes(itemIndex)) return str
+    const escaped = str
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+    return `<mark data-pdf-mark="true" style="background-color:rgba(59,130,246,0.45);border-radius:2px;color:inherit;">${escaped}</mark>`
+  }
 
   const loadPDF = async () => {
     try {
@@ -500,6 +519,8 @@ const PDFViewer: React.FC<PDFViewerProps> = ({
             scale={zoomFactor}
             renderTextLayer={true}
             renderAnnotationLayer={true}
+            onGetTextSuccess={handleGetTextSuccess}
+            customTextRenderer={customTextRenderer}
           />
         </Document>
         </Box>

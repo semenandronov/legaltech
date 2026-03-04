@@ -154,7 +154,7 @@ const HistoryPage = () => {
                               />
                             </div>
 
-                            {/* Text */}
+                            {/* Title + type */}
                             <div className="flex-1 min-w-0">
                               <p
                                 className="text-sm font-medium truncate"
@@ -162,33 +162,39 @@ const HistoryPage = () => {
                               >
                                 {item.title}
                               </p>
-                              <div className="flex items-center gap-2 mt-0.5">
-                                {item.case_name && (
-                                  <span
-                                    className="text-xs truncate max-w-[160px]"
-                                    style={{ color: 'var(--color-text-muted)' }}
-                                  >
-                                    {item.case_name}
-                                  </span>
-                                )}
-                                {item.case_name && (
-                                  <span style={{ color: 'var(--color-border)' }}>·</span>
-                                )}
+                              <span
+                                className="text-xs px-1.5 py-0.5 rounded mt-0.5 inline-block"
+                                style={{
+                                  color: 'var(--color-text-muted)',
+                                  backgroundColor: 'var(--color-bg-elevated)',
+                                }}
+                              >
+                                {cfg.label}
+                              </span>
+                            </div>
+
+                            {/* Case column */}
+                            <div className="flex-shrink-0 w-36 text-right">
+                              {item.case_name ? (
                                 <span
-                                  className="text-xs px-1.5 py-0.5 rounded"
-                                  style={{
-                                    color: 'var(--color-text-muted)',
-                                    backgroundColor: 'var(--color-bg-elevated)',
-                                  }}
+                                  className="text-xs truncate block"
+                                  style={{ color: 'var(--color-text-secondary)' }}
                                 >
-                                  {cfg.label}
+                                  {item.case_name}
                                 </span>
-                              </div>
+                              ) : (
+                                <span
+                                  className="text-xs"
+                                  style={{ color: 'var(--color-text-muted)' }}
+                                >
+                                  —
+                                </span>
+                              )}
                             </div>
 
                             {/* Date */}
                             <span
-                              className="text-xs flex-shrink-0"
+                              className="text-xs flex-shrink-0 w-32 text-right"
                               style={{ color: 'var(--color-text-muted)' }}
                             >
                               {formatDate(item.updated_at)}

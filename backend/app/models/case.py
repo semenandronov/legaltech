@@ -66,6 +66,8 @@ class GlobalAssistantSession(Base):
     id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
     user_id = Column(String, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
     title = Column(String(500), nullable=True)   # first user message preview
+    draft_title = Column(String(500), nullable=True)   # saved draft document title
+    draft_content = Column(Text, nullable=True)        # saved draft document HTML content
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 

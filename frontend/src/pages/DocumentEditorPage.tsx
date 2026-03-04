@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
-import { Download, ArrowLeft, MessageSquare, FileText, Table, FileEdit, History, BookOpen, Workflow, ChevronDown } from 'lucide-react'
+import { Download, ArrowLeft, MessageSquare, FileText, FileEdit, History, BookOpen, Workflow, ChevronDown } from 'lucide-react'
 import { toast } from 'sonner'
 import UnifiedSidebar from '../components/Layout/UnifiedSidebar'
 import { DocumentEditor, DocumentEditorRef } from '../components/Editor/DocumentEditor'
@@ -20,6 +20,7 @@ interface DocumentData {
   content: string
   case_id: string
   version?: number
+  metadata?: Record<string, any>
 }
 
 const DocumentEditorPage = () => {
@@ -52,7 +53,6 @@ const DocumentEditorPage = () => {
   const editorRef = useRef<DocumentEditorRef>(null)
   const [showDownloadDropdown, setShowDownloadDropdown] = useState(false)
   const downloadDropdownRef = useRef<HTMLDivElement>(null)
-
   // Закрытие выпадающего списка «Скачать» при клике снаружи
   useEffect(() => {
     const handleClickOutside = (e: MouseEvent) => {
@@ -389,9 +389,7 @@ const DocumentEditorPage = () => {
 
   const navItems = caseId ? [
     { id: 'chat', label: 'Ассистент', icon: MessageSquare, path: `/cases/${caseId}/chat` },
-    { id: 'documents', label: 'Документы', icon: FileText, path: `/cases/${caseId}/documents` },
     { id: 'editor', label: 'Редактор', icon: FileEdit, path: `/cases/${caseId}/editor` },
-    { id: 'tabular-review', label: 'Tabular Review', icon: Table, path: `/cases/${caseId}/tabular-review` },
     { id: 'playbooks', label: 'Playbooks', icon: BookOpen, path: `/cases/${caseId}/playbooks` },
     { id: 'workflows', label: 'Workflows', icon: Workflow, path: `/cases/${caseId}/workflows` },
   ] : []
@@ -400,7 +398,7 @@ const DocumentEditorPage = () => {
   if (loading || loadingDocuments) {
     return (
       <div className="h-screen bg-bg-primary flex">
-        {caseId && <UnifiedSidebar navItems={navItems} title="Legal AI" forceCollapsed={true} />}
+        {caseId && <UnifiedSidebar navItems={navItems} title="Legal AI"  />}
         <div className="flex-1 flex items-center justify-center">
           <div className="text-center">
             <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto mb-4"></div>
@@ -417,7 +415,7 @@ const DocumentEditorPage = () => {
   if (!documentId) {
     return (
       <div className="h-screen bg-bg-primary flex">
-        {caseId && <UnifiedSidebar navItems={navItems} title="Legal AI" forceCollapsed={true} />}
+        {caseId && <UnifiedSidebar navItems={navItems} title="Legal AI"  />}
         <div className="flex-1 flex flex-col" style={{ backgroundColor: 'var(--color-bg-primary)' }}>
           <DocumentsList
             documents={documentsList}
@@ -440,7 +438,7 @@ const DocumentEditorPage = () => {
   // Show editor for specific document
   return (
     <div className="h-screen bg-bg-primary flex">
-      {caseId && <UnifiedSidebar navItems={navItems} title="Legal AI" forceCollapsed={true} />}
+      {caseId && <UnifiedSidebar navItems={navItems} title="Legal AI"  />}
       <div className="flex-1 flex flex-col" style={{ backgroundColor: 'var(--color-bg-primary)' }}>
       {/* Toolbar */}
       <div className="flex items-center justify-between px-4 py-3 border-b gap-2" style={{ borderBottomColor: 'var(--color-border)' }}>
@@ -556,7 +554,7 @@ const DocumentEditorPage = () => {
       {/* Main content area */}
       <div className="flex-1 overflow-hidden flex">
         {/* Editor */}
-        <div className="flex-1 flex flex-col transition-all duration-300">
+        <div className="flex-1 flex flex-col transition-all duration-300 overflow-hidden">
           <DocumentEditor
             ref={editorRef}
             content={content}
@@ -565,10 +563,8 @@ const DocumentEditorPage = () => {
             onSelectionRangeChange={(range) => {
               setSelectionRange(range)
               if (range && range.from !== range.to) {
-                // Actual text selection — highlight it
                 editorRef.current?.setSelectionHighlight(range.from, range.to)
               } else {
-                // Just cursor movement — clear highlight but keep position
                 editorRef.current?.clearSelectionHighlight()
               }
             }}

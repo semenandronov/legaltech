@@ -21,6 +21,7 @@ import { SourceReference } from "@/services/tabularReviewApi"
 
 interface CellData {
   verbatimExtract?: string | null
+  cellValue?: string | null
   sourcePage?: number | null
   sourceSection?: string | null
   columnType?: string
@@ -341,6 +342,7 @@ export const TabularDocumentViewer: React.FC<TabularDocumentViewerProps> = ({
                   ? cellData.sourcePage
                     : cellData?.sourceReferences?.[0]?.page || undefined
               }
+              highlightText={cellData?.verbatimExtract || cellData?.sourceReferences?.[0]?.text || cellData?.cellValue || undefined}
               onError={(err) => {
                 setError(err.message || "Ошибка при загрузке PDF")
               }}

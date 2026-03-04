@@ -18,6 +18,7 @@ from dataclasses import dataclass
 from sqlalchemy.orm import Session
 import logging
 import re
+import json
 
 from app.services.chat.events import SSESerializer, SSEEvent
 from app.services.chat.classifier import RequestClassifier, ClassificationResult
@@ -59,6 +60,9 @@ class ChatRequest:
     
     # Прикреплённые файлы
     attached_file_ids: Optional[List[str]] = None
+
+    # ID сессии (если передан клиентом — продолжаем её, иначе auto-detect)
+    session_id: Optional[str] = None
 
 
 class ChatOrchestrator:
@@ -195,12 +199,14 @@ class ChatOrchestrator:
             except: pass
             # #endregion
             
-            session_id = self.history_service.get_or_create_session(request.case_id)
+            session_id = request.session_id or self.history_service.get_or_create_session(request.case_id)
             user_message = self.history_service.save_user_message(
                 case_id=request.case_id,
                 content=request.question,
                 session_id=session_id
             )
+            # Сообщаем клиенту session_id чтобы он мог продолжать ту же сессию
+            yield f"data: {json.dumps({'session_id': session_id})}\n\n"
             
             # #region agent log
             try:

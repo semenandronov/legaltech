@@ -209,6 +209,9 @@ const MessageContent: React.FC<MessageContentProps> = ({
   const processedText = useMemo(() => {
     let text = content
 
+    // Replace lines of repeated decorative symbols (•••, ===, ···, etc.) with ---
+    text = text.replace(/^([•·\-=_~*]{3,})\s*$/gm, '---')
+
     // Convert [filename.ext, ...] references to [N] using sources
     if (sources.length > 0) {
       const fileToIndex = new Map<string, number>()

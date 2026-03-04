@@ -778,6 +778,19 @@ def init_db():
     except Exception as e:
         logger.warning(f"Could not check/add case_id to documents table: {e}", exc_info=True)
     
+    # Add draft_title / draft_content to global_assistant_sessions
+    try:
+        if "global_assistant_sessions" in inspector.get_table_names():
+            columns = [col['name'] for col in inspector.get_columns("global_assistant_sessions")]
+            if "draft_content" not in columns:
+                logger.info("Adding draft_title/draft_content to global_assistant_sessions...")
+                with engine.begin() as conn:
+                    conn.execute(text("ALTER TABLE global_assistant_sessions ADD COLUMN IF NOT EXISTS draft_title VARCHAR(500)"))
+                    conn.execute(text("ALTER TABLE global_assistant_sessions ADD COLUMN IF NOT EXISTS draft_content TEXT"))
+                logger.info("✅ Added draft columns to global_assistant_sessions")
+    except Exception as e:
+        logger.warning(f"Could not add draft columns to global_assistant_sessions: {e}", exc_info=True)
+
     # Setup LangGraph checkpointer tables
     try:
         from app.utils.checkpointer_setup import setup_checkpointer

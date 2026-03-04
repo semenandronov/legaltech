@@ -147,10 +147,11 @@ async def assistant_chat_v2(
         template_file_id = body.get("template_file_id")
         template_file_content = body.get("template_file_content")
         attached_file_ids = body.get("attached_file_ids")
-        
+        session_id = body.get("session_id") or None
+
         if attached_file_ids:
             logger.info(f"Attached file IDs: {attached_file_ids}")
-        
+
         # Создаём ChatRequest
         chat_request = ChatRequest(
             case_id=case_id,
@@ -166,7 +167,8 @@ async def assistant_chat_v2(
             template_file_id=template_file_id,
             template_file_content=template_file_content,
             attached_file_ids=attached_file_ids,
-            editor_mode_hint=editor_mode_hint
+            editor_mode_hint=editor_mode_hint,
+            session_id=session_id
         )
         
         # Создаём оркестратор и обрабатываем запрос
@@ -357,9 +359,21 @@ async def assistant_global_chat(
         body = await request.json()
         messages = body.get("messages", [])
         session_id = body.get("session_id")  # optional: continue existing session
-        file_contexts = body.get("file_contexts", [])  # [{filename, text}, ...]
+        file_contexts = list(body.get("file_contexts", []))  # [{filename, text}, ...]
         draft_mode = _normalize_bool(body.get("draft_mode", False))
         document_context = body.get("document_context")  # current draft content for refinement
+        attached_file_ids = body.get("attached_file_ids") or []
+
+        # Resolve attached case-file IDs → fetch text from DB
+        if attached_file_ids:
+            from app.models.case import File as CaseFile
+            for fid in attached_file_ids:
+                file_obj = db.query(CaseFile).filter(CaseFile.id == fid).first()
+                if file_obj and file_obj.original_text:
+                    file_contexts.append({
+                        "filename": file_obj.filename,
+                        "text": file_obj.original_text[:12000],
+                    })
 
         if not messages:
             raise HTTPException(status_code=400, detail="No messages provided")
@@ -408,14 +422,19 @@ async def assistant_global_chat(
                 "Форматируй документ чётко: заголовок, стороны, предмет договора, права и обязанности, "
                 "условия, ответственность, заключительные положения, подписи. "
                 "Не добавляй лишних пояснений — только сам документ.\n"
-                "При доработке документа всегда выводи полный обновлённый текст."
+                "При доработке документа всегда выводи полный обновлённый текст.\n"
+                "ВАЖНО: Никогда не используй разделители из точек (•••), дашей (---) или других символов "
+                "для визуального разделения разделов. Используй только заголовки Markdown (## Раздел)."
             )
             if document_context:
                 system_content += f"\n\n--- Текущий черновик документа ---\n{document_context}\n---"
         else:
             system_content = (
                 "Ты — юридический AI-ассистент. Отвечай чётко, профессионально и по существу. "
-                "Если вопрос выходит за пределы юридической тематики — отвечай всё равно полезно."
+                "На приветствия отвечай коротко и дружелюбно, например: 'Здравствуйте! Чем могу помочь?' "
+                "Если вопрос выходит за пределы юридической тематики — отвечай всё равно полезно. "
+                "Никогда не используй разделители из точек (•••), тире или других повторяющихся символов — "
+                "только заголовки Markdown (## Раздел) для структурирования текста."
             )
         if file_contexts:
             system_content += "\n\nПользователь приложил следующие документы для анализа:\n"
@@ -529,38 +548,83 @@ async def download_draft_as_docx(
     import re
     from fastapi.responses import Response
 
-    body = await request.json()
+    try:
+        body = await request.json()
+    except Exception as e:
+        logger.error(f"download-docx: failed to parse JSON body: {e}")
+        raise
+
     title = body.get("title", "Документ").strip()
-    content = body.get("content", "").strip()
+    content = (body.get("content") or "").strip()
+    content_type = body.get("content_type", "markdown")
 
-    doc = DocxDocument()
+    logger.info(f"download-docx: title={repr(title)}, content_type={content_type}, content_len={len(content)}")
 
-    # Title
-    heading = doc.add_heading(title, level=0)
-    heading.runs[0].font.size = Pt(16)
+    if not content:
+        from fastapi.responses import JSONResponse
+        return JSONResponse({"error": "content is empty"}, status_code=400)
 
-    # Parse content: split by double newline into paragraphs
-    paragraphs = [p.strip() for p in content.split("\n\n") if p.strip()]
-    for para_text in paragraphs:
-        # Bold section headers like **Section name**
-        if para_text.startswith("**") and para_text.endswith("**") and "\n" not in para_text:
-            h = doc.add_heading(para_text.strip("*").strip(), level=2)
-            h.runs[0].font.size = Pt(12)
+    try:
+        doc = DocxDocument()
+
+        # Title
+        heading = doc.add_heading(title, level=0)
+        if heading.runs:
+            heading.runs[0].font.size = Pt(16)
+
+        if content_type == "html":
+            # Parse HTML content (from TipTap editor)
+            from bs4 import BeautifulSoup
+            soup = BeautifulSoup(content, 'html.parser')
+            for tag in soup.find_all(['h1', 'h2', 'h3', 'h4', 'p', 'ul', 'ol', 'hr'], recursive=True):
+                if tag.parent and tag.parent.name in ['ul', 'ol']:
+                    continue  # handled by parent
+                if tag.name in ['h1', 'h2', 'h3', 'h4']:
+                    level = int(tag.name[1])
+                    h = doc.add_heading(tag.get_text(strip=True), level=min(level + 1, 9))
+                    if h.runs:
+                        h.runs[0].font.size = Pt(max(14 - (level - 1) * 2, 10))
+                elif tag.name == 'p':
+                    text = tag.get_text(strip=True)
+                    if text:
+                        doc.add_paragraph(text)
+                elif tag.name in ['ul', 'ol']:
+                    for li in tag.find_all('li', recursive=False):
+                        prefix = '• ' if tag.name == 'ul' else ''
+                        doc.add_paragraph(f"{prefix}{li.get_text(strip=True)}")
+                elif tag.name == 'hr':
+                    doc.add_paragraph('─' * 40)
         else:
-            # Handle inline bold: strip ** markers for simplicity
-            clean = re.sub(r"\*\*(.*?)\*\*", r"\1", para_text)
-            doc.add_paragraph(clean)
+            # Parse markdown content (legacy)
+            paragraphs = [p.strip() for p in content.split("\n\n") if p.strip()]
+            for para_text in paragraphs:
+                if para_text.startswith("**") and para_text.endswith("**") and "\n" not in para_text:
+                    h = doc.add_heading(para_text.strip("*").strip(), level=2)
+                    h.runs[0].font.size = Pt(12)
+                else:
+                    clean = re.sub(r"\*\*(.*?)\*\*", r"\1", para_text)
+                    doc.add_paragraph(clean)
 
-    buf = io.BytesIO()
-    doc.save(buf)
-    buf.seek(0)
+        buf = io.BytesIO()
+        doc.save(buf)
+        buf.seek(0)
 
-    safe_title = re.sub(r'[^\w\s-]', '', title)[:60] or "document"
-    return Response(
-        content=buf.read(),
-        media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-        headers={"Content-Disposition": f'attachment; filename="{safe_title}.docx"'},
-    )
+        import urllib.parse
+        safe_title = re.sub(r'[^\w\s-]', '', title)[:60] or "document"
+        ascii_title = safe_title.encode('ascii', 'ignore').decode().strip() or "document"
+        encoded_title = urllib.parse.quote(safe_title.encode('utf-8'))
+        content_disposition = f"attachment; filename=\"{ascii_title}.docx\"; filename*=UTF-8''{encoded_title}.docx"
+        return Response(
+            content=buf.read(),
+            media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            headers={"Content-Disposition": content_disposition},
+        )
+    except Exception as e:
+        import traceback
+        tb = traceback.format_exc()
+        logger.error(f"download-docx: failed to generate DOCX: {e}\n{tb}")
+        from fastapi.responses import JSONResponse
+        return JSONResponse({"error": str(e), "traceback": tb}, status_code=500)
 
 
 @router.get("/api/v2/assistant/global-sessions")
@@ -618,8 +682,36 @@ async def get_global_session_messages(
     return {
         "session_id": session.id,
         "title": session.title,
+        "draft_title": session.draft_title,
+        "draft_content": session.draft_content,
         "messages": [{"role": m.role, "content": m.content} for m in messages],
     }
+
+
+@router.patch("/api/v2/assistant/global-sessions/{session_id}/draft")
+async def save_session_draft(
+    session_id: str,
+    request: Request,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Save or update the draft document associated with a global assistant session."""
+    from app.models.case import GlobalAssistantSession
+    body = await request.json()
+    draft_title = body.get("draft_title", "")
+    draft_content = body.get("draft_content", "")
+
+    session = db.query(GlobalAssistantSession).filter(
+        GlobalAssistantSession.id == session_id,
+        GlobalAssistantSession.user_id == current_user.id,
+    ).first()
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    session.draft_title = draft_title
+    session.draft_content = draft_content
+    db.commit()
+    return {"ok": True}
 
 
 @router.get("/api/v2/recent-activity")

@@ -9,6 +9,7 @@ Draft Handler - Обработчик создания документов (Draf
 from typing import AsyncGenerator, Optional, List, Dict, Any
 from sqlalchemy.orm import Session
 import logging
+import re
 
 from app.services.chat.events import (
     SSESerializer,
@@ -164,7 +165,19 @@ class DraftHandler:
             if not content or len(content.strip()) < 50:
                 return None
 
-            return content.strip()
+            content = content.strip()
+
+            # Strip markdown code fences if LLM wrapped output in ```html ... ```
+            content = re.sub(r'^```html?\s*', '', content, flags=re.IGNORECASE)
+            content = re.sub(r'\s*```$', '', content)
+            content = content.strip()
+
+            # Extract <body> inner content if LLM returned a full HTML document
+            body_match = re.search(r'<body[^>]*>(.*?)</body>', content, re.DOTALL | re.IGNORECASE)
+            if body_match:
+                content = body_match.group(1).strip()
+
+            return content
 
         except Exception as e:
             logger.error(f"[DraftHandler] Error generating content: {e}", exc_info=True)

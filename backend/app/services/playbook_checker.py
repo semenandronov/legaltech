@@ -672,7 +672,7 @@ class PlaybookChecker:
                     rule_type=rule.rule_type,
                     clause_category=rule.clause_category,
                     status="passed",
-                    found_text=clause.text[:500],
+                    found_text=clause.text[:250],
                     location=clause.location,
                     confidence=0.8,
                     reasoning="Формулировка близка к стандартной позиции (по вхождению текста).",
@@ -693,7 +693,7 @@ class PlaybookChecker:
                     rule_type=rule.rule_type,
                     clause_category=rule.clause_category,
                     status="warning",
-                    found_text=clause.text[:500],
+                    found_text=clause.text[:250],
                     location=clause.location,
                     issue_description="Формулировка соответствует запасному варианту. Лучше привести к стандарту.",
                     suggested_fix=standard_position or "",
@@ -722,7 +722,7 @@ class PlaybookChecker:
                     rule_type=rule.rule_type,
                     clause_category=rule.clause_category,
                     status="violation",
-                    found_text=clause.text[:500],
+                    found_text=clause.text[:250],
                     location=clause.location,
                     issue_description="Формулировка относится к недопустимым. Требуется замена.",
                     suggested_fix=standard_position or (fallback_positions[0] if fallback_positions else ""),
@@ -750,7 +750,7 @@ class PlaybookChecker:
                 rule_type=rule.rule_type,
                 clause_category=rule.clause_category,
                 status="warning",
-                found_text=clause.text[:500] if clause else "",
+                found_text=clause.text[:250] if clause else "",
                 location=clause.location if clause else {},
                 issue_description="Формулировка не совпадает ни со стандартом, ни с fallback, ни с недопустимыми. Требуется проверка.",
                 suggested_fix=standard_position or "",
@@ -885,8 +885,8 @@ class PlaybookChecker:
             if not issue_description:
                 issue_description = "Формулировка не совпадает ни со стандартом, ни с fallback, ни с недопустимыми. Требуется проверка."
 
-        # suggested_fix по-прежнему используем как «главную» правку — стандарт
-        main_fix = standard_position or (fallback_positions[0] if fallback_positions else "")
+        # suggested_fix только для правил с нарушениями — для passed не нужна правка
+        main_fix = "" if status == "passed" else (standard_position or (fallback_positions[0] if fallback_positions else ""))
 
         return RuleCheckResult(
             rule_id=rule.id,
@@ -894,7 +894,7 @@ class PlaybookChecker:
             rule_type=rule.rule_type,
             clause_category=rule.clause_category,
             status=status,
-            found_text=clause.text[:500],
+            found_text=clause.text[:250],
             location=clause.location,
             issue_description=issue_description,
             suggested_fix=main_fix,
@@ -942,7 +942,7 @@ class PlaybookChecker:
                     rule_type=rule.rule_type,
                     clause_category=rule.clause_category,
                     status="violation",
-                    found_text=clause.text[:500],
+                    found_text=clause.text[:250],
                     location=clause.location,
                     issue_description=f"Пункт не содержит обязательные элементы: {', '.join(missing_patterns)}",
                     suggested_fix=rule.suggested_clause_template or "",
@@ -956,7 +956,7 @@ class PlaybookChecker:
             rule_type=rule.rule_type,
             clause_category=rule.clause_category,
             status="passed",
-            found_text=clause.text[:500],
+            found_text=clause.text[:250],
             location=clause.location,
             confidence=0.9,
             reasoning="Пункт найден и соответствует требованиям"
@@ -987,7 +987,7 @@ class PlaybookChecker:
                 rule_type=rule.rule_type,
                 clause_category=rule.clause_category,
                 status="violation",
-                found_text=clause.text[:500] if clause else "",
+                found_text=clause.text[:250] if clause else "",
                 location=clause.location if clause else {},
                 issue_description=f"Документ содержит запрещённые положения: {', '.join(found_patterns)}",
                 suggested_fix="Удалить указанные положения",
@@ -1045,7 +1045,7 @@ class PlaybookChecker:
                 rule_type=rule.rule_type,
                 clause_category=rule.clause_category,
                 status="not_found",
-                found_text=clause.text[:500],
+                found_text=clause.text[:250],
                 location=clause.location,
                 issue_description="Не удалось извлечь числовое значение из пункта",
                 confidence=0.6
@@ -1070,7 +1070,7 @@ class PlaybookChecker:
                 rule_type=rule.rule_type,
                 clause_category=rule.clause_category,
                 status="violation",
-                found_text=clause.text[:500],
+                found_text=clause.text[:250],
                 location=clause.location,
                 issue_description=issue,
                 suggested_fix=f"Изменить значение на допустимое (мин: {min_value}, макс: {max_value})",
@@ -1084,7 +1084,7 @@ class PlaybookChecker:
             rule_type=rule.rule_type,
             clause_category=rule.clause_category,
             status="passed",
-            found_text=clause.text[:500],
+            found_text=clause.text[:250],
             location=clause.location,
             confidence=0.85,
             reasoning=f"Значение {extracted_value} в допустимых пределах"
@@ -1165,7 +1165,7 @@ class PlaybookChecker:
                 rule_type=rule.rule_type,
                 clause_category=rule.clause_category,
                 status="not_found",
-                found_text=clause.text[:500],
+                found_text=clause.text[:250],
                 location=clause.location,
                 issue_description="Не удалось извлечь срок из пункта",
                 confidence=0.6
@@ -1183,7 +1183,7 @@ class PlaybookChecker:
                 rule_type=rule.rule_type,
                 clause_category=rule.clause_category,
                 status="passed",
-                found_text=clause.text[:500],
+                found_text=clause.text[:250],
                 location=clause.location,
                 confidence=0.6,
                 reasoning=f"Найден срок: {duration_value}. Не удалось привести к числу для сравнения."
@@ -1212,7 +1212,7 @@ class PlaybookChecker:
                 rule_type=rule.rule_type,
                 clause_category=rule.clause_category,
                 status="violation",
-                found_text=clause.text[:500],
+                found_text=clause.text[:250],
                 location=clause.location,
                 issue_description=issue,
                 suggested_fix=f"Изменить срок ({', '.join(fix_parts)})",
@@ -1226,7 +1226,7 @@ class PlaybookChecker:
             rule_type=rule.rule_type,
             clause_category=rule.clause_category,
             status="passed",
-            found_text=clause.text[:500],
+            found_text=clause.text[:250],
             location=clause.location,
             confidence=0.85,
             reasoning=f"Срок {duration_value} в допустимых пределах"
@@ -1262,7 +1262,7 @@ class PlaybookChecker:
                 rule_type=rule.rule_type,
                 clause_category=rule.clause_category,
                 status="violation",
-                found_text=clause.text[:500] if clause else "",
+                found_text=clause.text[:250] if clause else "",
                 location=clause.location if clause else {},
                 issue_description=f"Отсутствуют обязательные формулировки: {', '.join(missing_patterns)}",
                 suggested_fix=rule.suggested_clause_template or "",
@@ -1277,7 +1277,7 @@ class PlaybookChecker:
                 rule_type=rule.rule_type,
                 clause_category=rule.clause_category,
                 status="violation",
-                found_text=clause.text[:500] if clause else "",
+                found_text=clause.text[:250] if clause else "",
                 location=clause.location if clause else {},
                 issue_description=f"Не найдена ни одна из требуемых формулировок: {', '.join(patterns)}",
                 suggested_fix=rule.suggested_clause_template or "",
@@ -1290,7 +1290,7 @@ class PlaybookChecker:
             rule_type=rule.rule_type,
             clause_category=rule.clause_category,
             status="passed",
-            found_text=clause.text[:500] if clause else "",
+            found_text=clause.text[:250] if clause else "",
             location=clause.location if clause else {},
             confidence=0.9,
             reasoning=f"Найдены требуемые формулировки: {found_patterns}"
@@ -1322,7 +1322,7 @@ class PlaybookChecker:
                 rule_type=rule.rule_type,
                 clause_category=rule.clause_category,
                 status="violation",
-                found_text=clause.text[:500] if clause else "",
+                found_text=clause.text[:250] if clause else "",
                 location=clause.location if clause else {},
                 issue_description=f"Найдены запрещённые формулировки: {', '.join(found_forbidden)}",
                 suggested_fix="Удалить или заменить указанные формулировки",
@@ -1336,7 +1336,7 @@ class PlaybookChecker:
             rule_type=rule.rule_type,
             clause_category=rule.clause_category,
             status="passed",
-            found_text=clause.text[:500] if clause else "",
+            found_text=clause.text[:250] if clause else "",
             location=clause.location if clause else {},
             confidence=0.9,
             reasoning="Запрещённые формулировки не найдены"
@@ -1398,7 +1398,7 @@ class PlaybookChecker:
                     rule_type=rule.rule_type,
                     clause_category=rule.clause_category,
                     status=status,
-                    found_text=clause.text[:500],
+                    found_text=clause.text[:250],
                     location=clause.location,
                     issue_description=result_data.get("issue_description", ""),
                     suggested_fix=result_data.get("suggested_fix", "") or rule.suggested_clause_template or "",
@@ -1415,7 +1415,7 @@ class PlaybookChecker:
             rule_type=rule.rule_type,
             clause_category=rule.clause_category,
             status="error",
-            found_text=clause.text[:500] if clause else "",
+            found_text=clause.text[:250] if clause else "",
             issue_description="Ошибка при проверке с помощью LLM"
         )
     
