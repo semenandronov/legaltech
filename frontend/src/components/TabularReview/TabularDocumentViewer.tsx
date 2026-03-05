@@ -336,11 +336,14 @@ export const TabularDocumentViewer: React.FC<TabularDocumentViewerProps> = ({
               caseId={caseId}
                 filename={activeDoc?.fileName || ""}
               initialPage={
-                highlightMode === "page" && cellData?.sourcePage
-                  ? cellData.sourcePage
-                  : highlightMode === "verbatim" && cellData?.sourcePage
-                  ? cellData.sourcePage
-                    : cellData?.sourceReferences?.[0]?.page || undefined
+                // Backend stores source_page as 0-indexed (PyMuPDF range()), PDFViewer expects 1-indexed
+                highlightMode === "page" && cellData?.sourcePage != null
+                  ? cellData.sourcePage + 1
+                  : highlightMode === "verbatim" && cellData?.sourcePage != null
+                  ? cellData.sourcePage + 1
+                  : cellData?.sourceReferences?.[0]?.page != null
+                  ? cellData.sourceReferences[0].page + 1
+                  : undefined
               }
               highlightText={cellData?.verbatimExtract || cellData?.sourceReferences?.[0]?.text || cellData?.cellValue || undefined}
               onError={(err) => {
