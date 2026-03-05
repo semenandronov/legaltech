@@ -983,11 +983,9 @@ const AssistantChatPage = () => {
     toast.error('Документ ещё не готов')
   }
 
-  // ── Open citation in document viewer ──
+  // ── Open citation in document viewer (or quote popup for direct uploads) ──
   const handleCitationClick = (source: SourceInfo) => {
-    if (source.source_id) {
-      setViewerSource(source)
-    }
+    setViewerSource(source)
   }
 
   // ── New chat ──
@@ -1129,12 +1127,36 @@ const AssistantChatPage = () => {
                           style={{ color: '#111827' }}
                         >
                           {msg.content ? (
-                            <MessageContent
-                              content={msg.content}
-                              sources={msg.sources || []}
-                              onCitationClick={handleCitationClick}
-                              isStreaming={isStreaming && idx === messages.length - 1}
-                            />
+                            <>
+                              <MessageContent
+                                content={msg.content}
+                                sources={msg.sources || []}
+                                onCitationClick={handleCitationClick}
+                                isStreaming={isStreaming && idx === messages.length - 1}
+                              />
+                              {/* Source chips — always visible when sources exist */}
+                              {msg.sources && msg.sources.length > 0 && !isStreaming && (
+                                <div className="flex flex-wrap gap-2 mt-3">
+                                  {msg.sources.map((src, si) => (
+                                    <button
+                                      key={si}
+                                      onClick={() => handleCitationClick(src)}
+                                      className="flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-medium transition-colors"
+                                      style={{
+                                        border: '1px solid rgba(37,99,235,0.25)',
+                                        backgroundColor: 'rgba(37,99,235,0.06)',
+                                        color: '#2563eb',
+                                      }}
+                                      onMouseOver={e => (e.currentTarget.style.backgroundColor = 'rgba(37,99,235,0.12)')}
+                                      onMouseOut={e => (e.currentTarget.style.backgroundColor = 'rgba(37,99,235,0.06)')}
+                                    >
+                                      <FileText className="w-3 h-3" />
+                                      [{si + 1}] {src.file || 'Документ'}
+                                    </button>
+                                  ))}
+                                </div>
+                              )}
+                            </>
                           ) : (
                             // Dots only during active streaming (not in draft mode after completion)
                             isStreaming && idx === messages.length - 1 && !isDraftMode && (
@@ -1336,8 +1358,8 @@ const AssistantChatPage = () => {
         onLoadHistory={handleLoadHistory}
       />
 
-      {/* Document viewer modal — opens when citation is clicked */}
-      {viewerSource && caseId && (
+      {/* Citation modal — full viewer for case files, quote panel for direct uploads */}
+      {viewerSource && (
         <div
           className="fixed inset-0 z-50 flex items-center justify-center"
           style={{ backgroundColor: 'rgba(0,0,0,0.45)' }}
@@ -1345,7 +1367,11 @@ const AssistantChatPage = () => {
         >
           <div
             className="relative flex flex-col rounded-xl shadow-2xl overflow-hidden"
-            style={{ width: '82vw', height: '85vh', backgroundColor: '#fff' }}
+            style={{
+              width: viewerSource.source_id && caseId ? '82vw' : '480px',
+              height: viewerSource.source_id && caseId ? '85vh' : 'auto',
+              backgroundColor: '#fff',
+            }}
             onClick={(e) => e.stopPropagation()}
           >
             <button
@@ -1354,20 +1380,41 @@ const AssistantChatPage = () => {
             >
               <X className="w-5 h-5" style={{ color: '#6B7280' }} />
             </button>
-            <TabularDocumentViewer
-              fileId={viewerSource.source_id}
-              caseId={caseId}
-              fileType={
-                viewerSource.file?.toLowerCase().endsWith('.pdf') ? 'pdf' :
-                viewerSource.file?.toLowerCase().endsWith('.docx') ? 'docx' : 'txt'
-              }
-              fileName={viewerSource.file}
-              cellData={{
-                verbatimExtract: viewerSource.quote || viewerSource.text_preview || null,
-                highlightMode: 'verbatim',
-                sourcePage: viewerSource.page ?? null,
-              }}
-            />
+
+            {viewerSource.source_id && caseId ? (
+              /* Case file — open full document viewer with highlight */
+              <TabularDocumentViewer
+                fileId={viewerSource.source_id}
+                caseId={caseId}
+                fileType={
+                  viewerSource.file?.toLowerCase().endsWith('.pdf') ? 'pdf' :
+                  viewerSource.file?.toLowerCase().endsWith('.docx') ? 'docx' : 'txt'
+                }
+                fileName={viewerSource.file}
+                cellData={{
+                  verbatimExtract: viewerSource.quote || viewerSource.text_preview || null,
+                  highlightMode: 'verbatim',
+                  sourcePage: viewerSource.page ?? null,
+                }}
+              />
+            ) : (
+              /* Direct upload — show extracted quote */
+              <div className="p-6">
+                <div className="flex items-center gap-2 mb-4" style={{ color: '#374151' }}>
+                  <FileText className="w-4 h-4" style={{ color: '#2563eb' }} />
+                  <span className="font-medium text-sm">{viewerSource.file || 'Документ'}</span>
+                </div>
+                <div
+                  className="text-sm leading-relaxed p-4 rounded-lg"
+                  style={{ backgroundColor: '#EFF6FF', color: '#1e40af', border: '1px solid #BFDBFE', whiteSpace: 'pre-wrap' }}
+                >
+                  {viewerSource.quote || viewerSource.text_preview || 'Текст недоступен'}
+                </div>
+                <p className="mt-3 text-xs" style={{ color: '#9CA3AF' }}>
+                  Для навигации по документу прикрепите его через «Из дел»
+                </p>
+              </div>
+            )}
           </div>
         </div>
       )}
