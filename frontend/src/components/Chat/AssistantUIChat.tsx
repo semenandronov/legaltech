@@ -390,7 +390,7 @@ const PromptInputWithDrop = ({
   handlePromptSubmit,
   isLoading,
   onStop,
-  selectedText,
+  selectedText: _selectedText,
   documentEditorMode,
   editorChatMode = 'edit',
   deepThink,
@@ -570,28 +570,6 @@ const PromptInputWithDrop = ({
   
   return (
     <div ref={containerRef} className="w-full relative">
-      {/* Выделенный текст (чип) НАД полем ввода - только в режиме редактора */}
-      {documentEditorMode && selectedText && selectedText.trim() && (
-        <div className="px-4 pt-3 pb-2 mb-2">
-          <div 
-            className="flex items-start gap-3 px-4 py-2.5 rounded-lg border border-blue-200/50 bg-blue-50/80 backdrop-blur-sm shadow-sm"
-            style={{
-              background: 'linear-gradient(135deg, rgba(239, 246, 255, 0.9) 0%, rgba(219, 234, 254, 0.9) 100%)',
-              boxShadow: '0 1px 3px 0 rgba(0, 0, 0, 0.1), 0 1px 2px 0 rgba(0, 0, 0, 0.06)',
-            }}
-          >
-            <div className="flex-shrink-0 mt-0.5">
-              <FileText className="w-5 h-5 text-blue-600" strokeWidth={1.5} />
-            </div>
-            <div className="flex-1 min-w-0">
-              <div className="text-xs font-medium text-blue-900 mb-1">Выделенный текст:</div>
-              <div className="text-sm text-blue-800 line-clamp-2">
-                {selectedText.length > 100 ? selectedText.substring(0, 100) + '...' : selectedText}
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
       
       {/* Файлы (чипы) НАД полем ввода - ВНЕ PromptInput, но внутри контейнера */}
       {attachments && attachments.files.length > 0 && (
