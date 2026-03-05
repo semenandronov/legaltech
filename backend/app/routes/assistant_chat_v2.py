@@ -373,6 +373,7 @@ async def assistant_global_chat(
                     file_contexts.append({
                         "filename": file_obj.filename,
                         "text": file_obj.original_text[:12000],
+                        "file_id": fid,  # used for citation navigation
                     })
 
         if not messages:
@@ -438,10 +439,15 @@ async def assistant_global_chat(
             )
         if file_contexts:
             system_content += "\n\nПользователь приложил следующие документы для анализа:\n"
-            for fc in file_contexts:
+            for i, fc in enumerate(file_contexts, start=1):
                 fname = fc.get("filename", "документ")
                 text = fc.get("text", "")
-                system_content += f"\n--- {fname} ---\n{text}\n"
+                system_content += f"\n--- [{i}] {fname} ---\n{text}\n"
+            system_content += (
+                "\n\nВАЖНО: При ответе ставь номер источника [1], [2] и т.д. "
+                "сразу после каждого утверждения, которое основано на конкретном прикреплённом документе. "
+                "Например: «Срок действия договора — 12 месяцев [1].»"
+            )
         lc_messages = [SystemMessage(content=system_content)]
         for m in messages:
             role = m.get("role", "user")
@@ -463,6 +469,20 @@ async def assistant_global_chat(
                     if text:
                         full_response += text
                         yield SSESerializer.text_delta(text)
+
+                # Emit citations for attached files so frontend can render [N] badges
+                if file_contexts:
+                    citations = [
+                        {
+                            "source_id": fc.get("file_id") or "",
+                            "file_name": fc.get("filename", "Документ"),
+                            "quote": fc.get("text", "")[:400],
+                            "source_type": "document",
+                        }
+                        for fc in file_contexts
+                    ]
+                    yield SSESerializer.citations(citations)
+
             except Exception as e:
                 logger.error(f"Global chat LLM error: {e}", exc_info=True)
                 yield SSESerializer.error(str(e))

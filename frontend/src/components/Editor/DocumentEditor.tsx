@@ -365,27 +365,36 @@ export const DocumentEditor = forwardRef<DocumentEditorRef, DocumentEditorProps>
 
       const docText = editor.state.doc.textContent
 
-      // Collect ALL occurrences (char offsets in docText)
-      const charIndices: number[] = []
-      let searchFrom = 0
-      while (true) {
-        const idx = docText.indexOf(originalText, searchFrom)
-        if (idx === -1) break
-        charIndices.push(idx)
-        searchFrom = idx + originalText.length
+      // Find the FIRST occurrence only — playbook fixes target a specific clause,
+      // replacing all occurrences would corrupt other parts of the document.
+      let searchText = originalText
+      let charIndex = docText.indexOf(searchText)
+
+      // If exact match not found, try progressively shorter prefixes (same as scrollToText)
+      if (charIndex === -1) {
+        searchText = originalText.slice(0, 200)
+        charIndex = docText.indexOf(searchText)
       }
-      if (charIndices.length === 0) return false
+      if (charIndex === -1) {
+        searchText = originalText.slice(0, 100)
+        charIndex = docText.indexOf(searchText)
+      }
+      if (charIndex === -1) {
+        searchText = originalText.slice(0, 50)
+        charIndex = docText.indexOf(searchText)
+      }
+      if (charIndex === -1) return false
 
       // Convert docText char offset → ProseMirror position
-      const charToPmPos = (charIndex: number): number => {
+      const charToPmPos = (ci: number): number => {
         let charCount = 0
         let foundPos = -1
         editor.state.doc.descendants((node, pos) => {
           if (foundPos !== -1) return false
           if (node.isText && node.text) {
             const nodeLen = node.text.length
-            if (charCount + nodeLen > charIndex) {
-              foundPos = pos + (charIndex - charCount)
+            if (charCount + nodeLen > ci) {
+              foundPos = pos + (ci - charCount)
               return false
             }
             charCount += nodeLen
@@ -395,17 +404,11 @@ export const DocumentEditor = forwardRef<DocumentEditorRef, DocumentEditorProps>
         return foundPos
       }
 
-      // Apply from LAST to FIRST so earlier positions stay stable
-      charIndices.reverse()
+      const from = charToPmPos(charIndex)
+      const to = charToPmPos(charIndex + searchText.length)
+      if (from === -1 || to === -1) return false
 
-      let tr = editor.state.tr
-      for (const charIndex of charIndices) {
-        const from = charToPmPos(charIndex)
-        const to = charToPmPos(charIndex + originalText.length)
-        if (from === -1 || to === -1) continue
-        tr = tr.replaceWith(from, to, editor.state.schema.text(newText))
-      }
-
+      const tr = editor.state.tr.replaceWith(from, to, editor.state.schema.text(newText))
       editor.view.dispatch(tr)
       editor.commands.focus()
       onChange(editor.getHTML())

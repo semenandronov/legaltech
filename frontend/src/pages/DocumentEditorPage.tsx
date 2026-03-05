@@ -44,6 +44,7 @@ const DocumentEditorPage = () => {
   const [selectedPlaybookId, setSelectedPlaybookId] = useState<string | null>(null)
   const [selectedPlaybookName, setSelectedPlaybookName] = useState<string | null>(null)
   const [playbookError, setPlaybookError] = useState<string | null>(null)
+  const [showPlaybookPanel, setShowPlaybookPanel] = useState(false)
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false)
@@ -338,6 +339,7 @@ const DocumentEditorPage = () => {
     setRunningPlaybookId(playbookId)
     setPlaybookError(null)
     setSelectedPlaybookId(playbookId)
+    setShowPlaybookPanel(true)
     if (playbookName) {
       setSelectedPlaybookName(playbookName)
     }
@@ -578,7 +580,7 @@ const DocumentEditorPage = () => {
         {documentId && (
           <div className="shrink-0 flex border-l border-border">
             {/* Панель результатов Playbook */}
-            <div className="w-[420px] shrink-0 flex flex-col" style={{ backgroundColor: 'var(--color-bg-primary)' }}>
+            {showPlaybookPanel && <div className="w-[420px] shrink-0 flex flex-col" style={{ backgroundColor: 'var(--color-bg-primary)' }}>
               <PlaybookResultsPanel
                 result={
                   playbookResult
@@ -603,6 +605,7 @@ const DocumentEditorPage = () => {
                 onClose={() => {
                   setPlaybookResult(null)
                   setPlaybookError(null)
+                  setShowPlaybookPanel(false)
                 }}
                 onNavigateToIssue={handleNavigateToIssue}
                 onScrollToText={handleScrollToText}
@@ -619,10 +622,10 @@ const DocumentEditorPage = () => {
                 errorMessage={playbookError}
                 onSelectPlaybook={handleOpenPlaybookModal}
               />
-            </div>
+            </div>}
 
-            {/* Чат ассистента */}
-            <div className="w-[480px] border-l border-border shrink-0 flex flex-col">
+            {/* Чат ассистента — скрыт, когда открыта панель результатов */}
+            <div className={`w-[480px] border-l border-border shrink-0 flex flex-col${showPlaybookPanel ? ' hidden' : ''}`}>
               <DocumentEditorContextChat
                 documentId={documentId}
                 documentTitle={title}

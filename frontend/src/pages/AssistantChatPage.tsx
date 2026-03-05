@@ -8,6 +8,7 @@ import { getCase, getApiUrl, SourceInfo, getCaseFiles } from '../services/api'
 import { ChatHistoryPanel } from '../components/Chat/ChatHistoryPanel'
 import { loadChatHistory } from '../services/chatHistoryService'
 import MessageContent from '../components/Chat/MessageContent'
+import { TabularDocumentViewer } from '../components/TabularReview/TabularDocumentViewer'
 import {
   consumePendingWorkflowResult,
   createWorkflowResultChatMessage,
@@ -719,6 +720,7 @@ const AssistantChatPage = () => {
   const [caseFilesLoaded, setCaseFilesLoaded] = useState(false)
   const [showCaseFilePicker, setShowCaseFilePicker] = useState(false)
   const [loadingCaseFiles, setLoadingCaseFiles] = useState(false)
+  const [viewerSource, setViewerSource] = useState<SourceInfo | null>(null)
 
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const abortRef = useRef<AbortController | null>(null)
@@ -851,7 +853,7 @@ const AssistantChatPage = () => {
     const contextsToSend = [...fileContexts]
     const currentDraft = draftDocument
     setQuestion('')
-    setFileContexts([])
+    // fileContexts are kept for the whole session — files stay available for follow-up messages
 
     const userMsg: ChatMessage = { role: 'user', content: text }
     const allMessages = [...messages, userMsg]
@@ -896,56 +898,66 @@ const AssistantChatPage = () => {
       let assistantContent = ''
       let buffer = ''
 
+      const processSSELine = (line: string) => {
+        if (!line.startsWith('data: ')) return
+        const raw = line.slice(6).trim()
+        if (!raw) return
+        try {
+          const data = JSON.parse(raw)
+          if (data.session_id && !sessionId) {
+            setSessionId(data.session_id)
+          } else if (data.type === 'citations' && Array.isArray(data.citations)) {
+            const sources: SourceInfo[] = data.citations.map((c: any) => ({
+              file: c.file_name || c.file || '',
+              title: c.file_name || c.file,
+              page: c.page ?? undefined,
+              text_preview: c.quote,
+              source_id: c.source_id,
+              quote: c.quote,
+              char_start: c.char_start,
+              char_end: c.char_end,
+            }))
+            setMessages((prev) => {
+              const last = prev[prev.length - 1]
+              return [...prev.slice(0, -1), { ...last, sources }]
+            })
+          } else if (data.error) {
+            assistantContent = `Ошибка: ${data.error}`
+            setMessages((prev) => [
+              ...prev.slice(0, -1),
+              { role: 'assistant', content: assistantContent },
+            ])
+          } else if (data.type === 'document_created' && data.document) {
+            const docId = data.document.id
+            const docTitle = data.document.title || 'Черновик'
+            setDraftDocId(docId)
+            setDraftDocument({ title: docTitle, content: '' })
+          } else if (data.textDelta) {
+            assistantContent += data.textDelta
+            if (!isDraftMode) {
+              // Preserve sources if already set (citations can arrive before last textDelta in some edge cases)
+              setMessages((prev) => {
+                const last = prev[prev.length - 1]
+                return [...prev.slice(0, -1), { ...last, role: 'assistant', content: assistantContent }]
+              })
+            }
+          }
+        } catch {}
+      }
+
       while (true) {
         const { done, value } = await reader.read()
-        if (done) break
+        if (done) {
+          // Flush remaining buffer on stream end
+          if (buffer) {
+            for (const line of buffer.split('\n')) processSSELine(line)
+          }
+          break
+        }
         buffer += decoder.decode(value, { stream: true })
         const lines = buffer.split('\n')
         buffer = lines.pop() ?? ''
-        for (const line of lines) {
-          if (!line.startsWith('data: ')) continue
-          const raw = line.slice(6).trim()
-          if (!raw) continue
-          try {
-            const data = JSON.parse(raw)
-            if (data.session_id && !sessionId) {
-              setSessionId(data.session_id)
-            } else if (data.type === 'citations' && Array.isArray(data.citations)) {
-              const sources: SourceInfo[] = data.citations.map((c: any) => ({
-                file: c.file_name || c.file || '',
-                title: c.file_name || c.file,
-                page: c.page ?? undefined,
-                text_preview: c.quote,
-              }))
-              setMessages((prev) => {
-                const last = prev[prev.length - 1]
-                return [...prev.slice(0, -1), { ...last, sources }]
-              })
-            } else if (data.error) {
-              assistantContent = `Ошибка: ${data.error}`
-              setMessages((prev) => [
-                ...prev.slice(0, -1),
-                { role: 'assistant', content: assistantContent },
-              ])
-            } else if (data.type === 'document_created' && data.document) {
-              // Backend already created the document — just store the id and title
-              const docId = data.document.id
-              const docTitle = data.document.title || 'Черновик'
-              setDraftDocId(docId)
-              setDraftDocument({ title: docTitle, content: '' })
-            } else if (data.textDelta) {
-              assistantContent += data.textDelta
-              if (!isDraftMode) {
-                // Normal mode: show full response in chat
-                setMessages((prev) => [
-                  ...prev.slice(0, -1),
-                  { role: 'assistant', content: assistantContent },
-                ])
-              }
-              // Draft mode: textDelta is just a confirmation message — ignore it
-            }
-          } catch {}
-        }
+        for (const line of lines) processSSELine(line)
       }
     } catch (err: any) {
       if (err?.name !== 'AbortError') {
@@ -969,6 +981,13 @@ const AssistantChatPage = () => {
     }
     // Fallback: shouldn't happen, but handle gracefully
     toast.error('Документ ещё не готов')
+  }
+
+  // ── Open citation in document viewer ──
+  const handleCitationClick = (source: SourceInfo) => {
+    if (source.source_id) {
+      setViewerSource(source)
+    }
   }
 
   // ── New chat ──
@@ -1113,6 +1132,7 @@ const AssistantChatPage = () => {
                             <MessageContent
                               content={msg.content}
                               sources={msg.sources || []}
+                              onCitationClick={handleCitationClick}
                               isStreaming={isStreaming && idx === messages.length - 1}
                             />
                           ) : (
@@ -1315,6 +1335,42 @@ const AssistantChatPage = () => {
         }}
         onLoadHistory={handleLoadHistory}
       />
+
+      {/* Document viewer modal — opens when citation is clicked */}
+      {viewerSource && caseId && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center"
+          style={{ backgroundColor: 'rgba(0,0,0,0.45)' }}
+          onClick={() => setViewerSource(null)}
+        >
+          <div
+            className="relative flex flex-col rounded-xl shadow-2xl overflow-hidden"
+            style={{ width: '82vw', height: '85vh', backgroundColor: '#fff' }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <button
+              onClick={() => setViewerSource(null)}
+              className="absolute top-3 right-3 z-10 p-1.5 rounded-full hover:bg-gray-100 transition-colors"
+            >
+              <X className="w-5 h-5" style={{ color: '#6B7280' }} />
+            </button>
+            <TabularDocumentViewer
+              fileId={viewerSource.source_id}
+              caseId={caseId}
+              fileType={
+                viewerSource.file?.toLowerCase().endsWith('.pdf') ? 'pdf' :
+                viewerSource.file?.toLowerCase().endsWith('.docx') ? 'docx' : 'txt'
+              }
+              fileName={viewerSource.file}
+              cellData={{
+                verbatimExtract: viewerSource.quote || viewerSource.text_preview || null,
+                highlightMode: 'verbatim',
+                sourcePage: viewerSource.page ?? null,
+              }}
+            />
+          </div>
+        </div>
+      )}
 
       {/* Case file picker modal */}
       <CaseFilePickerModal

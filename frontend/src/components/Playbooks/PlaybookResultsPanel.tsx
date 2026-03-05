@@ -407,7 +407,7 @@ export const PlaybookResultsPanel = ({
 
                       {onApplyFix && selectedRule.found_text && opt.text && (
                         <div className="mt-2 flex items-center gap-2">
-                          {appliedRules.has(selectedRule.rule_id) ? (
+                          {appliedRules.has(`${selectedRule.rule_id}_${idx}`) ? (
                             <span className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium text-green-600 bg-green-50">
                               <CheckCheck className="w-3 h-3" />
                               Применено
@@ -417,7 +417,7 @@ export const PlaybookResultsPanel = ({
                               onClick={() => {
                                 const success = onApplyFix(selectedRule.found_text!, opt.text)
                                 if (success) {
-                                  setAppliedRules(prev => new Set(prev).add(selectedRule.rule_id))
+                                  setAppliedRules(prev => new Set(prev).add(`${selectedRule.rule_id}_${idx}`))
                                   toast.success('Правка применена')
                                 } else {
                                   toast.error('Не удалось найти текст в документе')
@@ -435,7 +435,7 @@ export const PlaybookResultsPanel = ({
                   ))}
 
                   <div className="flex items-center gap-2 mt-1">
-                    {(onScrollToText || (onNavigateToIssue && (selectedRule.document_location || selectedRule.location))) && (
+                    {((onScrollToText && selectedRule.found_text) || (onNavigateToIssue && (selectedRule.document_location || selectedRule.location))) && (
                       <button
                         onClick={() => {
                           if (onScrollToText && selectedRule.found_text) {
