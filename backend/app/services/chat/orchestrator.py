@@ -228,18 +228,23 @@ class ChatOrchestrator:
             
             # Определяем handler и обрабатываем запрос
             full_response = ""
-            
+            citations_data = []
+
             try:
                 # #region agent log
                 try:
                     _debug_log("orchestrator.py:185", "Routing to handler", {"mode": mode}, hypothesis_id="D")
                 except: pass
                 # #endregion
-                
+
                 async for event in self._route_to_handler(request, session_id):
                     yield event
                     # Извлекаем текст для сохранения
                     full_response += self._extract_text_from_event(event)
+                    # Захватываем citations для сохранения в БД
+                    extracted_citations = self._extract_citations_from_event(event)
+                    if extracted_citations:
+                        citations_data = extracted_citations
                 
                 # #region agent log
                 try:
@@ -258,7 +263,8 @@ class ChatOrchestrator:
                     
                     self.history_service.update_assistant_message(
                         message_id=assistant_placeholder.id,
-                        content=full_response
+                        content=full_response,
+                        source_references=citations_data if citations_data else None
                     )
                 
                 # Записываем метрику латентности
@@ -418,15 +424,30 @@ class ChatOrchestrator:
     def _extract_text_from_event(self, event: str) -> str:
         """Извлечь текст из SSE события"""
         import json
-        
+
         if "textDelta" not in event:
             return ""
-        
+
         try:
             data = json.loads(event.replace("data: ", "").strip())
             return data.get("textDelta", "")
         except:
             return ""
+
+    def _extract_citations_from_event(self, event: str) -> list:
+        """Извлечь citations из SSE события типа citations"""
+        import json
+
+        if "citations" not in event:
+            return []
+
+        try:
+            data = json.loads(event.replace("data: ", "").strip())
+            if data.get("type") == "citations" and isinstance(data.get("citations"), list):
+                return data["citations"]
+        except:
+            pass
+        return []
     
     def _verify_case_access(self, case_id: str, user: User) -> Optional[Case]:
         """

@@ -784,7 +784,22 @@ const AssistantChatPage = () => {
       setLoadingSession(true)
       loadChatHistory(caseId, sessionParam)
         .then((history) => {
-          setMessages(history.map((m) => ({ role: m.role, content: m.content })))
+          setMessages(history.map((m) => ({
+            role: m.role,
+            content: m.content,
+            sources: Array.isArray((m as any).source_references)
+              ? (m as any).source_references.map((c: any) => ({
+                  file: c.file_name || c.file || '',
+                  title: c.file_name || c.file,
+                  page: c.page ?? undefined,
+                  text_preview: c.quote,
+                  source_id: c.source_id,
+                  quote: c.quote,
+                  char_start: c.char_start,
+                  char_end: c.char_end,
+                }))
+              : undefined,
+          })))
           setSessionId(sessionParam)
         })
         .catch(() => {})
@@ -1006,7 +1021,22 @@ const AssistantChatPage = () => {
     if (!caseId) return
     try {
       const history = await loadChatHistory(caseId, histSessionId)
-      setMessages(history.map((m) => ({ role: m.role, content: m.content })))
+      setMessages(history.map((m) => ({
+        role: m.role,
+        content: m.content,
+        sources: Array.isArray((m as any).source_references)
+          ? (m as any).source_references.map((c: any) => ({
+              file: c.file_name || c.file || '',
+              title: c.file_name || c.file,
+              page: c.page ?? undefined,
+              text_preview: c.quote,
+              source_id: c.source_id,
+              quote: c.quote,
+              char_start: c.char_start,
+              char_end: c.char_end,
+            }))
+          : undefined,
+      })))
       if (histSessionId) setSessionId(histSessionId)
     } catch {
       toast.error('Не удалось загрузить историю')
@@ -1096,7 +1126,10 @@ const AssistantChatPage = () => {
           {/* Body: chat + optional document panel */}
           <div className="flex-1 flex overflow-hidden">
             {/* Chat column */}
-            <div className="flex flex-col overflow-hidden" style={{ width: '100%' }}>
+            <div
+              className="flex flex-col overflow-hidden transition-all duration-300"
+              style={{ width: viewerSource ? '45%' : '100%' }}
+            >
               <div className="flex-1 overflow-y-auto">
                 <div style={{ maxWidth: '960px', margin: '0 auto' }} className="px-6 py-8 space-y-6">
                   {loadingSession && messages.length === 0 && (
@@ -1134,28 +1167,6 @@ const AssistantChatPage = () => {
                                 onCitationClick={handleCitationClick}
                                 isStreaming={isStreaming && idx === messages.length - 1}
                               />
-                              {/* Source chips — always visible when sources exist */}
-                              {msg.sources && msg.sources.length > 0 && !isStreaming && (
-                                <div className="flex flex-wrap gap-2 mt-3">
-                                  {msg.sources.map((src, si) => (
-                                    <button
-                                      key={si}
-                                      onClick={() => handleCitationClick(src)}
-                                      className="flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-medium transition-colors"
-                                      style={{
-                                        border: '1px solid rgba(37,99,235,0.25)',
-                                        backgroundColor: 'rgba(37,99,235,0.06)',
-                                        color: '#2563eb',
-                                      }}
-                                      onMouseOver={e => (e.currentTarget.style.backgroundColor = 'rgba(37,99,235,0.12)')}
-                                      onMouseOut={e => (e.currentTarget.style.backgroundColor = 'rgba(37,99,235,0.06)')}
-                                    >
-                                      <FileText className="w-3 h-3" />
-                                      [{si + 1}] {src.file || 'Документ'}
-                                    </button>
-                                  ))}
-                                </div>
-                              )}
                             </>
                           ) : (
                             // Dots only during active streaming (not in draft mode after completion)
@@ -1226,6 +1237,55 @@ const AssistantChatPage = () => {
                 </div>
               </div>
             </div>
+
+            {/* Document viewer panel — slides in from right when citation clicked */}
+            {viewerSource && (
+              <div
+                className="flex flex-col border-l overflow-hidden transition-all duration-300"
+                style={{ width: '55%', borderColor: '#E5E7EB', backgroundColor: '#fff' }}
+              >
+                <div className="flex items-center justify-between px-4 py-2 border-b shrink-0" style={{ borderColor: '#E5E7EB' }}>
+                  <span className="text-sm font-medium truncate" style={{ color: '#374151' }}>
+                    {viewerSource.file || 'Документ'}
+                  </span>
+                  <button
+                    onClick={() => setViewerSource(null)}
+                    className="p-1.5 rounded-full hover:bg-gray-100 transition-colors"
+                  >
+                    <X className="w-4 h-4" style={{ color: '#6B7280' }} />
+                  </button>
+                </div>
+
+                {viewerSource.source_id && caseId ? (
+                  <TabularDocumentViewer
+                    fileId={viewerSource.source_id}
+                    caseId={caseId}
+                    fileType={
+                      viewerSource.file?.toLowerCase().endsWith('.pdf') ? 'pdf' :
+                      viewerSource.file?.toLowerCase().endsWith('.docx') ? 'docx' : 'txt'
+                    }
+                    fileName={viewerSource.file}
+                    cellData={{
+                      verbatimExtract: viewerSource.quote || viewerSource.text_preview || null,
+                      highlightMode: 'verbatim',
+                      sourcePage: viewerSource.page ?? null,
+                    }}
+                  />
+                ) : (
+                  <div className="p-6 overflow-y-auto">
+                    <div
+                      className="text-sm leading-relaxed p-4 rounded-lg"
+                      style={{ backgroundColor: '#EFF6FF', color: '#1e40af', border: '1px solid #BFDBFE', whiteSpace: 'pre-wrap' }}
+                    >
+                      {viewerSource.quote || viewerSource.text_preview || 'Текст недоступен'}
+                    </div>
+                    <p className="mt-3 text-xs" style={{ color: '#9CA3AF' }}>
+                      Для навигации по документу прикрепите его через «Из дел»
+                    </p>
+                  </div>
+                )}
+              </div>
+            )}
 
           </div>
         </>
@@ -1357,67 +1417,6 @@ const AssistantChatPage = () => {
         }}
         onLoadHistory={handleLoadHistory}
       />
-
-      {/* Citation modal — full viewer for case files, quote panel for direct uploads */}
-      {viewerSource && (
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center"
-          style={{ backgroundColor: 'rgba(0,0,0,0.45)' }}
-          onClick={() => setViewerSource(null)}
-        >
-          <div
-            className="relative flex flex-col rounded-xl shadow-2xl overflow-hidden"
-            style={{
-              width: viewerSource.source_id && caseId ? '82vw' : '480px',
-              height: viewerSource.source_id && caseId ? '85vh' : 'auto',
-              backgroundColor: '#fff',
-            }}
-            onClick={(e) => e.stopPropagation()}
-          >
-            <button
-              onClick={() => setViewerSource(null)}
-              className="absolute top-3 right-3 z-10 p-1.5 rounded-full hover:bg-gray-100 transition-colors"
-            >
-              <X className="w-5 h-5" style={{ color: '#6B7280' }} />
-            </button>
-
-            {viewerSource.source_id && caseId ? (
-              /* Case file — open full document viewer with highlight */
-              <TabularDocumentViewer
-                fileId={viewerSource.source_id}
-                caseId={caseId}
-                fileType={
-                  viewerSource.file?.toLowerCase().endsWith('.pdf') ? 'pdf' :
-                  viewerSource.file?.toLowerCase().endsWith('.docx') ? 'docx' : 'txt'
-                }
-                fileName={viewerSource.file}
-                cellData={{
-                  verbatimExtract: viewerSource.quote || viewerSource.text_preview || null,
-                  highlightMode: 'verbatim',
-                  sourcePage: viewerSource.page ?? null,
-                }}
-              />
-            ) : (
-              /* Direct upload — show extracted quote */
-              <div className="p-6">
-                <div className="flex items-center gap-2 mb-4" style={{ color: '#374151' }}>
-                  <FileText className="w-4 h-4" style={{ color: '#2563eb' }} />
-                  <span className="font-medium text-sm">{viewerSource.file || 'Документ'}</span>
-                </div>
-                <div
-                  className="text-sm leading-relaxed p-4 rounded-lg"
-                  style={{ backgroundColor: '#EFF6FF', color: '#1e40af', border: '1px solid #BFDBFE', whiteSpace: 'pre-wrap' }}
-                >
-                  {viewerSource.quote || viewerSource.text_preview || 'Текст недоступен'}
-                </div>
-                <p className="mt-3 text-xs" style={{ color: '#9CA3AF' }}>
-                  Для навигации по документу прикрепите его через «Из дел»
-                </p>
-              </div>
-            )}
-          </div>
-        </div>
-      )}
 
       {/* Case file picker modal */}
       <CaseFilePickerModal

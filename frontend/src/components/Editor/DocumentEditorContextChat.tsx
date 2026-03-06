@@ -981,25 +981,7 @@ export const DocumentEditorContextChat: React.FC<DocumentEditorContextChatProps>
           </div>
         )}
 
-        {/* Selection chip */}
-        {activeSelection && (
-          <div className="mx-3 mb-2 flex items-start gap-2 px-3 py-2 rounded-xl border" style={{ background: '#f5f5f5', borderColor: '#e5e7eb' }}>
-            <Scissors className="w-3.5 h-3.5 shrink-0 mt-0.5" style={{ color: '#9ca3af' }} />
-            <div className="flex-1 min-w-0">
-              <div className="text-xs font-semibold mb-0.5" style={{ color: '#6b7280' }}>Выделенный текст</div>
-              <div className="text-xs leading-relaxed line-clamp-2" style={{ color: '#374151' }}>
-                {activeSelection.slice(0, 120)}{activeSelection.length > 120 ? '…' : ''}
-              </div>
-            </div>
-            <button
-              onClick={clearActiveSelection}
-              className="shrink-0 p-0.5 rounded hover:bg-gray-200 transition-colors"
-              style={{ color: '#9ca3af' }}
-            >
-              <X className="w-3.5 h-3.5" />
-            </button>
-          </div>
-        )}
+        {/* Selection chip hidden — activeSelection is kept in state for prompt context */}
 
         {/* Input box */}
         <div className="px-3 pt-3 pb-2">

@@ -597,3 +597,21 @@ class CaseVectorStore:
         except Exception as e:
             logger.error(f"Failed to delete vectors for case {case_id}: {e}", exc_info=True)
             return False
+
+    def delete_file_vectors(self, file_id: str) -> bool:
+        """Delete all vector chunks for a specific file (before reindexing)."""
+        try:
+            with self.engine.begin() as conn:
+                conn.execute(
+                    text(f"""
+                        DELETE FROM {VectorEmbedding.__tablename__}
+                        WHERE collection_id = :collection_id
+                          AND document->'metadata'->>'file_id' = :file_id
+                    """),
+                    {"collection_id": self.collection_name, "file_id": file_id}
+                )
+            logger.info(f"✅ Deleted vectors for file {file_id}")
+            return True
+        except Exception as e:
+            logger.error(f"Failed to delete vectors for file {file_id}: {e}", exc_info=True)
+            return False

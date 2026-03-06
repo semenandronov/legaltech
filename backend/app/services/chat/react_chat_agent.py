@@ -66,6 +66,8 @@ _TOOL_NAME_MENTION_RE = re.compile(
     r'[^\n.!?]*(?:' + '|'.join(re.escape(t) for t in _TOOL_NAMES) + r')[^\n.!?]*[.!?]?\n?',
     re.IGNORECASE,
 )
+# GigaChat auto-citation artifacts like "Фрагмент 1 из documents" or "Фрагмент 2 из search_results"
+_FRAGMENT_CITE_RE = re.compile(r'\s*Фрагмент\s+\d+\s+из\s+\S+\.?', re.IGNORECASE)
 
 
 # Задержка между «словами» при эффекте печати (секунды)
@@ -100,6 +102,8 @@ def _clean_response_text(text: str) -> str:
     # Remove sentences that mention internal tool function names
     # (e.g. "Подробный обзор можно найти в выводе функции analyze_all_documents.")
     cleaned = _TOOL_NAME_MENTION_RE.sub('', cleaned)
+    # Remove GigaChat auto-citation artifacts: "Фрагмент N из documents" etc.
+    cleaned = _FRAGMENT_CITE_RE.sub('', cleaned)
     # Remove "Улучшенный ответ:" prefix from reflection
     cleaned = re.sub(r'^\s*Улучшенный ответ:\s*', '', cleaned, flags=re.MULTILINE)
     # Collapse excessive blank lines
@@ -117,8 +121,14 @@ def _filter_section_headers_streaming(token: str, line_buf: str) -> tuple:
     emit_parts = []
     # All parts except the last are complete lines (they ended with \n)
     for part in parts[:-1]:
-        if not _SECTION_HEADER_RE.match(part) and not _BRACKET_NOTE_RE.match(part):
-            emit_parts.append(part + '\n')
+        if _SECTION_HEADER_RE.match(part) or _BRACKET_NOTE_RE.match(part):
+            continue
+        # Suppress lines that mention internal tool names (GigaChat reasoning leakage)
+        if _TOOL_NAME_MENTION_RE.search(part):
+            continue
+        # Strip GigaChat "Фрагмент N из ..." inline citations from the line
+        cleaned_part = _FRAGMENT_CITE_RE.sub('', part)
+        emit_parts.append(cleaned_part + '\n')
     # Last part is an incomplete line — buffer it
     return ''.join(emit_parts), parts[-1]
 
@@ -224,7 +234,9 @@ class ReActChatAgent:
 - Для списков используй маркеры
 - Для важного используй **жирный** текст
 - НЕ включай в ответ внутренние заголовки разделов вида [# Анализ вопроса], [# Выбор инструмента], [# Ответ] и подобные. Пиши ответ сразу без таких маркеров.
-- НЕ упоминай названия инструментов/функций (analyze_all_documents, search_in_documents и т.д.) в тексте ответа пользователю. Пользователь не видит и не должен видеть эти названия."""
+- НЕ упоминай названия инструментов/функций (analyze_all_documents, search_in_documents и т.д.) в тексте ответа пользователю. Пользователь не видит и не должен видеть эти названия.
+- НЕ добавляй раздел "Источники:", "Сноски:" или отдельный список вида "[1] Описание источника" в конце ответа. Маркеры [N] используй ТОЛЬКО встроенно в предложения, не выносить в отдельный список.
+- НЕ пиши "Фрагмент N из ..." — это внутренний формат системы, недопустимый в ответе пользователю. Для ссылки на источник используй только [N]."""
     
     def __init__(
         self,
@@ -826,12 +838,18 @@ ID дела: {self.case_id}
                     has_seen_tool_execution = False  # True after first on_tool_end event
                     step_tokens_streamed = False  # True if current step's tokens were streamed live
                     stream_line_buf = ""  # Line buffer for filtering section headers in real-time
+                    # When a tool already produced a synthesized answer (search/extract), skip
+                    # GigaChat's outer synthesis — it would just rephrase without [N] markers.
+                    direct_result_streamed = False
 
                     async for event in self.agent.astream_events(input_data, version="v2"):
                         kind = event.get("event", "")
 
                         # Token-by-token streaming from LLM
                         if kind == "on_chat_model_stream":
+                            # Skip GigaChat's outer synthesis when a tool already produced the answer
+                            if direct_result_streamed:
+                                continue
                             chunk = event.get("data", {}).get("chunk")
                             if chunk:
                                 # Text content
@@ -880,8 +898,12 @@ ID дела: {self.case_id}
                         elif kind == "on_chat_model_end":
                             # Flush any incomplete line remaining in the streaming line buffer
                             if stream_line_buf and step_tokens_streamed:
-                                if not _SECTION_HEADER_RE.match(stream_line_buf.strip()):
-                                    yield SSESerializer.text_delta(stream_line_buf)
+                                stripped = stream_line_buf.strip()
+                                if (not _SECTION_HEADER_RE.match(stripped)
+                                        and not _TOOL_NAME_MENTION_RE.search(stripped)):
+                                    flushed = _FRAGMENT_CITE_RE.sub('', stream_line_buf)
+                                    if flushed:
+                                        yield SSESerializer.text_delta(flushed)
                                 stream_line_buf = ""
                             if text_buffer and not has_tool_call_in_current_step:
                                 if step_tokens_streamed:
@@ -923,6 +945,26 @@ ID дела: {self.case_id}
                                         logger.info("[ReActChatAgent] Emitted playbook_check_result SSE event")
                                 except Exception as pb_err:
                                     logger.warning(f"[ReActChatAgent] Failed to emit playbook result: {pb_err}")
+
+                            # For search/extract tools that already synthesised the answer with [N] markers:
+                            # stream the synthesised result directly and skip GigaChat's outer synthesis.
+                            elif tool_name in ("search_in_documents", "extract_structured_data"):
+                                try:
+                                    from app.services.chat.universal_tools import (
+                                        get_last_direct_result,
+                                        clear_last_direct_result,
+                                    )
+                                    direct = get_last_direct_result()
+                                    if direct and not direct_result_streamed:
+                                        cleaned = _clean_response_text(direct)
+                                        if cleaned:
+                                            yield SSESerializer.text_delta(cleaned)
+                                            response_text += cleaned
+                                            direct_result_streamed = True
+                                            logger.info(f"[ReActChatAgent] Direct-streamed {tool_name} result ({len(cleaned)} chars)")
+                                    clear_last_direct_result()
+                                except Exception as dr_err:
+                                    logger.warning(f"[ReActChatAgent] Failed to direct-stream result: {dr_err}")
 
                     # Flush any remaining buffered text (only if not already streamed live)
                     if text_buffer and not step_tokens_streamed:

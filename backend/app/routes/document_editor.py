@@ -2,12 +2,12 @@
 import logging
 import re
 from urllib.parse import quote
-from fastapi import APIRouter, HTTPException, Depends, UploadFile, File
+from fastapi import APIRouter, BackgroundTasks, HTTPException, Depends, UploadFile, File
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 from typing import List, Optional, Dict
 from datetime import datetime
-from app.utils.database import get_db
+from app.utils.database import get_db, SessionLocal
 from app.utils.auth import get_current_user
 from app.models.user import User
 from app.models.case import Case, File as FileModel
@@ -15,10 +15,52 @@ from app.services.document_editor_service import DocumentEditorService
 from app.services.document_ai_service import DocumentAIService
 from app.services.document_export_service import DocumentExportService
 from app.services.document_converter_service import DocumentConverterService
+from app.services.document_processor import DocumentProcessor
+from app.services.pgvector_store import CaseVectorStore
 from fastapi.responses import StreamingResponse
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
+
+
+def _sync_editor_to_case_file(document_id: str, file_id: str) -> None:
+    """Background task: sync editor document edits back to case file + reindex RAG."""
+    from app.models.document_editor import Document
+    db = SessionLocal()
+    try:
+        doc = db.query(Document).filter(Document.id == document_id).first()
+        file = db.query(FileModel).filter(FileModel.id == file_id).first()
+        if not doc or not file:
+            logger.warning(f"[EditorSync] doc={document_id} or file={file_id} not found, skipping")
+            return
+
+        # 1. Update file plain text and html
+        file.original_text = doc.content_plain or ""
+        file.html_content = doc.content
+        db.commit()
+
+        # 2. Delete old vectors for this file
+        vector_store = CaseVectorStore()
+        vector_store.delete_file_vectors(file_id)
+
+        # 3. Re-split and re-index
+        processor = DocumentProcessor()
+        chunks = processor.split_documents(
+            text=file.original_text,
+            filename=file.filename,
+            metadata={"case_id": file.case_id},
+            file_id=file_id,
+        )
+        processor.store_in_vector_db(
+            case_id=file.case_id,
+            documents=chunks,
+            db=db,
+        )
+        logger.info(f"[EditorSync] Reindexed file {file_id} ({len(chunks)} chunks)")
+    except Exception as e:
+        logger.error(f"[EditorSync] Failed to sync file {file_id}: {e}", exc_info=True)
+    finally:
+        db.close()
 
 
 def _build_content_disposition(filename: str) -> Dict[str, str]:
@@ -314,18 +356,19 @@ async def get_document(
 async def update_document(
     document_id: str,
     request: DocumentUpdateRequest,
+    background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
     """
     Update a document
-    
+
     Args:
         document_id: Document identifier
         request: Document update request
         db: Database session
         current_user: Current user
-        
+
     Returns:
         Updated document
     """
@@ -337,7 +380,12 @@ async def update_document(
             content=request.content,
             title=request.title
         )
-        
+
+        # If this document was created from a case file, sync edits back + reindex RAG
+        source_file_id = (document.document_metadata or {}).get("source_file_id")
+        if source_file_id:
+            background_tasks.add_task(_sync_editor_to_case_file, document_id, source_file_id)
+
         return DocumentResponse(
             id=document.id,
             case_id=document.case_id,

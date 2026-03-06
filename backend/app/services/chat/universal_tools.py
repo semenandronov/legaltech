@@ -45,6 +45,10 @@ _attached_file_ids: Optional[List[str]] = None  # Фильтрация по пр
 # Отслеживание использованных источников для citations
 _used_sources: List[Dict[str, Any]] = []
 
+# Pre-synthesised answer (with inline [N] markers) to stream directly,
+# bypassing GigaChat's outer synthesis step.
+_last_direct_result: Optional[str] = None
+
 
 def get_used_sources() -> List[Dict[str, Any]]:
     """Получить список использованных источников (для отправки citations в SSE)"""
@@ -57,6 +61,34 @@ def clear_used_sources():
     _used_sources = []
 
 
+def get_last_direct_result() -> Optional[str]:
+    """Get the pre-synthesised answer to stream directly (bypasses GigaChat synthesis)."""
+    global _last_direct_result
+    return _last_direct_result
+
+
+def clear_last_direct_result() -> None:
+    """Clear after direct-streaming."""
+    global _last_direct_result
+    _last_direct_result = None
+
+
+def _parse_entity_quotes(result_text: str, n_sources: int) -> dict:
+    """Parse LLM entity-extraction output to get per-source short quotes for highlighting.
+    Matches lines like: '- Абумов Евгений Геннадьевич [1]: исполнитель'
+    Returns {source_index: entity_text}.
+    """
+    quotes: dict = {}
+    for line in result_text.split('\n'):
+        m = re.search(r'[-•]\s+(.+?)\s*\[(\d+)\]', line)
+        if m:
+            entity = m.group(1).strip('- \u2022').strip()
+            idx = int(m.group(2))
+            if 1 <= idx <= n_sources and entity and idx not in quotes:
+                quotes[idx] = entity
+    return quotes
+
+
 def initialize_universal_tools(
     db: Session,
     rag_service,
@@ -65,12 +97,13 @@ def initialize_universal_tools(
     attached_file_ids: Optional[List[str]] = None
 ):
     """Инициализировать глобальные зависимости для tools"""
-    global _db, _rag_service, _case_id, _user_id, _attached_file_ids
+    global _db, _rag_service, _case_id, _user_id, _attached_file_ids, _last_direct_result
     _db = db
     _rag_service = rag_service
     _case_id = case_id
     _user_id = user_id
     _attached_file_ids = attached_file_ids or None
+    _last_direct_result = None
     clear_used_sources()
 
 
@@ -140,8 +173,19 @@ def get_document(filename: str) -> str:
             text = text[:15000] + "\n\n... [текст обрезан, используй search_in_documents для поиска конкретной информации]"
         
         logger.info(f"[UniversalTools] get_document: {matched_file.filename} ({len(text)} символов)")
+
+        # Track source for citations
+        global _used_sources
+        _used_sources = [{
+            "source_id": str(matched_file.id),
+            "file_name": matched_file.filename,
+            "page": 1,
+            "quote": text[:300],
+            "source_type": "document",
+        }]
+
         return f"📄 **{matched_file.filename}**\n\n{text}"
-        
+
     except Exception as e:
         logger.error(f"[UniversalTools] get_document error: {e}")
         return f"Ошибка получения документа: {str(e)}"
@@ -159,12 +203,15 @@ def search_in_documents(query: str, k: int = 20) -> str:
     Returns:
         Найденные фрагменты документов с источниками
     """
-    global _rag_service, _case_id, _db, _used_sources, _attached_file_ids
+    global _rag_service, _case_id, _db, _used_sources, _attached_file_ids, _last_direct_result
 
     if not _rag_service or not _case_id:
         return "Ошибка: сервис поиска не инициализирован"
 
     try:
+        from app.services.llm_factory import create_legal_llm
+        from langchain_core.messages import HumanMessage, SystemMessage
+
         # Ограничиваем k разумными пределами
         k = max(5, min(100, k))
 
@@ -183,49 +230,83 @@ def search_in_documents(query: str, k: int = 20) -> str:
         # Очищаем предыдущие источники при новом поиске
         _used_sources = []
 
-        # Форматируем результаты - увеличен лимит контекста
-        # и улучшен формат для лучшего понимания LLM
+        # Group chunks by source file, preserving order of first appearance
+        files_map: dict = {}  # fname -> list of docs
+        for doc in documents:
+            fname = doc.metadata.get("source_file", "Документ")
+            files_map.setdefault(fname, []).append(doc)
+
+        file_order = list(files_map.keys())
+
+        # Build numbered per-file context: [N] filename:\n <all chunks>
         result_parts = []
         total_chars = 0
-        max_chars = 25000  # Увеличен лимит
+        max_chars = 25000
 
-        for i, doc in enumerate(documents, 1):
+        for i, fname in enumerate(file_order, 1):
             if total_chars >= max_chars:
                 break
-
-            metadata = doc.metadata
-            source_file = metadata.get("source_file", "Документ")
-            content = doc.page_content.strip()
-
-            # Формат: номер, источник, контент
-            entry = f"[{i}] {source_file}:\n{content}"
-
+            chunks = files_map[fname]
+            file_text = "\n".join(c.page_content.strip() for c in chunks)[:3000]
+            entry = f"[{i}] {fname}:\n{file_text}"
             if total_chars + len(entry) > max_chars:
-                # Обрезаем последний документ если не влезает
                 available = max_chars - total_chars - 100
                 if available > 200:
-                    entry = f"[{i}] {source_file}:\n{content[:available]}..."
+                    entry = f"[{i}] {fname}:\n{file_text[:available]}..."
                 else:
                     break
-
             result_parts.append(entry)
             total_chars += len(entry)
 
-            # Сохраняем метаданные источника для citations
+            # One _used_sources entry per file — first chunk is most relevant
+            best = chunks[0]
+            meta = best.metadata
             _used_sources.append({
-                "source_id": str(metadata.get("file_id", metadata.get("doc_id", f"src-{i}"))),
-                "file_name": source_file,
-                "page": metadata.get("source_page") or metadata.get("page"),
-                "quote": content[:300],
-                "char_start": metadata.get("char_start"),
-                "char_end": metadata.get("char_end"),
+                "source_id": str(meta.get("file_id", meta.get("doc_id", f"src-{i}"))),
+                "file_name": fname,
+                "page": meta.get("source_page") or meta.get("page") or 1,
+                "quote": best.page_content[:300],
+                "char_start": meta.get("char_start"),
+                "char_end": meta.get("char_end"),
                 "source_type": "document",
             })
 
-        logger.info(f"[UniversalTools] search_in_documents: найдено {len(documents)} фрагментов, вернули {len(result_parts)} для '{query[:50]}...'")
+        context = "\n\n".join(result_parts)
+        logger.info(f"[UniversalTools] search_in_documents: {len(documents)} чанков, {len(result_parts)} файлов для '{query[:50]}'")
 
-        return f"Найдено {len(documents)} фрагментов в документах:\n\n" + "\n\n".join(result_parts)
-        
+        # Inner LLM synthesis: answer the query with inline [N] markers.
+        # This bypasses GigaChat's unreliable outer synthesis.
+        synthesis_prompt = f"""Ответь на вопрос пользователя, используя ТОЛЬКО данные из приведённых фрагментов.
+
+Вопрос: {query}
+
+Фрагменты документов (каждый помечен [N] — номером источника):
+{context}
+
+ПРАВИЛО: после каждого факта/имени/суммы СРАЗУ ставь [N] в том же предложении.
+Пример: «Иванов А.А. [1] является исполнителем, сумма договора — 100 000 руб. [2]»
+
+Дай развёрнутый ответ на вопрос:"""
+
+        llm = create_legal_llm()
+        response = llm.invoke([
+            SystemMessage(content="Ты юридический ассистент. Отвечай строго по документам, ставь [N] после каждого факта."),
+            HumanMessage(content=synthesis_prompt)
+        ])
+        synthesized = response.content if hasattr(response, 'content') else str(response)
+
+        # Update quotes from synthesized answer for better highlight precision
+        entity_quotes = _parse_entity_quotes(synthesized, len(file_order))
+        for i, src in enumerate(_used_sources, 1):
+            if i in entity_quotes:
+                src["quote"] = entity_quotes[i]
+
+        # Store for direct streaming (bypasses GigaChat's outer synthesis)
+        _last_direct_result = synthesized
+        logger.info(f"[UniversalTools] search_in_documents: inner synthesis done ({len(synthesized)} chars)")
+
+        return synthesized
+
     except Exception as e:
         logger.error(f"[UniversalTools] search_in_documents error: {e}")
         return f"Ошибка поиска: {str(e)}"
@@ -364,51 +445,110 @@ def extract_structured_data(entity_types: str = "dates,amounts,persons,organizat
         from app.services.llm_factory import create_legal_llm
         from langchain_core.messages import HumanMessage, SystemMessage
         
+        # Build entity-specific RAG query so top chunks are most relevant to what's being extracted
+        _ENTITY_QUERY_MAP = {
+            "dates": "даты сроки события договор подписано",
+            "amounts": "суммы стоимость цена оплата рублей",
+            "persons": "имена фамилии лица стороны представители",
+            "organizations": "организации компании юридические лица стороны",
+        }
+        types_list_for_query = [t.strip() for t in entity_types.split(",")]
+        rag_query = " ".join(
+            _ENTITY_QUERY_MAP.get(t, t) for t in types_list_for_query
+        ) or "ключевые факты даты суммы имена организации"
+
         # Получаем контекст из документов
         documents = _rag_service.retrieve_context(
             case_id=_case_id,
-            query="ключевые факты даты суммы имена организации",
+            query=rag_query,
             k=50,
             db=_db
         )
-        
+
         if not documents:
             return "Документы не найдены для извлечения данных."
-        
-        context = "\n".join([d.page_content for d in documents])[:12000]
-        
+
+        # Group RAG chunks by source file, preserving order of first appearance
+        files_map: dict = {}  # fname -> list of docs
+        for doc in documents:
+            fname = doc.metadata.get("source_file", "Документ")
+            files_map.setdefault(fname, []).append(doc)
+
+        file_order = list(files_map.keys())
+
+        # Build numbered per-file context: [1] filename:\n <text>
+        context_parts = []
+        for i, fname in enumerate(file_order, 1):
+            chunks = files_map[fname]
+            file_text = "\n".join(d.page_content for d in chunks)[:2500]
+            context_parts.append(f"[{i}] {fname}:\n{file_text}")
+        context = "\n\n".join(context_parts)[:15000]
+
         # Парсим типы сущностей
         types_list = [t.strip() for t in entity_types.split(",")]
-        
+
         prompt = f"""Извлеки из текста следующие сущности: {', '.join(types_list)}
 
-Текст документов:
+Текст документов (каждый помечен [N] — номером источника):
 {context}
 
-Формат ответа (только те категории, которые запрошены):
+ВАЖНО: После каждого найденного факта указывай [N] — номер документа-источника прямо в тексте.
+Пример: "Абумов Евгений Геннадьевич [1]: исполнитель" или "26 января 2026 года [2]: дата подачи КП"
+
+Формат ответа (только запрошенные категории):
 """
         if "dates" in types_list:
-            prompt += "\n📅 ДАТЫ:\n- [дата]: [контекст/событие]"
+            prompt += "\n📅 ДАТЫ:\n- [дата] [N]: [контекст/событие]"
         if "amounts" in types_list:
-            prompt += "\n\n💰 СУММЫ:\n- [сумма]: [контекст]"
+            prompt += "\n\n💰 СУММЫ:\n- [сумма] [N]: [контекст]"
         if "persons" in types_list:
-            prompt += "\n\n👤 ЛИЦА:\n- [имя]: [роль]"
+            prompt += "\n\n👤 ЛИЦА:\n- [имя] [N]: [роль]"
         if "organizations" in types_list:
-            prompt += "\n\n🏢 ОРГАНИЗАЦИИ:\n- [название]: [роль]"
-        
-        prompt += "\n\nЕсли сущность не найдена - напиши 'не найдено'."
-        
+            prompt += "\n\n🏢 ОРГАНИЗАЦИИ:\n- [название] [N]: [роль]"
+
+        prompt += "\n\nЕсли сущность не найдена — напиши 'не найдено'."
+
         llm = create_legal_llm()
         response = llm.invoke([
             SystemMessage(content="Ты извлекаешь структурированную информацию из юридических документов. Будь точен."),
             HumanMessage(content=prompt)
         ])
-        
+
         result = response.content if hasattr(response, 'content') else str(response)
         logger.info(f"[UniversalTools] extract_structured_data: извлечены {entity_types}")
-        
+
+        # Populate _used_sources — one entry per source file with best matching chunk
+        global _used_sources, _last_direct_result
+        _used_sources = []
+        try:
+            from app.models.case import File as FileModel
+            db_files = _db.query(FileModel).filter(FileModel.case_id == _case_id).all()
+            fname_to_id = {f.filename: str(f.id) for f in db_files}
+            # Parse LLM result to extract entity-level quotes for precise highlighting
+            entity_quotes = _parse_entity_quotes(result, len(file_order))
+            for i, fname in enumerate(file_order, 1):
+                chunks = files_map[fname]
+                file_id = fname_to_id.get(fname, "")
+                best_chunk = chunks[0]  # First chunk = highest RAG relevance score
+                # Use entity-parsed quote if available (much shorter, more precise highlight)
+                quote = entity_quotes.get(i, best_chunk.page_content[:200])
+                _used_sources.append({
+                    "source_id": file_id,
+                    "file_name": fname,
+                    "page": best_chunk.metadata.get("source_page") or best_chunk.metadata.get("page") or 1,
+                    "quote": quote,
+                    "char_start": best_chunk.metadata.get("char_start"),
+                    "char_end": best_chunk.metadata.get("char_end"),
+                    "source_type": "document",
+                })
+        except Exception as src_err:
+            logger.warning(f"[UniversalTools] extract_structured_data: failed to populate _used_sources: {src_err}")
+
+        # Store for direct streaming (bypasses GigaChat's outer synthesis)
+        _last_direct_result = result
+
         return result
-        
+
     except Exception as e:
         logger.error(f"[UniversalTools] extract_structured_data error: {e}")
         return f"Ошибка извлечения данных: {str(e)}"
