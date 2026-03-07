@@ -380,12 +380,19 @@ export const PlaybookResultsPanel = ({
                     className="p-3 rounded-lg text-sm leading-relaxed"
                     style={{ background: 'var(--color-bg-primary)', border: '1px solid var(--color-border)' }}
                   >
-                    <span className="text-xs font-medium" style={{ color: '#dc2626' }}>Исходный текст:</span>
-                    <p className="mt-0.5">
-                      {selectedRule.found_text.length > 250
-                        ? selectedRule.found_text.substring(0, 250) + '…'
-                        : selectedRule.found_text}
+                    <span className="text-xs font-medium" style={{ color: '#dc2626' }}>Найденная формулировка:</span>
+                    <p className="mt-0.5 font-mono" style={{ color: '#dc2626' }}>
+                      «{selectedRule.found_text}»
                     </p>
+                    {/* Surrounding context for readability (from direct scan) */}
+                    {selectedRule.occurrences?.[0]?.context && (
+                      <p className="mt-2 text-xs leading-relaxed" style={{ color: 'var(--color-text-secondary)' }}>
+                        <span className="font-medium">Контекст: </span>
+                        {selectedRule.occurrences[0].context.length > 300
+                          ? selectedRule.occurrences[0].context.substring(0, 300) + '…'
+                          : selectedRule.occurrences[0].context}
+                      </p>
+                    )}
                   </div>
 
                   {/* Варианты правок (standard + fallbacks) — только если статус не passed */}

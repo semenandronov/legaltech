@@ -828,7 +828,9 @@ class PlaybookChecker:
                     rule_type=rule.rule_type,
                     clause_category=rule.clause_category,
                     status=status,
-                    found_text=first_match["context"][:1000],
+                    # found_text = EXACT phrase to replace (not the surrounding context).
+                    # The context is stored in occurrences[N].context for display.
+                    found_text=first_match["phrase"],
                     location={
                         "char_start": first_match["char_start"],
                         "char_end": first_match["char_end"],
