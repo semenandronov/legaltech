@@ -261,10 +261,15 @@ def search_in_documents(query: str, k: int = 20) -> str:
             # One _used_sources entry per file — first chunk is most relevant
             best = chunks[0]
             meta = best.metadata
+            # Preserve None when there's no real page info — viewer then uses verbatim
+            # text search instead of jumping to a wrong page (sourcePage + 1 offset).
+            _page = meta.get("source_page")
+            if _page is None:
+                _page = meta.get("page")
             _used_sources.append({
                 "source_id": str(meta.get("file_id", meta.get("doc_id", f"src-{i}"))),
                 "file_name": fname,
-                "page": meta.get("source_page") or meta.get("page") or 1,
+                "page": _page,
                 "quote": best.page_content[:300],
                 "char_start": meta.get("char_start"),
                 "char_end": meta.get("char_end"),
@@ -544,10 +549,13 @@ def extract_structured_data(entity_types: str = "dates,amounts,persons,organizat
                 best_chunk = chunks[0]  # First chunk = highest RAG relevance score
                 # Use entity-parsed quote if available (much shorter, more precise highlight)
                 quote = entity_quotes.get(i, best_chunk.page_content[:200])
+                _bpage = best_chunk.metadata.get("source_page")
+                if _bpage is None:
+                    _bpage = best_chunk.metadata.get("page")
                 _used_sources.append({
                     "source_id": file_id,
                     "file_name": fname,
-                    "page": best_chunk.metadata.get("source_page") or best_chunk.metadata.get("page") or 1,
+                    "page": _bpage,
                     "quote": quote,
                     "char_start": best_chunk.metadata.get("char_start"),
                     "char_end": best_chunk.metadata.get("char_end"),
