@@ -46,6 +46,13 @@ interface RuleResult {
   guidance?: string
   suggested_options?: { label: string; type: 'standard' | 'fallback' | string; text: string }[]
   citations?: string[]
+  occurrences?: Array<{
+    type: 'unacceptable' | 'fallback' | 'standard' | string
+    phrase: string
+    char_start: number
+    char_end: number
+    context: string
+  }>
 }
 
 interface PlaybookResult {
@@ -456,6 +463,58 @@ export const PlaybookResultsPanel = ({
                       </button>
                     )}
                   </div>
+                </div>
+              )}
+
+              {/* Все вхождения фраз в документе (из прямого сканирования) */}
+              {selectedRule.occurrences && selectedRule.occurrences.length > 1 && (
+                <div className="space-y-2">
+                  <h3 className="text-xs font-semibold" style={{ color: 'var(--color-text-secondary)' }}>
+                    Все вхождения в документе ({selectedRule.occurrences.length})
+                  </h3>
+                  {selectedRule.occurrences.map((occ, idx) => {
+                    const typeColors: Record<string, { bg: string; border: string; label: string; labelColor: string }> = {
+                      unacceptable: { bg: 'rgba(220,38,38,0.05)', border: 'rgba(220,38,38,0.2)', label: 'Недопустимая', labelColor: '#dc2626' },
+                      fallback: { bg: 'rgba(202,138,4,0.05)', border: 'rgba(202,138,4,0.2)', label: 'Запасная', labelColor: '#ca8a04' },
+                      standard: { bg: 'rgba(22,163,74,0.05)', border: 'rgba(22,163,74,0.2)', label: 'Стандартная', labelColor: '#16a34a' },
+                    }
+                    const tc = typeColors[occ.type] || typeColors.fallback
+                    return (
+                      <div
+                        key={idx}
+                        className="p-3 rounded-lg text-sm"
+                        style={{ background: tc.bg, border: `1px solid ${tc.border}` }}
+                      >
+                        <div className="flex items-center justify-between mb-1">
+                          <span className="text-xs font-semibold" style={{ color: tc.labelColor }}>
+                            {tc.label} формулировка #{idx + 1}
+                          </span>
+                          <span className="text-xs" style={{ color: 'var(--color-text-tertiary)' }}>
+                            символ {occ.char_start}
+                          </span>
+                        </div>
+                        <p className="text-xs font-mono mb-1.5" style={{ color: tc.labelColor }}>
+                          «{occ.phrase}»
+                        </p>
+                        <p className="text-xs leading-relaxed" style={{ color: 'var(--color-text-secondary)' }}>
+                          {occ.context.length > 200 ? occ.context.substring(0, 200) + '…' : occ.context}
+                        </p>
+                        {onScrollToText && (
+                          <button
+                            onClick={() => {
+                              const found = onScrollToText(occ.phrase)
+                              if (!found) toast.warning('Текст не найден в документе')
+                            }}
+                            className="mt-2 flex items-center gap-1 text-xs hover:underline"
+                            style={{ color: tc.labelColor }}
+                          >
+                            <Eye className="w-3 h-3" />
+                            Перейти
+                          </button>
+                        )}
+                      </div>
+                    )
+                  })}
                 </div>
               )}
 

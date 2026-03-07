@@ -37,6 +37,8 @@ class RuleCheckResult:
     ui_status: str = ""  # acceptable | needs_review | not_acceptable
     guidance: str = ""
     suggested_options: List[Dict[str, Any]] = field(default_factory=list)
+    # All phrase occurrences found in the document (for display)
+    occurrences: List[Dict[str, Any]] = field(default_factory=list)
 
 
 @dataclass
@@ -653,6 +655,87 @@ class PlaybookChecker:
             key_values={},
         )
 
+    def _scan_document_for_phrases(
+        self,
+        document_text: str,
+        unacceptable_phrases: List[str],
+        fallback_positions: List[str],
+        standard_position: str,
+        context_window: int = 200,
+    ) -> Dict[str, Any]:
+        """
+        Scan the ENTIRE document text for all occurrences of configured phrases.
+        Returns every match with character positions and surrounding context.
+        """
+        doc_lower = document_text.lower()
+        found_unacceptable: List[Dict[str, Any]] = []
+        found_fallbacks: List[Dict[str, Any]] = []
+        found_standard: List[Dict[str, Any]] = []
+
+        for phrase in unacceptable_phrases:
+            if not phrase:
+                continue
+            phrase_lower = phrase.lower()
+            start = 0
+            while True:
+                pos = doc_lower.find(phrase_lower, start)
+                if pos == -1:
+                    break
+                ctx_start = max(0, pos - context_window)
+                ctx_end = min(len(document_text), pos + len(phrase) + context_window)
+                found_unacceptable.append({
+                    "type": "unacceptable",
+                    "phrase": phrase,
+                    "char_start": pos,
+                    "char_end": pos + len(phrase),
+                    "context": document_text[ctx_start:ctx_end],
+                })
+                start = pos + len(phrase)
+
+        for phrase in fallback_positions:
+            if not phrase:
+                continue
+            phrase_lower = phrase.lower()
+            start = 0
+            while True:
+                pos = doc_lower.find(phrase_lower, start)
+                if pos == -1:
+                    break
+                ctx_start = max(0, pos - context_window)
+                ctx_end = min(len(document_text), pos + len(phrase) + context_window)
+                found_fallbacks.append({
+                    "type": "fallback",
+                    "phrase": phrase,
+                    "char_start": pos,
+                    "char_end": pos + len(phrase),
+                    "context": document_text[ctx_start:ctx_end],
+                })
+                start = pos + len(phrase)
+
+        if standard_position:
+            std_lower = standard_position.lower()
+            start = 0
+            while True:
+                pos = doc_lower.find(std_lower, start)
+                if pos == -1:
+                    break
+                ctx_start = max(0, pos - context_window)
+                ctx_end = min(len(document_text), pos + len(standard_position) + context_window)
+                found_standard.append({
+                    "type": "standard",
+                    "phrase": standard_position,
+                    "char_start": pos,
+                    "char_end": pos + len(standard_position),
+                    "context": document_text[ctx_start:ctx_end],
+                })
+                start = pos + len(standard_position)
+
+        return {
+            "unacceptable": found_unacceptable,
+            "fallbacks": found_fallbacks,
+            "standard": found_standard,
+        }
+
     async def _check_harvey_semantic(
         self,
         rule: PlaybookRule,
@@ -668,6 +751,105 @@ class PlaybookChecker:
         unacceptable_phrases = cfg["unacceptable_phrases"]
         guidance = cfg["guidance"]
         mark_missing = cfg["mark_missing"]
+
+        # ---------------------------------------------------------------
+        # Phase 0: Direct full-document scan for ALL configured phrases.
+        # This finds every occurrence in the document, not just the best
+        # semantic chunk — fixing the "stops after first match" bug.
+        # ---------------------------------------------------------------
+        has_any_phrases = bool(unacceptable_phrases or fallback_positions or standard_position)
+        if has_any_phrases and document_text:
+            scan = self._scan_document_for_phrases(
+                document_text=document_text,
+                unacceptable_phrases=unacceptable_phrases,
+                fallback_positions=fallback_positions,
+                standard_position=standard_position,
+            )
+            all_occurrences = scan["unacceptable"] + scan["fallbacks"] + scan["standard"]
+            if all_occurrences:
+                suggested_options: List[Dict[str, Any]] = []
+
+                if scan["unacceptable"]:
+                    # Violation: unacceptable phrase(s) found anywhere in document
+                    status = "violation"
+                    ui_status = "not_acceptable"
+                    if standard_position:
+                        suggested_options.append(
+                            {"label": "Standard position", "type": "standard", "text": standard_position}
+                        )
+                    for idx, fb in enumerate(fallback_positions):
+                        if fb:
+                            suggested_options.append(
+                                {"label": f"Fallback {idx + 1}", "type": "fallback", "text": fb}
+                            )
+                    issue_description = (
+                        f"Найдено {len(scan['unacceptable'])} недопустимых формулировок в документе."
+                    )
+                    if scan["fallbacks"]:
+                        issue_description += (
+                            f" Также найдено {len(scan['fallbacks'])} запасных формулировок."
+                        )
+                    first_match = scan["unacceptable"][0]
+                    reasoning = (
+                        "Прямой поиск по всему документу нашёл недопустимые формулировки: "
+                        + ", ".join(repr(m["phrase"]) for m in scan["unacceptable"][:3])
+                    )
+                elif scan["fallbacks"]:
+                    # Warning: only fallback phrase(s) found
+                    status = "warning"
+                    ui_status = "needs_review"
+                    if standard_position:
+                        suggested_options.append(
+                            {"label": "Standard position", "type": "standard", "text": standard_position}
+                        )
+                    issue_description = (
+                        f"Найдено {len(scan['fallbacks'])} запасных формулировок. "
+                        "Рекомендуется привести к стандартной позиции."
+                    )
+                    first_match = scan["fallbacks"][0]
+                    reasoning = (
+                        "Прямой поиск по всему документу нашёл запасные формулировки: "
+                        + ", ".join(repr(m["phrase"]) for m in scan["fallbacks"][:3])
+                    )
+                else:
+                    # Only standard position found — passed
+                    status = "passed"
+                    ui_status = "acceptable"
+                    issue_description = ""
+                    first_match = scan["standard"][0]
+                    reasoning = "Найдена стандартная позиция в документе."
+
+                main_fix = "" if status == "passed" else (
+                    standard_position or (fallback_positions[0] if fallback_positions else "")
+                )
+                return RuleCheckResult(
+                    rule_id=rule.id,
+                    rule_name=rule.rule_name,
+                    rule_type=rule.rule_type,
+                    clause_category=rule.clause_category,
+                    status=status,
+                    found_text=first_match["context"][:1000],
+                    location={
+                        "char_start": first_match["char_start"],
+                        "char_end": first_match["char_end"],
+                        "start": first_match["char_start"],
+                        "end": first_match["char_end"],
+                        "source": "direct_scan",
+                    },
+                    issue_description=issue_description,
+                    suggested_fix=main_fix,
+                    confidence=0.95,
+                    reasoning=reasoning,
+                    ui_status=ui_status,
+                    guidance=guidance,
+                    suggested_options=suggested_options,
+                    occurrences=all_occurrences,
+                )
+
+        # ---------------------------------------------------------------
+        # Phase 1: No direct phrase matches (or no configured phrases).
+        # Fall through to heuristic / LLM analysis on the semantic clause.
+        # ---------------------------------------------------------------
 
         # Если LLM не инициализирован — делаем максимально простую эвристику
         if not self.llm:
@@ -1461,6 +1643,7 @@ class PlaybookChecker:
             "ui_status": result.ui_status,
             "guidance": result.guidance,
             "suggested_options": result.suggested_options,
+            "occurrences": result.occurrences,
         }
     
     async def batch_check(
