@@ -274,23 +274,35 @@ def search_in_documents(query: str, k: int = 20) -> str:
         context = "\n\n".join(result_parts)
         logger.info(f"[UniversalTools] search_in_documents: {len(documents)} чанков, {len(result_parts)} файлов для '{query[:50]}'")
 
-        # Inner LLM synthesis: answer the query with inline [N] markers.
-        # This bypasses GigaChat's unreliable outer synthesis.
-        synthesis_prompt = f"""Ответь на вопрос пользователя, используя ТОЛЬКО данные из приведённых фрагментов.
+        # Inner LLM synthesis: per-source paragraphs guarantee correct [N] markers.
+        # LLMs reliably use [N] when the response is structured per-source (one paragraph = one source).
+        source_list = "\n".join(f"[{i}] {fn}" for i, fn in enumerate(file_order, 1))
+
+        synthesis_prompt = f"""Ответь на вопрос, используя ТОЛЬКО данные из документов ниже.
 
 Вопрос: {query}
 
-Фрагменты документов (каждый помечен [N] — номером источника):
+Документы:
 {context}
 
-ПРАВИЛО: после каждого факта/имени/суммы СРАЗУ ставь [N] в том же предложении.
-Пример: «Иванов А.А. [1] является исполнителем, сумма договора — 100 000 руб. [2]»
+ОБЯЗАТЕЛЬНЫЙ ФОРМАТ ОТВЕТА — по одному абзацу на документ, каждый абзац начинается с [N]:
+{source_list}
 
-Дай развёрнутый ответ на вопрос:"""
+Пример:
+[1] В договоре подряда: исполнитель — Иванов А.А., сумма — 500 000 руб., срок — до 31.12.2024.
+[2] В акте приёмки: работы выполнены полностью, замечания отсутствуют.
+
+Если документ не содержит информации по вопросу — пропусти его целиком.
+Отвечай только по документам выше:"""
 
         llm = create_legal_llm()
         response = llm.invoke([
-            SystemMessage(content="Ты юридический ассистент. Отвечай строго по документам, ставь [N] после каждого факта."),
+            SystemMessage(content=(
+                "Ты юридический ассистент. "
+                "Строго следуй формату: каждый абзац начинается с [N] — номера документа, "
+                "из которого взяты факты. "
+                "Никогда не используй [1] для фактов из документов [2], [3] и т.д."
+            )),
             HumanMessage(content=synthesis_prompt)
         ])
         synthesized = response.content if hasattr(response, 'content') else str(response)
