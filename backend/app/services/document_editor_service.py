@@ -223,18 +223,20 @@ class DocumentEditorService:
             return ""
         
         try:
-            # Remove HTML tags using regex (simple approach)
-            # For production, consider using BeautifulSoup
-            text = re.sub(r'<[^>]+>', '', html_content)
+            # Replace block-level tags with newlines to preserve word boundaries
+            text = re.sub(r'</(p|div|h[1-6]|li|br|tr)>', '\n', html_content, flags=re.IGNORECASE)
+            # Remove remaining tags
+            text = re.sub(r'<[^>]+>', ' ', text)
             # Decode HTML entities
             text = text.replace('&nbsp;', ' ')
             text = text.replace('&amp;', '&')
             text = text.replace('&lt;', '<')
             text = text.replace('&gt;', '>')
             text = text.replace('&quot;', '"')
-            # Clean up whitespace
-            text = ' '.join(text.split())
-            return text[:5000]  # Limit length
+            # Normalize whitespace (collapse multiple spaces/newlines but keep structure)
+            text = re.sub(r' +', ' ', text)
+            text = re.sub(r'\n{3,}', '\n\n', text)
+            return text.strip()
         except Exception as e:
             logger.warning(f"Error extracting plain text: {e}")
             return ""

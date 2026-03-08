@@ -13,6 +13,7 @@ from langchain_core.prompts import ChatPromptTemplate
 from datetime import datetime
 import logging
 import json
+import math
 import re
 import hashlib
 
@@ -138,12 +139,15 @@ HARVEY_RULE_PROMPT = """Ты - эксперт по анализу юридиче
   "classification": "standard|fallback|unacceptable|unknown|no_clause",
   "status": "passed|violation|warning|not_found",
   "confidence": 0.0,
+  "found_excerpt": "ТОЧНАЯ цитата из текста пункта — самый короткий фрагмент (до 150 символов), который однозначно идентифицирует найденную формулировку. Например, ФИО, ключевая фраза или условие. НЕ копируй весь текст — только суть. Если пункт не найден — пустая строка.",
   "issue_description": "кратко, в чём проблема (или почему всё нормально)",
   "reasoning": "подробное логическое объяснение на русском языке"
 }}
 
 ТРЕБОВАНИЯ:
 - Не добавляй никакого текста до или после JSON.
+- found_excerpt — точная цитата из clause_text (не перефразировка), максимум 150 символов.
+- Для имён: если в тексте "Абумова Евгения Геннадьевича", а стандарт "Абумов Е.Г." — это одно и то же лицо, классифицируй как "standard".
 - Если текста пункта нет или он явно не относится к правилу — используй classification = "no_clause".
 - Будь последовательным и консервативным: если есть сомнения, используй classification = "unknown" и status = "warning"."""
 
@@ -423,14 +427,16 @@ class PlaybookChecker:
         has_harvey_config = bool(rule.suggested_clause_template or rule.fallback_options)
         matching_clause: Optional[ExtractedClause] = None
 
-        # 1. Если есть Harvey-конфигурация и доступен case_id — пробуем семантический поиск по эмбеддингам.
-        #    Для файлов фильтруем по конкретному file_id, для редакторских документов ищем по всему делу.
-        if has_harvey_config and case_id:
+        # 1. Если есть Harvey-конфигурация, доступен case_id И документ — файл из дела
+        #    (не editor-документ), пробуем семантический поиск по эмбеддингам с фильтром по file_id.
+        #    Для editor-документов семантический поиск пропускаем, чтобы не возвращать чанки
+        #    из других файлов того же дела.
+        if has_harvey_config and case_id and file is not None:
             try:
                 matching_clause = await self._find_semantic_clause_for_rule(
                     rule=rule,
                     case_id=case_id,
-                    file_id=file.id if file else None,
+                    file_id=file.id,
                 )
             except Exception as e:
                 logger.warning(
@@ -641,7 +647,7 @@ class PlaybookChecker:
             "start": char_start,
             "end": char_end,
             "chunk_index": metadata.get("chunk_index"),
-            "similarity_score": float(best_score) if best_score is not None else None,
+            "similarity_score": (lambda s: None if s is None or math.isnan(s) else s)(float(best_score) if best_score is not None else None),
             "source_file": metadata.get("source_file") or metadata.get("source"),
         }
 
@@ -655,13 +661,71 @@ class PlaybookChecker:
             key_values={},
         )
 
+    def _find_all_name_variants(
+        self,
+        standard_position: str,
+        document_text: str,
+        already_found_starts: set,
+        context_window: int = 60,
+    ) -> List[Dict[str, Any]]:
+        """Find all occurrences of a name/phrase by its key surname/word.
+
+        Catches variants like "Абумов Е Г" (no dots) when standard is "Абумов Е.Г." (dots).
+        Only returns occurrences not already in already_found_starts.
+        """
+        if not standard_position or not document_text:
+            return []
+        # Extract the longest significant keyword (e.g. surname "Абумов")
+        keywords = sorted(
+            [w.rstrip(".,;:()") for w in standard_position.split() if len(w.rstrip(".,;:()")) >= 4],
+            key=len, reverse=True,
+        )
+        if not keywords:
+            return []
+        original_kw = keywords[0]
+        # Only apply keyword scan for PROPER NOUNS (capitalized) — e.g. names and company names.
+        # Skips common legal words like "оплаты", "расторжения" that would flood the results.
+        if not original_kw[0].isupper():
+            return []
+        kw = original_kw.lower()
+        doc_lower = document_text.lower()
+        # If the keyword appears too often it's not a distinctive name — skip.
+        if doc_lower.count(kw) > 8:
+            return []
+        raw_len = len(standard_position) + 15
+        additional: List[Dict[str, Any]] = []
+        start = 0
+        while True:
+            pos = doc_lower.find(kw, start)
+            if pos == -1:
+                break
+            # Skip positions already covered (within 3-char tolerance)
+            if not any(abs(pos - fp) <= 3 for fp in already_found_starts):
+                # Capture phrase: from pos until first comma/newline
+                raw = document_text[pos:min(len(document_text), pos + raw_len)]
+                phrase = re.split(r'[,\n]', raw)[0].strip().rstrip(".,;: ")
+                if not phrase:
+                    phrase = document_text[pos:pos + len(kw)]
+                ctx_start = max(0, pos - context_window)
+                ctx_end = min(len(document_text), pos + len(phrase) + context_window)
+                additional.append({
+                    "type": "standard",
+                    "phrase": phrase,
+                    "char_start": pos,
+                    "char_end": pos + len(phrase),
+                    "context": document_text[ctx_start:ctx_end],
+                })
+                already_found_starts.add(pos)
+            start = pos + len(kw)
+        return additional
+
     def _scan_document_for_phrases(
         self,
         document_text: str,
         unacceptable_phrases: List[str],
         fallback_positions: List[str],
         standard_position: str,
-        context_window: int = 200,
+        context_window: int = 60,
     ) -> Dict[str, Any]:
         """
         Scan the ENTIRE document text for all occurrences of configured phrases.
@@ -675,60 +739,66 @@ class PlaybookChecker:
         for phrase in unacceptable_phrases:
             if not phrase:
                 continue
-            phrase_lower = phrase.lower()
+            # Strip trailing punctuation to match "Абумов Е.Г," or "Абумов Е.Г" in doc
+            phrase_search = phrase.rstrip(".,;: ") or phrase
+            phrase_lower = phrase_search.lower()
             start = 0
             while True:
                 pos = doc_lower.find(phrase_lower, start)
                 if pos == -1:
                     break
                 ctx_start = max(0, pos - context_window)
-                ctx_end = min(len(document_text), pos + len(phrase) + context_window)
+                ctx_end = min(len(document_text), pos + len(phrase_search) + context_window)
                 found_unacceptable.append({
                     "type": "unacceptable",
-                    "phrase": phrase,
+                    "phrase": document_text[pos:pos + len(phrase_search)],
                     "char_start": pos,
-                    "char_end": pos + len(phrase),
+                    "char_end": pos + len(phrase_search),
                     "context": document_text[ctx_start:ctx_end],
                 })
-                start = pos + len(phrase)
+                start = pos + len(phrase_search)
 
         for phrase in fallback_positions:
             if not phrase:
                 continue
-            phrase_lower = phrase.lower()
+            # Strip trailing punctuation to match "phrase," or "phrase." variants
+            phrase_search = phrase.rstrip(".,;: ") or phrase
+            phrase_lower = phrase_search.lower()
             start = 0
             while True:
                 pos = doc_lower.find(phrase_lower, start)
                 if pos == -1:
                     break
                 ctx_start = max(0, pos - context_window)
-                ctx_end = min(len(document_text), pos + len(phrase) + context_window)
+                ctx_end = min(len(document_text), pos + len(phrase_search) + context_window)
                 found_fallbacks.append({
                     "type": "fallback",
-                    "phrase": phrase,
+                    "phrase": document_text[pos:pos + len(phrase_search)],
                     "char_start": pos,
-                    "char_end": pos + len(phrase),
+                    "char_end": pos + len(phrase_search),
                     "context": document_text[ctx_start:ctx_end],
                 })
-                start = pos + len(phrase)
+                start = pos + len(phrase_search)
 
         if standard_position:
-            std_lower = standard_position.lower()
+            # Strip trailing punctuation to match "Абумов Е.Г," when standard is "Абумов Е.Г."
+            std_search = standard_position.rstrip(".,;: ") or standard_position
+            std_lower = std_search.lower()
             start = 0
             while True:
                 pos = doc_lower.find(std_lower, start)
                 if pos == -1:
                     break
                 ctx_start = max(0, pos - context_window)
-                ctx_end = min(len(document_text), pos + len(standard_position) + context_window)
+                ctx_end = min(len(document_text), pos + len(std_search) + context_window)
                 found_standard.append({
                     "type": "standard",
-                    "phrase": standard_position,
+                    "phrase": document_text[pos:pos + len(std_search)],
                     "char_start": pos,
-                    "char_end": pos + len(standard_position),
+                    "char_end": pos + len(std_search),
                     "context": document_text[ctx_start:ctx_end],
                 })
-                start = pos + len(standard_position)
+                start = pos + len(std_search)
 
         return {
             "unacceptable": found_unacceptable,
@@ -822,6 +892,58 @@ class PlaybookChecker:
                 main_fix = "" if status == "passed" else (
                     standard_position or (fallback_positions[0] if fallback_positions else "")
                 )
+                # Keyword-based scan to catch inflected/variant forms for ALL phrase types.
+                # E.g. "Иванову Е.Г." (dative) found when fallback is "Иванов Е.Г."
+                already_found = {occ["char_start"] for occ in all_occurrences}
+                variants = self._find_all_name_variants(
+                    standard_position, document_text, already_found
+                )
+                all_occurrences = all_occurrences + variants
+
+                # Fallback keyword variants
+                for fb in fallback_positions:
+                    if not fb:
+                        continue
+                    fb_variants = self._find_all_name_variants(fb, document_text, already_found)
+                    if fb_variants:
+                        for v in fb_variants:
+                            v["type"] = "fallback"
+                        all_occurrences = all_occurrences + fb_variants
+                        if status == "passed":
+                            status = "warning"
+                            ui_status = "needs_review"
+                            issue_description = (
+                                "Найдены стандартные и запасные формулировки. "
+                                "Запасные рекомендуется привести к стандартной позиции."
+                            )
+                            if standard_position:
+                                suggested_options = [
+                                    {"label": "Standard position", "type": "standard", "text": standard_position}
+                                ]
+
+                # Unacceptable keyword variants
+                for unac in unacceptable_phrases:
+                    if not unac:
+                        continue
+                    unac_variants = self._find_all_name_variants(unac, document_text, already_found)
+                    if unac_variants:
+                        for v in unac_variants:
+                            v["type"] = "unacceptable"
+                        all_occurrences = all_occurrences + unac_variants
+                        status = "violation"
+                        ui_status = "not_acceptable"
+                        issue_description = "Найдены недопустимые формулировки. Требуется замена."
+                        if not suggested_options:
+                            if standard_position:
+                                suggested_options.append(
+                                    {"label": "Standard position", "type": "standard", "text": standard_position}
+                                )
+                            for idx2, fb2 in enumerate(fallback_positions):
+                                if fb2:
+                                    suggested_options.append(
+                                        {"label": f"Fallback {idx2 + 1}", "type": "fallback", "text": fb2}
+                                    )
+
                 return RuleCheckResult(
                     rule_id=rule.id,
                     rule_name=rule.rule_name,
@@ -847,6 +969,52 @@ class PlaybookChecker:
                     suggested_options=suggested_options,
                     occurrences=all_occurrences,
                 )
+
+            # Phase 0.5: keyword-based scan for unacceptable phrase variants.
+            # Catches e.g. "Абумов Е Г" (spaces) when phrase is "Абумов Е.Г." (dots).
+            if not all_occurrences and unacceptable_phrases:
+                unac_variants: List[Dict[str, Any]] = []
+                uac_already: set = set()
+                for unac_phrase in unacceptable_phrases:
+                    variants = self._find_all_name_variants(unac_phrase, document_text, uac_already)
+                    for v in variants:
+                        v["type"] = "unacceptable"
+                    unac_variants.extend(variants)
+                if unac_variants:
+                    uac_suggested: List[Dict[str, Any]] = []
+                    if standard_position:
+                        uac_suggested.append(
+                            {"label": "Standard position", "type": "standard", "text": standard_position}
+                        )
+                    for idx, fb in enumerate(fallback_positions):
+                        if fb:
+                            uac_suggested.append(
+                                {"label": f"Fallback {idx + 1}", "type": "fallback", "text": fb}
+                            )
+                    first_uac = unac_variants[0]
+                    return RuleCheckResult(
+                        rule_id=rule.id,
+                        rule_name=rule.rule_name,
+                        rule_type=rule.rule_type,
+                        clause_category=rule.clause_category,
+                        status="violation",
+                        found_text=first_uac["phrase"],
+                        location={
+                            "char_start": first_uac["char_start"],
+                            "char_end": first_uac["char_end"],
+                            "start": first_uac["char_start"],
+                            "end": first_uac["char_end"],
+                            "source": "keyword_scan",
+                        },
+                        issue_description=f"Найдено {len(unac_variants)} недопустимых формулировок в документе.",
+                        suggested_fix=standard_position or (fallback_positions[0] if fallback_positions else ""),
+                        confidence=0.9,
+                        reasoning="Поиск по ключевому слову из недопустимой формулировки нашёл вхождения.",
+                        ui_status="not_acceptable",
+                        guidance=guidance,
+                        suggested_options=uac_suggested,
+                        occurrences=unac_variants,
+                    )
 
         # ---------------------------------------------------------------
         # Phase 1: No direct phrase matches (or no configured phrases).
@@ -1042,6 +1210,7 @@ class PlaybookChecker:
         confidence = float(data.get("confidence", 0.7) or 0.7)
         issue_description = data.get("issue_description") or ""
         reasoning = data.get("reasoning") or ""
+        llm_found_excerpt = (data.get("found_excerpt") or "").strip()
 
         ui_status = ""
         suggested_options: List[Dict[str, Any]] = []
@@ -1097,13 +1266,101 @@ class PlaybookChecker:
         # suggested_fix только для правил с нарушениями — для passed не нужна правка
         main_fix = "" if status == "passed" else (standard_position or (fallback_positions[0] if fallback_positions else ""))
 
+        # found_text: prefer the LLM-extracted excerpt (precise quote from the doc).
+        # Fall back to keyword search around the standard_position words.
+        raw_clause_text = clause.text
+
+        def _extract_short_excerpt(text: str, anchor: str, window: int = 80) -> str:
+            """Find anchor word(s) in text and return a tight context window."""
+            # Try each word of the anchor phrase, longest first
+            words = [w.rstrip(".,;:()") for w in anchor.split() if len(w) > 2]
+            words.sort(key=len, reverse=True)
+            text_lower = text.lower()
+            for word in words:
+                pos = text_lower.find(word.lower())
+                if pos != -1:
+                    start = pos
+                    end = min(len(text), pos + window)
+                    return text[start:end].strip()
+            return ""
+
+        # Post-scan: find ALL occurrences of standard/fallback phrases in the full document,
+        # using fuzzy match (strip trailing punctuation to catch "Абумов Е.Г," vs "Абумов Е.Г.")
+        post_occurrences: List[Dict[str, Any]] = []
+        if document_text:
+            doc_lower = document_text.lower()
+            phrases_to_scan = []
+            if standard_position:
+                phrases_to_scan.append(("standard", standard_position))
+            for fb in fallback_positions:
+                if fb:
+                    phrases_to_scan.append(("fallback", fb))
+            # Also scan for short form of LLM excerpt — catches document variants like
+            # "Абумов Е Г" (no dots) when the standard is "Абумов Е.Г." (with dots).
+            # Take text before the first comma/semicolon/newline as the short phrase.
+            if llm_found_excerpt and 3 < len(llm_found_excerpt) <= 200:
+                short_form = re.split(r'[,;\n]', llm_found_excerpt.strip())[0].strip()
+                already_covered = {(p.rstrip(".,;: ")).lower() for _, p in phrases_to_scan}
+                if 3 < len(short_form) <= 60 and short_form.lower() not in already_covered:
+                    phrases_to_scan.append(("standard", short_form))
+            for phrase_type, phrase in phrases_to_scan:
+                stripped = phrase.rstrip(".,;: ")
+                phrase_lower = stripped.lower()
+                if not phrase_lower:
+                    continue
+                start = 0
+                while True:
+                    pos = doc_lower.find(phrase_lower, start)
+                    if pos == -1:
+                        break
+                    ctx_start = max(0, pos - 60)
+                    ctx_end = min(len(document_text), pos + len(stripped) + 60)
+                    post_occurrences.append({
+                        "type": phrase_type,
+                        "phrase": document_text[pos:pos + len(stripped)],
+                        "char_start": pos,
+                        "char_end": pos + len(stripped),
+                        "context": document_text[ctx_start:ctx_end],
+                    })
+                    start = pos + len(stripped)
+
+        # Keyword-based scan to catch ALL name variants not found by exact phrase scan
+        if standard_position and document_text:
+            already_found = {occ["char_start"] for occ in post_occurrences}
+            variants = self._find_all_name_variants(standard_position, document_text, already_found)
+            post_occurrences.extend(variants)
+
+        # found_text: use exact phrase from first post-scan occurrence when available
+        # (most precise — actual text in document, right length for scrollToText)
+        if post_occurrences:
+            found_text_for_result = post_occurrences[0]["phrase"]
+        else:
+            # Accept LLM excerpt only if it's a precise verbatim quote (not an abbreviation with ...)
+            excerpt_is_precise = (
+                llm_found_excerpt
+                and 3 < len(llm_found_excerpt) <= 150
+                and "..." not in llm_found_excerpt
+                and "…" not in llm_found_excerpt
+                and llm_found_excerpt.count("\n") <= 1
+            )
+            if excerpt_is_precise:
+                found_text_for_result = llm_found_excerpt
+            elif standard_position:
+                found_text_for_result = (
+                    _extract_short_excerpt(raw_clause_text, standard_position)
+                    or _extract_short_excerpt(document_text, standard_position)
+                    or raw_clause_text[:150]
+                )
+            else:
+                found_text_for_result = raw_clause_text[:150]
+
         return RuleCheckResult(
             rule_id=rule.id,
             rule_name=rule.rule_name,
             rule_type=rule.rule_type,
             clause_category=rule.clause_category,
             status=status,
-            found_text=clause.text[:1000],
+            found_text=found_text_for_result,
             location=clause.location,
             issue_description=issue_description,
             suggested_fix=main_fix,
@@ -1112,6 +1369,7 @@ class PlaybookChecker:
             ui_status=ui_status,
             guidance=guidance,
             suggested_options=suggested_options,
+            occurrences=post_occurrences,
         )
     
     async def _check_must_exist(

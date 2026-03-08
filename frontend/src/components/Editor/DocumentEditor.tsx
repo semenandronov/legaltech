@@ -45,7 +45,7 @@ export interface DocumentEditorRef {
   setRisks: (risks: Array<{ id: string; from: number; to: number; level: 'high' | 'medium' | 'low'; description: string }>) => void
   clearRisks: () => void
   getRisks: () => Array<{ id: string; from: number; to: number; level: 'high' | 'medium' | 'low'; description: string }>
-  scrollToText: (text: string) => boolean
+  scrollToText: (text: string, nthOccurrence?: number) => boolean
   replaceText: (originalText: string, newText: string) => boolean
   replaceRange: (from: number, to: number, text: string) => void
   replaceMultipleTexts: (replacements: Array<{ original: string; replacement: string }>) => number
@@ -296,27 +296,37 @@ export const DocumentEditor = forwardRef<DocumentEditorRef, DocumentEditorProps>
       }
       return []
     },
-    scrollToText: (text: string) => {
+    scrollToText: (text: string, nthOccurrence: number = 0) => {
       if (!editor || !text) return false
 
       const docText = editor.state.doc.textContent
       const searchText = text.trim()
+      const docLower = docText.toLowerCase()
+      const searchLower = searchText.toLowerCase()
 
-      // Try progressively shorter strings until we find a match in the full doc text
+      // Find the nth occurrence (case-insensitive)
+      let charIndex = -1
       let matchText = searchText
-      let charIndex = docText.indexOf(matchText)
-      if (charIndex === -1) {
-        matchText = searchText.slice(0, 100)
-        charIndex = docText.indexOf(matchText)
+      let found = 0
+      let searchFrom = 0
+      while (true) {
+        const idx = docLower.indexOf(searchLower, searchFrom)
+        if (idx === -1) break
+        if (found === nthOccurrence) { charIndex = idx; break }
+        found++
+        searchFrom = idx + 1
       }
-      if (charIndex === -1) {
-        matchText = searchText.slice(0, 50)
-        charIndex = docText.indexOf(matchText)
+      if (charIndex !== -1) {
+        matchText = docText.slice(charIndex, charIndex + searchText.length)
       }
+
+      // Fallback: try shorter prefixes (in case phrase has minor differences vs editor)
       if (charIndex === -1) {
-        // Try first 5 words
-        matchText = searchText.split(/\s+/).slice(0, 5).join(' ')
-        charIndex = docText.indexOf(matchText)
+        const tries = [searchText.slice(0, 100), searchText.slice(0, 50), searchText.split(/\s+/).slice(0, 5).join(' ')]
+        for (const t of tries) {
+          const idx = docLower.indexOf(t.toLowerCase())
+          if (idx !== -1) { charIndex = idx; matchText = docText.slice(idx, idx + t.length); break }
+        }
       }
       if (charIndex === -1) return false
 
@@ -382,6 +392,17 @@ export const DocumentEditor = forwardRef<DocumentEditorRef, DocumentEditorProps>
       if (charIndex === -1) {
         searchText = originalText.slice(0, 50)
         charIndex = docText.indexOf(searchText)
+      }
+      // Fallback: case-insensitive search (handles ALL-CAPS documents)
+      if (charIndex === -1) {
+        const docLower = docText.toLowerCase()
+        let ciIdx = docLower.indexOf(originalText.toLowerCase())
+        if (ciIdx === -1) ciIdx = docLower.indexOf(originalText.slice(0, 50).toLowerCase())
+        if (ciIdx !== -1) {
+          charIndex = ciIdx
+          // Use actual document text at that position so replacement span is correct
+          searchText = docText.slice(ciIdx, ciIdx + originalText.length)
+        }
       }
       if (charIndex === -1) return false
 
@@ -517,7 +538,7 @@ export const DocumentEditor = forwardRef<DocumentEditorRef, DocumentEditorProps>
         className="flex-1 overflow-auto document-canvas"
         style={{ backgroundColor: '#f1f3f4' }}
       >
-        <div className="flex justify-center py-8 px-4">
+        <div style={{ width: '100%', padding: '32px 24px', boxSizing: 'border-box' }}>
           <div
             ref={editorContentRef}
             className="editor-content"
@@ -525,6 +546,7 @@ export const DocumentEditor = forwardRef<DocumentEditorRef, DocumentEditorProps>
               width: '100%',
               maxWidth: `${scaledWidth}px`,
               minHeight: `${scaledHeight}px`,
+              margin: '0 auto',
               backgroundColor: 'white',
               boxShadow: '0 1px 3px 0 rgba(60, 64, 67, 0.3), 0 4px 8px 3px rgba(60, 64, 67, 0.15)',
               padding: `${scaledMargin}px`,

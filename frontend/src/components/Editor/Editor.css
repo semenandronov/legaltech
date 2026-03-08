@@ -2,10 +2,6 @@
 .document-canvas {
   background-color: #f1f3f4;
   min-height: 100%;
-  padding: 32px 16px;
-  display: flex;
-  justify-content: center;
-  align-items: flex-start; /* allow pages to grow beyond viewport height */
 }
 
 .document-container {

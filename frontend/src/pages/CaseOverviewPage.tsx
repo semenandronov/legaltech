@@ -232,8 +232,8 @@ const CaseOverviewPage = () => {
     setUploading(true)
     try {
       const result = await addFilesToCase(caseId, filesToUpload)
-      setFiles(result.files || [])
       setCaseData(prev => prev ? { ...prev, num_documents: result.total } : prev)
+      reloadFiles()
     } finally {
       setUploading(false)
     }

@@ -253,10 +253,9 @@ const DocumentEditorPage = () => {
     }
   }
 
-  const handleScrollToText = (text: string): boolean => {
-    // Scroll to specific text in the document
+  const handleScrollToText = (text: string, nthOccurrence?: number): boolean => {
     if (editorRef.current) {
-      return editorRef.current.scrollToText(text)
+      return editorRef.current.scrollToText(text, nthOccurrence)
     }
     return false
   }
@@ -344,6 +343,10 @@ const DocumentEditorPage = () => {
       setSelectedPlaybookName(playbookName)
     }
     try {
+      // Always check against the current version — save silently first if needed
+      if (hasUnsavedChanges) {
+        await handleSave(false)
+      }
       const checkResponse = await runPlaybookCheck(playbookId, documentId, caseId)
       // Get full check result using check_id
       const fullResult = await getCheck(checkResponse.check_id)
@@ -357,13 +360,9 @@ const DocumentEditorPage = () => {
       )
       toast.success(`Проверка завершена! Соответствие: ${fullResult.compliance_score?.toFixed(1) || 0}%`)
     } catch (error: any) {
-      const status = error?.response?.status
-      let message: string
-      if (status === 500) {
-        message = 'Ошибка проверки: внутренняя ошибка сервера при выполнении playbook. Сообщите администратору, что в БД может отсутствовать столбец files.folder_id.'
-      } else {
-        message = 'Ошибка проверки: ' + (error.message || 'Неизвестная ошибка')
-      }
+      const rawDetail = error?.response?.data?.error?.message || error?.response?.data?.detail || error?.message || 'Неизвестная ошибка'
+      const detail = rawDetail.length > 200 ? rawDetail.slice(0, 200) + '...' : rawDetail
+      const message = 'Ошибка проверки: ' + detail
       setPlaybookError(message)
       toast.error(message)
     } finally {
@@ -625,7 +624,7 @@ const DocumentEditorPage = () => {
             </div>}
 
             {/* Чат ассистента — скрыт, когда открыта панель результатов */}
-            <div className={`w-[480px] border-l border-border shrink-0 flex flex-col${showPlaybookPanel ? ' hidden' : ''}`}>
+            <div className={`w-[380px] border-l border-border shrink-0 flex flex-col${showPlaybookPanel ? ' hidden' : ''}`}>
               <DocumentEditorContextChat
                 documentId={documentId}
                 documentTitle={title}

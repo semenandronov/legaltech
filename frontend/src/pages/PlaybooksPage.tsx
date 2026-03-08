@@ -462,11 +462,15 @@ function PlaybookEditor({
   }
 
   const handleSave = () => {
-    if (!form.display_name.trim()) { toast.error('Укажите название'); return }
+    if (!form.display_name.trim()) { toast.error('Укажите название playbook (поле вверху)'); return }
+    const emptyNameIdx = form.rules.findIndex(r => !r.rule_name.trim())
+    if (emptyNameIdx !== -1) { toast.error(`Укажите название для правила #${emptyNameIdx + 1}`); return }
 
-    const name = form.name.trim() ||
-      form.display_name.toLowerCase().replace(/\s+/g, '_').replace(/[^a-z0-9_]/g, '').slice(0, 40) ||
-      `playbook_${Date.now()}`
+    const slug = (form.name.trim() ||
+      form.display_name.toLowerCase().replace(/\s+/g, '_').replace(/[^a-z0-9_]/g, '').slice(0, 40)
+    ).replace(/^_+|_+$/g, '')
+    // Use a timestamp suffix when slug is too short (e.g. Cyrillic-only names like "Тест4" → "4")
+    const name = slug.length >= 3 ? slug : `playbook_${Date.now()}`
 
     const normalizedRules = form.rules.map(r => {
       const h = harveyMap[r.id] ?? EMPTY_HARVEY
