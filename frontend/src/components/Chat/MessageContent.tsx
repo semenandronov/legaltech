@@ -212,6 +212,10 @@ const MessageContent: React.FC<MessageContentProps> = ({
     // Replace lines of repeated decorative symbols (•••, ===, ···, etc.) with ---
     text = text.replace(/^([•·\-=_~*]{3,})\s*$/gm, '---')
 
+    // Remove trailing lines that consist only of citation numbers like [1] [2] [3]
+    // These are "footnote rows" the LLM adds at the end despite instructions
+    text = text.replace(/(\n+(\s*\[\d+\]\s*)+)+\s*$/, '')
+
     // Convert [filename.ext, ...] references to [N] using sources
     if (sources.length > 0) {
       const fileToIndex = new Map<string, number>()
