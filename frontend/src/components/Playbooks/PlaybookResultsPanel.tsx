@@ -368,7 +368,7 @@ export const PlaybookResultsPanel = ({
                             const ruleOccs = rule.occurrences && rule.occurrences.length > 0
                               ? rule.occurrences
                               : rule.found_text
-                                ? [{ type: 'standard', phrase: rule.found_text, char_start: 0, char_end: 0, context: '' }]
+                                ? [{ type: rule.status === 'passed' ? 'standard' : 'unacceptable', phrase: rule.found_text, char_start: 0, char_end: 0, context: '' }]
                                 : []
                             const ruleSuggestedOptions = rule.suggested_options && rule.suggested_options.length > 0
                               ? rule.suggested_options
@@ -428,7 +428,7 @@ export const PlaybookResultsPanel = ({
 
                                     {/* Occurrences */}
                                     {ruleOccs.length > 0 ? ruleOccs.map((occ, occIdx) => {
-                                      const occOptions = occ.type === 'standard' ? [] : ruleSuggestedOptions
+                                      const occOptions = (occ.type === 'standard' && rule.status === 'passed') ? [] : ruleSuggestedOptions
                                       const occApplyPrefix = `${rule.rule_id}_${occIdx}`
                                       const anyApplied = occOptions.some((_, oi) => appliedRules.has(`${occApplyPrefix}_${oi}`))
                                       const nthOcc = ruleOccs.slice(0, occIdx).filter(o => o.phrase === occ.phrase).length
@@ -464,7 +464,7 @@ export const PlaybookResultsPanel = ({
                                             )}
                                           </div>
 
-                                          {occ.type === 'standard' && (
+                                          {occ.type === 'standard' && rule.status === 'passed' && (
                                             <div className="px-4 pb-3 flex items-center gap-1.5 text-xs" style={{ color: '#16a34a' }}>
                                               <Check className="w-3.5 h-3.5" />
                                               Соответствует стандарту
