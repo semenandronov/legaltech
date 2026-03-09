@@ -151,7 +151,7 @@ export const PlaybookResultsPanel = ({
     return parts
   }
 
-  const renderPreview = (occPhrase: string, occCtx: string, optText: string) => {
+  const renderPreview = (occPhrase: string, occCtx: string, optText: string, delColor = '#dc2626') => {
     const ctx = occCtx || occPhrase
     const idx = ctx.toLowerCase().indexOf(occPhrase.toLowerCase())
     const before = idx !== -1 ? ctx.slice(0, idx) : ''
@@ -162,7 +162,7 @@ export const PlaybookResultsPanel = ({
         {before}
         {diff.map((p, pi) =>
           p.t === 'eq' ? <span key={pi}>{p.s}</span> :
-          p.t === 'del' ? <del key={pi} style={{ color: '#dc2626', textDecorationColor: '#dc2626' }}>{p.s}</del> :
+          p.t === 'del' ? <del key={pi} style={{ color: delColor, textDecorationColor: delColor }}>{p.s}</del> :
           <span key={pi} style={{ color: '#2563eb' }}>{p.s}</span>
         )}
         {after.length > 120 ? after.slice(0, 120) + '…' : after}
@@ -452,11 +452,17 @@ export const PlaybookResultsPanel = ({
 
                   {/* Occurrences + fix options */}
                   {ruleOccs.length > 0 ? ruleOccs.map((occ, occIdx) => {
-                    const occOptions = (occ.type === 'standard' && rule.status === 'passed') ? [] : ruleSuggestedOptions
+                    const baseOptions = (occ.type === 'standard' && rule.status === 'passed') ? [] : ruleSuggestedOptions
+                    // Skip options that would replace the phrase with itself (no-op diff)
+                    const occOptions = baseOptions.filter(opt =>
+                      opt.text.toLowerCase().trim() !== occ.phrase.toLowerCase().trim()
+                    )
                     const occApplyPrefix = `${rule.rule_id}_${occIdx}`
                     const anyApplied = occOptions.some((_, oi) => appliedRules.has(`${occApplyPrefix}_${oi}`))
                     const nthOcc = ruleOccs.slice(0, occIdx).filter(o => o.phrase === occ.phrase).length
                     const ctxDisplay = (occ.context || occ.phrase).slice(0, 280) + ((occ.context || occ.phrase).length > 280 ? '…' : '')
+                    // Yellow for fallback occurrences, red for unacceptable
+                    const delColor = occ.type === 'fallback' ? '#ca8a04' : '#dc2626'
                     return (
                       <div key={occIdx} className="border-b" style={{ borderColor: 'var(--color-border)' }}>
                         {ruleOccs.length > 1 && (
@@ -501,7 +507,7 @@ export const PlaybookResultsPanel = ({
                               )}
                               <div className="rounded-lg px-3 py-2 text-sm leading-relaxed mb-2 mt-1"
                                 style={{ backgroundColor: 'var(--color-bg-primary)', color: 'var(--color-text-primary)', border: '1px solid var(--color-border)' }}>
-                                {renderPreview(occ.phrase, occ.context || '', opt.text)}
+                                {renderPreview(occ.phrase, occ.context || '', opt.text, delColor)}
                               </div>
                               <div className="flex justify-end">
                                 {isApplied ? (
