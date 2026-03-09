@@ -101,9 +101,14 @@ export const PlaybookResultsPanel = ({
   errorMessage,
   onSelectPlaybook
 }: PlaybookResultsPanelProps) => {
-  const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set())
   const [appliedRules, setAppliedRules] = useState<Set<string>>(new Set())
   const [selectedRule, setSelectedRule] = useState<RuleResult | null>(null)
+  const [fullRuleOpen, setFullRuleOpen] = useState(false)
+
+  const openRule = (rule: RuleResult) => {
+    setSelectedRule(rule)
+    setFullRuleOpen(false)
+  }
 
   const effectivePlaybookName =
     result?.playbook_name ||
@@ -343,7 +348,7 @@ export const PlaybookResultsPanel = ({
               <div className="flex flex-col h-full">
                 {/* Back button */}
                 <button
-                  onClick={() => setSelectedRule(null)}
+                  onClick={() => { setSelectedRule(null); setFullRuleOpen(false) }}
                   className="flex items-center gap-1.5 px-4 py-3 text-sm border-b hover:bg-gray-50 transition-colors shrink-0"
                   style={{ borderColor: 'var(--color-border)', color: 'var(--color-text-secondary)' }}
                 >
@@ -367,37 +372,49 @@ export const PlaybookResultsPanel = ({
                     </div>
                   )}
 
-                  {/* Full rule phrases — always visible */}
+                  {/* Full rule phrases — collapsible */}
                   {(stdPhrases.length > 0 || fbPhrases.length > 0 || unacPhrases.length > 0) && (
-                    <div className="px-4 py-3 border-b space-y-3" style={{ borderColor: 'var(--color-border)' }}>
-                      <p className="text-xs font-semibold" style={{ color: 'var(--color-text-tertiary)' }}>Полное правило</p>
-                      {stdPhrases.map((phrase, i) => (
-                        <div key={i}>
-                          <p className="text-xs font-semibold mb-1" style={{ color: '#16a34a' }}>Стандартная формулировка</p>
-                          <div className="rounded-lg px-3 py-2 text-xs leading-relaxed"
-                            style={{ backgroundColor: 'rgba(22,163,74,0.07)', color: 'var(--color-text-primary)', border: '1px solid rgba(22,163,74,0.25)' }}>
-                            {phrase}
-                          </div>
+                    <div className="border-b" style={{ borderColor: 'var(--color-border)' }}>
+                      <button
+                        onClick={() => setFullRuleOpen(prev => !prev)}
+                        className="w-full flex items-center justify-between px-4 py-3 hover:bg-gray-50 transition-colors"
+                      >
+                        <p className="text-xs font-semibold" style={{ color: 'var(--color-text-secondary)' }}>Полное правило</p>
+                        {fullRuleOpen
+                          ? <ChevronDown className="w-4 h-4" style={{ color: 'var(--color-text-tertiary)' }} />
+                          : <ChevronRight className="w-4 h-4" style={{ color: 'var(--color-text-tertiary)' }} />}
+                      </button>
+                      {fullRuleOpen && (
+                        <div className="px-4 pb-3 space-y-3">
+                          {stdPhrases.map((phrase, i) => (
+                            <div key={i}>
+                              <p className="text-xs font-semibold mb-1" style={{ color: 'var(--color-text-secondary)' }}>Стандартная формулировка</p>
+                              <div className="rounded-lg px-3 py-2 text-xs leading-relaxed"
+                                style={{ backgroundColor: 'var(--color-bg-primary)', color: 'var(--color-text-primary)', border: '1px solid var(--color-border)' }}>
+                                {phrase}
+                              </div>
+                            </div>
+                          ))}
+                          {fbPhrases.map((phrase, i) => (
+                            <div key={i}>
+                              <p className="text-xs font-semibold mb-1" style={{ color: 'var(--color-text-secondary)' }}>Запасной вариант {fbPhrases.length > 1 ? i + 1 : ''}</p>
+                              <div className="rounded-lg px-3 py-2 text-xs leading-relaxed"
+                                style={{ backgroundColor: 'var(--color-bg-primary)', color: 'var(--color-text-primary)', border: '1px solid var(--color-border)' }}>
+                                {phrase}
+                              </div>
+                            </div>
+                          ))}
+                          {unacPhrases.map((phrase, i) => (
+                            <div key={i}>
+                              <p className="text-xs font-semibold mb-1" style={{ color: 'var(--color-text-secondary)' }}>Недопустимая формулировка</p>
+                              <div className="rounded-lg px-3 py-2 text-xs leading-relaxed"
+                                style={{ backgroundColor: 'var(--color-bg-primary)', color: 'var(--color-text-primary)', border: '1px solid var(--color-border)' }}>
+                                {phrase}
+                              </div>
+                            </div>
+                          ))}
                         </div>
-                      ))}
-                      {fbPhrases.map((phrase, i) => (
-                        <div key={i}>
-                          <p className="text-xs font-semibold mb-1" style={{ color: '#ca8a04' }}>Запасной вариант {fbPhrases.length > 1 ? i + 1 : ''}</p>
-                          <div className="rounded-lg px-3 py-2 text-xs leading-relaxed"
-                            style={{ backgroundColor: 'rgba(202,138,4,0.07)', color: 'var(--color-text-primary)', border: '1px solid rgba(202,138,4,0.25)' }}>
-                            {phrase}
-                          </div>
-                        </div>
-                      ))}
-                      {unacPhrases.map((phrase, i) => (
-                        <div key={i}>
-                          <p className="text-xs font-semibold mb-1" style={{ color: '#dc2626' }}>Недопустимая формулировка</p>
-                          <div className="rounded-lg px-3 py-2 text-xs leading-relaxed"
-                            style={{ backgroundColor: 'rgba(220,38,38,0.07)', color: 'var(--color-text-primary)', border: '1px solid rgba(220,38,38,0.25)' }}>
-                            {phrase}
-                          </div>
-                        </div>
-                      ))}
+                      )}
                     </div>
                   )}
 
@@ -530,57 +547,41 @@ export const PlaybookResultsPanel = ({
                   { id: 'acceptable', title: 'Приемлемо', dotClass: 'bg-green-500', rules: passed },
                 ].map(group => {
                   if (group.rules.length === 0) return null
-                  const groupOpen = expandedGroups.has(group.id)
                   return (
                     <div key={group.id} className="border-b" style={{ borderColor: 'var(--color-border)' }}>
-                      {/* Group header */}
-                      <button
-                        onClick={() => setExpandedGroups(prev => {
-                          const next = new Set(prev)
-                          if (next.has(group.id)) next.delete(group.id)
-                          else next.add(group.id)
-                          return next
-                        })}
-                        className="w-full flex items-center justify-between px-4 py-3 text-left hover:bg-gray-50"
-                      >
-                        <div className="flex items-center gap-2">
-                          <span className={`w-2 h-2 rounded-full ${group.dotClass}`} />
-                          <span className="text-sm font-semibold" style={{ color: 'var(--color-text-primary)' }}>
-                            {group.title}
-                          </span>
-                          <span className="text-xs" style={{ color: 'var(--color-text-secondary)' }}>
-                            {group.rules.length} правил
-                          </span>
-                        </div>
-                        {groupOpen
-                          ? <ChevronDown className="w-4 h-4" style={{ color: 'var(--color-text-tertiary)' }} />
-                          : <ChevronRight className="w-4 h-4" style={{ color: 'var(--color-text-tertiary)' }} />}
-                      </button>
-
-                      {groupOpen && (
-                        <div>
-                          {group.rules.map(rule => (
-                            <div key={rule.rule_id} className="border-t" style={{ borderColor: 'var(--color-border)' }}>
-                              <button
-                                onClick={() => setSelectedRule(rule)}
-                                className="w-full flex items-start gap-3 px-4 py-3 text-left hover:bg-gray-50/70 transition-colors"
-                              >
-                                <div className="flex-1 min-w-0">
-                                  <span className="font-medium text-sm" style={{ color: 'var(--color-text-primary)' }}>
-                                    {rule.rule_name}
-                                  </span>
-                                  {rule.issue_description && rule.status !== 'passed' && (
-                                    <p className="text-xs mt-0.5 line-clamp-2" style={{ color: 'var(--color-text-secondary)' }}>
-                                      {rule.issue_description}
-                                    </p>
-                                  )}
-                                </div>
-                                <ChevronRight className="w-4 h-4 shrink-0 mt-0.5" style={{ color: 'var(--color-text-tertiary)' }} />
-                              </button>
-                            </div>
-                          ))}
-                        </div>
-                      )}
+                      {/* Group label (non-clickable) */}
+                      <div className="flex items-center gap-2 px-4 py-2 border-b" style={{ borderColor: 'var(--color-border)' }}>
+                        <span className={`w-2 h-2 rounded-full ${group.dotClass}`} />
+                        <span className="text-xs font-semibold uppercase tracking-wide" style={{ color: 'var(--color-text-secondary)' }}>
+                          {group.title}
+                        </span>
+                        <span className="text-xs" style={{ color: 'var(--color-text-tertiary)' }}>
+                          {group.rules.length}
+                        </span>
+                      </div>
+                      {/* Rules — always visible */}
+                      <div>
+                        {group.rules.map(rule => (
+                          <div key={rule.rule_id} className="border-b" style={{ borderColor: 'var(--color-border)' }}>
+                            <button
+                              onClick={() => openRule(rule)}
+                              className="w-full flex items-start gap-3 px-4 py-3 text-left hover:bg-gray-50/70 transition-colors"
+                            >
+                              <div className="flex-1 min-w-0">
+                                <span className="font-medium text-sm" style={{ color: 'var(--color-text-primary)' }}>
+                                  {rule.rule_name}
+                                </span>
+                                {rule.issue_description && rule.status !== 'passed' && (
+                                  <p className="text-xs mt-0.5 line-clamp-2" style={{ color: 'var(--color-text-secondary)' }}>
+                                    {rule.issue_description}
+                                  </p>
+                                )}
+                              </div>
+                              <ChevronRight className="w-4 h-4 shrink-0 mt-0.5" style={{ color: 'var(--color-text-tertiary)' }} />
+                            </button>
+                          </div>
+                        ))}
+                      </div>
                     </div>
                   )
                 })}
