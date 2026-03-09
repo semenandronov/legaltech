@@ -101,6 +101,7 @@ export const PlaybookResultsPanel = ({
   const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set())
   const [appliedRules, setAppliedRules] = useState<Set<string>>(new Set())
   const [expandedRuleId, setExpandedRuleId] = useState<string | null>(null)
+  const [expandedFullRule, setExpandedFullRule] = useState<Set<string>>(new Set())
 
   const effectivePlaybookName =
     result?.playbook_name ||
@@ -413,6 +414,72 @@ export const PlaybookResultsPanel = ({
                                         </p>
                                       </div>
                                     )}
+
+                                    {/* Full rule definition — collapsible */}
+                                    {(() => {
+                                      const stdOptions = (rule.suggested_options || []).filter(o => o.type === 'standard')
+                                      const fbOptions = (rule.suggested_options || []).filter(o => o.type === 'fallback')
+                                      const unacOccs = ruleOccs.filter(o => o.type === 'unacceptable')
+                                      if (stdOptions.length === 0 && fbOptions.length === 0 && unacOccs.length === 0) return null
+                                      const frOpen = expandedFullRule.has(rule.rule_id)
+                                      return (
+                                        <div className="border-b" style={{ borderColor: 'var(--color-border)' }}>
+                                          <button
+                                            onClick={() => setExpandedFullRule(prev => {
+                                              const next = new Set(prev)
+                                              if (next.has(rule.rule_id)) next.delete(rule.rule_id)
+                                              else next.add(rule.rule_id)
+                                              return next
+                                            })}
+                                            className="w-full flex items-center justify-between px-4 py-2 text-left hover:bg-gray-100/60 transition-colors"
+                                          >
+                                            <span className="text-xs font-semibold" style={{ color: 'var(--color-text-tertiary)' }}>
+                                              Полное правило
+                                            </span>
+                                            {frOpen
+                                              ? <ChevronDown className="w-3.5 h-3.5" style={{ color: 'var(--color-text-tertiary)' }} />
+                                              : <ChevronRight className="w-3.5 h-3.5" style={{ color: 'var(--color-text-tertiary)' }} />}
+                                          </button>
+                                          {frOpen && (
+                                            <div className="px-4 pb-3 space-y-3">
+                                              {stdOptions.map((o, i) => (
+                                                <div key={i}>
+                                                  <p className="text-xs font-semibold mb-1" style={{ color: '#16a34a' }}>
+                                                    Стандартная формулировка
+                                                  </p>
+                                                  <div className="rounded-lg px-3 py-2 text-xs leading-relaxed"
+                                                    style={{ backgroundColor: 'rgba(22,163,74,0.07)', color: 'var(--color-text-primary)', border: '1px solid rgba(22,163,74,0.25)' }}>
+                                                    {o.text}
+                                                  </div>
+                                                </div>
+                                              ))}
+                                              {fbOptions.map((o, i) => (
+                                                <div key={i}>
+                                                  <p className="text-xs font-semibold mb-1" style={{ color: '#ca8a04' }}>
+                                                    Запасной вариант {fbOptions.length > 1 ? i + 1 : ''}
+                                                  </p>
+                                                  <div className="rounded-lg px-3 py-2 text-xs leading-relaxed"
+                                                    style={{ backgroundColor: 'rgba(202,138,4,0.07)', color: 'var(--color-text-primary)', border: '1px solid rgba(202,138,4,0.25)' }}>
+                                                    {o.text}
+                                                  </div>
+                                                </div>
+                                              ))}
+                                              {unacOccs.map((o, i) => (
+                                                <div key={i}>
+                                                  <p className="text-xs font-semibold mb-1" style={{ color: '#dc2626' }}>
+                                                    Недопустимая формулировка
+                                                  </p>
+                                                  <div className="rounded-lg px-3 py-2 text-xs leading-relaxed"
+                                                    style={{ backgroundColor: 'rgba(220,38,38,0.07)', color: 'var(--color-text-primary)', border: '1px solid rgba(220,38,38,0.25)' }}>
+                                                    {o.phrase}
+                                                  </div>
+                                                </div>
+                                              ))}
+                                            </div>
+                                          )}
+                                        </div>
+                                      )
+                                    })()}
 
                                     {/* Lawyer guidance */}
                                     {rule.guidance && (
