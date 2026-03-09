@@ -112,7 +112,7 @@ HARVEY_RULE_PROMPT = """Ты - эксперт по анализу юридиче
 - Название: {rule_name}
 - Тип правила: {rule_type}  // red_line, fallback, no_go
 - Категория пункта: {clause_category}
-- Описание / guidance: {guidance}
+- Совет для пользователя (показывается юристу после проверки — НЕ является критерием классификации): {guidance}
 
 СТАНДАРТНАЯ ПОЗИЦИЯ:
 \"\"\"{standard_position}\"\"\"
@@ -133,6 +133,11 @@ HARVEY_RULE_PROMPT = """Ты - эксперт по анализу юридиче
 4. Если формулировка попадает в недопустимые — это неприемлемо, нужно предложить изменения.
 5. Если пункт по смыслу относится к правилу, но не совпадает ни со стандартом, ни с fallback, ни с недопустимыми — пометь как неподтверждённый вариант, требующий проверки.
 6. Если соответствующий пункт в документе отсутствует — так и укажи.
+
+ВАЖНО: «Совет для пользователя» — это подсказка для юриста, которая будет отображена ему после проверки.
+НЕ используй её как критерий классификации. Классифицируй пункт ТОЛЬКО по его семантическому сходству
+с текстом стандарта, запасных вариантов или недопустимых формулировок.
+Запасные варианты (fallbacks) могут содержать пустые поля «_____» — это допустимо, если структура совпадает.
 
 Верни результат ТОЛЬКО в виде одного JSON-объекта:
 {{
@@ -719,6 +724,23 @@ class PlaybookChecker:
             start = pos + len(kw)
         return additional
 
+    @staticmethod
+    def _get_blank_prefix_pos(phrase: str, doc_lower: str, min_prefix_len: int = 20) -> Optional[int]:
+        """For template phrases containing ___ blanks, find position via prefix (text before first blanks).
+
+        Returns position in doc_lower where the prefix starts, or None if not applicable/found.
+        Useful when the phrase has blanks like "по адресу: _____________" but the document
+        has a comma difference: "по адресу: _____________,".
+        """
+        m = re.search(r'_{2,}', phrase)
+        if not m:
+            return None
+        prefix = phrase[:m.start()].strip().rstrip(".,;: ").lower()
+        if len(prefix) < min_prefix_len:
+            return None
+        pos = doc_lower.find(prefix)
+        return pos if pos != -1 else None
+
     def _scan_document_for_phrases(
         self,
         document_text: str,
@@ -765,10 +787,12 @@ class PlaybookChecker:
             phrase_search = phrase.rstrip(".,;: ") or phrase
             phrase_lower = phrase_search.lower()
             start = 0
+            found_any_exact = False
             while True:
                 pos = doc_lower.find(phrase_lower, start)
                 if pos == -1:
                     break
+                found_any_exact = True
                 ctx_start = max(0, pos - context_window)
                 ctx_end = min(len(document_text), pos + len(phrase_search) + context_window)
                 found_fallbacks.append({
@@ -779,6 +803,26 @@ class PlaybookChecker:
                     "context": document_text[ctx_start:ctx_end],
                 })
                 start = pos + len(phrase_search)
+            # If exact match failed, try blank-tolerant prefix match for template phrases
+            if not found_any_exact:
+                prefix_pos = self._get_blank_prefix_pos(phrase_search, doc_lower)
+                if prefix_pos is not None:
+                    # Capture actual document text from that position
+                    cap_len = min(len(phrase_search) + 20, len(document_text) - prefix_pos)
+                    phrase_found = document_text[prefix_pos:prefix_pos + cap_len]
+                    # Trim at nearest sentence/clause end after a reasonable minimum
+                    end_m = re.search(r'[.!?\n]', phrase_found[10:]) if len(phrase_found) > 10 else None
+                    if end_m:
+                        phrase_found = phrase_found[:10 + end_m.start() + 1]
+                    ctx_start = max(0, prefix_pos - context_window)
+                    ctx_end = min(len(document_text), prefix_pos + len(phrase_found) + context_window)
+                    found_fallbacks.append({
+                        "type": "fallback",
+                        "phrase": phrase_found,
+                        "char_start": prefix_pos,
+                        "char_end": prefix_pos + len(phrase_found),
+                        "context": document_text[ctx_start:ctx_end],
+                    })
 
         if standard_position:
             # Strip trailing punctuation to match "Абумов Е.Г," when standard is "Абумов Е.Г."
@@ -1309,10 +1353,12 @@ class PlaybookChecker:
                 if not phrase_lower:
                     continue
                 start = 0
+                found_any_exact = False
                 while True:
                     pos = doc_lower.find(phrase_lower, start)
                     if pos == -1:
                         break
+                    found_any_exact = True
                     ctx_start = max(0, pos - 60)
                     ctx_end = min(len(document_text), pos + len(stripped) + 60)
                     post_occurrences.append({
@@ -1323,6 +1369,27 @@ class PlaybookChecker:
                         "context": document_text[ctx_start:ctx_end],
                     })
                     start = pos + len(stripped)
+                # Blank-tolerant prefix match for template phrases (catches comma-after-blanks variants)
+                if not found_any_exact and phrase_type == "fallback":
+                    prefix_pos = self._get_blank_prefix_pos(stripped, doc_lower)
+                    if prefix_pos is not None:
+                        # Check not already covered by another occurrence
+                        already_covered = {occ["char_start"] for occ in post_occurrences}
+                        if not any(abs(prefix_pos - s) <= 5 for s in already_covered):
+                            cap_len = min(len(stripped) + 20, len(document_text) - prefix_pos)
+                            phrase_found = document_text[prefix_pos:prefix_pos + cap_len]
+                            end_m = re.search(r'[.!?\n]', phrase_found[10:]) if len(phrase_found) > 10 else None
+                            if end_m:
+                                phrase_found = phrase_found[:10 + end_m.start() + 1]
+                            ctx_start = max(0, prefix_pos - 60)
+                            ctx_end = min(len(document_text), prefix_pos + len(phrase_found) + 60)
+                            post_occurrences.append({
+                                "type": phrase_type,
+                                "phrase": phrase_found,
+                                "char_start": prefix_pos,
+                                "char_end": prefix_pos + len(phrase_found),
+                                "context": document_text[ctx_start:ctx_end],
+                            })
 
         # Keyword-based scan to catch ALL name variants not found by exact phrase scan
         if standard_position and document_text:
