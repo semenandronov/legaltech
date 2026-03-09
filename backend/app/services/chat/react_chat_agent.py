@@ -960,7 +960,7 @@ ID дела: {self.case_id}
 
                             # For search/extract tools that already synthesised the answer with [N] markers:
                             # stream the synthesised result directly and skip GigaChat's outer synthesis.
-                            elif tool_name in ("search_in_documents", "extract_structured_data"):
+                            elif tool_name in ("search_in_documents", "extract_structured_data", "analyze_all_documents"):
                                 try:
                                     from app.services.chat.universal_tools import (
                                         get_last_direct_result,

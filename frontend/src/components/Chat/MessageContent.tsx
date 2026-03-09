@@ -216,6 +216,31 @@ const MessageContent: React.FC<MessageContentProps> = ({
     // These are "footnote rows" the LLM adds at the end despite instructions
     text = text.replace(/(\n+(\s*\[\d+\]\s*)+)+\s*$/, '')
 
+    // Auto-inject [N] for bullet items under numbered document sections.
+    // The LLM structures answers as "1. Из файла 'X.pdf':\n  • item" —
+    // the section number IS the citation index, so append it to each bullet.
+    if (sources.length > 0) {
+      const lines = text.split('\n')
+      let currentDocNum: number | null = null
+      text = lines.map(line => {
+        // Detect "1. Из файла / из документа / в документе" etc.
+        const sectionMatch = line.match(/^\s*(\d+)\.\s+(?:[^\n]*(?:файл|документ|doc)[^\n]*:)/i)
+        if (sectionMatch) {
+          currentDocNum = parseInt(sectionMatch[1], 10)
+          return line
+        }
+        // Bullet under a document section — inject [N] if no citation yet
+        if (currentDocNum !== null && /^\s*[-•*]\s+\S/.test(line) && !/\[\d/.test(line)) {
+          return line.trimEnd() + ` [${currentDocNum}]`
+        }
+        // Blank line — keep section context
+        if (/^\s*$/.test(line)) return line
+        // Any other non-bullet line resets section context
+        currentDocNum = null
+        return line
+      }).join('\n')
+    }
+
     // Convert [filename.ext, ...] references to [N] using sources
     if (sources.length > 0) {
       const fileToIndex = new Map<string, number>()

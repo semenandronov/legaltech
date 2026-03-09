@@ -414,12 +414,10 @@ def analyze_all_documents(question: str, task_type: str = "answer") -> str:
 
         response = f"{result.answer}"
 
-        # Добавляем [N] ссылки на источники
-        for i, f_obj in enumerate(files, 1):
-            if f_obj.original_text:
-                response += f" [{i}]"
-                if i >= 5:
-                    break
+        # Store as direct result so react_chat_agent bypasses outer GigaChat synthesis
+        # (outer synthesis drops [N] markers and reformats without citations)
+        global _last_direct_result
+        _last_direct_result = response
 
         logger.info(
             f"[UniversalTools] analyze_all_documents: завершено, "
