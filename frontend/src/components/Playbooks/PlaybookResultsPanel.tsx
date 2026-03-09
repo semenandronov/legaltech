@@ -16,6 +16,7 @@ import {
   RefreshCw,
   Lightbulb,
   CheckCheck,
+  Check,
 } from 'lucide-react'
 import { toast } from 'sonner'
 
@@ -331,214 +332,247 @@ export const PlaybookResultsPanel = ({
               </>
             )}
           </div>
-        ) : selectedRule ? (
-          /* Детальное окно по одному правилу, как на экране Harvey */
-          <div className="flex flex-col h-full">
-            <div className="px-4 py-3 border-b flex items-center justify-between" style={{ borderColor: 'var(--color-border)' }}>
-              <button
-                onClick={closeRuleDetails}
-                className="flex items-center gap-1.5 text-sm text-gray-600 hover:text-gray-800"
-              >
-                <ChevronLeft className="w-4 h-4" />
-                Назад к списку
-              </button>
-              <div className="text-sm font-medium" style={{ color: 'var(--color-text-secondary)' }}>
-                {selectedGroupTitle || 'Результат правила'}
-              </div>
-            </div>
+        ) : selectedRule ? (() => {
+          /* Harvey-style rule detail — "Text to review" + per-option diff preview */
+          const harvey = getHarveyClassification(selectedRule)
 
-            <div className="p-4 space-y-4 overflow-y-auto">
-              {/* Название правила и краткое описание */}
-              <div>
-                <h2 className="text-base font-semibold mb-1" style={{ color: 'var(--color-text-primary)' }}>
-                  {selectedRule.rule_name}
-                </h2>
-                {selectedRule.issue_description && (
-                  <p className="text-sm" style={{ color: 'var(--color-text-secondary)' }}>
-                    {selectedRule.issue_description}
-                  </p>
+          const occs = selectedRule.occurrences && selectedRule.occurrences.length > 0
+            ? selectedRule.occurrences
+            : selectedRule.found_text
+              ? [{ type: 'standard', phrase: selectedRule.found_text, char_start: 0, char_end: 0, context: '' }]
+              : []
+
+          const allSuggestedOptions = selectedRule.suggested_options && selectedRule.suggested_options.length > 0
+            ? selectedRule.suggested_options
+            : (selectedRule.suggestion || selectedRule.suggested_fix)
+              ? [{ label: 'Предлагаемая правка', type: 'standard', text: selectedRule.suggestion || selectedRule.suggested_fix || '' }]
+              : []
+
+          /** Character-level inline diff: returns equal/delete/insert segments */
+          type DiffPart = { t: 'eq' | 'del' | 'ins'; s: string }
+          const computeDiff = (oldTxt: string, newTxt: string): DiffPart[] => {
+            if (!oldTxt && !newTxt) return []
+            if (!oldTxt) return [{ t: 'ins', s: newTxt }]
+            if (!newTxt) return [{ t: 'del', s: oldTxt }]
+            let i = 0
+            while (i < oldTxt.length && i < newTxt.length && oldTxt[i] === newTxt[i]) i++
+            let j = 0
+            while (j < oldTxt.length - i && j < newTxt.length - i &&
+                   oldTxt[oldTxt.length - 1 - j] === newTxt[newTxt.length - 1 - j]) j++
+            const parts: DiffPart[] = []
+            if (i > 0) parts.push({ t: 'eq', s: oldTxt.slice(0, i) })
+            const om = oldTxt.slice(i, j > 0 ? oldTxt.length - j : undefined)
+            const nm = newTxt.slice(i, j > 0 ? newTxt.length - j : undefined)
+            if (om) parts.push({ t: 'del', s: om })
+            if (nm) parts.push({ t: 'ins', s: nm })
+            if (j > 0) parts.push({ t: 'eq', s: oldTxt.slice(oldTxt.length - j) })
+            return parts
+          }
+
+          /** Render diff preview: context with old phrase struck-through and new phrase in blue */
+          const renderPreview = (occPhrase: string, occCtx: string, optText: string) => {
+            const ctx = occCtx || occPhrase
+            const idx = ctx.toLowerCase().indexOf(occPhrase.toLowerCase())
+            const before = idx !== -1 ? ctx.slice(0, idx) : ''
+            const after = idx !== -1 ? ctx.slice(idx + occPhrase.length) : ''
+            const diff = computeDiff(occPhrase, optText)
+            return (
+              <span>
+                {before}
+                {diff.map((p, pi) =>
+                  p.t === 'eq' ? <span key={pi}>{p.s}</span> :
+                  p.t === 'del' ? <del key={pi} style={{ color: '#dc2626', textDecorationColor: '#dc2626' }}>{p.s}</del> :
+                  <span key={pi} style={{ color: '#2563eb' }}>{p.s}</span>
                 )}
+                {after.length > 120 ? after.slice(0, 120) + '…' : after}
+              </span>
+            )
+          }
+
+          return (
+            <div className="flex flex-col h-full">
+              {/* Header */}
+              <div className="px-4 py-2.5 border-b flex items-center" style={{ borderColor: 'var(--color-border)' }}>
+                <button
+                  onClick={closeRuleDetails}
+                  className="flex items-center justify-center w-7 h-7 rounded hover:bg-gray-100 transition-colors mr-2"
+                  style={{ color: 'var(--color-text-secondary)' }}
+                >
+                  <ChevronLeft className="w-4 h-4" />
+                </button>
+                <div className="flex-1 flex items-center justify-center gap-1.5">
+                  <span className="w-2 h-2 rounded-full flex-shrink-0" style={{ backgroundColor: harvey.color }} />
+                  <span className="text-sm font-semibold" style={{ color: 'var(--color-text-primary)' }}>
+                    {harvey.label}
+                  </span>
+                </div>
+                <div className="w-6 h-6 border rounded flex items-center justify-center flex-shrink-0"
+                  style={{ borderColor: 'var(--color-border)' }}>
+                  <div className="w-2.5 h-2.5 border rounded-sm" style={{ borderColor: 'var(--color-text-tertiary)' }} />
+                </div>
               </div>
 
-              {/* Summary / Резюме — почему это правило сработало */}
-              {selectedRule.reasoning && (
-                <div className="p-3 rounded-lg" style={{ backgroundColor: 'var(--color-bg-secondary)' }}>
-                  <h3 className="text-xs font-semibold mb-1.5" style={{ color: 'var(--color-text-secondary)' }}>
-                    Резюме
-                  </h3>
-                  <p className="text-sm leading-relaxed" style={{ color: 'var(--color-text-primary)' }}>
-                    {selectedRule.reasoning}
-                  </p>
+              {/* Scrollable content */}
+              <div className="flex-1 overflow-y-auto">
+                {/* Rule name + guidance */}
+                <div className="px-4 pt-4 pb-3 border-b" style={{ borderColor: 'var(--color-border)' }}>
+                  <h2 className="text-sm font-bold" style={{ color: 'var(--color-text-primary)' }}>
+                    {selectedRule.rule_name}
+                  </h2>
+                  {selectedRule.guidance && (
+                    <p className="text-xs mt-1 leading-relaxed" style={{ color: 'var(--color-text-secondary)' }}>
+                      {selectedRule.guidance}
+                    </p>
+                  )}
+                  {selectedRule.issue_description && (
+                    <p className="text-xs mt-1 leading-relaxed italic" style={{ color: 'var(--color-text-secondary)' }}>
+                      {selectedRule.issue_description}
+                    </p>
+                  )}
                 </div>
-              )}
 
-              {/* Guidance — как трактовать правило (оригинальное правило и советы) */}
-              {(selectedRule.guidance || selectedRule.suggestion || selectedRule.suggested_fix) && (
-                <div className="p-3 rounded-lg border" style={{ borderColor: 'var(--color-border)' }}>
-                  <h3 className="text-xs font-semibold mb-1.5" style={{ color: 'var(--color-text-secondary)' }}>
-                    Guidance
-                  </h3>
-                  <p className="text-sm" style={{ color: 'var(--color-text-primary)' }}>
-                    {selectedRule.guidance || selectedRule.suggestion || selectedRule.suggested_fix}
-                  </p>
-                </div>
-              )}
+                {/* Per-occurrence blocks */}
+                {occs.length > 0 ? occs.map((occ, occIdx) => {
+                  const occOptions = occ.type === 'standard' ? [] : allSuggestedOptions
+                  const occApplyPrefix = `${selectedRule.rule_id}_${occIdx}`
+                  const anyAppliedForOcc = occOptions.some((_, oi) => appliedRules.has(`${occApplyPrefix}_${oi}`))
+                  const nthOcc = occs.slice(0, occIdx).filter(o => o.phrase === occ.phrase).length
+                  const ctxDisplay = (occ.context || occ.phrase).slice(0, 280) + ((occ.context || occ.phrase).length > 280 ? '…' : '')
 
-              {/* Вхождения в документе — единый раздел */}
-              {(() => {
-                const occs = selectedRule.occurrences && selectedRule.occurrences.length > 0
-                  ? selectedRule.occurrences
-                  : selectedRule.found_text
-                    ? [{ type: 'standard', phrase: selectedRule.found_text, char_start: 0, char_end: 0, context: '' }]
-                    : null
-                if (!occs) return null
+                  return (
+                    <div key={occIdx} className="px-4 py-4 border-b" style={{ borderColor: 'var(--color-border)' }}>
+                      {occs.length > 1 && (
+                        <p className="text-xs font-semibold mb-2" style={{ color: 'var(--color-text-tertiary)' }}>
+                          Вхождение #{occIdx + 1}
+                        </p>
+                      )}
 
-                const statusLabel = 'Текст для проверки и предлагаемые изменения'
-                // Colors are always per-type — standard is always green regardless of overall status
-                const typeColors: Record<string, string> = {
-                  unacceptable: '#dc2626',
-                  fallback: '#ca8a04',
-                  standard: '#16a34a',
-                }
-                // Suggested fix options (only used for non-standard occurrences)
-                const allSuggestedOptions = selectedRule.suggested_options && selectedRule.suggested_options.length > 0
-                  ? selectedRule.suggested_options
-                  : (selectedRule.suggestion || selectedRule.suggested_fix)
-                    ? [{ label: 'Suggested fix', type: 'standard', text: selectedRule.suggestion || selectedRule.suggested_fix || '' }]
-                    : []
+                      {/* Text to review */}
+                      <p className="text-xs font-semibold mb-1.5" style={{ color: 'var(--color-text-secondary)' }}>
+                        Text to review
+                      </p>
+                      <div className="rounded-lg px-3 py-2.5 text-sm leading-relaxed mb-1"
+                        style={{ backgroundColor: 'var(--color-bg-secondary, #f3f4f6)', color: 'var(--color-text-primary)' }}>
+                        {ctxDisplay}
+                      </div>
 
-                return (
-                  <div className="space-y-3">
-                    <h3 className="text-xs font-semibold" style={{ color: 'var(--color-text-secondary)' }}>
-                      {statusLabel}{occs.length > 1 ? ` — ${occs.length} вхождения` : ''}
-                    </h3>
+                      {/* Navigate to text */}
+                      {onScrollToText && occ.phrase && (
+                        <button
+                          onClick={() => {
+                            const found = onScrollToText(occ.phrase, nthOcc)
+                            if (!found) toast.warning('Текст не найден в документе')
+                          }}
+                          className="flex items-center gap-1 text-xs mb-4 transition-colors hover:opacity-70"
+                          style={{ color: 'var(--color-text-secondary)' }}
+                        >
+                          <Eye className="w-3 h-3" />
+                          Перейти к тексту
+                        </button>
+                      )}
 
-                    {occs.map((occ, occIdx) => {
-                      const color = typeColors[occ.type] || '#b45309'
-                      // Standard occurrences are already correct — no fix needed
-                      const occSuggestedOptions = occ.type === 'standard' ? [] : allSuggestedOptions
-                      const phraseLabel = occ.type === 'standard'
-                        ? 'Найденная формулировка (соответствует стандарту):'
-                        : occ.type === 'fallback'
-                          ? 'Найденная формулировка (запасной вариант):'
-                          : 'Найденная формулировка (недопустимая):'
-                      // Highlight the phrase within the context
-                      const renderContext = (ctx: string, phrase: string) => {
-                        const idx = ctx.toLowerCase().indexOf(phrase.toLowerCase())
-                        if (idx === -1) return <>{ctx}</>
-                        return <>
-                          {ctx.slice(0, idx)}
-                          <mark style={{ backgroundColor: `${color}22`, color, fontWeight: 600, borderRadius: 2, padding: '0 2px' }}>
-                            {ctx.slice(idx, idx + phrase.length)}
-                          </mark>
-                          {ctx.slice(idx + phrase.length)}
-                        </>
-                      }
-                      return (
-                        <div key={occIdx} className="rounded-lg text-sm leading-relaxed overflow-hidden"
-                          style={{ border: '1px solid var(--color-border)' }}>
-                          {/* Header фразы */}
-                          <div className="p-3" style={{ background: 'var(--color-bg-primary)' }}>
-                            {occs.length > 1 && (
-                              <div className="mb-1">
-                                <span className="text-xs font-semibold" style={{ color }}>
-                                  Вхождение #{occIdx + 1}
-                                </span>
-                              </div>
-                            )}
-                            <span className="text-xs font-medium" style={{ color }}>{phraseLabel}</span>
-                            <p className="mt-0.5 font-mono text-sm" style={{ color }}>«{occ.phrase}»</p>
-                            {occ.context && (
-                              <p className="mt-2 text-xs leading-relaxed" style={{ color: 'var(--color-text-secondary)' }}>
-                                {renderContext(occ.context, occ.phrase)}
+                      {/* Standard — just show it's correct */}
+                      {occ.type === 'standard' && (
+                        <div className="flex items-center gap-1.5 text-xs" style={{ color: '#16a34a' }}>
+                          <Check className="w-3.5 h-3.5" />
+                          Соответствует стандарту
+                        </div>
+                      )}
+
+                      {/* Fix options with diff preview */}
+                      {occOptions.map((opt, optIdx) => {
+                        const applyKey = `${occApplyPrefix}_${optIdx}`
+                        const isApplied = appliedRules.has(applyKey)
+                        const otherApplied = anyAppliedForOcc && !isApplied
+                        const optLabel = opt.label || (opt.type === 'standard' ? 'Standard position' : `Fallback ${optIdx}`)
+
+                        return (
+                          <div key={optIdx} className="pt-3 mt-1 border-t" style={{ borderColor: 'var(--color-border)' }}>
+                            {/* Option title */}
+                            <p className="text-sm font-semibold mb-0.5" style={{ color: 'var(--color-text-primary)' }}>
+                              {optLabel}
+                            </p>
+                            {/* Short description */}
+                            <p className="text-xs leading-relaxed mb-2" style={{ color: 'var(--color-text-secondary)' }}>
+                              {opt.type === 'standard'
+                                ? 'Привести формулировку к стандартной позиции.'
+                                : 'Заменить на запасной вариант формулировки.'}
+                            </p>
+
+                            {otherApplied && (
+                              <p className="text-xs italic mb-2" style={{ color: 'var(--color-text-tertiary)' }}>
+                                Another suggestion has been applied
                               </p>
                             )}
-                            {/* Перейти к тексту */}
-                            <div className="mt-2">
-                              <button
-                                onClick={() => {
-                                  if (onScrollToText) {
-                                    // Count how many times this same phrase appeared before
-                                    // to navigate to the correct (nth) occurrence in the editor
-                                    const nthOccurrence = occs.slice(0, occIdx).filter(o => o.phrase === occ.phrase).length
-                                    const found = onScrollToText(occ.phrase, nthOccurrence)
-                                    if (!found) toast.warning('Текст не найден в документе')
-                                  } else if (onNavigateToIssue && occIdx === 0 && (selectedRule.document_location || selectedRule.location)) {
-                                    onNavigateToIssue(
-                                      selectedRule.document_location ||
-                                      { start: selectedRule.location?.start || 0, end: selectedRule.location?.end || 0 }
-                                    )
-                                  }
-                                }}
-                                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium border transition-colors hover:bg-gray-50"
-                                style={{ color: 'var(--color-text-secondary)', borderColor: 'var(--color-border)' }}
-                              >
-                                <Eye className="w-3 h-3" />
-                                Перейти к тексту
-                              </button>
+
+                            {/* Preview changes */}
+                            <p className="text-xs font-semibold mb-1" style={{ color: 'var(--color-text-secondary)' }}>
+                              Preview changes:
+                            </p>
+                            <div className="rounded-lg px-3 py-2.5 text-sm leading-relaxed mb-3"
+                              style={{ backgroundColor: 'var(--color-bg-secondary, #f3f4f6)', color: 'var(--color-text-primary)' }}>
+                              {renderPreview(occ.phrase, occ.context || '', opt.text)}
+                            </div>
+
+                            {/* Action buttons */}
+                            <div className="flex items-center justify-end gap-5">
+                              {isApplied ? (
+                                <span className="flex items-center gap-1 text-xs font-medium" style={{ color: '#16a34a' }}>
+                                  <Check className="w-3.5 h-3.5" />
+                                  Applied
+                                </span>
+                              ) : onApplyFix && occ.phrase && opt.text ? (
+                                <button
+                                  onClick={() => {
+                                    const success = onApplyFix(occ.phrase, opt.text)
+                                    if (success) {
+                                      setAppliedRules(prev => new Set(prev).add(applyKey))
+                                      toast.success('Правка применена')
+                                    } else {
+                                      toast.error('Не удалось найти текст в документе')
+                                    }
+                                  }}
+                                  className="text-xs font-semibold transition-colors hover:opacity-70"
+                                  style={{ color: 'var(--color-accent, #6366f1)' }}
+                                >
+                                  Apply changes
+                                </button>
+                              ) : null}
                             </div>
                           </div>
+                        )
+                      })}
+                    </div>
+                  )
+                }) : (
+                  /* No occurrences found — show not_found state */
+                  <div className="px-4 py-4">
+                    <p className="text-xs font-semibold mb-1.5" style={{ color: 'var(--color-text-secondary)' }}>
+                      Text to review
+                    </p>
+                    <div className="rounded-lg px-3 py-2.5 text-sm italic"
+                      style={{ backgroundColor: 'var(--color-bg-secondary, #f3f4f6)', color: 'var(--color-text-secondary)' }}>
+                      {selectedRule.issue_description || 'Соответствующий пункт не найден в документе.'}
+                    </div>
 
-                          {/* Варианты правок для этого вхождения (только для fallback/unacceptable) */}
-                          {occSuggestedOptions.length > 0 && (
-                            <div className="border-t space-y-2 p-3" style={{ borderColor: 'var(--color-border)', background: 'var(--color-bg-secondary, #f9fafb)' }}>
-                              {occSuggestedOptions.map((opt, optIdx) => {
-                                const applyKey = `${selectedRule.rule_id}_${occIdx}_${optIdx}`
-                                return (
-                                  <div key={optIdx} className="space-y-1">
-                                    <span className="text-xs font-semibold" style={{ color: 'var(--color-text-secondary)' }}>
-                                      {opt.label || (opt.type === 'fallback' ? `Fallback ${optIdx}` : 'Standard position')}
-                                    </span>
-                                    <p className="text-xs" style={{ color: '#2563eb' }}>
-                                      {opt.text.length > 400 ? opt.text.substring(0, 400) + '…' : opt.text}
-                                    </p>
-                                    {onApplyFix && occ.phrase && opt.text && (
-                                      appliedRules.has(applyKey) ? (
-                                        <span className="inline-flex items-center gap-1 px-2 py-1 rounded text-xs font-medium text-green-600 bg-green-50">
-                                          <CheckCheck className="w-3 h-3" />
-                                          Применено
-                                        </span>
-                                      ) : (
-                                        <button
-                                          onClick={() => {
-                                            const success = onApplyFix(occ.phrase, opt.text)
-                                            if (success) {
-                                              setAppliedRules(prev => new Set(prev).add(applyKey))
-                                              toast.success('Правка применена')
-                                            } else {
-                                              toast.error('Не удалось найти текст в документе')
-                                            }
-                                          }}
-                                          className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium text-white transition-colors hover:opacity-90"
-                                          style={{ backgroundColor: 'var(--color-accent, #6366f1)' }}
-                                        >
-                                          Применить правку
-                                        </button>
-                                      )
-                                    )}
-                                  </div>
-                                )
-                              })}
-                            </div>
-                          )}
+                    {/* Show suggested options without diff (no found phrase to compare) */}
+                    {allSuggestedOptions.map((opt, optIdx) => (
+                      <div key={optIdx} className="pt-3 mt-3 border-t" style={{ borderColor: 'var(--color-border)' }}>
+                        <p className="text-sm font-semibold mb-0.5" style={{ color: 'var(--color-text-primary)' }}>
+                          {opt.label || (opt.type === 'standard' ? 'Standard position' : `Fallback ${optIdx}`)}
+                        </p>
+                        <div className="rounded-lg px-3 py-2.5 text-sm leading-relaxed mt-2"
+                          style={{ backgroundColor: 'var(--color-bg-secondary, #f3f4f6)', color: '#2563eb' }}>
+                          {opt.text.length > 300 ? opt.text.slice(0, 300) + '…' : opt.text}
                         </div>
-                      )
-                    })}
+                      </div>
+                    ))}
                   </div>
-                )
-              })()}
-
-              {/* Рекомендация без конкретного текста */}
-              {!selectedRule.found_text && (selectedRule.suggestion || selectedRule.suggested_fix) && (
-                <div className="p-3 rounded-lg bg-blue-50 border border-blue-100">
-                  <h3 className="text-xs font-semibold text-blue-700 mb-1">Рекомендация</h3>
-                  <p className="text-sm text-blue-800">
-                    {selectedRule.suggestion || selectedRule.suggested_fix}
-                  </p>
-                </div>
-              )}
+                )}
+              </div>
             </div>
-          </div>
+          )
+        })()
         ) : (
           /* Сводный список групп и правил, как на первом экране Harvey */
           <>
