@@ -9,7 +9,6 @@ import {
   X,
   ChevronDown,
   ChevronRight,
-  ChevronLeft,
   FileText,
   Eye,
   Download,
@@ -107,38 +106,6 @@ export const PlaybookResultsPanel = ({
     result?.playbook_name ||
     selectedPlaybookName ||
     'Проверка по playbook'
-
-  /** Harvey-style classification for a rule result */
-  const getHarveyClassification = (rule: RuleResult) => {
-    if (rule.status === 'passed') {
-      return { label: 'Приемлемо', icon: '✅', color: '#16a34a', bg: 'rgba(22, 163, 74, 0.1)', border: 'rgba(22, 163, 74, 0.25)' }
-    }
-    if (rule.status === 'warning' || rule.rule_type === 'fallback') {
-      return { label: 'Требует проверки', icon: '🔍', color: '#ca8a04', bg: 'rgba(202, 138, 4, 0.08)', border: 'rgba(202, 138, 4, 0.2)' }
-    }
-    return { label: 'Нарушения', icon: '❌', color: '#dc2626', bg: 'rgba(220, 38, 38, 0.08)', border: 'rgba(220, 38, 38, 0.2)' }
-  }
-
-  const getRuleTypeBadge = (type: RuleResult['rule_type']) => {
-    const styles: Record<string, { bg: string; text: string }> = {
-      red_line: { bg: 'bg-red-100', text: 'text-red-700' },
-      no_go: { bg: 'bg-purple-100', text: 'text-purple-700' },
-      fallback: { bg: 'bg-yellow-100', text: 'text-yellow-700' },
-      standard: { bg: 'bg-blue-100', text: 'text-blue-700' }
-    }
-    const labels: Record<string, string> = {
-      red_line: 'Red Line',
-      no_go: 'No-Go',
-      fallback: 'Fallback',
-      standard: 'Standard'
-    }
-    const style = styles[type] || styles.standard
-    return (
-      <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${style.bg} ${style.text}`}>
-        {labels[type] || type}
-      </span>
-    )
-  }
 
   const violations = (result?.results || []).filter(r =>
     r.status === 'violation' || r.status === 'not_found' || r.status === 'error'
