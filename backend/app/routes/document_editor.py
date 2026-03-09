@@ -23,6 +23,39 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
+def _index_editor_document(document_id: str, case_id: str) -> None:
+    """Background task: index a scratch editor document into the case RAG store."""
+    from app.models.document_editor import Document
+    db = SessionLocal()
+    try:
+        doc = db.query(Document).filter(Document.id == document_id).first()
+        if not doc or not doc.content_plain:
+            return
+
+        virtual_file_id = f"editor_doc_{document_id}"
+
+        vector_store = CaseVectorStore()
+        vector_store.delete_file_vectors(virtual_file_id)
+
+        processor = DocumentProcessor()
+        chunks = processor.split_documents(
+            text=doc.content_plain,
+            filename=doc.title or "Документ редактора",
+            metadata={"case_id": case_id},
+            file_id=virtual_file_id,
+        )
+        processor.store_in_vector_db(
+            case_id=case_id,
+            documents=chunks,
+            db=db,
+        )
+        logger.info(f"[EditorIndex] Indexed editor document {document_id} ({len(chunks)} chunks)")
+    except Exception as e:
+        logger.error(f"[EditorIndex] Failed to index document {document_id}: {e}", exc_info=True)
+    finally:
+        db.close()
+
+
 def _sync_editor_to_case_file(document_id: str, file_id: str) -> None:
     """Background task: sync editor document edits back to case file + reindex RAG."""
     from app.models.document_editor import Document
@@ -381,10 +414,14 @@ async def update_document(
             title=request.title
         )
 
-        # If this document was created from a case file, sync edits back + reindex RAG
+        # Sync edits back to RAG
         source_file_id = (document.document_metadata or {}).get("source_file_id")
         if source_file_id:
+            # Document opened from a case file → sync back to files table + reindex
             background_tasks.add_task(_sync_editor_to_case_file, document_id, source_file_id)
+        elif document.content_plain:
+            # Document created from scratch → index into case RAG directly
+            background_tasks.add_task(_index_editor_document, document_id, document.case_id)
 
         return DocumentResponse(
             id=document.id,

@@ -6,12 +6,17 @@ from datetime import datetime
 import logging
 
 # Configure basic logging immediately to capture all errors
+_log_file_handler = logging.FileHandler('/tmp/legaltech_backend.log', mode='a', encoding='utf-8')
+_log_file_handler.setLevel(logging.DEBUG)
+_log_file_handler.setFormatter(logging.Formatter('%(asctime)s [%(levelname)s] %(name)s: %(message)s'))
+
 logging.basicConfig(
     level=logging.DEBUG,
     format='%(asctime)s [%(levelname)s] %(name)s: %(message)s',
     handlers=[
         logging.StreamHandler(sys.stderr),  # Always use stderr for Docker
-        logging.StreamHandler(sys.stdout)   # Also stdout for visibility
+        logging.StreamHandler(sys.stdout),   # Also stdout for visibility
+        _log_file_handler,
     ],
     force=True  # Override any existing configuration
 )

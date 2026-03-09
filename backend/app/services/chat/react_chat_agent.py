@@ -861,6 +861,10 @@ ID дела: {self.case_id}
                         if kind == "on_chat_model_stream":
                             # Skip GigaChat's outer synthesis when a tool already produced the answer
                             if direct_result_streamed:
+                                chunk = event.get("data", {}).get("chunk")
+                                tok = getattr(chunk, 'content', '') if chunk else ''
+                                if tok:
+                                    logger.debug(f"[ReActChatAgent] SKIPPING synthesis token (direct already streamed): {tok[:30]!r}")
                                 continue
                             chunk = event.get("data", {}).get("chunk")
                             if chunk:
@@ -873,6 +877,8 @@ ID дела: {self.case_id}
                                     elif has_seen_tool_execution:
                                         # Post-tools final response: stream token in real-time,
                                         # filtering out [# Section Header] lines.
+                                        if not step_tokens_streamed:
+                                            logger.info(f"[ReActChatAgent] GigaChat synthesis started streaming (direct_result_streamed={direct_result_streamed})")
                                         text_buffer += token
                                         step_tokens_streamed = True
                                         emit, stream_line_buf = _filter_section_headers_streaming(token, stream_line_buf)
@@ -937,6 +943,8 @@ ID дела: {self.case_id}
                             has_seen_tool_execution = True  # Enable real-time streaming for final response
                             tool_name = event.get("name", "unknown")
                             output_data = event.get("data", {}).get("output", "")
+                            from app.services.chat.universal_tools import get_last_direct_result as _gdr
+                            logger.info(f"[ReActChatAgent] on_tool_end: tool={tool_name!r}, direct_result_streamed={direct_result_streamed}, last_direct_set={bool(_gdr())}")
                             output_preview = str(output_data)[:300] if output_data else ''
                             yield SSESerializer.tool_call(
                                 name=tool_name,
@@ -958,25 +966,28 @@ ID дела: {self.case_id}
                                 except Exception as pb_err:
                                     logger.warning(f"[ReActChatAgent] Failed to emit playbook result: {pb_err}")
 
-                            # For search/extract tools that already synthesised the answer with [N] markers:
-                            # stream the synthesised result directly and skip GigaChat's outer synthesis.
-                            elif tool_name in ("search_in_documents", "extract_structured_data", "analyze_all_documents"):
-                                try:
-                                    from app.services.chat.universal_tools import (
-                                        get_last_direct_result,
-                                        clear_last_direct_result,
-                                    )
-                                    direct = get_last_direct_result()
-                                    if direct and not direct_result_streamed:
-                                        cleaned = _clean_response_text(direct)
-                                        if cleaned:
-                                            yield SSESerializer.text_delta(cleaned)
-                                            response_text += cleaned
-                                            direct_result_streamed = True
-                                            logger.info(f"[ReActChatAgent] Direct-streamed {tool_name} result ({len(cleaned)} chars)")
-                                    clear_last_direct_result()
-                                except Exception as dr_err:
-                                    logger.warning(f"[ReActChatAgent] Failed to direct-stream result: {dr_err}")
+                            # For any tool that stored a synthesized answer: stream it directly
+                            # and skip GigaChat's outer synthesis (which drops [N] markers).
+                            # We check _last_direct_result for ALL tools, not just a hardcoded list,
+                            # because LangChain event names may differ from function names.
+                            try:
+                                from app.services.chat.universal_tools import (
+                                    get_last_direct_result,
+                                    clear_last_direct_result,
+                                )
+                                direct = get_last_direct_result()
+                                if direct and not direct_result_streamed:
+                                    cleaned = _clean_response_text(direct)
+                                    # Use original `direct` as fallback if cleaning stripped everything
+                                    text_to_stream = cleaned if cleaned else direct.strip()
+                                    if text_to_stream:
+                                        yield SSESerializer.text_delta(text_to_stream)
+                                        response_text += text_to_stream
+                                        direct_result_streamed = True
+                                        logger.info(f"[ReActChatAgent] Direct-streamed {tool_name} result ({len(text_to_stream)} chars)")
+                                clear_last_direct_result()
+                            except Exception as dr_err:
+                                logger.warning(f"[ReActChatAgent] Failed to direct-stream result: {dr_err}")
 
                     # Flush any remaining buffered text (only if not already streamed live)
                     if text_buffer and not step_tokens_streamed:
@@ -1046,8 +1057,8 @@ ID дела: {self.case_id}
                         yield SSESerializer.text_delta(result)
                         response_text = result
                 
-                # Если ответ пустой, пробуем fallback
-                if not response_text.strip():
+                # Если ответ пустой, пробуем fallback (только если прямой результат не был стримирован)
+                if not response_text.strip() and not direct_result_streamed:
                     logger.warning("[ReActChatAgent] Empty response, trying fallback")
                     fallback_response = await self._fallback_response(question)
                     yield SSESerializer.text_delta(fallback_response)

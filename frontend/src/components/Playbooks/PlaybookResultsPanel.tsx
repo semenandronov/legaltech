@@ -101,7 +101,7 @@ export const PlaybookResultsPanel = ({
 }: PlaybookResultsPanelProps) => {
   const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set())
   const [appliedRules, setAppliedRules] = useState<Set<string>>(new Set())
-  const [selectedRule, setSelectedRule] = useState<RuleResult | null>(null)
+  const [expandedRuleId, setExpandedRuleId] = useState<string | null>(null)
 
   const effectivePlaybookName =
     result?.playbook_name ||
@@ -155,12 +155,44 @@ export const PlaybookResultsPanel = ({
   }
   const totalForBar = (barStandard + barFallback + barUnacceptable) || 1
 
-  const openRuleDetails = (rule: RuleResult) => {
-    setSelectedRule(rule)
+  /** Character-level inline diff */
+  type DiffPart = { t: 'eq' | 'del' | 'ins'; s: string }
+  const computeDiff = (oldTxt: string, newTxt: string): DiffPart[] => {
+    if (!oldTxt && !newTxt) return []
+    if (!oldTxt) return [{ t: 'ins', s: newTxt }]
+    if (!newTxt) return [{ t: 'del', s: oldTxt }]
+    let i = 0
+    while (i < oldTxt.length && i < newTxt.length && oldTxt[i] === newTxt[i]) i++
+    let j = 0
+    while (j < oldTxt.length - i && j < newTxt.length - i &&
+           oldTxt[oldTxt.length - 1 - j] === newTxt[newTxt.length - 1 - j]) j++
+    const parts: DiffPart[] = []
+    if (i > 0) parts.push({ t: 'eq', s: oldTxt.slice(0, i) })
+    const om = oldTxt.slice(i, j > 0 ? oldTxt.length - j : undefined)
+    const nm = newTxt.slice(i, j > 0 ? newTxt.length - j : undefined)
+    if (om) parts.push({ t: 'del', s: om })
+    if (nm) parts.push({ t: 'ins', s: nm })
+    if (j > 0) parts.push({ t: 'eq', s: oldTxt.slice(oldTxt.length - j) })
+    return parts
   }
 
-  const closeRuleDetails = () => {
-    setSelectedRule(null)
+  const renderPreview = (occPhrase: string, occCtx: string, optText: string) => {
+    const ctx = occCtx || occPhrase
+    const idx = ctx.toLowerCase().indexOf(occPhrase.toLowerCase())
+    const before = idx !== -1 ? ctx.slice(0, idx) : ''
+    const after = idx !== -1 ? ctx.slice(idx + occPhrase.length) : ''
+    const diff = computeDiff(occPhrase, optText)
+    return (
+      <span>
+        {before}
+        {diff.map((p, pi) =>
+          p.t === 'eq' ? <span key={pi}>{p.s}</span> :
+          p.t === 'del' ? <del key={pi} style={{ color: '#dc2626', textDecorationColor: '#dc2626' }}>{p.s}</del> :
+          <span key={pi} style={{ color: '#2563eb' }}>{p.s}</span>
+        )}
+        {after.length > 120 ? after.slice(0, 120) + '…' : after}
+      </span>
+    )
   }
 
   return (
@@ -319,277 +351,33 @@ export const PlaybookResultsPanel = ({
               </>
             )}
           </div>
-        ) : selectedRule ? ((() => {
-          /* Harvey-style rule detail — "Text to review" + per-option diff preview */
-          const harvey = getHarveyClassification(selectedRule)
-
-          const occs = selectedRule.occurrences && selectedRule.occurrences.length > 0
-            ? selectedRule.occurrences
-            : selectedRule.found_text
-              ? [{ type: 'standard', phrase: selectedRule.found_text, char_start: 0, char_end: 0, context: '' }]
-              : []
-
-          const allSuggestedOptions = selectedRule.suggested_options && selectedRule.suggested_options.length > 0
-            ? selectedRule.suggested_options
-            : (selectedRule.suggestion || selectedRule.suggested_fix)
-              ? [{ label: 'Предлагаемая правка', type: 'standard', text: selectedRule.suggestion || selectedRule.suggested_fix || '' }]
-              : []
-
-          /** Character-level inline diff: returns equal/delete/insert segments */
-          type DiffPart = { t: 'eq' | 'del' | 'ins'; s: string }
-          const computeDiff = (oldTxt: string, newTxt: string): DiffPart[] => {
-            if (!oldTxt && !newTxt) return []
-            if (!oldTxt) return [{ t: 'ins', s: newTxt }]
-            if (!newTxt) return [{ t: 'del', s: oldTxt }]
-            let i = 0
-            while (i < oldTxt.length && i < newTxt.length && oldTxt[i] === newTxt[i]) i++
-            let j = 0
-            while (j < oldTxt.length - i && j < newTxt.length - i &&
-                   oldTxt[oldTxt.length - 1 - j] === newTxt[newTxt.length - 1 - j]) j++
-            const parts: DiffPart[] = []
-            if (i > 0) parts.push({ t: 'eq', s: oldTxt.slice(0, i) })
-            const om = oldTxt.slice(i, j > 0 ? oldTxt.length - j : undefined)
-            const nm = newTxt.slice(i, j > 0 ? newTxt.length - j : undefined)
-            if (om) parts.push({ t: 'del', s: om })
-            if (nm) parts.push({ t: 'ins', s: nm })
-            if (j > 0) parts.push({ t: 'eq', s: oldTxt.slice(oldTxt.length - j) })
-            return parts
-          }
-
-          /** Render diff preview: context with old phrase struck-through and new phrase in blue */
-          const renderPreview = (occPhrase: string, occCtx: string, optText: string) => {
-            const ctx = occCtx || occPhrase
-            const idx = ctx.toLowerCase().indexOf(occPhrase.toLowerCase())
-            const before = idx !== -1 ? ctx.slice(0, idx) : ''
-            const after = idx !== -1 ? ctx.slice(idx + occPhrase.length) : ''
-            const diff = computeDiff(occPhrase, optText)
-            return (
-              <span>
-                {before}
-                {diff.map((p, pi) =>
-                  p.t === 'eq' ? <span key={pi}>{p.s}</span> :
-                  p.t === 'del' ? <del key={pi} style={{ color: '#dc2626', textDecorationColor: '#dc2626' }}>{p.s}</del> :
-                  <span key={pi} style={{ color: '#2563eb' }}>{p.s}</span>
-                )}
-                {after.length > 120 ? after.slice(0, 120) + '…' : after}
-              </span>
-            )
-          }
-
-          return (
-            <div className="flex flex-col h-full">
-              {/* Header */}
-              <div className="px-4 py-2.5 border-b flex items-center" style={{ borderColor: 'var(--color-border)' }}>
-                <button
-                  onClick={closeRuleDetails}
-                  className="flex items-center justify-center w-7 h-7 rounded hover:bg-gray-100 transition-colors mr-2"
-                  style={{ color: 'var(--color-text-secondary)' }}
-                >
-                  <ChevronLeft className="w-4 h-4" />
-                </button>
-                <div className="flex-1 flex items-center justify-center gap-1.5">
-                  <span className="w-2 h-2 rounded-full flex-shrink-0" style={{ backgroundColor: harvey.color }} />
-                  <span className="text-sm font-semibold" style={{ color: 'var(--color-text-primary)' }}>
-                    {harvey.label}
-                  </span>
-                </div>
-                <div className="w-6 h-6 border rounded flex items-center justify-center flex-shrink-0"
-                  style={{ borderColor: 'var(--color-border)' }}>
-                  <div className="w-2.5 h-2.5 border rounded-sm" style={{ borderColor: 'var(--color-text-tertiary)' }} />
-                </div>
-              </div>
-
-              {/* Scrollable content */}
-              <div className="flex-1 overflow-y-auto">
-                {/* Rule name + guidance */}
-                <div className="px-4 pt-4 pb-3 border-b" style={{ borderColor: 'var(--color-border)' }}>
-                  <h2 className="text-sm font-bold" style={{ color: 'var(--color-text-primary)' }}>
-                    {selectedRule.rule_name}
-                  </h2>
-                  {selectedRule.guidance && (
-                    <p className="text-xs mt-1 leading-relaxed" style={{ color: 'var(--color-text-secondary)' }}>
-                      {selectedRule.guidance}
-                    </p>
-                  )}
-                  {selectedRule.issue_description && (
-                    <p className="text-xs mt-1 leading-relaxed italic" style={{ color: 'var(--color-text-secondary)' }}>
-                      {selectedRule.issue_description}
-                    </p>
-                  )}
-                </div>
-
-                {/* Per-occurrence blocks */}
-                {occs.length > 0 ? occs.map((occ, occIdx) => {
-                  const occOptions = occ.type === 'standard' ? [] : allSuggestedOptions
-                  const occApplyPrefix = `${selectedRule.rule_id}_${occIdx}`
-                  const anyAppliedForOcc = occOptions.some((_, oi) => appliedRules.has(`${occApplyPrefix}_${oi}`))
-                  const nthOcc = occs.slice(0, occIdx).filter(o => o.phrase === occ.phrase).length
-                  const ctxDisplay = (occ.context || occ.phrase).slice(0, 280) + ((occ.context || occ.phrase).length > 280 ? '…' : '')
-
-                  return (
-                    <div key={occIdx} className="px-4 py-4 border-b" style={{ borderColor: 'var(--color-border)' }}>
-                      {occs.length > 1 && (
-                        <p className="text-xs font-semibold mb-2" style={{ color: 'var(--color-text-tertiary)' }}>
-                          Вхождение #{occIdx + 1}
-                        </p>
-                      )}
-
-                      {/* Text to review */}
-                      <p className="text-xs font-semibold mb-1.5" style={{ color: 'var(--color-text-secondary)' }}>
-                        Text to review
-                      </p>
-                      <div className="rounded-lg px-3 py-2.5 text-sm leading-relaxed mb-1"
-                        style={{ backgroundColor: 'var(--color-bg-secondary, #f3f4f6)', color: 'var(--color-text-primary)' }}>
-                        {ctxDisplay}
-                      </div>
-
-                      {/* Navigate to text */}
-                      {onScrollToText && occ.phrase && (
-                        <button
-                          onClick={() => {
-                            const found = onScrollToText(occ.phrase, nthOcc)
-                            if (!found) toast.warning('Текст не найден в документе')
-                          }}
-                          className="flex items-center gap-1 text-xs mb-4 transition-colors hover:opacity-70"
-                          style={{ color: 'var(--color-text-secondary)' }}
-                        >
-                          <Eye className="w-3 h-3" />
-                          Перейти к тексту
-                        </button>
-                      )}
-
-                      {/* Standard — just show it's correct */}
-                      {occ.type === 'standard' && (
-                        <div className="flex items-center gap-1.5 text-xs" style={{ color: '#16a34a' }}>
-                          <Check className="w-3.5 h-3.5" />
-                          Соответствует стандарту
-                        </div>
-                      )}
-
-                      {/* Fix options with diff preview */}
-                      {occOptions.map((opt, optIdx) => {
-                        const applyKey = `${occApplyPrefix}_${optIdx}`
-                        const isApplied = appliedRules.has(applyKey)
-                        const otherApplied = anyAppliedForOcc && !isApplied
-                        const optLabel = opt.label || (opt.type === 'standard' ? 'Standard position' : `Fallback ${optIdx}`)
-
-                        return (
-                          <div key={optIdx} className="pt-3 mt-1 border-t" style={{ borderColor: 'var(--color-border)' }}>
-                            {/* Option title */}
-                            <p className="text-sm font-semibold mb-0.5" style={{ color: 'var(--color-text-primary)' }}>
-                              {optLabel}
-                            </p>
-                            {/* Short description */}
-                            <p className="text-xs leading-relaxed mb-2" style={{ color: 'var(--color-text-secondary)' }}>
-                              {opt.type === 'standard'
-                                ? 'Привести формулировку к стандартной позиции.'
-                                : 'Заменить на запасной вариант формулировки.'}
-                            </p>
-
-                            {otherApplied && (
-                              <p className="text-xs italic mb-2" style={{ color: 'var(--color-text-tertiary)' }}>
-                                Another suggestion has been applied
-                              </p>
-                            )}
-
-                            {/* Preview changes */}
-                            <p className="text-xs font-semibold mb-1" style={{ color: 'var(--color-text-secondary)' }}>
-                              Preview changes:
-                            </p>
-                            <div className="rounded-lg px-3 py-2.5 text-sm leading-relaxed mb-3"
-                              style={{ backgroundColor: 'var(--color-bg-secondary, #f3f4f6)', color: 'var(--color-text-primary)' }}>
-                              {renderPreview(occ.phrase, occ.context || '', opt.text)}
-                            </div>
-
-                            {/* Action buttons */}
-                            <div className="flex items-center justify-end gap-5">
-                              {isApplied ? (
-                                <span className="flex items-center gap-1 text-xs font-medium" style={{ color: '#16a34a' }}>
-                                  <Check className="w-3.5 h-3.5" />
-                                  Applied
-                                </span>
-                              ) : onApplyFix && occ.phrase && opt.text ? (
-                                <button
-                                  onClick={() => {
-                                    const success = onApplyFix(occ.phrase, opt.text)
-                                    if (success) {
-                                      setAppliedRules(prev => new Set(prev).add(applyKey))
-                                      toast.success('Правка применена')
-                                    } else {
-                                      toast.error('Не удалось найти текст в документе')
-                                    }
-                                  }}
-                                  className="text-xs font-semibold transition-colors hover:opacity-70"
-                                  style={{ color: 'var(--color-accent, #6366f1)' }}
-                                >
-                                  Apply changes
-                                </button>
-                              ) : null}
-                            </div>
-                          </div>
-                        )
-                      })}
-                    </div>
-                  )
-                }) : (
-                  /* No occurrences found — show not_found state */
-                  <div className="px-4 py-4">
-                    <p className="text-xs font-semibold mb-1.5" style={{ color: 'var(--color-text-secondary)' }}>
-                      Text to review
-                    </p>
-                    <div className="rounded-lg px-3 py-2.5 text-sm italic"
-                      style={{ backgroundColor: 'var(--color-bg-secondary, #f3f4f6)', color: 'var(--color-text-secondary)' }}>
-                      {selectedRule.issue_description || 'Соответствующий пункт не найден в документе.'}
-                    </div>
-
-                    {/* Show suggested options without diff (no found phrase to compare) */}
-                    {allSuggestedOptions.map((opt, optIdx) => (
-                      <div key={optIdx} className="pt-3 mt-3 border-t" style={{ borderColor: 'var(--color-border)' }}>
-                        <p className="text-sm font-semibold mb-0.5" style={{ color: 'var(--color-text-primary)' }}>
-                          {opt.label || (opt.type === 'standard' ? 'Standard position' : `Fallback ${optIdx}`)}
-                        </p>
-                        <div className="rounded-lg px-3 py-2.5 text-sm leading-relaxed mt-2"
-                          style={{ backgroundColor: 'var(--color-bg-secondary, #f3f4f6)', color: '#2563eb' }}>
-                          {opt.text.length > 300 ? opt.text.slice(0, 300) + '…' : opt.text}
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-            </div>
-          )
-        })())
-        : (
-          /* Сводный список групп и правил, как на первом экране Harvey */
+        ) : (
+          /* Accordion: groups → rules expand inline */
           <>
             {violations.length === 0 && warnings.length === 0 && passed.length === 0 ? (
               <div className="text-center py-12">
                 <FileText className="w-10 h-10 mx-auto mb-3" style={{ color: 'var(--color-text-tertiary)' }} />
-                <p style={{ color: 'var(--color-text-secondary)' }}>
-                  Нет результатов для отображения
-                </p>
+                <p style={{ color: 'var(--color-text-secondary)' }}>Нет результатов для отображения</p>
               </div>
             ) : (
-              <div style={{ borderColor: 'var(--color-border)' }}>
+              <div>
                 {[
                   { id: 'needs_review', title: 'Требует проверки', dotClass: 'bg-yellow-400', rules: warnings },
                   { id: 'not_acceptable', title: 'Нарушения', dotClass: 'bg-red-500', rules: violations },
                   { id: 'acceptable', title: 'Приемлемо', dotClass: 'bg-green-500', rules: passed },
                 ].map(group => {
                   if (group.rules.length === 0) return null
-                  const open = expandedGroups.has(group.id)
+                  const groupOpen = expandedGroups.has(group.id)
                   return (
                     <div key={group.id} className="border-b" style={{ borderColor: 'var(--color-border)' }}>
+                      {/* Group header */}
                       <button
-                        onClick={() => {
-                          setExpandedGroups(prev => {
-                            const next = new Set(prev)
-                            if (next.has(group.id)) next.delete(group.id)
-                            else next.add(group.id)
-                            return next
-                          })
-                        }}
+                        onClick={() => setExpandedGroups(prev => {
+                          const next = new Set(prev)
+                          if (next.has(group.id)) next.delete(group.id)
+                          else next.add(group.id)
+                          return next
+                        })}
                         className="w-full flex items-center justify-between px-4 py-3 text-left hover:bg-gray-50"
                       >
                         <div className="flex items-center gap-2">
@@ -601,47 +389,192 @@ export const PlaybookResultsPanel = ({
                             {group.rules.length} правил
                           </span>
                         </div>
-                        {open ? (
-                          <ChevronDown className="w-4 h-4" style={{ color: 'var(--color-text-tertiary)' }} />
-                        ) : (
-                          <ChevronRight className="w-4 h-4" style={{ color: 'var(--color-text-tertiary)' }} />
-                        )}
+                        {groupOpen
+                          ? <ChevronDown className="w-4 h-4" style={{ color: 'var(--color-text-tertiary)' }} />
+                          : <ChevronRight className="w-4 h-4" style={{ color: 'var(--color-text-tertiary)' }} />}
                       </button>
 
-                      {open && (
-                        <div className="divide-y" style={{ borderColor: 'var(--color-border)' }}>
-                          {group.rules.map((rule) => {
-                            const harvey = getHarveyClassification(rule)
+                      {groupOpen && (
+                        <div>
+                          {group.rules.map(rule => {
+                            const ruleOpen = expandedRuleId === rule.rule_id
+                            const ruleOccs = rule.occurrences && rule.occurrences.length > 0
+                              ? rule.occurrences
+                              : rule.found_text
+                                ? [{ type: 'standard', phrase: rule.found_text, char_start: 0, char_end: 0, context: '' }]
+                                : []
+                            const ruleSuggestedOptions = rule.suggested_options && rule.suggested_options.length > 0
+                              ? rule.suggested_options
+                              : (rule.suggestion || rule.suggested_fix)
+                                ? [{ label: 'Предлагаемая правка', type: 'standard', text: rule.suggestion || rule.suggested_fix || '' }]
+                                : []
+
                             return (
-                              <div key={rule.rule_id} className="transition-colors hover:bg-gray-50/50">
-                                {/* Rule Header — краткий список как в Harvey */}
+                              <div key={rule.rule_id} className="border-t" style={{ borderColor: 'var(--color-border)' }}>
+                                {/* Rule row — click to expand inline */}
                                 <button
-                                  onClick={() => openRuleDetails(rule)}
-                                  className="w-full flex items-start gap-3 p-4 text-left"
+                                  onClick={() => setExpandedRuleId(ruleOpen ? null : rule.rule_id)}
+                                  className="w-full flex items-start gap-3 px-4 py-3 text-left hover:bg-gray-50/70 transition-colors"
                                 >
                                   <div className="flex-1 min-w-0">
-                                    <div className="flex items-center gap-2 mb-1.5 flex-wrap">
-                                      <span
-                                        className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-xs font-semibold"
-                                        style={{ color: harvey.color, backgroundColor: harvey.bg, border: `1px solid ${harvey.border}` }}
-                                      >
-                                        {harvey.icon} {harvey.label}
-                                      </span>
-                                      {getRuleTypeBadge(rule.rule_type)}
-                                    </div>
                                     <span className="font-medium text-sm" style={{ color: 'var(--color-text-primary)' }}>
                                       {rule.rule_name}
                                     </span>
-                                    {rule.issue_description && rule.status !== 'passed' && (
-                                      <p className="text-xs mt-1 line-clamp-2" style={{ color: 'var(--color-text-secondary)' }}>
+                                    {rule.issue_description && rule.status !== 'passed' && !ruleOpen && (
+                                      <p className="text-xs mt-0.5 line-clamp-2" style={{ color: 'var(--color-text-secondary)' }}>
                                         {rule.issue_description}
                                       </p>
                                     )}
                                   </div>
-                                  <div className="shrink-0 mt-1">
-                                    <ChevronRight className="w-4 h-4" style={{ color: 'var(--color-text-tertiary)' }} />
-                                  </div>
+                                  {ruleOpen
+                                    ? <ChevronDown className="w-4 h-4 shrink-0 mt-0.5" style={{ color: 'var(--color-text-tertiary)' }} />
+                                    : <ChevronRight className="w-4 h-4 shrink-0 mt-0.5" style={{ color: 'var(--color-text-tertiary)' }} />}
                                 </button>
+
+                                {/* Inline expanded detail */}
+                                {ruleOpen && (
+                                  <div className="border-t" style={{ borderColor: 'var(--color-border)', backgroundColor: 'var(--color-bg-secondary, #fafafa)' }}>
+
+                                    {/* AI summary */}
+                                    {(rule.reasoning || rule.issue_description) && (
+                                      <div className="px-4 py-3 border-b" style={{ borderColor: 'var(--color-border)' }}>
+                                        <p className="text-xs font-semibold mb-1" style={{ color: 'var(--color-text-tertiary)' }}>
+                                          Анализ системы
+                                        </p>
+                                        <p className="text-sm leading-relaxed" style={{ color: 'var(--color-text-secondary)' }}>
+                                          {rule.reasoning || rule.issue_description}
+                                        </p>
+                                      </div>
+                                    )}
+
+                                    {/* Lawyer guidance */}
+                                    {rule.guidance && (
+                                      <div className="px-4 py-3 border-b" style={{ borderColor: 'var(--color-border)' }}>
+                                        <p className="text-xs font-semibold mb-1" style={{ color: 'var(--color-text-tertiary)' }}>
+                                          Руководство юриста
+                                        </p>
+                                        <p className="text-sm leading-relaxed" style={{ color: 'var(--color-text-secondary)' }}>
+                                          {rule.guidance}
+                                        </p>
+                                      </div>
+                                    )}
+
+                                    {/* Occurrences */}
+                                    {ruleOccs.length > 0 ? ruleOccs.map((occ, occIdx) => {
+                                      const occOptions = occ.type === 'standard' ? [] : ruleSuggestedOptions
+                                      const occApplyPrefix = `${rule.rule_id}_${occIdx}`
+                                      const anyApplied = occOptions.some((_, oi) => appliedRules.has(`${occApplyPrefix}_${oi}`))
+                                      const nthOcc = ruleOccs.slice(0, occIdx).filter(o => o.phrase === occ.phrase).length
+                                      const ctxDisplay = (occ.context || occ.phrase).slice(0, 280) + ((occ.context || occ.phrase).length > 280 ? '…' : '')
+
+                                      return (
+                                        <div key={occIdx} className="border-b" style={{ borderColor: 'var(--color-border)' }}>
+                                          {ruleOccs.length > 1 && (
+                                            <p className="px-4 pt-3 text-xs font-semibold" style={{ color: 'var(--color-text-tertiary)' }}>
+                                              Вхождение #{occIdx + 1}
+                                            </p>
+                                          )}
+                                          <div className="px-4 pt-3 pb-2">
+                                            <p className="text-xs font-semibold mb-1.5" style={{ color: 'var(--color-text-secondary)' }}>
+                                              Текст для проверки
+                                            </p>
+                                            <div className="rounded-lg px-3 py-2 text-sm leading-relaxed"
+                                              style={{ backgroundColor: 'var(--color-bg-primary)', color: 'var(--color-text-primary)', border: '1px solid var(--color-border)' }}>
+                                              {ctxDisplay}
+                                            </div>
+                                            {onScrollToText && occ.phrase && (
+                                              <button
+                                                onClick={() => {
+                                                  const found = onScrollToText(occ.phrase, nthOcc)
+                                                  if (!found) toast.warning('Текст не найден в документе')
+                                                }}
+                                                className="flex items-center gap-1 text-xs mt-1.5 hover:opacity-70 transition-colors"
+                                                style={{ color: 'var(--color-text-tertiary)' }}
+                                              >
+                                                <Eye className="w-3 h-3" />
+                                                Перейти к тексту
+                                              </button>
+                                            )}
+                                          </div>
+
+                                          {occ.type === 'standard' && (
+                                            <div className="px-4 pb-3 flex items-center gap-1.5 text-xs" style={{ color: '#16a34a' }}>
+                                              <Check className="w-3.5 h-3.5" />
+                                              Соответствует стандарту
+                                            </div>
+                                          )}
+
+                                          {occOptions.map((opt, optIdx) => {
+                                            const applyKey = `${occApplyPrefix}_${optIdx}`
+                                            const isApplied = appliedRules.has(applyKey)
+                                            const otherApplied = anyApplied && !isApplied
+                                            const optLabel = opt.label || (opt.type === 'standard' ? 'Стандартная позиция' : `Запасной вариант ${optIdx + 1}`)
+                                            return (
+                                              <div key={optIdx} className="px-4 py-3 border-t" style={{ borderColor: 'var(--color-border)' }}>
+                                                <p className="text-xs font-semibold mb-0.5" style={{ color: 'var(--color-text-primary)' }}>
+                                                  {optLabel}
+                                                </p>
+                                                {otherApplied && (
+                                                  <p className="text-xs italic mb-1" style={{ color: 'var(--color-text-tertiary)' }}>
+                                                    Другой вариант уже применён
+                                                  </p>
+                                                )}
+                                                <div className="rounded-lg px-3 py-2 text-sm leading-relaxed mb-2 mt-1"
+                                                  style={{ backgroundColor: 'var(--color-bg-primary)', color: 'var(--color-text-primary)', border: '1px solid var(--color-border)' }}>
+                                                  {renderPreview(occ.phrase, occ.context || '', opt.text)}
+                                                </div>
+                                                <div className="flex justify-end">
+                                                  {isApplied ? (
+                                                    <span className="flex items-center gap-1 text-xs font-medium" style={{ color: '#16a34a' }}>
+                                                      <Check className="w-3 h-3" /> Применено
+                                                    </span>
+                                                  ) : onApplyFix && occ.phrase && opt.text ? (
+                                                    <button
+                                                      onClick={() => {
+                                                        const success = onApplyFix(occ.phrase, opt.text)
+                                                        if (success) {
+                                                          setAppliedRules(prev => new Set(prev).add(applyKey))
+                                                          toast.success('Правка применена')
+                                                        } else {
+                                                          toast.error('Не удалось найти текст')
+                                                        }
+                                                      }}
+                                                      className="text-xs font-semibold px-3 py-1 rounded-md hover:opacity-80 transition-colors"
+                                                      style={{ backgroundColor: 'var(--color-accent, #6366f1)', color: '#fff' }}
+                                                    >
+                                                      Применить
+                                                    </button>
+                                                  ) : null}
+                                                </div>
+                                              </div>
+                                            )
+                                          })}
+                                        </div>
+                                      )
+                                    }) : (
+                                      <div className="px-4 py-3">
+                                        <p className="text-xs font-semibold mb-1.5" style={{ color: 'var(--color-text-secondary)' }}>
+                                          Текст для проверки
+                                        </p>
+                                        <div className="rounded-lg px-3 py-2 text-xs italic"
+                                          style={{ backgroundColor: 'var(--color-bg-primary)', color: 'var(--color-text-secondary)', border: '1px solid var(--color-border)' }}>
+                                          {rule.issue_description || 'Пункт не найден в документе.'}
+                                        </div>
+                                        {ruleSuggestedOptions.map((opt, optIdx) => (
+                                          <div key={optIdx} className="pt-3 mt-3 border-t" style={{ borderColor: 'var(--color-border)' }}>
+                                            <p className="text-xs font-semibold mb-1" style={{ color: 'var(--color-text-primary)' }}>
+                                              {opt.label || (opt.type === 'standard' ? 'Стандартная позиция' : `Запасной вариант ${optIdx + 1}`)}
+                                            </p>
+                                            <div className="rounded-lg px-3 py-2 text-sm mt-1"
+                                              style={{ backgroundColor: 'var(--color-bg-primary)', color: '#2563eb', border: '1px solid var(--color-border)' }}>
+                                              {opt.text.length > 300 ? opt.text.slice(0, 300) + '…' : opt.text}
+                                            </div>
+                                          </div>
+                                        ))}
+                                      </div>
+                                    )}
+                                  </div>
+                                )}
                               </div>
                             )
                           })}
