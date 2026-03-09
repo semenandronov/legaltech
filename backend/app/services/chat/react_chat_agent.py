@@ -1080,10 +1080,14 @@ ID дела: {self.case_id}
                 
             except Exception as stream_error:
                 logger.warning(f"[ReActChatAgent] Stream error: {stream_error}, trying sync invoke")
+                # If direct result was already streamed, don't append a fallback error on top
+                if direct_result_streamed:
+                    logger.info("[ReActChatAgent] Direct result already streamed — skipping fallback after stream error")
+                    return
                 result = await self._invoke_agent_sync(input_data)
                 if result:
                     yield SSESerializer.text_delta(result)
-                    
+
                     # Post-processing
                     if self.enable_reflection or self.enable_citation_verification:
                         async for event in self._post_process_answer(question, result):
@@ -1094,7 +1098,9 @@ ID дела: {self.case_id}
                     
         except Exception as e:
             logger.error(f"[ReActChatAgent] Agent error: {e}", exc_info=True)
-            # Fallback на простой RAG
+            if direct_result_streamed:
+                logger.info("[ReActChatAgent] Direct result already streamed — skipping fallback")
+                return
             fallback_response = await self._fallback_response(question)
             yield SSESerializer.text_delta(fallback_response)
     

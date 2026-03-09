@@ -475,8 +475,8 @@ def extract_structured_data(entity_types: str = "dates,amounts,persons,organizat
         # Build numbered per-file context: [N] filename:\n <text>
         context_parts = []
         for i, f in enumerate(files_with_text, 1):
-            context_parts.append(f"[{i}] {f.filename}:\n{f.original_text[:3000]}")
-        context = "\n\n".join(context_parts)[:20000]
+            context_parts.append(f"[{i}] {f.filename}:\n{f.original_text[:1500]}")
+        context = "\n\n".join(context_parts)[:12000]
 
         # Парсим типы сущностей
         types_list = [t.strip() for t in entity_types.split(",")]
