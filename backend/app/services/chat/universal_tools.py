@@ -460,44 +460,23 @@ def extract_structured_data(entity_types: str = "dates,amounts,persons,organizat
         from app.services.llm_factory import create_legal_llm
         from langchain_core.messages import HumanMessage, SystemMessage
         
-        # Build entity-specific RAG query so top chunks are most relevant to what's being extracted
-        _ENTITY_QUERY_MAP = {
-            "dates": "даты сроки события договор подписано",
-            "amounts": "суммы стоимость цена оплата рублей",
-            "persons": "имена фамилии лица стороны представители",
-            "organizations": "организации компании юридические лица стороны",
-        }
-        types_list_for_query = [t.strip() for t in entity_types.split(",")]
-        rag_query = " ".join(
-            _ENTITY_QUERY_MAP.get(t, t) for t in types_list_for_query
-        ) or "ключевые факты даты суммы имена организации"
+        # Load ALL files directly from DB — guarantees 100% coverage of every document.
+        # Vector search (k=50) was previously used but could miss documents with low
+        # query similarity, causing incomplete entity lists.
+        from app.models.case import File as FileModel
+        all_files = _db.query(FileModel).filter(FileModel.case_id == _case_id).all()
+        files_with_text = [f for f in all_files if f.original_text]
 
-        # Получаем контекст из документов
-        documents = _rag_service.retrieve_context(
-            case_id=_case_id,
-            query=rag_query,
-            k=50,
-            db=_db
-        )
-
-        if not documents:
+        if not files_with_text:
             return "Документы не найдены для извлечения данных."
 
-        # Group RAG chunks by source file, preserving order of first appearance
-        files_map: dict = {}  # fname -> list of docs
-        for doc in documents:
-            fname = doc.metadata.get("source_file", "Документ")
-            files_map.setdefault(fname, []).append(doc)
+        file_order = [f.filename for f in files_with_text]
 
-        file_order = list(files_map.keys())
-
-        # Build numbered per-file context: [1] filename:\n <text>
+        # Build numbered per-file context: [N] filename:\n <text>
         context_parts = []
-        for i, fname in enumerate(file_order, 1):
-            chunks = files_map[fname]
-            file_text = "\n".join(d.page_content for d in chunks)[:2500]
-            context_parts.append(f"[{i}] {fname}:\n{file_text}")
-        context = "\n\n".join(context_parts)[:15000]
+        for i, f in enumerate(files_with_text, 1):
+            context_parts.append(f"[{i}] {f.filename}:\n{f.original_text[:3000]}")
+        context = "\n\n".join(context_parts)[:20000]
 
         # Парсим типы сущностей
         types_list = [t.strip() for t in entity_types.split(",")]
@@ -532,31 +511,20 @@ def extract_structured_data(entity_types: str = "dates,amounts,persons,organizat
         result = response.content if hasattr(response, 'content') else str(response)
         logger.info(f"[UniversalTools] extract_structured_data: извлечены {entity_types}")
 
-        # Populate _used_sources — one entry per source file with best matching chunk
+        # Populate _used_sources — one entry per file (same order as context [N])
         global _used_sources, _last_direct_result
         _used_sources = []
         try:
-            from app.models.case import File as FileModel
-            db_files = _db.query(FileModel).filter(FileModel.case_id == _case_id).all()
-            fname_to_id = {f.filename: str(f.id) for f in db_files}
-            # Parse LLM result to extract entity-level quotes for precise highlighting
             entity_quotes = _parse_entity_quotes(result, len(file_order))
-            for i, fname in enumerate(file_order, 1):
-                chunks = files_map[fname]
-                file_id = fname_to_id.get(fname, "")
-                best_chunk = chunks[0]  # First chunk = highest RAG relevance score
-                # Use entity-parsed quote if available (much shorter, more precise highlight)
-                quote = entity_quotes.get(i, best_chunk.page_content[:200])
-                _bpage = best_chunk.metadata.get("source_page")
-                if _bpage is None:
-                    _bpage = best_chunk.metadata.get("page")
+            for i, f in enumerate(files_with_text, 1):
+                quote = entity_quotes.get(i, f.original_text[:200])
                 _used_sources.append({
-                    "source_id": file_id,
-                    "file_name": fname,
-                    "page": _bpage,
+                    "source_id": str(f.id),
+                    "file_name": f.filename,
+                    "page": 1,
                     "quote": quote,
-                    "char_start": best_chunk.metadata.get("char_start"),
-                    "char_end": best_chunk.metadata.get("char_end"),
+                    "char_start": None,
+                    "char_end": None,
                     "source_type": "document",
                 })
         except Exception as src_err:
