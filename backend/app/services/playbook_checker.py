@@ -1171,18 +1171,37 @@ class PlaybookChecker:
 
             if any(fb and fb in text_lower for fb in fallbacks_lower):
                 # Fallback — допустимо, но лучше стандарт
+                # Find the specific fallback phrase that matched (for accurate diff in UI)
+                matched_fb = next(
+                    (fb for fb in fallback_positions if fb and fb.lower() in text_lower), None
+                )
+                fb_idx = text_lower.find(matched_fb.lower()) if matched_fb else -1
+                fb_context = ""
+                if matched_fb and fb_idx != -1:
+                    ctx_start = max(0, fb_idx - 80)
+                    ctx_end = min(len(clause.text), fb_idx + len(matched_fb) + 80)
+                    fb_context = clause.text[ctx_start:ctx_end]
                 suggested_options: List[Dict[str, Any]] = []
                 if standard_position:
                     suggested_options.append(
                         {"label": "Standard position", "type": "standard", "text": standard_position}
                     )
+                fallback_occurrences = []
+                if matched_fb and fb_idx != -1:
+                    fallback_occurrences = [{
+                        "type": "fallback",
+                        "phrase": clause.text[fb_idx:fb_idx + len(matched_fb)],
+                        "char_start": fb_idx,
+                        "char_end": fb_idx + len(matched_fb),
+                        "context": fb_context,
+                    }]
                 return RuleCheckResult(
                     rule_id=rule.id,
                     rule_name=rule.rule_name,
                     rule_type=rule.rule_type,
                     clause_category=rule.clause_category,
                     status="warning",
-                    found_text=clause.text[:1000],
+                    found_text=matched_fb or clause.text[:200],
                     location=clause.location,
                     issue_description="Формулировка соответствует запасному варианту. Лучше привести к стандарту.",
                     suggested_fix=standard_position or "",
@@ -1191,10 +1210,20 @@ class PlaybookChecker:
                     ui_status="needs_review",
                     guidance=guidance,
                     suggested_options=suggested_options,
+                    occurrences=fallback_occurrences,
                 )
 
             if any(ua and ua in text_lower for ua in unacc_lower):
-                # Недопустимый текст
+                # Недопустимый текст — найти конкретную matched фразу
+                matched_ua = next(
+                    (ua for ua in unacceptable_phrases if ua and ua.lower() in text_lower), None
+                )
+                ua_idx = text_lower.find(matched_ua.lower()) if matched_ua else -1
+                ua_context = ""
+                if matched_ua and ua_idx != -1:
+                    ctx_start = max(0, ua_idx - 80)
+                    ctx_end = min(len(clause.text), ua_idx + len(matched_ua) + 80)
+                    ua_context = clause.text[ctx_start:ctx_end]
                 suggested_options: List[Dict[str, Any]] = []
                 if standard_position:
                     suggested_options.append(
@@ -1205,13 +1234,22 @@ class PlaybookChecker:
                         suggested_options.append(
                             {"label": f"Fallback {idx + 1}", "type": "fallback", "text": fb}
                         )
+                unac_occurrences = []
+                if matched_ua and ua_idx != -1:
+                    unac_occurrences = [{
+                        "type": "unacceptable",
+                        "phrase": clause.text[ua_idx:ua_idx + len(matched_ua)],
+                        "char_start": ua_idx,
+                        "char_end": ua_idx + len(matched_ua),
+                        "context": ua_context,
+                    }]
                 return RuleCheckResult(
                     rule_id=rule.id,
                     rule_name=rule.rule_name,
                     rule_type=rule.rule_type,
                     clause_category=rule.clause_category,
                     status="violation",
-                    found_text=clause.text[:1000],
+                    found_text=matched_ua or clause.text[:200],
                     location=clause.location,
                     issue_description="Формулировка относится к недопустимым. Требуется замена.",
                     suggested_fix=standard_position or (fallback_positions[0] if fallback_positions else ""),
@@ -1220,6 +1258,7 @@ class PlaybookChecker:
                     ui_status="not_acceptable",
                     guidance=guidance,
                     suggested_options=suggested_options,
+                    occurrences=unac_occurrences,
                 )
 
             # Не попали ни в одну категорию — требуется ручная проверка

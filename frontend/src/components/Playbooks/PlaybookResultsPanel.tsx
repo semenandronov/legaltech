@@ -333,7 +333,31 @@ export const PlaybookResultsPanel = ({
             const ruleOccs = rule.occurrences && rule.occurrences.length > 0
               ? rule.occurrences
               : rule.found_text
-                ? [{ type: rule.status === 'passed' ? 'standard' : 'unacceptable', phrase: rule.found_text, char_start: 0, char_end: 0, context: '' }]
+                ? (() => {
+                    // When found_text is the entire clause (LLM path), try to extract
+                    // the specific fallback/standard phrase from it for a useful diff
+                    const ft = rule.found_text
+                    if (ft.length > 200) {
+                      const fbPhrasesList = rule.rule_fallback_phrases || []
+                      const stdPhrasesList = rule.rule_standard_phrases || []
+                      const unacPhrasesList = rule.rule_unacceptable_phrases || []
+                      const allPhrases: Array<{ phrase: string; type: string }> = [
+                        ...unacPhrasesList.map(p => ({ phrase: p, type: 'unacceptable' })),
+                        ...fbPhrasesList.map(p => ({ phrase: p, type: 'fallback' })),
+                        ...stdPhrasesList.map(p => ({ phrase: p, type: 'standard' })),
+                      ]
+                      for (const { phrase, type } of allPhrases) {
+                        if (!phrase) continue
+                        const idx = ft.toLowerCase().indexOf(phrase.toLowerCase())
+                        if (idx !== -1) {
+                          const ctxStart = Math.max(0, idx - 80)
+                          const ctxEnd = Math.min(ft.length, idx + phrase.length + 80)
+                          return [{ type, phrase: ft.slice(idx, idx + phrase.length), char_start: idx, char_end: idx + phrase.length, context: ft.slice(ctxStart, ctxEnd) }]
+                        }
+                      }
+                    }
+                    return [{ type: rule.status === 'passed' ? 'standard' : 'unacceptable', phrase: ft, char_start: 0, char_end: 0, context: '' }]
+                  })()
                 : []
             const ruleSuggestedOptions = rule.suggested_options && rule.suggested_options.length > 0
               ? rule.suggested_options
