@@ -1396,6 +1396,35 @@ class PlaybookChecker:
             already_found = {occ["char_start"] for occ in post_occurrences}
             variants = self._find_all_name_variants(standard_position, document_text, already_found)
             post_occurrences.extend(variants)
+            # If keyword scan found standard variants AND LLM was uncertain (unknown),
+            # trust the scan — upgrade status to passed.
+            if variants and classification == "unknown" and status == "warning":
+                status = "passed"
+                ui_status = "acceptable"
+                issue_description = ""
+                suggested_options = []
+
+        # Keyword-based scan for fallback variants (catches "Иванов Е Г" when fallback is "Иванов Е.Г.")
+        if fallback_positions and document_text:
+            for fb in fallback_positions:
+                if not fb:
+                    continue
+                already_found = {occ["char_start"] for occ in post_occurrences}
+                fb_variants = self._find_all_name_variants(fb, document_text, already_found)
+                for v in fb_variants:
+                    v["type"] = "fallback"
+                post_occurrences.extend(fb_variants)
+                if fb_variants and status == "passed":
+                    status = "warning"
+                    ui_status = "needs_review"
+                    issue_description = (
+                        "Найдены стандартные и запасные формулировки. "
+                        "Запасные рекомендуется привести к стандартной позиции."
+                    )
+                    suggested_options = (
+                        [{"label": "Standard position", "type": "standard", "text": standard_position}]
+                        if standard_position else []
+                    )
 
         # found_text: use exact phrase from first post-scan occurrence when available
         # (most precise — actual text in document, right length for scrollToText)
