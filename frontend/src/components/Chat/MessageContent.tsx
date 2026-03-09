@@ -223,11 +223,15 @@ const MessageContent: React.FC<MessageContentProps> = ({
       const lines = text.split('\n')
       let currentDocNum: number | null = null
       text = lines.map(line => {
-        // Detect "1. Из файла / из документа / в документе" etc.
-        const sectionMatch = line.match(/^\s*(\d+)\.\s+(?:[^\n]*(?:файл|документ|doc)[^\n]*:)/i)
+        // Detect numbered document section headers: "1. <anything>:" or "1. **<anything>**"
+        // Only when N is within the range of available sources
+        const sectionMatch = line.match(/^\s*(\d+)\.\s+.+[:\s]*$/)
         if (sectionMatch) {
-          currentDocNum = parseInt(sectionMatch[1], 10)
-          return line
+          const num = parseInt(sectionMatch[1], 10)
+          if (num >= 1 && num <= sources.length) {
+            currentDocNum = num
+            return line
+          }
         }
         // Bullet under a document section — inject [N] if no citation yet
         if (currentDocNum !== null && /^\s*[-•*]\s+\S/.test(line) && !/\[\d/.test(line)) {
