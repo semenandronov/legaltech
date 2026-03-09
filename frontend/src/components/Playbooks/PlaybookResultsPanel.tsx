@@ -146,20 +146,12 @@ export const PlaybookResultsPanel = ({
   const warnings = (result?.results || []).filter(r => r.status === 'warning' || r.rule_type === 'fallback')
   const passed = (result?.results || []).filter(r => r.status === 'passed')
 
-  // Count occurrences by type across all rules for the compliance bar
+  // Count bar segments by rule status (consistent with group logic)
   let barStandard = 0, barFallback = 0, barUnacceptable = 0
   for (const rule of result?.results || []) {
-    if (rule.occurrences && rule.occurrences.length > 0) {
-      for (const occ of rule.occurrences) {
-        if (occ.type === 'standard') barStandard++
-        else if (occ.type === 'fallback') barFallback++
-        else if (occ.type === 'unacceptable') barUnacceptable++
-      }
-    } else {
-      if (rule.status === 'passed') barStandard++
-      else if (rule.status === 'warning') barFallback++
-      else if (rule.status === 'violation' || rule.status === 'error') barUnacceptable++
-    }
+    if (rule.status === 'passed') barStandard++
+    else if (rule.status === 'warning' || rule.rule_type === 'fallback') barFallback++
+    else if (rule.status === 'violation' || rule.status === 'not_found' || rule.status === 'error') barUnacceptable++
   }
   const totalForBar = (barStandard + barFallback + barUnacceptable) || 1
 
