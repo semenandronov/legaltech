@@ -101,7 +101,7 @@ export const PlaybookResultsPanel = ({
   const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set())
   const [appliedRules, setAppliedRules] = useState<Set<string>>(new Set())
   const [expandedRuleId, setExpandedRuleId] = useState<string | null>(null)
-  const [expandedFullRule, setExpandedFullRule] = useState<Set<string>>(new Set())
+  const [collapsedFullRule, setCollapsedFullRule] = useState<Set<string>>(new Set())
 
   const effectivePlaybookName =
     result?.playbook_name ||
@@ -415,17 +415,17 @@ export const PlaybookResultsPanel = ({
                                       </div>
                                     )}
 
-                                    {/* Full rule definition — collapsible */}
+                                    {/* Full rule definition — collapsible, open by default */}
                                     {(() => {
                                       const stdOptions = (rule.suggested_options || []).filter(o => o.type === 'standard')
                                       const fbOptions = (rule.suggested_options || []).filter(o => o.type === 'fallback')
                                       const unacOccs = ruleOccs.filter(o => o.type === 'unacceptable')
                                       if (stdOptions.length === 0 && fbOptions.length === 0 && unacOccs.length === 0) return null
-                                      const frOpen = expandedFullRule.has(rule.rule_id)
+                                      const frOpen = !collapsedFullRule.has(rule.rule_id)
                                       return (
                                         <div className="border-b" style={{ borderColor: 'var(--color-border)' }}>
                                           <button
-                                            onClick={() => setExpandedFullRule(prev => {
+                                            onClick={() => setCollapsedFullRule(prev => {
                                               const next = new Set(prev)
                                               if (next.has(rule.rule_id)) next.delete(rule.rule_id)
                                               else next.add(rule.rule_id)
