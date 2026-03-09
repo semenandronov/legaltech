@@ -15,7 +15,6 @@ import {
   Download,
   RefreshCw,
   Lightbulb,
-  CheckCheck,
   Check,
 } from 'lucide-react'
 import { toast } from 'sonner'
@@ -91,7 +90,6 @@ interface PlaybookResultsPanelProps {
 export const PlaybookResultsPanel = ({
   result,
   onClose,
-  onNavigateToIssue,
   onScrollToText,
   onApplyFix,
   onRerun,
@@ -104,7 +102,6 @@ export const PlaybookResultsPanel = ({
   const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set())
   const [appliedRules, setAppliedRules] = useState<Set<string>>(new Set())
   const [selectedRule, setSelectedRule] = useState<RuleResult | null>(null)
-  const [selectedGroupTitle, setSelectedGroupTitle] = useState<string | null>(null)
 
   const effectivePlaybookName =
     result?.playbook_name ||
@@ -166,14 +163,12 @@ export const PlaybookResultsPanel = ({
   }
   const totalForBar = (barStandard + barFallback + barUnacceptable) || 1
 
-  const openRuleDetails = (rule: RuleResult, groupTitle: string) => {
+  const openRuleDetails = (rule: RuleResult) => {
     setSelectedRule(rule)
-    setSelectedGroupTitle(groupTitle)
   }
 
   const closeRuleDetails = () => {
     setSelectedRule(null)
-    setSelectedGroupTitle(null)
   }
 
   return (
@@ -332,7 +327,7 @@ export const PlaybookResultsPanel = ({
               </>
             )}
           </div>
-        ) : selectedRule ? (() => {
+        ) : selectedRule ? ((() => {
           /* Harvey-style rule detail — "Text to review" + per-option diff preview */
           const harvey = getHarveyClassification(selectedRule)
 
@@ -572,8 +567,8 @@ export const PlaybookResultsPanel = ({
               </div>
             </div>
           )
-        })()
-        ) : (
+        })())
+        : (
           /* Сводный список групп и правил, как на первом экране Harvey */
           <>
             {violations.length === 0 && warnings.length === 0 && passed.length === 0 ? (
@@ -629,7 +624,7 @@ export const PlaybookResultsPanel = ({
                               <div key={rule.rule_id} className="transition-colors hover:bg-gray-50/50">
                                 {/* Rule Header — краткий список как в Harvey */}
                                 <button
-                                  onClick={() => openRuleDetails(rule, group.title)}
+                                  onClick={() => openRuleDetails(rule)}
                                   className="w-full flex items-start gap-3 p-4 text-left"
                                 >
                                   <div className="flex-1 min-w-0">
