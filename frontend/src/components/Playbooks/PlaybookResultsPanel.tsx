@@ -45,6 +45,9 @@ interface RuleResult {
   guidance?: string
   suggested_options?: { label: string; type: 'standard' | 'fallback' | string; text: string }[]
   citations?: string[]
+  rule_standard_phrases?: string[]
+  rule_fallback_phrases?: string[]
+  rule_unacceptable_phrases?: string[]
   occurrences?: Array<{
     type: 'unacceptable' | 'fallback' | 'standard' | string
     phrase: string
@@ -417,10 +420,10 @@ export const PlaybookResultsPanel = ({
 
                                     {/* Full rule definition — collapsible, open by default */}
                                     {(() => {
-                                      const stdOptions = (rule.suggested_options || []).filter(o => o.type === 'standard')
-                                      const fbOptions = (rule.suggested_options || []).filter(o => o.type === 'fallback')
-                                      const unacOccs = ruleOccs.filter(o => o.type === 'unacceptable')
-                                      if (stdOptions.length === 0 && fbOptions.length === 0 && unacOccs.length === 0) return null
+                                      const stdPhrases = rule.rule_standard_phrases || []
+                                      const fbPhrases = rule.rule_fallback_phrases || []
+                                      const unacPhrases = rule.rule_unacceptable_phrases || []
+                                      if (stdPhrases.length === 0 && fbPhrases.length === 0 && unacPhrases.length === 0) return null
                                       const frOpen = !collapsedFullRule.has(rule.rule_id)
                                       return (
                                         <div className="border-b" style={{ borderColor: 'var(--color-border)' }}>
@@ -442,36 +445,36 @@ export const PlaybookResultsPanel = ({
                                           </button>
                                           {frOpen && (
                                             <div className="px-4 pb-3 space-y-3">
-                                              {stdOptions.map((o, i) => (
+                                              {stdPhrases.map((phrase, i) => (
                                                 <div key={i}>
                                                   <p className="text-xs font-semibold mb-1" style={{ color: '#16a34a' }}>
                                                     Стандартная формулировка
                                                   </p>
                                                   <div className="rounded-lg px-3 py-2 text-xs leading-relaxed"
                                                     style={{ backgroundColor: 'rgba(22,163,74,0.07)', color: 'var(--color-text-primary)', border: '1px solid rgba(22,163,74,0.25)' }}>
-                                                    {o.text}
+                                                    {phrase}
                                                   </div>
                                                 </div>
                                               ))}
-                                              {fbOptions.map((o, i) => (
+                                              {fbPhrases.map((phrase, i) => (
                                                 <div key={i}>
                                                   <p className="text-xs font-semibold mb-1" style={{ color: '#ca8a04' }}>
-                                                    Запасной вариант {fbOptions.length > 1 ? i + 1 : ''}
+                                                    Запасной вариант {fbPhrases.length > 1 ? i + 1 : ''}
                                                   </p>
                                                   <div className="rounded-lg px-3 py-2 text-xs leading-relaxed"
                                                     style={{ backgroundColor: 'rgba(202,138,4,0.07)', color: 'var(--color-text-primary)', border: '1px solid rgba(202,138,4,0.25)' }}>
-                                                    {o.text}
+                                                    {phrase}
                                                   </div>
                                                 </div>
                                               ))}
-                                              {unacOccs.map((o, i) => (
+                                              {unacPhrases.map((phrase, i) => (
                                                 <div key={i}>
                                                   <p className="text-xs font-semibold mb-1" style={{ color: '#dc2626' }}>
                                                     Недопустимая формулировка
                                                   </p>
                                                   <div className="rounded-lg px-3 py-2 text-xs leading-relaxed"
                                                     style={{ backgroundColor: 'rgba(220,38,38,0.07)', color: 'var(--color-text-primary)', border: '1px solid rgba(220,38,38,0.25)' }}>
-                                                    {o.phrase}
+                                                    {phrase}
                                                   </div>
                                                 </div>
                                               ))}

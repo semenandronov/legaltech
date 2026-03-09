@@ -40,6 +40,10 @@ class RuleCheckResult:
     suggested_options: List[Dict[str, Any]] = field(default_factory=list)
     # All phrase occurrences found in the document (for display)
     occurrences: List[Dict[str, Any]] = field(default_factory=list)
+    # Full rule phrase lists (for display in UI)
+    rule_standard_phrases: List[str] = field(default_factory=list)
+    rule_fallback_phrases: List[str] = field(default_factory=list)
+    rule_unacceptable_phrases: List[str] = field(default_factory=list)
 
 
 @dataclass
@@ -502,9 +506,19 @@ class PlaybookChecker:
                     all_results.append(extra_result)
                 except Exception as e:
                     logger.warning("PlaybookChecker: error checking extra clause for rule %s: %s", rule.id, e)
-            return self._pick_worst_result(all_results)
+            final_result = self._pick_worst_result(all_results)
+        else:
+            final_result = primary_result
 
-        return primary_result
+        # Attach full rule phrase lists so the UI can show the complete rule definition
+        if has_harvey_config:
+            cfg = self._extract_harvey_config_from_rule(rule)
+            sp = cfg.get("standard_position", "")
+            final_result.rule_standard_phrases = [sp] if sp else []
+            final_result.rule_fallback_phrases = [f for f in cfg.get("fallback_positions", []) if f]
+            final_result.rule_unacceptable_phrases = [u for u in cfg.get("unacceptable_phrases", []) if u]
+
+        return final_result
 
     def _pick_worst_result(self, results: List[RuleCheckResult]) -> RuleCheckResult:
         """Return the result with the worst (most severe) status."""
@@ -2033,6 +2047,9 @@ class PlaybookChecker:
             "guidance": result.guidance,
             "suggested_options": result.suggested_options,
             "occurrences": result.occurrences,
+            "rule_standard_phrases": result.rule_standard_phrases,
+            "rule_fallback_phrases": result.rule_fallback_phrases,
+            "rule_unacceptable_phrases": result.rule_unacceptable_phrases,
         }
     
     async def batch_check(
