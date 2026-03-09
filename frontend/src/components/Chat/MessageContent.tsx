@@ -234,6 +234,11 @@ const MessageContent: React.FC<MessageContentProps> = ({
     // Replace [N] citation markers with unique placeholders that won't be parsed as markdown links
     // Only replace if we have sources and the number is within range
     if (sources.length > 0) {
+      // Normalize comma-separated citations like [1, 2, 4, 5] → [1][2][4][5]
+      text = text.replace(/\[(\d+(?:\s*,\s*\d+)+)\]/g, (_match, nums) => {
+        return nums.split(',').map((n: string) => `[${n.trim()}]`).join('')
+      })
+
       text = text.replace(/\[(\d+)\]/g, (match, num) => {
         const idx = parseInt(num, 10)
         if (idx >= 1 && idx <= sources.length) {
