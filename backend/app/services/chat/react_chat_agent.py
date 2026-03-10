@@ -914,6 +914,24 @@ ID дела: {self.case_id}
 
                         # LLM call ended
                         elif kind == "on_chat_model_end":
+                            # GigaChat may not stream tool_call_chunks during on_chat_model_stream
+                            # but still include tool_calls in the final output message.
+                            # Detect this here so we don't accidentally leak pre-tool reasoning text.
+                            end_output = event.get("data", {}).get("output")
+                            if end_output and not has_tool_call_in_current_step:
+                                end_tool_calls = (
+                                    getattr(end_output, "tool_calls", None)
+                                    or (getattr(end_output, "additional_kwargs", {}) or {}).get("tool_calls")
+                                )
+                                if end_tool_calls:
+                                    has_tool_call_in_current_step = True
+                                    if text_buffer and not step_tokens_streamed:
+                                        logger.info(
+                                            f"[ReActChatAgent] Discarding pre-tool-call text "
+                                            f"(detected via on_chat_model_end, {len(text_buffer)} chars)"
+                                        )
+                                        text_buffer = ""
+
                             # Flush any incomplete line remaining in the streaming line buffer
                             if stream_line_buf and step_tokens_streamed:
                                 stripped = stream_line_buf.strip()
