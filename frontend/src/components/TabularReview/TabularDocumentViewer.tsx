@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react"
+import React, { useState, useEffect, useRef } from "react"
 import PDFViewer from "../Documents/PDFViewer"
 import { TextHighlighter } from "./TextHighlighter"
 import { Card } from "../UI/Card"
@@ -18,6 +18,7 @@ import {
   Typography,
 } from "@mui/material"
 import { SourceReference } from "@/services/tabularReviewApi"
+import { getFileHtml } from "@/services/fileHtmlApi"
 
 interface CellData {
   verbatimExtract?: string | null
@@ -61,6 +62,7 @@ export const TabularDocumentViewer: React.FC<TabularDocumentViewerProps> = ({
   onDocumentChange,
 }) => {
   const [documentText, setDocumentText] = useState<string>("")
+  const [documentHtml, setDocumentHtml] = useState<string | null>(null) // DOCX → HTML
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [fileType, setFileType] = useState<string>(propFileType || "pdf")
@@ -70,6 +72,7 @@ export const TabularDocumentViewer: React.FC<TabularDocumentViewerProps> = ({
   const [searchQuery, setSearchQuery] = useState("")
   const [showAbout, setShowAbout] = useState(false)
   const [aboutAnchorEl, setAboutAnchorEl] = useState<null | HTMLElement>(null)
+  const docxContainerRef = useRef<HTMLDivElement>(null)
   
   // Use documents array if provided, otherwise use single file
   const documentTabs: DocumentTab[] = React.useMemo(() => {
@@ -110,27 +113,42 @@ export const TabularDocumentViewer: React.FC<TabularDocumentViewerProps> = ({
     try {
       setLoading(true)
       setError(null)
+      setDocumentHtml(null)
+      setDocumentText("")
       setFileType(fileTypeToLoad || "pdf")
 
-      // For non-PDF files, load text content
-      if (fileTypeToLoad !== "pdf") {
-        const baseUrl = import.meta.env.VITE_API_URL || ""
-        const url = baseUrl ? `${baseUrl}/api/cases/${caseId}/files/${fileIdToLoad}/content` : `/api/cases/${caseId}/files/${fileIdToLoad}/content`
-        const textResponse = await fetch(
-          url,
-          {
-            headers: {
-              Authorization: `Bearer ${localStorage.getItem("access_token")}`,
-            },
-          }
-        )
+      if (fileTypeToLoad === "pdf") {
+        // PDF is rendered by PDFViewer component directly
+        return
+      }
 
-        if (textResponse.ok) {
-          const text = await textResponse.text()
-          setDocumentText(text)
-        } else {
-          throw new Error("Failed to load document content")
+      // DOCX: convert to HTML server-side for proper rendering
+      if (fileTypeToLoad === "docx") {
+        try {
+          const htmlResponse = await getFileHtml(caseId, fileIdToLoad, false)
+          if (htmlResponse.html) {
+            setDocumentHtml(htmlResponse.html)
+            return
+          }
+        } catch (htmlErr) {
+          console.warn("[TabularDocumentViewer] DOCX→HTML failed, falling back to text:", htmlErr)
         }
+      }
+
+      // For other non-PDF files (txt, csv, etc.) — load raw text content
+      const baseUrl = import.meta.env.VITE_API_URL || ""
+      const url = baseUrl ? `${baseUrl}/api/cases/${caseId}/files/${fileIdToLoad}/content` : `/api/cases/${caseId}/files/${fileIdToLoad}/content`
+      const textResponse = await fetch(url, {
+        headers: {
+          Authorization: `Bearer ${localStorage.getItem("access_token")}`,
+        },
+      })
+
+      if (textResponse.ok) {
+        const text = await textResponse.text()
+        setDocumentText(text)
+      } else {
+        throw new Error("Failed to load document content")
       }
     } catch (err: any) {
       setError(err.message || "Ошибка при загрузке документа")
@@ -138,6 +156,107 @@ export const TabularDocumentViewer: React.FC<TabularDocumentViewerProps> = ({
       setLoading(false)
     }
   }
+
+  /**
+   * Insert <mark> highlight into HTML string using DOM text-node traversal.
+   * Finds the quote in the concatenated text of all leaf nodes and wraps matching segments.
+   */
+  const insertMarkInHtml = (html: string, quote: string): string => {
+    if (!quote || quote.length < 10) return html
+    const searchText = quote.replace(/\.{3}$/, '').trim()
+    if (searchText.length < 10) return html
+    try {
+      const container = window.document.createElement('div')
+      container.innerHTML = html
+
+      const textNodes: Text[] = []
+      const walk = (node: Node): void => {
+        if (node.nodeType === Node.TEXT_NODE) {
+          textNodes.push(node as Text)
+        } else {
+          Array.from(node.childNodes).forEach(walk)
+        }
+      }
+      walk(container)
+
+      const nodeTexts = textNodes.map(n => n.textContent || '')
+      const fullText = nodeTexts.join('')
+      const fullTextLower = fullText.toLowerCase()
+
+      let pos = -1
+      let matchLength = 0
+      for (const len of [searchText.length, 200, 100, 60, 30]) {
+        if (len > searchText.length) continue
+        const candidate = searchText.substring(0, len).toLowerCase()
+        if (candidate.length < 10) continue
+        const idx = fullTextLower.indexOf(candidate)
+        if (idx !== -1) {
+          pos = idx
+          matchLength = candidate.length
+          break
+        }
+      }
+      if (pos === -1) return html
+
+      const endPos = pos + matchLength
+      let currentPos = 0
+      let firstMark = true
+
+      for (let i = 0; i < textNodes.length; i++) {
+        const nodeStart = currentPos
+        const nodeText = nodeTexts[i]
+        const nodeEnd = nodeStart + nodeText.length
+
+        if (nodeEnd > pos && nodeStart < endPos) {
+          const hlStart = Math.max(0, pos - nodeStart)
+          const hlEnd = Math.min(nodeText.length, endPos - nodeStart)
+
+          if (hlStart < hlEnd) {
+            const parent = textNodes[i].parentNode
+            if (parent) {
+              const before = nodeText.substring(0, hlStart)
+              const middle = nodeText.substring(hlStart, hlEnd)
+              const after = nodeText.substring(hlEnd)
+
+              const mark = window.document.createElement('mark')
+              mark.style.backgroundColor = '#fef08a'
+              mark.style.borderRadius = '2px'
+              mark.style.padding = '2px 0'
+              if (firstMark) {
+                mark.id = 'citation-highlight'
+                firstMark = false
+              }
+              mark.textContent = middle
+
+              const frag = window.document.createDocumentFragment()
+              if (before) frag.appendChild(window.document.createTextNode(before))
+              frag.appendChild(mark)
+              if (after) frag.appendChild(window.document.createTextNode(after))
+              parent.replaceChild(frag, textNodes[i])
+            }
+          }
+        }
+        currentPos = nodeEnd
+      }
+
+      return container.innerHTML
+    } catch {
+      return html
+    }
+  }
+
+  // Auto-scroll to highlighted mark in DOCX after render
+  useEffect(() => {
+    if (!docxContainerRef.current || !documentHtml) return
+    // Small delay to let the DOM update
+    const timer = setTimeout(() => {
+      const mark = docxContainerRef.current?.querySelector('#citation-highlight')
+      if (mark) {
+        mark.scrollIntoView({ behavior: 'smooth', block: 'center' })
+      }
+    }, 100)
+    return () => clearTimeout(timer)
+  }, [documentHtml])
 
   const handleDownload = async () => {
     if (!currentFileId) return
@@ -376,27 +495,55 @@ export const TabularDocumentViewer: React.FC<TabularDocumentViewerProps> = ({
               </Box>
             )}
           </Box>
+        ) : fileType === "docx" && documentHtml ? (
+          // DOCX rendered as HTML with optional quote highlighting
+          <Box sx={{ p: 2 }}>
+            <Box
+              ref={docxContainerRef}
+              dangerouslySetInnerHTML={{
+                __html: cellData?.verbatimExtract
+                  ? insertMarkInHtml(documentHtml, cellData.verbatimExtract)
+                  : documentHtml,
+              }}
+              sx={{ fontSize: "0.875rem", fontFamily: "inherit", lineHeight: 1.6 }}
+            />
+          </Box>
         ) : (
           <Box sx={{ p: 2 }}>
-            {showHighlight || highlightTexts.length > 0 ? (
-              <TextHighlighter
-                text={documentText}
-                highlightText={cellData?.verbatimExtract || highlightTexts[0] || undefined}
-                highlightTexts={highlightTexts}
-                searchQuery={searchQuery}
-                className="whitespace-pre-wrap text-sm"
-              />
+            {documentText ? (
+              showHighlight || highlightTexts.length > 0 ? (
+                <TextHighlighter
+                  text={documentText}
+                  highlightText={cellData?.verbatimExtract || highlightTexts[0] || undefined}
+                  highlightTexts={highlightTexts}
+                  searchQuery={searchQuery}
+                  className="whitespace-pre-wrap text-sm"
+                />
+              ) : (
+                <Box
+                  component="pre"
+                  sx={{
+                    whiteSpace: "pre-wrap",
+                    fontSize: "0.875rem",
+                    fontFamily: "monospace",
+                    m: 0,
+                  }}
+                >
+                  {documentText}
+                </Box>
+              )
+            ) : fileType === "docx" ? (
+              // DOCX loading/failed state — never show raw binary
+              <Box sx={{ display: "flex", alignItems: "center", justifyContent: "center", py: 6 }}>
+                <Typography variant="body2" color="text.secondary" textAlign="center">
+                  {loading ? 'Загрузка документа…' : 'Не удалось отобразить документ. Скачайте файл для просмотра.'}
+                </Typography>
+              </Box>
             ) : (
-              <Box
-                component="pre"
-                sx={{
-                  whiteSpace: "pre-wrap",
-                  fontSize: "0.875rem",
-                  fontFamily: "monospace",
-                  m: 0,
-                }}
-              >
-                {documentText}
+              <Box sx={{ display: "flex", alignItems: "center", justifyContent: "center", py: 6 }}>
+                <Typography variant="body2" color="text.secondary">
+                  Документ загружается…
+                </Typography>
               </Box>
             )}
           </Box>

@@ -84,6 +84,23 @@ def clear_last_direct_result() -> None:
     _last_direct_result = None
 
 
+def _extract_meaningful_excerpt(text: str, max_len: int = 200) -> Optional[str]:
+    """Extract the first meaningful (non-header, non-empty) line from document text."""
+    if not text:
+        return None
+    for line in text.split('\n'):
+        line = line.strip()
+        # Skip short lines (headers, titles, blank lines)
+        if len(line) < 20:
+            continue
+        # Skip lines that look like metadata/headers (all caps, short)
+        if len(line) < 50 and line.isupper():
+            continue
+        return line[:max_len]
+    # Fallback: just use the beginning
+    return text[:max_len].strip() or None
+
+
 def _parse_entity_quotes(result_text: str, n_sources: int) -> dict:
     """Parse LLM entity-extraction output to get per-source short quotes for highlighting.
     Matches lines like: '- Абумов Евгений Геннадьевич [1]: исполнитель'
@@ -518,9 +535,27 @@ def analyze_all_documents(question: str, task_type: str = "answer") -> str:
                 idx = int(m.group(1))
                 if 1 <= idx <= included_count and idx not in entity_quotes:
                     entity_quotes[idx] = m.group(2)[:250]
+        # Validate entity quotes: only keep quotes that actually appear in the source document.
+        # LLM synthesis quotes (paraphrased text) won't highlight correctly in the viewer.
+        # For non-matching quotes, fall back to a meaningful excerpt from the document text.
         for i, src in enumerate(_used_sources, 1):
+            doc_text = files_with_text[i - 1].original_text if i <= len(files_with_text) else ""
+            doc_text_lower = doc_text.lower() if doc_text else ""
             if i in entity_quotes:
-                src["quote"] = entity_quotes[i]
+                eq = entity_quotes[i]
+                # Check if the extracted quote (or its significant prefix) appears in the document
+                eq_lower = eq.lower()
+                if eq_lower in doc_text_lower:
+                    src["quote"] = eq
+                elif len(eq_lower) > 30 and eq_lower[:60] in doc_text_lower:
+                    src["quote"] = eq[:60]
+                else:
+                    # Quote is LLM synthesis, not verbatim — fall back to doc excerpt
+                    src["quote"] = _extract_meaningful_excerpt(doc_text, 200)
+            else:
+                # No quote extracted at all — use doc excerpt
+                if doc_text:
+                    src["quote"] = _extract_meaningful_excerpt(doc_text, 200)
 
         # Store as direct result so react_chat_agent bypasses outer GigaChat synthesis
         global _last_direct_result
