@@ -89,24 +89,26 @@ class ChatGigaChat(BaseChatModel):
             # Логируем настройки для диагностики
             logger.info(f"Initializing GigaChat with verify_ssl_certs={self.verify_ssl_certs}, timeout={self.timeout}s")
             
-            # Build SDK kwargs: only pass scope/profanity_check if explicitly configured
+            # Build SDK kwargs — only pass optional params if explicitly set in env
+            import os
             sdk_kwargs = {
                 "credentials": self.credentials,
                 "verify_ssl_certs": self.verify_ssl_certs,
                 "timeout": self.timeout,
             }
-            # Pass scope only if explicitly set in env (not the default)
-            gigachat_scope = config.GIGACHAT_SCOPE
-            if gigachat_scope:
-                sdk_kwargs["scope"] = gigachat_scope
+            # Only pass scope if user explicitly set GIGACHAT_SCOPE in env
+            # (don't use config default — SDK has its own default that worked before)
+            env_scope = os.getenv("GIGACHAT_SCOPE")
+            if env_scope:
+                sdk_kwargs["scope"] = env_scope
+                logger.info(f"GigaChat scope set from env: {env_scope}")
             # Disable profanity filter only if env var explicitly requests it
-            import os
             if os.getenv("GIGACHAT_PROFANITY_CHECK", "").lower() in ("false", "0", "no"):
                 sdk_kwargs["profanity_check"] = False
                 logger.info("GigaChat profanity_check disabled via GIGACHAT_PROFANITY_CHECK=false")
 
             self._client = GigaChatSDK(**sdk_kwargs)
-            logger.info(f"✅ Initialized ChatGigaChat with model={self.model}, scope={gigachat_scope}, verify_ssl={self.verify_ssl_certs}, timeout={self.timeout}s")
+            logger.info(f"✅ Initialized ChatGigaChat with model={self.model}, verify_ssl={self.verify_ssl_certs}, timeout={self.timeout}s")
         except Exception as e:
             logger.error(f"Failed to initialize GigaChat: {e}", exc_info=True)
             # Если ошибка связана с SSL, предлагаем решение
