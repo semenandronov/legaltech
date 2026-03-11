@@ -33,6 +33,8 @@ from datetime import datetime
 import logging
 import re
 
+from app.config import config
+
 logger = logging.getLogger(__name__)
 
 # Глобальные зависимости (инжектируются при создании tools)
@@ -41,6 +43,10 @@ _rag_service = None
 _case_id: Optional[str] = None
 _user_id: Optional[str] = None
 _attached_file_ids: Optional[List[str]] = None  # Фильтрация по прикреплённым файлам
+
+# Флаг использования Pro-модели (GigaChat-Pro) для внутренних LLM-вызовов,
+# когда в чате включён deep_think.
+_use_pro_llm: bool = False
 
 # Отслеживание использованных источников для citations
 _used_sources: List[Dict[str, Any]] = []
@@ -124,16 +130,18 @@ def initialize_universal_tools(
     rag_service,
     case_id: str,
     user_id: Optional[str] = None,
-    attached_file_ids: Optional[List[str]] = None
+    attached_file_ids: Optional[List[str]] = None,
+    use_pro_llm: bool = False,
 ):
     """Инициализировать глобальные зависимости для tools"""
-    global _db, _rag_service, _case_id, _user_id, _attached_file_ids, _last_direct_result
+    global _db, _rag_service, _case_id, _user_id, _attached_file_ids, _last_direct_result, _use_pro_llm
     _db = db
     _rag_service = rag_service
     _case_id = case_id
     _user_id = user_id
     _attached_file_ids = attached_file_ids or None
     _last_direct_result = None
+    _use_pro_llm = use_pro_llm
     clear_used_sources()
 
 
@@ -332,7 +340,11 @@ def search_in_documents(query: str, k: int = 20) -> str:
 Если документ не содержит информации по вопросу — пропусти его целиком.
 Отвечай только по документам выше:"""
 
-        llm = create_legal_llm()
+        # В режиме deep_think используем Pro-модель (GigaChat-Pro), если флаг установлен.
+        if _use_pro_llm:
+            llm = create_legal_llm(model=config.GIGACHAT_PRO_MODEL, use_rate_limiting=False)
+        else:
+            llm = create_legal_llm()
         response = llm.invoke([
             SystemMessage(content=(
                 "Ты юридический ассистент. "
@@ -485,7 +497,11 @@ def analyze_all_documents(question: str, task_type: str = "answer") -> str:
 
             from langchain_core.messages import HumanMessage, SystemMessage
             from app.services.llm_factory import create_legal_llm
-            llm = create_legal_llm()
+            # При включённом deep_think используем Pro-модель для глубокого анализа.
+            if _use_pro_llm:
+                llm = create_legal_llm(model=config.GIGACHAT_PRO_MODEL, use_rate_limiting=False)
+            else:
+                llm = create_legal_llm()
             llm_response = llm.invoke([
                 SystemMessage(content=(
                     "Ты юридический ассистент. "
@@ -1585,7 +1601,8 @@ def get_universal_tools(
     user_id: Optional[str] = None,
     legal_research: bool = False,
     web_search: bool = False,
-    attached_file_ids: Optional[List[str]] = None
+    attached_file_ids: Optional[List[str]] = None,
+    use_pro_llm: bool = False,
 ) -> List:
     """
     Получить набор из 12 универсальных инструментов.
@@ -1602,7 +1619,14 @@ def get_universal_tools(
         Список из 12 инструментов
     """
     # Инициализируем глобальные зависимости
-    initialize_universal_tools(db, rag_service, case_id, user_id, attached_file_ids)
+    initialize_universal_tools(
+        db=db,
+        rag_service=rag_service,
+        case_id=case_id,
+        user_id=user_id,
+        attached_file_ids=attached_file_ids,
+        use_pro_llm=use_pro_llm,
+    )
     
     # Базовые инструменты (всегда доступны)
     tools = [

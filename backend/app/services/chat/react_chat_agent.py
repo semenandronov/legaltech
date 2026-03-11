@@ -348,6 +348,9 @@ class ReActChatAgent:
         user_id = str(current_user.id) if current_user else None
         
         # Инициализируем инструменты из universal_tools
+        # Если включён deep_think, передаём флаг use_pro_llm=True, чтобы
+        # внутренние LLM-вызовы (analyze_all_documents, search_in_documents и др.)
+        # также использовали GigaChat-Pro.
         self.tools = get_universal_tools(
             db=db,
             rag_service=rag_service,
@@ -355,7 +358,8 @@ class ReActChatAgent:
             user_id=user_id,
             legal_research=legal_research,
             web_search=web_search,
-            attached_file_ids=attached_file_ids
+            attached_file_ids=attached_file_ids,
+            use_pro_llm=deep_think,
         )
         
         # Создаём LLM и агента
