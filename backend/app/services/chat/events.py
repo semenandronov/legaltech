@@ -380,7 +380,15 @@ class SSESerializer:
     @staticmethod
     def citations(citations: List[Dict[str, Any]]) -> str:
         """Быстрый метод для citations из dict"""
-        citation_objects = [Citation(**c) for c in citations]
+        citation_objects = []
+        for c in citations:
+            try:
+                # Only pass fields that Citation model accepts
+                valid_fields = {k: v for k, v in c.items() if k in Citation.model_fields}
+                citation_objects.append(Citation(**valid_fields))
+            except Exception:
+                # Skip malformed citations rather than failing entirely
+                continue
         return CitationsEvent(citations=citation_objects).to_sse()
     
     @staticmethod

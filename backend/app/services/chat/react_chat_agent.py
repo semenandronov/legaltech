@@ -53,13 +53,21 @@ _SEARCH_RESULTS_HEADER = re.compile(
     r'^\s*Результаты поиска:\s*$',
     re.MULTILINE
 )
-# Chain-of-thought section headers: [# Header], # Header, ## Header, ### Header, **Header**
+# Chain-of-thought section headers: [# Header], # Header, ## Header, ### Header, **Header**,
+# numbered steps like "1. Выбор Подходящего Инструмента", "2. Применение Инструмента"
 _SECTION_HEADER_RE = re.compile(
     r'^\s*(?:'
     r'\[#[^\]]+\]'  # [# ...] bracket format
     r'|#{1,3}\s*(?:Анализ вопроса|Выбор инструмента|Применение инструмента|Вызов инструмента|'
-    r'Ответ|Шаг \d+|Итог|Размышление|Рассуждение|Мышление|Thinking|Analysis|Tool)(?:[^\n]*)?'  # # / ## / ### headers
-    r'|\*{2}(?:Анализ вопроса|Применение инструмента|Вызов инструмента|Размышление)\*{2}'  # **bold** headers
+    r'Ответ|Шаг \d+|Итог|Размышление|Рассуждение|Мышление|Thinking|Analysis|Tool|'
+    r'Источники|Заключение|Результаты?\s*поиска|Поиск[^\n]*|Ключевые\s+[^\n]*|'
+    r'Обзор|Выводы?|Резюме|Итоги|Анализ[^\n]*|Ответ на вопрос|'
+    r'Извлечение[^\n]*|Полученные\s+результаты)(?:[^\n]*)?'  # # / ## / ### headers
+    r'|\*{2}(?:Анализ вопроса|Применение инструмента|Вызов инструмента|Размышление|'
+    r'Источники|Заключение|Результаты?\s*поиска|Ключевые\s+[^\n]*|Выводы?)\*{2}'  # **bold** headers
+    r'|\d+\.\s*(?:Выбор\s+(?:подходящего\s+)?инструмента|Применение\s+инструмента|'
+    r'Полученные\s+результаты|Анализ\s+[^\n]*|Результаты?\s*[^\n]*|'
+    r'Извлечение\s+[^\n]*|Шаг\s+\d+)[^\n]*'  # numbered steps: "1. Выбор Инструмента"
     r')\s*$',
     re.MULTILINE | re.IGNORECASE
 )
@@ -67,8 +75,9 @@ _SECTION_HEADER_RE = re.compile(
 _INTERNAL_REASONING_RE = re.compile(
     r'^\s*(?:Пользователь (?:запрашивает|спрашивает|просит|хочет)|'
     r'Мне нужно|Я должен|Необходимо|Нужно (?:использовать|вызвать|найти)|'
-    r'Для (?:ответа|этого) (?:мне |)нужно|'
-    r'Давайте|Буду использовать|Вызываю)[^\n]*$',
+    r'Для (?:ответа|этого|извлечения|анализа|поиска)[^\n]{0,20}(?:мне |)(?:нужно|необходимо|требуется)|'
+    r'Давайте|Буду использовать|Вызываю|'
+    r'Эти данные получены путем)[^\n]*$',
     re.MULTILINE | re.IGNORECASE
 )
 # [Single-line bracket notes] like [Приветствие удалено из вопроса пользователя]
@@ -81,6 +90,11 @@ _TOOL_NAME_MENTION_RE = re.compile(
 )
 # GigaChat auto-citation artifacts like "Фрагмент 1 из documents" or "Фрагмент 2 из search_results"
 _FRAGMENT_CITE_RE = re.compile(r'\s*Фрагмент\s+\d+\s+из\s+\S+\.?', re.IGNORECASE)
+# "Источники:" / "Источники" section at the end of responses (GigaChat appends source lists)
+_SOURCES_SECTION_RE = re.compile(
+    r'\n\s*(?:#{1,3}\s*)?(?:\*{2})?(?:Источники|Sources)(?:\*{2})?:?\s*\n.*',
+    re.DOTALL | re.IGNORECASE
+)
 
 
 # Задержка между «словами» при эффекте печати (секунды)
@@ -119,6 +133,8 @@ def _clean_response_text(text: str) -> str:
     cleaned = _TOOL_NAME_MENTION_RE.sub('', cleaned)
     # Remove GigaChat auto-citation artifacts: "Фрагмент N из documents" etc.
     cleaned = _FRAGMENT_CITE_RE.sub('', cleaned)
+    # Remove "Источники:" trailing section (GigaChat appends its own source list)
+    cleaned = _SOURCES_SECTION_RE.sub('', cleaned)
     # Remove "Улучшенный ответ:" prefix from reflection
     cleaned = re.sub(r'^\s*Улучшенный ответ:\s*', '', cleaned, flags=re.MULTILINE)
     # Collapse excessive blank lines
@@ -126,16 +142,28 @@ def _clean_response_text(text: str) -> str:
     return cleaned.strip()
 
 
-def _filter_section_headers_streaming(token: str, line_buf: str) -> tuple:
+_SOURCES_LINE_RE = re.compile(
+    r'^\s*(?:#{1,3}\s*)?(?:\*{2})?(?:Источники|Sources)(?:\*{2})?:?\s*$',
+    re.IGNORECASE
+)
+
+
+def _filter_section_headers_streaming(token: str, line_buf: str, in_sources_section: bool = False) -> tuple:
     """
     Buffer tokens line-by-line and filter out [# ...] section header lines during streaming.
-    Returns (text_to_emit, remaining_line_buf).
+    Returns (text_to_emit, remaining_line_buf, in_sources_section).
     """
     combined = line_buf + token
     parts = combined.split('\n')
     emit_parts = []
     # All parts except the last are complete lines (they ended with \n)
     for part in parts[:-1]:
+        # Once we hit "Источники:" section, suppress everything after it
+        if _SOURCES_LINE_RE.match(part):
+            in_sources_section = True
+            continue
+        if in_sources_section:
+            continue
         if _SECTION_HEADER_RE.match(part) or _BRACKET_NOTE_RE.match(part):
             continue
         # Suppress internal reasoning lines (agent thinking leaked into output)
@@ -148,7 +176,7 @@ def _filter_section_headers_streaming(token: str, line_buf: str) -> tuple:
         cleaned_part = _FRAGMENT_CITE_RE.sub('', part)
         emit_parts.append(cleaned_part + '\n')
     # Last part is an incomplete line — buffer it
-    return ''.join(emit_parts), parts[-1]
+    return ''.join(emit_parts), parts[-1], in_sources_section
 
 
 class ReActChatAgent:
@@ -871,6 +899,7 @@ ID дела: {self.case_id}
                     has_seen_tool_execution = False  # True after first on_tool_end event
                     step_tokens_streamed = False  # True if current step's tokens were streamed live
                     stream_line_buf = ""  # Line buffer for filtering section headers in real-time
+                    stream_in_sources = False  # True once "Источники:" header encountered
 
                     async for event in self.agent.astream_events(input_data, version="v2"):
                         kind = event.get("event", "")
@@ -899,7 +928,7 @@ ID дела: {self.case_id}
                                             logger.info(f"[ReActChatAgent] GigaChat synthesis started streaming (direct_result_streamed={direct_result_streamed})")
                                         text_buffer += token
                                         step_tokens_streamed = True
-                                        emit, stream_line_buf = _filter_section_headers_streaming(token, stream_line_buf)
+                                        emit, stream_line_buf, stream_in_sources = _filter_section_headers_streaming(token, stream_line_buf, stream_in_sources)
                                         if emit:
                                             yield SSESerializer.text_delta(emit)
                                     else:
@@ -1029,8 +1058,9 @@ ID дела: {self.case_id}
                             except Exception as dr_err:
                                 logger.warning(f"[ReActChatAgent] Failed to direct-stream result: {dr_err}")
 
-                    # Flush any remaining buffered text (only if not already streamed live)
-                    if text_buffer and not step_tokens_streamed:
+                    # Flush any remaining buffered text (only if not already streamed live
+                    # AND no direct result was already streamed from a tool)
+                    if text_buffer and not step_tokens_streamed and not direct_result_streamed:
                         cleaned = _clean_response_text(text_buffer)
                         if cleaned:
                             async for sse_chunk in _stream_text_with_typing_effect(cleaned):
@@ -1060,19 +1090,52 @@ ID дела: {self.case_id}
                                             status="completed",
                                             output=output_preview
                                         )
+                                        # Check for direct result after tool completion
+                                        try:
+                                            from app.services.chat.universal_tools import (
+                                                get_last_direct_result,
+                                                clear_last_direct_result,
+                                            )
+                                            direct = get_last_direct_result()
+                                            if direct and not direct_result_streamed:
+                                                cleaned = _clean_response_text(direct)
+                                                text_to_stream = cleaned if cleaned else direct.strip()
+                                                if text_to_stream:
+                                                    yield SSESerializer.text_delta(text_to_stream)
+                                                    response_text += text_to_stream
+                                                    direct_result_streamed = True
+                                                    from app.services.chat.universal_tools import lock_used_sources
+                                                    lock_used_sources()
+                                                    logger.info(f"[ReActChatAgent] astream: Direct-streamed {tool_name} result ({len(text_to_stream)} chars)")
+                                            clear_last_direct_result()
+                                        except Exception as dr_err:
+                                            logger.warning(f"[ReActChatAgent] astream: Failed to direct-stream result: {dr_err}")
                                         continue
 
                                     if msg_type in ('system', 'human'):
                                         continue
 
-                                    if hasattr(msg, 'content') and msg.content:
-                                        cleaned_msg = _clean_response_text(msg.content)
-                                        if cleaned_msg:
-                                            async for sse_chunk in _stream_text_with_typing_effect(cleaned_msg):
-                                                yield sse_chunk
-                                            response_text += cleaned_msg
+                                    # Skip AI synthesis when a tool already produced the answer
+                                    if direct_result_streamed:
+                                        logger.debug(f"[ReActChatAgent] astream: Skipping AI message (direct already streamed)")
+                                        # Still track tool calls from AI messages
+                                        if hasattr(msg, 'tool_calls') and msg.tool_calls:
+                                            for tc in msg.tool_calls:
+                                                tool_name = tc.get('name', 'unknown')
+                                                tool_calls_made.append(tool_name)
+                                                logger.info(f"[ReActChatAgent] Tool call: {tool_name}")
+                                                tool_input = json.dumps(tc.get('args', {}), ensure_ascii=False)[:200] if tc.get('args') else None
+                                                yield SSESerializer.tool_call(
+                                                    name=tool_name,
+                                                    status="running",
+                                                    input=tool_input
+                                                )
+                                        continue
 
-                                    if hasattr(msg, 'tool_calls') and msg.tool_calls:
+                                    # Check tool_calls FIRST: if the AI message has tool_calls,
+                                    # its content is reasoning/chain-of-thought — skip it
+                                    has_tool_calls = hasattr(msg, 'tool_calls') and msg.tool_calls
+                                    if has_tool_calls:
                                         for tc in msg.tool_calls:
                                             tool_name = tc.get('name', 'unknown')
                                             tool_calls_made.append(tool_name)
@@ -1083,13 +1146,28 @@ ID дела: {self.case_id}
                                                 status="running",
                                                 input=tool_input
                                             )
+                                        # Skip content of AI messages with tool calls (it's reasoning)
+                                        continue
+
+                                    # AI message without tool calls — this is the final answer
+                                    if hasattr(msg, 'content') and msg.content:
+                                        cleaned_msg = _clean_response_text(msg.content)
+                                        if cleaned_msg:
+                                            async for sse_chunk in _stream_text_with_typing_effect(cleaned_msg):
+                                                yield sse_chunk
+                                            response_text += cleaned_msg
 
                             elif "output" in event:
+                                # Skip output if direct result already streamed
+                                if direct_result_streamed:
+                                    continue
                                 output = event["output"]
                                 if output and output not in response_text:
-                                    async for sse_chunk in _stream_text_with_typing_effect(output):
-                                        yield sse_chunk
-                                    response_text += output
+                                    cleaned_output = _clean_response_text(output)
+                                    if cleaned_output:
+                                        async for sse_chunk in _stream_text_with_typing_effect(cleaned_output):
+                                            yield sse_chunk
+                                        response_text += cleaned_output
                 else:
                     # Синхронный вызов с fallback
                     result = await self._invoke_agent_sync(input_data)
@@ -1112,10 +1190,12 @@ ID дела: {self.case_id}
                 if used_sources:
                     try:
                         # Fallback: если LLM не включил [1] маркеры — добавляем их
+                        # Append inline to last sentence instead of as separate block
                         if not re.search(r"\[\d+\]", response_text):
                             refs = " ".join(f"[{i+1}]" for i in range(len(used_sources)))
-                            yield SSESerializer.text_delta(f"\n\n{refs}")
-                            response_text += f"\n\n{refs}"
+                            suffix = f" {refs}"
+                            yield SSESerializer.text_delta(suffix)
+                            response_text += suffix
                             logger.info(f"[ReActChatAgent] Added inline citation markers: {refs}")
                         yield SSESerializer.citations(used_sources)
                         logger.info(f"[ReActChatAgent] Sent {len(used_sources)} citations")
