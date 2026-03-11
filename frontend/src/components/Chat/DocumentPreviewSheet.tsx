@@ -307,9 +307,9 @@ const DocumentPreviewSheet = ({
   }
 
   useEffect(() => {
-    // Загружаем файл и создаем blob URL для не-PDF файлов
-    // ИСПРАВЛЕНИЕ: Используем /content endpoint вместо /download для inline отображения
-    if (isOpen && fileInfo && fileInfo.file_type !== 'pdf' && fileInfo.id && caseId) {
+    // Загружаем файл и создаем blob URL только для файлов без специализированного рендерера.
+    // PDF → PDFViewer, DOCX → HTML via getFileHtml. Остальные — blob URL + <object>.
+    if (isOpen && fileInfo && fileInfo.file_type !== 'pdf' && fileInfo.file_type !== 'docx' && fileInfo.id && caseId) {
       const loadFile = async () => {
         try {
           const baseUrl = import.meta.env.VITE_API_URL || ''
@@ -681,6 +681,13 @@ const DocumentPreviewSheet = ({
                   {documentText}
                 </Box>
               )}
+            </Box>
+          ) : fileInfo && fileInfo.file_type === 'docx' ? (
+            // DOCX HTML still loading or conversion failed — never fall through to raw binary
+            <Box sx={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', p: 3 }}>
+              <Typography variant="body2" color="text.secondary" textAlign="center">
+                {loading ? 'Загрузка документа…' : 'Не удалось отобразить документ.\nСкачайте файл для просмотра.'}
+              </Typography>
             </Box>
           ) : fileInfo && fileUrl ? (
             // For non-PDF files, use object tag instead of iframe to avoid CSP issues

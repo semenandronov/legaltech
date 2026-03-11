@@ -1014,7 +1014,7 @@ export const AssistantUIChat = forwardRef<AssistantUIChatRef, AssistantUIChatPro
                           citations: data.citations.map((citation: any) => ({
                             source_id: citation.source_id,
                             file_name: citation.file_name,
-                            page: citation.page || 1,
+                            page: citation.page || undefined,
                             quote: citation.quote || '',
                             char_start: citation.char_start,
                             char_end: citation.char_end,

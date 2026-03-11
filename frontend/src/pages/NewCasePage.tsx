@@ -278,9 +278,13 @@ const NewCasePage = () => {
           className="border-t flex items-center justify-end gap-3 px-8 py-4"
           style={{ borderTopColor: 'var(--color-border)' }}
         >
-          {isCreating && stagedFiles.length > 0 && uploadProgress > 0 && (
+          {isCreating && stagedFiles.length > 0 && (
             <span className="text-xs mr-auto" style={{ color: 'var(--color-text-muted)' }}>
-              Загрузка файлов… {uploadProgress}%
+              {uploadProgress < 100 && uploadProgress > 0
+                ? `Загрузка файлов… ${uploadProgress}%`
+                : uploadProgress >= 100
+                ? 'Обработка файлов… это может занять до минуты'
+                : 'Загрузка файлов…'}
             </span>
           )}
           {isCreating && stagedFiles.length === 0 && (

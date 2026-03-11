@@ -45,6 +45,10 @@ _attached_file_ids: Optional[List[str]] = None  # Фильтрация по пр
 # Отслеживание использованных источников для citations
 _used_sources: List[Dict[str, Any]] = []
 
+# Lock flag: once the first direct-streamed answer is sent, don't let subsequent
+# tool calls overwrite _used_sources (they correspond to already-streamed [N] markers).
+_sources_locked: bool = False
+
 # Pre-synthesised answer (with inline [N] markers) to stream directly,
 # bypassing GigaChat's outer synthesis step.
 _last_direct_result: Optional[str] = None
@@ -55,10 +59,17 @@ def get_used_sources() -> List[Dict[str, Any]]:
     return list(_used_sources)
 
 
+def lock_used_sources():
+    """Lock _used_sources so subsequent tool calls don't overwrite citations from the first stream."""
+    global _sources_locked
+    _sources_locked = True
+
+
 def clear_used_sources():
-    """Очистить список использованных источников"""
-    global _used_sources
+    """Очистить список использованных источников и снять блокировку"""
+    global _used_sources, _sources_locked
     _used_sources = []
+    _sources_locked = False
 
 
 def get_last_direct_result() -> Optional[str]:
@@ -83,6 +94,8 @@ def _parse_entity_quotes(result_text: str, n_sources: int) -> dict:
         m = re.search(r'[-•]\s+(.+?)\s*\[(\d+)\]', line)
         if m:
             entity = m.group(1).strip('- \u2022').strip()
+            # Strip leading [label] markers like "[сумма]", "[стороны]" — they won't appear verbatim in the document
+            entity = re.sub(r'^\[.*?\]\s*', '', entity).strip()
             idx = int(m.group(2))
             if 1 <= idx <= n_sources and entity and idx not in quotes:
                 quotes[idx] = entity
@@ -203,7 +216,7 @@ def search_in_documents(query: str, k: int = 20) -> str:
     Returns:
         Найденные фрагменты документов с источниками
     """
-    global _rag_service, _case_id, _db, _used_sources, _attached_file_ids, _last_direct_result
+    global _rag_service, _case_id, _db, _used_sources, _sources_locked, _attached_file_ids, _last_direct_result
 
     if not _rag_service or not _case_id:
         return "Ошибка: сервис поиска не инициализирован"
@@ -227,8 +240,10 @@ def search_in_documents(query: str, k: int = 20) -> str:
         if not documents:
             return f"По запросу '{query}' ничего не найдено в документах дела."
 
-        # Очищаем предыдущие источники при новом поиске
-        _used_sources = []
+        # Очищаем предыдущие источники при новом поиске (только если ещё не заблокированы
+        # первым прямым стримингом — иначе источники уже отправлены и перезаписывать их не нужно)
+        if not _sources_locked:
+            _used_sources = []
 
         # Group chunks by source file, preserving order of first appearance
         files_map: dict = {}  # fname -> list of docs
@@ -304,16 +319,25 @@ def search_in_documents(query: str, k: int = 20) -> str:
         response = llm.invoke([
             SystemMessage(content=(
                 "Ты юридический ассистент. "
-                "Строго следуй формату: каждый абзац начинается с [N] — номера документа, "
-                "из которого взяты факты. "
+                "Строго следуй формату: каждый абзац начинается с [N] — числа в квадратных скобках, номера документа. "
+                "Пиши только [1], [2], [3] и т.д. — никогда не пиши [документ 1], только [1]. "
                 "Никогда не используй [1] для фактов из документов [2], [3] и т.д."
             )),
             HumanMessage(content=synthesis_prompt)
         ])
         synthesized = response.content if hasattr(response, 'content') else str(response)
 
-        # Update quotes from synthesized answer for better highlight precision
+        # Update quotes from synthesized answer for better highlight precision.
+        # Try bullet-point format first (- entity [N]: role), then paragraph format ([N] text...)
         entity_quotes = _parse_entity_quotes(synthesized, len(file_order))
+        # Fallback: extract first 250 chars of each [N] paragraph as the quote
+        if not entity_quotes:
+            for line in synthesized.split('\n'):
+                m = re.match(r'^\[(\d+)\]\s+(.+)', line)
+                if m:
+                    idx = int(m.group(1))
+                    if 1 <= idx <= len(file_order) and idx not in entity_quotes:
+                        entity_quotes[idx] = m.group(2)[:250]
         for i, src in enumerate(_used_sources, 1):
             if i in entity_quotes:
                 src["quote"] = entity_quotes[i]
@@ -354,8 +378,8 @@ def analyze_all_documents(question: str, task_type: str = "answer") -> str:
     Returns:
         Комплексный ответ на основе анализа всех документов
     """
-    global _rag_service, _case_id, _db
-    
+    global _rag_service, _case_id, _db, _used_sources, _sources_locked, _last_direct_result
+
     if not _rag_service or not _case_id:
         return "Ошибка: сервис не инициализирован"
     
@@ -373,56 +397,136 @@ def analyze_all_documents(question: str, task_type: str = "answer") -> str:
         if not files:
             return "В деле нет загруженных документов."
         
-        # Собираем документы для обработки
-        documents = []
-        for f in files:
-            if f.original_text:
-                documents.append(Document(
-                    page_content=f.original_text,
-                    metadata={"source_file": f.filename, "file_id": str(f.id)}
-                ))
-        
-        if not documents:
+        # Collect files with text (ordered — [N] numbering must match _used_sources)
+        files_with_text = [f for f in files if f.original_text]
+
+        if not files_with_text:
             return "Документы найдены, но текст не извлечён."
-        
-        logger.info(f"[UniversalTools] analyze_all_documents: {len(documents)} документов для анализа")
 
-        # Запускаем Map-Reduce
-        service = MapReduceService()
+        logger.info(f"[UniversalTools] analyze_all_documents: {len(files_with_text)} документов для анализа")
 
-        from app.utils.async_utils import run_async_safe
-        result = run_async_safe(
-            service.process(documents, question, task_type)
-        )
+        # Build numbered context [N] for reliable citation markers.
+        # Each document gets a capped excerpt; for very large sets use MapReduce.
+        MAX_CHARS_PER_DOC = 4000
+        MAX_TOTAL_CHARS = 30000
+        file_order = []  # [(index, filename)]
+        context_parts = []
+        total_chars = 0
 
-        # Сохраняем источники для citations (каждый обработанный документ)
-        _used_sources.clear()
-        for f in files:
-            if f.original_text:
-                _used_sources.append({
-                    "source_id": str(f.id),
-                    "file_name": f.filename,
-                    "page": 1,
-                    "quote": f.original_text[:300],
-                    "source_type": "document",
-                })
+        for i, f in enumerate(files_with_text, 1):
+            excerpt = f.original_text[:MAX_CHARS_PER_DOC]
+            entry = f"[{i}] {f.filename}:\n{excerpt}"
+            if total_chars + len(entry) > MAX_TOTAL_CHARS:
+                available = MAX_TOTAL_CHARS - total_chars - 50
+                if available > 200:
+                    entry = f"[{i}] {f.filename}:\n{f.original_text[:available]}..."
+                else:
+                    break
+            context_parts.append(entry)
+            file_order.append((i, f.filename))
+            total_chars += len(entry)
 
-        # Форматируем ответ
-        sources_str = ", ".join(result.sources[:5])
-        if len(result.sources) > 5:
-            sources_str += f" и ещё {len(result.sources) - 5}"
+        if not context_parts:
+            # Fallback: MapReduce for very large documents
+            from app.services.map_reduce_service import MapReduceService
+            from langchain_core.documents import Document
+            from app.utils.async_utils import run_async_safe
+            documents = [
+                Document(page_content=f.original_text, metadata={"source_file": f.filename, "file_id": str(f.id)})
+                for f in files_with_text
+            ]
+            service = MapReduceService()
+            result = run_async_safe(service.process(documents, question, task_type))
+            response = result.answer
+        else:
+            context = "\n\n".join(context_parts)
+            source_list = "\n".join(f"[{i}] {fn}" for i, fn in file_order)
 
-        response = f"{result.answer}"
+            synthesis_prompt = f"""Ответь на вопрос, используя ТОЛЬКО данные из документов ниже.
+
+Вопрос: {question}
+
+Документы:
+{context}
+
+Правила цитирования:
+- После каждого конкретного факта, числа, имени или даты добавляй [N] в квадратных скобках, где N — номер документа-источника из списка ниже
+- Документы без нужной информации не упоминай совсем
+- Не пиши фразы вида «В документе N не указано» или «документ N не содержит»
+
+Список документов:
+{source_list}
+
+Пример правильного ответа:
+Срок действия договора: до 31.12.2024 [1]
+Стороны: ООО «Ромашка» (заказчик) [1] и ИП Иванов (исполнитель) [1]
+Сумма: 300 000 руб. [1]
+
+Отвечай только по документам выше:"""
+
+            from langchain_core.messages import HumanMessage, SystemMessage
+            from app.services.llm_factory import create_legal_llm
+            llm = create_legal_llm()
+            llm_response = llm.invoke([
+                SystemMessage(content=(
+                    "Ты юридический ассистент. "
+                    "Используй только цифры в квадратных скобках как маркеры источников: [1], [2], [3] и т.д. "
+                    "Никогда не пиши [документ 1] — только [1]. "
+                    "Не упоминай документы без нужной информации. "
+                    "Не используй один и тот же [N] для фактов из других документов."
+                )),
+                HumanMessage(content=synthesis_prompt)
+            ])
+            response = llm_response.content if hasattr(llm_response, 'content') else str(llm_response)
+
+        # Populate _used_sources in [N] order (only docs included in context)
+        included_count = len(file_order) if context_parts else len(files_with_text)
+        if not _sources_locked:
+            _used_sources.clear()
+        for i, f in enumerate(files_with_text, 1):
+            if i > included_count:
+                break
+            _used_sources.append({
+                "source_id": str(f.id),
+                "file_name": f.filename,
+                "page": None,
+                "quote": None,  # set below from synthesized response; None = no highlight
+                "source_type": "document",
+            })
+
+        # Update quotes from synthesized response for accurate highlight in document viewer.
+        # Three patterns handled (in order of priority):
+        #   1. bullet "- entity text [N]" — _parse_entity_quotes
+        #   2. inline "some fact [N]" at end of line — new inline pattern
+        #   3. paragraph "[N] text..." at start of line — legacy paragraph format
+        entity_quotes = _parse_entity_quotes(response, included_count)
+        # Pattern 2: inline [N] at end — "Срок: 11.12.2023 [2]" or "text [2]."
+        # Allow any trailing punctuation after [N] (LLMs often write "fact [N].")
+        for line in response.split('\n'):
+            m = re.search(r'(.+?)\s*\[(\d+)\][.,;:!?\s]*$', line.strip())
+            if m:
+                text = m.group(1).strip('•- ').strip()
+                # Strip leading list numbering like "1. " or "2) "
+                text = re.sub(r'^\d+[.)]\s*', '', text).strip()
+                idx = int(m.group(2))
+                if 1 <= idx <= included_count and text and idx not in entity_quotes:
+                    entity_quotes[idx] = text[:250]
+        # Pattern 3: paragraph [N] at start — "[N] text..."
+        for line in response.split('\n'):
+            m = re.match(r'^\[(\d+)\]\s+(.+)', line)
+            if m:
+                idx = int(m.group(1))
+                if 1 <= idx <= included_count and idx not in entity_quotes:
+                    entity_quotes[idx] = m.group(2)[:250]
+        for i, src in enumerate(_used_sources, 1):
+            if i in entity_quotes:
+                src["quote"] = entity_quotes[i]
 
         # Store as direct result so react_chat_agent bypasses outer GigaChat synthesis
-        # (outer synthesis drops [N] markers and reformats without citations)
         global _last_direct_result
         _last_direct_result = response
 
-        logger.info(
-            f"[UniversalTools] analyze_all_documents: завершено, "
-            f"стратегия={result.strategy_used.value}, документов={result.documents_processed}"
-        )
+        logger.info(f"[UniversalTools] analyze_all_documents: завершено, {len(files_with_text)} документов")
 
         return response
         
@@ -451,8 +555,8 @@ def extract_structured_data(entity_types: str = "dates,amounts,persons,organizat
     Returns:
         Структурированный список найденных сущностей по категориям
     """
-    global _rag_service, _case_id, _db
-    
+    global _rag_service, _case_id, _db, _used_sources, _sources_locked, _last_direct_result
+
     if not _rag_service or not _case_id:
         return "Ошибка: сервис не инициализирован"
     
@@ -512,8 +616,8 @@ def extract_structured_data(entity_types: str = "dates,amounts,persons,organizat
         logger.info(f"[UniversalTools] extract_structured_data: извлечены {entity_types}")
 
         # Populate _used_sources — one entry per file (same order as context [N])
-        global _used_sources, _last_direct_result
-        _used_sources = []
+        if not _sources_locked:
+            _used_sources = []
         try:
             entity_quotes = _parse_entity_quotes(result, len(file_order))
             for i, f in enumerate(files_with_text, 1):
@@ -521,7 +625,7 @@ def extract_structured_data(entity_types: str = "dates,amounts,persons,organizat
                 _used_sources.append({
                     "source_id": str(f.id),
                     "file_name": f.filename,
-                    "page": 1,
+                    "page": None,
                     "quote": quote,
                     "char_start": None,
                     "char_end": None,

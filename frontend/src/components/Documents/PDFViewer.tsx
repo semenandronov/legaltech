@@ -149,13 +149,22 @@ const PDFViewer: React.FC<PDFViewerProps> = ({
     })
     const normFullText = itemPositions.map(ip => normText(ip.str)).join(' ')
 
+    const hlWords = hlNorm.split(/\s+/)
+    // Sliding window variants: try every 4-word window to find verbatim substrings
+    // even when the quote starts with non-verbatim label text (e.g. "[сумма] 495 000,00 р.")
+    const windowVariants: string[] = []
+    for (let i = 0; i < hlWords.length - 3; i++) {
+      windowVariants.push(hlWords.slice(i, i + 4).join(' '))
+    }
+
     const variants = [
       hlNorm,
       hlNorm.substring(0, 100),
       hlNorm.substring(0, 60),
-      hlNorm.split(/\s+/).slice(0, 6).join(' '),
-      hlNorm.split(/\s+/).slice(0, 4).join(' '),
-      hlNorm.split(/\s+/).slice(0, 3).join(' '),
+      hlWords.slice(0, 6).join(' '),
+      hlWords.slice(0, 4).join(' '),
+      hlWords.slice(0, 3).join(' '),
+      ...windowVariants,
     ].filter(v => v.length > 5)
 
     for (const text of variants) {

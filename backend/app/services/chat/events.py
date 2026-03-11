@@ -19,7 +19,7 @@ class Citation(BaseModel):
     source_id: str = Field(..., description="ID источника")
     file_name: str = Field(..., description="Имя файла")
     page: Optional[int] = Field(None, description="Номер страницы")
-    quote: str = Field(..., description="Текст цитаты")
+    quote: Optional[str] = Field(None, description="Текст цитаты")
     char_start: Optional[int] = Field(None, description="Начало цитаты в документе")
     char_end: Optional[int] = Field(None, description="Конец цитаты в документе")
     context_before: Optional[str] = Field(None, description="Контекст до цитаты")

@@ -835,6 +835,9 @@ ID дела: {self.case_id}
                 response_text = ""
                 tool_calls_made = []
                 context_used = ""  # Сохраняем контекст для reflection
+                # Flag: whether a tool already produced a synthesized answer and it was streamed.
+                # Defined here (before if/elif/else) so it's always accessible in except blocks.
+                direct_result_streamed = False
 
                 # Token-level streaming via astream_events (v2)
                 if hasattr(self.agent, 'astream_events'):
@@ -850,9 +853,6 @@ ID дела: {self.case_id}
                     has_seen_tool_execution = False  # True after first on_tool_end event
                     step_tokens_streamed = False  # True if current step's tokens were streamed live
                     stream_line_buf = ""  # Line buffer for filtering section headers in real-time
-                    # When a tool already produced a synthesized answer (search/extract), skip
-                    # GigaChat's outer synthesis — it would just rephrase without [N] markers.
-                    direct_result_streamed = False
 
                     async for event in self.agent.astream_events(input_data, version="v2"):
                         kind = event.get("event", "")
@@ -1002,6 +1002,10 @@ ID дела: {self.case_id}
                                         yield SSESerializer.text_delta(text_to_stream)
                                         response_text += text_to_stream
                                         direct_result_streamed = True
+                                        # Lock _used_sources so subsequent tools don't overwrite
+                                        # the sources that correspond to already-streamed [N] markers.
+                                        from app.services.chat.universal_tools import lock_used_sources
+                                        lock_used_sources()
                                         logger.info(f"[ReActChatAgent] Direct-streamed {tool_name} result ({len(text_to_stream)} chars)")
                                 clear_last_direct_result()
                             except Exception as dr_err:
@@ -1103,7 +1107,10 @@ ID дела: {self.case_id}
                         clear_used_sources()
 
                 # === NEW v3.0: Post-processing с Reflection и Citation Verification ===
-                if response_text and (self.enable_reflection or self.enable_citation_verification):
+                # Skip reflection when tool already provided a direct synthesized answer:
+                # the inner LLM already produced a high-quality per-document response,
+                # and reflection would duplicate or overwrite it.
+                if response_text and not direct_result_streamed and (self.enable_reflection or self.enable_citation_verification):
                     async for event in self._post_process_answer(question, response_text, context_used):
                         yield event
                 

@@ -205,9 +205,15 @@ const MessageContent: React.FC<MessageContentProps> = ({
   onCitationClick,
   isStreaming = false
 }) => {
-  // Pre-process content: normalize [filename] → [N] and then [N] → citation markers
-  const processedText = useMemo(() => {
+  // Pre-process content: normalize [filename] → [N] and then [N] → citation markers.
+  // Also remap [N] occurrences to unique sequential display numbers so no two badges
+  // in the same message share a number (footnote-style: [1], [2], [3]…).
+  const { processedText, effectiveSources } = useMemo(() => {
     let text = content
+
+    // Normalize LLM citation variants to plain [N]:
+    // [документ N], [doc N], [источник N], [Документ N], etc. → [N]
+    text = text.replace(/\[(?:документ|doc|источник|файл|file|ref|ссылка)\s*\.?\s*(\d+)\s*\]/gi, '[$1]')
 
     // Replace lines of repeated decorative symbols (•••, ===, ···, etc.) with ---
     text = text.replace(/^([•·\-=_~*]{3,})\s*$/gm, '---')
@@ -264,30 +270,48 @@ const MessageContent: React.FC<MessageContentProps> = ({
       }
     }
 
-    // Replace [N] citation markers with unique placeholders that won't be parsed as markdown links
-    // Only replace if we have sources and the number is within range
+    // Normalize comma-separated citations like [1, 2, 4, 5] → [1][2][4][5]
     if (sources.length > 0) {
-      // Normalize comma-separated citations like [1, 2, 4, 5] → [1][2][4][5]
       text = text.replace(/\[(\d+(?:\s*,\s*\d+)+)\]/g, (_match, nums) => {
         return nums.split(',').map((n: string) => `[${n.trim()}]`).join('')
       })
+    }
 
+    // Remap every [N] occurrence to a unique sequential display number.
+    // First occurrence of any valid source → [1], second → [2], etc.
+    // This means no two badges share the same number, like proper footnotes.
+    const remappedSources: SourceInfo[] = []
+    if (sources.length > 0) {
+      let counter = 0
       text = text.replace(/\[(\d+)\]/g, (match, num) => {
         const idx = parseInt(num, 10)
-        if (idx >= 1 && idx <= sources.length) {
-          return `${CITE_PREFIX}${idx}${CITE_SUFFIX}`
-        }
-        return match // Keep as-is if out of range
+        if (idx < 1 || idx > sources.length) return match
+        counter++
+        remappedSources.push(sources[idx - 1])
+        return `[${counter}]`
       })
     }
 
-    return text
+    const effectiveSources = remappedSources.length > 0 ? remappedSources : sources
+
+    // Convert [N] → unique placeholders (won't be parsed as markdown links)
+    if (effectiveSources.length > 0) {
+      text = text.replace(/\[(\d+)\]/g, (match, num) => {
+        const idx = parseInt(num, 10)
+        if (idx >= 1 && idx <= effectiveSources.length) {
+          return `${CITE_PREFIX}${idx}${CITE_SUFFIX}`
+        }
+        return match
+      })
+    }
+
+    return { processedText: text, effectiveSources }
   }, [content, sources])
 
   // Build markdown components with citation injection
   const markdownComponents = useMemo(
-    () => buildMarkdownComponents(sources, onCitationClick),
-    [sources, onCitationClick]
+    () => buildMarkdownComponents(effectiveSources, onCitationClick),
+    [effectiveSources, onCitationClick]
   )
 
   return (
