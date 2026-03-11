@@ -89,12 +89,17 @@ class ChatGigaChat(BaseChatModel):
             # Логируем настройки для диагностики
             logger.info(f"Initializing GigaChat with verify_ssl_certs={self.verify_ssl_certs}, timeout={self.timeout}s")
             
+            # Pass scope from config (GIGACHAT_API_PERS for personal, GIGACHAT_API_CORP for corporate)
+            # Corporate scope has fewer content restrictions for legal documents
+            gigachat_scope = config.GIGACHAT_SCOPE
             self._client = GigaChatSDK(
                 credentials=self.credentials,
                 verify_ssl_certs=self.verify_ssl_certs,
-                timeout=self.timeout  # Передаем timeout в SDK
+                timeout=self.timeout,
+                scope=gigachat_scope,
+                profanity_check=False,  # Disable content filter for legal documents
             )
-            logger.info(f"✅ Initialized ChatGigaChat with model={self.model}, verify_ssl={self.verify_ssl_certs}, timeout={self.timeout}s")
+            logger.info(f"✅ Initialized ChatGigaChat with model={self.model}, scope={gigachat_scope}, profanity_check=False, verify_ssl={self.verify_ssl_certs}, timeout={self.timeout}s")
         except Exception as e:
             logger.error(f"Failed to initialize GigaChat: {e}", exc_info=True)
             # Если ошибка связана с SSL, предлагаем решение
