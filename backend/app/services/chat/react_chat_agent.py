@@ -890,50 +890,26 @@ ID дела: {self.case_id}
                     logger.info("[ReActChatAgent] Using astream_events for token-level streaming")
                     active_tool_calls = set()  # Track tool calls we've already emitted "running" for
 
-                    # Buffer text tokens: GigaChat may output "reasoning" text before a tool call.
-                    # We buffer tokens per LLM invocation and only flush if there's no tool call.
-                    # EXCEPTION: after at least one tool has executed, the final response is streamed
-                    # token-by-token in real-time (GigaChat won't echo tool names at that point).
+                    # STRATEGY: Buffer ALL GigaChat tokens. Never stream them directly.
+                    # The actual answer comes from _last_direct_result (set by tools).
+                    # Buffer is only flushed at end of loop if no tool produced a direct result.
                     text_buffer = ""
                     has_tool_call_in_current_step = False
-                    has_seen_tool_execution = False  # True after first on_tool_end event
-                    step_tokens_streamed = False  # True if current step's tokens were streamed live
-                    stream_line_buf = ""  # Line buffer for filtering section headers in real-time
-                    stream_in_sources = False  # True once "Источники:" header encountered
 
                     async for event in self.agent.astream_events(input_data, version="v2"):
                         kind = event.get("event", "")
 
                         # Token-by-token streaming from LLM
+                        # STRATEGY: NEVER stream GigaChat's outer tokens directly.
+                        # Only buffer them. The actual answer comes from _last_direct_result
+                        # (set by tools). If no tool was called, we flush the buffer at the end.
                         if kind == "on_chat_model_stream":
-                            # Skip GigaChat's outer synthesis when a tool already produced the answer
-                            if direct_result_streamed:
-                                chunk = event.get("data", {}).get("chunk")
-                                tok = getattr(chunk, 'content', '') if chunk else ''
-                                if tok:
-                                    logger.debug(f"[ReActChatAgent] SKIPPING synthesis token (direct already streamed): {tok[:30]!r}")
-                                continue
                             chunk = event.get("data", {}).get("chunk")
                             if chunk:
-                                # Text content
+                                # Buffer text content (never stream GigaChat tokens directly)
                                 token = getattr(chunk, 'content', '') or ''
                                 if token:
-                                    if has_tool_call_in_current_step:
-                                        # Already saw a tool call in this step, skip reasoning text
-                                        pass
-                                    elif has_seen_tool_execution:
-                                        # Post-tools final response: stream token in real-time,
-                                        # filtering out [# Section Header] lines.
-                                        if not step_tokens_streamed:
-                                            logger.info(f"[ReActChatAgent] GigaChat synthesis started streaming (direct_result_streamed={direct_result_streamed})")
-                                        text_buffer += token
-                                        step_tokens_streamed = True
-                                        emit, stream_line_buf, stream_in_sources = _filter_section_headers_streaming(token, stream_line_buf, stream_in_sources)
-                                        if emit:
-                                            yield SSESerializer.text_delta(emit)
-                                    else:
-                                        # First LLM call: buffer to avoid GigaChat tool-echo artifacts
-                                        text_buffer += token
+                                    text_buffer += token
 
                                 # Tool call chunks — emit "running" on first appearance
                                 tool_call_chunks = getattr(chunk, 'tool_call_chunks', None)
@@ -942,11 +918,6 @@ ID дела: {self.case_id}
                                         tc_name = tc_chunk.get('name', '')
                                         if tc_name and tc_name not in active_tool_calls:
                                             has_tool_call_in_current_step = True
-                                            # Discard buffered reasoning text (pre-tool-call thinking)
-                                            if text_buffer and not step_tokens_streamed:
-                                                logger.info(f"[ReActChatAgent] Discarding pre-tool-call text ({len(text_buffer)} chars)")
-                                                text_buffer = ""
-
                                             active_tool_calls.add(tc_name)
                                             tool_calls_made.append(tc_name)
                                             logger.info(f"[ReActChatAgent] Tool call: {tc_name}")
@@ -972,40 +943,22 @@ ID дела: {self.case_id}
                                 )
                                 if end_tool_calls:
                                     has_tool_call_in_current_step = True
-                                    if text_buffer and not step_tokens_streamed:
-                                        logger.info(
-                                            f"[ReActChatAgent] Discarding pre-tool-call text "
-                                            f"(detected via on_chat_model_end, {len(text_buffer)} chars)"
-                                        )
-                                        text_buffer = ""
 
-                            # Flush any incomplete line remaining in the streaming line buffer
-                            if stream_line_buf and step_tokens_streamed:
-                                stripped = stream_line_buf.strip()
-                                if (not _SECTION_HEADER_RE.match(stripped)
-                                        and not _TOOL_NAME_MENTION_RE.search(stripped)):
-                                    flushed = _FRAGMENT_CITE_RE.sub('', stream_line_buf)
-                                    if flushed:
-                                        yield SSESerializer.text_delta(flushed)
-                                stream_line_buf = ""
-                            if text_buffer and not has_tool_call_in_current_step:
-                                if step_tokens_streamed:
-                                    # Already streamed in real-time — just accumulate for post-processing
-                                    cleaned = _clean_response_text(text_buffer)
-                                    response_text += cleaned
-                                else:
-                                    # Wasn't streamed yet (first LLM call, no tools) — send now
-                                    cleaned = _clean_response_text(text_buffer)
-                                    if cleaned:
-                                        yield SSESerializer.text_delta(cleaned)
-                                        response_text += cleaned
-                            text_buffer = ""
+                            # If this LLM step had tool calls, discard buffered text (it's reasoning)
+                            if has_tool_call_in_current_step:
+                                if text_buffer:
+                                    logger.info(
+                                        f"[ReActChatAgent] Discarding pre-tool-call reasoning "
+                                        f"({len(text_buffer)} chars)"
+                                    )
+                                text_buffer = ""
+                            # Otherwise keep buffer — it will be flushed at end of loop
+                            # (only if no direct result was streamed from a tool)
+
                             has_tool_call_in_current_step = False
-                            step_tokens_streamed = False
 
                         # Tool execution completed
                         elif kind == "on_tool_end":
-                            has_seen_tool_execution = True  # Enable real-time streaming for final response
                             tool_name = event.get("name", "unknown")
                             output_data = event.get("data", {}).get("output", "")
                             from app.services.chat.universal_tools import get_last_direct_result as _gdr
@@ -1058,9 +1011,9 @@ ID дела: {self.case_id}
                             except Exception as dr_err:
                                 logger.warning(f"[ReActChatAgent] Failed to direct-stream result: {dr_err}")
 
-                    # Flush any remaining buffered text (only if not already streamed live
-                    # AND no direct result was already streamed from a tool)
-                    if text_buffer and not step_tokens_streamed and not direct_result_streamed:
+                    # Flush any remaining buffered text (only if no direct result
+                    # was already streamed from a tool)
+                    if text_buffer and not direct_result_streamed:
                         cleaned = _clean_response_text(text_buffer)
                         if cleaned:
                             async for sse_chunk in _stream_text_with_typing_effect(cleaned):
