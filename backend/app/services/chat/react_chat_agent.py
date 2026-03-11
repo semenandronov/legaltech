@@ -53,10 +53,23 @@ _SEARCH_RESULTS_HEADER = re.compile(
     r'^\s*Результаты поиска:\s*$',
     re.MULTILINE
 )
-# Chain-of-thought section headers: both [# Header] and bare # Header markdown variants
+# Chain-of-thought section headers: [# Header], # Header, ## Header, ### Header, **Header**
 _SECTION_HEADER_RE = re.compile(
-    r'^\s*(?:\[#[^\]]+\]|# (?:Анализ вопроса|Выбор инструмента|Ответ|Шаг \d+|Итог)(?:[^\n]*)?)\s*$',
-    re.MULTILINE
+    r'^\s*(?:'
+    r'\[#[^\]]+\]'  # [# ...] bracket format
+    r'|#{1,3}\s*(?:Анализ вопроса|Выбор инструмента|Применение инструмента|Вызов инструмента|'
+    r'Ответ|Шаг \d+|Итог|Размышление|Рассуждение|Мышление|Thinking|Analysis|Tool)(?:[^\n]*)?'  # # / ## / ### headers
+    r'|\*{2}(?:Анализ вопроса|Применение инструмента|Вызов инструмента|Размышление)\*{2}'  # **bold** headers
+    r')\s*$',
+    re.MULTILINE | re.IGNORECASE
+)
+# Lines that look like agent internal reasoning (e.g. "Пользователь запрашивает ... из дела с ID ...")
+_INTERNAL_REASONING_RE = re.compile(
+    r'^\s*(?:Пользователь (?:запрашивает|спрашивает|просит|хочет)|'
+    r'Мне нужно|Я должен|Необходимо|Нужно (?:использовать|вызвать|найти)|'
+    r'Для (?:ответа|этого) (?:мне |)нужно|'
+    r'Давайте|Буду использовать|Вызываю)[^\n]*$',
+    re.MULTILINE | re.IGNORECASE
 )
 # [Single-line bracket notes] like [Приветствие удалено из вопроса пользователя]
 _BRACKET_NOTE_RE = re.compile(r'^\s*\[[^\]#\n]{8,}\]\s*$', re.MULTILINE)
@@ -97,6 +110,8 @@ def _clean_response_text(text: str) -> str:
     cleaned = _SEARCH_RESULTS_HEADER.sub('', cleaned)
     # Remove chain-of-thought section header lines
     cleaned = _SECTION_HEADER_RE.sub('', cleaned)
+    # Remove internal reasoning lines ("Пользователь запрашивает...", "Мне нужно...")
+    cleaned = _INTERNAL_REASONING_RE.sub('', cleaned)
     # Remove [bracket note] lines (preprocessing notes like [Приветствие удалено...])
     cleaned = _BRACKET_NOTE_RE.sub('', cleaned)
     # Remove sentences that mention internal tool function names
@@ -122,6 +137,9 @@ def _filter_section_headers_streaming(token: str, line_buf: str) -> tuple:
     # All parts except the last are complete lines (they ended with \n)
     for part in parts[:-1]:
         if _SECTION_HEADER_RE.match(part) or _BRACKET_NOTE_RE.match(part):
+            continue
+        # Suppress internal reasoning lines (agent thinking leaked into output)
+        if _INTERNAL_REASONING_RE.match(part):
             continue
         # Suppress lines that mention internal tool names (GigaChat reasoning leakage)
         if _TOOL_NAME_MENTION_RE.search(part):
@@ -234,7 +252,7 @@ class ReActChatAgent:
 - Используй Markdown для форматирования
 - Для списков используй маркеры
 - Для важного используй **жирный** текст
-- НЕ включай в ответ внутренние заголовки разделов вида [# Анализ вопроса], [# Выбор инструмента], [# Ответ] и подобные. Пиши ответ сразу без таких маркеров.
+- ЗАПРЕЩЕНО включать в ответ заголовки разделов: «Анализ вопроса», «Применение инструмента», «Вызов инструмента», «Выбор инструмента», «Заключение», «Результаты поиска», «Шаг N», «Итог» и любые подобные. НЕ используй # ## ### ** или другие маркеры для таких заголовков. Пиши ответ пользователю СРАЗУ — без структуры «анализ→инструмент→результат→заключение». Пользователь НЕ должен видеть внутренний процесс мышления.
 - НЕ упоминай названия инструментов/функций (analyze_all_documents, search_in_documents и т.д.) в тексте ответа пользователю. Пользователь не видит и не должен видеть эти названия.
 - НЕ добавляй раздел "Источники:", "Сноски:" или отдельный список вида "[1] Описание источника" в конце ответа. Маркеры [N] используй ТОЛЬКО встроенно сразу после каждого факта, НИКОГДА не выносить в отдельный список или строку в конце.
 - НЕ пиши "Фрагмент N из ..." — это внутренний формат системы, недопустимый в ответе пользователю. Для ссылки на источник используй только [N].
