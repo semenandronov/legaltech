@@ -22,6 +22,37 @@ except ImportError:
     ResponseError = None
 
 
+def _log_gigachat_error(e: Exception, context: str = "") -> None:
+    """Log GigaChat error with X-Request-ID for support diagnostics."""
+    prefix = f"[GigaChat{f'/{context}' if context else ''}] ERROR"
+    # Try to extract X-Request-ID from response headers or body
+    request_id = None
+    response_body = None
+    status_code = getattr(e, 'status_code', None)
+
+    # ResponseError has a .response attribute (httpx.Response)
+    response_obj = getattr(e, 'response', None)
+    if response_obj is not None:
+        headers = getattr(response_obj, 'headers', {}) or {}
+        request_id = (
+            headers.get('x-request-id')
+            or headers.get('X-Request-ID')
+            or headers.get('x-request-id'.upper())
+        )
+        try:
+            response_body = response_obj.text[:500] if hasattr(response_obj, 'text') else None
+        except Exception:
+            pass
+
+    if request_id:
+        logger.error(f"{prefix}: X-Request-ID={request_id}, status={status_code}, error={e}")
+    else:
+        logger.error(f"{prefix}: status={status_code}, error={e}")
+
+    if response_body:
+        logger.error(f"{prefix}: response_body={response_body}")
+
+
 class ChatGigaChat(BaseChatModel):
     """
     Wrapper для GigaChat с поддержкой function calling через LangChain
@@ -183,9 +214,10 @@ class ChatGigaChat(BaseChatModel):
                 break
                 
             except Exception as e:
+                _log_gigachat_error(e, context="_generate")
                 # Check if it's a 429 rate limit error
                 is_rate_limit = (
-                    ResponseError and isinstance(e, ResponseError) and 
+                    ResponseError and isinstance(e, ResponseError) and
                     hasattr(e, 'status_code') and e.status_code == 429
                 ) or (
                     "429" in str(e) or "Too Many Requests" in str(e)
@@ -379,6 +411,7 @@ class ChatGigaChat(BaseChatModel):
                 return
 
             except Exception as e:
+                _log_gigachat_error(e, context="_stream")
                 is_rate_limit = (
                     ResponseError and isinstance(e, ResponseError) and
                     hasattr(e, 'status_code') and e.status_code == 429
@@ -455,6 +488,7 @@ class ChatGigaChat(BaseChatModel):
 
             except Exception as e:
                 import random
+                _log_gigachat_error(e, context="_astream")
                 is_rate_limit = (
                     ResponseError and isinstance(e, ResponseError) and
                     hasattr(e, 'status_code') and e.status_code == 429
