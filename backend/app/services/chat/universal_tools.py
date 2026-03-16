@@ -125,6 +125,59 @@ def _parse_entity_quotes(result_text: str, n_sources: int) -> dict:
     return quotes
 
 
+_SAFETY_FILTER_PHRASES = [
+    # Variant 1: "Генеративные языковые модели не обладают собственным мнением"
+    "не обладают собственным мнением",
+    # Variant 2: "GigaChat не обладает собственным мнением" (singular form)
+    "не обладает собственным мнением",
+    # Tail phrases common to both variants
+    "неправильного толкования, разговоры",
+    "темы временно ограничены",
+    "чувствительные темы могут быть ограничены",
+    # GigaChat-specific boilerplate (variant 2)
+    "нейросетевой моделью, обученной на открытых данных",
+    "не транслирует мнение своих разработчиков",
+    # Generic disclaimers
+    "не могу дать совет",
+    "не могу высказать мнение",
+    "как языковая модель, я не могу",
+    "не могу предоставить юридическую консультацию",
+    "за консультацией к специалисту",
+    "я не в состоянии оценить",
+]
+
+
+def _is_safety_filter_response(text: str) -> bool:
+    """Detect if GigaChat returned a safety filter / disclaimer instead of an answer."""
+    if not text:
+        return False
+    text_lower = text.lower()
+    return any(phrase.lower() in text_lower for phrase in _SAFETY_FILTER_PHRASES)
+
+
+def _neutralize_sensitive_query(query: str) -> Optional[str]:
+    """If query contains words that trigger GigaChat's safety filter,
+    return a semantically equivalent neutral phrasing. Returns None if no change needed."""
+    q_lower = query.lower()
+    triggers = ["риск", "опасност", "угроз", "нарушени", "проблем", "слабост"]
+    if not any(t in q_lower for t in triggers):
+        return None
+    # Replace trigger phrases while preserving semantic intent
+    neutral = re.sub(
+        r'\b(?:риски|риск|опасности|угрозы|проблемы|слабости)\b',
+        'неблагоприятные обстоятельства',
+        query,
+        flags=re.IGNORECASE
+    )
+    neutral = re.sub(
+        r'\b(?:рискованн\w+|опасн\w+)\b',
+        'проблемн',
+        neutral,
+        flags=re.IGNORECASE
+    )
+    return neutral if neutral != query else None
+
+
 def initialize_universal_tools(
     db: Session,
     rag_service,
@@ -319,44 +372,86 @@ def search_in_documents(query: str, k: int = 20) -> str:
         context = "\n\n".join(result_parts)
         logger.info(f"[UniversalTools] search_in_documents: {len(documents)} чанков, {len(result_parts)} файлов для '{query[:50]}'")
 
-        # Inner LLM synthesis: per-source paragraphs guarantee correct [N] markers.
-        # LLMs reliably use [N] when the response is structured per-source (one paragraph = one source).
+        # Inner LLM synthesis: documents go into SystemMessage (like global assistant),
+        # which avoids GigaChat safety filter that triggers on user-turn document content.
         source_list = "\n".join(f"[{i}] {fn}" for i, fn in enumerate(file_order, 1))
-
-        synthesis_prompt = f"""Ответь на вопрос, используя ТОЛЬКО данные из документов ниже.
-
-Вопрос: {query}
-
-Документы:
-{context}
-
-ОБЯЗАТЕЛЬНЫЙ ФОРМАТ ОТВЕТА — по одному абзацу на документ, каждый абзац начинается с [N]:
-{source_list}
-
-Пример:
-[1] В договоре подряда: исполнитель — Иванов А.А., сумма — 500 000 руб., срок — до 31.12.2024.
-[2] В акте приёмки: работы выполнены полностью, замечания отсутствуют.
-
-Если документ не содержит информации по вопросу — пропусти его целиком.
-Отвечай только по документам выше:"""
 
         # В режиме deep_think используем Pro-модель (GigaChat-Pro), если флаг установлен.
         if _use_pro_llm:
             llm = create_legal_llm(model=config.GIGACHAT_PRO_MODEL, use_rate_limiting=False)
         else:
             llm = create_legal_llm()
+
+        _system_msg = (
+            "Ты ассистент по работе с текстом документов. "
+            "Твоя задача — извлекать и излагать информацию из предоставленных текстов. "
+            "Строго следуй формату: каждый абзац начинается с [N] — числа в квадратных скобках, номера документа. "
+            "Пиши только [1], [2], [3] и т.д. — никогда не пиши [документ 1], только [1]. "
+            "ЗАПРЕЩЕНО добавлять заголовки, секции или разделы типа 'Результаты поиска', 'Источники', 'Заключение'. "
+            "Пиши только содержательный ответ с [N] маркерами, без оформления.\n\n"
+            f"Документы из дела:\n{context}\n\n"
+            f"Список документов:\n{source_list}"
+        )
+        query_prompt = (
+            f"На основе документов выше выполни следующий запрос: {query}\n\n"
+            "ФОРМАТ: по одному абзацу на документ, каждый абзац начинается с [N] (номер документа):\n"
+            "[1] В договоре подряда: исполнитель — Иванов А.А., сумма — 500 000 руб.\n"
+            "[2] В акте приёмки: работы выполнены полностью.\n\n"
+            "Если документ не содержит нужной информации — пропусти его.\n"
+            "Отвечай строго по тексту документов:"
+        )
         response = llm.invoke([
-            SystemMessage(content=(
-                "Ты юридический ассистент. "
-                "Строго следуй формату: каждый абзац начинается с [N] — числа в квадратных скобках, номера документа. "
-                "Пиши только [1], [2], [3] и т.д. — никогда не пиши [документ 1], только [1]. "
-                "Никогда не используй [1] для фактов из документов [2], [3] и т.д. "
-                "ЗАПРЕЩЕНО добавлять заголовки, секции, нумерованные шаги или разделы типа 'Результаты поиска', 'Источники', 'Заключение'. "
-                "Пиши только содержательный ответ с [N] маркерами, без оформления."
-            )),
-            HumanMessage(content=synthesis_prompt)
+            SystemMessage(content=_system_msg),
+            HumanMessage(content=query_prompt)
         ])
         synthesized = response.content if hasattr(response, 'content') else str(response)
+
+        # Retry with neutral query if safety filter triggered
+        if _is_safety_filter_response(synthesized):
+            logger.warning(
+                f"[UniversalTools] search_in_documents: safety filter hit at {datetime.now().isoformat()} "
+                f"| query='{query[:100]}' | response='{synthesized[:120]}'"
+            )
+            neutral_query = _neutralize_sensitive_query(query)
+            # Try 1: neutral query (риски → неблагоприятные обстоятельства)
+            if neutral_query:
+                logger.info(f"[UniversalTools] search_in_documents: retry 1 with neutral query")
+                neutral_prompt = (
+                    f"На основе документов выше выполни следующий запрос: {neutral_query}\n\n"
+                    "ФОРМАТ: по одному абзацу на документ, каждый абзац начинается с [N]:\n"
+                    "Если документ не содержит нужной информации — пропусти его.\n"
+                    "Отвечай строго по тексту документов:"
+                )
+                response2 = llm.invoke([
+                    SystemMessage(content=_system_msg),
+                    HumanMessage(content=neutral_prompt)
+                ])
+                retry_text = response2.content if hasattr(response2, 'content') else str(response2)
+                if not _is_safety_filter_response(retry_text):
+                    synthesized = retry_text
+                    logger.info(f"[UniversalTools] search_in_documents: retry 1 succeeded ({len(synthesized)} chars)")
+                else:
+                    # Try 2: extraction-framed prompt (no mention of sensitive topics)
+                    logger.info("[UniversalTools] search_in_documents: retry 2 with extraction framing")
+                    extract_prompt = (
+                        "Из каждого документа выпиши все упомянутые проблемы, отказы, замечания, "
+                        "процессуальные нарушения, спорные условия и затруднения.\n\n"
+                        "ФОРМАТ: по одному абзацу на документ, каждый абзац начинается с [N]:\n"
+                        "Если документ не содержит нужной информации — пропусти его."
+                    )
+                    response3 = llm.invoke([
+                        SystemMessage(content=_system_msg),
+                        HumanMessage(content=extract_prompt)
+                    ])
+                    retry_text2 = response3.content if hasattr(response3, 'content') else str(response3)
+                    if not _is_safety_filter_response(retry_text2):
+                        synthesized = retry_text2
+                        logger.info(f"[UniversalTools] search_in_documents: retry 2 succeeded ({len(synthesized)} chars)")
+                    else:
+                        logger.warning("[UniversalTools] search_in_documents: all retries hit safety filter — using raw context")
+                        synthesized = context
+            else:
+                logger.warning("[UniversalTools] search_in_documents: safety filter, no neutralization possible")
 
         # Update quotes from synthesized answer for better highlight precision.
         # Try bullet-point format first (- entity [N]: role), then paragraph format ([N] text...)
@@ -473,28 +568,6 @@ def analyze_all_documents(question: str, task_type: str = "answer") -> str:
             context = "\n\n".join(context_parts)
             source_list = "\n".join(f"[{i}] {fn}" for i, fn in file_order)
 
-            synthesis_prompt = f"""Ответь на вопрос, используя ТОЛЬКО данные из документов ниже.
-
-Вопрос: {question}
-
-Документы:
-{context}
-
-Правила цитирования:
-- После каждого конкретного факта, числа, имени или даты добавляй [N] в квадратных скобках, где N — номер документа-источника из списка ниже
-- Документы без нужной информации не упоминай совсем
-- Не пиши фразы вида «В документе N не указано» или «документ N не содержит»
-
-Список документов:
-{source_list}
-
-Пример правильного ответа:
-Срок действия договора: до 31.12.2024 [1]
-Стороны: ООО «Ромашка» (заказчик) [1] и ИП Иванов (исполнитель) [1]
-Сумма: 300 000 руб. [1]
-
-Отвечай только по документам выше:"""
-
             from langchain_core.messages import HumanMessage, SystemMessage
             from app.services.llm_factory import create_legal_llm
             # При включённом deep_think используем Pro-модель для глубокого анализа.
@@ -502,19 +575,85 @@ def analyze_all_documents(question: str, task_type: str = "answer") -> str:
                 llm = create_legal_llm(model=config.GIGACHAT_PRO_MODEL, use_rate_limiting=False)
             else:
                 llm = create_legal_llm()
+
+            # Documents go into SystemMessage (mirrors global assistant) to avoid safety filter
+            # that triggers on user-turn content with legal/sensitive document text.
+            _sys_content = (
+                "Ты ассистент по работе с текстом документов. "
+                "Твоя задача — извлекать и излагать информацию из предоставленных текстов. "
+                "Используй только цифры в квадратных скобках как маркеры источников: [1], [2], [3] и т.д. "
+                "Никогда не пиши [документ 1] — только [1]. "
+                "Не упоминай документы без нужной информации. "
+                "ЗАПРЕЩЕНО добавлять заголовки, секции или разделы типа 'Результаты поиска', 'Источники', 'Заключение'. "
+                "Пиши только содержательный ответ с [N] маркерами, без оформления.\n\n"
+                f"Документы из дела:\n{context}\n\n"
+                f"Список документов:\n{source_list}"
+            )
+            query_prompt = (
+                f"На основе документов выше выполни следующий запрос: {question}\n\n"
+                "Правила:\n"
+                "- После каждого факта, числа, имени или даты добавляй [N] — номер документа-источника\n"
+                "- Документы без нужной информации не упоминай\n"
+                "- Не пиши «В документе N не указано»\n\n"
+                "Пример:\n"
+                "Срок действия договора: до 31.12.2024 [1]\n"
+                "Стороны: ООО «Ромашка» (заказчик) [1] и ИП Иванов (исполнитель) [1]\n\n"
+                "Отвечай строго по тексту документов:"
+            )
             llm_response = llm.invoke([
-                SystemMessage(content=(
-                    "Ты юридический ассистент. "
-                    "Используй только цифры в квадратных скобках как маркеры источников: [1], [2], [3] и т.д. "
-                    "Никогда не пиши [документ 1] — только [1]. "
-                    "Не упоминай документы без нужной информации. "
-                    "Не используй один и тот же [N] для фактов из других документов. "
-                    "ЗАПРЕЩЕНО добавлять заголовки, секции, нумерованные шаги или разделы типа 'Результаты поиска', 'Источники', 'Заключение'. "
-                    "Пиши только содержательный ответ с [N] маркерами, без оформления."
-                )),
-                HumanMessage(content=synthesis_prompt)
+                SystemMessage(content=_sys_content),
+                HumanMessage(content=query_prompt)
             ])
             response = llm_response.content if hasattr(llm_response, 'content') else str(llm_response)
+
+            # Retry with neutral query if safety filter triggered
+            if _is_safety_filter_response(response):
+                logger.warning(
+                    f"[UniversalTools] analyze_all_documents: safety filter hit at {datetime.now().isoformat()} "
+                    f"| question='{question[:100]}' | response='{response[:120]}'"
+                )
+                neutral_question = _neutralize_sensitive_query(question)
+                # Try 1: neutral query (риски → неблагоприятные обстоятельства)
+                if neutral_question:
+                    logger.info("[UniversalTools] analyze_all_documents: retry 1 with neutral query")
+                    neutral_prompt = (
+                        f"На основе документов выше выполни следующий запрос: {neutral_question}\n\n"
+                        "Правила:\n"
+                        "- После каждого факта, числа, имени или даты добавляй [N]\n"
+                        "- Документы без нужной информации не упоминай\n"
+                        "Отвечай строго по тексту документов:"
+                    )
+                    retry_resp = llm.invoke([
+                        SystemMessage(content=_sys_content),
+                        HumanMessage(content=neutral_prompt)
+                    ])
+                    retry_text = retry_resp.content if hasattr(retry_resp, 'content') else str(retry_resp)
+                    if not _is_safety_filter_response(retry_text):
+                        response = retry_text
+                        logger.info(f"[UniversalTools] analyze_all_documents: retry 1 succeeded ({len(response)} chars)")
+                    else:
+                        # Try 2: extraction-framed prompt
+                        logger.info("[UniversalTools] analyze_all_documents: retry 2 with extraction framing")
+                        extract_prompt = (
+                            "Из каждого документа выпиши все упомянутые проблемы, отказы, замечания, "
+                            "процессуальные нарушения и затруднения.\n\n"
+                            "Правила:\n"
+                            "- После каждого факта добавляй [N] — номер документа-источника\n"
+                            "Отвечай строго по тексту документов:"
+                        )
+                        retry_resp2 = llm.invoke([
+                            SystemMessage(content=_sys_content),
+                            HumanMessage(content=extract_prompt)
+                        ])
+                        retry_text2 = retry_resp2.content if hasattr(retry_resp2, 'content') else str(retry_resp2)
+                        if not _is_safety_filter_response(retry_text2):
+                            response = retry_text2
+                            logger.info(f"[UniversalTools] analyze_all_documents: retry 2 succeeded ({len(response)} chars)")
+                        else:
+                            logger.warning("[UniversalTools] analyze_all_documents: all retries hit safety filter — using raw context")
+                            response = context
+                else:
+                    logger.warning("[UniversalTools] analyze_all_documents: safety filter, no neutralization possible")
 
         # Populate _used_sources in [N] order (only docs included in context)
         included_count = len(file_order) if context_parts else len(files_with_text)

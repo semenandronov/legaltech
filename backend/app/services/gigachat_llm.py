@@ -209,7 +209,22 @@ class ChatGigaChat(BaseChatModel):
             try:
                 # Make API call
                 response = self._client.chat(chat_obj)
-                
+
+                # Log X-Request-ID from successful response (needed for safety-filter support tickets)
+                try:
+                    x_headers = getattr(response, 'x_headers', None) or {}
+                    rid = (
+                        x_headers.get('x-request-id')
+                        or x_headers.get('X-Request-ID')
+                        or x_headers.get('X-Request-Id')
+                    )
+                    if rid:
+                        logger.info(f"[GigaChat] X-Request-ID={rid}")
+                    else:
+                        logger.info(f"[GigaChat] x_headers={x_headers}")
+                except Exception:
+                    pass
+
                 # If successful, break out of retry loop
                 break
                 

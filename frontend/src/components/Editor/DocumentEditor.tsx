@@ -321,11 +321,20 @@ export const DocumentEditor = forwardRef<DocumentEditorRef, DocumentEditorProps>
       }
 
       // Fallback: try shorter prefixes (in case phrase has minor differences vs editor)
+      // Respects nthOccurrence so the correct (2nd, 3rd…) occurrence is found.
       if (charIndex === -1) {
         const tries = [searchText.slice(0, 100), searchText.slice(0, 50), searchText.split(/\s+/).slice(0, 5).join(' ')]
         for (const t of tries) {
-          const idx = docLower.indexOf(t.toLowerCase())
-          if (idx !== -1) { charIndex = idx; matchText = docText.slice(idx, idx + t.length); break }
+          if (!t) continue
+          const tLower = t.toLowerCase()
+          let f = 0, sf = 0
+          while (true) {
+            const idx = docLower.indexOf(tLower, sf)
+            if (idx === -1) break
+            if (f === nthOccurrence) { charIndex = idx; matchText = docText.slice(idx, idx + t.length); break }
+            f++; sf = idx + 1
+          }
+          if (charIndex !== -1) break
         }
       }
       if (charIndex === -1) return false

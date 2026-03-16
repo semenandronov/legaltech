@@ -300,13 +300,13 @@ export function PlaybookCheckCard({ check }: PlaybookCheckCardProps) {
                   title="Нарушения"
                   dotColor="#ef4444"
                   rules={violations}
-                  defaultOpen={true}
+                  defaultOpen={false}
                 />
                 <RuleSection
                   title="Требует внимания"
                   dotColor="#f59e0b"
                   rules={warnings}
-                  defaultOpen={true}
+                  defaultOpen={false}
                 />
                 {filter === 'all' && (
                   <RuleSection
@@ -319,8 +319,8 @@ export function PlaybookCheckCard({ check }: PlaybookCheckCardProps) {
               </>
             ) : (
               <>
-                <RuleSection title="Нарушения" dotColor="#ef4444" rules={violations} defaultOpen={true} />
-                <RuleSection title="Требует внимания" dotColor="#f59e0b" rules={warnings} defaultOpen={true} />
+                <RuleSection title="Нарушения" dotColor="#ef4444" rules={violations} defaultOpen={false} />
+                <RuleSection title="Требует внимания" dotColor="#f59e0b" rules={warnings} defaultOpen={false} />
                 <RuleSection title="Соответствует" dotColor="#22c55e" rules={passed} defaultOpen={false} />
               </>
             )}

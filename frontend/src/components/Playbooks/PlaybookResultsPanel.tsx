@@ -459,7 +459,7 @@ export const PlaybookResultsPanel = ({
                     )
                     const occApplyPrefix = `${rule.rule_id}_${occIdx}`
                     const anyApplied = occOptions.some((_, oi) => appliedRules.has(`${occApplyPrefix}_${oi}`))
-                    const nthOcc = ruleOccs.slice(0, occIdx).filter(o => o.phrase === occ.phrase).length
+                    const nthOcc = ruleOccs.slice(0, occIdx).filter(o => o.phrase.trim().toLowerCase() === occ.phrase.trim().toLowerCase()).length
                     const ctxDisplay = (occ.context || occ.phrase).slice(0, 280) + ((occ.context || occ.phrase).length > 280 ? '…' : '')
                     // Yellow for fallback occurrences, red for unacceptable
                     const delColor = occ.type === 'fallback' ? '#ca8a04' : '#dc2626'
@@ -550,8 +550,8 @@ export const PlaybookResultsPanel = ({
                             {opt.label || (opt.type === 'standard' ? 'Стандартная позиция' : `Запасной вариант ${optIdx + 1}`)}
                           </p>
                           <div className="rounded-lg px-3 py-2 text-sm mt-1"
-                            style={{ backgroundColor: 'var(--color-bg-primary)', color: '#2563eb', border: '1px solid var(--color-border)' }}>
-                            {opt.text.length > 300 ? opt.text.slice(0, 300) + '…' : opt.text}
+                            style={{ backgroundColor: 'var(--color-bg-primary)', color: 'var(--color-text-primary)', border: '1px solid var(--color-border)' }}>
+                            {renderPreview(rule.found_text || '', rule.found_text || '', opt.text, '#ca8a04')}
                           </div>
                         </div>
                       ))}

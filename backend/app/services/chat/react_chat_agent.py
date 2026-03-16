@@ -45,6 +45,11 @@ _TOOL_CALL_PATTERN = re.compile(
     r'^[ \t]*(?:' + '|'.join(re.escape(t) for t in _TOOL_NAMES) + r')\s*\(.*?\)\s*$',
     re.MULTILINE
 )
+# Code fences (```...```) that contain a tool function call — GigaChat reasoning leak
+_CODE_BLOCK_TOOL_RE = re.compile(
+    r'```[^\n]*\n(?:[^`]*?(?:' + '|'.join(re.escape(t) for t in _TOOL_NAMES) + r')[^`]*?)```',
+    re.DOTALL
+)
 _RESULT_PREFIX_PATTERN = re.compile(
     r'^\s*\[Результат (?:анализа|поиска|извлечения)\]\s*:\s*',
     re.MULTILINE
@@ -62,22 +67,29 @@ _SECTION_HEADER_RE = re.compile(
     r'Ответ|Шаг \d+|Итог|Размышление|Рассуждение|Мышление|Thinking|Analysis|Tool|'
     r'Источники|Заключение|Результаты?\s*поиска|Поиск[^\n]*|Ключевые\s+[^\n]*|'
     r'Обзор|Выводы?|Резюме|Итоги|Анализ[^\n]*|Ответ на вопрос|'
+    r'Решение[^\n]*|Результат[^\n]*|Обработка результата[^\n]*|'
     r'Извлечение[^\n]*|Полученные\s+результаты)(?:[^\n]*)?'  # # / ## / ### headers
     r'|\*{2}(?:Анализ вопроса|Применение инструмента|Вызов инструмента|Размышление|'
-    r'Источники|Заключение|Результаты?\s*поиска|Ключевые\s+[^\n]*|Выводы?)\*{2}'  # **bold** headers
+    r'Источники|Заключение|Результаты?\s*поиска|Ключевые\s+[^\n]*|Выводы?|'
+    r'Решение|Результат|Обработка результата|Шаг \d+|Ответ|Итог|Вывод)\*{2}'  # **bold** headers
     r'|\d+\.\s*(?:Выбор\s+(?:подходящего\s+)?инструмента|Применение\s+инструмента|'
     r'Полученные\s+результаты|Анализ\s+[^\n]*|Результаты?\s*[^\n]*|'
-    r'Извлечение\s+[^\n]*|Шаг\s+\d+)[^\n]*'  # numbered steps: "1. Выбор Инструмента"
+    r'Извлечение\s+[^\n]*|Шаг\s+\d+|Обработка результата|'
+    r'Данный инструмент позволяет|Используем инструмент|После обработки инструментом)[^\n]*'  # numbered steps: "1. Выбор Инструмента"
     r')\s*$',
     re.MULTILINE | re.IGNORECASE
 )
 # Lines that look like agent internal reasoning (e.g. "Пользователь запрашивает ... из дела с ID ...")
 _INTERNAL_REASONING_RE = re.compile(
     r'^\s*(?:Пользователь (?:запрашивает|спрашивает|просит|хочет)|'
-    r'Мне нужно|Я должен|Необходимо|Нужно (?:использовать|вызвать|найти)|'
+    r'Мне нужно|Я должен|Необходимо(?:сть)?\s+(?:использовать|вызвать|найти|выполнить|проанализировать)|'
+    r'Нужно (?:использовать|вызвать|найти)|'
     r'Для (?:ответа|этого|извлечения|анализа|поиска)[^\n]{0,20}(?:мне |)(?:нужно|необходимо|требуется)|'
     r'Давайте|Буду использовать|Вызываю|'
-    r'Эти данные получены путем)[^\n]*$',
+    r'Эти данные получены путем|'
+    r'Данный инструмент позволяет|Используем инструмент|Применяем инструмент|'
+    r'Инструмент (?:позволяет|вернул|возвращает|предоставляет)|После обработки инструментом|'
+    r'После выполнения функции|Обработка результата|Получим релевантные)[^\n]*$',
     re.MULTILINE | re.IGNORECASE
 )
 # [Single-line bracket notes] like [Приветствие удалено из вопроса пользователя]
@@ -119,7 +131,9 @@ async def _stream_text_with_typing_effect(
 
 def _clean_response_text(text: str) -> str:
     """Strip GigaChat artifacts: echoed tool calls, [Результат анализа]: prefixes, etc."""
-    cleaned = _TOOL_CALL_PATTERN.sub('', text)
+    # Strip code fences that contain tool function calls (GigaChat reasoning leak)
+    cleaned = _CODE_BLOCK_TOOL_RE.sub('', text)
+    cleaned = _TOOL_CALL_PATTERN.sub('', cleaned)
     cleaned = _RESULT_PREFIX_PATTERN.sub('', cleaned)
     cleaned = _SEARCH_RESULTS_HEADER.sub('', cleaned)
     # Remove chain-of-thought section header lines
@@ -137,6 +151,8 @@ def _clean_response_text(text: str) -> str:
     cleaned = _SOURCES_SECTION_RE.sub('', cleaned)
     # Remove "Улучшенный ответ:" prefix from reflection
     cleaned = re.sub(r'^\s*Улучшенный ответ:\s*', '', cleaned, flags=re.MULTILINE)
+    # Remove lines that are ONLY "N." or "N. " (empty numbered list items left after stripping)
+    cleaned = re.sub(r'^\s*\d+\.\s*$', '', cleaned, flags=re.MULTILINE)
     # Collapse excessive blank lines
     cleaned = re.sub(r'\n{3,}', '\n\n', cleaned)
     return cleaned.strip()
@@ -1018,7 +1034,26 @@ ID дела: {self.case_id}
                     # Flush any remaining buffered text (only if no direct result
                     # was already streamed from a tool)
                     if text_buffer and not direct_result_streamed:
+                        # Detect GigaChat hallucination: it imagines calling a tool
+                        # instead of actually calling it, producing fabricated [N] citations.
+                        # Signs: text_buffer contains reasoning headers but no tool was called.
+                        _hallucination_indicators = (
+                            _SECTION_HEADER_RE.search(text_buffer)
+                            or _INTERNAL_REASONING_RE.search(text_buffer)
+                        )
+                        strip_citations = False
+                        if _hallucination_indicators and not tool_calls_made:
+                            # GigaChat hallucinated a tool call — [N] markers are fabricated.
+                            # Clean the reasoning but also strip [N] markers (fake citations).
+                            logger.warning(
+                                f"[ReActChatAgent] Detected hallucinated tool response "
+                                f"({len(text_buffer)} chars, no real tool calls) — stripping fake citations"
+                            )
+                            strip_citations = True
                         cleaned = _clean_response_text(text_buffer)
+                        if strip_citations:
+                            # Remove inline [N] citation markers from hallucinated content
+                            cleaned = re.sub(r'\s*\[\d+\]', '', cleaned)
                         if cleaned:
                             async for sse_chunk in _stream_text_with_typing_effect(cleaned):
                                 yield sse_chunk
