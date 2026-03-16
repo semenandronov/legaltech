@@ -470,12 +470,13 @@ def generate_edits_node(
 {doc_text}
 
 ВАЖНО:
-1. В original_text указывай ТОЧНЫЙ текст из документа
+1. В original_text указывай ТОЧНЫЙ текст из документа (минимально необходимый фрагмент для однозначной идентификации)
 2. В new_text указывай новый текст для замены
-3. Проверь, что original_text действительно есть в документе
+3. Если одно и то же изменение нужно внести в нескольких местах — создай ОТДЕЛЬНУЮ правку для каждого места
+4. Проверь, что original_text действительно есть в документе
 
 Ответь в формате JSON согласно схеме EditsResponse."""
-        
+
         try:
             structured_llm = llm.with_structured_output(EditsResponse)
             edits_response = structured_llm.invoke([HumanMessage(content=edits_prompt)])
@@ -484,41 +485,60 @@ def generate_edits_node(
             # Fallback: обычный вызов
             response = llm.invoke([HumanMessage(content=edits_prompt)])
             response_text = response.content if hasattr(response, 'content') else str(response)
-            
+
             # Простой fallback - возвращаем пустой список
             edits_response = EditsResponse(edits=[], reasoning=response_text[:200])
-        
-        # Проверяем наличие текста в документе и извлекаем контекст
-        validated_edits = []
+
+        # Проверяем наличие текста в документе и извлекаем контекст.
+        # Дополнительно: раскрываем каждую правку на ВСЕ вхождения (одна карточка на каждое вхождение).
+        raw_edits = []
         edits_list = edits_response.edits if hasattr(edits_response, 'edits') else []
-        
+
         for edit in edits_list:
             original_text = edit.original_text if hasattr(edit, 'original_text') else edit.get('original_text', '')
             new_text = edit.new_text if hasattr(edit, 'new_text') else edit.get('new_text', '')
-            
-            # Проверяем наличие в документе
-            find_pos = document_context.find(original_text)
-            found_in_doc = find_pos != -1
-            
-            # Извлекаем контекст
-            context_before, context_after = extract_context(document_context, original_text) if found_in_doc else ("", "")
-            
-            validated_edits.append({
-                "id": f"edit-{uuid.uuid4().hex[:8]}",
-                "original_text": original_text,
-                "new_text": new_text,
-                "context_before": context_before,
-                "context_after": context_after,
-                "found_in_document": found_in_doc
-            })
-            
-            if found_in_doc:
-                logger.info(f"[GenerateEdits] Found edit: '{original_text[:50]}…' → '{new_text[:50]}…'")
-            else:
+
+            if not original_text:
+                continue
+
+            # Найти ВСЕ вхождения original_text в документе
+            occurrences = []
+            search_from = 0
+            while True:
+                idx = document_context.find(original_text, search_from)
+                if idx == -1:
+                    break
+                occurrences.append(idx)
+                search_from = idx + len(original_text)
+
+            if not occurrences:
+                # Текст не найден — добавляем одну правку с found_in_document=False
+                raw_edits.append({
+                    "id": f"edit-{uuid.uuid4().hex[:8]}",
+                    "original_text": original_text,
+                    "new_text": new_text,
+                    "context_before": "",
+                    "context_after": "",
+                    "found_in_document": False
+                })
                 logger.warning(f"[GenerateEdits] Edit text not found: '{original_text[:100]}…'")
-        
-        new_state["structured_edits"] = validated_edits
-        logger.info(f"[GenerateEdits] Generated {len(validated_edits)} edits")
+            else:
+                # Одна карточка на каждое вхождение
+                for pos in occurrences:
+                    ctx_before = document_context[max(0, pos - 50):pos]
+                    ctx_after = document_context[pos + len(original_text):pos + len(original_text) + 50]
+                    raw_edits.append({
+                        "id": f"edit-{uuid.uuid4().hex[:8]}",
+                        "original_text": original_text,
+                        "new_text": new_text,
+                        "context_before": ctx_before,
+                        "context_after": ctx_after,
+                        "found_in_document": True
+                    })
+                logger.info(f"[GenerateEdits] '{original_text[:50]}…' → '{new_text[:50]}…' ({len(occurrences)} вхождений)")
+
+        new_state["structured_edits"] = raw_edits
+        logger.info(f"[GenerateEdits] Generated {len(raw_edits)} edits (from {len(edits_list)} LLM edits)")
         
     except Exception as e:
         logger.error(f"[GenerateEdits] Error: {e}", exc_info=True)

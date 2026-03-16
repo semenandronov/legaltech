@@ -147,7 +147,7 @@ export const EditSuggestionCard: React.FC<EditSuggestionCardProps> = ({
             }
             if (seg.type === 'added') {
               return (
-                <span key={idx} className="text-green-600 font-medium">
+                <span key={idx} style={{ color: '#2563eb' }} className="font-medium">
                   {seg.text}
                 </span>
               )

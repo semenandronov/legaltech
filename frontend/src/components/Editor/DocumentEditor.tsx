@@ -438,16 +438,24 @@ export const DocumentEditor = forwardRef<DocumentEditorRef, DocumentEditorProps>
       const to = charToPmPos(charIndex + searchText.length)
       if (from === -1 || to === -1) return false
 
-      const tr = editor.state.tr.replaceWith(from, to, editor.state.schema.text(newText))
+      // Preserve marks (bold, italic, etc.) from the original text position
+      const $from = editor.state.doc.resolve(from)
+      const marksAtPos = $from.marks()
+      const newNode = marksAtPos.length > 0
+        ? editor.state.schema.text(newText, marksAtPos)
+        : editor.state.schema.text(newText)
+
+      const tr = editor.state.tr.replaceWith(from, to, newNode)
       editor.view.dispatch(tr)
       editor.commands.focus()
-      onChange(editor.getHTML())
+      // Don't call onChange directly — onUpdate fires automatically and calls debouncedOnChange.
+      // A direct onChange call triggers a parent re-render that recreates the editor (toolbar disappears).
       return true
     },
     replaceRange: (from: number, to: number, text: string) => {
       if (!editor) return
       editor.chain().focus().deleteRange({ from, to }).insertContent(text).run()
-      onChange(editor.getHTML())
+      // onUpdate fires automatically
     },
     replaceMultipleTexts: (replacements: Array<{ original: string; replacement: string }>) => {
       if (!editor) return 0
@@ -493,12 +501,18 @@ export const DocumentEditor = forwardRef<DocumentEditorRef, DocumentEditorProps>
 
       let tr = editor.state.tr
       for (const { from, to, text } of ops) {
-        tr = tr.replaceWith(from, to, editor.state.schema.text(text))
+        // Preserve marks (bold, italic, etc.) at each replacement position
+        const $from = editor.state.doc.resolve(from)
+        const marksAtPos = $from.marks()
+        const newNode = marksAtPos.length > 0
+          ? editor.state.schema.text(text, marksAtPos)
+          : editor.state.schema.text(text)
+        tr = tr.replaceWith(from, to, newNode)
       }
 
       editor.view.dispatch(tr)
       editor.commands.focus()
-      onChange(editor.getHTML())
+      // onUpdate fires automatically
       return ops.length
     },
     setSelectionHighlight: (from: number, to: number) => {

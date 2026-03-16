@@ -929,8 +929,15 @@ class PlaybookChecker:
                         "Прямой поиск по всему документу нашёл недопустимые формулировки: "
                         + ", ".join(repr(m["phrase"]) for m in scan["unacceptable"][:3])
                     )
+                elif scan["standard"]:
+                    # Standard position found — passed (even if fallback also matched via blank-tolerant search)
+                    status = "passed"
+                    ui_status = "acceptable"
+                    issue_description = ""
+                    first_match = scan["standard"][0]
+                    reasoning = "Найдена стандартная позиция в документе."
                 elif scan["fallbacks"]:
-                    # Warning: only fallback phrase(s) found
+                    # Warning: fallback phrase(s) found but NO standard match
                     status = "warning"
                     ui_status = "needs_review"
                     if standard_position:
@@ -947,12 +954,12 @@ class PlaybookChecker:
                         + ", ".join(repr(m["phrase"]) for m in scan["fallbacks"][:3])
                     )
                 else:
-                    # Only standard position found — passed
+                    # Should not normally reach here (all_occurrences was non-empty)
                     status = "passed"
                     ui_status = "acceptable"
                     issue_description = ""
-                    first_match = scan["standard"][0]
-                    reasoning = "Найдена стандартная позиция в документе."
+                    first_match = all_occurrences[0]
+                    reasoning = "Найдена соответствующая формулировка в документе."
 
                 main_fix = "" if status == "passed" else (
                     standard_position or (fallback_positions[0] if fallback_positions else "")

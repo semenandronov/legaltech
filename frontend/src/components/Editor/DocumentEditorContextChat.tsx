@@ -200,9 +200,9 @@ const StructuredEditsBlock: React.FC<{
                   <span className="text-xs font-bold text-red-400 shrink-0 mt-0.5 select-none">–</span>
                   <span className="text-xs text-red-600 line-through break-words leading-relaxed opacity-80">{edit.original_text}</span>
                 </div>
-                <div className="flex items-start gap-1.5 px-2 py-1 rounded-md" style={{ background: 'rgba(16,185,129,0.05)' }}>
-                  <span className="text-xs font-bold text-emerald-500 shrink-0 mt-0.5 select-none">+</span>
-                  <span className="text-xs text-emerald-800 break-words leading-relaxed">{edit.new_text}</span>
+                <div className="flex items-start gap-1.5 px-2 py-1 rounded-md" style={{ background: 'rgba(37,99,235,0.05)' }}>
+                  <span className="text-xs font-bold shrink-0 mt-0.5 select-none" style={{ color: '#2563eb' }}>+</span>
+                  <span className="text-xs break-words leading-relaxed" style={{ color: '#1e40af' }}>{edit.new_text}</span>
                 </div>
               </div>
               {!isFound && !status && (
