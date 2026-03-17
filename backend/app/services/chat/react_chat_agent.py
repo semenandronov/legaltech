@@ -1055,16 +1055,36 @@ ID дела: {self.case_id}
                                 (t for t in self.tools if getattr(t, 'name', '') == 'search_in_documents'),
                                 None
                             )
-                            if search_tool:
+                            # Pick the best fallback tool:
+                            # - analyze_all_documents for broad/overview questions ("какие сроки", "расскажи о деле")
+                            # - search_in_documents for specific targeted questions
+                            _overview_kw = ('какие', 'все', 'перечисли', 'расскажи', 'обзор', 'итог', 'суть', 'краткое')
+                            _q_lower = question.lower()
+                            _use_analyze = any(kw in _q_lower for kw in _overview_kw)
+                            fallback_tool = None
+                            if _use_analyze:
+                                fallback_tool = next(
+                                    (t for t in self.tools if getattr(t, 'name', '') == 'analyze_all_documents'),
+                                    None
+                                )
+                            if fallback_tool is None:
+                                fallback_tool = search_tool  # search_in_documents as default
+
+                            if fallback_tool:
                                 try:
                                     from app.services.chat.universal_tools import (
                                         get_last_direct_result as _fb_gdr,
                                         clear_last_direct_result as _fb_clr,
                                         get_used_sources as _fb_sources,
                                     )
-                                    await search_tool.ainvoke(
-                                        {"query": question, "k": 5}
-                                    )
+                                    if _use_analyze and getattr(fallback_tool, 'name', '') == 'analyze_all_documents':
+                                        await fallback_tool.ainvoke(
+                                            {"question": question, "task_type": "analyze"}
+                                        )
+                                    else:
+                                        await fallback_tool.ainvoke(
+                                            {"query": question, "k": 8}
+                                        )
                                     direct = _fb_gdr()
                                     if direct:
                                         cleaned_direct = _clean_response_text(direct)
