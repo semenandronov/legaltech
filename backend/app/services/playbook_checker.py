@@ -762,6 +762,55 @@ class PlaybookChecker:
         pos = doc_lower.find(prefix)
         return pos if pos != -1 else None
 
+    @staticmethod
+    def _number_fuzzy_search(
+        phrase: str,
+        document_text: str,
+        context_window: int = 60,
+    ) -> List[Dict[str, Any]]:
+        """Find phrase occurrences where the structure matches but NUMBERS differ.
+
+        Example: standard has "до "20" июня 2026 года", document has "до "21" июня 2026 года".
+        Exact search fails; this method detects the variant via a regex with \\d+ wildcards.
+
+        Returns occurrences tagged type="number_variant" so the caller can mark them
+        as "needs_review" rather than "passed".
+        """
+        if not re.search(r'\d', phrase):
+            return []  # No numbers in phrase — nothing to fuzz
+
+        # Build a regex by splitting on digit sequences and replacing them with \\d+
+        parts = re.split(r'(\d+)', phrase.lower())
+        pattern_parts = []
+        for part in parts:
+            if re.match(r'^\d+$', part):
+                pattern_parts.append(r'\d+')
+            else:
+                pattern_parts.append(re.escape(part))
+        try:
+            regex = re.compile(''.join(pattern_parts), re.IGNORECASE)
+        except re.error:
+            return []
+
+        doc_lower = document_text.lower()
+        phrase_lower = phrase.lower().rstrip('.,;: ')
+        results: List[Dict[str, Any]] = []
+        for m in regex.finditer(doc_lower):
+            matched_text = document_text[m.start():m.end()]
+            # Skip if it's actually an exact match (already handled by exact search)
+            if matched_text.lower() == phrase_lower:
+                continue
+            ctx_start = max(0, m.start() - context_window)
+            ctx_end = min(len(document_text), m.end() + context_window)
+            results.append({
+                "type": "number_variant",
+                "phrase": matched_text,
+                "char_start": m.start(),
+                "char_end": m.end(),
+                "context": document_text[ctx_start:ctx_end],
+            })
+        return results
+
     def _find_unknown_concept_occurrences(
         self,
         standard_position: str,
@@ -934,6 +983,9 @@ class PlaybookChecker:
                         "context": document_text[ctx_start:ctx_end],
                     })
 
+        found_number_variants: List[Dict[str, Any]] = []
+        already_nv_starts: set = set()
+
         if standard_position:
             # Strip trailing punctuation to match "Абумов Е.Г," when standard is "Абумов Е.Г."
             std_search = standard_position.rstrip(".,;: ") or standard_position
@@ -954,10 +1006,35 @@ class PlaybookChecker:
                 })
                 start = pos + len(std_search)
 
+            # If exact match failed, try number-fuzzy search (e.g. "до '20' июня" vs "до '21' июня")
+            if not found_standard:
+                nv = self._number_fuzzy_search(std_search, document_text, context_window)
+                for item in nv:
+                    if not any(abs(item["char_start"] - s) <= 3 for s in already_nv_starts):
+                        found_number_variants.append(item)
+                        already_nv_starts.add(item["char_start"])
+
+        # Also number-fuzzy for fallback phrases when exact+blank-tolerant both failed
+        for phrase in fallback_positions:
+            if not phrase:
+                continue
+            phrase_search = phrase.rstrip(".,;: ") or phrase
+            already_found_this = any(
+                occ for occ in found_fallbacks
+                if occ.get("char_start") is not None
+            )
+            if not already_found_this:
+                nv = self._number_fuzzy_search(phrase_search, document_text, context_window)
+                for item in nv:
+                    if not any(abs(item["char_start"] - s) <= 3 for s in already_nv_starts):
+                        found_number_variants.append(item)
+                        already_nv_starts.add(item["char_start"])
+
         return {
             "unacceptable": found_unacceptable,
             "fallbacks": found_fallbacks,
             "standard": found_standard,
+            "number_variants": found_number_variants,
         }
 
     async def _check_harvey_semantic(
@@ -990,6 +1067,11 @@ class PlaybookChecker:
                 standard_position=standard_position,
             )
             all_occurrences = scan["unacceptable"] + scan["fallbacks"] + scan["standard"]
+            # Include number-variant occurrences even when no exact matches were found,
+            # so Phase 0 returns a result instead of falling to the LLM (which picks wrong clause).
+            number_variants = scan.get("number_variants", [])
+            if not all_occurrences and number_variants:
+                all_occurrences = number_variants
             if all_occurrences:
                 suggested_options: List[Dict[str, Any]] = []
 
@@ -1041,6 +1123,28 @@ class PlaybookChecker:
                     reasoning = (
                         "Прямой поиск по всему документу нашёл запасные формулировки: "
                         + ", ".join(repr(m["phrase"]) for m in scan["fallbacks"][:3])
+                    )
+                elif number_variants:
+                    # Number-variant found: structure matches but numbers differ (e.g. "до '21' июня" vs "до '20' июня")
+                    status = "warning"
+                    ui_status = "needs_review"
+                    if standard_position:
+                        suggested_options.append(
+                            {"label": "Standard position", "type": "standard", "text": standard_position}
+                        )
+                    for idx, fb in enumerate(fallback_positions):
+                        if fb:
+                            suggested_options.append(
+                                {"label": f"Fallback {idx + 1}", "type": "fallback", "text": fb}
+                            )
+                    issue_description = (
+                        "Найдена формулировка, совпадающая по структуре со стандартной, "
+                        "но с отличающимися числовыми значениями. Требуется проверка."
+                    )
+                    first_match = number_variants[0]
+                    reasoning = (
+                        "Прямой поиск нашёл числовой вариант формулировки: "
+                        + ", ".join(repr(m["phrase"]) for m in number_variants[:3])
                     )
                 else:
                     # Should not normally reach here (all_occurrences was non-empty)
@@ -1626,7 +1730,7 @@ class PlaybookChecker:
                         if not any(abs(prefix_pos - s) <= 5 for s in already_covered):
                             cap_len = min(len(stripped) + 20, len(document_text) - prefix_pos)
                             phrase_found = document_text[prefix_pos:prefix_pos + cap_len]
-                            end_m = re.search(r'[.!?\n]', phrase_found[10:]) if len(phrase_found) > 10 else None
+                            end_m = re.search(r'[!?\n]|\.(?=[\s"\')\]]|$)', phrase_found[10:]) if len(phrase_found) > 10 else None
                             if end_m:
                                 phrase_found = phrase_found[:10 + end_m.start() + 1]
                             ctx_start = max(0, prefix_pos - 60)
@@ -1652,6 +1756,16 @@ class PlaybookChecker:
                 ui_status = "acceptable"
                 issue_description = ""
                 suggested_options = []
+
+            # Number-fuzzy scan for Phase 1 post: if standard not yet in post_occurrences,
+            # look for structural match with different numbers.
+            if not any(occ["type"] == "standard" for occ in post_occurrences):
+                already_nv = {occ["char_start"] for occ in post_occurrences}
+                nv = self._number_fuzzy_search(standard_position, document_text)
+                for item in nv:
+                    if not any(abs(item["char_start"] - s) <= 3 for s in already_nv):
+                        post_occurrences.append(item)
+                        already_nv.add(item["char_start"])
 
         # found_text: use exact phrase from first post-scan occurrence when available
         # (most precise — actual text in document, right length for scrollToText)
