@@ -153,25 +153,27 @@ def _normalize_citation_positions(text: str) -> str:
 
 
 def _last_sentence_fragment(text: str, max_len: int = 300) -> str:
-    """Return the text of the last incomplete sentence in text (before a [N] marker).
+    """Return the sentence fragment preceding a [N] marker.
 
-    Used to get the 'hint' for quote extraction: the sentence being annotated.
+    Strips leading filename headers (e.g. "file.pdf: ") so that the returned
+    hint contains the full annotated sentence like "Срок устранения: установлен судом."
     """
     text = text.rstrip()
     if not text:
         return ''
-    # Strip markdown formatting chars
+    # Strip markdown bold markers
     clean = re.sub(r'\*{1,3}', '', text).strip()
-    # Find last sentence boundary (. ! ?) followed by space
+    # Strip leading filename header: "А53-..._Opredelenie.pdf: " or "...копия.pdf: "
+    clean = re.sub(
+        r'^[^\n]+?\.(?:pdf|PDF|docx?|DOCX|txt|TXT)(?:\s*[—–-]\s*\S+)?\s*:\s*',
+        '', clean
+    ).strip()
+    # Find the last complete sentence boundary and take text after it
     m = re.search(r'[.!?]\s+(.+)$', clean, re.DOTALL)
     if m:
         fragment = m.group(1).strip()
         return fragment[-max_len:] if len(fragment) > max_len else fragment
-    # No boundary found — try to strip document header prefix "filename.pdf: "
-    m2 = re.search(r'[:\]]\s+(.+)$', clean, re.DOTALL)
-    if m2:
-        fragment = m2.group(1).strip()
-        return fragment[-max_len:] if len(fragment) > max_len else fragment
+    # No boundary — return everything (it's all one sentence)
     return clean[-max_len:] if len(clean) > max_len else clean
 
 
@@ -223,6 +225,21 @@ def _expand_per_fact_citations(
             # The "hint" is the sentence fragment right before this [N]
             hint = _last_sentence_fragment(new_line)
             quote = _extract_key_search_phrase(hint, doc_text) if hint else None
+
+            # Fallback: find the longest n-gram from hint words that appears verbatim
+            # in doc_text. This handles cases where the hint has no date/amount but
+            # contains content words that appear literally in the document.
+            if quote is None and hint and doc_text:
+                words = re.findall(r'[а-яёА-ЯЁ]{4,}', hint)
+                doc_lower = doc_text.lower()
+                for window in range(min(4, len(words)), 1, -1):
+                    for i in range(len(words) - window + 1):
+                        phrase = ' '.join(words[i:i + window])
+                        if phrase.lower() in doc_lower:
+                            quote = phrase
+                            break
+                    if quote:
+                        break
 
             used_sources.append({
                 "source_id": meta.get("source_id"),
