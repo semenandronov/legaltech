@@ -110,40 +110,45 @@ def _extract_meaningful_excerpt(text: str, max_len: int = 200) -> Optional[str]:
 def _normalize_citation_positions(text: str) -> str:
     """Move [N] markers from the START of lines to the END of the sentence.
 
-    Also strips [N] from bold headers like '**[1] filename.pdf:**' → '**filename.pdf:**'
-    since headers are structural, not inline citations.
-
-    GigaChat sometimes ignores the 'end of sentence' instruction and writes:
-        '[1] Заявление получено 17 августа 2011 года.'
-    This function converts it to:
-        'Заявление получено 17 августа 2011 года. [1]'
+    Handles all forms GigaChat may produce:
+      '[1] text.'                        → 'text. [1]'
+      '[1][2] text.'                     → 'text. [1][2]'
+      '[1] filename.pdf: sentence text.' → 'filename.pdf: sentence text. [1]'
+      '**[1] filename.pdf:**'            → '**filename.pdf:**'  (strip from bold headers)
     """
+    # 1. Strip [N] from bold headers: **[1] text:** → **text:**
+    text = re.sub(r'(\*{1,3})((?:\[\d+\]\s*)+)', r'\1', text)
+
     lines = text.split('\n')
     result = []
     for line in lines:
-        # Strip [N] from bold headers: **[1] filename:** → **filename:**
-        line = re.sub(r'(\*{1,2})((?:\[\d+\]\s*)+)', r'\1', line)
-
-        # Match: optional whitespace, one or more [N] at start, then the rest of the line
+        # Match one or more [N] at the very start of the line (with optional leading spaces)
         m = re.match(r'^(\s*)((?:\[\d+\]\s*)+)(.+)', line)
         if m:
             indent = m.group(1)
-            citations = m.group(2).strip()  # e.g. '[1][2]'
+            citations = re.sub(r'\s+', '', m.group(2))  # '[1][2]' compact
             content = m.group(3).strip()
-            # Skip if this looks like a header (ends with : or **)
-            if re.search(r'[:\*]{1,2}\s*$', content):
+
+            # If content is ONLY a header marker (ends with : and no real sentence)
+            # just drop the leading [N] entirely — the citation will appear on the next line
+            if re.match(r'^[^:]+:\s*$', content):
                 result.append(indent + content)
                 continue
-            # Only move if content doesn't already end with a citation (avoid double)
-            if not re.search(r'\[\d+\]\s*$', content):
-                punc_m = re.search(r'([.!?])\s*$', content)
-                if punc_m:
-                    content = content[:punc_m.start()] + punc_m.group(1) + ' ' + citations
-                else:
-                    content = content + ' ' + citations
+
+            # Don't double-append if content already ends with [N]
+            if re.search(r'\[\d+\]\s*[.!?]?\s*$', content):
                 result.append(indent + content)
                 continue
-        result.append(line)
+
+            # Attach citations before trailing punctuation
+            punc_m = re.search(r'([.!?])\s*$', content)
+            if punc_m:
+                content = content[:punc_m.start()] + punc_m.group(1) + ' ' + citations
+            else:
+                content = content + ' ' + citations
+            result.append(indent + content)
+        else:
+            result.append(line)
     return '\n'.join(result)
 
 

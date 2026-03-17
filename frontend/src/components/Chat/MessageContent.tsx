@@ -215,6 +215,24 @@ const MessageContent: React.FC<MessageContentProps> = ({
     // [документ N], [doc N], [источник N], [Документ N], etc. → [N]
     text = text.replace(/\[(?:документ|doc|источник|файл|file|ref|ссылка)\s*\.?\s*(\d+)\s*\]/gi, '[$1]')
 
+    // Strip [N] from bold headers: **[1] filename:** → **filename:**
+    text = text.replace(/(\*{1,3})((?:\[\d+\]\s*)+)/g, '$1')
+
+    // Move leading [N] markers to end of sentence (safety net for backend normalization)
+    // '[1] some text.' → 'some text. [1]'
+    // '[1][2] some text.' → 'some text. [1][2]'
+    text = text.replace(/^(\s*)((?:\[\d+\]\s*)+)(.+)$/gm, (_match, indent, cites, rest) => {
+      const c = cites.replace(/\s+/g, '')
+      const trimmed = rest.trimEnd()
+      // Skip pure header lines like "filename.pdf:"
+      if (/^[^:]+:\s*$/.test(trimmed)) return indent + trimmed
+      // Don't double if already ends with [N]
+      if (/\[\d+\]\s*[.!?]?\s*$/.test(trimmed)) return indent + trimmed + ' ' + '' // no-op
+      const punc = trimmed.match(/([.!?])\s*$/)
+      if (punc) return indent + trimmed.slice(0, -punc[0].length) + punc[1] + ' ' + c
+      return indent + trimmed + ' ' + c
+    })
+
     // Replace lines of repeated decorative symbols (•••, ===, ···, etc.) with ---
     text = text.replace(/^([•·\-=_~*]{3,})\s*$/gm, '---')
 
