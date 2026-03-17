@@ -187,6 +187,63 @@ def _find_verbatim_quote_in_chunk(entity_quote: str, chunk_text: str, max_len: i
     return None
 
 
+# Russian month names for date extraction
+_RU_MONTHS = (
+    'января|февраля|марта|апреля|мая|июня|июля|августа|сентября|октября|ноября|декабря'
+)
+# Date patterns in order of specificity
+_DATE_PATTERNS = [
+    # «28» сентября 2011  or  «28» сентября 2011 года
+    rf'«\s*\d{{1,2}}\s*»\s+(?:{_RU_MONTHS})\s+\d{{4}}(?:\s*г(?:ода)?\.?)?',
+    # 28 сентября 2011 года
+    rf'\d{{1,2}}\s+(?:{_RU_MONTHS})\s+\d{{4}}(?:\s*г(?:ода)?\.?)?',
+    # 28.09.2011 or 28/09/2011
+    r'\d{1,2}[./]\d{2}[./]\d{4}',
+]
+# Amount patterns: "500 000 руб.", "1 500 000,00 рублей"
+_AMOUNT_PATTERN = r'\d[\d\s]*\d\s*(?:руб(?:лей|\.)?|тыс(?:\.|\s*руб)?|млн)'
+
+
+def _extract_key_search_phrase(synthesis_sentence: str, chunk_text: str) -> Optional[str]:
+    """Return the shortest VERBATIM phrase from synthesis_sentence that exists in chunk_text.
+
+    Priority:
+      1. Specific date expressions — almost always copied verbatim by the LLM
+      2. Monetary amounts
+      3. Best-matching sentence via token overlap (_find_verbatim_quote_in_chunk)
+
+    For PDFs this short phrase is passed to PDF.js findController for text search,
+    so it MUST appear literally in the extracted PDF text.
+    """
+    if not synthesis_sentence:
+        return None
+
+    chunk_lower = (chunk_text or '').lower()
+
+    # 1. Try date patterns
+    for pattern in _DATE_PATTERNS:
+        for m in re.finditer(pattern, synthesis_sentence, re.IGNORECASE):
+            candidate = m.group(0).strip()
+            # Strip guillemets for matching — PDF may have plain quotes or none
+            cand_plain = re.sub(r'[«»"]', '', candidate).strip()
+            if cand_plain.lower() in chunk_lower or candidate.lower() in chunk_lower:
+                return candidate
+
+    # 2. Try amount patterns
+    for m in re.finditer(_AMOUNT_PATTERN, synthesis_sentence, re.IGNORECASE):
+        candidate = m.group(0).strip()
+        # Flexible whitespace match (non-breaking spaces in PDFs)
+        pattern_flex = re.compile(
+            re.escape(candidate.lower()).replace(r'\ ', r'[\s\u00a0]+'),
+            re.IGNORECASE
+        )
+        if pattern_flex.search(chunk_lower):
+            return candidate
+
+    # 3. Fall back to verbatim sentence via keyword overlap
+    return _find_verbatim_quote_in_chunk(synthesis_sentence, chunk_text, max_len=150)
+
+
 def _parse_entity_quotes(result_text: str, n_sources: int) -> dict:
     """Parse LLM entity-extraction output to get per-source short quotes for highlighting.
     Matches lines like: '- Абумов Евгений Геннадьевич [1]: исполнитель'
@@ -548,16 +605,27 @@ def search_in_documents(query: str, k: int = 20) -> str:
                     idx = int(m.group(1))
                     if 1 <= idx <= len(file_order) and idx not in entity_quotes:
                         entity_quotes[idx] = m.group(2)[:250]
+        # Build a map: source_index → synthesis sentence (the line containing [N])
+        # Used as the "hint" for key-phrase extraction below.
+        sentences_by_source: Dict[int, str] = {}
+        for line in synthesized.split('\n'):
+            line_clean = re.sub(r'\[\d+\]', '', line).strip()
+            for m in re.finditer(r'\[(\d+)\]', line):
+                idx = int(m.group(1))
+                if 1 <= idx <= len(file_order) and idx not in sentences_by_source:
+                    sentences_by_source[idx] = line_clean
+
         for i, src in enumerate(_used_sources, 1):
-            if i in entity_quotes:
-                # Use entity_quote as a hint to find the VERBATIM sentence in the chunk.
-                # This ensures DocumentPreviewSheet can match it via text search.
-                chunk_text = files_map[file_order[i - 1]][0].page_content if i <= len(file_order) else ''
-                verbatim = _find_verbatim_quote_in_chunk(entity_quotes[i], chunk_text)
-                if verbatim:
-                    src["quote"] = verbatim
-                    logger.debug(f"[UniversalTools] source[{i}] verbatim quote: {verbatim[:60]}")
-                # If no verbatim match, keep the original chunk excerpt (src["quote"] already set)
+            chunk_text = files_map[file_order[i - 1]][0].page_content if i <= len(file_order) else ''
+            # Prefer the synthesis sentence (contains the actual date/number mentioned)
+            # over the entity_quote extracted from bullet lists, then fall back.
+            hint = sentences_by_source.get(i) or entity_quotes.get(i, '')
+            if hint:
+                key_phrase = _extract_key_search_phrase(hint, chunk_text)
+                if key_phrase:
+                    src["quote"] = key_phrase
+                    logger.debug(f"[UniversalTools] source[{i}] key phrase: {key_phrase[:80]}")
+                # If no key phrase found, keep the original chunk excerpt already in src["quote"]
 
         # Normalize: move any [N] markers that ended up at start of sentence to end
         synthesized = _normalize_citation_positions(synthesized)
@@ -787,27 +855,26 @@ def analyze_all_documents(question: str, task_type: str = "answer") -> str:
                 idx = int(m.group(1))
                 if 1 <= idx <= included_count and idx not in entity_quotes:
                     entity_quotes[idx] = m.group(2)[:250]
-        # Map entity_quotes to verbatim document sentences for accurate highlighting.
-        # Priority: (1) verbatim match in doc, (2) keyword-based verbatim sentence lookup,
-        # (3) None — no highlight rather than wrong highlight.
+        # Build synthesis sentence map: source_index → line text (citation stripped)
+        sentences_by_source_a: Dict[int, str] = {}
+        for line in response.split('\n'):
+            line_clean = re.sub(r'\[\d+\]', '', line).strip()
+            for m in re.finditer(r'\[(\d+)\]', line):
+                idx = int(m.group(1))
+                if 1 <= idx <= included_count and idx not in sentences_by_source_a:
+                    sentences_by_source_a[idx] = line_clean
+
+        # Extract a short verbatim key phrase (date/number/sentence) for each source.
+        # Priority: date from synthesis sentence → amount → verbatim sentence → None.
         for i, src in enumerate(_used_sources, 1):
             doc_text = files_with_text[i - 1].original_text if i <= len(files_with_text) else ""
-            doc_text_lower = doc_text.lower() if doc_text else ""
-            if i in entity_quotes:
-                eq = entity_quotes[i]
-                eq_lower = eq.lower()
-                if eq_lower in doc_text_lower:
-                    # Verbatim match — use as-is
-                    src["quote"] = eq
-                elif len(eq_lower) > 30 and eq_lower[:60] in doc_text_lower:
-                    src["quote"] = eq[:60]
-                else:
-                    # Paraphrased — find the verbatim sentence with best keyword overlap
-                    verbatim = _find_verbatim_quote_in_chunk(eq, doc_text, max_len=200)
-                    src["quote"] = verbatim  # None if not found (no highlight)
-                    if verbatim:
-                        logger.debug(f"[UniversalTools] analyze[{i}] verbatim quote: {verbatim[:60]}")
-            # No entity_quote for this source → leave src["quote"] as None (no highlight)
+            hint = sentences_by_source_a.get(i) or entity_quotes.get(i, '')
+            if hint and doc_text:
+                key_phrase = _extract_key_search_phrase(hint, doc_text)
+                src["quote"] = key_phrase  # None → no highlight (better than wrong highlight)
+                if key_phrase:
+                    logger.debug(f"[UniversalTools] analyze[{i}] key phrase: {key_phrase[:80]}")
+            # No hint → leave src["quote"] as None (no highlight)
 
         # Normalize: move any [N] markers that ended up at start of sentence to end
         response = _normalize_citation_positions(response)
