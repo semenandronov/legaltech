@@ -762,6 +762,93 @@ class PlaybookChecker:
         pos = doc_lower.find(prefix)
         return pos if pos != -1 else None
 
+    def _find_unknown_concept_occurrences(
+        self,
+        standard_position: str,
+        fallback_positions: List[str],
+        unacceptable_phrases: List[str],
+        document_text: str,
+        already_found_starts: set,
+        context_window: int = 60,
+    ) -> List[Dict[str, Any]]:
+        """
+        Find occurrences of the concept that are NOT covered by standard/fallback/unacceptable phrases.
+
+        Works by comparing word-by-word across all configured phrases to find:
+        - "anchor" words that are COMMON to all phrases (fixed context)
+        - "variable" words that DIFFER between phrases (e.g. the name slot)
+
+        Then scans the document for anchor + any_capitalized_word, and returns
+        occurrences where the word is NOT a known variable word.
+
+        Example: standard="Арендодатель Андронов –", fallback="Арендодатель Иванов –"
+          → anchor="арендодатель", known_vars={"андронов","иванов"}
+          → finds "Арендодатель Андропов" in document → unknown occurrence
+        """
+        all_phrases = [p for p in ([standard_position] + list(fallback_positions or []) + list(unacceptable_phrases or [])) if p]
+        if len(all_phrases) < 2:
+            return []
+
+        # Tokenise each phrase into cleaned words
+        phrase_word_lists = [p.split() for p in all_phrases]
+        max_len = min(len(wl) for wl in phrase_word_lists)
+        if max_len < 2:
+            return []
+
+        # Find positions where words DIFFER and preceding word (anchor) is the SAME
+        anchor_var_pairs: List[tuple] = []  # (anchor_lower, set_of_known_var_lowers)
+        for i in range(1, max_len):
+            words_at_i = [wl[i].rstrip(".,;:()–-—") for wl in phrase_word_lists]
+            words_lower = [w.lower() for w in words_at_i]
+            if len(set(words_lower)) <= 1:
+                continue  # same word at position i — not variable
+            # Check all variable words look like proper nouns (start uppercase)
+            if not all(w and w[0].isupper() for w in words_at_i):
+                continue
+            # The anchor is the word at position i-1
+            anchor_words_lower = [wl[i - 1].rstrip(".,;:()–-—").lower() for wl in phrase_word_lists]
+            if len(set(anchor_words_lower)) != 1:
+                continue  # anchor itself differs — skip
+            anchor = anchor_words_lower[0]
+            if not anchor:
+                continue
+            known_vars = set(words_lower)
+            anchor_var_pairs.append((anchor, known_vars))
+
+        if not anchor_var_pairs:
+            return []
+
+        unknown_occurrences: List[Dict[str, Any]] = []
+
+        for anchor, known_vars in anchor_var_pairs:
+            pattern = re.compile(
+                r'\b' + re.escape(anchor) + r'\s+([А-ЯA-Za-z][а-яёa-z]{2,})',
+                re.IGNORECASE,
+            )
+            for m in pattern.finditer(document_text):
+                var_word = m.group(1).lower()
+                pos = m.start()
+                # Skip already-found positions
+                if any(abs(pos - fp) <= 3 for fp in already_found_starts):
+                    continue
+                # Skip if this is a known variable word
+                if var_word in known_vars:
+                    continue
+                phrase = m.group(0).rstrip(".,;: ")
+                ctx_start = max(0, pos - context_window)
+                ctx_end = min(len(document_text), pos + len(phrase) + context_window)
+                unknown_occurrences.append({
+                    "type": "unknown",
+                    "phrase": phrase,
+                    "char_start": pos,
+                    "char_end": pos + len(phrase),
+                    "context": document_text[ctx_start:ctx_end],
+                })
+                already_found_starts.add(pos)
+                logger.debug(f"[UnknownConcept] Found unknown occurrence: '{phrase[:60]}'")
+
+        return unknown_occurrences
+
     def _scan_document_for_phrases(
         self,
         document_text: str,
@@ -1016,6 +1103,25 @@ class PlaybookChecker:
                                         {"label": f"Fallback {idx2 + 1}", "type": "fallback", "text": fb2}
                                     )
 
+                # Unknown concept occurrences: anchor+variable patterns not in any configured phrase.
+                # E.g. "Арендодатель Андропов" when only "Андронов"/"Иванов" are configured.
+                unknown_occs = self._find_unknown_concept_occurrences(
+                    standard_position, fallback_positions, unacceptable_phrases,
+                    document_text, already_found,
+                )
+                if unknown_occs:
+                    all_occurrences = all_occurrences + unknown_occs
+                    if status != "violation":
+                        status = "warning"
+                        ui_status = "needs_review"
+                        extra = f" Также найдено {len(unknown_occs)} формулировок, не соответствующих ни стандарту, ни запасным вариантам."
+                        issue_description = (issue_description or "") + extra
+                        if standard_position and not any(o.get("type") == "standard" for o in suggested_options):
+                            suggested_options.insert(0, {"label": "Standard position", "type": "standard", "text": standard_position})
+                        for idx3, fb3 in enumerate(fallback_positions):
+                            if fb3 and not any(o.get("text") == fb3 for o in suggested_options):
+                                suggested_options.append({"label": f"Fallback {idx3 + 1}", "type": "fallback", "text": fb3})
+
                 return RuleCheckResult(
                     rule_id=rule.id,
                     rule_name=rule.rule_name,
@@ -1074,7 +1180,13 @@ class PlaybookChecker:
                     p05_fallbacks.extend(vv)
                     p05_already.update(v["char_start"] for v in vv)
 
-                p05_all = p05_unac + p05_fallbacks + p05_standard
+                # Unknown concept occurrences for Phase 0.5 as well
+                p05_unknown = self._find_unknown_concept_occurrences(
+                    standard_position, fallback_positions, unacceptable_phrases,
+                    document_text, p05_already,
+                )
+                p05_all = p05_unac + p05_fallbacks + p05_standard + p05_unknown
+
                 if p05_all:
                     p05_suggested: List[Dict[str, Any]] = []
                     if p05_unac:
@@ -1091,6 +1203,18 @@ class PlaybookChecker:
                         p05_ui = "not_acceptable"
                         p05_issue = f"Найдено {len(p05_unac)} недопустимых формулировок в документе."
                         p05_first = p05_unac[0]
+                    elif p05_standard:
+                        # Standard wins over fallback
+                        p05_status = "passed"
+                        p05_ui = "acceptable"
+                        p05_issue = ""
+                        p05_first = p05_standard[0]
+                        if p05_unknown:
+                            p05_status = "warning"
+                            p05_ui = "needs_review"
+                            p05_issue = f"Найдено {len(p05_unknown)} формулировок, не совпадающих со стандартной или запасной позицией."
+                            if standard_position:
+                                p05_suggested.append({"label": "Standard position", "type": "standard", "text": standard_position})
                     elif p05_fallbacks:
                         if standard_position:
                             p05_suggested.append(
@@ -1102,12 +1226,20 @@ class PlaybookChecker:
                             f"Найдено {len(p05_fallbacks)} запасных формулировок. "
                             "Рекомендуется привести к стандартной позиции."
                         )
+                        if p05_unknown:
+                            p05_issue += f" Также {len(p05_unknown)} нераспознанных формулировок."
                         p05_first = p05_fallbacks[0]
                     else:
-                        p05_status = "passed"
-                        p05_ui = "acceptable"
-                        p05_issue = ""
-                        p05_first = p05_standard[0]
+                        # Only unknown occurrences
+                        if standard_position:
+                            p05_suggested.append({"label": "Standard position", "type": "standard", "text": standard_position})
+                        for idx, fb in enumerate(fallback_positions):
+                            if fb:
+                                p05_suggested.append({"label": f"Fallback {idx + 1}", "type": "fallback", "text": fb})
+                        p05_status = "warning"
+                        p05_ui = "needs_review"
+                        p05_issue = f"Найдено {len(p05_unknown)} формулировок, не совпадающих со стандартной или запасной позицией."
+                        p05_first = p05_unknown[0]
 
                     return RuleCheckResult(
                         rule_id=rule.id,
