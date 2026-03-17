@@ -152,6 +152,38 @@ def _normalize_citation_positions(text: str) -> str:
     return '\n'.join(result)
 
 
+def _normalize_synthesis_citations(synthesized: str, file_order: list) -> str:
+    """Remap [N] citation markers so all facts under a document header use the
+    correct document index from file_order.
+
+    GigaChat often uses sequential numbering [1],[2],[3],... per fact instead of
+    [docN] per document. This function scans each line: if a document filename from
+    file_order is found on the line, the current_doc_idx is updated. All [N] markers
+    on that line and subsequent lines (until the next doc header) are replaced with
+    [current_doc_idx].
+    """
+    if not synthesized or not file_order:
+        return synthesized
+
+    lines = synthesized.split('\n')
+    result = []
+    current_doc_idx: Optional[int] = None
+
+    for line in lines:
+        line_lower = line.lower()
+        for i, fname in enumerate(file_order):
+            if fname.lower() in line_lower:
+                current_doc_idx = i + 1  # 1-based, matches _used_sources order
+                break
+
+        if current_doc_idx is not None:
+            line = re.sub(r'\[\d+\]', f'[{current_doc_idx}]', line)
+
+        result.append(line)
+
+    return '\n'.join(result)
+
+
 def _find_verbatim_quote_in_chunk(entity_quote: str, chunk_text: str, max_len: int = 200) -> Optional[str]:
     """Find the sentence in chunk_text that best matches a paraphrased entity_quote.
 
@@ -529,13 +561,15 @@ def search_in_documents(query: str, k: int = 20) -> str:
             f"Документы из дела:\n{context}\n\n"
             f"Список документов:\n{source_list}"
         )
+        ex1 = file_order[0] if file_order else "Договор_подряда.pdf"
+        ex2 = file_order[1] if len(file_order) > 1 else "Дополнительное_соглашение.pdf"
         query_prompt = (
             f"На основе документов выше выполни следующий запрос: {query}\n\n"
-            "ФОРМАТ — по каждому документу отдельный блок, несколько фактов в каждом:\n"
-            "**Название документа 1:**\n"
-            "Исполнитель — Иванов А.А. [1] Сумма — 500 000 руб. [1] Срок — до 31.12.2024. [1]\n\n"
-            "**Название документа 2:**\n"
-            "Дата подачи заявления — 17.08.2011. [2] Срок рассмотрения — до 13.07.2011. [2]\n\n"
+            "ФОРМАТ — по каждому документу отдельный блок. [N] = номер документа из списка выше, одинаковый для всех фактов из этого документа:\n"
+            f"**{ex1}:**\n"
+            f"Исполнитель — Иванов А.А. [1] Сумма — 500 000 руб. [1] Срок — до 31.12.2024. [1]\n\n"
+            f"**{ex2}:**\n"
+            f"Дата подачи заявления — 17.08.2011. [2] Срок рассмотрения — до 13.07.2011. [2]\n\n"
             "КРИТИЧЕСКИ ВАЖНО: [N] — ТОЛЬКО в конце каждого предложения, НИКОГДА не в начале строки и не в заголовке.\n"
             "Перечисли ВСЕ факты, даты и сроки из каждого документа, относящиеся к запросу.\n"
             "Если документ не содержит нужной информации — пропусти его.\n"
@@ -628,6 +662,8 @@ def search_in_documents(query: str, k: int = 20) -> str:
                     logger.debug(f"[UniversalTools] source[{i}] key phrase: {key_phrase[:80]}")
                 # If no key phrase found, keep the original chunk excerpt already in src["quote"]
 
+        # Remap sequential [N] markers to correct document indices
+        synthesized = _normalize_synthesis_citations(synthesized, file_order)
         # Normalize: move any [N] markers that ended up at start of sentence to end
         synthesized = _normalize_citation_positions(synthesized)
 
@@ -752,13 +788,15 @@ def analyze_all_documents(question: str, task_type: str = "answer") -> str:
                 f"Документы из дела:\n{context}\n\n"
                 f"Список документов:\n{source_list}"
             )
+            ex1_a = files_with_text[0].filename if files_with_text else "Договор.pdf"
+            ex2_a = files_with_text[1].filename if len(files_with_text) > 1 else "Заявление.pdf"
             query_prompt = (
                 f"На основе документов выше выполни следующий запрос: {question}\n\n"
-                "ФОРМАТ — по каждому документу отдельный блок, несколько фактов в каждом:\n"
-                "**Название документа 1:**\n"
-                "Срок действия: до 31.12.2024. [1] Стороны: ООО «Ромашка» и ИП Иванов. [1] Сумма: 1 500 000 руб. [1]\n\n"
-                "**Название документа 2:**\n"
-                "Дата подачи заявления: 17.08.2011. [2] Срок рассмотрения: до 13.07.2011. [2]\n\n"
+                "ФОРМАТ — по каждому документу отдельный блок. [N] = номер документа из списка выше, одинаковый для всех фактов из этого документа:\n"
+                f"**{ex1_a}:**\n"
+                f"Срок действия: до 31.12.2024. [1] Стороны: ООО «Ромашка» и ИП Иванов. [1] Сумма: 1 500 000 руб. [1]\n\n"
+                f"**{ex2_a}:**\n"
+                f"Дата подачи заявления: 17.08.2011. [2] Срок рассмотрения: до 13.07.2011. [2]\n\n"
                 "КРИТИЧЕСКИ ВАЖНО: [N] — ТОЛЬКО в конце каждого предложения, НИКОГДА не в начале строки и не в заголовке.\n"
                 "Перечисли ВСЕ факты, даты и сроки из каждого документа, относящиеся к запросу. Документы без нужной информации не упоминай.\n"
                 "Отвечай строго по тексту документов:"
@@ -878,6 +916,8 @@ def analyze_all_documents(question: str, task_type: str = "answer") -> str:
                     logger.debug(f"[UniversalTools] analyze[{i}] key phrase: {key_phrase[:80]}")
             # No hint → leave src["quote"] as None (no highlight)
 
+        # Remap sequential [N] markers to correct document indices
+        response = _normalize_synthesis_citations(response, [f.filename for f in files_with_text])
         # Normalize: move any [N] markers that ended up at start of sentence to end
         response = _normalize_citation_positions(response)
 
