@@ -69,7 +69,7 @@ _SECTION_HEADER_RE = re.compile(
     r'Обзор|Выводы?|Резюме|Итоги|Анализ[^\n]*|Ответ на вопрос|'
     r'Решение[^\n]*|Результат[^\n]*|Обработка результата[^\n]*|'
     r'Извлечение[^\n]*|Полученные\s+результаты)(?:[^\n]*)?'  # # / ## / ### headers
-    r'|\*{2}(?:Анализ вопроса|Применение инструмента|Вызов инструмента|Размышление|'
+    r'|\*{2}(?:Анализ вопроса|Применение инструмента|Вызов инструмента|Выбор инструмента|Размышление|'
     r'Источники|Заключение|Результаты?\s*поиска|Ключевые\s+[^\n]*|Выводы?|'
     r'Решение|Результат|Обработка результата|Шаг \d+|Ответ|Итог|Вывод)\*{2}'  # **bold** headers
     r'|\d+\.\s*(?:Выбор\s+(?:подходящего\s+)?инструмента|Применение\s+инструмента|'
@@ -1043,21 +1043,52 @@ ID дела: {self.case_id}
                         )
                         strip_citations = False
                         if _hallucination_indicators and not tool_calls_made:
-                            # GigaChat hallucinated a tool call — [N] markers are fabricated.
-                            # Clean the reasoning but also strip [N] markers (fake citations).
+                            # GigaChat hallucinated a tool call — discard the hallucinated text
+                            # and run search_in_documents directly so the user gets real citations.
                             logger.warning(
                                 f"[ReActChatAgent] Detected hallucinated tool response "
-                                f"({len(text_buffer)} chars, no real tool calls) — stripping fake citations"
+                                f"({len(text_buffer)} chars, no real tool calls) — running fallback search"
                             )
                             strip_citations = True
-                        cleaned = _clean_response_text(text_buffer)
-                        if strip_citations:
-                            # Remove inline [N] citation markers from hallucinated content
-                            cleaned = re.sub(r'\s*\[\d+\]', '', cleaned)
-                        if cleaned:
-                            async for sse_chunk in _stream_text_with_typing_effect(cleaned):
-                                yield sse_chunk
-                            response_text += cleaned
+                            # Find search_in_documents tool and call it directly
+                            search_tool = next(
+                                (t for t in self.tools if getattr(t, 'name', '') == 'search_in_documents'),
+                                None
+                            )
+                            if search_tool:
+                                try:
+                                    from app.services.chat.universal_tools import (
+                                        get_last_direct_result as _fb_gdr,
+                                        clear_last_direct_result as _fb_clr,
+                                        get_used_sources as _fb_sources,
+                                    )
+                                    await search_tool.ainvoke(
+                                        {"query": question, "k": 5}
+                                    )
+                                    direct = _fb_gdr()
+                                    if direct:
+                                        cleaned_direct = _clean_response_text(direct)
+                                        text_to_stream = cleaned_direct if cleaned_direct else direct.strip()
+                                        if text_to_stream:
+                                            async for sse_chunk in _stream_text_with_typing_effect(text_to_stream):
+                                                yield sse_chunk
+                                            response_text += text_to_stream
+                                            direct_result_streamed = True
+                                            strip_citations = False
+                                    _fb_clr()
+                                    sources = _fb_sources()
+                                    if sources:
+                                        yield SSESerializer.citations(sources)
+                                except Exception as fb_err:
+                                    logger.warning(f"[ReActChatAgent] Fallback search failed: {fb_err}")
+                        if not direct_result_streamed:
+                            cleaned = _clean_response_text(text_buffer)
+                            if strip_citations:
+                                cleaned = re.sub(r'\s*\[\d+\]', '', cleaned)
+                            if cleaned:
+                                async for sse_chunk in _stream_text_with_typing_effect(cleaned):
+                                    yield sse_chunk
+                                response_text += cleaned
 
                 # Fallback: step-level streaming (old behavior)
                 elif hasattr(self.agent, 'astream'):
