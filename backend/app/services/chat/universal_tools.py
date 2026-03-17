@@ -152,36 +152,90 @@ def _normalize_citation_positions(text: str) -> str:
     return '\n'.join(result)
 
 
-def _normalize_synthesis_citations(synthesized: str, file_order: list) -> str:
-    """Remap [N] citation markers so all facts under a document header use the
-    correct document index from file_order.
+def _last_sentence_fragment(text: str, max_len: int = 300) -> str:
+    """Return the text of the last incomplete sentence in text (before a [N] marker).
 
-    GigaChat often uses sequential numbering [1],[2],[3],... per fact instead of
-    [docN] per document. This function scans each line: if a document filename from
-    file_order is found on the line, the current_doc_idx is updated. All [N] markers
-    on that line and subsequent lines (until the next doc header) are replaced with
-    [current_doc_idx].
+    Used to get the 'hint' for quote extraction: the sentence being annotated.
+    """
+    text = text.rstrip()
+    if not text:
+        return ''
+    # Strip markdown formatting chars
+    clean = re.sub(r'\*{1,3}', '', text).strip()
+    # Find last sentence boundary (. ! ?) followed by space
+    m = re.search(r'[.!?]\s+(.+)$', clean, re.DOTALL)
+    if m:
+        fragment = m.group(1).strip()
+        return fragment[-max_len:] if len(fragment) > max_len else fragment
+    # No boundary found — try to strip document header prefix "filename.pdf: "
+    m2 = re.search(r'[:\]]\s+(.+)$', clean, re.DOTALL)
+    if m2:
+        fragment = m2.group(1).strip()
+        return fragment[-max_len:] if len(fragment) > max_len else fragment
+    return clean[-max_len:] if len(clean) > max_len else clean
+
+
+def _expand_per_fact_citations(
+    synthesized: str,
+    file_order: list,
+    doc_texts_map: dict,   # fname → text used for verbatim quote search
+    source_meta_map: dict, # fname → {source_id, page}
+) -> tuple:
+    """Expand document-level [N] citations into unique per-fact [1],[2],[3]...
+
+    GigaChat emits the same [docN] for every fact from document N. This function:
+      1. Detects document sections by scanning for known filenames in each line.
+      2. For each [N] occurrence assigns a unique sequential counter.
+      3. Extracts a verbatim key phrase from the document text to use as `quote`.
+      4. Builds a _used_sources list with one entry per badge.
+
+    Returns: (expanded_text, per_fact_used_sources)
     """
     if not synthesized or not file_order:
-        return synthesized
+        return synthesized, []
 
     lines = synthesized.split('\n')
-    result = []
-    current_doc_idx: Optional[int] = None
+    result_lines = []
+    used_sources = []
+    counter = 0
+    current_fname: Optional[str] = None
 
     for line in lines:
         line_lower = line.lower()
-        for i, fname in enumerate(file_order):
+        # Detect document header — update active document
+        for fname in file_order:
             if fname.lower() in line_lower:
-                current_doc_idx = i + 1  # 1-based, matches _used_sources order
+                current_fname = fname
                 break
 
-        if current_doc_idx is not None:
-            line = re.sub(r'\[\d+\]', f'[{current_doc_idx}]', line)
+        if not re.search(r'\[\d+\]', line):
+            result_lines.append(line)
+            continue
 
-        result.append(line)
+        # Split at every [N], process each gap
+        segments = re.split(r'\[\d+\]', line)
+        new_line = segments[0]
+        doc_text = doc_texts_map.get(current_fname, '') if current_fname else ''
+        meta = source_meta_map.get(current_fname, {}) if current_fname else {}
 
-    return '\n'.join(result)
+        for seg in segments[1:]:
+            counter += 1
+            # The "hint" is the sentence fragment right before this [N]
+            hint = _last_sentence_fragment(new_line)
+            quote = _extract_key_search_phrase(hint, doc_text) if hint else None
+
+            used_sources.append({
+                "source_id": meta.get("source_id"),
+                "file_name": current_fname,
+                "page": meta.get("page"),
+                "quote": quote,
+                "source_type": "document",
+            })
+            new_line += f'[{counter}]{seg}'
+
+        result_lines.append(new_line)
+
+    return '\n'.join(result_lines), used_sources
 
 
 def _find_verbatim_quote_in_chunk(entity_quote: str, chunk_text: str, max_len: int = 200) -> Optional[str]:
@@ -628,42 +682,30 @@ def search_in_documents(query: str, k: int = 20) -> str:
             else:
                 logger.warning("[UniversalTools] search_in_documents: safety filter, no neutralization possible")
 
-        # Update quotes: find the verbatim sentence in each chunk that best matches
-        # the synthesized (potentially paraphrased) text so DocumentPreviewSheet can
-        # locate the exact highlight position within the chunk bounds.
-        entity_quotes = _parse_entity_quotes(synthesized, len(file_order))
-        # Fallback: extract first 250 chars of each [N] paragraph as the entity hint
-        if not entity_quotes:
-            for line in synthesized.split('\n'):
-                m = re.match(r'^\[(\d+)\]\s+(.+)', line)
-                if m:
-                    idx = int(m.group(1))
-                    if 1 <= idx <= len(file_order) and idx not in entity_quotes:
-                        entity_quotes[idx] = m.group(2)[:250]
-        # Build a map: source_index → synthesis sentence (the line containing [N])
-        # Used as the "hint" for key-phrase extraction below.
-        sentences_by_source: Dict[int, str] = {}
-        for line in synthesized.split('\n'):
-            line_clean = re.sub(r'\[\d+\]', '', line).strip()
-            for m in re.finditer(r'\[(\d+)\]', line):
-                idx = int(m.group(1))
-                if 1 <= idx <= len(file_order) and idx not in sentences_by_source:
-                    sentences_by_source[idx] = line_clean
+        # Build per-document text and metadata maps for per-fact quote extraction
+        doc_texts_map: dict = {}
+        source_meta_map: dict = {}
+        for fn in file_order:
+            chunks = files_map.get(fn, [])
+            # Concatenate all retrieved chunks for this file (better recall for dates)
+            doc_texts_map[fn] = '\n'.join(c.page_content for c in chunks)
+            if chunks:
+                meta = chunks[0].metadata or {}
+                source_meta_map[fn] = {
+                    "source_id": str(meta.get("file_id", meta.get("doc_id", ""))),
+                    "page": meta.get("source_page") or meta.get("page"),
+                }
 
-        for i, src in enumerate(_used_sources, 1):
-            chunk_text = files_map[file_order[i - 1]][0].page_content if i <= len(file_order) else ''
-            # Prefer the synthesis sentence (contains the actual date/number mentioned)
-            # over the entity_quote extracted from bullet lists, then fall back.
-            hint = sentences_by_source.get(i) or entity_quotes.get(i, '')
-            if hint:
-                key_phrase = _extract_key_search_phrase(hint, chunk_text)
-                if key_phrase:
-                    src["quote"] = key_phrase
-                    logger.debug(f"[UniversalTools] source[{i}] key phrase: {key_phrase[:80]}")
-                # If no key phrase found, keep the original chunk excerpt already in src["quote"]
+        # Expand document-level [N] → unique per-fact [1],[2],[3]...
+        # Each fact gets its own _used_sources entry with a verbatim quote.
+        synthesized, per_fact_sources = _expand_per_fact_citations(
+            synthesized, file_order, doc_texts_map, source_meta_map
+        )
+        if per_fact_sources and not _sources_locked:
+            _used_sources.clear()
+            _used_sources.extend(per_fact_sources)
+            logger.info(f"[UniversalTools] search_in_documents: {len(per_fact_sources)} per-fact citations built")
 
-        # Remap sequential [N] markers to correct document indices
-        synthesized = _normalize_synthesis_citations(synthesized, file_order)
         # Normalize: move any [N] markers that ended up at start of sentence to end
         synthesized = _normalize_citation_positions(synthesized)
 
@@ -856,68 +898,34 @@ def analyze_all_documents(question: str, task_type: str = "answer") -> str:
                 else:
                     logger.warning("[UniversalTools] analyze_all_documents: safety filter, no neutralization possible")
 
-        # Populate _used_sources in [N] order (only docs included in context)
-        included_count = len(file_order) if context_parts else len(files_with_text)
-        if not _sources_locked:
+        # Build per-document text and metadata maps for per-fact quote extraction
+        analyze_doc_texts: dict = {}
+        analyze_meta: dict = {}
+        for f in files_with_text:
+            analyze_doc_texts[f.filename] = f.original_text or ''
+            analyze_meta[f.filename] = {"source_id": str(f.id), "page": None}
+
+        # Expand document-level [N] → unique per-fact [1],[2],[3]...
+        an_file_order = [f.filename for f in files_with_text]
+        response, per_fact_sources = _expand_per_fact_citations(
+            response, an_file_order, analyze_doc_texts, analyze_meta
+        )
+        if per_fact_sources and not _sources_locked:
             _used_sources.clear()
-        for i, f in enumerate(files_with_text, 1):
-            if i > included_count:
-                break
-            _used_sources.append({
-                "source_id": str(f.id),
-                "file_name": f.filename,
-                "page": None,
-                "quote": None,  # set below from synthesized response; None = no highlight
-                "source_type": "document",
-            })
+            _used_sources.extend(per_fact_sources)
+            logger.info(f"[UniversalTools] analyze_all_documents: {len(per_fact_sources)} per-fact citations built")
+        elif not _sources_locked:
+            # Fallback: populate one entry per file if expansion produced nothing
+            _used_sources.clear()
+            for f in files_with_text:
+                _used_sources.append({
+                    "source_id": str(f.id),
+                    "file_name": f.filename,
+                    "page": None,
+                    "quote": None,
+                    "source_type": "document",
+                })
 
-        # Update quotes from synthesized response for accurate highlight in document viewer.
-        # Three patterns handled (in order of priority):
-        #   1. bullet "- entity text [N]" — _parse_entity_quotes
-        #   2. inline "some fact [N]" at end of line — new inline pattern
-        #   3. paragraph "[N] text..." at start of line — legacy paragraph format
-        entity_quotes = _parse_entity_quotes(response, included_count)
-        # Pattern 2: inline [N] at end — "Срок: 11.12.2023 [2]" or "text [2]."
-        # Allow any trailing punctuation after [N] (LLMs often write "fact [N].")
-        for line in response.split('\n'):
-            m = re.search(r'(.+?)\s*\[(\d+)\][.,;:!?\s]*$', line.strip())
-            if m:
-                text = m.group(1).strip('•- ').strip()
-                # Strip leading list numbering like "1. " or "2) "
-                text = re.sub(r'^\d+[.)]\s*', '', text).strip()
-                idx = int(m.group(2))
-                if 1 <= idx <= included_count and text and idx not in entity_quotes:
-                    entity_quotes[idx] = text[:250]
-        # Pattern 3: paragraph [N] at start — "[N] text..."
-        for line in response.split('\n'):
-            m = re.match(r'^\[(\d+)\]\s+(.+)', line)
-            if m:
-                idx = int(m.group(1))
-                if 1 <= idx <= included_count and idx not in entity_quotes:
-                    entity_quotes[idx] = m.group(2)[:250]
-        # Build synthesis sentence map: source_index → line text (citation stripped)
-        sentences_by_source_a: Dict[int, str] = {}
-        for line in response.split('\n'):
-            line_clean = re.sub(r'\[\d+\]', '', line).strip()
-            for m in re.finditer(r'\[(\d+)\]', line):
-                idx = int(m.group(1))
-                if 1 <= idx <= included_count and idx not in sentences_by_source_a:
-                    sentences_by_source_a[idx] = line_clean
-
-        # Extract a short verbatim key phrase (date/number/sentence) for each source.
-        # Priority: date from synthesis sentence → amount → verbatim sentence → None.
-        for i, src in enumerate(_used_sources, 1):
-            doc_text = files_with_text[i - 1].original_text if i <= len(files_with_text) else ""
-            hint = sentences_by_source_a.get(i) or entity_quotes.get(i, '')
-            if hint and doc_text:
-                key_phrase = _extract_key_search_phrase(hint, doc_text)
-                src["quote"] = key_phrase  # None → no highlight (better than wrong highlight)
-                if key_phrase:
-                    logger.debug(f"[UniversalTools] analyze[{i}] key phrase: {key_phrase[:80]}")
-            # No hint → leave src["quote"] as None (no highlight)
-
-        # Remap sequential [N] markers to correct document indices
-        response = _normalize_synthesis_citations(response, [f.filename for f in files_with_text])
         # Normalize: move any [N] markers that ended up at start of sentence to end
         response = _normalize_citation_positions(response)
 
