@@ -77,17 +77,31 @@ const DocumentPreviewSheet = ({
       source.char_end - source.char_start > 10 // Минимум 10 символов
 
     if (hasExactCoordinates) {
-      console.log('[DocumentPreview] ✓ Using EXACT chunk coordinates:', {
-        char_start: source!.char_start,
-        char_end: source!.char_end,
-        chunk_id: source!.chunk_id,
-        length: source!.char_end! - source!.char_start!
-      })
-      
-      setFoundHighlights([{
-        char_start: source!.char_start!,
-        char_end: source!.char_end!
-      }])
+      const chunkStart = source!.char_start!
+      const chunkEnd = source!.char_end!
+      const chunkLen = chunkEnd - chunkStart
+
+      // If chunk is large AND we have a quote, try to find the quote WITHIN the chunk
+      // to get a tighter highlight instead of highlighting the whole chunk.
+      if (chunkLen > 150 && source?.quote && documentText && source.quote.length >= 10) {
+        const quoteLower = source.quote.trim().toLowerCase().replace(/\.{3}$/, '')
+        const chunkText = documentText.toLowerCase().substring(chunkStart, chunkEnd)
+        let qIdx = chunkText.indexOf(quoteLower)
+        if (qIdx === -1 && quoteLower.length > 60) {
+          qIdx = chunkText.indexOf(quoteLower.substring(0, 60))
+        }
+        if (qIdx !== -1) {
+          const ql = qIdx === -1 ? 0 : Math.min(quoteLower.length, 120)
+          console.log('[DocumentPreview] ✓ Narrowed chunk highlight via quote at offset', qIdx)
+          setFoundHighlights([{ char_start: chunkStart + qIdx, char_end: chunkStart + qIdx + ql }])
+          return
+        }
+      }
+
+      // Chunk is small or no quote match — highlight the chunk, cap at 200 chars
+      const cappedEnd = chunkLen > 200 ? chunkStart + 200 : chunkEnd
+      console.log('[DocumentPreview] ✓ Using chunk coordinates (len=%d)', chunkLen)
+      setFoundHighlights([{ char_start: chunkStart, char_end: cappedEnd }])
       return
     }
     

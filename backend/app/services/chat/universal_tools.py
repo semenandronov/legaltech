@@ -110,24 +110,32 @@ def _extract_meaningful_excerpt(text: str, max_len: int = 200) -> Optional[str]:
 def _normalize_citation_positions(text: str) -> str:
     """Move [N] markers from the START of lines to the END of the sentence.
 
+    Also strips [N] from bold headers like '**[1] filename.pdf:**' → '**filename.pdf:**'
+    since headers are structural, not inline citations.
+
     GigaChat sometimes ignores the 'end of sentence' instruction and writes:
         '[1] Заявление получено 17 августа 2011 года.'
     This function converts it to:
         'Заявление получено 17 августа 2011 года. [1]'
-    Multiple leading markers like '[1][2] text.' → 'text. [1][2]' are handled too.
     """
     lines = text.split('\n')
     result = []
     for line in lines:
+        # Strip [N] from bold headers: **[1] filename:** → **filename:**
+        line = re.sub(r'(\*{1,2})((?:\[\d+\]\s*)+)', r'\1', line)
+
         # Match: optional whitespace, one or more [N] at start, then the rest of the line
         m = re.match(r'^(\s*)((?:\[\d+\]\s*)+)(.+)', line)
         if m:
             indent = m.group(1)
             citations = m.group(2).strip()  # e.g. '[1][2]'
             content = m.group(3).strip()
+            # Skip if this looks like a header (ends with : or **)
+            if re.search(r'[:\*]{1,2}\s*$', content):
+                result.append(indent + content)
+                continue
             # Only move if content doesn't already end with a citation (avoid double)
             if not re.search(r'\[\d+\]\s*$', content):
-                # Attach citation before trailing punctuation if present
                 punc_m = re.search(r'([.!?])\s*$', content)
                 if punc_m:
                     content = content[:punc_m.start()] + punc_m.group(1) + ' ' + citations
@@ -426,12 +434,12 @@ def search_in_documents(query: str, k: int = 20) -> str:
         )
         query_prompt = (
             f"На основе документов выше выполни следующий запрос: {query}\n\n"
-            "ФОРМАТ — по каждому документу отдельный блок, [N] СТРОГО в конце каждого предложения:\n"
-            "**[1] Название документа 1:**\n"
+            "ФОРМАТ — по каждому документу отдельный блок:\n"
+            "**Название документа 1:**\n"
             "Исполнитель — Иванов А.А., сумма — 500 000 руб. [1]\n\n"
-            "**[2] Название документа 2:**\n"
+            "**Название документа 2:**\n"
             "Работы выполнены полностью. [2]\n\n"
-            "Правила: [N] — ТОЛЬКО в конце предложения. Никогда не ставь [N] в начале.\n"
+            "КРИТИЧЕСКИ ВАЖНО: [N] — ТОЛЬКО в конце предложения, НИКОГДА не в начале строки и не в заголовке.\n"
             "Если документ не содержит нужной информации — пропусти его.\n"
             "Отвечай строго по тексту документов:"
         )
@@ -629,12 +637,12 @@ def analyze_all_documents(question: str, task_type: str = "answer") -> str:
             )
             query_prompt = (
                 f"На основе документов выше выполни следующий запрос: {question}\n\n"
-                "ФОРМАТ — по каждому документу отдельный блок, [N] СТРОГО в конце каждого предложения:\n"
-                "**[1] Название документа 1:**\n"
+                "ФОРМАТ — по каждому документу отдельный блок:\n"
+                "**Название документа 1:**\n"
                 "Срок действия договора: до 31.12.2024. [1]\n\n"
-                "**[2] Название документа 2:**\n"
+                "**Название документа 2:**\n"
                 "Стороны: ООО «Ромашка» (заказчик) и ИП Иванов (исполнитель). [2]\n\n"
-                "Правила: [N] — ТОЛЬКО в конце предложения, никогда не в начале. Документы без нужной информации не упоминай.\n"
+                "КРИТИЧЕСКИ ВАЖНО: [N] — ТОЛЬКО в конце предложения, НИКОГДА не в начале строки и не в заголовке. Документы без нужной информации не упоминай.\n"
                 "Отвечай строго по тексту документов:"
             )
             llm_response = llm.invoke([
