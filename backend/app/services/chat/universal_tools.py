@@ -152,6 +152,41 @@ def _normalize_citation_positions(text: str) -> str:
     return '\n'.join(result)
 
 
+def _find_verbatim_quote_in_chunk(entity_quote: str, chunk_text: str, max_len: int = 200) -> Optional[str]:
+    """Find the sentence in chunk_text that best matches a paraphrased entity_quote.
+
+    Extracts key tokens (numbers, dates, long words) from entity_quote and scores each
+    sentence in chunk_text by overlap.  Returns the verbatim best-matching sentence so
+    DocumentPreviewSheet can locate it precisely via text search within the chunk bounds.
+    """
+    if not entity_quote or not chunk_text:
+        return None
+
+    # Key tokens: numbers/dates (e.g. "5.11.2011", "500 000") and long content words
+    tokens = set(re.findall(r'\b\d[\d.,\-/]*\d\b|\b[а-яёА-ЯЁa-zA-Z]{5,}\b', entity_quote.lower()))
+    if not tokens:
+        return None
+
+    # Split chunk into sentence-like fragments
+    sentences = re.split(r'(?<=[.!?])\s+|\n+', chunk_text)
+    best_sentence: Optional[str] = None
+    best_score = 0
+
+    for sent in sentences:
+        sent_stripped = sent.strip()
+        if len(sent_stripped) < 10:
+            continue
+        score = sum(1 for t in tokens if t in sent_stripped.lower())
+        if score > best_score:
+            best_score = score
+            best_sentence = sent_stripped
+
+    # Require at least 2 matching tokens to avoid false positives
+    if best_sentence and best_score >= 2:
+        return best_sentence[:max_len]
+    return None
+
+
 def _parse_entity_quotes(result_text: str, n_sources: int) -> dict:
     """Parse LLM entity-extraction output to get per-source short quotes for highlighting.
     Matches lines like: '- Абумов Евгений Геннадьевич [1]: исполнитель'
@@ -501,10 +536,11 @@ def search_in_documents(query: str, k: int = 20) -> str:
             else:
                 logger.warning("[UniversalTools] search_in_documents: safety filter, no neutralization possible")
 
-        # Update quotes from synthesized answer for better highlight precision.
-        # Try bullet-point format first (- entity [N]: role), then paragraph format ([N] text...)
+        # Update quotes: find the verbatim sentence in each chunk that best matches
+        # the synthesized (potentially paraphrased) text so DocumentPreviewSheet can
+        # locate the exact highlight position within the chunk bounds.
         entity_quotes = _parse_entity_quotes(synthesized, len(file_order))
-        # Fallback: extract first 250 chars of each [N] paragraph as the quote
+        # Fallback: extract first 250 chars of each [N] paragraph as the entity hint
         if not entity_quotes:
             for line in synthesized.split('\n'):
                 m = re.match(r'^\[(\d+)\]\s+(.+)', line)
@@ -514,7 +550,14 @@ def search_in_documents(query: str, k: int = 20) -> str:
                         entity_quotes[idx] = m.group(2)[:250]
         for i, src in enumerate(_used_sources, 1):
             if i in entity_quotes:
-                src["quote"] = entity_quotes[i]
+                # Use entity_quote as a hint to find the VERBATIM sentence in the chunk.
+                # This ensures DocumentPreviewSheet can match it via text search.
+                chunk_text = files_map[file_order[i - 1]][0].page_content if i <= len(file_order) else ''
+                verbatim = _find_verbatim_quote_in_chunk(entity_quotes[i], chunk_text)
+                if verbatim:
+                    src["quote"] = verbatim
+                    logger.debug(f"[UniversalTools] source[{i}] verbatim quote: {verbatim[:60]}")
+                # If no verbatim match, keep the original chunk excerpt (src["quote"] already set)
 
         # Normalize: move any [N] markers that ended up at start of sentence to end
         synthesized = _normalize_citation_positions(synthesized)
@@ -744,27 +787,27 @@ def analyze_all_documents(question: str, task_type: str = "answer") -> str:
                 idx = int(m.group(1))
                 if 1 <= idx <= included_count and idx not in entity_quotes:
                     entity_quotes[idx] = m.group(2)[:250]
-        # Validate entity quotes: only keep quotes that actually appear in the source document.
-        # LLM synthesis quotes (paraphrased text) won't highlight correctly in the viewer.
-        # For non-matching quotes, fall back to a meaningful excerpt from the document text.
+        # Map entity_quotes to verbatim document sentences for accurate highlighting.
+        # Priority: (1) verbatim match in doc, (2) keyword-based verbatim sentence lookup,
+        # (3) None — no highlight rather than wrong highlight.
         for i, src in enumerate(_used_sources, 1):
             doc_text = files_with_text[i - 1].original_text if i <= len(files_with_text) else ""
             doc_text_lower = doc_text.lower() if doc_text else ""
             if i in entity_quotes:
                 eq = entity_quotes[i]
-                # Check if the extracted quote (or its significant prefix) appears in the document
                 eq_lower = eq.lower()
                 if eq_lower in doc_text_lower:
+                    # Verbatim match — use as-is
                     src["quote"] = eq
                 elif len(eq_lower) > 30 and eq_lower[:60] in doc_text_lower:
                     src["quote"] = eq[:60]
                 else:
-                    # Quote is LLM synthesis, not verbatim — fall back to doc excerpt
-                    src["quote"] = _extract_meaningful_excerpt(doc_text, 200)
-            else:
-                # No quote extracted at all — use doc excerpt
-                if doc_text:
-                    src["quote"] = _extract_meaningful_excerpt(doc_text, 200)
+                    # Paraphrased — find the verbatim sentence with best keyword overlap
+                    verbatim = _find_verbatim_quote_in_chunk(eq, doc_text, max_len=200)
+                    src["quote"] = verbatim  # None if not found (no highlight)
+                    if verbatim:
+                        logger.debug(f"[UniversalTools] analyze[{i}] verbatim quote: {verbatim[:60]}")
+            # No entity_quote for this source → leave src["quote"] as None (no highlight)
 
         # Normalize: move any [N] markers that ended up at start of sentence to end
         response = _normalize_citation_positions(response)
