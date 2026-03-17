@@ -919,7 +919,9 @@ class PlaybookChecker:
                     cap_len = min(len(phrase_search) + 20, len(document_text) - prefix_pos)
                     phrase_found = document_text[prefix_pos:prefix_pos + cap_len]
                     # Trim at nearest sentence/clause end after a reasonable minimum
-                    end_m = re.search(r'[.!?\n]', phrase_found[10:]) if len(phrase_found) > 10 else None
+                    # Match sentence-ending punctuation only — NOT abbreviation dots like "кв.м."
+                    # A sentence-ending dot is followed by whitespace, quote/paren, or end of string.
+                    end_m = re.search(r'[!?\n]|\.(?=[\s"\')\]]|$)', phrase_found[10:]) if len(phrase_found) > 10 else None
                     if end_m:
                         phrase_found = phrase_found[:10 + end_m.start() + 1]
                     ctx_start = max(0, prefix_pos - context_window)
