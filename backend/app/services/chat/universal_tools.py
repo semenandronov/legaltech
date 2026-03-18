@@ -181,7 +181,7 @@ def _expand_per_fact_citations(
     synthesized: str,
     file_order: list,
     doc_texts_map: dict,   # fname → text used for verbatim quote search
-    source_meta_map: dict, # fname → {source_id, page}
+    source_meta_map: dict, # fname → {source_id, page, chunk_excerpt?}
 ) -> tuple:
     """Expand document-level [N] citations into unique per-fact [1],[2],[3]...
 
@@ -226,9 +226,9 @@ def _expand_per_fact_citations(
             hint = _last_sentence_fragment(new_line)
             quote = _extract_key_search_phrase(hint, doc_text) if hint else None
 
-            # Fallback: find the longest n-gram from hint words that appears verbatim
-            # in doc_text. This handles cases where the hint has no date/amount but
-            # contains content words that appear literally in the document.
+            # Fallback 1: find longest n-gram from hint that appears verbatim in doc_text.
+            # Handles cases where the hint has no date/amount but contains content words
+            # that appear literally in the document.
             if quote is None and hint and doc_text:
                 words = re.findall(r'[а-яёА-ЯЁ]{4,}', hint)
                 doc_lower = doc_text.lower()
@@ -240,6 +240,12 @@ def _expand_per_fact_citations(
                             break
                     if quote:
                         break
+
+            # Fallback 2 (insurance): use the verbatim chunk excerpt stored in meta.
+            # This is always findable in the document and at least opens it at the
+            # right area (the chunk most relevant to the query for this document).
+            if quote is None:
+                quote = meta.get("chunk_excerpt")
 
             used_sources.append({
                 "source_id": meta.get("source_id"),
@@ -708,9 +714,21 @@ def search_in_documents(query: str, k: int = 20) -> str:
             doc_texts_map[fn] = '\n'.join(c.page_content for c in chunks)
             if chunks:
                 meta = chunks[0].metadata or {}
+                # First meaningful sentence from best chunk — verbatim fallback quote
+                chunk_text = chunks[0].page_content.strip()
+                # Skip very short leading lines (headers/numbers) to get real content
+                chunk_excerpt = None
+                for line in chunk_text.split('\n'):
+                    line = line.strip()
+                    if len(line) >= 30:
+                        chunk_excerpt = line[:150]
+                        break
+                if not chunk_excerpt:
+                    chunk_excerpt = chunk_text[:150]
                 source_meta_map[fn] = {
                     "source_id": str(meta.get("file_id", meta.get("doc_id", ""))),
                     "page": meta.get("source_page") or meta.get("page"),
+                    "chunk_excerpt": chunk_excerpt,
                 }
 
         # Expand document-level [N] → unique per-fact [1],[2],[3]...
@@ -920,7 +938,19 @@ def analyze_all_documents(question: str, task_type: str = "answer") -> str:
         analyze_meta: dict = {}
         for f in files_with_text:
             analyze_doc_texts[f.filename] = f.original_text or ''
-            analyze_meta[f.filename] = {"source_id": str(f.id), "page": None}
+            # First long line from document as verbatim fallback quote
+            doc_text_raw = f.original_text or ''
+            chunk_excerpt_a = None
+            for line in doc_text_raw.split('\n'):
+                line = line.strip()
+                if len(line) >= 30:
+                    chunk_excerpt_a = line[:150]
+                    break
+            analyze_meta[f.filename] = {
+                "source_id": str(f.id),
+                "page": None,
+                "chunk_excerpt": chunk_excerpt_a,
+            }
 
         # Expand document-level [N] → unique per-fact [1],[2],[3]...
         an_file_order = [f.filename for f in files_with_text]
