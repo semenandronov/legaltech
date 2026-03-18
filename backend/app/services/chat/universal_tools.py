@@ -152,6 +152,35 @@ def _normalize_citation_positions(text: str) -> str:
     return '\n'.join(result)
 
 
+_HEADER_SKIP_RE = re.compile(
+    r'^(?:'
+    r'[А-ЯЁ\s«»"\d\-/.,()]+$'          # ALL-CAPS lines (court names, titles)
+    r'|АРБИТРАЖНЫЙ\b|ОПРЕДЕЛЕНИЕ\b|РЕШЕНИЕ\b|ПОСТАНОВЛЕНИЕ\b'
+    r'|г\.\s+\w|«\d+»\s+\w'             # location "г. Ростов" or date "«11» марта"
+    r'|\d+\s*/\s*\d+'                    # page numbers
+    r'|(?:Дело\s+№|№\s*\d)'             # case numbers
+    r')',
+    re.IGNORECASE,
+)
+
+
+def _first_content_line(text: str, max_len: int = 150) -> Optional[str]:
+    """Return the first verbatim line from text that is actual document content
+    (not a court header, section title, or formatting artifact).
+    Falls back to the first long line if all lines look like headers.
+    """
+    first_long: Optional[str] = None
+    for line in text.split('\n'):
+        line = line.strip()
+        if len(line) < 25:
+            continue
+        if first_long is None:
+            first_long = line[:max_len]
+        if not _HEADER_SKIP_RE.match(line):
+            return line[:max_len]
+    return first_long[:max_len] if first_long else (text[:max_len] or None)
+
+
 def _last_sentence_fragment(text: str, max_len: int = 300) -> str:
     """Return the sentence fragment preceding a [N] marker.
 
@@ -329,14 +358,38 @@ def _extract_key_search_phrase(synthesis_sentence: str, chunk_text: str) -> Opti
 
     chunk_lower = (chunk_text or '').lower()
 
-    # 1. Try date patterns
+    _NUM_TO_MONTH = {
+        '01': 'января', '02': 'февраля', '03': 'марта', '04': 'апреля',
+        '05': 'мая', '06': 'июня', '07': 'июля', '08': 'августа',
+        '09': 'сентября', '10': 'октября', '11': 'ноября', '12': 'декабря',
+    }
+
+    # 1. Try date patterns — also generate Russian-month variants for numeric dates
     for pattern in _DATE_PATTERNS:
         for m in re.finditer(pattern, synthesis_sentence, re.IGNORECASE):
             candidate = m.group(0).strip()
-            # Strip guillemets for matching — PDF may have plain quotes or none
+            # Strip guillemets for direct match
             cand_plain = re.sub(r'[«»"]', '', candidate).strip()
             if cand_plain.lower() in chunk_lower or candidate.lower() in chunk_lower:
                 return candidate
+
+            # Numeric date "DD.MM.YYYY" → try Russian written forms in chunk
+            num_m = re.match(r'(\d{1,2})[./](\d{2})[./](\d{4})', candidate)
+            if num_m:
+                day, mon, year = num_m.group(1), num_m.group(2).zfill(2), num_m.group(3)
+                month_name = _NUM_TO_MONTH.get(mon)
+                if month_name:
+                    for variant in [
+                        f"{day} {month_name} {year}",
+                        f"«{day}» {month_name}",
+                        f"{month_name} {year}",
+                    ]:
+                        if variant.lower() in chunk_lower:
+                            # Return the verbatim text from the chunk, not the hint
+                            idx = chunk_lower.find(variant.lower())
+                            end = min(len(chunk_text), idx + len(variant) + 20)
+                            return chunk_text[idx:end].strip()
+            continue
 
     # 2. Try amount patterns
     for m in re.finditer(_AMOUNT_PATTERN, synthesis_sentence, re.IGNORECASE):
@@ -716,15 +769,7 @@ def search_in_documents(query: str, k: int = 20) -> str:
                 meta = chunks[0].metadata or {}
                 # First meaningful sentence from best chunk — verbatim fallback quote
                 chunk_text = chunks[0].page_content.strip()
-                # Skip very short leading lines (headers/numbers) to get real content
-                chunk_excerpt = None
-                for line in chunk_text.split('\n'):
-                    line = line.strip()
-                    if len(line) >= 30:
-                        chunk_excerpt = line[:150]
-                        break
-                if not chunk_excerpt:
-                    chunk_excerpt = chunk_text[:150]
+                chunk_excerpt = _first_content_line(chunk_text)
                 source_meta_map[fn] = {
                     "source_id": str(meta.get("file_id", meta.get("doc_id", ""))),
                     "page": meta.get("source_page") or meta.get("page"),
@@ -938,14 +983,7 @@ def analyze_all_documents(question: str, task_type: str = "answer") -> str:
         analyze_meta: dict = {}
         for f in files_with_text:
             analyze_doc_texts[f.filename] = f.original_text or ''
-            # First long line from document as verbatim fallback quote
-            doc_text_raw = f.original_text or ''
-            chunk_excerpt_a = None
-            for line in doc_text_raw.split('\n'):
-                line = line.strip()
-                if len(line) >= 30:
-                    chunk_excerpt_a = line[:150]
-                    break
+            chunk_excerpt_a = _first_content_line(f.original_text or '')
             analyze_meta[f.filename] = {
                 "source_id": str(f.id),
                 "page": None,
