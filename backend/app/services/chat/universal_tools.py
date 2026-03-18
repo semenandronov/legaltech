@@ -395,16 +395,27 @@ def _extract_key_search_phrase(synthesis_sentence: str, chunk_text: str) -> Opti
                 day, mon, year = num_m.group(1), num_m.group(2).zfill(2), num_m.group(3)
                 month_name = _NUM_TO_MONTH.get(mon)
                 if month_name:
+                    # Exact substring variants (fast path)
                     for variant in [
                         f"{day} {month_name} {year}",
                         f"«{day}» {month_name}",
                         f"{month_name} {year}",
                     ]:
                         if variant.lower() in chunk_lower:
-                            # Return the verbatim text from the chunk, not the hint
                             idx = chunk_lower.find(variant.lower())
                             end = min(len(chunk_text), idx + len(variant) + 20)
                             return chunk_text[idx:end].strip()
+                    # Regex variants — handle spaces inside guillemets (« 11 » марта)
+                    # and multiple/non-breaking spaces (common in PDF extraction)
+                    for pat in [
+                        rf'«\s*{re.escape(day)}\s*»\s*{re.escape(month_name)}\s*{re.escape(year)}',
+                        rf'«\s*{re.escape(day)}\s*»\s*{re.escape(month_name)}',
+                        rf'{re.escape(day)}\s+{re.escape(month_name)}\s+{re.escape(year)}',
+                    ]:
+                        rm = re.search(pat, chunk_lower)
+                        if rm:
+                            end = min(len(chunk_text), rm.end() + 20)
+                            return chunk_text[rm.start():end].strip()
             continue
 
     # 2. Try amount patterns
@@ -779,8 +790,20 @@ def search_in_documents(query: str, k: int = 20) -> str:
         source_meta_map: dict = {}
         for fn in file_order:
             chunks = files_map.get(fn, [])
-            # Concatenate all retrieved chunks for this file (better recall for dates)
-            doc_texts_map[fn] = '\n'.join(c.page_content for c in chunks)
+            # Prefer full document text from DB for better date/number coverage
+            full_text = ''
+            try:
+                from app.models.case import File as FileModel
+                if _db is not None and _case_id is not None:
+                    file_obj = _db.query(FileModel).filter(
+                        FileModel.case_id == _case_id,
+                        FileModel.filename == fn,
+                    ).first()
+                    if file_obj and file_obj.original_text:
+                        full_text = file_obj.original_text
+            except Exception as _e:
+                logger.warning("[UniversalTools] Could not load full doc text for %s: %s", fn, _e)
+            doc_texts_map[fn] = full_text or '\n'.join(c.page_content for c in chunks)
             if chunks:
                 meta = chunks[0].metadata or {}
                 # First meaningful sentence from best chunk — verbatim fallback quote
