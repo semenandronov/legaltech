@@ -233,9 +233,13 @@ def _expand_per_fact_citations(
 
     for line in lines:
         line_lower = line.lower()
-        # Detect document header — update active document
+        # Detect document section header — filename must appear at the START of the
+        # line (possibly with bold markers **). Filenames embedded mid-sentence (e.g.
+        # in quotes or case references) must NOT trigger a document switch.
+        stripped = line_lower.lstrip('*# \t')
         for fname in file_order:
-            if fname.lower() in line_lower:
+            fname_lower = fname.lower()
+            if stripped.startswith(fname_lower):
                 current_fname = fname
                 break
 
