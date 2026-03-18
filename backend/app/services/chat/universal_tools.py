@@ -233,6 +233,18 @@ def _expand_per_fact_citations(
 
     for line in lines:
         line_lower = line.lower()
+
+        # GigaChat often puts [N] in the first column instead of the filename.
+        # Detect "| [N] | fact... |" rows, resolve [N] → filename, and rewrite the
+        # line so the filename appears in column 1 for correct display.
+        first_col_num_m = re.match(r'^\|\s*\[(\d+)\]\s*\|(.+)$', line)
+        if first_col_num_m:
+            doc_num = int(first_col_num_m.group(1))
+            if 1 <= doc_num <= len(file_order):
+                current_fname = file_order[doc_num - 1]
+                line = f'| {current_fname} |{first_col_num_m.group(2)}'
+                line_lower = line.lower()
+
         # Detect document section header — filename must appear at the START of the
         # line (bold header "**file.pdf:**") OR in the FIRST COLUMN of a table row
         # "| file.pdf | fact |". Filenames embedded mid-sentence must NOT trigger switch.
@@ -705,7 +717,7 @@ def search_in_documents(query: str, k: int = 20) -> str:
             f"| {ex1} | Сумма договора — 500 000 руб. [1] |\n"
             f"| {ex2} | Дата подачи заявления — 17.08.2011. [2] |\n"
             f"| {ex2} | Срок рассмотрения — до 13.07.2011. [2] |\n\n"
-            "ПРАВИЛА: [N] ставь ТОЛЬКО в конце ячейки с фактом, никогда не в колонку «Документ».\n"
+            "ПРАВИЛА: [N] ставь ТОЛЬКО в конце ячейки «Факт». В колонке «Документ» пиши ТОЛЬКО полное имя файла из списка — НЕЛЬЗЯ писать [1] или другие числа в скобках в колонке «Документ».\n"
             "Перечисли ВСЕ факты, даты и сроки, относящиеся к запросу. Документы без нужной информации не включай.\n"
             "Отвечай строго по тексту документов:"
         )
@@ -923,7 +935,7 @@ def analyze_all_documents(question: str, task_type: str = "answer") -> str:
                 f"| {ex1_a} | Стороны — ООО «Ромашка» и ИП Иванов. [1] |\n"
                 f"| {ex2_a} | Дата подачи заявления — 17.08.2011. [2] |\n"
                 f"| {ex2_a} | Срок рассмотрения — до 13.07.2011. [2] |\n\n"
-                "ПРАВИЛА: [N] ставь ТОЛЬКО в конце ячейки с фактом, никогда не в колонку «Документ».\n"
+                "ПРАВИЛА: [N] ставь ТОЛЬКО в конце ячейки «Факт». В колонке «Документ» пиши ТОЛЬКО полное имя файла из списка — НЕЛЬЗЯ писать [1] или другие числа в скобках в колонке «Документ».\n"
                 "Перечисли ВСЕ факты, даты и сроки, относящиеся к запросу. Документы без нужной информации не включай.\n"
                 "Отвечай строго по тексту документов:"
             )
