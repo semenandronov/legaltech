@@ -1103,7 +1103,9 @@ ID дела: {self.case_id}
                                     logger.warning(f"[ReActChatAgent] Fallback search failed: {fb_err}")
                         if not direct_result_streamed:
                             cleaned = _clean_response_text(text_buffer)
-                            if strip_citations:
+                            # If no tools were called there are no real sources — always strip [N]
+                            # markers to prevent broken citation badges in the UI.
+                            if strip_citations or not tool_calls_made:
                                 cleaned = re.sub(r'\s*\[\d+\]', '', cleaned)
                             if cleaned:
                                 async for sse_chunk in _stream_text_with_typing_effect(cleaned):
