@@ -261,14 +261,27 @@ def _expand_per_fact_citations(
             result_lines.append(line)
             continue
 
-        # Split at every [N], process each gap
-        segments = re.split(r'\[\d+\]', line)
-        new_line = segments[0]
-        doc_text = doc_texts_map.get(current_fname, '') if current_fname else ''
-        meta = source_meta_map.get(current_fname, {}) if current_fname else {}
-        doc_used = used_quotes_per_doc.setdefault(current_fname or '_', [])
+        # Use capturing split to preserve the actual N value from each [N] marker.
+        # parts alternates: text, N_str, text, N_str, ...
+        parts = re.split(r'\[(\d+)\]', line)
+        new_line = parts[0]
 
-        for seg in segments[1:]:
+        for part_idx in range(1, len(parts), 2):
+            n_str = parts[part_idx]
+            seg = parts[part_idx + 1] if part_idx + 1 < len(parts) else ''
+            n_val = int(n_str)
+
+            # Resolve the document for this badge.
+            # Priority: explicit filename header detected in the line (table format).
+            # Fallback: use N directly as document index (prose/bullet format like extract_structured_data).
+            effective_fname = current_fname
+            if effective_fname is None and 1 <= n_val <= len(file_order):
+                effective_fname = file_order[n_val - 1]
+
+            doc_text = doc_texts_map.get(effective_fname, '') if effective_fname else ''
+            meta = source_meta_map.get(effective_fname, {}) if effective_fname else {}
+            doc_used = used_quotes_per_doc.setdefault(effective_fname or '_', [])
+
             counter += 1
             # The "hint" is the sentence fragment right before this [N]
             hint = _last_sentence_fragment(new_line)
@@ -320,7 +333,7 @@ def _expand_per_fact_citations(
 
             used_sources.append({
                 "source_id": meta.get("source_id"),
-                "file_name": current_fname,
+                "file_name": effective_fname,
                 "page": meta.get("page"),
                 "quote": quote,
                 "source_type": "document",
@@ -1175,24 +1188,25 @@ def extract_structured_data(entity_types: str = "dates,amounts,persons,organizat
         result = response.content if hasattr(response, 'content') else str(response)
         logger.info(f"[UniversalTools] extract_structured_data: извлечены {entity_types}")
 
-        # Populate _used_sources — one entry per file (same order as context [N])
+        # Build per-document text and metadata maps (same pattern as search_in_documents)
+        doc_texts_map_esd: dict = {f.filename: f.original_text or '' for f in files_with_text}
+        source_meta_map_esd: dict = {
+            f.filename: {
+                "source_id": str(f.id),
+                "page": None,
+                "chunk_excerpt": _first_content_line(f.original_text or ''),
+            }
+            for f in files_with_text
+        }
+
+        # Expand per-fact citations — each [N] badge gets its own unique highlight
+        result, per_fact_sources = _expand_per_fact_citations(
+            result, file_order, doc_texts_map_esd, source_meta_map_esd
+        )
         if not _sources_locked:
             _used_sources = []
-        try:
-            entity_quotes = _parse_entity_quotes(result, len(file_order))
-            for i, f in enumerate(files_with_text, 1):
-                quote = entity_quotes.get(i, f.original_text[:200])
-                _used_sources.append({
-                    "source_id": str(f.id),
-                    "file_name": f.filename,
-                    "page": None,
-                    "quote": quote,
-                    "char_start": None,
-                    "char_end": None,
-                    "source_type": "document",
-                })
-        except Exception as src_err:
-            logger.warning(f"[UniversalTools] extract_structured_data: failed to populate _used_sources: {src_err}")
+            _used_sources.extend(per_fact_sources)
+            logger.info(f"[UniversalTools] extract_structured_data: {len(per_fact_sources)} per-fact citations built")
 
         # Store for direct streaming (bypasses GigaChat's outer synthesis)
         _last_direct_result = result
