@@ -230,6 +230,8 @@ def _expand_per_fact_citations(
     used_sources = []
     counter = 0
     current_fname: Optional[str] = None
+    # Track quotes already assigned per document to avoid duplicate highlights
+    used_quotes_per_doc: dict = {}  # fname → list[str]
 
     for line in lines:
         line_lower = line.lower()
@@ -264,6 +266,7 @@ def _expand_per_fact_citations(
         new_line = segments[0]
         doc_text = doc_texts_map.get(current_fname, '') if current_fname else ''
         meta = source_meta_map.get(current_fname, {}) if current_fname else {}
+        doc_used = used_quotes_per_doc.setdefault(current_fname or '_', [])
 
         for seg in segments[1:]:
             counter += 1
@@ -286,11 +289,34 @@ def _expand_per_fact_citations(
                     if quote:
                         break
 
+            # Deduplication: if this quote is already used for this document,
+            # try to find the NEXT occurrence of the phrase in the document text
+            # so each badge highlights a different place.
+            if quote is not None and quote in doc_used and doc_text:
+                doc_lower = doc_text.lower()
+                q_lower = quote.lower()
+                # Skip past all known occurrences to find a new one
+                search_start = 0
+                for already in doc_used:
+                    if already.lower() == q_lower:
+                        pos = doc_lower.find(q_lower, search_start)
+                        if pos >= 0:
+                            search_start = pos + len(q_lower)
+                next_pos = doc_lower.find(q_lower, search_start)
+                if next_pos >= 0:
+                    quote = doc_text[next_pos:next_pos + len(quote) + 30].strip()
+
             # Fallback 2 (insurance): use the verbatim chunk excerpt stored in meta.
             # This is always findable in the document and at least opens it at the
             # right area (the chunk most relevant to the query for this document).
             if quote is None:
-                quote = meta.get("chunk_excerpt")
+                chunk_exc = meta.get("chunk_excerpt")
+                # Use chunk_excerpt only if not already taken by another badge
+                if chunk_exc and chunk_exc not in doc_used:
+                    quote = chunk_exc
+
+            if quote:
+                doc_used.append(quote)
 
             used_sources.append({
                 "source_id": meta.get("source_id"),
@@ -713,7 +739,9 @@ def search_in_documents(query: str, k: int = 20) -> str:
             "Твоя задача — извлекать и излагать информацию из предоставленных текстов в виде таблицы Markdown. "
             "Строго следуй формату таблицы: каждая строка — один факт, в конце ячейки с фактом ставь [N] — номер документа-источника. "
             "Пиши только [1], [2], [3] и т.д. — никогда не пиши [документ 1], только [1]. "
-            "ЗАПРЕЩЕНО добавлять заголовки или текст вне таблицы.\n\n"
+            "ЗАПРЕЩЕНО добавлять заголовки или текст вне таблицы. "
+            "ЗАПРЕЩЕНО изменять, округлять или перефразировать числа, даты и суммы — "
+            "все цифры, даты и денежные суммы переписывай ДОСЛОВНО так, как они написаны в документе.\n\n"
             f"Документы из дела:\n{context}\n\n"
             f"Список документов:\n{source_list}"
         )
@@ -730,6 +758,7 @@ def search_in_documents(query: str, k: int = 20) -> str:
             f"| {ex2} | Срок рассмотрения — до 13.07.2011. [2] |\n\n"
             "ПРАВИЛА: [N] ставь ТОЛЬКО в конце ячейки «Факт». В колонке «Документ» пиши ТОЛЬКО полное имя файла из списка — НЕЛЬЗЯ писать [1] или другие числа в скобках в колонке «Документ».\n"
             "Перечисли ВСЕ факты, даты и сроки, относящиеся к запросу. Документы без нужной информации не включай.\n"
+            "ВАЖНО: числа, даты и суммы переписывай ДОСЛОВНО из документа — не округляй и не изменяй их.\n"
             "Отвечай строго по тексту документов:"
         )
         response = llm.invoke([
