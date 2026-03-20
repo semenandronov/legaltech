@@ -276,7 +276,7 @@ class Config:
     
     # GigaChat (Сбер) - с поддержкой function calling
     GIGACHAT_CREDENTIALS: str = os.getenv("GIGACHAT_CREDENTIALS", "")  # Authorization Key (base64 encoded ClientID:ClientSecret)
-    GIGACHAT_MODEL: str = os.getenv("GIGACHAT_MODEL", "GigaChat")
+    GIGACHAT_MODEL: str = os.getenv("GIGACHAT_MODEL", "GigaChat-Pro")
     # По умолчанию отключаем проверку SSL для совместимости с некоторыми окружениями (Render, прокси)
     # Установите GIGACHAT_VERIFY_SSL=true для включения проверки SSL (более безопасно)
     GIGACHAT_VERIFY_SSL: bool = os.getenv("GIGACHAT_VERIFY_SSL", "false").lower() == "true"
