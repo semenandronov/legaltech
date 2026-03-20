@@ -236,6 +236,8 @@ interface Message {
     char_end: number
     context_before?: string
     context_after?: string
+    url?: string
+    source_type?: string
   }>
   // Фаза 9.3: Human feedback request
   feedbackRequest?: {
@@ -1020,6 +1022,8 @@ export const AssistantUIChat = forwardRef<AssistantUIChatRef, AssistantUIChatPro
                             char_end: citation.char_end,
                             context_before: citation.context_before || '',
                             context_after: citation.context_after || '',
+                            url: citation.url || '',
+                            source_type: citation.source_type || 'document',
                           })),
                         }
                       : msg
@@ -1605,6 +1609,14 @@ export const AssistantUIChat = forwardRef<AssistantUIChatRef, AssistantUIChatPro
               citations={message.citations}
               isStreaming={isLoading && message.id === messages[messages.length - 1]?.id}
               onSourceClick={(source) => {
+                // External sources (pravo.gov.ru) — open URL in new tab
+                if ((source as any).source_type === 'external' || (source as any).url) {
+                  const extUrl = (source as any).url
+                  if (extUrl) {
+                    window.open(extUrl, '_blank', 'noopener,noreferrer')
+                    return
+                  }
+                }
                 if (source.file) {
                   // Открываем документ справа в панели предпросмотра с подсветкой
                   const sourceInfo: SourceInfo = {
@@ -1623,7 +1635,7 @@ export const AssistantUIChat = forwardRef<AssistantUIChatRef, AssistantUIChatPro
                   setPreviewOpen(true)
                   // Собираем все источники из текущего сообщения для навигации
                   // Используем citations если есть, иначе sources
-                  const allSources = message.citations 
+                  const allSources = message.citations
                     ? message.citations.map(c => ({
                         file: c.file_name,
                         title: c.file_name,
@@ -1633,6 +1645,8 @@ export const AssistantUIChat = forwardRef<AssistantUIChatRef, AssistantUIChatPro
                         char_end: c.char_end,
                         quote: c.quote,
                         source_id: c.source_id,
+                        url: c.url,
+                        source_type: c.source_type,
                       }))
                     : message.sources 
                     ? message.sources.map(s => ({

@@ -1309,10 +1309,25 @@ def compare_documents(doc1_name: str, doc2_name: str) -> str:
 # БЛОК 2: ЗАКОНЫ (2 инструмента)
 # =============================================================================
 
+def _run_async(coro, timeout: int = 40):
+    """Run an async coroutine from sync context (handles running event loops)."""
+    import asyncio
+    try:
+        loop = asyncio.get_event_loop()
+        if loop.is_running():
+            import concurrent.futures
+            with concurrent.futures.ThreadPoolExecutor() as executor:
+                return executor.submit(asyncio.run, coro).result(timeout=timeout)
+        else:
+            return loop.run_until_complete(coro)
+    except RuntimeError:
+        return asyncio.run(coro)
+
+
 @tool
-def search_legal_db(query: str, max_results: int = 8) -> str:
+def search_legal_db(query: str, max_results: int = 5) -> str:
     """
-    Поиск нормативно-правовых актов на портале publication.pravo.gov.ru.
+    Поиск НПА на pravo.gov.ru с синтезом ответа из реального текста закона.
 
     КОГДА ИСПОЛЬЗОВАТЬ:
     - Нужен закон, постановление, приказ, кодекс или иной НПА
@@ -1321,104 +1336,143 @@ def search_legal_db(query: str, max_results: int = 8) -> str:
 
     НЕ ИСПОЛЬЗОВАТЬ:
     - Для поиска в документах пользователя (используй search_in_documents)
-    - Когда вопрос про "мой договор", "в иске" и т.д.
 
     ВАЖНО — стратегия поиска:
     - Если знаешь номер закона — ОБЯЗАТЕЛЬНО укажи его в query (например "127-ФЗ", "44-ФЗ")
-    - Без номера закона поиск работает по тематическому блоку (суд, правительство, банкротство и т.д.)
-    - После получения списка НПА вызывай get_legal_document(eo_number) для получения полного текста
+    - Без номера — поиск по тематическому блоку (суд, правительство, банкротство и т.д.)
 
     Args:
-        query: Запрос. Примеры: "127-ФЗ несостоятельность банкротство", "44-ФЗ контрактная система"
-        max_results: Количество результатов (1-20)
+        query: Запрос. Примеры: "127-ФЗ несостоятельность", "44-ФЗ контрактная система"
+        max_results: Количество НПА для поиска (1-10)
 
     Returns:
-        Список найденных НПА с реквизитами и ссылками
+        Ответ на основе текста найденных НПА с реальными ссылками
     """
-    import asyncio
     from app.services.external_sources.pravo_source import PravoSource
+    from app.services.llm_factory import create_legal_llm
+    from langchain_core.messages import HumanMessage, SystemMessage
+
+    global _used_sources, _sources_locked, _last_direct_result
 
     logger.info("[UniversalTools] search_legal_db: %s...", query[:60])
 
     source = PravoSource()
 
-    async def _search():
-        return await source.search(query=query, max_results=min(20, max(1, max_results)))
-
-    try:
-        loop = asyncio.get_event_loop()
-        if loop.is_running():
-            import concurrent.futures
-            with concurrent.futures.ThreadPoolExecutor() as executor:
-                results = executor.submit(asyncio.run, _search()).result(timeout=25)
-        else:
-            results = loop.run_until_complete(_search())
-    except RuntimeError:
-        results = asyncio.run(_search())
-    except Exception as exc:
-        logger.error("[UniversalTools] search_legal_db error: %s", exc)
-        return f"Ошибка поиска в pravo.gov.ru: {exc}"
-
+    # 1. Search pravo.gov.ru
+    results = _run_async(
+        source.search(query=query, max_results=min(10, max(1, max_results))),
+        timeout=25,
+    )
     if not results:
         return f"По запросу «{query}» ничего не найдено на портале pravo.gov.ru."
 
-    parts = []
-    for i, r in enumerate(results, 1):
-        meta = r.metadata or {}
-        eo = meta.get("eo_number", "")
-        date = meta.get("doc_date", "")
-        url = r.url or ""
-        line = f"**[{i}] {r.title}**"
-        if date:
-            line += f" от {date}"
-        if eo:
-            line += f"\nЭл. номер: {eo}"
-        if url:
-            line += f"\n{url}"
-        parts.append(line)
+    # 2. Download PDF text for top 2 documents
+    async def _fetch_texts():
+        tasks = [source.get_document_text(r.metadata["eo_number"]) for r in results[:2] if r.metadata.get("eo_number")]
+        import asyncio
+        return await asyncio.gather(*tasks, return_exceptions=True)
 
-    header = f"📜 Найдено на pravo.gov.ru: {len(results)} НПА\n\n"
-    return header + "\n\n".join(parts)
+    texts = _run_async(_fetch_texts(), timeout=60)
+
+    # 3. Build numbered context
+    context_parts = []
+    valid_results = []
+    text_idx = 0
+    for r in results[:2]:
+        eo = r.metadata.get("eo_number", "")
+        if not eo:
+            continue
+        doc_text = texts[text_idx] if text_idx < len(texts) else None
+        text_idx += 1
+        if isinstance(doc_text, Exception) or not doc_text:
+            doc_text = "(текст недоступен)"
+        title = r.metadata.get("complex_name") or r.title
+        context_parts.append(f"[{len(valid_results)+1}] {title}:\n{doc_text[:4000]}")
+        valid_results.append((r, doc_text))
+
+    if not valid_results:
+        # Fallback: return list without synthesis
+        parts = [f"[{i}] {r.title} — {r.url}" for i, r in enumerate(results[:5], 1)]
+        return "Найдено на pravo.gov.ru:\n" + "\n".join(parts)
+
+    context = "\n\n---\n\n".join(context_parts)
+    file_order = [r.metadata.get("complex_name") or r.title for r, _ in valid_results]
+
+    # 4. Inner LLM synthesis
+    ex1 = file_order[0] if file_order else "Документ 1"
+    system_msg = (
+        "Ты юридический ассистент. Отвечай ТОЛЬКО на основе текстов документов ниже. "
+        "Формат ответа — маркированный список. Каждый пункт заканчивается [N] — номером источника."
+    )
+    user_msg = (
+        f"Документы (каждый помечен [N]):\n\n{context}\n\n"
+        f"Запрос: {query}\n\n"
+        f"Ответь по существу, ссылаясь на конкретные положения документов. "
+        f"После каждого факта ставь [N]. Пример: «Должник обязан уведомить кредиторов [1]»."
+    )
+
+    try:
+        llm = create_legal_llm()
+        resp = llm.invoke([SystemMessage(content=system_msg), HumanMessage(content=user_msg)])
+        synthesized = resp.content if hasattr(resp, "content") else str(resp)
+    except Exception as exc:
+        logger.error("[UniversalTools] search_legal_db synthesis error: %s", exc)
+        synthesized = "\n".join(f"[{i+1}] {r.title}" for i, (r, _) in enumerate(valid_results))
+
+    # 5. Build _used_sources with real pravo.gov.ru URLs (one per document, external type)
+    if not _sources_locked:
+        _used_sources = []
+        for i, (r, _) in enumerate(valid_results):
+            eo = r.metadata.get("eo_number", "")
+            url = f"https://publication.pravo.gov.ru/Document/View/{eo}"
+            _used_sources.append({
+                "source_id": eo,
+                "file_name": r.metadata.get("complex_name") or r.title,
+                "page": None,
+                "quote": None,
+                "url": url,
+                "source_type": "external",
+            })
+        logger.info("[UniversalTools] search_legal_db: %d external sources set", len(_used_sources))
+
+    # 6. Re-number [N] markers to match _used_sources indices (1-based)
+    # For external sources we keep the mapping simple: [1] → source 0, [2] → source 1
+    _last_direct_result = synthesized
+    return synthesized
 
 
 @tool
 def get_legal_document(eo_number: str) -> str:
     """
-    Получить полный текст нормативного акта с портала pravo.gov.ru по номеру электронного опубликования.
+    Получить полный текст нормативного акта с портала pravo.gov.ru.
 
     КОГДА ИСПОЛЬЗОВАТЬ:
     - После search_legal_db, когда нужен полный текст конкретного НПА
-    - Пользователь хочет сравнить положения своего документа с текстом закона
-    - Нужно проверить соответствие документа конкретной норме
+    - Для детального анализа конкретной статьи закона
 
     Args:
-        eo_number: Номер электронного опубликования (eoNumber), например "2600202104190001"
+        eo_number: Номер электронного опубликования из результатов search_legal_db
 
     Returns:
-        Полный текст НПА (из PDF) с реквизитами
+        Полный текст НПА (из PDF)
     """
-    import asyncio
     from app.services.external_sources.pravo_source import PravoSource
+    global _used_sources, _sources_locked, _last_direct_result
 
     logger.info("[UniversalTools] get_legal_document: %s", eo_number)
 
     source = PravoSource()
 
     async def _fetch():
-        meta = await source.get_document_metadata(eo_number)
-        text = await source.get_document_text(eo_number)
+        import asyncio
+        meta, text = await asyncio.gather(
+            source.get_document_metadata(eo_number),
+            source.get_document_text(eo_number),
+        )
         return meta, text
 
     try:
-        loop = asyncio.get_event_loop()
-        if loop.is_running():
-            import concurrent.futures
-            with concurrent.futures.ThreadPoolExecutor() as executor:
-                meta, text = executor.submit(asyncio.run, _fetch()).result(timeout=40)
-        else:
-            meta, text = loop.run_until_complete(_fetch())
-    except RuntimeError:
-        meta, text = asyncio.run(_fetch())
+        meta, text = _run_async(_fetch(), timeout=45)
     except Exception as exc:
         logger.error("[UniversalTools] get_legal_document error: %s", exc)
         return f"Ошибка получения документа: {exc}"
@@ -1426,16 +1480,22 @@ def get_legal_document(eo_number: str) -> str:
     if not meta and not text:
         return f"Документ с номером {eo_number} не найден."
 
-    title = ""
-    if meta:
-        title = meta.get("complexName") or meta.get("name") or ""
-
+    title = (meta or {}).get("complexName") or (meta or {}).get("name") or eo_number
     url = f"https://publication.pravo.gov.ru/Document/View/{eo_number}"
-    header = f"📜 **{title}**\n{url}\n\n" if title else f"📜 {url}\n\n"
 
-    if text:
-        return header + text
-    return header + "(Текст PDF не удалось извлечь)"
+    if not _sources_locked:
+        _used_sources = [{
+            "source_id": eo_number,
+            "file_name": title,
+            "page": None,
+            "quote": None,
+            "url": url,
+            "source_type": "external",
+        }]
+
+    result = f"**{title}**\n{url}\n\n{text or '(Текст PDF не удалось извлечь)'}"
+    _last_direct_result = result
+    return result
 
 
 # =============================================================================
