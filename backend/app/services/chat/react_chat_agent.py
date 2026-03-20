@@ -34,8 +34,8 @@ logger = logging.getLogger(__name__)
 # Tool names used for stripping echoed tool calls from GigaChat responses
 _TOOL_NAMES = [
     "search_in_documents", "get_document", "analyze_all_documents",
-    "extract_structured_data", "compare_documents", "search_garant",
-    "get_law_article", "generate_document", "list_templates",
+    "extract_structured_data", "compare_documents", "search_legal_db",
+    "get_legal_document", "generate_document", "list_templates",
     "validate_with_playbook", "get_user_playbooks", "calculate",
     "get_current_date", "web_research",
 ]
@@ -472,16 +472,16 @@ class ReActChatAgent:
             optional_tools_text += """
 ═══════════════════════════════════════════════════════════════════════════════
 
-⚖️ ПРАВОВАЯ БАЗА ГАРАНТ:
+⚖️ ПРАВОВАЯ БАЗА (pravo.gov.ru):
 
-12. **search_garant(query, doc_type, max_results)** - Поиск в базе ГАРАНТ
-    - Используй для вопросов о законах, статьях кодексов, судебной практике
-    - doc_type: "all", "law", "court_decision", "article"
-    - Пример: search_garant("статья 395 ГК РФ", "law", 10)
+12. **search_legal_db(query, max_results)** - Поиск НПА на официальном портале pravo.gov.ru
+    - Используй для вопросов о законах, постановлениях, приказах, судебной практике
+    - Пример: search_legal_db("несостоятельность банкротство требования кредиторов", 5)
 
-13. **get_law_article(article_ref)** - Полный текст статьи закона
-    - Используй после search_garant для получения полного текста
-    - Пример: get_law_article("ст. 393 ГК РФ")
+13. **get_legal_document(eo_number)** - Полный текст НПА (из PDF)
+    - Используй после search_legal_db для загрузки текста нужного НПА
+    - eo_number — номер электронного опубликования из результатов search_legal_db
+    - Пример: get_legal_document("2600202104190001")
 """
         
         if self.web_search:

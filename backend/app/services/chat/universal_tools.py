@@ -11,8 +11,8 @@ Universal Tools - 12 универсальных инструментов для 
 - compare_documents: сравнить два документа
 
 БЛОК 2: Законы (2 инструмента)
-- search_garant: поиск в базе законов
-- get_law_article: получить конкретную статью
+- search_legal_db: поиск НПА на pravo.gov.ru
+- get_legal_document: получить полный текст НПА
 
 БЛОК 3: Генерация документов (2 инструмента)
 - generate_document: создать черновик
@@ -1310,187 +1310,128 @@ def compare_documents(doc1_name: str, doc2_name: str) -> str:
 # =============================================================================
 
 @tool
-def search_garant(query: str, doc_type: str = "all", max_results: int = 10) -> str:
+def search_legal_db(query: str, max_results: int = 8) -> str:
     """
-    Поиск в правовой базе ГАРАНТ.
-    
+    Поиск нормативно-правовых актов на портале publication.pravo.gov.ru.
+
     КОГДА ИСПОЛЬЗОВАТЬ:
-    - Нужна статья кодекса (ГК, ГПК, АПК, УК, НК)
-    - Нужен закон или нормативный акт
-    - Нужно судебное решение или практика
-    - Пользователь спрашивает про законодательство
-    
+    - Нужен закон, постановление, приказ, кодекс или иной НПА
+    - Пользователь просит проверить соответствие документа законодательству
+    - Нужно сравнить положения документа с официальными нормами права
+    - Вопрос про "что говорит закон", "статья", "норма права"
+
     НЕ ИСПОЛЬЗОВАТЬ:
     - Для поиска в документах пользователя (используй search_in_documents)
     - Когда вопрос про "мой договор", "в иске" и т.д.
-    
+
     Args:
-        query: Поисковый запрос (например: "статья 393 ГК РФ", "возмещение убытков")
-        doc_type: Тип документа:
-            - all: все типы (по умолчанию)
-            - law: законы и кодексы
-            - court_decision: судебные решения
-            - article: статьи и комментарии
+        query: Поисковый запрос (например: "возмещение убытков", "несостоятельность банкротство")
         max_results: Количество результатов (1-20)
-    
+
     Returns:
-        Найденные нормы права с цитатами и ссылками
+        Список найденных НПА с реквизитами и ссылками
     """
     import asyncio
-    
+    from app.services.external_sources.pravo_source import PravoSource
+
+    logger.info("[UniversalTools] search_legal_db: %s...", query[:60])
+
+    source = PravoSource()
+
+    async def _search():
+        return await source.search(query=query, max_results=min(20, max(1, max_results)))
+
     try:
-        from app.services.external_sources.garant_source import GarantSource
-        
-        logger.info(f"[UniversalTools] search_garant: {query[:50]}... (type={doc_type})")
-        
-        garant_source = GarantSource()
-        if not garant_source.api_key:
-            return "⚠️ ГАРАНТ API не настроен. Обратитесь к администратору."
-        
-        # Подготавливаем фильтры
-        filters = {}
-        if doc_type and doc_type != "all":
-            filters["doc_type"] = doc_type
-        
-        # Выполняем асинхронный поиск
-        async def do_search():
-            return await garant_source.search(
-                query=query,
-                max_results=min(20, max(1, max_results)),
-                filters=filters if filters else None,
-                get_full_text=True  # Получаем полный текст
-            )
-        
-        # Запускаем асинхронно
-        try:
-            loop = asyncio.get_event_loop()
-            if loop.is_running():
-                # Если уже в async контексте
-                import concurrent.futures
-                with concurrent.futures.ThreadPoolExecutor() as executor:
-                    future = executor.submit(asyncio.run, do_search())
-                    results = future.result(timeout=30)
-            else:
-                results = loop.run_until_complete(do_search())
-        except RuntimeError:
-            results = asyncio.run(do_search())
-        
-        if not results:
-            return f"По запросу '{query}' ничего не найдено в ГАРАНТ."
-        
-        # Форматируем результаты
-        formatted_parts = []
-        for i, result in enumerate(results, 1):
-            title = result.title or "Без названия"
-            content = result.content[:2000] if result.content else ""
-            url = result.url or ""
-            
-            # Извлекаем метаданные
-            metadata = result.metadata or {}
-            doc_type_str = metadata.get('doc_type', '')
-            doc_date = metadata.get('doc_date', '')
-            doc_number = metadata.get('doc_number', '')
-            
-            part = f"**[{i}] {title}**"
-            if doc_type_str:
-                part += f" ({doc_type_str})"
-            if doc_date:
-                part += f" от {doc_date}"
-            if doc_number:
-                part += f" № {doc_number}"
-            if url:
-                part += f"\n🔗 {url}"
-            if content:
-                part += f"\n\n{content}"
-            
-            formatted_parts.append(part)
-        
-        result_text = f"📜 **Найдено в ГАРАНТ: {len(results)} документов**\n\n"
-        result_text += "\n\n---\n\n".join(formatted_parts)
-        
-        logger.info(f"[UniversalTools] search_garant: found {len(results)} results")
-        return result_text
-        
-    except ImportError as e:
-        logger.error(f"[UniversalTools] search_garant import error: {e}")
-        return "⚠️ Поиск в ГАРАНТ недоступен. Модуль не установлен."
-    except Exception as e:
-        logger.error(f"[UniversalTools] search_garant error: {e}", exc_info=True)
-        return f"Ошибка поиска в ГАРАНТ: {str(e)}"
+        loop = asyncio.get_event_loop()
+        if loop.is_running():
+            import concurrent.futures
+            with concurrent.futures.ThreadPoolExecutor() as executor:
+                results = executor.submit(asyncio.run, _search()).result(timeout=25)
+        else:
+            results = loop.run_until_complete(_search())
+    except RuntimeError:
+        results = asyncio.run(_search())
+    except Exception as exc:
+        logger.error("[UniversalTools] search_legal_db error: %s", exc)
+        return f"Ошибка поиска в pravo.gov.ru: {exc}"
+
+    if not results:
+        return f"По запросу «{query}» ничего не найдено на портале pravo.gov.ru."
+
+    parts = []
+    for i, r in enumerate(results, 1):
+        meta = r.metadata or {}
+        eo = meta.get("eo_number", "")
+        date = meta.get("doc_date", "")
+        url = r.url or ""
+        line = f"**[{i}] {r.title}**"
+        if date:
+            line += f" от {date}"
+        if eo:
+            line += f"\nЭл. номер: {eo}"
+        if url:
+            line += f"\n{url}"
+        parts.append(line)
+
+    header = f"📜 Найдено на pravo.gov.ru: {len(results)} НПА\n\n"
+    return header + "\n\n".join(parts)
 
 
 @tool
-def get_law_article(article_ref: str) -> str:
+def get_legal_document(eo_number: str) -> str:
     """
-    Получить полный текст конкретной статьи закона.
-    
+    Получить полный текст нормативного акта с портала pravo.gov.ru по номеру электронного опубликования.
+
     КОГДА ИСПОЛЬЗОВАТЬ:
-    - Нужен полный текст статьи (после search_garant)
-    - Пользователь просит "покажи статью 395 ГК"
-    - Нужны детали конкретной нормы
-    
+    - После search_legal_db, когда нужен полный текст конкретного НПА
+    - Пользователь хочет сравнить положения своего документа с текстом закона
+    - Нужно проверить соответствие документа конкретной норме
+
     Args:
-        article_ref: Ссылка на статью (например: "ст. 393 ГК РФ", "статья 15 Закона о защите прав потребителей")
-    
+        eo_number: Номер электронного опубликования (eoNumber), например "2600202104190001"
+
     Returns:
-        Полный текст статьи с комментариями
+        Полный текст НПА (из PDF) с реквизитами
     """
     import asyncio
-    
+    from app.services.external_sources.pravo_source import PravoSource
+
+    logger.info("[UniversalTools] get_legal_document: %s", eo_number)
+
+    source = PravoSource()
+
+    async def _fetch():
+        meta = await source.get_document_metadata(eo_number)
+        text = await source.get_document_text(eo_number)
+        return meta, text
+
     try:
-        from app.services.external_sources.garant_source import GarantSource
-        
-        logger.info(f"[UniversalTools] get_law_article: {article_ref}")
-        
-        garant_source = GarantSource()
-        if not garant_source.api_key:
-            return "⚠️ ГАРАНТ API не настроен. Обратитесь к администратору."
-        
-        # Ищем статью по запросу
-        async def do_search():
-            return await garant_source.search(
-                query=article_ref,
-                max_results=3,
-                get_full_text=True
-            )
-        
-        # Запускаем асинхронно
-        try:
-            loop = asyncio.get_event_loop()
-            if loop.is_running():
-                import concurrent.futures
-                with concurrent.futures.ThreadPoolExecutor() as executor:
-                    future = executor.submit(asyncio.run, do_search())
-                    results = future.result(timeout=30)
-            else:
-                results = loop.run_until_complete(do_search())
-        except RuntimeError:
-            results = asyncio.run(do_search())
-        
-        if not results:
-            return f"Статья '{article_ref}' не найдена в ГАРАНТ."
-        
-        # Берём первый (наиболее релевантный) результат
-        result = results[0]
-        
-        title = result.title or article_ref
-        content = result.content or "Текст не найден"
-        url = result.url or ""
-        
-        response = f"📜 **{title}**\n\n"
-        if url:
-            response += f"🔗 Источник: {url}\n\n"
-        response += content
-        
-        logger.info(f"[UniversalTools] get_law_article: found '{title}'")
-        return response
-        
-    except ImportError as e:
-        logger.error(f"[UniversalTools] get_law_article import error: {e}")
-        return "⚠️ Получение статей из ГАРАНТ недоступно."
-    except Exception as e:
-        logger.error(f"[UniversalTools] get_law_article error: {e}", exc_info=True)
-        return f"Ошибка получения статьи: {str(e)}"
+        loop = asyncio.get_event_loop()
+        if loop.is_running():
+            import concurrent.futures
+            with concurrent.futures.ThreadPoolExecutor() as executor:
+                meta, text = executor.submit(asyncio.run, _fetch()).result(timeout=40)
+        else:
+            meta, text = loop.run_until_complete(_fetch())
+    except RuntimeError:
+        meta, text = asyncio.run(_fetch())
+    except Exception as exc:
+        logger.error("[UniversalTools] get_legal_document error: %s", exc)
+        return f"Ошибка получения документа: {exc}"
+
+    if not meta and not text:
+        return f"Документ с номером {eo_number} не найден."
+
+    title = ""
+    if meta:
+        title = meta.get("complexName") or meta.get("name") or ""
+
+    url = f"https://publication.pravo.gov.ru/Document/View/{eo_number}"
+    header = f"📜 **{title}**\n{url}\n\n" if title else f"📜 {url}\n\n"
+
+    if text:
+        return header + text
+    return header + "(Текст PDF не удалось извлечь)"
 
 
 # =============================================================================
@@ -2172,8 +2113,8 @@ def get_universal_tools(
     # Блок 2: Законы (опционально)
     if legal_research:
         tools.extend([
-            search_garant,
-            get_law_article,
+            search_legal_db,
+            get_legal_document,
         ])
         logger.info("[UniversalTools] GARANT tools enabled")
     

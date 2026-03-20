@@ -48,7 +48,7 @@ async def assistant_chat_v2(
         - messages: array of {role, content}
         - case_id: ID дела
         - web_search: включить веб-поиск
-        - legal_research: включить поиск в ГАРАНТ
+        - legal_research: включить поиск НПА на pravo.gov.ru
         - deep_think: включить глубокое мышление
         - draft_mode: режим создания документа
         - document_context: контекст документа (для редактора)

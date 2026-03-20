@@ -82,8 +82,8 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({
     },
     {
       id: 'legalResearch',
-      label: 'ГАРАНТ',
-      description: 'Поиск в базе ГАРАНТ: законы, кодексы, судебные решения, правовые позиции. ИИ анализирует результаты и отвечает на ваш вопрос с учетом найденных документов.',
+      label: 'Pravo.gov.ru',
+      description: 'Поиск НПА на официальном портале publication.pravo.gov.ru: законы, постановления, приказы, приказы. ИИ находит нужный акт, загружает его текст и сравнивает с документами дела.',
       icon: Scale,
       value: legalResearch,
       onChange: handleLegalResearchChange,
