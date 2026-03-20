@@ -50,9 +50,11 @@ def create_llm(
                     "Set GIGACHAT_CREDENTIALS in environment variables."
                 )
             
+            effective_model = model or config.GIGACHAT_MODEL
+            logger.info("Creating GigaChat LLM: model=%s temperature=%s", effective_model, temperature)
             llm = ChatGigaChat(
                 credentials=config.GIGACHAT_CREDENTIALS,
-                model=model or config.GIGACHAT_MODEL,
+                model=effective_model,
                 temperature=temperature,
                 verify_ssl_certs=config.GIGACHAT_VERIFY_SSL,
                 timeout=timeout,
