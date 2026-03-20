@@ -637,7 +637,7 @@ function HarveyInput({
                 >
                   {isLegalResearch && <span className="text-white" style={{ fontSize: '9px' }}>✓</span>}
                 </span>
-                Legal Research
+                Pravo.gov.ru
               </button>
               <button
                 type="button"
@@ -1099,7 +1099,7 @@ const AssistantChatPage = () => {
                   className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-xs font-medium"
                   style={{ backgroundColor: '#ECFDF5', color: '#059669', border: '1px solid #A7F3D0' }}
                 >
-                  Legal Research
+                  Pravo.gov.ru
                 </span>
               )}
               {isDeepThink && (
