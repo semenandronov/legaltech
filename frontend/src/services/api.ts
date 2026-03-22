@@ -180,6 +180,8 @@ export interface SourceInfo {
   quote?: string       // Text from chunk (for preview)
   source_id?: string   // Document ID (file_id) for reference
   chunk_id?: string    // Unique chunk ID for precise navigation - KEY for reliable highlighting!
+  url?: string         // External URL (for pravo.gov.ru and other external sources)
+  source_type?: string // Source type: 'document' | 'external' | 'garant' | 'web'
 }
 
 export interface ChatResponse {
