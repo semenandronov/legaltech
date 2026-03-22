@@ -171,6 +171,23 @@ class PravoSource(BaseSource):
 
         items = data.get("items") or []
         total = data.get("itemsTotalCount", 0)
+
+        # When searching by law number, prefer the base law over amendments.
+        # Amendments are titled "О внесении изменений в..." — sort them after base laws.
+        if law_number:
+            def _is_amendment(item: Dict[str, Any]) -> bool:
+                n = (item.get("name") or item.get("complexName") or "").lower()
+                return "о внесении изменений" in n or "о признании утратившим" in n
+
+            base = [i for i in items if not _is_amendment(i)]
+            amendments = [i for i in items if _is_amendment(i)]
+            items = base + amendments
+            if base:
+                logger.info(
+                    "[PravoSource] search: %d base laws, %d amendments for Number=%s",
+                    len(base), len(amendments), law_number,
+                )
+
         results: List[SourceResult] = []
         for item in items[:max_results]:
             eo = item.get("eoNumber", "")
@@ -178,7 +195,7 @@ class PravoSource(BaseSource):
             title = item.get("complexName") or name
             doc_date = (item.get("documentDate") or "")[:10]
             view_date = item.get("viewDate", "")
-            url = f"https://publication.pravo.gov.ru/Document/View/{eo}" if eo else ""
+            url = f"http://publication.pravo.gov.ru/Document/View/{eo}" if eo else ""
             results.append(
                 SourceResult(
                     content=f"{title}\nДата подписания: {doc_date}\nДата публикации: {view_date}",

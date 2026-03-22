@@ -78,6 +78,18 @@ def clear_used_sources():
     _sources_locked = False
 
 
+def unlock_used_sources():
+    """Снять блокировку _used_sources (для авто-поиска pravo.gov.ru после документального ответа)."""
+    global _sources_locked
+    _sources_locked = False
+
+
+def set_used_sources(sources: List[Dict[str, Any]]):
+    """Напрямую установить _used_sources (для объединения источников из разных инструментов)."""
+    global _used_sources
+    _used_sources = list(sources)
+
+
 def get_last_direct_result() -> Optional[str]:
     """Get the pre-synthesised answer to stream directly (bypasses GigaChat synthesis)."""
     global _last_direct_result
@@ -1405,7 +1417,7 @@ def search_legal_db(query: str, max_results: int = 5) -> str:
                 f"{title}\n"
                 f"Дата подписания: {doc_date}\n"
                 f"Дата официального опубликования: {view_date}\n"
-                f"Источник: https://publication.pravo.gov.ru/Document/View/{eo}"
+                f"Источник: http://publication.pravo.gov.ru/Document/View/{eo}"
             )
             logger.info(
                 "[UniversalTools] search_legal_db: ⚠️ no text for %s, using metadata as context", eo
@@ -1453,7 +1465,7 @@ def search_legal_db(query: str, max_results: int = 5) -> str:
         _used_sources = []
         for i, (r, _) in enumerate(valid_results):
             eo = r.metadata.get("eo_number", "")
-            url = f"https://publication.pravo.gov.ru/Document/View/{eo}"
+            url = f"http://publication.pravo.gov.ru/Document/View/{eo}"
             _used_sources.append({
                 "source_id": eo,
                 "file_name": r.metadata.get("complex_name") or r.title,

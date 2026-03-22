@@ -931,6 +931,8 @@ const AssistantChatPage = () => {
               quote: c.quote,
               char_start: c.char_start,
               char_end: c.char_end,
+              url: c.url || '',
+              source_type: c.source_type || 'document',
             }))
             setMessages((prev) => {
               const last = prev[prev.length - 1]
@@ -1000,6 +1002,13 @@ const AssistantChatPage = () => {
 
   // ── Open citation in document viewer (or quote popup for direct uploads) ──
   const handleCitationClick = (source: SourceInfo) => {
+    // External sources (pravo.gov.ru etc.) — open in new tab, never local viewer
+    if (source.source_type === 'external' || (source.url && source.url.startsWith('http'))) {
+      if (source.url) {
+        window.open(source.url, '_blank', 'noopener,noreferrer')
+      }
+      return
+    }
     setViewerSource(source)
   }
 
