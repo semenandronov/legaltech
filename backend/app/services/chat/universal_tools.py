@@ -1366,13 +1366,24 @@ def search_legal_db(query: str, max_results: int = 5) -> str:
     if not results:
         return f"По запросу «{query}» ничего не найдено на портале pravo.gov.ru."
 
-    # 2. Download PDF text for top 2 documents
+    logger.info(
+        "[UniversalTools] search_legal_db: ✅ found %d results on pravo.gov.ru for %r",
+        len(results), query[:60],
+    )
+    for i, r in enumerate(results[:3], 1):
+        eo = r.metadata.get("eo_number", "")
+        logger.info(
+            "[UniversalTools] search_legal_db:   [%d] %s | eo=%s | url=%s",
+            i, (r.metadata.get("complex_name") or r.title)[:80], eo, r.url,
+        )
+
+    # 2. Download document text for top 2 documents (PDF → HTML fallback inside get_document_text)
     async def _fetch_texts():
         tasks = [source.get_document_text(r.metadata["eo_number"]) for r in results[:2] if r.metadata.get("eo_number")]
         import asyncio
         return await asyncio.gather(*tasks, return_exceptions=True)
 
-    texts = _run_async(_fetch_texts(), timeout=60)
+    texts = _run_async(_fetch_texts(), timeout=70)
 
     # 3. Build numbered context
     context_parts = []
@@ -1384,9 +1395,25 @@ def search_legal_db(query: str, max_results: int = 5) -> str:
             continue
         doc_text = texts[text_idx] if text_idx < len(texts) else None
         text_idx += 1
-        if isinstance(doc_text, Exception) or not doc_text:
-            doc_text = "(текст недоступен)"
         title = r.metadata.get("complex_name") or r.title
+        if isinstance(doc_text, Exception) or not doc_text:
+            # Fallback: use metadata from search result (title + dates) so the inner LLM
+            # can produce a useful answer instead of "информация отсутствует"
+            doc_date = r.metadata.get("doc_date", "")
+            view_date = r.metadata.get("view_date", "")
+            doc_text = (
+                f"{title}\n"
+                f"Дата подписания: {doc_date}\n"
+                f"Дата официального опубликования: {view_date}\n"
+                f"Источник: https://publication.pravo.gov.ru/Document/View/{eo}"
+            )
+            logger.info(
+                "[UniversalTools] search_legal_db: ⚠️ no text for %s, using metadata as context", eo
+            )
+        else:
+            logger.info(
+                "[UniversalTools] search_legal_db: 📄 got text for %s: %d chars", eo, len(doc_text)
+            )
         context_parts.append(f"[{len(valid_results)+1}] {title}:\n{doc_text[:4000]}")
         valid_results.append((r, doc_text))
 
@@ -1399,16 +1426,18 @@ def search_legal_db(query: str, max_results: int = 5) -> str:
     file_order = [r.metadata.get("complex_name") or r.title for r, _ in valid_results]
 
     # 4. Inner LLM synthesis
-    ex1 = file_order[0] if file_order else "Документ 1"
     system_msg = (
-        "Ты юридический ассистент. Отвечай ТОЛЬКО на основе текстов документов ниже. "
-        "Формат ответа — маркированный список. Каждый пункт заканчивается [N] — номером источника."
+        "Ты юридический ассистент. Отвечай на основе данных о документах ниже. "
+        "Если есть полный текст — цитируй конкретные положения. "
+        "Если есть только метаданные — сообщи название, дату и ссылку документа. "
+        "Каждый факт или упоминание документа заканчивай [N] — номером источника. "
+        "Не пиши «информация отсутствует» если документ найден — документ с его реквизитами уже является результатом поиска."
     )
     user_msg = (
-        f"Документы (каждый помечен [N]):\n\n{context}\n\n"
-        f"Запрос: {query}\n\n"
-        f"Ответь по существу, ссылаясь на конкретные положения документов. "
-        f"После каждого факта ставь [N]. Пример: «Должник обязан уведомить кредиторов [1]»."
+        f"Найденные документы на pravo.gov.ru (каждый помечен [N]):\n\n{context}\n\n"
+        f"Запрос пользователя: {query}\n\n"
+        f"Ответь по существу. После каждого упоминания документа или факта ставь [N]. "
+        f"Пример: «Федеральный закон №273-ФЗ «Об образовании» принят 29.12.2012 [1]»."
     )
 
     try:
@@ -1478,10 +1507,16 @@ def get_legal_document(eo_number: str) -> str:
         return f"Ошибка получения документа: {exc}"
 
     if not meta and not text:
+        logger.warning("[UniversalTools] get_legal_document: ⚠️ not found: %s", eo_number)
         return f"Документ с номером {eo_number} не найден."
 
     title = (meta or {}).get("complexName") or (meta or {}).get("name") or eo_number
     url = f"https://publication.pravo.gov.ru/Document/View/{eo_number}"
+
+    logger.info(
+        "[UniversalTools] get_legal_document: ✅ %s | title=%s | text=%d chars",
+        eo_number, title[:80], len(text) if text else 0,
+    )
 
     if not _sources_locked:
         _used_sources = [{
@@ -1492,8 +1527,20 @@ def get_legal_document(eo_number: str) -> str:
             "url": url,
             "source_type": "external",
         }]
+        logger.info("[UniversalTools] get_legal_document: external source set → %s", url)
 
-    result = f"**{title}**\n{url}\n\n{text or '(Текст PDF не удалось извлечь)'}"
+    if text:
+        result = f"**{title}**\n{url}\n\n{text}"
+    else:
+        # No text — return metadata so the agent can still report the document was found
+        doc_date = (meta or {}).get("documentDate", "")[:10]
+        result = (
+            f"**{title}**\n"
+            f"Дата: {doc_date}\n"
+            f"Ссылка: {url}\n\n"
+            f"(Полный текст документа доступен по ссылке выше. "
+            f"Автоматическое извлечение текста недоступно — документ является сканом.)"
+        )
     _last_direct_result = result
     return result
 

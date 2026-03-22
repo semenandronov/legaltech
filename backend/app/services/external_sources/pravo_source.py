@@ -220,8 +220,13 @@ class PravoSource(BaseSource):
             return None
 
     async def get_document_text(self, eo_number: str, max_chars: int = MAX_PDF_TEXT) -> Optional[str]:
-        """Download the PDF and extract plain text (uses pypdf)."""
-        pdf_url = f"{BASE_URL}/File/GetFile/{eo_number}?type=pdf"
+        """
+        Download the PDF and extract plain text (uses pypdf).
+        NOTE: Many documents on pravo.gov.ru are scanned PDFs — pypdf extracts empty text
+        for those. In that case returns None; callers should fall back to metadata.
+        """
+        pdf_url = f"{BASE_URL}/file/pdf?eoNumber={eo_number}"
+        logger.info("[PravoSource] get_document_text %s: downloading PDF from %s", eo_number, pdf_url)
         try:
             async with aiohttp.ClientSession() as session:
                 async with session.get(
@@ -232,21 +237,33 @@ class PravoSource(BaseSource):
                         logger.warning("[PravoSource] PDF HTTP %s for %s", resp.status, eo_number)
                         return None
                     raw = await resp.read()
+                    logger.info("[PravoSource] PDF downloaded: %d bytes for %s", len(raw), eo_number)
         except Exception as exc:
-            logger.error("[PravoSource] PDF download error: %s", exc)
+            logger.error("[PravoSource] PDF download error for %s: %s", eo_number, exc)
             return None
 
         try:
             from pypdf import PdfReader
             reader = PdfReader(io.BytesIO(raw))
+            page_count = len(reader.pages)
             parts: List[str] = []
             for page in reader.pages:
                 text = page.extract_text() or ""
                 parts.append(text)
                 if sum(len(p) for p in parts) >= max_chars:
                     break
-            full_text = "\n".join(parts)
+            full_text = "\n".join(parts).strip()
+            logger.info(
+                "[PravoSource] PDF parsed: %d pages, %d chars text for %s",
+                page_count, len(full_text), eo_number,
+            )
+            if not full_text:
+                logger.warning(
+                    "[PravoSource] ⚠️ PDF text empty for %s (%d pages) — likely a scanned document",
+                    eo_number, page_count,
+                )
+                return None
             return full_text[:max_chars]
         except Exception as exc:
-            logger.error("[PravoSource] PDF parse error: %s", exc)
+            logger.error("[PravoSource] PDF parse error for %s: %s", eo_number, exc)
             return None
