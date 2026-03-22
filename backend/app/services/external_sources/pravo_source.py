@@ -49,12 +49,61 @@ _LAW_NUMBER_RE = re.compile(
     re.IGNORECASE,
 )
 
+# Common Russian code abbreviations → their base federal law number
+# NOTE: publication.pravo.gov.ru only has documents from ~2011+;
+# these codes were enacted earlier, so only amendments appear on the portal.
+_CODE_ABBREV_TO_NUMBER: Dict[str, str] = {
+    "АПК": "95-ФЗ",      # Арбитражный процессуальный кодекс, 24.07.2002
+    "ГПК": "138-ФЗ",     # Гражданский процессуальный кодекс, 14.11.2002
+    "УПК": "174-ФЗ",     # Уголовно-процессуальный кодекс, 18.12.2001
+    "УК": "63-ФЗ",       # Уголовный кодекс, 13.06.1996
+    "ТК": "197-ФЗ",      # Трудовой кодекс, 30.12.2001
+    "КоАП": "195-ФЗ",    # Кодекс об административных правонарушениях, 30.12.2001
+    "ЖК": "188-ФЗ",      # Жилищный кодекс, 29.12.2004
+    "ЗК": "136-ФЗ",      # Земельный кодекс, 25.10.2001
+    "СК": "223-ФЗ",      # Семейный кодекс, 29.12.1995
+    "БК": "145-ФЗ",      # Бюджетный кодекс, 31.07.1998
+    "НК": "146-ФЗ",      # Налоговый кодекс ч.1, 31.07.1998
+    "ГК": "51-ФЗ",       # Гражданский кодекс ч.1, 30.11.1994
+    "ЛК": "200-ФЗ",      # Лесной кодекс, 04.12.2006
+    "ВК": "74-ФЗ",       # Водный кодекс, 03.06.2006
+}
+
+# Full names of codes for context in LLM prompts
+_CODE_FULL_NAMES: Dict[str, str] = {
+    "АПК": "Арбитражный процессуальный кодекс Российской Федерации",
+    "ГПК": "Гражданский процессуальный кодекс Российской Федерации",
+    "УПК": "Уголовно-процессуальный кодекс Российской Федерации",
+    "УК": "Уголовный кодекс Российской Федерации",
+    "ТК": "Трудовой кодекс Российской Федерации",
+    "КоАП": "Кодекс Российской Федерации об административных правонарушениях",
+    "ЖК": "Жилищный кодекс Российской Федерации",
+    "ЗК": "Земельный кодекс Российской Федерации",
+    "СК": "Семейный кодекс Российской Федерации",
+    "БК": "Бюджетный кодекс Российской Федерации",
+    "НК": "Налоговый кодекс Российской Федерации",
+    "ГК": "Гражданский кодекс Российской Федерации",
+    "ЛК": "Лесной кодекс Российской Федерации",
+    "ВК": "Водный кодекс Российской Федерации",
+}
+
 
 def _pick_page_size(n: int) -> int:
     for ps in _VALID_PAGE_SIZES:
         if n <= ps:
             return ps
     return 30
+
+
+def _extract_code_abbrev(query: str) -> Optional[str]:
+    """Detect a code abbreviation (АПК, ГПК, ГК etc.) in query.
+    Returns the canonical abbreviation (e.g. 'АПК') or None.
+    """
+    # Match whole-word abbreviations, longest first (КоАП before АП)
+    for abbrev in sorted(_CODE_ABBREV_TO_NUMBER, key=len, reverse=True):
+        if re.search(rf'\b{re.escape(abbrev)}\b', query, re.IGNORECASE):
+            return abbrev
+    return None
 
 
 def _extract_law_number(query: str) -> Optional[str]:
@@ -134,7 +183,13 @@ class PravoSource(BaseSource):
             "SortDestination": 1, # descending
         }
 
+        code_abbrev = _extract_code_abbrev(query)
         law_number = _extract_law_number(query)
+        if code_abbrev and not law_number:
+            # Code abbreviation detected (АПК, ГПК, ГК...) — resolve to law number
+            law_number = _CODE_ABBREV_TO_NUMBER[code_abbrev]
+            logger.info("[PravoSource] code abbrev %s → law number %s", code_abbrev, law_number)
+
         if law_number:
             # Exact number match
             params["Number"] = law_number
@@ -188,6 +243,17 @@ class PravoSource(BaseSource):
                     len(base), len(amendments), law_number,
                 )
 
+        # If a code abbreviation was used, prepend a note so the inner LLM has context
+        code_note = ""
+        if code_abbrev:
+            full_name = _CODE_FULL_NAMES.get(code_abbrev, code_abbrev)
+            code_note = (
+                f"ПРИМЕЧАНИЕ: {full_name} ({code_abbrev} РФ, {law_number}) был принят до 2011 года "
+                f"и не размещён в полном объёме на portal publication.pravo.gov.ru. "
+                f"Ниже представлены последние поправки к этому кодексу с портала. "
+                f"Для получения актуального текста конкретной статьи используй знания о российском законодательстве.\n\n"
+            )
+
         results: List[SourceResult] = []
         for item in items[:max_results]:
             eo = item.get("eoNumber", "")
@@ -198,7 +264,7 @@ class PravoSource(BaseSource):
             url = f"http://publication.pravo.gov.ru/Document/View/{eo}" if eo else ""
             results.append(
                 SourceResult(
-                    content=f"{title}\nДата подписания: {doc_date}\nДата публикации: {view_date}",
+                    content=f"{code_note}{title}\nДата подписания: {doc_date}\nДата публикации: {view_date}",
                     title=name,
                     source_name="pravo",
                     url=url,
@@ -210,6 +276,7 @@ class PravoSource(BaseSource):
                         "complex_name": title,
                         "pages_count": item.get("pagesCount"),
                         "total_found": total,
+                        "code_abbrev": code_abbrev,
                     },
                 )
             )
