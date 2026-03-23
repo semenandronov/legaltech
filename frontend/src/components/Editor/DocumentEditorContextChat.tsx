@@ -139,6 +139,43 @@ const renderMarkdown = (text: string): React.ReactNode => {
   })
 }
 
+// ==================== INLINE DIFF HELPERS ====================
+type DiffPart = { t: 'eq' | 'del' | 'ins'; s: string }
+
+function computeDiff(oldTxt: string, newTxt: string): DiffPart[] {
+  if (!oldTxt && !newTxt) return []
+  if (!oldTxt) return [{ t: 'ins', s: newTxt }]
+  if (!newTxt) return [{ t: 'del', s: oldTxt }]
+  let i = 0
+  while (i < oldTxt.length && i < newTxt.length && oldTxt[i] === newTxt[i]) i++
+  let j = 0
+  while (j < oldTxt.length - i && j < newTxt.length - i &&
+         oldTxt[oldTxt.length - 1 - j] === newTxt[newTxt.length - 1 - j]) j++
+  const parts: DiffPart[] = []
+  if (i > 0) parts.push({ t: 'eq', s: oldTxt.slice(0, i) })
+  const om = oldTxt.slice(i, j > 0 ? oldTxt.length - j : undefined)
+  const nm = newTxt.slice(i, j > 0 ? newTxt.length - j : undefined)
+  if (om) parts.push({ t: 'del', s: om })
+  if (nm) parts.push({ t: 'ins', s: nm })
+  if (j > 0) parts.push({ t: 'eq', s: oldTxt.slice(oldTxt.length - j) })
+  return parts
+}
+
+function renderInlineDiff(original: string, newText: string) {
+  const diff = computeDiff(original, newText)
+  return (
+    <span className="text-xs leading-relaxed break-words">
+      {diff.map((p, pi) =>
+        p.t === 'eq'
+          ? <span key={pi} style={{ color: '#374151' }}>{p.s}</span>
+          : p.t === 'del'
+          ? <del key={pi} style={{ color: '#dc2626', textDecorationColor: '#dc2626' }}>{p.s}</del>
+          : <span key={pi} style={{ color: '#2563eb', fontWeight: 500 }}>{p.s}</span>
+      )}
+    </span>
+  )
+}
+
 // ==================== STRUCTURED EDITS CARD ====================
 type EditStatus = 'accepted' | 'rejected'
 
@@ -194,16 +231,9 @@ const StructuredEditsBlock: React.FC<{
             style={{ borderColor: '#e5e7eb', background: '#f5f5f5' }}
           >
             <div className="px-3 pt-2.5 pb-1.5">
-              {/* Diff row */}
-              <div className="space-y-1">
-                <div className="flex items-start gap-1.5 px-2 py-1 rounded-md" style={{ background: 'rgba(239,68,68,0.05)' }}>
-                  <span className="text-xs font-bold text-red-400 shrink-0 mt-0.5 select-none">–</span>
-                  <span className="text-xs text-red-600 line-through break-words leading-relaxed opacity-80">{edit.original_text}</span>
-                </div>
-                <div className="flex items-start gap-1.5 px-2 py-1 rounded-md" style={{ background: 'rgba(37,99,235,0.05)' }}>
-                  <span className="text-xs font-bold shrink-0 mt-0.5 select-none" style={{ color: '#2563eb' }}>+</span>
-                  <span className="text-xs break-words leading-relaxed" style={{ color: '#1e40af' }}>{edit.new_text}</span>
-                </div>
+              {/* Inline diff row */}
+              <div className="px-2 py-2 rounded-md" style={{ background: 'rgba(0,0,0,0.03)', lineHeight: '1.6' }}>
+                {renderInlineDiff(edit.original_text, edit.new_text)}
               </div>
               {!isFound && !status && (
                 <div className="text-xs text-amber-600 mt-1.5">⚠ Фрагмент не найден в документе</div>
