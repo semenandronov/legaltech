@@ -182,6 +182,7 @@ export interface SourceInfo {
   chunk_id?: string    // Unique chunk ID for precise navigation - KEY for reliable highlighting!
   url?: string         // External URL (for pravo.gov.ru and other external sources)
   source_type?: string // Source type: 'document' | 'external' | 'garant' | 'web'
+  case_id?: string     // Case ID (for case files — enables full document preview)
 }
 
 export interface ChatResponse {

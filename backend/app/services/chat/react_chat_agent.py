@@ -282,6 +282,9 @@ class ReActChatAgent:
 5. Для вопросов "все X из ВСЕХ документов" ("все фамилии", "все даты", "все суммы", "все участники дела") — используй analyze_all_documents(task_type="extract"). ТОЛЬКО этот инструмент гарантирует 100% охват всех документов. search_in_documents и extract_structured_data просматривают только часть документов и могут пропустить данные.
 6. Для конкретных вопросов по содержанию ("какая сумма в договоре?", "что написано о сроках?") используй search_in_documents
 7. Можешь вызывать несколько инструментов для полного ответа
+   - Если вопрос о законе КАК ТАКОВОМ ("что такое 127-ФЗ?", "расскажи о законе X") и включён режим НПА — вызови ТОЛЬКО search_legal_db. НЕ вызывай search_in_documents.
+   - Если вопрос о применении закона к документам дела — сначала search_legal_db, затем search_in_documents
+   - Если в документах найдено упоминание конкретного закона (например, 127-ФЗ) — ОБЯЗАТЕЛЬНО вызови search_legal_db с этим номером, чтобы предоставить официальное описание закона
 8. КРИТИЧЕСКИ ВАЖНО — СНОСКИ ПОСЛЕ КАЖДОГО ПУНКТА:
    - КАЖДЫЙ пункт списка, КАЖДОЕ предложение с фактом ОБЯЗАНЫ заканчиваться [N]
    - НЕТ НИ ОДНОГО исключения. Если у "Иванов" источник [1] — пиши "Иванов [1]"
@@ -483,6 +486,11 @@ class ReActChatAgent:
     - Используй после search_legal_db для загрузки текста нужного НПА
     - eo_number — номер электронного опубликования из результатов search_legal_db
     - Пример: get_legal_document("2600202104190001")
+
+⚠️ ПРАВИЛА ПРИОРИТЕТОВ ДЛЯ РЕЖИМА ПОИСКА НПА:
+- Вопросы о законе КАК ТАКОВОМ ("что такое 127-ФЗ?", "расскажи о законе", "что говорит статья X?") → ТОЛЬКО search_legal_db. НЕ вызывай search_in_documents.
+- Вопросы о применении закона К ДОКУМЕНТАМ ДЕЛА ("соответствует ли договор требованиям ГК?") → сначала search_legal_db, потом search_in_documents.
+- НИКОГДА не вызывай search_in_documents первым в режиме поиска НПА.
 """
         
         if self.web_search:
@@ -871,14 +879,16 @@ class ReActChatAgent:
                     messages.append(AIMessage(content=msg.get("content", "")))
             
             # Добавляем текущий вопрос с контекстом
+            legal_hint = ""
+            if self.legal_research:
+                legal_hint = "\n- Вопрос о законе КАК ТАКОВОМ ('что такое X-ФЗ?', 'расскажи о законе') → ТОЛЬКО search_legal_db, НЕ вызывай search_in_documents.\n- Вопрос о применении закона к документам дела → сначала search_legal_db, потом search_in_documents."
             enhanced_question = f"""Вопрос пользователя: {question}
 
-ID дела: {self.case_id}
+ВАЖНО: В деле {self.case_id} есть загруженные документы (договоры, иски, судебные акты и др.).
+Ты ОБЯЗАН использовать инструменты для доступа к ним. НЕ отвечай из общих знаний.
+Если вопрос про договор, документ или дело — вызови search_in_documents или analyze_all_documents.{legal_hint}
 
-Проанализируй вопрос и используй подходящие инструменты для ответа.
-- Если вопрос об обзоре всех документов — используй analyze_all_documents
-- Если конкретный вопрос — используй search_in_documents
-- Если нужна статья закона — используй search_garant (если доступен)"""
+Немедленно вызови подходящий инструмент."""
             
             messages.append(HumanMessage(content=enhanced_question))
             
@@ -1013,6 +1023,7 @@ ID дела: {self.case_id}
                                 from app.services.chat.universal_tools import (
                                     get_last_direct_result,
                                     clear_last_direct_result,
+                                    lock_used_sources,
                                 )
                                 direct = get_last_direct_result()
                                 if direct and not direct_result_streamed:
@@ -1023,11 +1034,10 @@ ID дела: {self.case_id}
                                         yield SSESerializer.text_delta(text_to_stream)
                                         response_text += text_to_stream
                                         direct_result_streamed = True
-                                        # Lock _used_sources so subsequent tools don't overwrite
-                                        # the sources that correspond to already-streamed [N] markers.
-                                        from app.services.chat.universal_tools import lock_used_sources
                                         lock_used_sources()
                                         logger.info(f"[ReActChatAgent] Direct-streamed {tool_name} result ({len(text_to_stream)} chars)")
+
+
                                 clear_last_direct_result()
                             except Exception as dr_err:
                                 logger.warning(f"[ReActChatAgent] Failed to direct-stream result: {dr_err}")
@@ -1363,35 +1373,7 @@ ID дела: {self.case_id}
             
             combined_context = ""
             
-            # Если включен ГАРАНТ и это правовой вопрос
-            if self.legal_research and is_legal_question:
-                try:
-                    from app.services.external_sources.garant_source import get_garant_source
-                    
-                    garant_source = get_garant_source()
-                    if garant_source and garant_source.api_key:
-                        results = await garant_source.search(query=question, max_results=5)
-                        
-                        if results:
-                            garant_parts = []
-                            for i, result in enumerate(results, 1):
-                                title = result.title or "Без названия"
-                                content = result.content[:1500] if result.content else ""
-                                url = result.url or ""
-                                
-                                part = f"[{i}] {title}"
-                                if url:
-                                    part += f"\nСсылка: {url}"
-                                if content:
-                                    part += f"\n\n{content}"
-                                garant_parts.append(part)
-                            
-                            combined_context += "=== РЕЗУЛЬТАТЫ ИЗ ПРАВОВОЙ БАЗЫ ГАРАНТ ===\n\n"
-                            combined_context += "\n\n---\n\n".join(garant_parts)
-                            combined_context += "\n\n"
-                            
-                except Exception as e:
-                    logger.warning(f"[ReActChatAgent] ГАРАНТ fallback error: {e}")
+            # pravo.gov.ru поиск выполняется через инструмент search_legal_db в ReAct цикле
             
             if is_overview:
                 # Для обзорных вопросов используем analyze_all_documents напрямую

@@ -89,6 +89,20 @@ class GlobalAssistantMessage(Base):
     session = relationship("GlobalAssistantSession", back_populates="messages")
 
 
+class GlobalAssistantFile(Base):
+    """File uploaded directly in the global assistant (not tied to a case)."""
+    __tablename__ = "global_assistant_files"
+
+    id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    user_id = Column(String, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    filename = Column(String(255), nullable=False)
+    file_type = Column(String(50), nullable=False)
+    file_content = Column(LargeBinary, nullable=True)   # raw bytes of original file
+    html_content = Column(Text, nullable=True)          # cached HTML for DOCX
+    original_text = Column(Text, nullable=False, default="")
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+
 class File(Base):
     """File model - stores per-document data for a case"""
     __tablename__ = "files"

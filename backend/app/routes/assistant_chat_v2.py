@@ -374,6 +374,7 @@ async def assistant_global_chat(
                         "filename": file_obj.filename,
                         "text": file_obj.original_text[:12000],
                         "file_id": fid,  # used for citation navigation
+                        "case_id": str(file_obj.case_id) if file_obj.case_id else None,
                     })
 
         if not messages:
@@ -478,6 +479,7 @@ async def assistant_global_chat(
                             "file_name": fc.get("filename", "Документ"),
                             "quote": fc.get("text", "")[:400],
                             "source_type": "document",
+                            "case_id": fc.get("case_id") or None,
                         }
                         for fc in file_contexts
                     ]
@@ -526,12 +528,14 @@ async def assistant_global_chat(
 async def upload_file_for_assistant(
     file: UploadFile = File(...),
     current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
 ):
     """
-    Extract text from an uploaded file for use as context in the global assistant.
-    Returns the extracted text directly (no DB storage).
+    Extract text from an uploaded file and store it in DB for document preview.
+    Returns file_id, filename, file_type, text, char_count.
     """
     from app.services.langchain_loaders import DocumentLoaderService
+    from app.models.case import GlobalAssistantFile
 
     filename = file.filename or "document"
     content = await file.read()
@@ -547,13 +551,201 @@ async def upload_file_for_assistant(
     try:
         documents = DocumentLoaderService.load_document(content, filename)
         text = "\n\n".join(doc.page_content for doc in documents if doc.page_content.strip())
-        # Truncate to ~100k chars to keep context manageable
         if len(text) > 100_000:
             text = text[:100_000] + "\n\n[...документ обрезан для контекста...]"
-        return {"filename": filename, "text": text, "char_count": len(text)}
+
+        # Store file in DB so it can be previewed later
+        db_file = GlobalAssistantFile(
+            user_id=current_user.id,
+            filename=filename,
+            file_type=ext,
+            file_content=content,
+            original_text=text,
+        )
+        db.add(db_file)
+        db.commit()
+        db.refresh(db_file)
+
+        return {"file_id": db_file.id, "filename": filename, "file_type": ext, "text": text, "char_count": len(text)}
     except Exception as e:
         logger.error(f"File extraction error for {filename}: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Не удалось извлечь текст из файла: {e}")
+
+
+@router.post("/api/v2/assistant/transcribe")
+async def transcribe_audio(
+    audio: UploadFile = File(...),
+    current_user: User = Depends(get_current_user),
+):
+    """
+    Transcribe audio using GigaChat SmartSpeech STT API.
+    Expects a WAV file (PCM 16-bit, 16kHz mono).
+    Returns { text: "transcribed text" }.
+    """
+    import asyncio
+    import requests as sync_requests
+    import uuid
+    import urllib3
+    urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+
+    try:
+        content = await audio.read()
+    except Exception as e:
+        logger.error(f"[STT] Failed to read audio: {e}", exc_info=True)
+        raise HTTPException(status_code=400, detail=f"Не удалось прочитать аудиофайл: {e}")
+
+    logger.info(f"[STT] Received audio file: {len(content)} bytes, filename={audio.filename}")
+
+    # Strip WAV header (44 bytes standard, but check RIFF magic to be safe)
+    if content[:4] == b'RIFF':
+        pcm_data = content[44:]
+        logger.info(f"[STT] Stripped WAV header, PCM size: {len(pcm_data)} bytes")
+    else:
+        pcm_data = content
+        logger.info(f"[STT] No WAV header detected, using raw data: {len(pcm_data)} bytes")
+
+    if not pcm_data:
+        raise HTTPException(status_code=400, detail="Пустой аудиофайл")
+
+    stt_creds = config.GIGACHAT_STT_CREDENTIALS
+    if not stt_creds:
+        raise HTTPException(status_code=503, detail="STT credentials not configured")
+
+    # Run synchronous requests in a thread pool to avoid blocking the event loop
+    def _get_token() -> str:
+        resp = sync_requests.post(
+            "https://ngw.devices.sberbank.ru:9443/api/v2/oauth",
+            headers={
+                "Content-Type": "application/x-www-form-urlencoded",
+                "Accept": "application/json",
+                "RqUID": str(uuid.uuid4()),
+                "Authorization": f"Basic {stt_creds}",
+            },
+            data={"scope": "SALUTE_SPEECH_PERS"},
+            timeout=15,
+            verify=False,
+        )
+        logger.info(f"[STT] Token response: {resp.status_code}, body: {resp.text[:200]}")
+        resp.raise_for_status()
+        return resp.json()["access_token"]
+
+    def _recognize(token: str, pcm: bytes) -> str:
+        resp = sync_requests.post(
+            "https://smartspeech.sber.ru/rest/v1/speech:recognize",
+            headers={
+                "Authorization": f"Bearer {token}",
+                "Content-Type": "audio/x-pcm;bit=16;rate=16000",
+            },
+            data=pcm,
+            timeout=30,
+            verify=False,
+        )
+        logger.info(f"[STT] STT response: {resp.status_code}, body: {resp.text[:300]}")
+        if resp.status_code != 200:
+            raise ValueError(f"SmartSpeech вернул {resp.status_code}: {resp.text[:200]}")
+        result = resp.json()
+        if isinstance(result.get("result"), list) and result["result"]:
+            return result["result"][0]
+        return result.get("text", "")
+
+    try:
+        access_token = await asyncio.to_thread(_get_token)
+    except Exception as e:
+        logger.error(f"[STT] Token error: {e}", exc_info=True)
+        raise HTTPException(status_code=503, detail=f"Не удалось получить токен STT: {e}")
+
+    try:
+        text = await asyncio.to_thread(_recognize, access_token, pcm_data)
+        logger.info(f"[STT] Transcribed: {repr(text[:100])}")
+        return {"text": text}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"[STT] Recognition error: {e}", exc_info=True)
+        raise HTTPException(status_code=502, detail=f"Ошибка распознавания речи: {e}")
+
+
+@router.get("/api/v2/assistant/files")
+async def list_assistant_files(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """List uploaded global assistant files (mirrors /api/cases/{id}/files structure)."""
+    from app.models.case import GlobalAssistantFile
+    files = db.query(GlobalAssistantFile).filter(
+        GlobalAssistantFile.user_id == current_user.id
+    ).order_by(GlobalAssistantFile.created_at.desc()).all()
+    return {
+        "documents": [
+            {"id": f.id, "filename": f.filename, "file_type": f.file_type}
+            for f in files
+        ]
+    }
+
+
+@router.get("/api/v2/assistant/files/{file_id}/content")
+async def get_assistant_file_content(
+    file_id: str,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Serve raw file bytes for a global assistant file."""
+    from app.models.case import GlobalAssistantFile
+    from fastapi.responses import Response
+    f = db.query(GlobalAssistantFile).filter(
+        GlobalAssistantFile.id == file_id,
+        GlobalAssistantFile.user_id == current_user.id,
+    ).first()
+    if not f:
+        raise HTTPException(status_code=404, detail="File not found")
+    if not f.file_content:
+        raise HTTPException(status_code=404, detail="File content not stored")
+
+    mime_map = {
+        "pdf": "application/pdf",
+        "docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        "txt": "text/plain; charset=utf-8",
+        "csv": "text/csv; charset=utf-8",
+        "xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    }
+    media_type = mime_map.get(f.file_type.lower(), "application/octet-stream")
+    return Response(content=f.file_content, media_type=media_type)
+
+
+@router.get("/api/v2/assistant/files/{file_id}/html")
+async def get_assistant_file_html(
+    file_id: str,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Return HTML version of a DOCX global assistant file."""
+    from app.models.case import GlobalAssistantFile
+    f = db.query(GlobalAssistantFile).filter(
+        GlobalAssistantFile.id == file_id,
+        GlobalAssistantFile.user_id == current_user.id,
+    ).first()
+    if not f:
+        raise HTTPException(status_code=404, detail="File not found")
+
+    # Return cached HTML if available
+    if f.html_content:
+        return {"html": f.html_content, "cached": True, "file_id": file_id, "filename": f.filename}
+
+    # Generate HTML from DOCX
+    if f.file_type.lower() == "docx" and f.file_content:
+        try:
+            import mammoth, io
+            result = mammoth.convert_to_html(io.BytesIO(f.file_content))
+            html = result.value
+            # Cache it
+            f.html_content = html
+            db.commit()
+            return {"html": html, "cached": False, "file_id": file_id, "filename": f.filename}
+        except Exception as e:
+            logger.error(f"HTML conversion error for global file {file_id}: {e}")
+            raise HTTPException(status_code=500, detail="Failed to convert DOCX to HTML")
+
+    raise HTTPException(status_code=400, detail="HTML preview not available for this file type")
 
 
 @router.post("/api/v2/assistant/download-docx")

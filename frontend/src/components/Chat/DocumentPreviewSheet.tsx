@@ -23,8 +23,7 @@ import { SourceInfo } from '@/services/api'
 import PDFViewer from '@/components/Documents/PDFViewer'
 import { DocumentHighlighter } from '@/components/Documents/DocumentHighlighter'
 import { TextHighlighter } from '@/components/TabularReview/TextHighlighter'
-import { getFileHtml } from '@/services/fileHtmlApi'
-import { getDocumentContent } from '@/services/api'
+
 
 interface DocumentPreviewSheetProps {
   isOpen: boolean
@@ -33,6 +32,8 @@ interface DocumentPreviewSheetProps {
   caseId: string
   allSources?: SourceInfo[]
   onNavigate?: (source: SourceInfo) => void
+  /** Override the API base used for file loading. Defaults to /api/cases/{caseId}. */
+  filesApiBase?: string
 }
 
 const DocumentPreviewSheet = ({
@@ -41,8 +42,11 @@ const DocumentPreviewSheet = ({
   source,
   caseId,
   allSources = [],
-  onNavigate
+  onNavigate,
+  filesApiBase,
 }: DocumentPreviewSheetProps) => {
+  // Compute API base: custom override or default case-based path
+  const apiBase = filesApiBase ?? `/api/cases/${caseId}`
   const [copied, setCopied] = useState(false)
   const [documentContent, setDocumentContent] = useState<string | null>(null)
   const [documentText, setDocumentText] = useState<string | null>(null) // Текстовый контент для подсветки
@@ -184,16 +188,24 @@ const DocumentPreviewSheet = ({
 
   const loadDocumentInfo = async () => {
     if (!source) return
-    
+
+    // External sources (pravo.gov.ru, etc.) — don't try to load from case files
+    if (source.url && source.url.startsWith('http')) {
+      setDocumentContent(null)
+      setFileInfo(null)
+      setLoading(false)
+      return
+    }
+
     setLoading(true)
     setFileInfo(null)
     setDocumentContent(null)
     setDocumentText(null)
     setDocumentHtml(null)
-    
+
     try {
       // Get list of files to find file by filename or id
-      const filesResponse = await fetch(`/api/cases/${caseId}/files`, {
+      const filesResponse = await fetch(`${apiBase}/files`, {
         headers: {
           'Authorization': `Bearer ${localStorage.getItem('access_token')}`
         }
@@ -269,48 +281,56 @@ const DocumentPreviewSheet = ({
       const isDocx = fileTypeLower === 'docx'
       const isPdf = fileTypeLower === 'pdf'
       
+      const authHeaders = { 'Authorization': `Bearer ${localStorage.getItem('access_token')}` }
+
       // Для DOCX - загружаем HTML версию
       if (isDocx) {
         try {
           console.log('[DocumentPreview] Loading DOCX as HTML for highlighting')
-          const htmlResponse = await getFileHtml(caseId, fileId, false)
-          setDocumentHtml(htmlResponse.html)
-          console.log('[DocumentPreview] DOCX HTML loaded, length:', htmlResponse.html?.length)
+          const htmlRes = await fetch(`${apiBase}/files/${fileId}/html`, { headers: authHeaders })
+          if (htmlRes.ok) {
+            const htmlData = await htmlRes.json()
+            setDocumentHtml(htmlData.html)
+            console.log('[DocumentPreview] DOCX HTML loaded, length:', htmlData.html?.length)
+          }
         } catch (error) {
           console.warn('Failed to load HTML content for DOCX highlighting:', error)
         }
         return
       }
-      
+
       // Для текстовых файлов - загружаем текст
       if (isTextFile) {
         try {
           console.log('[DocumentPreview] Loading text file for highlighting')
-          const textBlob = await getDocumentContent(caseId, fileId)
-          const text = await textBlob.text()
-          setDocumentText(text)
-          console.log('[DocumentPreview] Text loaded, length:', text?.length)
+          const textRes = await fetch(`${apiBase}/files/${fileId}/content`, { headers: authHeaders })
+          if (textRes.ok) {
+            const text = await textRes.text()
+            setDocumentText(text)
+            console.log('[DocumentPreview] Text loaded, length:', text?.length)
+          }
         } catch (error) {
           console.warn('Failed to load text content for highlighting:', error)
         }
         return
       }
-      
+
       // Для PDF - пока только переход на страницу (подсветка требует PDF.js text layer)
       if (isPdf) {
         console.log('[DocumentPreview] PDF file - using page navigation only')
-        // PDF подсветка будет добавлена позже через PDF.js findController
         return
       }
-      
+
       // Для остальных файлов - пробуем загрузить как текст
       try {
         console.log('[DocumentPreview] Trying to load unknown file type as text')
-        const textBlob = await getDocumentContent(caseId, fileId)
-        const text = await textBlob.text()
-        if (text && text.length > 0 && !text.includes('\x00')) { // Проверяем что это не бинарный файл
-          setDocumentText(text)
-          console.log('[DocumentPreview] File loaded as text, length:', text?.length)
+        const textRes = await fetch(`${apiBase}/files/${fileId}/content`, { headers: authHeaders })
+        if (textRes.ok) {
+          const text = await textRes.text()
+          if (text && text.length > 0 && !text.includes('\x00')) {
+            setDocumentText(text)
+            console.log('[DocumentPreview] File loaded as text, length:', text?.length)
+          }
         }
       } catch (error) {
         console.warn('Failed to load file as text:', error)
@@ -323,15 +343,12 @@ const DocumentPreviewSheet = ({
   useEffect(() => {
     // Загружаем файл и создаем blob URL только для файлов без специализированного рендерера.
     // PDF → PDFViewer, DOCX → HTML via getFileHtml. Остальные — blob URL + <object>.
-    if (isOpen && fileInfo && fileInfo.file_type !== 'pdf' && fileInfo.file_type !== 'docx' && fileInfo.id && caseId) {
+    if (isOpen && fileInfo && fileInfo.file_type !== 'pdf' && fileInfo.file_type !== 'docx' && fileInfo.id && (caseId || filesApiBase)) {
       const loadFile = async () => {
         try {
           const baseUrl = import.meta.env.VITE_API_URL || ''
-          // Используем /content endpoint вместо /download для inline отображения
-          const url = baseUrl 
-            ? `${baseUrl}/api/cases/${caseId}/files/${fileInfo.id}/content`
-            : `/api/cases/${caseId}/files/${fileInfo.id}/content`
-          
+          const url = `${baseUrl}${apiBase}/files/${fileInfo.id}/content`
+
           const response = await fetch(url, {
             headers: {
               'Authorization': `Bearer ${localStorage.getItem('access_token')}`
@@ -600,23 +617,25 @@ const DocumentPreviewSheet = ({
                 <IconButton
                   size="small"
                   component="a"
-                  href={fileInfo ? `/api/cases/${caseId}/files/${fileInfo.id}/download` : `#`}
+                  href={fileInfo ? `${apiBase}/files/${fileInfo.id}/download` : `#`}
                   download
                 >
                   <DownloadIcon fontSize="small" />
                 </IconButton>
               </Tooltip>
-              <Tooltip title="Открыть в полном окне">
-                <IconButton
-                  size="small"
-                  component="a"
-                  href={`/cases/${caseId}/chat?file=${encodeURIComponent(source.file)}`}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                >
-                  <MaximizeIcon fontSize="small" />
-                </IconButton>
-              </Tooltip>
+              {!filesApiBase && (
+                <Tooltip title="Открыть в полном окне">
+                  <IconButton
+                    size="small"
+                    component="a"
+                    href={`/cases/${caseId}/chat?file=${encodeURIComponent(source.file)}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                  >
+                    <MaximizeIcon fontSize="small" />
+                  </IconButton>
+                </Tooltip>
+              )}
             </Stack>
           </Box>
         </Box>
@@ -630,7 +649,33 @@ const DocumentPreviewSheet = ({
             flexDirection: 'column',
           }}
         >
-          {loading ? (
+          {source?.url && source.url.startsWith('http') ? (
+            // External source (pravo.gov.ru) — show link to open in browser
+            <Box sx={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', p: 4, gap: 2 }}>
+              <Typography variant="body2" color="text.secondary" textAlign="center">
+                Документ опубликован на официальном портале.<br />Откройте его в браузере для просмотра.
+              </Typography>
+              <a
+                href={source.url}
+                target="_blank"
+                rel="noopener noreferrer"
+                style={{
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: 4,
+                  padding: '8px 16px',
+                  backgroundColor: '#1976d2',
+                  color: '#fff',
+                  borderRadius: 6,
+                  textDecoration: 'none',
+                  fontSize: '0.875rem',
+                  fontWeight: 500,
+                }}
+              >
+                Открыть на pravo.gov.ru ↗
+              </a>
+            </Box>
+          ) : loading ? (
             <Box sx={{ p: 2 }}>
               <Stack spacing={1}>
                 <Skeleton variant="text" width="100%" />
@@ -647,6 +692,7 @@ const DocumentPreviewSheet = ({
                   fileId={fileInfo.id}
                   caseId={caseId}
                   filename={fileInfo.filename}
+                  fileApiBase={filesApiBase}
                   initialPage={source.page || 1} // Переход на страницу из citation
                   highlightText={source.quote?.replace(/\.{3}$/, '').substring(0, 150)} // Убираем "..." и берём первые 150 символов
                   showTabs={false}
@@ -721,7 +767,7 @@ const DocumentPreviewSheet = ({
                     Браузер не поддерживает отображение этого типа файла.
                     <br />
                     <a 
-                      href={`/api/cases/${caseId}/files/${fileInfo.id}/download`}
+                      href={`${apiBase}/files/${fileInfo.id}/download`}
                       download
                       style={{ color: 'primary.main', textDecoration: 'underline' }}
                     >

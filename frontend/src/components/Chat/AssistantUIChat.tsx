@@ -1609,13 +1609,13 @@ export const AssistantUIChat = forwardRef<AssistantUIChatRef, AssistantUIChatPro
               citations={message.citations}
               isStreaming={isLoading && message.id === messages[messages.length - 1]?.id}
               onSourceClick={(source) => {
-                // External sources (pravo.gov.ru) — open URL in new tab
-                if ((source as any).source_type === 'external' || (source as any).url) {
-                  const extUrl = (source as any).url
+                // External sources (pravo.gov.ru) — always open in new tab, never local preview
+                if (source.source_type === 'external' || (source.url && source.url.startsWith('http'))) {
+                  const extUrl = source.url
                   if (extUrl) {
                     window.open(extUrl, '_blank', 'noopener,noreferrer')
-                    return
                   }
+                  return  // stop here even if URL is empty — never open local preview
                 }
                 if (source.file) {
                   // Открываем документ справа в панели предпросмотра с подсветкой
@@ -1630,6 +1630,8 @@ export const AssistantUIChat = forwardRef<AssistantUIChatRef, AssistantUIChatPro
                     source_id: source.source_id,
                     context_before: (source as any).context_before,
                     context_after: (source as any).context_after,
+                    url: source.url,
+                    source_type: (source as any).source_type,
                   }
                   setPreviewSource(sourceInfo)
                   setPreviewOpen(true)

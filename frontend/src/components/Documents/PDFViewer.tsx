@@ -49,6 +49,7 @@ interface PDFViewerProps {
     file_size?: number
     [key: string]: any
   }
+  fileApiBase?: string // Override API base (e.g. for global assistant files)
 }
 
 const PDFViewer: React.FC<PDFViewerProps> = ({
@@ -63,7 +64,9 @@ const PDFViewer: React.FC<PDFViewerProps> = ({
   onTabChange,
   showAbout = false,
   metadata,
+  fileApiBase,
 }) => {
+  const apiBase = fileApiBase ?? `/api/cases/${caseId}`
   const [numPages, setNumPages] = useState<number | null>(null)
   const [pageNumber, setPageNumber] = useState(initialPage || 1)
   const [pdfUrl, setPdfUrl] = useState<string | null>(null)
@@ -220,7 +223,7 @@ const PDFViewer: React.FC<PDFViewerProps> = ({
 
       // Try to get PDF content from API
       const response = await fetch(
-        `/api/cases/${caseId}/files/${fileId}/content`,
+        `${apiBase}/files/${fileId}/content`,
         {
           headers: {
             'Authorization': `Bearer ${localStorage.getItem('access_token')}`

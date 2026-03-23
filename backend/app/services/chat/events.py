@@ -25,7 +25,7 @@ class Citation(BaseModel):
     context_before: Optional[str] = Field(None, description="Контекст до цитаты")
     context_after: Optional[str] = Field(None, description="Контекст после цитаты")
     url: Optional[str] = Field(None, description="URL источника (для ГАРАНТ)")
-    source_type: Literal["document", "garant", "web"] = Field("document", description="Тип источника")
+    source_type: Literal["document", "garant", "web", "external"] = Field("document", description="Тип источника")
     doc_type: Optional[str] = Field(None, description="Тип документа")
     doc_date: Optional[str] = Field(None, description="Дата документа")
     doc_number: Optional[str] = Field(None, description="Номер документа")

@@ -295,17 +295,22 @@ const MessageContent: React.FC<MessageContentProps> = ({
       })
     }
 
-    // Remap every [N] occurrence to a unique sequential display number.
-    // First occurrence of any valid source → [1], second → [2], etc.
-    // This means no two badges share the same number, like proper footnotes.
+    // Remap every [N] to a sequential display number.
+    // Each unique source gets one badge at its FIRST occurrence; duplicates are removed.
     const remappedSources: SourceInfo[] = []
     if (sources.length > 0) {
       let counter = 0
+      const srcIdxToDisplayNum = new Map<number, number>()
       text = text.replace(/\[(\d+)\]/g, (match, num) => {
         const idx = parseInt(num, 10)
         if (idx < 1 || idx > sources.length) return match
+        const srcIdx = idx - 1
+        if (srcIdxToDisplayNum.has(srcIdx)) {
+          return '' // remove duplicate badge
+        }
         counter++
-        remappedSources.push(sources[idx - 1])
+        srcIdxToDisplayNum.set(srcIdx, counter)
+        remappedSources.push(sources[srcIdx])
         return `[${counter}]`
       })
     }

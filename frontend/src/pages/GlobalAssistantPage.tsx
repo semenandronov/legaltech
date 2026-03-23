@@ -5,11 +5,12 @@ import UnifiedSidebar from '../components/Layout/UnifiedSidebar'
 import {
   FolderOpen, MessageSquare, FileText, X, Plus,
   AlignJustify, SlidersHorizontal, Sparkles, Search, ChevronDown, Loader2, Download, Clock,
-  ChevronRight, Check,
+  ChevronRight, Check, Mic, MicOff,
 } from 'lucide-react'
-import { getApiUrl, getGlobalAssistantSession, saveSessionDraft, getCasesList, getCaseFiles, CaseListItem, UploadedFile } from '../services/api'
+import { getApiUrl, getGlobalAssistantSession, saveSessionDraft, getCasesList, getCaseFiles, CaseListItem, UploadedFile, SourceInfo } from '../services/api'
 import { DocumentEditor, DocumentEditorRef } from '../components/Editor/DocumentEditor'
 import MessageContent from '../components/Chat/MessageContent'
+import DocumentPreviewSheet from '../components/Chat/DocumentPreviewSheet'
 
 function inlineFmt(text: string): string {
   return text
@@ -51,10 +52,13 @@ interface ChatMessage {
   role: 'user' | 'assistant'
   content: string
   attachedFiles?: Array<{ id: string; filename: string }>
+  sources?: SourceInfo[]
 }
 
 interface FileContext {
+  file_id?: string
   filename: string
+  file_type?: string
   text: string
   charCount: number
 }
@@ -380,6 +384,19 @@ interface HarveyInputProps {
   placeholder?: string
 }
 
+function createWAV(pcm: Int16Array, sampleRate: number): Blob {
+  const buf = new ArrayBuffer(44 + pcm.length * 2)
+  const v = new DataView(buf)
+  const w = (o: number, s: string) => { for (let i = 0; i < s.length; i++) v.setUint8(o + i, s.charCodeAt(i)) }
+  w(0, 'RIFF'); v.setUint32(4, 36 + pcm.length * 2, true); w(8, 'WAVE')
+  w(12, 'fmt '); v.setUint32(16, 16, true); v.setUint16(20, 1, true); v.setUint16(22, 1, true)
+  v.setUint32(24, sampleRate, true); v.setUint32(28, sampleRate * 2, true)
+  v.setUint16(32, 2, true); v.setUint16(34, 16, true)
+  w(36, 'data'); v.setUint32(40, pcm.length * 2, true)
+  for (let i = 0; i < pcm.length; i++) v.setInt16(44 + i * 2, pcm[i], true)
+  return new Blob([buf], { type: 'audio/wav' })
+}
+
 function HarveyInput({
   value, onChange, onSubmit,
   fileContexts, uploadingFiles, onAddFiles, onRemoveContext,
@@ -393,6 +410,77 @@ function HarveyInput({
   const promptsRef = useRef<HTMLDivElement>(null)
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [promptsOpen, setPromptsOpen] = useState(false)
+  const [isRecording, setIsRecording] = useState(false)
+  const [isTranscribing, setIsTranscribing] = useState(false)
+  const mediaStreamRef = useRef<MediaStream | null>(null)
+  const audioCtxRef = useRef<AudioContext | null>(null)
+  const pcmChunksRef = useRef<Int16Array[]>([])
+  const processorRef = useRef<ScriptProcessorNode | null>(null)
+
+  const startRecording = async () => {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
+      mediaStreamRef.current = stream
+      const ctx = new AudioContext({ sampleRate: 16000 })
+      audioCtxRef.current = ctx
+      const source = ctx.createMediaStreamSource(stream)
+      const processor = ctx.createScriptProcessor(4096, 1, 1)
+      processorRef.current = processor
+      pcmChunksRef.current = []
+      processor.onaudioprocess = (e) => {
+        const input = e.inputBuffer.getChannelData(0)
+        const pcm = new Int16Array(input.length)
+        for (let i = 0; i < input.length; i++)
+          pcm[i] = Math.max(-32768, Math.min(32767, input[i] * 32768))
+        pcmChunksRef.current.push(pcm)
+      }
+      source.connect(processor)
+      processor.connect(ctx.destination)
+      setIsRecording(true)
+    } catch {
+      alert('Не удалось получить доступ к микрофону')
+    }
+  }
+
+  const stopRecording = async () => {
+    processorRef.current?.disconnect()
+    mediaStreamRef.current?.getTracks().forEach(t => t.stop())
+    audioCtxRef.current?.close()
+    setIsRecording(false)
+    setIsTranscribing(true)
+    try {
+      const total = pcmChunksRef.current.reduce((s, c) => s + c.length, 0)
+      if (total === 0) { toast.error('Не удалось записать аудио'); setIsTranscribing(false); return }
+      const pcm = new Int16Array(total)
+      let offset = 0
+      for (const chunk of pcmChunksRef.current) { pcm.set(chunk, offset); offset += chunk.length }
+      const wav = createWAV(pcm, 16000)
+      const formData = new FormData()
+      formData.append('audio', wav, 'audio.wav')
+      const token = localStorage.getItem('access_token')
+      const res = await fetch(getApiUrl('/api/v2/assistant/transcribe'), {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}` },
+        body: formData,
+      })
+      if (res.ok) {
+        const data = await res.json()
+        if (data.text) {
+          onChange((value ? value + ' ' : '') + data.text)
+        } else {
+          toast.error('Речь не распознана — попробуйте ещё раз')
+        }
+      } else {
+        const err = await res.json().catch(() => ({}))
+        toast.error(`Ошибка распознавания: ${err.detail || res.status}`)
+      }
+    } catch (e: any) {
+      console.error('Transcription error:', e)
+      toast.error(`Ошибка: ${e?.message || 'неизвестная ошибка'}`)
+    } finally {
+      setIsTranscribing(false)
+    }
+  }
 
   useEffect(() => {
     const el = textareaRef.current
@@ -664,6 +752,27 @@ function HarveyInput({
         {/* Spacer */}
         <div className="flex-1" />
 
+        {/* Mic button */}
+        <div className="flex-shrink-0">
+          <button
+            type="button"
+            onClick={isRecording ? stopRecording : startRecording}
+            disabled={isStreaming || isTranscribing}
+            className="flex items-center justify-center w-8 h-8 rounded-lg transition-all mr-1"
+            style={{
+              backgroundColor: isRecording ? '#FEE2E2' : 'transparent',
+              color: isRecording ? '#DC2626' : '#9CA3AF',
+            }}
+          >
+            {isTranscribing
+              ? <Loader2 className="w-4 h-4 animate-spin" />
+              : isRecording
+                ? <MicOff className="w-4 h-4" />
+                : <Mic className="w-4 h-4" />
+            }
+          </button>
+        </div>
+
         {/* Send button — always visible */}
         <div className="flex-shrink-0">
           <button
@@ -709,6 +818,7 @@ const GlobalAssistantPage = () => {
   const abortRef = useRef<AbortController | null>(null)
   const [selectedCaseFiles, setSelectedCaseFiles] = useState<UploadedFile[]>([])
   const [showCasePicker, setShowCasePicker] = useState(false)
+  const [citationPreview, setCitationPreview] = useState<SourceInfo | null>(null)
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
@@ -800,12 +910,14 @@ const GlobalAssistantPage = () => {
     setFileContexts([])
     setSelectedCaseFiles([])
 
+    const allAttachedFiles = [
+      ...contextsToSend.map((fc) => ({ id: fc.file_id || fc.filename, filename: fc.filename })),
+      ...selectedCaseFiles.map((f) => ({ id: f.id, filename: f.filename })),
+    ]
     const userMsg: ChatMessage = {
       role: 'user',
       content: text,
-      attachedFiles: selectedCaseFiles.length > 0
-        ? selectedCaseFiles.map((f) => ({ id: f.id, filename: f.filename }))
-        : undefined,
+      attachedFiles: allAttachedFiles.length > 0 ? allAttachedFiles : undefined,
     }
     const allMessages = [...messages, userMsg]
     setMessages([...allMessages, { role: 'assistant', content: '' }])
@@ -835,7 +947,7 @@ const GlobalAssistantPage = () => {
         body: JSON.stringify({
           messages: allMessages.map((m) => ({ role: m.role, content: m.content })),
           session_id: sessionId,
-          file_contexts: contextsToSend.map((fc) => ({ filename: fc.filename, text: fc.text })),
+          file_contexts: contextsToSend.map((fc) => ({ file_id: fc.file_id, filename: fc.filename, text: fc.text })),
           attached_file_ids: caseFileIdsToSend.length > 0 ? caseFileIdsToSend : undefined,
           draft_mode: isDraftMode,
           document_context: isDraftMode && currentDraft ? currentDraft.content : undefined,
@@ -870,6 +982,24 @@ const GlobalAssistantPage = () => {
               setMessages((prev) => [
                 ...prev.slice(0, -1),
                 { role: 'assistant', content: assistantContent },
+              ])
+            } else if (data.type === 'citations' && Array.isArray(data.citations)) {
+              const sources: SourceInfo[] = data.citations.map((c: any) => ({
+                file: c.file_name || c.file || '',
+                title: c.file_name || c.file,
+                page: c.page ?? undefined,
+                text_preview: c.quote,
+                source_id: c.source_id,
+                quote: c.quote,
+                char_start: c.char_start,
+                char_end: c.char_end,
+                url: c.url || '',
+                source_type: c.source_type || 'document',
+                case_id: c.case_id || undefined,
+              }))
+              setMessages((prev) => [
+                ...prev.slice(0, -1),
+                { ...prev[prev.length - 1], sources },
               ])
             } else if (data.textDelta) {
               assistantContent += data.textDelta
@@ -1057,8 +1187,15 @@ const GlobalAssistantPage = () => {
                             {msg.content && !(draftDocument && idx === messages.length - 1) ? (
                               <MessageContent
                                 content={msg.content}
-                                sources={[]}
+                                sources={msg.sources || []}
                                 isStreaming={isStreaming && idx === messages.length - 1 && !isDraftMode}
+                                onCitationClick={(source) => {
+                                  if (source.source_type === 'external' || (source.url && source.url.startsWith('http'))) {
+                                    if (source.url) window.open(source.url, '_blank', 'noopener,noreferrer')
+                                    return
+                                  }
+                                  setCitationPreview(source)
+                                }}
                               />
                             ) : (
                               isStreaming && idx === messages.length - 1 && !isDraftMode && (
@@ -1133,6 +1270,56 @@ const GlobalAssistantPage = () => {
                   </div>
                 </div>
               </div>
+
+              {/* Citation preview — full doc viewer for case files, quote panel for uploads */}
+              {citationPreview && citationPreview.case_id ? (
+                <DocumentPreviewSheet
+                  isOpen={!!citationPreview}
+                  onClose={() => setCitationPreview(null)}
+                  source={citationPreview}
+                  caseId={citationPreview.case_id}
+                />
+              ) : citationPreview && citationPreview.source_id ? (
+                <DocumentPreviewSheet
+                  isOpen={!!citationPreview}
+                  onClose={() => setCitationPreview(null)}
+                  source={citationPreview}
+                  caseId=""
+                  filesApiBase="/api/v2/assistant"
+                />
+              ) : citationPreview && (
+                <div
+                  className="flex flex-col border-l overflow-hidden"
+                  style={{ width: '400px', minWidth: '320px', borderLeftColor: '#E5E7EB', backgroundColor: '#FAFAFA' }}
+                >
+                  <div className="flex items-center justify-between px-4 py-3 border-b" style={{ borderBottomColor: '#E5E7EB' }}>
+                    <div className="flex items-center gap-2 min-w-0">
+                      <FileText className="w-4 h-4 shrink-0" style={{ color: '#6366F1' }} />
+                      <span className="text-sm font-medium truncate" style={{ color: '#111827' }}>
+                        {citationPreview.title || citationPreview.file || 'Источник'}
+                      </span>
+                    </div>
+                    <button
+                      onClick={() => setCitationPreview(null)}
+                      className="p-1 rounded hover:bg-gray-100 shrink-0"
+                    >
+                      <X className="w-4 h-4" style={{ color: '#6B7280' }} />
+                    </button>
+                  </div>
+                  <div className="flex-1 overflow-y-auto p-4">
+                    {citationPreview.quote || citationPreview.text_preview ? (
+                      <div
+                        className="rounded-lg p-3 text-sm leading-relaxed whitespace-pre-wrap"
+                        style={{ backgroundColor: '#F3F4F6', color: '#374151', borderLeft: '3px solid #6366F1' }}
+                      >
+                        {citationPreview.quote || citationPreview.text_preview}
+                      </div>
+                    ) : (
+                      <p className="text-sm" style={{ color: '#9CA3AF' }}>Текст фрагмента недоступен.</p>
+                    )}
+                  </div>
+                </div>
+              )}
 
               {/* Document panel */}
               {showDraftPanel && draftDocument && (

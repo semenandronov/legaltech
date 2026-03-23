@@ -83,9 +83,11 @@ export interface AssistantMessageProps {
     char_end: number
     context_before?: string
     context_after?: string
+    url?: string
+    source_type?: string
   }>
   isStreaming?: boolean
-  onSourceClick?: (source: { title?: string; url?: string; page?: number; file?: string; source_id?: string; char_start?: number; char_end?: number; quote?: string }) => void
+  onSourceClick?: (source: { title?: string; url?: string; page?: number; file?: string; source_id?: string; char_start?: number; char_end?: number; quote?: string; source_type?: string }) => void
   className?: string
   children?: React.ReactNode
 }
@@ -118,6 +120,8 @@ export const AssistantMessage = React.memo(function AssistantMessage({
         source_id: citation.source_id,
         context_before: citation.context_before,
         context_after: citation.context_after,
+        url: citation.url,
+        source_type: citation.source_type,
       }))
     } else if (sources) {
       // Используем обычные sources если citations нет
@@ -169,7 +173,9 @@ export const AssistantMessage = React.memo(function AssistantMessage({
                     char_start: source.char_start,
                     char_end: source.char_end,
                     quote: source.quote,
-                  })
+                    url: source.url,
+                    source_type: source.source_type,
+                  } as any)
                 }
               }}
               isStreaming={isStreaming}
@@ -193,7 +199,9 @@ export const AssistantMessage = React.memo(function AssistantMessage({
                     char_start: source.char_start,
                     char_end: source.char_end,
                     quote: source.quote,
-                  })
+                    url: source.url,
+                    source_type: source.source_type,
+                  } as any)
                 }
               }}
               isStreaming={isStreaming}
