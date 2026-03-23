@@ -384,19 +384,6 @@ interface HarveyInputProps {
   placeholder?: string
 }
 
-function createWAV(pcm: Int16Array, sampleRate: number): Blob {
-  const buf = new ArrayBuffer(44 + pcm.length * 2)
-  const v = new DataView(buf)
-  const w = (o: number, s: string) => { for (let i = 0; i < s.length; i++) v.setUint8(o + i, s.charCodeAt(i)) }
-  w(0, 'RIFF'); v.setUint32(4, 36 + pcm.length * 2, true); w(8, 'WAVE')
-  w(12, 'fmt '); v.setUint32(16, 16, true); v.setUint16(20, 1, true); v.setUint16(22, 1, true)
-  v.setUint32(24, sampleRate, true); v.setUint32(28, sampleRate * 2, true)
-  v.setUint16(32, 2, true); v.setUint16(34, 16, true)
-  w(36, 'data'); v.setUint32(40, pcm.length * 2, true)
-  for (let i = 0; i < pcm.length; i++) v.setInt16(44 + i * 2, pcm[i], true)
-  return new Blob([buf], { type: 'audio/wav' })
-}
-
 function HarveyInput({
   value, onChange, onSubmit,
   fileContexts, uploadingFiles, onAddFiles, onRemoveContext,
@@ -411,75 +398,45 @@ function HarveyInput({
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [promptsOpen, setPromptsOpen] = useState(false)
   const [isRecording, setIsRecording] = useState(false)
-  const [isTranscribing, setIsTranscribing] = useState(false)
-  const mediaStreamRef = useRef<MediaStream | null>(null)
-  const audioCtxRef = useRef<AudioContext | null>(null)
-  const pcmChunksRef = useRef<Int16Array[]>([])
-  const processorRef = useRef<ScriptProcessorNode | null>(null)
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const recognitionRef = useRef<any>(null)
 
-  const startRecording = async () => {
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
-      mediaStreamRef.current = stream
-      const ctx = new AudioContext({ sampleRate: 16000 })
-      audioCtxRef.current = ctx
-      const source = ctx.createMediaStreamSource(stream)
-      const processor = ctx.createScriptProcessor(4096, 1, 1)
-      processorRef.current = processor
-      pcmChunksRef.current = []
-      processor.onaudioprocess = (e) => {
-        const input = e.inputBuffer.getChannelData(0)
-        const pcm = new Int16Array(input.length)
-        for (let i = 0; i < input.length; i++)
-          pcm[i] = Math.max(-32768, Math.min(32767, input[i] * 32768))
-        pcmChunksRef.current.push(pcm)
-      }
-      source.connect(processor)
-      processor.connect(ctx.destination)
-      setIsRecording(true)
-    } catch {
-      alert('Не удалось получить доступ к микрофону')
+  const toggleRecording = () => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const SR = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition
+    if (!SR) {
+      toast.error('Голосовой ввод не поддерживается в этом браузере. Используйте Chrome.')
+      return
     }
-  }
 
-  const stopRecording = async () => {
-    processorRef.current?.disconnect()
-    mediaStreamRef.current?.getTracks().forEach(t => t.stop())
-    audioCtxRef.current?.close()
-    setIsRecording(false)
-    setIsTranscribing(true)
-    try {
-      const total = pcmChunksRef.current.reduce((s, c) => s + c.length, 0)
-      if (total === 0) { toast.error('Не удалось записать аудио'); setIsTranscribing(false); return }
-      const pcm = new Int16Array(total)
-      let offset = 0
-      for (const chunk of pcmChunksRef.current) { pcm.set(chunk, offset); offset += chunk.length }
-      const wav = createWAV(pcm, 16000)
-      const formData = new FormData()
-      formData.append('audio', wav, 'audio.wav')
-      const token = localStorage.getItem('access_token')
-      const res = await fetch(getApiUrl('/api/v2/assistant/transcribe'), {
-        method: 'POST',
-        headers: { Authorization: `Bearer ${token}` },
-        body: formData,
-      })
-      if (res.ok) {
-        const data = await res.json()
-        if (data.text) {
-          onChange((value ? value + ' ' : '') + data.text)
-        } else {
-          toast.error('Речь не распознана — попробуйте ещё раз')
-        }
-      } else {
-        const err = await res.json().catch(() => ({}))
-        toast.error(`Ошибка распознавания: ${err.detail || res.status}`)
-      }
-    } catch (e: any) {
-      console.error('Transcription error:', e)
-      toast.error(`Ошибка: ${e?.message || 'неизвестная ошибка'}`)
-    } finally {
-      setIsTranscribing(false)
+    if (isRecording) {
+      recognitionRef.current?.stop()
+      return
     }
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const recognition: any = new SR()
+    recognitionRef.current = recognition
+    recognition.lang = 'ru-RU'
+    recognition.continuous = false
+    recognition.interimResults = false
+
+    recognition.onstart = () => setIsRecording(true)
+    recognition.onend = () => setIsRecording(false)
+
+    recognition.onresult = (e: any) => {
+      const text = e.results[0][0].transcript
+      if (text) onChange((value ? value + ' ' : '') + text)
+    }
+
+    recognition.onerror = (e: any) => {
+      setIsRecording(false)
+      if (e.error !== 'aborted') {
+        toast.error(`Ошибка распознавания: ${e.error}`)
+      }
+    }
+
+    recognition.start()
   }
 
   useEffect(() => {
@@ -756,19 +713,17 @@ function HarveyInput({
         <div className="flex-shrink-0">
           <button
             type="button"
-            onClick={isRecording ? stopRecording : startRecording}
-            disabled={isStreaming || isTranscribing}
+            onClick={toggleRecording}
+            disabled={isStreaming}
             className="flex items-center justify-center w-8 h-8 rounded-lg transition-all mr-1"
             style={{
               backgroundColor: isRecording ? '#FEE2E2' : 'transparent',
               color: isRecording ? '#DC2626' : '#9CA3AF',
             }}
           >
-            {isTranscribing
-              ? <Loader2 className="w-4 h-4 animate-spin" />
-              : isRecording
-                ? <MicOff className="w-4 h-4" />
-                : <Mic className="w-4 h-4" />
+            {isRecording
+              ? <MicOff className="w-4 h-4" />
+              : <Mic className="w-4 h-4" />
             }
           </button>
         </div>
