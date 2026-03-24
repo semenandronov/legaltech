@@ -50,6 +50,7 @@ interface DocumentEditorContextChatProps {
   onApplyEdit?: (text: string) => void
   onInsertText?: (text: string) => void
   onReplaceText?: (original: string, newText: string) => boolean
+  onReplaceAllText?: (original: string, newText: string) => number
   onReplaceRange?: (from: number, to: number, text: string) => void
   onRunPlaybook?: () => void
   caseId?: string
@@ -505,6 +506,7 @@ export const DocumentEditorContextChat: React.FC<DocumentEditorContextChatProps>
   onApplyEdit,
   onInsertText: _onInsertText,
   onReplaceText,
+  onReplaceAllText,
   onReplaceRange,
   onRunPlaybook,
   caseId,
@@ -737,6 +739,14 @@ export const DocumentEditorContextChat: React.FC<DocumentEditorContextChatProps>
       onReplaceRange(msg.selectionRange.from, msg.selectionRange.to, edit.new_text)
       setStatus(messageId, edit.id, 'accepted')
       toast.success('Правка принята')
+    } else if (edit.replace_all && onReplaceAllText) {
+      const count = onReplaceAllText(edit.original_text, edit.new_text)
+      if (count > 0) {
+        setStatus(messageId, edit.id, 'accepted')
+        toast.success(`Правка принята (${count} замен)`)
+      } else {
+        toast.error('Не удалось найти фрагмент в документе')
+      }
     } else if (onReplaceText) {
       const success = onReplaceText(edit.original_text, edit.new_text)
       if (success) {
@@ -759,10 +769,12 @@ export const DocumentEditorContextChat: React.FC<DocumentEditorContextChatProps>
       return
     }
 
-    if (!onReplaceText) return
+    if (!onReplaceText && !onReplaceAllText) return
     let applied = 0
     for (const edit of pendingEdits) {
-      const success = onReplaceText(edit.original_text, edit.new_text)
+      const success = edit.replace_all && onReplaceAllText
+        ? onReplaceAllText(edit.original_text, edit.new_text) > 0
+        : onReplaceText?.(edit.original_text, edit.new_text) ?? false
       if (success) {
         setStatus(messageId, edit.id, 'accepted')
         applied++

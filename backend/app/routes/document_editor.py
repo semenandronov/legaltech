@@ -857,6 +857,7 @@ class StructuredEdit(BaseModel):
     context_before: str = ""
     context_after: str = ""
     found_in_document: bool = True
+    replace_all: bool = False  # True if original_text appears multiple times
 
 
 class DocumentChatResponse(BaseModel):

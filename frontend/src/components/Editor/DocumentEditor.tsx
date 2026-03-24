@@ -47,6 +47,7 @@ export interface DocumentEditorRef {
   getRisks: () => Array<{ id: string; from: number; to: number; level: 'high' | 'medium' | 'low'; description: string }>
   scrollToText: (text: string, nthOccurrence?: number) => boolean
   replaceText: (originalText: string, newText: string) => boolean
+  replaceAllText: (originalText: string, newText: string) => number
   replaceRange: (from: number, to: number, text: string) => void
   replaceMultipleTexts: (replacements: Array<{ original: string; replacement: string }>) => number
   setSelectionHighlight: (from: number, to: number) => void
@@ -451,6 +452,42 @@ export const DocumentEditor = forwardRef<DocumentEditorRef, DocumentEditorProps>
       // Don't call onChange directly — onUpdate fires automatically and calls debouncedOnChange.
       // A direct onChange call triggers a parent re-render that recreates the editor (toolbar disappears).
       return true
+    },
+    replaceAllText: (originalText: string, newText: string) => {
+      if (!editor || !originalText) return 0
+      // Reuse replaceMultipleTexts logic inline (same handle object, can't self-reference)
+      const docText = editor.state.doc.textContent
+      const charToPmPos = (ci: number): number => {
+        let charCount = 0; let foundPos = -1
+        editor.state.doc.descendants((node, pos) => {
+          if (foundPos !== -1) return false
+          if (node.isText && node.text) {
+            if (charCount + node.text.length > ci) { foundPos = pos + (ci - charCount); return false }
+            charCount += node.text.length
+          }
+          return true
+        })
+        return foundPos
+      }
+      const ops: { from: number; to: number }[] = []
+      let searchFrom = 0
+      while (true) {
+        const idx = docText.indexOf(originalText, searchFrom)
+        if (idx === -1) break
+        const from = charToPmPos(idx); const to = charToPmPos(idx + originalText.length)
+        if (from !== -1 && to !== -1) ops.push({ from, to })
+        searchFrom = idx + originalText.length
+      }
+      if (ops.length === 0) return 0
+      ops.sort((a, b) => b.from - a.from)
+      let tr = editor.state.tr
+      for (const { from, to } of ops) {
+        const marks = editor.state.doc.resolve(from).marks()
+        const node = marks.length > 0 ? editor.state.schema.text(newText, marks) : editor.state.schema.text(newText)
+        tr = tr.replaceWith(from, to, node)
+      }
+      editor.view.dispatch(tr); editor.commands.focus()
+      return ops.length
     },
     replaceRange: (from: number, to: number, text: string) => {
       if (!editor) return

@@ -632,6 +632,7 @@ const DocumentEditorPage = () => {
                 onApplyEdit={handleApplyEdit}
                 onInsertText={handleInsertText}
                 onReplaceText={handleReplaceTextInDocument}
+                onReplaceAllText={(orig, next) => editorRef.current?.replaceAllText(orig, next) ?? 0}
                 onRunPlaybook={handleOpenPlaybookModal}
                 caseId={caseId}
                 pendingPlaybookResult={null}

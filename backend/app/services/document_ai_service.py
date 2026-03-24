@@ -838,6 +838,13 @@ class DocumentAIService:
         suggestions: List[str] = []
         structured_edits: List[Dict[str, Any]] = []
 
+        def _count_occurrences(text: str) -> int:
+            """Count how many times text appears in the document (HTML + plain)."""
+            if not text or not document_content:
+                return 0
+            doc_plain = re.sub(r'<[^>]+>', '', document_content)
+            return max(document_content.count(text), doc_plain.count(text))
+
         if use_targeted:
             edit_block_pattern = r'```edit\s*\n([\s\S]*?)```'
             for block_match in re.finditer(edit_block_pattern, answer, re.DOTALL | re.IGNORECASE):
@@ -850,6 +857,7 @@ class DocumentAIService:
                     if original_text and new_text:
                         doc_plain = re.sub(r'<[^>]+>', '', document_content) if document_content else ""
                         found_in_doc = original_text in (document_content or "") or original_text in doc_plain
+                        occurrences = _count_occurrences(original_text)
                         structured_edits.append({
                             "id": f"edit-{uuid.uuid4().hex[:8]}",
                             "original_text": original_text,
@@ -857,6 +865,7 @@ class DocumentAIService:
                             "context_before": "",
                             "context_after": "",
                             "found_in_document": found_in_doc,
+                            "replace_all": occurrences > 1,
                         })
 
             # Fallback: LLM skipped code fences — parse raw НАЙТИ/ЗАМЕНИТЬ
@@ -871,6 +880,8 @@ class DocumentAIService:
                     if original_text and new_text:
                         doc_plain = re.sub(r'<[^>]+>', '', document_content) if document_content else ""
                         found_in_doc = original_text in (document_content or "") or original_text in doc_plain
+                        occurrences = _count_occurrences(original_text)
+                        occurrences = _count_occurrences(original_text)
                         structured_edits.append({
                             "id": f"edit-{uuid.uuid4().hex[:8]}",
                             "original_text": original_text,
@@ -878,6 +889,7 @@ class DocumentAIService:
                             "context_before": "",
                             "context_after": "",
                             "found_in_document": found_in_doc,
+                            "replace_all": occurrences > 1,
                         })
 
             # Strip all edit-format content from answer text

@@ -37,6 +37,7 @@ export interface StructuredEdit {
   context_before: string
   context_after: string
   found_in_document: boolean
+  replace_all?: boolean
 }
 
 export interface DocumentChatResponse {
