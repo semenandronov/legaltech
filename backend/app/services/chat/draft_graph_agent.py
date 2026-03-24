@@ -449,10 +449,13 @@ async def run_draft_graph(
     if state.get("error"):
         yield SSESerializer.error(f"Ошибка при генерации документа: {state['error']}")
     elif state.get("final_content"):
-        # Yield a special event that DraftHandler will intercept
-        yield SSESerializer.tool_call(
-            tool_name="_draft_content",
-            tool_input={"content": state["final_content"], "title": state["title"]},
-        )
+        # Internal marker intercepted by DraftHandler — not forwarded to client
+        import json as _json
+        payload = _json.dumps({
+            "type": "_draft_content",
+            "content": state["final_content"],
+            "title": state["title"],
+        }, ensure_ascii=False)
+        yield f"data: {payload}\n\n"
     else:
         yield SSESerializer.error("Документ не был сгенерирован")

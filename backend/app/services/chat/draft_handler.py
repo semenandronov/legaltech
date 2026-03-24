@@ -64,12 +64,12 @@ class DraftHandler:
                 if '"_draft_content"' in sse_event:
                     try:
                         import json
-                        data = json.loads(sse_event.split("data: ", 1)[1])
-                        payload = data.get("tool_input", {})
-                        content = payload.get("content", "")
-                        final_title = payload.get("title", document_title) or document_title
-                    except Exception:
-                        pass
+                        raw = sse_event.split("data: ", 1)[1].strip()
+                        data = json.loads(raw)
+                        content = data.get("content", "")
+                        final_title = data.get("title", document_title) or document_title
+                    except Exception as parse_err:
+                        logger.warning(f"[DraftHandler] could not parse _draft_content: {parse_err}")
                     continue  # don't forward this internal event to client
                 yield sse_event
 
