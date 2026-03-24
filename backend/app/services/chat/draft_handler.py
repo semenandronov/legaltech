@@ -114,10 +114,11 @@ class DraftHandler:
             logger.error(f"[DraftHandler] Error: {e}", exc_info=True)
             yield SSESerializer.error(f"Ошибка при создании документа: {str(e)}")
 
-    def _load_case_context(self, case_id: str) -> str:
-        """Загрузить контекст дела: название, описание и тексты документов."""
+    def _load_case_context(self, case_id: str, query: str) -> str:
+        """Загрузить релевантный контекст дела через RAG (топ-5 чанков по запросу)."""
         try:
-            from app.models.case import Case, File as FileModel
+            from app.models.case import Case
+            from app.services.rag_service import RAGService
 
             case = self.db.query(Case).filter(Case.id == case_id).first()
             if not case:
@@ -131,27 +132,24 @@ class DraftHandler:
             if case.description:
                 parts.append(f"Описание дела: {case.description}")
 
-            # Документы дела
-            files = (
-                self.db.query(FileModel)
-                .filter(FileModel.case_id == case_id)
-                .order_by(FileModel.filename)
-                .all()
-            )
-
-            if files:
-                parts.append("\nДОКУМЕНТЫ ДЕЛА:")
-                total_chars = 0
-                char_limit = 20_000  # суммарный лимит на все документы
-                for f in files:
-                    if not f.original_text or not f.original_text.strip():
-                        continue
-                    available = char_limit - total_chars
-                    if available <= 0:
-                        break
-                    snippet = f.original_text[:available]
-                    parts.append(f"--- {f.filename} ---\n{snippet}")
-                    total_chars += len(snippet)
+            # Семантический поиск — берём только релевантные чанки
+            try:
+                rag = RAGService()
+                chunks = rag.retrieve_context(
+                    case_id=case_id,
+                    query=query,
+                    k=5,
+                    use_hybrid=True,
+                    db=self.db,
+                )
+                if chunks:
+                    parts.append("\nРЕЛЕВАНТНЫЕ ФРАГМЕНТЫ ИЗ ДОКУМЕНТОВ ДЕЛА:")
+                    for i, chunk in enumerate(chunks, 1):
+                        source = chunk.metadata.get("source", "")
+                        parts.append(f"[{i}] {source}\n{chunk.page_content[:1500]}")
+                    logger.info(f"[DraftHandler] RAG: {len(chunks)} chunks, ~{sum(len(c.page_content) for c in chunks)} chars")
+            except Exception as e:
+                logger.warning(f"[DraftHandler] RAG search failed, skipping: {e}")
 
             return "\n".join(parts)
 
@@ -174,10 +172,10 @@ class DraftHandler:
 
             llm = create_legal_llm(temperature=0.2)
 
-            # Контекст дела
+            # Контекст дела — релевантные фрагменты через RAG
             case_context = ""
             if case_id:
-                raw = self._load_case_context(case_id)
+                raw = self._load_case_context(case_id, f"{title} {question}")
                 if raw:
                     case_context = f"\n\nКОНТЕКСТ ДЕЛА (используй для заполнения реквизитов и деталей):\n{raw}"
                     logger.info(f"[DraftHandler] Loaded case context: {len(raw)} chars")
