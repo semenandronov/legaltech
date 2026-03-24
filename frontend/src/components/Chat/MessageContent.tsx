@@ -71,9 +71,21 @@ function injectCitations(
   })
 }
 
+/** Extract plain text from React children (used to read table header labels). */
+function extractChildText(children: React.ReactNode): string {
+  if (typeof children === 'string') return children
+  if (typeof children === 'number') return String(children)
+  if (Array.isArray(children)) return children.map(extractChildText).join('')
+  if (React.isValidElement(children) && (children.props as any)?.children != null)
+    return extractChildText((children.props as any).children)
+  return ''
+}
+
 /**
  * Build markdown component overrides that inject inline citations.
  * Every text-containing element processes its children for citation markers.
+ * Tables are rendered as labelled text blocks (not a visual grid) while
+ * citation injection still works on every cell.
  */
 function buildMarkdownComponents(
   sources: SourceInfo[],
@@ -82,6 +94,11 @@ function buildMarkdownComponents(
   // Wrapper: inject citations into children
   const w = (children: React.ReactNode) =>
     injectCitations(children, sources, onCitationClick)
+
+  // Mutable state shared across all table-component renders for a single message.
+  // react-markdown renders synchronously top-down, so thead/th populate headers
+  // before tbody/td reads them.
+  const tbl = { headers: [] as string[], col: 0, inHead: false }
 
   return {
     p: ({ children }) => (
@@ -161,38 +178,56 @@ function buildMarkdownComponents(
         {w(children)}
       </blockquote>
     ),
-    table: ({ children }) => (
-      <div style={{ margin: '24px 0', overflowX: 'auto', borderRadius: '8px', border: '1px solid rgba(0, 0, 0, 0.12)', display: 'block', boxShadow: '0 1px 3px rgba(0, 0, 0, 0.05)' }}>
-        <table style={{ borderCollapse: 'collapse', width: '100%', display: 'table', minWidth: '100%', backgroundColor: 'transparent' }}>
+    // ── Table rendered as labelled text blocks, not a visual grid ──────────
+    table: ({ children }) => {
+      tbl.headers = []; tbl.col = 0; tbl.inHead = false
+      return (
+        <div style={{ margin: '20px 0' }}>{children}</div>
+      )
+    },
+    thead: ({ children }) => {
+      tbl.inHead = true; tbl.headers = []
+      // Render into a hidden node so th components fire and populate tbl.headers
+      return <div style={{ display: 'none' }}>{children}</div>
+    },
+    tbody: ({ children }) => {
+      tbl.inHead = false
+      return <>{children}</>
+    },
+    tr: ({ children }) => {
+      if (tbl.inHead) return null
+      tbl.col = 0
+      return (
+        <div style={{
+          borderLeft: '3px solid rgba(0,0,0,0.12)',
+          paddingLeft: '14px',
+          margin: '14px 0',
+          display: 'flex',
+          flexDirection: 'column',
+          gap: '6px',
+        }}>
           {children}
-        </table>
-      </div>
-    ),
-    thead: ({ children }) => (
-      <thead style={{ display: 'table-header-group', backgroundColor: 'rgba(0, 0, 0, 0.04)' }}>
-        {children}
-      </thead>
-    ),
-    tbody: ({ children }) => (
-      <tbody style={{ display: 'table-row-group' }}>
-        {children}
-      </tbody>
-    ),
-    tr: ({ children }) => (
-      <tr style={{ display: 'table-row', borderBottom: '1px solid rgba(0, 0, 0, 0.08)' }}>
-        {children}
-      </tr>
-    ),
-    th: ({ children }) => (
-      <th style={{ border: '1px solid rgba(0, 0, 0, 0.12)', padding: '14px 18px', textAlign: 'left', fontWeight: 600, backgroundColor: 'rgba(0, 0, 0, 0.05)', display: 'table-cell', verticalAlign: 'middle', fontSize: '0.95em', color: 'inherit' }}>
-        {w(children)}
-      </th>
-    ),
-    td: ({ children }) => (
-      <td style={{ border: '1px solid rgba(0, 0, 0, 0.1)', padding: '14px 18px', display: 'table-cell', verticalAlign: 'top', lineHeight: 1.7 }}>
-        {w(children)}
-      </td>
-    ),
+        </div>
+      )
+    },
+    th: ({ children }) => {
+      tbl.headers.push(extractChildText(children))
+      return null
+    },
+    td: ({ children }) => {
+      const label = tbl.headers[tbl.col] ?? ''
+      tbl.col++
+      return (
+        <div style={{ lineHeight: 1.7, display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
+          {label && (
+            <span style={{ fontWeight: 600, flexShrink: 0, color: 'inherit' }}>
+              {label}:
+            </span>
+          )}
+          <span style={{ color: 'inherit' }}>{w(children)}</span>
+        </div>
+      )
+    },
     hr: () => (
       <hr style={{ border: 'none', borderTop: '2px solid rgba(0, 0, 0, 0.1)', margin: '32px 0', display: 'block' }} />
     ),
