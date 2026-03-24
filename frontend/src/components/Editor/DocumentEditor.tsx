@@ -85,9 +85,13 @@ export const DocumentEditor = forwardRef<DocumentEditorRef, DocumentEditorProps>
     }
   }, [onInsertText])
   
+  // Track the last HTML that came FROM the editor (to avoid syncing it back via useEffect)
+  const lastEditorContentRef = useRef<string>('')
+
   // Debounced onChange to prevent excessive re-renders during typing
   const debouncedOnChange = useDebouncedCallback(
     (html: string) => {
+      lastEditorContentRef.current = html
       onChange(html)
     },
     300 // 300ms debounce
@@ -174,10 +178,12 @@ export const DocumentEditor = forwardRef<DocumentEditorRef, DocumentEditorProps>
     },
   })
 
-  // Update editor content when prop changes (e.g., when loading a document)
+  // Update editor content when prop changes externally (e.g., loading a document, restoring a version).
+  // Skip if the new content is what the editor itself just produced — avoids re-setting on undo/redo.
   useEffect(() => {
-    if (editor && content !== editor.getHTML()) {
+    if (editor && content !== editor.getHTML() && content !== lastEditorContentRef.current) {
       editor.commands.setContent(content, false)
+      lastEditorContentRef.current = content
     }
   }, [content, editor])
 

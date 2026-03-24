@@ -790,6 +790,7 @@ class DocumentAIService:
                 "```\n\n"
                 "ВАЖНО:\n"
                 "- В НАЙТИ: пиши ТОЧНЫЙ текст из документа (не перефразируй).\n"
+                "- Если нужно заменить имя, фамилию или короткое слово — в НАЙТИ указывай ТОЛЬКО само слово/фамилию, без окружающего контекста. Это позволит заменить все вхождения сразу.\n"
                 "- В ЗАМЕНИТЬ: только новый текст, без пояснений.\n"
                 "- Один блок — одно изменение.\n"
                 "- Если текст не найден в документе — напиши об этом текстом."
@@ -880,7 +881,6 @@ class DocumentAIService:
                     if original_text and new_text:
                         doc_plain = re.sub(r'<[^>]+>', '', document_content) if document_content else ""
                         found_in_doc = original_text in (document_content or "") or original_text in doc_plain
-                        occurrences = _count_occurrences(original_text)
                         occurrences = _count_occurrences(original_text)
                         structured_edits.append({
                             "id": f"edit-{uuid.uuid4().hex[:8]}",
