@@ -114,6 +114,51 @@ class DraftHandler:
             logger.error(f"[DraftHandler] Error: {e}", exc_info=True)
             yield SSESerializer.error(f"Ошибка при создании документа: {str(e)}")
 
+    def _load_case_context(self, case_id: str) -> str:
+        """Загрузить контекст дела: название, описание и тексты документов."""
+        try:
+            from app.models.case import Case, File as FileModel
+
+            case = self.db.query(Case).filter(Case.id == case_id).first()
+            if not case:
+                return ""
+
+            parts: List[str] = []
+
+            # Название и описание дела
+            if case.title:
+                parts.append(f"Название дела: {case.title}")
+            if case.description:
+                parts.append(f"Описание дела: {case.description}")
+
+            # Документы дела
+            files = (
+                self.db.query(FileModel)
+                .filter(FileModel.case_id == case_id)
+                .order_by(FileModel.filename)
+                .all()
+            )
+
+            if files:
+                parts.append("\nДОКУМЕНТЫ ДЕЛА:")
+                total_chars = 0
+                char_limit = 20_000  # суммарный лимит на все документы
+                for f in files:
+                    if not f.original_text or not f.original_text.strip():
+                        continue
+                    available = char_limit - total_chars
+                    if available <= 0:
+                        break
+                    snippet = f.original_text[:available]
+                    parts.append(f"--- {f.filename} ---\n{snippet}")
+                    total_chars += len(snippet)
+
+            return "\n".join(parts)
+
+        except Exception as e:
+            logger.warning(f"[DraftHandler] Failed to load case context: {e}")
+            return ""
+
     async def _generate_document_content(
         self,
         question: str,
@@ -129,17 +174,24 @@ class DraftHandler:
 
             llm = create_legal_llm(temperature=0.2)
 
+            # Контекст дела
+            case_context = ""
+            if case_id:
+                raw = self._load_case_context(case_id)
+                if raw:
+                    case_context = f"\n\nКОНТЕКСТ ДЕЛА (используй для заполнения реквизитов и деталей):\n{raw}"
+                    logger.info(f"[DraftHandler] Loaded case context: {len(raw)} chars")
+
             # Собираем контекст шаблона
             template_context = ""
             if template_file_content:
-                template_context = f"\n\nШАБЛОН ДОКУМЕНТА (используй его как основу):\n{template_file_content[:5000]}"
+                template_context = f"\n\nШАБЛОН ДОКУМЕНТА (используй его как основу структуры):\n{template_file_content[:5000]}"
             elif template_file_id:
-                # Загружаем шаблон из БД
                 try:
                     from app.models.case import File as FileModel
                     file_record = self.db.query(FileModel).filter(FileModel.id == template_file_id).first()
-                    if file_record and file_record.content:
-                        template_context = f"\n\nШАБЛОН ДОКУМЕНТА (используй его как основу):\n{file_record.content[:5000]}"
+                    if file_record and file_record.original_text:
+                        template_context = f"\n\nШАБЛОН ДОКУМЕНТА (используй его как основу структуры):\n{file_record.original_text[:5000]}"
                 except Exception as e:
                     logger.warning(f"[DraftHandler] Failed to load template file: {e}")
 
@@ -147,14 +199,15 @@ class DraftHandler:
 
 НАЗВАНИЕ: {title}
 ОПИСАНИЕ: {question}
+{case_context}
 {template_context}
 
 ИНСТРУКЦИИ:
 - Создай профессиональный юридический документ в формате HTML
 - Используй стандартную структуру для данного типа документа
 - Включи все необходимые разделы
-- Поля для заполнения отметь как [ЗАПОЛНИТЬ]
-- Даты, суммы и имена которые неизвестны — отметь как [ЗАПОЛНИТЬ]
+- Если в контексте дела есть имена сторон, реквизиты, суммы, даты — используй их в документе
+- Поля, данные для которых отсутствуют в контексте, отметь как [ЗАПОЛНИТЬ]
 - Используй HTML-теги для форматирования (h1, h2, p, ul, li, table и т.д.)
 
 Ответь только HTML-кодом документа без дополнительных комментариев."""
