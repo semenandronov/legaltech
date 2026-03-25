@@ -180,13 +180,43 @@ function renderInlineDiff(original: string, newText: string) {
 // ==================== STRUCTURED EDITS CARD ====================
 type EditStatus = 'accepted' | 'rejected'
 
+/** Extract plain text from HTML, decode common entities */
+function htmlToPlain(html: string): string {
+  return html
+    .replace(/<[^>]+>/g, '')
+    .replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>')
+    .replace(/&nbsp;/g, ' ').replace(/&quot;/g, '"')
+}
+
+/** Find all occurrences of searchText in documentContent, returning context snippets */
+function findOccurrencesWithContext(
+  searchText: string,
+  documentContent: string,
+  contextLen = 55
+): Array<{ before: string; after: string }> {
+  if (!searchText || !documentContent) return []
+  const plain = htmlToPlain(documentContent)
+  const results: Array<{ before: string; after: string }> = []
+  let start = 0
+  while (true) {
+    const idx = plain.indexOf(searchText, start)
+    if (idx === -1) break
+    const before = plain.slice(Math.max(0, idx - contextLen), idx)
+    const after = plain.slice(idx + searchText.length, idx + searchText.length + contextLen)
+    results.push({ before, after })
+    start = idx + searchText.length
+  }
+  return results
+}
+
 const StructuredEditsBlock: React.FC<{
   edits: StructuredEdit[]
   statuses: Record<string, EditStatus>
+  documentContent?: string
   onAccept: (edit: StructuredEdit) => void
   onAcceptAll: () => void
   onDismiss: (editId: string) => void
-}> = ({ edits, statuses, onAccept, onAcceptAll, onDismiss }) => {
+}> = ({ edits, statuses, documentContent, onAccept, onAcceptAll, onDismiss }) => {
   const pendingEdits = edits.filter(e => e.found_in_document !== false && !statuses[e.id])
 
   return (
@@ -224,6 +254,11 @@ const StructuredEditsBlock: React.FC<{
       {edits.map((edit) => {
         const isFound = edit.found_in_document !== false
         const status = statuses[edit.id]
+        // Find all occurrences to show context around each one
+        const occurrences = (edit.replace_all && documentContent)
+          ? findOccurrencesWithContext(edit.original_text, documentContent)
+          : []
+        const occurrenceCount = occurrences.length || (isFound ? 1 : 0)
 
         return (
           <div
@@ -231,15 +266,33 @@ const StructuredEditsBlock: React.FC<{
             className="rounded-xl border overflow-hidden"
             style={{ borderColor: '#e5e7eb', background: '#f5f5f5' }}
           >
-            <div className="px-3 pt-2.5 pb-1.5">
-              {/* Inline diff row */}
-              <div className="px-2 py-2 rounded-md" style={{ background: 'rgba(0,0,0,0.03)', lineHeight: '1.6' }}>
-                {renderInlineDiff(edit.original_text, edit.new_text)}
-              </div>
+            <div className="px-3 pt-2.5 pb-1.5 space-y-1.5">
+              {/* Per-occurrence context rows, or single diff row */}
+              {occurrences.length > 0 ? (
+                occurrences.map((occ, i) => (
+                  <div key={i} className="px-2 py-2 rounded-md text-xs leading-relaxed break-words" style={{ background: 'rgba(0,0,0,0.03)', lineHeight: '1.7' }}>
+                    {occ.before && <span style={{ color: '#9ca3af' }}>…{occ.before}</span>}
+                    <del style={{ color: '#dc2626', textDecorationColor: '#dc2626' }}>{edit.original_text}</del>
+                    <span style={{ color: '#2563eb', fontWeight: 500 }}>{edit.new_text}</span>
+                    {occ.after && <span style={{ color: '#9ca3af' }}>{occ.after}…</span>}
+                  </div>
+                ))
+              ) : (
+                <div className="px-2 py-2 rounded-md" style={{ background: 'rgba(0,0,0,0.03)', lineHeight: '1.6' }}>
+                  {renderInlineDiff(edit.original_text, edit.new_text)}
+                </div>
+              )}
               {!isFound && !status && (
                 <div className="text-xs text-amber-600 mt-1.5">⚠ Фрагмент не найден в документе</div>
               )}
             </div>
+
+            {/* Occurrence count label */}
+            {occurrenceCount > 1 && !status && (
+              <div className="px-3 pb-1 text-xs" style={{ color: '#6b7280' }}>
+                {occurrenceCount} вхождени{occurrenceCount === 1 ? 'е' : occurrenceCount < 5 ? 'я' : 'й'} — будут заменены все
+              </div>
+            )}
 
             {/* Footer: status badge or action buttons */}
             <div className="flex items-center justify-end gap-2 px-3 pb-2.5 pt-1 border-t" style={{ borderColor: '#ebebeb' }}>
@@ -911,6 +964,7 @@ export const DocumentEditorContextChat: React.FC<DocumentEditorContextChatProps>
                   <StructuredEditsBlock
                     edits={allEdits}
                     statuses={editStatuses[message.id] || {}}
+                    documentContent={documentContent}
                     onAccept={(edit) => handleAcceptEdit(message.id, edit)}
                     onAcceptAll={() => handleAcceptAllEdits(message.id, allEdits)}
                     onDismiss={(editId) => handleDismissEdit(message.id, editId)}

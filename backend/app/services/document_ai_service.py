@@ -718,6 +718,10 @@ class DocumentAIService:
         targeted_keywords = [
             " на ", "замени", "поменяй", "вместо", "заменить на",
             "поставь", "впиши", "укажи", "обнови значение",
+            "должен быть", "должна быть", "должно быть",
+            "исправь", "исправить", "измени", "изменить",
+            "фио", "фамили", "замените", "поменяйте",
+            "сделай", "сделайте", "укажите", "поставьте", "впишите",
         ]
         has_file_reference = "[файл:" in question.lower() or "[file:" in question.lower()
         # selected_text forces targeted mode — user is working on a specific fragment
