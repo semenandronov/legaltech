@@ -245,26 +245,15 @@ const StatusBadge: React.FC<{ status: EditStatus }> = ({ status }) =>
     ? <div className="flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 rounded-lg border" style={{ borderColor: '#d1fae5', color: '#10b981', background: 'rgba(16,185,129,0.07)' }}><Check className="w-3 h-3" />Принято</div>
     : <div className="flex items-center gap-1.5 text-xs font-medium px-3 py-1.5 rounded-lg border" style={{ borderColor: '#fee2e2', color: '#ef4444', background: 'rgba(239,68,68,0.05)' }}><X className="w-3 h-3" />Отклонено</div>
 
-const StructuredEditsBlock: React.FC<{
-  edits: StructuredEdit[]
-  statuses: Record<string, EditStatus>
-  documentContent?: string
-  onAccept: (edit: StructuredEdit) => void
-  onAcceptAll: () => void
-  onDismiss: (editId: string) => void
-}> = ({ edits, statuses, documentContent, onAccept, onAcceptAll, onDismiss }) => {
-  // Local state for virtual per-occurrence cards (keyed by `${editId}-${occIdx}`)
-  const [occStatuses, setOccStatuses] = useState<Record<string, EditStatus>>({})
+type Item =
+  | { kind: 'single'; edit: StructuredEdit }
+  | { kind: 'virtual'; edit: StructuredEdit; occ: { before: string; after: string }; virtualId: string }
 
-  type Item =
-    | { kind: 'single'; edit: StructuredEdit }
-    | { kind: 'virtual'; edit: StructuredEdit; occ: { before: string; after: string }; virtualId: string }
-
-  // Expand replace_all edits with >1 occurrences into virtual per-occurrence items
-  const items: Item[] = edits.flatMap((edit): Item[] => {
+function buildItems(edits: StructuredEdit[], docContent: string | undefined): Item[] {
+  return edits.flatMap((edit): Item[] => {
     const isFound = edit.found_in_document !== false
-    const occs = (edit.replace_all && isFound && documentContent)
-      ? findOccurrencesWithContext(edit.original_text, documentContent)
+    const occs = (edit.replace_all && isFound && docContent)
+      ? findOccurrencesWithContext(edit.original_text, docContent)
       : []
     if (occs.length > 1) {
       return occs.map((occ, i) => ({
@@ -276,6 +265,29 @@ const StructuredEditsBlock: React.FC<{
     }
     return [{ kind: 'single' as const, edit }]
   })
+}
+
+const StructuredEditsBlock: React.FC<{
+  edits: StructuredEdit[]
+  statuses: Record<string, EditStatus>
+  documentContent?: string
+  onAccept: (edit: StructuredEdit) => void
+  onAcceptAll: () => void
+  onDismiss: (editId: string) => void
+}> = ({ edits, statuses, documentContent, onAccept, onAcceptAll, onDismiss }) => {
+  // Local state for virtual per-occurrence cards (keyed by `${editId}-${occIdx}`)
+  const [occStatuses, setOccStatuses] = useState<Record<string, EditStatus>>({})
+
+  // Compute items ONCE when edits change — NOT when documentContent changes.
+  // This prevents re-indexing occurrences after each replacement (which would
+  // shift IDs and incorrectly mark remaining occurrences as already accepted).
+  const [items, setItems] = useState<Item[]>(() => buildItems(edits, documentContent))
+  const prevEditsRef = useRef(edits)
+  if (edits !== prevEditsRef.current) {
+    prevEditsRef.current = edits
+    setItems(buildItems(edits, documentContent))
+    setOccStatuses({})
+  }
 
   const pendingCount = items.filter(item =>
     item.kind === 'virtual'
