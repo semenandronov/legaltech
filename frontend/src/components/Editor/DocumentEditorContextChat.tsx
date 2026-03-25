@@ -1257,7 +1257,6 @@ export const DocumentEditorContextChat: React.FC<DocumentEditorContextChatProps>
                   backgroundColor: isRecording ? '#FEE2E2' : 'transparent',
                   color: isRecording ? '#DC2626' : '#9ca3af',
                 }}
-                title={isRecording ? 'Остановить запись' : 'Голосовой ввод'}
               >
                 {isRecording ? <MicOff className="w-4 h-4" /> : <Mic className="w-4 h-4" />}
               </button>

@@ -719,7 +719,6 @@ const VoiceMicButton: React.FC<{ disabled?: boolean }> = ({ disabled }) => {
       disabled={disabled}
       className="flex items-center justify-center w-8 h-8 rounded-lg transition-all mr-1 disabled:opacity-40"
       style={{ backgroundColor: isRecording ? '#FEE2E2' : 'transparent', color: isRecording ? '#DC2626' : '#9CA3AF' }}
-      title={isRecording ? 'Остановить запись' : 'Голосовой ввод'}
     >
       {isRecording ? <MicOff className="w-4 h-4" /> : <Mic className="w-4 h-4" />}
     </button>
