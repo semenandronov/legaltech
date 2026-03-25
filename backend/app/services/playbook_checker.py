@@ -1588,6 +1588,13 @@ class PlaybookChecker:
             prompt = ChatPromptTemplate.from_template(HARVEY_RULE_PROMPT)
             chain = prompt | self.llm
 
+            # Phase 0 found no exact phrase matches, so the semantic chunk in clause.text
+            # may be wrong (e.g. PGVector returned a force-majeure section for a
+            # "property address" rule).  Prefer the full document text so the LLM can
+            # find the relevant clause itself.  Fall back to clause.text only when no
+            # document text is available.
+            clause_text_for_llm = (document_text[:12000] if document_text else clause.text)
+
             response = await chain.ainvoke(
                 {
                     "rule_name": rule.rule_name,
@@ -1597,7 +1604,7 @@ class PlaybookChecker:
                     "standard_position": standard_position,
                     "fallback_positions": json.dumps(fallback_positions, ensure_ascii=False),
                     "unacceptable_phrases": json.dumps(unacceptable_phrases, ensure_ascii=False),
-                    "clause_text": clause.text,
+                    "clause_text": clause_text_for_llm,
                 }
             )
 
