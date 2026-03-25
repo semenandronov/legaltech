@@ -185,7 +185,7 @@ COT_CLASSIFICATION_PROMPT = """Ты - эксперт по анализу юри�
   "classification": "standard|fallback|unacceptable|unknown|no_clause",
   "status": "passed|violation|warning|not_found",
   "confidence": 0.0,
-  "found_excerpt": "ТОЧНАЯ цитата из текста — самый короткий фрагмент (до 150 символов), однозначно идентифицирующий найденную формулировку. Только суть. Если не найден — пустая строка.",
+  "found_excerpt": "ДОСЛОВНАЯ цитата из ДОГОВОРА (не из стандартной позиции!) — скопируй точные слова из поля ТЕКСТ ДЛЯ АНАЛИЗА, самый короткий фрагмент (до 150 символов), однозначно идентифицирующий найденную формулировку. Если текст договора содержит 'двадцатого июня' — пиши именно 'двадцатого июня', а не '20 июня'. Если не найден — пустая строка.",
   "full_clause_to_replace": "ПОЛНЫЙ текст пункта из документа, который нужно заменить целиком (весь проблемный абзац/предложение, не фрагмент). Это то, что будет удалено при нажатии 'Применить'. Если пункт не найден или статус passed — пустая строка.",
   "issue_description": "кратко, в чём проблема (или почему всё нормально)",
   "reasoning": "краткий итог анализа на русском языке"
@@ -917,8 +917,10 @@ class PlaybookChecker:
         unknown_occurrences: List[Dict[str, Any]] = []
 
         for anchor, known_vars in anchor_var_pairs:
+            # Allow non-letter characters between anchor and name (e.g. ": _____ /")
+            # but stop at any Cyrillic/Latin letter to avoid skipping across words.
             pattern = re.compile(
-                r'\b' + re.escape(anchor) + r'\s+([А-ЯA-Za-z][а-яёa-z]{2,})',
+                r'\b' + re.escape(anchor) + r'[^А-Яа-яёЁA-Za-z]{0,40}([А-Я][а-яёЁ]{2,})',
                 re.IGNORECASE,
             )
             for m in pattern.finditer(document_text):
@@ -1737,15 +1739,16 @@ class PlaybookChecker:
         raw_clause_text = clause.text
 
         def _extract_short_excerpt(text: str, anchor: str, window: int = 80) -> str:
-            """Find anchor word(s) in text and return a tight context window."""
+            """Find anchor word(s) in text and return a context window around the match."""
             # Try each word of the anchor phrase, longest first
-            words = [w.rstrip(".,;:()") for w in anchor.split() if len(w) > 2]
+            words = [w.rstrip(".,;:()\"'") for w in anchor.split() if len(w) > 3]
             words.sort(key=len, reverse=True)
             text_lower = text.lower()
             for word in words:
                 pos = text_lower.find(word.lower())
                 if pos != -1:
-                    start = pos
+                    # Return context centered on the found word, not just forward
+                    start = max(0, pos - window // 2)
                     end = min(len(text), pos + window)
                     return text[start:end].strip()
             return ""
@@ -1843,23 +1846,37 @@ class PlaybookChecker:
             found_text_for_result = post_occurrences[0]["phrase"]
         else:
             # Accept LLM excerpt only if it's a precise verbatim quote (not an abbreviation with ...)
+            # AND it actually exists verbatim in the document (otherwise it's a hallucination —
+            # e.g. LLM converts "двадцатого" to "20" and returns the standard phrase).
+            excerpt_in_doc = (
+                document_text and llm_found_excerpt and llm_found_excerpt in document_text
+            ) or (
+                raw_clause_text and llm_found_excerpt and llm_found_excerpt in raw_clause_text
+            )
             excerpt_is_precise = (
                 llm_found_excerpt
                 and 3 < len(llm_found_excerpt) <= 150
                 and "..." not in llm_found_excerpt
                 and "…" not in llm_found_excerpt
                 and llm_found_excerpt.count("\n") <= 1
+                and excerpt_in_doc
             )
             if excerpt_is_precise:
                 found_text_for_result = llm_found_excerpt
             elif standard_position:
+                # Try to find the most relevant sentence in the actual clause text
                 found_text_for_result = (
                     _extract_short_excerpt(raw_clause_text, standard_position)
                     or _extract_short_excerpt(document_text, standard_position)
+                    # Last resort: first meaningful sentence from the actual document clause
+                    or re.split(r'(?<=[.!?])\s+', raw_clause_text.strip())[0][:200]
                     or raw_clause_text[:150]
                 )
             else:
-                found_text_for_result = raw_clause_text[:150]
+                found_text_for_result = (
+                    re.split(r'(?<=[.!?])\s+', raw_clause_text.strip())[0][:200]
+                    or raw_clause_text[:150]
+                )
 
         # CoT full-clause override: if the LLM returned the full problematic clause text
         # and it's verbatim in the document, use it so "Применить" replaces the entire
