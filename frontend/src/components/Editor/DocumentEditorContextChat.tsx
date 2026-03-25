@@ -9,7 +9,7 @@ import { Loader } from "@/components/ai-elements/loader"
 import {
   Check, Edit3, HelpCircle, FileText,
   Sparkles, ListPlus, ArrowRight, ChevronDown, ChevronUp, X, Paperclip,
-  BookOpen, ChevronRight, Scissors
+  BookOpen, ChevronRight, Scissors, Mic, MicOff
 } from "lucide-react"
 
 // ==================== TYPES ====================
@@ -617,9 +617,38 @@ export const DocumentEditorContextChat: React.FC<DocumentEditorContextChatProps>
   // Per-message edit statuses: { messageId: { editId: 'accepted' | 'rejected' } }
   const [editStatuses, setEditStatuses] = useState<Record<string, Record<string, EditStatus>>>({})
   const [modeDropdownPos, setModeDropdownPos] = useState<{ top: number; left: number } | null>(null)
+  const [isRecording, setIsRecording] = useState(false)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const modeDropdownRef = useRef<HTMLDivElement>(null)
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const recognitionRef = useRef<any>(null)
+
+  const toggleRecording = () => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const SR = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition
+    if (!SR) { toast.error('Голосовой ввод не поддерживается в этом браузере. Используйте Chrome.'); return }
+    if (isRecording) { recognitionRef.current?.stop(); return }
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const recognition: any = new SR()
+    recognitionRef.current = recognition
+    recognition.lang = 'ru-RU'
+    recognition.continuous = false
+    recognition.interimResults = false
+    recognition.onstart = () => setIsRecording(true)
+    recognition.onend = () => setIsRecording(false)
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    recognition.onresult = (e: any) => {
+      const text = e.results[0][0].transcript
+      if (text) setInputValue(prev => prev ? `${prev} ${text}` : text)
+    }
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    recognition.onerror = (e: any) => {
+      setIsRecording(false)
+      if (e.error !== 'aborted') toast.error(`Ошибка распознавания: ${e.error}`)
+    }
+    recognition.start()
+  }
   const modeDropdownMenuRef = useRef<HTMLDivElement>(null)
   const modeButtonRef = useRef<HTMLButtonElement>(null)
 
@@ -1218,6 +1247,20 @@ export const DocumentEditorContextChat: React.FC<DocumentEditorContextChatProps>
                   <Sparkles className="w-4 h-4" />
                 </button>
               </div>
+              {/* Mic */}
+              <button
+                type="button"
+                onClick={toggleRecording}
+                disabled={isLoading}
+                className="w-8 h-8 flex items-center justify-center rounded-xl transition-all disabled:opacity-30"
+                style={{
+                  backgroundColor: isRecording ? '#FEE2E2' : 'transparent',
+                  color: isRecording ? '#DC2626' : '#9ca3af',
+                }}
+                title={isRecording ? 'Остановить запись' : 'Голосовой ввод'}
+              >
+                {isRecording ? <MicOff className="w-4 h-4" /> : <Mic className="w-4 h-4" />}
+              </button>
               {/* Send */}
               <button
                 type="button"

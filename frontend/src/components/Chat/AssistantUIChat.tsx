@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef, useCallback, forwardRef, useImperativeHandle } from 'react'
+import { toast } from 'sonner'
 import { useParams } from 'react-router-dom'
 import { getApiUrl, getDocuments, getDocumentContent } from '@/services/api'
 import { logger } from '@/lib/logger'
@@ -38,8 +39,8 @@ import {
 import { Loader } from '../ai-elements/loader'
 import DocumentPreviewSheet from './DocumentPreviewSheet'
 import { SourceInfo } from '@/services/api'
-import { useOptionalProviderAttachments } from '../ai-elements/prompt-input'
-import { Plus, Check, FileText, X, MessageCircleQuestion, Pencil, Square } from 'lucide-react'
+import { useOptionalProviderAttachments, usePromptInputController } from '../ai-elements/prompt-input'
+import { Plus, Check, FileText, X, MessageCircleQuestion, Pencil, Square, Mic, MicOff } from 'lucide-react'
 import type { ExtendedFileUIPart } from '../ai-elements/prompt-input'
 import { EditSuggestionsList } from '../Editor/EditSuggestionCard'
 import type { StructuredEdit } from '@/services/documentEditorApi'
@@ -622,29 +623,32 @@ const PromptInputWithDrop = ({
                   style={{ paddingTop: 4, paddingBottom: 4 }}
                 />
               </div>
-              {isLoading ? (
-                <button
-                  type="button"
-                  onClick={onStop}
-                  className="rounded-xl h-10 w-10 p-0 flex items-center justify-center shrink-0 transition-all duration-150 border-2 border-gray-300 hover:border-red-400 hover:bg-red-50 group"
-                  style={{ backgroundColor: 'var(--color-bg-primary)' }}
-                  aria-label="Остановить генерацию"
-                  title="Остановить генерацию"
-                >
-                  <Square className="w-3.5 h-3.5 text-gray-500 group-hover:text-red-500 transition-colors" fill="currentColor" />
-                </button>
-              ) : (
-                <PromptInputSubmit
-                  variant="default"
-                  className="rounded-xl h-10 w-10 p-0 flex items-center justify-center shrink-0 transition-all duration-150 disabled:opacity-50 disabled:cursor-not-allowed"
-                  style={{
-                    backgroundColor: 'var(--color-accent)',
-                    color: 'var(--color-bg-primary)',
-                  }}
-                  disabled={!actualCaseId}
-                  aria-label="Отправить сообщение"
-                />
-              )}
+              <div className="flex items-center gap-1">
+                {!isLoading && <VoiceMicButton disabled={isLoading} />}
+                {isLoading ? (
+                  <button
+                    type="button"
+                    onClick={onStop}
+                    className="rounded-xl h-10 w-10 p-0 flex items-center justify-center shrink-0 transition-all duration-150 border-2 border-gray-300 hover:border-red-400 hover:bg-red-50 group"
+                    style={{ backgroundColor: 'var(--color-bg-primary)' }}
+                    aria-label="Остановить генерацию"
+                    title="Остановить генерацию"
+                  >
+                    <Square className="w-3.5 h-3.5 text-gray-500 group-hover:text-red-500 transition-colors" fill="currentColor" />
+                  </button>
+                ) : (
+                  <PromptInputSubmit
+                    variant="default"
+                    className="rounded-xl h-10 w-10 p-0 flex items-center justify-center shrink-0 transition-all duration-150 disabled:opacity-50 disabled:cursor-not-allowed"
+                    style={{
+                      backgroundColor: 'var(--color-accent)',
+                      color: 'var(--color-bg-primary)',
+                    }}
+                    disabled={!actualCaseId}
+                    aria-label="Отправить сообщение"
+                  />
+                )}
+              </div>
             </PromptInputFooter>
           </div>
         </PromptInputBody>
@@ -672,6 +676,53 @@ const PromptInputWithDrop = ({
         </div>
       )}
     </div>
+  )
+}
+
+// Voice mic button — must be rendered inside PromptInputProvider to access textInput context
+const VoiceMicButton: React.FC<{ disabled?: boolean }> = ({ disabled }) => {
+  const { textInput } = usePromptInputController()
+  const [isRecording, setIsRecording] = useState(false)
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const recognitionRef = useRef<any>(null)
+
+  const toggleRecording = () => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const SR = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition
+    if (!SR) { toast.error('Голосовой ввод не поддерживается в этом браузере. Используйте Chrome.'); return }
+    if (isRecording) { recognitionRef.current?.stop(); return }
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const recognition: any = new SR()
+    recognitionRef.current = recognition
+    recognition.lang = 'ru-RU'
+    recognition.continuous = false
+    recognition.interimResults = false
+    recognition.onstart = () => setIsRecording(true)
+    recognition.onend = () => setIsRecording(false)
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    recognition.onresult = (e: any) => {
+      const text = e.results[0][0].transcript
+      if (text) textInput.setInput(textInput.value ? `${textInput.value} ${text}` : text)
+    }
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    recognition.onerror = (e: any) => {
+      setIsRecording(false)
+      if (e.error !== 'aborted') toast.error(`Ошибка распознавания: ${e.error}`)
+    }
+    recognition.start()
+  }
+
+  return (
+    <button
+      type="button"
+      onClick={toggleRecording}
+      disabled={disabled}
+      className="flex items-center justify-center w-8 h-8 rounded-lg transition-all mr-1 disabled:opacity-40"
+      style={{ backgroundColor: isRecording ? '#FEE2E2' : 'transparent', color: isRecording ? '#DC2626' : '#9CA3AF' }}
+      title={isRecording ? 'Остановить запись' : 'Голосовой ввод'}
+    >
+      {isRecording ? <MicOff className="w-4 h-4" /> : <Mic className="w-4 h-4" />}
+    </button>
   )
 }
 
