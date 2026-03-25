@@ -108,66 +108,87 @@ RULE_CHECK_PROMPT = """Ты - эксперт по анализу юридиче�
 
 
 # Harvey-подобный промпт с учётом стандартной позиции, fallback и недопустимых формулировок
-HARVEY_RULE_PROMPT = """Ты - эксперт по анализу юридических документов.
+# ── Step 1 of CoT: structured fact-extraction and self-questioning ──────────
+COT_ANALYSIS_PROMPT = """Ты - эксперт по анализу юридических документов.
 
-Твоя задача — проанализировать, насколько приведённый пункт договора соответствует внутреннему правилу фирмы.
+Тебе нужно проверить, соответствует ли пункт договора правилу фирмы.
+Выполни анализ СТРОГО ПОШАГОВО — это критически важно для точности.
 
-ПРАВИЛО:
-- Название: {rule_name}
-- Тип правила: {rule_type}  // red_line, fallback, no_go
-- Категория пункта: {clause_category}
-- Совет для пользователя (показывается юристу после проверки — НЕ является критерием классификации): {guidance}
+ПРАВИЛО: {rule_name}
+СТАНДАРТНАЯ ПОЗИЦИЯ: \"\"\"{standard_position}\"\"\"
+ЗАПАСНЫЕ ВАРИАНТЫ: {fallback_positions}
+НЕДОПУСТИМЫЕ ФОРМУЛИРОВКИ: {unacceptable_phrases}
+ТЕКСТ ДЛЯ АНАЛИЗА: \"\"\"{clause_text}\"\"\"
 
-СТАНДАРТНАЯ ПОЗИЦИЯ:
-\"\"\"{standard_position}\"\"\"
+---
+ШАГ 1 — ФАКТЫ СТАНДАРТА
+Перечисли ВСЕ конкретные значения из стандартной позиции:
+имена, фамилии, числа, суммы, площади, даты, адреса, количество комнат/этажей и т.д.
+Если стандарт содержит «_____» — это означает «любое значение».
 
-ЗАПАСНЫЕ ВАРИАНТЫ (fallbacks):
-{fallback_positions}
+ШАГ 2 — ФАКТЫ ДОКУМЕНТА
+Найди в тексте для анализа раздел, соответствующий правилу «{rule_name}».
+Выпиши значения по тем же параметрам, что в шаге 1.
+ВАЖНО: числа, записанные словами, переводи в цифры
+(«тридцать один» → 31, «двух» → 2, «двадцатого июня» → 20 июня).
 
-НЕДОПУСТИМЫЕ ФОРМУЛИРОВКИ:
-{unacceptable_phrases}
+ШАГ 3 — СРАВНЕНИЕ ЗНАЧЕНИЙ
+Для каждого факта из шага 1 сравни с найденным в шаге 2.
+Формат: «[параметр]: стандарт=[X] / документ=[Y] → совпадает / НЕ совпадает»
 
-ИЗВЛЕЧЁННЫЙ ПУНКТ КОНТРАКТА:
-\"\"\"{clause_text}\"\"\"
+ШАГ 4 — ПРОВЕРОЧНЫЕ ВОПРОСЫ
+Сформулируй 2–4 конкретных вопроса, которые помогут точно классифицировать пункт.
+Примеры: «Совпадает ли площадь?», «Правильно ли написана фамилия?»
 
-ЗАДАЧА:
-1. Определи, соответствует ли пункт стандартной позиции, одному из запасных вариантов или недопустимым формулировкам.
-2. Если формулировка стандартная — это приемлемо.
-3. Если формулировка попадает в запасные варианты — это допустимо, но лучше привести к стандарту.
-4. Если формулировка попадает в недопустимые — это неприемлемо, нужно предложить изменения.
-5. Если пункт по смыслу относится к правилу, но не совпадает ни со стандартом, ни с fallback, ни с недопустимыми — пометь как неподтверждённый вариант, требующий проверки.
-6. Если соответствующий пункт в документе отсутствует — так и укажи.
+ШАГ 5 — ОТВЕТЫ НА ВОПРОСЫ
+Ответь на каждый вопрос из шага 4 кратко и точно, опираясь на шаги 1–3.
 
-ВАЖНО: «Совет для пользователя» — это подсказка для юриста, которая будет отображена ему после проверки.
-НЕ используй её как критерий классификации. Классифицируй пункт ТОЛЬКО по его семантическому сходству
-с текстом стандарта, запасных вариантов или недопустимых формулировок.
-Запасные варианты (fallbacks) могут содержать пустые поля «_____» — это допустимо, если структура совпадает.
+ШАГ 6 — ПРЕДВАРИТЕЛЬНЫЙ ВЫВОД
+На основе шагов 1–5 сформулируй предварительный вывод:
+- соответствует стандарту (ВСЕ значения совпадают точно)
+- соответствует запасному варианту (структура та же, значения допустимые)
+- недопустимая формулировка
+- неизвестная формулировка (требует проверки)
+- пункт отсутствует в документе
+---
 
-КРИТИЧЕСКИ ВАЖНО — ТОЧНЫЕ ЗНАЧЕНИЯ:
-Если в стандартной позиции указаны конкретные числа, суммы, площади, количество комнат/этажей,
-даты, сроки или иные точные параметры, эти значения ДОЛЖНЫ ТОЧНО СОВПАДАТЬ с пунктом контракта.
-Числа могут быть записаны цифрами («30») или словами («тридцать») — переведи оба в числовое значение
-и сравни. Если значения РАЗНЫЕ (например, стандарт «30 кв.м.» а контракт «тридцать один
-квадратный метр» = 31 кв.м., или стандарт «1 комната» а контракт «двух комнат» = 2 комнаты),
-то формулировка НЕ является стандартной.
-Используй classification = "unknown" и status = "warning", укажи в reasoning конкретные расхождения.
+Пиши развёрнуто, по-русски. Это промежуточный анализ — итоговая классификация будет на следующем шаге."""
 
-Верни результат ТОЛЬКО в виде одного JSON-объекта:
+# ── Step 2 of CoT: final JSON classification based on Step 1 analysis ───────
+COT_CLASSIFICATION_PROMPT = """Ты - эксперт по анализу юридических документов.
+
+На основе выполненного пошагового анализа сделай итоговую классификацию.
+
+ПРАВИЛО: {rule_name}
+СТАНДАРТНАЯ ПОЗИЦИЯ: \"\"\"{standard_position}\"\"\"
+ЗАПАСНЫЕ ВАРИАНТЫ: {fallback_positions}
+НЕДОПУСТИМЫЕ ФОРМУЛИРОВКИ: {unacceptable_phrases}
+
+РЕЗУЛЬТАТ ПОШАГОВОГО АНАЛИЗА:
+{cot_analysis}
+
+ПРАВИЛА КЛАССИФИКАЦИИ:
+- "standard" → ВСЕ ключевые значения точно совпадают со стандартной позицией
+- "fallback" → структура совпадает с одним из запасных вариантов
+- "unacceptable" → текст соответствует недопустимой формулировке
+- "unknown" → пункт есть, но не совпадает ни с одной из категорий выше (в т.ч. если хотя бы одно числовое значение, имя или дата отличаются от стандарта)
+- "no_clause" → соответствующий пункт в документе отсутствует
+
+ТРЕБОВАНИЯ К КЛАССИФИКАЦИИ:
+- Запасные варианты (fallbacks) могут содержать «_____» — это означает «любое значение», структура всё равно должна совпадать
+- Для имён: «Абумова Евгения Геннадьевича» и «Абумов Е.Г.» — одно лицо → standard
+- Если хотя бы одно числовое значение, площадь, дата или имя отличается — это НЕ standard
+- При любых сомнениях используй "unknown" и status="warning"
+
+Верни результат ТОЛЬКО в виде одного JSON-объекта без какого-либо другого текста:
 {{
   "classification": "standard|fallback|unacceptable|unknown|no_clause",
   "status": "passed|violation|warning|not_found",
   "confidence": 0.0,
-  "found_excerpt": "ТОЧНАЯ цитата из текста пункта — самый короткий фрагмент (до 150 символов), который однозначно идентифицирует найденную формулировку. Например, ФИО, ключевая фраза или условие. НЕ копируй весь текст — только суть. Если пункт не найден — пустая строка.",
+  "found_excerpt": "ТОЧНАЯ цитата из текста — самый короткий фрагмент (до 150 символов), однозначно идентифицирующий найденную формулировку. Только суть. Если не найден — пустая строка.",
   "issue_description": "кратко, в чём проблема (или почему всё нормально)",
-  "reasoning": "подробное логическое объяснение на русском языке"
-}}
-
-ТРЕБОВАНИЯ:
-- Не добавляй никакого текста до или после JSON.
-- found_excerpt — точная цитата из clause_text (не перефразировка), максимум 150 символов.
-- Для имён: если в тексте "Абумова Евгения Геннадьевича", а стандарт "Абумов Е.Г." — это одно и то же лицо, классифицируй как "standard".
-- Если текста пункта нет или он явно не относится к правилу — используй classification = "no_clause".
-- Будь последовательным и консервативным: если есть сомнения, используй classification = "unknown" и status = "warning"."""
+  "reasoning": "краткий итог анализа на русском языке"
+}}"""
 
 
 class PlaybookChecker:
@@ -1601,9 +1622,6 @@ class PlaybookChecker:
                 )
 
         try:
-            prompt = ChatPromptTemplate.from_template(HARVEY_RULE_PROMPT)
-            chain = prompt | self.llm
-
             # Phase 0 found no exact phrase matches, so the semantic chunk in clause.text
             # may be wrong (e.g. PGVector returned a force-majeure section for a
             # "property address" rule).  Prefer the full document text so the LLM can
@@ -1611,26 +1629,41 @@ class PlaybookChecker:
             # document text is available.
             clause_text_for_llm = (document_text[:12000] if document_text else clause.text)
 
-            response = await chain.ainvoke(
-                {
-                    "rule_name": rule.rule_name,
-                    "rule_type": rule.rule_type,
-                    "clause_category": rule.clause_category,
-                    "guidance": guidance,
-                    "standard_position": standard_position,
-                    "fallback_positions": json.dumps(fallback_positions, ensure_ascii=False),
-                    "unacceptable_phrases": json.dumps(unacceptable_phrases, ensure_ascii=False),
-                    "clause_text": clause_text_for_llm,
-                }
-            )
+            shared_inputs = {
+                "rule_name": rule.rule_name,
+                "standard_position": standard_position,
+                "fallback_positions": json.dumps(fallback_positions, ensure_ascii=False),
+                "unacceptable_phrases": json.dumps(unacceptable_phrases, ensure_ascii=False),
+                "clause_text": clause_text_for_llm,
+            }
 
-            json_match = re.search(r"\{[\s\S]*\}", response.content)
+            # ── CoT Step 1: structured fact-extraction and self-questioning ──
+            analysis_prompt = ChatPromptTemplate.from_template(COT_ANALYSIS_PROMPT)
+            analysis_chain = analysis_prompt | self.llm
+            analysis_response = await analysis_chain.ainvoke(shared_inputs)
+            cot_analysis = analysis_response.content.strip()
+            logger.debug("CoT analysis for rule %s:\n%s", rule.id, cot_analysis[:500])
+
+            # ── CoT Step 2: final JSON classification based on Step 1 ────────
+            classification_prompt = ChatPromptTemplate.from_template(COT_CLASSIFICATION_PROMPT)
+            classification_chain = classification_prompt | self.llm
+            classification_response = await classification_chain.ainvoke({
+                **shared_inputs,
+                "cot_analysis": cot_analysis,
+            })
+
+            json_match = re.search(r"\{[\s\S]*\}", classification_response.content)
             if json_match:
                 data = json.loads(json_match.group())
+                # Attach CoT analysis to reasoning for UI display
+                data["reasoning"] = (
+                    (data.get("reasoning") or "") +
+                    "\n\n--- Пошаговый анализ ---\n" + cot_analysis
+                ).strip()
             else:
                 data = {}
         except Exception as e:
-            logger.error("Harvey LLM check error for rule %s: %s", rule.id, e, exc_info=True)
+            logger.error("Harvey CoT check error for rule %s: %s", rule.id, e, exc_info=True)
             data = {}
 
         classification = data.get("classification", "unknown")
