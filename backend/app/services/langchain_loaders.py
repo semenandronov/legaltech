@@ -297,44 +297,70 @@ class DocumentLoaderService:
     @staticmethod
     def load_xlsx(content: bytes, filename: str) -> List[Document]:
         """
-        Load Excel document (convert to text format)
-        
-        Args:
-            content: XLSX file content as bytes
-            filename: Original filename
-            
-        Returns:
-            List of Document objects with metadata
+        Load Excel document (convert to text format).
+        Each data row is formatted as 'Header1: Value1, Header2: Value2, ...' so
+        column context is preserved. Merged cells are forward-filled so every row
+        carries the correct month/category label.
         """
         try:
             from openpyxl import load_workbook
-            
-            # Load workbook
+
             workbook = load_workbook(io.BytesIO(content), data_only=True)
-            
             documents = []
+
             for sheet_name in workbook.sheetnames:
                 sheet = workbook[sheet_name]
-                
-                # Extract text from cells
-                rows_text = []
-                for row in sheet.iter_rows(values_only=True):
-                    row_text = " | ".join([str(cell) if cell is not None else "" for cell in row])
-                    if row_text.strip():
-                        rows_text.append(row_text)
-                
-                if rows_text:
-                    sheet_text = "\n".join(rows_text)
-                    doc = Document(
+                all_rows = list(sheet.iter_rows(values_only=True))
+                if not all_rows:
+                    continue
+
+                # Find first non-empty row as header
+                header_row = None
+                data_start = 0
+                for i, row in enumerate(all_rows):
+                    if any(cell is not None and str(cell).strip() for cell in row):
+                        header_row = [
+                            str(cell).strip() if (cell is not None and str(cell).strip()) else f"Колонка{j + 1}"
+                            for j, cell in enumerate(row)
+                        ]
+                        data_start = i + 1
+                        break
+
+                if header_row is None:
+                    continue
+
+                # Forward-fill None values column-by-column to handle merged cells
+                filled_rows: List[list] = []
+                last_values: list = [None] * len(header_row)
+                for row in all_rows[data_start:]:
+                    new_row = list(row)
+                    for j in range(len(new_row)):
+                        if new_row[j] is None:
+                            new_row[j] = last_values[j]
+                        else:
+                            last_values[j] = new_row[j]
+                    filled_rows.append(new_row)
+
+                # Format each row as "Header: Value, ..."
+                text_lines = [f"=== Лист: {sheet_name} ==="]
+                for row in filled_rows:
+                    parts = []
+                    for j, cell in enumerate(row):
+                        val = str(cell).strip() if cell is not None else ""
+                        if not val or val.lower() in ("none", "nan", "-"):
+                            continue
+                        header = header_row[j] if j < len(header_row) else f"Колонка{j + 1}"
+                        parts.append(f"{header}: {val}")
+                    if parts:
+                        text_lines.append(", ".join(parts))
+
+                sheet_text = "\n".join(text_lines)
+                if sheet_text.strip():
+                    documents.append(Document(
                         page_content=sheet_text,
-                        metadata={
-                            "source_file": filename,
-                            "sheet_name": sheet_name,
-                            "source_type": "excel"
-                        }
-                    )
-                    documents.append(doc)
-            
+                        metadata={"source_file": filename, "sheet_name": sheet_name, "source_type": "excel"},
+                    ))
+
             logger.info(f"Loaded XLSX {filename}: {len(documents)} sheets")
             return documents
         except Exception as e:
@@ -365,6 +391,10 @@ class DocumentLoaderService:
             return DocumentLoaderService.load_txt(content, filename)
         elif ext in ['.xlsx', '.xls']:
             return DocumentLoaderService.load_xlsx(content, filename)
+        elif ext == '.csv':
+            from app.utils.file_parser import parse_csv
+            text = parse_csv(content, filename)
+            return [Document(page_content=text, metadata={"source_file": filename, "source_type": "csv"})]
         else:
             raise ValueError(f"Unsupported file format: {ext}")
 
