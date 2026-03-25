@@ -186,6 +186,7 @@ COT_CLASSIFICATION_PROMPT = """Ты - эксперт по анализу юри�
   "status": "passed|violation|warning|not_found",
   "confidence": 0.0,
   "found_excerpt": "ТОЧНАЯ цитата из текста — самый короткий фрагмент (до 150 символов), однозначно идентифицирующий найденную формулировку. Только суть. Если не найден — пустая строка.",
+  "full_clause_to_replace": "ПОЛНЫЙ текст пункта из документа, который нужно заменить целиком (весь проблемный абзац/предложение, не фрагмент). Это то, что будет удалено при нажатии 'Применить'. Если пункт не найден или статус passed — пустая строка.",
   "issue_description": "кратко, в чём проблема (или почему всё нормально)",
   "reasoning": "краткий итог анализа на русском языке"
 }}"""
@@ -1672,6 +1673,10 @@ class PlaybookChecker:
         issue_description = data.get("issue_description") or ""
         reasoning = data.get("reasoning") or ""
         llm_found_excerpt = (data.get("found_excerpt") or "").strip()
+        # Full clause text to replace — returned by CoT classification step.
+        # If it's actually present in the document, prefer it over the short excerpt
+        # so that "Применить" replaces the entire problematic clause, not just a fragment.
+        llm_full_clause = (data.get("full_clause_to_replace") or "").strip()
 
         ui_status = ""
         suggested_options: List[Dict[str, Any]] = []
@@ -1855,6 +1860,28 @@ class PlaybookChecker:
                 )
             else:
                 found_text_for_result = raw_clause_text[:150]
+
+        # CoT full-clause override: if the LLM returned the full problematic clause text
+        # and it's verbatim in the document, use it so "Применить" replaces the entire
+        # clause instead of a short fragment that leaves errors behind.
+        if llm_full_clause and document_text and status != "passed":
+            clause_pos = document_text.find(llm_full_clause)
+            if clause_pos != -1:
+                found_text_for_result = llm_full_clause
+                ctx_start = max(0, clause_pos - 60)
+                ctx_end = min(len(document_text), clause_pos + len(llm_full_clause) + 60)
+                full_clause_occ = {
+                    "type": classification if classification in ("unknown", "unacceptable", "fallback") else "unknown",
+                    "phrase": llm_full_clause,
+                    "char_start": clause_pos,
+                    "char_end": clause_pos + len(llm_full_clause),
+                    "context": document_text[ctx_start:ctx_end],
+                }
+                # Replace any occurrence overlapping the same position
+                post_occurrences = [full_clause_occ] + [
+                    occ for occ in post_occurrences
+                    if abs(occ["char_start"] - clause_pos) > 10
+                ]
 
         return RuleCheckResult(
             rule_id=rule.id,
