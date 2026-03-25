@@ -2,7 +2,7 @@ import { useState, useEffect, useRef } from 'react'
 import { useParams, useLocation, useNavigate } from 'react-router-dom'
 import {
   FileText, X, Plus, AlignJustify, SlidersHorizontal, Sparkles,
-  Search, Loader2, FolderOpen, Upload, Check, ExternalLink,
+  Search, Loader2, FolderOpen, Upload, Check, ExternalLink, Mic, MicOff,
 } from 'lucide-react'
 import { getCase, getApiUrl, SourceInfo, getCaseFiles } from '../services/api'
 import { ChatHistoryPanel } from '../components/Chat/ChatHistoryPanel'
@@ -326,6 +326,30 @@ function HarveyInput({
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [filesDropdownOpen, setFilesDropdownOpen] = useState(false)
   const [promptsOpen, setPromptsOpen] = useState(false)
+  const [isRecording, setIsRecording] = useState(false)
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const recognitionRef = useRef<any>(null)
+
+  const toggleRecording = () => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const SR = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition
+    if (!SR) { toast.error('Голосовой ввод не поддерживается в этом браузере. Используйте Chrome.'); return }
+    if (isRecording) { recognitionRef.current?.stop(); return }
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const recognition: any = new SR()
+    recognitionRef.current = recognition
+    recognition.lang = 'ru-RU'
+    recognition.continuous = false
+    recognition.interimResults = false
+    recognition.onstart = () => setIsRecording(true)
+    recognition.onend = () => setIsRecording(false)
+    recognition.onerror = () => setIsRecording(false)
+    recognition.onresult = (e: any) => {
+      const text = e.results[0][0].transcript
+      if (text) onChange(value ? `${value} ${text}` : text)
+    }
+    recognition.start()
+  }
 
   useEffect(() => {
     const handleClickOutside = (e: MouseEvent) => {
@@ -665,6 +689,18 @@ function HarveyInput({
 
         {/* Spacer */}
         <div className="flex-1" />
+
+        {/* Mic button */}
+        {!isStreaming && (
+          <button
+            type="button"
+            onClick={toggleRecording}
+            className="flex items-center justify-center w-8 h-8 rounded-lg transition-colors flex-shrink-0"
+            style={{ backgroundColor: isRecording ? '#FEE2E2' : 'transparent', color: isRecording ? '#DC2626' : '#9CA3AF' }}
+          >
+            {isRecording ? <MicOff className="w-4 h-4" /> : <Mic className="w-4 h-4" />}
+          </button>
+        )}
 
         {/* Send button */}
         <div className="flex-shrink-0">
