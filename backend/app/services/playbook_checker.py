@@ -844,34 +844,50 @@ class PlaybookChecker:
           → finds "Арендодатель Андропов" in document → unknown occurrence
         """
         all_phrases = [p for p in ([standard_position] + list(fallback_positions or []) + list(unacceptable_phrases or [])) if p]
-        if len(all_phrases) < 2:
+        if not all_phrases:
             return []
 
-        # Tokenise each phrase into cleaned words
-        phrase_word_lists = [p.split() for p in all_phrases]
-        max_len = min(len(wl) for wl in phrase_word_lists)
-        if max_len < 2:
-            return []
-
-        # Find positions where words DIFFER and preceding word (anchor) is the SAME
         anchor_var_pairs: List[tuple] = []  # (anchor_lower, set_of_known_var_lowers)
-        for i in range(1, max_len):
-            words_at_i = [wl[i].rstrip(".,;:()–-—") for wl in phrase_word_lists]
-            words_lower = [w.lower() for w in words_at_i]
-            if len(set(words_lower)) <= 1:
-                continue  # same word at position i — not variable
-            # Check all variable words look like proper nouns (start uppercase)
-            if not all(w and w[0].isupper() for w in words_at_i):
-                continue
-            # The anchor is the word at position i-1
-            anchor_words_lower = [wl[i - 1].rstrip(".,;:()–-—").lower() for wl in phrase_word_lists]
-            if len(set(anchor_words_lower)) != 1:
-                continue  # anchor itself differs — skip
-            anchor = anchor_words_lower[0]
-            if not anchor:
-                continue
-            known_vars = set(words_lower)
-            anchor_var_pairs.append((anchor, known_vars))
+
+        if len(all_phrases) >= 2:
+            # Tokenise each phrase into cleaned words
+            phrase_word_lists = [p.split() for p in all_phrases]
+            max_len = min(len(wl) for wl in phrase_word_lists)
+            if max_len >= 2:
+                # Find positions where words DIFFER and preceding word (anchor) is the SAME
+                for i in range(1, max_len):
+                    words_at_i = [wl[i].rstrip(".,;:()–-—") for wl in phrase_word_lists]
+                    words_lower = [w.lower() for w in words_at_i]
+                    if len(set(words_lower)) <= 1:
+                        continue  # same word at position i — not variable
+                    # Check all variable words look like proper nouns (start uppercase)
+                    if not all(w and w[0].isupper() for w in words_at_i):
+                        continue
+                    # The anchor is the word at position i-1
+                    anchor_words_lower = [wl[i - 1].rstrip(".,;:()–-—").lower() for wl in phrase_word_lists]
+                    if len(set(anchor_words_lower)) != 1:
+                        continue  # anchor itself differs — skip
+                    anchor = anchor_words_lower[0]
+                    if not anchor:
+                        continue
+                    known_vars = set(words_lower)
+                    anchor_var_pairs.append((anchor, known_vars))
+        else:
+            # Single phrase: extract anchor+variable by finding the last proper noun token
+            # and using the preceding word as anchor.
+            # E.g. "Арендодатель Андронов –" → anchor="арендодатель", var="андронов"
+            tokens = [t.rstrip(".,;:()–-— ") for t in all_phrases[0].split() if t.strip()]
+            var_idx = None
+            for i in range(len(tokens) - 1, 0, -1):
+                t = tokens[i]
+                if t and t[0].isupper() and len(t) >= 3 and t.isalpha():
+                    var_idx = i
+                    break
+            if var_idx is not None:
+                anchor = tokens[var_idx - 1].lower()
+                known_var = tokens[var_idx].lower()
+                if anchor and known_var:
+                    anchor_var_pairs.append((anchor, {known_var}))
 
         if not anchor_var_pairs:
             return []
