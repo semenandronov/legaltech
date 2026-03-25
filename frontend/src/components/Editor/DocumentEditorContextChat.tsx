@@ -59,6 +59,7 @@ interface DocumentEditorContextChatProps {
   selectedText?: string
   selectionRange?: { from: number; to: number } | null
   onClearSelection?: () => void
+  onScrollToText?: (text: string, nthOccurrence?: number) => boolean
 }
 
 interface Message {
@@ -247,7 +248,7 @@ const StatusBadge: React.FC<{ status: EditStatus }> = ({ status }) =>
 
 type Item =
   | { kind: 'single'; edit: StructuredEdit }
-  | { kind: 'virtual'; edit: StructuredEdit; occ: { before: string; after: string }; virtualId: string }
+  | { kind: 'virtual'; edit: StructuredEdit; occ: { before: string; after: string }; virtualId: string; occIdx: number }
 
 function buildItems(edits: StructuredEdit[], docContent: string | undefined): Item[] {
   return edits.flatMap((edit): Item[] => {
@@ -261,6 +262,7 @@ function buildItems(edits: StructuredEdit[], docContent: string | undefined): It
         edit,
         occ,
         virtualId: `${edit.id}-${i}`,
+        occIdx: i,
       }))
     }
     return [{ kind: 'single' as const, edit }]
@@ -274,7 +276,8 @@ const StructuredEditsBlock: React.FC<{
   onAccept: (edit: StructuredEdit) => void
   onAcceptAll: () => void
   onDismiss: (editId: string) => void
-}> = ({ edits, statuses, documentContent, onAccept, onAcceptAll, onDismiss }) => {
+  onScrollToText?: (text: string, nthOccurrence?: number) => boolean
+}> = ({ edits, statuses, documentContent, onAccept, onAcceptAll, onDismiss, onScrollToText }) => {
   // Local state for virtual per-occurrence cards (keyed by `${editId}-${occIdx}`)
   const [occStatuses, setOccStatuses] = useState<Record<string, EditStatus>>({})
 
@@ -317,7 +320,7 @@ const StructuredEditsBlock: React.FC<{
       {/* Cards */}
       {items.map((item) => {
         if (item.kind === 'virtual') {
-          const { edit, occ, virtualId } = item
+          const { edit, occ, virtualId, occIdx } = item
           const status = occStatuses[virtualId]
           return (
             <div key={virtualId} className="rounded-xl border overflow-hidden" style={{ borderColor: '#e5e7eb', background: '#f5f5f5' }}>
@@ -329,18 +332,31 @@ const StructuredEditsBlock: React.FC<{
                   {occ.after && <span style={{ color: '#9ca3af' }}>{occ.after}…</span>}
                 </div>
               </div>
-              <div className="flex items-center justify-end gap-2 px-3 pb-2.5 pt-1 border-t" style={{ borderColor: '#ebebeb' }}>
-                {status
-                  ? <StatusBadge status={status} />
-                  : <EditActionButtons
-                      onAccept={() => {
-                        setOccStatuses(prev => ({ ...prev, [virtualId]: 'accepted' }))
-                        // Pass edit with replace_all=false → parent calls replaceText (first remaining occurrence)
-                        onAccept({ ...edit, replace_all: false })
-                      }}
-                      onDismiss={() => setOccStatuses(prev => ({ ...prev, [virtualId]: 'rejected' }))}
-                    />
-                }
+              <div className="flex items-center justify-between gap-2 px-3 pb-2.5 pt-1 border-t" style={{ borderColor: '#ebebeb' }}>
+                {/* Left: scroll to text */}
+                {onScrollToText && !status && (
+                  <button
+                    onClick={() => onScrollToText(edit.original_text, occIdx)}
+                    className="flex items-center gap-1 text-xs transition-opacity hover:opacity-70"
+                    style={{ color: 'var(--color-text-tertiary, #9ca3af)' }}
+                  >
+                    <ArrowRight className="w-3 h-3" />
+                    Перейти
+                  </button>
+                )}
+                {/* Right: status or action buttons */}
+                <div className="flex items-center gap-2 ml-auto">
+                  {status
+                    ? <StatusBadge status={status} />
+                    : <EditActionButtons
+                        onAccept={() => {
+                          setOccStatuses(prev => ({ ...prev, [virtualId]: 'accepted' }))
+                          onAccept({ ...edit, replace_all: false })
+                        }}
+                        onDismiss={() => setOccStatuses(prev => ({ ...prev, [virtualId]: 'rejected' }))}
+                      />
+                  }
+                </div>
               </div>
             </div>
           )
@@ -584,6 +600,7 @@ export const DocumentEditorContextChat: React.FC<DocumentEditorContextChatProps>
   selectedText,
   selectionRange,
   onClearSelection,
+  onScrollToText,
 }) => {
   const [messages, setMessages] = useState<Message[]>([])
   const [isLoading, setIsLoading] = useState(false)
@@ -984,6 +1001,7 @@ export const DocumentEditorContextChat: React.FC<DocumentEditorContextChatProps>
                     onAccept={(edit) => handleAcceptEdit(message.id, edit)}
                     onAcceptAll={() => handleAcceptAllEdits(message.id, allEdits)}
                     onDismiss={(editId) => handleDismissEdit(message.id, editId)}
+                    onScrollToText={onScrollToText}
                   />
                 )}
 

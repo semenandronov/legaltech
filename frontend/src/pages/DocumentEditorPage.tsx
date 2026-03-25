@@ -645,6 +645,7 @@ const DocumentEditorPage = () => {
                   editorRef.current?.clearSelectionHighlight()
                 }}
                 onReplaceRange={handleReplaceRange}
+                onScrollToText={handleScrollToText}
               />
             </div>
           </div>
