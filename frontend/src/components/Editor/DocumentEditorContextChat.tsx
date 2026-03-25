@@ -209,6 +209,42 @@ function findOccurrencesWithContext(
   return results
 }
 
+// Reusable accept/dismiss button pair
+const EditActionButtons: React.FC<{
+  onAccept: () => void
+  onDismiss: () => void
+  isFound?: boolean
+}> = ({ onAccept, onDismiss, isFound = true }) => (
+  <>
+    <button
+      onClick={onDismiss}
+      className="text-xs font-medium px-3 py-1.5 rounded-lg border transition-colors"
+      style={{ borderColor: '#e5e7eb', color: '#9ca3af', background: 'transparent' }}
+      onMouseEnter={e => { const el = e.currentTarget; el.style.borderColor = '#fca5a5'; el.style.color = '#ef4444'; el.style.background = 'rgba(239,68,68,0.05)' }}
+      onMouseLeave={e => { const el = e.currentTarget; el.style.borderColor = '#e5e7eb'; el.style.color = '#9ca3af'; el.style.background = 'transparent' }}
+    >
+      Отклонить
+    </button>
+    {isFound && (
+      <button
+        onClick={onAccept}
+        className="flex items-center gap-1 text-xs font-semibold px-3 py-1.5 rounded-lg border transition-colors"
+        style={{ borderColor: '#d1d5db', color: '#374151', background: 'transparent' }}
+        onMouseEnter={e => { const el = e.currentTarget; el.style.borderColor = '#10b981'; el.style.color = '#10b981'; el.style.background = 'rgba(16,185,129,0.07)' }}
+        onMouseLeave={e => { const el = e.currentTarget; el.style.borderColor = '#d1d5db'; el.style.color = '#374151'; el.style.background = 'transparent' }}
+      >
+        <Check className="w-3 h-3" />
+        Принять
+      </button>
+    )}
+  </>
+)
+
+const StatusBadge: React.FC<{ status: EditStatus }> = ({ status }) =>
+  status === 'accepted'
+    ? <div className="flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 rounded-lg border" style={{ borderColor: '#d1fae5', color: '#10b981', background: 'rgba(16,185,129,0.07)' }}><Check className="w-3 h-3" />Принято</div>
+    : <div className="flex items-center gap-1.5 text-xs font-medium px-3 py-1.5 rounded-lg border" style={{ borderColor: '#fee2e2', color: '#ef4444', background: 'rgba(239,68,68,0.05)' }}><X className="w-3 h-3" />Отклонено</div>
+
 const StructuredEditsBlock: React.FC<{
   edits: StructuredEdit[]
   statuses: Record<string, EditStatus>
@@ -217,32 +253,48 @@ const StructuredEditsBlock: React.FC<{
   onAcceptAll: () => void
   onDismiss: (editId: string) => void
 }> = ({ edits, statuses, documentContent, onAccept, onAcceptAll, onDismiss }) => {
-  const pendingEdits = edits.filter(e => e.found_in_document !== false && !statuses[e.id])
+  // Local state for virtual per-occurrence cards (keyed by `${editId}-${occIdx}`)
+  const [occStatuses, setOccStatuses] = useState<Record<string, EditStatus>>({})
+
+  type Item =
+    | { kind: 'single'; edit: StructuredEdit }
+    | { kind: 'virtual'; edit: StructuredEdit; occ: { before: string; after: string }; virtualId: string }
+
+  // Expand replace_all edits with >1 occurrences into virtual per-occurrence items
+  const items: Item[] = edits.flatMap((edit): Item[] => {
+    const isFound = edit.found_in_document !== false
+    const occs = (edit.replace_all && isFound && documentContent)
+      ? findOccurrencesWithContext(edit.original_text, documentContent)
+      : []
+    if (occs.length > 1) {
+      return occs.map((occ, i) => ({
+        kind: 'virtual' as const,
+        edit,
+        occ,
+        virtualId: `${edit.id}-${i}`,
+      }))
+    }
+    return [{ kind: 'single' as const, edit }]
+  })
+
+  const pendingCount = items.filter(item =>
+    item.kind === 'virtual'
+      ? !occStatuses[item.virtualId]
+      : item.edit.found_in_document !== false && !statuses[item.edit.id]
+  ).length
 
   return (
     <div className="space-y-2 mt-2 max-w-[92%]">
       {/* Header bar */}
       <div className="flex items-center justify-between px-3 py-2 rounded-lg border" style={{ borderColor: '#e5e7eb', background: '#fafafa' }}>
-        <span className="text-xs font-semibold text-gray-500">
-          Правки ({edits.length})
-        </span>
-        {pendingEdits.length > 1 && (
+        <span className="text-xs font-semibold text-gray-500">Правки ({items.length})</span>
+        {pendingCount > 1 && (
           <button
             onClick={onAcceptAll}
             className="flex items-center gap-1 text-xs font-semibold px-2.5 py-1 rounded-lg border transition-colors"
             style={{ borderColor: '#d1d5db', color: '#374151', background: 'transparent' }}
-            onMouseEnter={e => {
-              const el = e.currentTarget
-              el.style.borderColor = '#10b981'
-              el.style.color = '#10b981'
-              el.style.background = 'rgba(16,185,129,0.06)'
-            }}
-            onMouseLeave={e => {
-              const el = e.currentTarget
-              el.style.borderColor = '#d1d5db'
-              el.style.color = '#374151'
-              el.style.background = 'transparent'
-            }}
+            onMouseEnter={e => { const el = e.currentTarget; el.style.borderColor = '#10b981'; el.style.color = '#10b981'; el.style.background = 'rgba(16,185,129,0.06)' }}
+            onMouseLeave={e => { const el = e.currentTarget; el.style.borderColor = '#d1d5db'; el.style.color = '#374151'; el.style.background = 'transparent' }}
           >
             <Check className="w-3 h-3" />
             Принять все
@@ -250,109 +302,61 @@ const StructuredEditsBlock: React.FC<{
         )}
       </div>
 
-      {/* Individual edits */}
-      {edits.map((edit) => {
+      {/* Cards */}
+      {items.map((item) => {
+        if (item.kind === 'virtual') {
+          const { edit, occ, virtualId } = item
+          const status = occStatuses[virtualId]
+          return (
+            <div key={virtualId} className="rounded-xl border overflow-hidden" style={{ borderColor: '#e5e7eb', background: '#f5f5f5' }}>
+              <div className="px-3 pt-2.5 pb-1.5">
+                <div className="px-2 py-2 rounded-md text-xs leading-relaxed break-words" style={{ background: 'rgba(0,0,0,0.03)', lineHeight: '1.7' }}>
+                  {occ.before && <span style={{ color: '#9ca3af' }}>…{occ.before}</span>}
+                  <del style={{ color: '#dc2626', textDecorationColor: '#dc2626' }}>{edit.original_text}</del>
+                  <span style={{ color: '#2563eb', fontWeight: 500 }}>{edit.new_text}</span>
+                  {occ.after && <span style={{ color: '#9ca3af' }}>{occ.after}…</span>}
+                </div>
+              </div>
+              <div className="flex items-center justify-end gap-2 px-3 pb-2.5 pt-1 border-t" style={{ borderColor: '#ebebeb' }}>
+                {status
+                  ? <StatusBadge status={status} />
+                  : <EditActionButtons
+                      onAccept={() => {
+                        setOccStatuses(prev => ({ ...prev, [virtualId]: 'accepted' }))
+                        // Pass edit with replace_all=false → parent calls replaceText (first remaining occurrence)
+                        onAccept({ ...edit, replace_all: false })
+                      }}
+                      onDismiss={() => setOccStatuses(prev => ({ ...prev, [virtualId]: 'rejected' }))}
+                    />
+                }
+              </div>
+            </div>
+          )
+        }
+
+        // Single-occurrence card (original behavior)
+        const { edit } = item
         const isFound = edit.found_in_document !== false
         const status = statuses[edit.id]
-        // Find all occurrences to show context around each one
-        const occurrences = (edit.replace_all && documentContent)
-          ? findOccurrencesWithContext(edit.original_text, documentContent)
-          : []
-        const occurrenceCount = occurrences.length || (isFound ? 1 : 0)
-
         return (
-          <div
-            key={edit.id}
-            className="rounded-xl border overflow-hidden"
-            style={{ borderColor: '#e5e7eb', background: '#f5f5f5' }}
-          >
-            <div className="px-3 pt-2.5 pb-1.5 space-y-1.5">
-              {/* Per-occurrence context rows, or single diff row */}
-              {occurrences.length > 0 ? (
-                occurrences.map((occ, i) => (
-                  <div key={i} className="px-2 py-2 rounded-md text-xs leading-relaxed break-words" style={{ background: 'rgba(0,0,0,0.03)', lineHeight: '1.7' }}>
-                    {occ.before && <span style={{ color: '#9ca3af' }}>…{occ.before}</span>}
-                    <del style={{ color: '#dc2626', textDecorationColor: '#dc2626' }}>{edit.original_text}</del>
-                    <span style={{ color: '#2563eb', fontWeight: 500 }}>{edit.new_text}</span>
-                    {occ.after && <span style={{ color: '#9ca3af' }}>{occ.after}…</span>}
-                  </div>
-                ))
-              ) : (
-                <div className="px-2 py-2 rounded-md" style={{ background: 'rgba(0,0,0,0.03)', lineHeight: '1.6' }}>
-                  {renderInlineDiff(edit.original_text, edit.new_text)}
-                </div>
-              )}
+          <div key={edit.id} className="rounded-xl border overflow-hidden" style={{ borderColor: '#e5e7eb', background: '#f5f5f5' }}>
+            <div className="px-3 pt-2.5 pb-1.5">
+              <div className="px-2 py-2 rounded-md" style={{ background: 'rgba(0,0,0,0.03)', lineHeight: '1.6' }}>
+                {renderInlineDiff(edit.original_text, edit.new_text)}
+              </div>
               {!isFound && !status && (
                 <div className="text-xs text-amber-600 mt-1.5">⚠ Фрагмент не найден в документе</div>
               )}
             </div>
-
-            {/* Occurrence count label */}
-            {occurrenceCount > 1 && !status && (
-              <div className="px-3 pb-1 text-xs" style={{ color: '#6b7280' }}>
-                {occurrenceCount} вхождени{occurrenceCount === 1 ? 'е' : occurrenceCount < 5 ? 'я' : 'й'} — будут заменены все
-              </div>
-            )}
-
-            {/* Footer: status badge or action buttons */}
             <div className="flex items-center justify-end gap-2 px-3 pb-2.5 pt-1 border-t" style={{ borderColor: '#ebebeb' }}>
-              {status === 'accepted' && (
-                <div className="flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 rounded-lg border" style={{ borderColor: '#d1fae5', color: '#10b981', background: 'rgba(16,185,129,0.07)' }}>
-                  <Check className="w-3 h-3" />
-                  Принято
-                </div>
-              )}
-              {status === 'rejected' && (
-                <div className="flex items-center gap-1.5 text-xs font-medium px-3 py-1.5 rounded-lg border" style={{ borderColor: '#fee2e2', color: '#ef4444', background: 'rgba(239,68,68,0.05)' }}>
-                  <X className="w-3 h-3" />
-                  Отклонено
-                </div>
-              )}
-              {!status && (
-                <>
-                  <button
-                    onClick={() => onDismiss(edit.id)}
-                    className="text-xs font-medium px-3 py-1.5 rounded-lg border transition-colors"
-                    style={{ borderColor: '#e5e7eb', color: '#9ca3af', background: 'transparent' }}
-                    onMouseEnter={e => {
-                      const el = e.currentTarget
-                      el.style.borderColor = '#fca5a5'
-                      el.style.color = '#ef4444'
-                      el.style.background = 'rgba(239,68,68,0.05)'
-                    }}
-                    onMouseLeave={e => {
-                      const el = e.currentTarget
-                      el.style.borderColor = '#e5e7eb'
-                      el.style.color = '#9ca3af'
-                      el.style.background = 'transparent'
-                    }}
-                  >
-                    Отклонить
-                  </button>
-                  {isFound && (
-                    <button
-                      onClick={() => onAccept(edit)}
-                      className="flex items-center gap-1 text-xs font-semibold px-3 py-1.5 rounded-lg border transition-colors"
-                      style={{ borderColor: '#d1d5db', color: '#374151', background: 'transparent' }}
-                      onMouseEnter={e => {
-                        const el = e.currentTarget
-                        el.style.borderColor = '#10b981'
-                        el.style.color = '#10b981'
-                        el.style.background = 'rgba(16,185,129,0.07)'
-                      }}
-                      onMouseLeave={e => {
-                        const el = e.currentTarget
-                        el.style.borderColor = '#d1d5db'
-                        el.style.color = '#374151'
-                        el.style.background = 'transparent'
-                      }}
-                    >
-                      <Check className="w-3 h-3" />
-                      Принять
-                    </button>
-                  )}
-                </>
-              )}
+              {status
+                ? <StatusBadge status={status} />
+                : <EditActionButtons
+                    isFound={isFound}
+                    onAccept={() => onAccept(edit)}
+                    onDismiss={() => onDismiss(edit.id)}
+                  />
+              }
             </div>
           </div>
         )
