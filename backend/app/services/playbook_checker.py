@@ -192,6 +192,24 @@ COT_CLASSIFICATION_PROMPT = """Ты - эксперт по анализу юри�
 }}"""
 
 
+def _filter_standard_variants(
+    occurrences: list,
+    status: str,
+) -> list:
+    """Remove standard_variant occurrences from the list when other actionable items are present.
+
+    standard_variant items are declined/inflected forms of the standard phrase found via
+    keyword search (e.g. "Абумова" as genitive of "Абумов"). They are acceptable — no
+    replacement needed. If they appear alongside unacceptable/fallback/unknown items, suppress
+    them so only actionable occurrences reach the UI.
+    """
+    non_variant = [o for o in occurrences if o.get("type") != "standard_variant"]
+    if non_variant:
+        return non_variant
+    # All items are standard_variant (e.g. only accepted declined forms found) — keep as-is
+    return occurrences
+
+
 class PlaybookChecker:
     """
     Движок проверки контрактов против Playbooks.
@@ -1356,7 +1374,7 @@ class PlaybookChecker:
                     ui_status=ui_status,
                     guidance=guidance,
                     suggested_options=suggested_options,
-                    occurrences=all_occurrences,
+                    occurrences=_filter_standard_variants(all_occurrences, status),
                 )
 
             # Phase 0.5: keyword-based scan for ALL phrase types when exact scan found nothing.
@@ -1480,7 +1498,7 @@ class PlaybookChecker:
                         ui_status=p05_ui,
                         guidance=guidance,
                         suggested_options=p05_suggested,
-                        occurrences=p05_all,
+                        occurrences=_filter_standard_variants(p05_all, p05_status),
                     )
 
         # ---------------------------------------------------------------
