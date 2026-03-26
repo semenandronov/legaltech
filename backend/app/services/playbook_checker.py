@@ -725,14 +725,28 @@ class PlaybookChecker:
         """
         if not standard_position or not document_text:
             return []
-        # Extract the longest significant keyword (e.g. surname "Абумов")
+
+        # Prefer the VARIABLE word (surname/name) over the longest word.
+        # "Арендодатель Андронов –" → use "Андронов", not "Арендодатель".
+        # Using the role word as keyword would find ALL occurrences of "арендодатель"
+        # (including ones with a wrong name) and mark them as "standard", which then
+        # prevents _find_unknown_concept_occurrences from flagging them.
+        _var_word: Optional[str] = None
+        _tokens = [t.rstrip(".,;:()–-— ") for t in standard_position.split() if t.strip()]
+        for _i in range(len(_tokens) - 1, 0, -1):
+            _t = _tokens[_i]
+            if _t and _t[0].isupper() and len(_t) >= 4 and _t.isalpha() and not set(_t) <= {'_'}:
+                _var_word = _t
+                break
+
+        # Fallback: longest proper noun keyword (original behaviour — e.g. "Абумов Е.Г.")
         keywords = sorted(
             [w.rstrip(".,;:()") for w in standard_position.split() if len(w.rstrip(".,;:()")) >= 4],
             key=len, reverse=True,
         )
         if not keywords:
             return []
-        original_kw = keywords[0]
+        original_kw = _var_word if _var_word else keywords[0]
         # Only apply keyword scan for PROPER NOUNS (capitalized) — e.g. names and company names.
         # Skips common legal words like "оплаты", "расторжения" that would flood the results.
         if not original_kw[0].isupper():
