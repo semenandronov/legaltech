@@ -774,7 +774,16 @@ class PlaybookChecker:
                 # This prevents capturing trailing words like "без присмотра" when the keyword
                 # matched as a substring (e.g. "абросимов" inside "Абросимова").
                 raw_tokens = raw.split()
-                phrase = " ".join(raw_tokens[:expected_tokens + 1]).rstrip(".,;: ")
+                phrase_tokens = list(raw_tokens[:expected_tokens + 1])
+                # Strip trailing lowercase tokens (prepositions like "при", "в", "на").
+                # E.g. ["Абумова", "Е.Г.,", "при"] → ["Абумова", "Е.Г.,"]
+                while len(phrase_tokens) > expected_tokens and phrase_tokens:
+                    last_clean = phrase_tokens[-1].lstrip(".,;:()–-— ")
+                    if last_clean and last_clean[0].islower():
+                        phrase_tokens.pop()
+                    else:
+                        break
+                phrase = " ".join(phrase_tokens).rstrip(".,;: ")
                 if not phrase:
                     phrase = document_text[pos:pos + len(kw)]
                 ctx_start = max(0, pos - context_window)
@@ -960,6 +969,14 @@ class PlaybookChecker:
                     continue
                 # Skip if this is a known variable word
                 if var_word in known_vars:
+                    continue
+                # Skip if this is a declined/inflected form of a known variable word.
+                # E.g. "абумова" is genitive of "абумов" → same person, not unknown.
+                # Rule: var_word starts with known_var and adds 1–3 chars (Russian declension).
+                if any(
+                    len(kv) >= 5 and var_word.startswith(kv) and 1 <= len(var_word) - len(kv) <= 3
+                    for kv in known_vars
+                ):
                     continue
                 phrase = m.group(0).rstrip(".,;: ")
                 ctx_start = max(0, pos - context_window)
