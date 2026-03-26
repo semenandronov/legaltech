@@ -967,6 +967,13 @@ class PlaybookChecker:
                 # Skip already-found positions
                 if any(abs(pos - fp) <= 3 for fp in already_found_starts):
                     continue
+                # Also skip if the VARIABLE WORD position was already found.
+                # _find_all_name_variants adds the surname position (P2) to already_found_starts,
+                # but `pos` here is the ANCHOR position (Q2 ≈ P2 - 12). The 3-char tolerance
+                # above fails. This second check catches that case.
+                var_pos = m.start(1)
+                if any(abs(var_pos - fp) <= 3 for fp in already_found_starts):
+                    continue
                 # Skip if this is a known variable word
                 if var_word in known_vars:
                     continue
