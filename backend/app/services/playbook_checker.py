@@ -1856,9 +1856,32 @@ class PlaybookChecker:
                         already_nv.add(item["char_start"])
 
         # found_text: use exact phrase from first post-scan occurrence when available
-        # (most precise — actual text in document, right length for scrollToText)
+        # (most precise — actual text in document, right length for scrollToText).
+        # When the status is a violation/warning we extend the phrase to the nearest
+        # sentence boundary so that "Применить" replaces the *whole* problematic clause
+        # rather than a fragment (e.g. blank-tolerant fallback match may stop at "площадью три"
+        # when the full clause continues "...тридцать один квадратный метр, состоящее из...").
+        def _extend_to_sentence_end(phrase: str, char_start: int, doc_text: str, max_extension: int = 600) -> str:
+            """Extend phrase to the next sentence-ending punctuation in the document."""
+            if not doc_text or char_start is None:
+                return phrase
+            # If phrase already ends with sentence punctuation — nothing to extend
+            if re.search(r'[.!?»"\')\]]\s*$', phrase.rstrip()):
+                return phrase
+            search_from = char_start + len(phrase)
+            remaining = doc_text[search_from:search_from + max_extension]
+            # Find first sentence-ending: period/!/?/» followed by whitespace or end
+            end_match = re.search(r'[.!?»](?=[\s\n]|$)', remaining)
+            if end_match:
+                return doc_text[char_start:search_from + end_match.end()].strip()
+            return phrase
+
         if post_occurrences:
-            found_text_for_result = post_occurrences[0]["phrase"]
+            first_occ = post_occurrences[0]
+            raw_phrase = first_occ["phrase"]
+            if status != "passed" and document_text and first_occ.get("char_start") is not None:
+                raw_phrase = _extend_to_sentence_end(raw_phrase, first_occ["char_start"], document_text)
+            found_text_for_result = raw_phrase
         else:
             # Accept LLM excerpt only if it's a precise verbatim quote (not an abbreviation with ...)
             # AND it actually exists verbatim in the document (otherwise it's a hallucination —
