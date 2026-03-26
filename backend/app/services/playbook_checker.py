@@ -1938,6 +1938,17 @@ class PlaybookChecker:
                     if abs(occ["char_start"] - clause_pos) > 10
                 ]
 
+        # Universal sentence-boundary extension: whenever found_text is a fragment
+        # (doesn't end at sentence punctuation) and the status is not "passed",
+        # extend it to the nearest sentence end in the document.
+        # This ensures "Применить" replaces the whole clause, not a mid-sentence chunk.
+        if status != "passed" and document_text and found_text_for_result:
+            pos_in_doc = document_text.find(found_text_for_result)
+            if pos_in_doc != -1:
+                found_text_for_result = _extend_to_sentence_end(
+                    found_text_for_result, pos_in_doc, document_text
+                )
+
         return RuleCheckResult(
             rule_id=rule.id,
             rule_name=rule.rule_name,
