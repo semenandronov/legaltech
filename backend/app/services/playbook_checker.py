@@ -1416,6 +1416,11 @@ class PlaybookChecker:
                             p05_issue = f"Найдено {len(p05_unknown)} формулировок, не совпадающих со стандартной или запасной позицией."
                             if standard_position:
                                 p05_suggested.append({"label": "Standard position", "type": "standard", "text": standard_position})
+                            # Point to the actual problem occurrence (not the acceptable standard variant).
+                            # Standard variants (e.g. declined form "Абумова") are correct — don't show them
+                            # as actionable occurrences when genuinely wrong names (e.g. "Иванов") are also present.
+                            p05_first = p05_unknown[0]
+                            p05_all = p05_unac + p05_fallbacks + p05_unknown
                     elif p05_fallbacks:
                         if standard_position:
                             p05_suggested.append(
