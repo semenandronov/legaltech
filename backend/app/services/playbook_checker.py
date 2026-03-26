@@ -789,7 +789,7 @@ class PlaybookChecker:
                 ctx_start = max(0, pos - context_window)
                 ctx_end = min(len(document_text), pos + len(phrase) + context_window)
                 additional.append({
-                    "type": "standard",
+                    "type": "standard_variant",
                     "phrase": phrase,
                     "char_start": pos,
                     "char_end": pos + len(phrase),
@@ -1318,6 +1318,9 @@ class PlaybookChecker:
                     document_text, already_found,
                 )
                 if unknown_occs:
+                    # Remove standard_variant occurrences (accepted declined forms) from the
+                    # actionable list — they don't need replacement when genuinely wrong names exist.
+                    all_occurrences = [o for o in all_occurrences if o.get("type") != "standard_variant"]
                     all_occurrences = all_occurrences + unknown_occs
                     if status != "violation":
                         status = "warning"
