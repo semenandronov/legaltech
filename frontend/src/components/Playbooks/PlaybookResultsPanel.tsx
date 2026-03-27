@@ -121,12 +121,23 @@ export const PlaybookResultsPanel = ({
   const warnings = (result?.results || []).filter(r => r.status === 'warning' || r.rule_type === 'fallback')
   const passed = (result?.results || []).filter(r => r.status === 'passed')
 
-  // Count bar segments by rule status (consistent with group logic)
+  // Count bar segments by individual OCCURRENCES across all rules, using occurrence type.
+  // This reflects reality: 3 correct + 1 wrong = 75% green + 25% red.
   let barStandard = 0, barFallback = 0, barUnacceptable = 0
   for (const rule of result?.results || []) {
-    if (rule.status === 'passed') barStandard++
-    else if (rule.status === 'warning' || rule.rule_type === 'fallback') barFallback++
-    else if (rule.status === 'violation' || rule.status === 'not_found' || rule.status === 'error') barUnacceptable++
+    const occs = rule.occurrences
+    if (occs && occs.length > 0) {
+      for (const occ of occs) {
+        if (occ.type === 'standard' || occ.type === 'standard_variant') barStandard++
+        else if (occ.type === 'fallback') barFallback++
+        else barUnacceptable++ // unacceptable, unknown, etc.
+      }
+    } else {
+      // No occurrences recorded — count by rule status
+      if (rule.status === 'passed') barStandard++
+      else if (rule.status === 'warning') barFallback++
+      else if (rule.status === 'violation' || rule.status === 'not_found' || rule.status === 'error') barUnacceptable++
+    }
   }
   const totalForBar = (barStandard + barFallback + barUnacceptable) || 1
 
