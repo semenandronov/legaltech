@@ -1095,6 +1095,23 @@ class PlaybookChecker:
                 ):
                     logger.warning(f"[UnknownConcept] skip: declension of known var {var_word!r} in {known_vars}")
                     continue
+                # Skip common Russian non-name words by suffix.
+                # Verbal/abstract nouns (-ение, -ание, -ость, -ство, -тие) are never surnames.
+                # E.g. "Расторжение", "Ответственность", "Государство", "Открытие".
+                _NON_SURNAME_SUFFIXES = (
+                    'ение', 'ание', 'ование', 'жение', 'зание',
+                    'ость', 'есть',
+                    'ство', 'чество', 'зство',
+                    'тие', 'итие',
+                )
+                if any(var_word.endswith(s) for s in _NON_SURNAME_SUFFIXES):
+                    logger.warning(f"[UnknownConcept] skip: non-surname suffix in {var_word!r}")
+                    continue
+                # Skip if this word appears too often in the document — likely a legal term.
+                # Genuine surnames rarely appear more than 10 times; common nouns appear more.
+                if document_text.lower().count(var_word) > 10:
+                    logger.warning(f"[UnknownConcept] skip: too frequent ({document_text.lower().count(var_word)}x) {var_word!r}")
+                    continue
                 phrase = m.group(0).rstrip(".,;: ")
                 ctx_start = max(0, pos - context_window)
                 ctx_end = min(len(document_text), pos + len(phrase) + context_window)
