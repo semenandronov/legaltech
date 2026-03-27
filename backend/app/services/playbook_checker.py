@@ -192,6 +192,45 @@ COT_CLASSIFICATION_PROMPT = """Ты - эксперт по анализу юри�
 }}"""
 
 
+def _build_fuzzy_pattern(phrase: str) -> re.Pattern:
+    """Convert a configured phrase to a fuzzy regex that tolerates common OCR/human variations:
+
+    - Initials with/without dots and spaces: "Е.Г." == "Е. Г." == "Е Г" == "ЕГ"
+    - Extra or missing whitespace between words
+    - Trailing punctuation (comma, dot, semicolon after the last word)
+    - Hyphens and dashes: "купли-продажи" == "купли - продажи"
+
+    Usage: m = _build_fuzzy_pattern(phrase).search(document_text)
+    """
+    phrase_clean = phrase.strip().rstrip(".,;: ")
+    tokens = phrase_clean.split()
+    parts = []
+    for token in tokens:
+        token_clean = token.rstrip(".,;:()–-— ")
+        if not token_clean:
+            continue
+        # Combined initials in one token: "Е.Г." or "Е.Г" (letter.letter.?)
+        if re.match(r'^[А-ЯЁA-ZА-яёa-z]\.[А-ЯЁA-ZА-яёa-z]\.?$', token_clean):
+            # Matches "ЕГ", "Е.Г", "Е.Г.", "Е. Г.", "Е Г" etc.
+            parts.append(r'[А-ЯЁа-яёA-Za-z]\.?\s*[А-ЯЁа-яёA-Za-z]\.?')
+        # Single initial (possibly with trailing dot): "Е" or "Е."
+        elif re.match(r'^[А-ЯЁA-Z]\.?$', token_clean):
+            parts.append(r'[А-ЯЁа-яёA-Za-z]\.?')
+        else:
+            # Regular word — escape it; allow optional hyphen variants (spaces around dash)
+            escaped = re.escape(token_clean.lower())
+            # Allow flexible whitespace around hyphens: "купли-продажи" or "купли - продажи"
+            escaped = re.sub(r'\\-', r'\\s*-\\s*', escaped)
+            parts.append(escaped)
+
+    if not parts:
+        return re.compile(re.escape(phrase.lower()), re.IGNORECASE)
+
+    # Words separated by flexible whitespace (1+ spaces, possibly with OCR line-break artifacts)
+    pattern_str = r'\s+'.join(parts)
+    return re.compile(pattern_str, re.IGNORECASE)
+
+
 def _filter_standard_variants(
     occurrences: list,
     status: str,
@@ -203,10 +242,8 @@ def _filter_standard_variants(
     replacement needed. If they appear alongside unacceptable/fallback/unknown items, suppress
     them so only actionable occurrences reach the UI.
     """
-    non_variant = [o for o in occurrences if o.get("type") != "standard_variant"]
-    if non_variant:
-        return non_variant
-    # All items are standard_variant (e.g. only accepted declined forms found) — keep as-is
+    # Always keep all occurrences including standard_variant — users need to see
+    # where the correct name appears even when wrong names are also present.
     return occurrences
 
 
@@ -907,6 +944,7 @@ class PlaybookChecker:
           → finds "Арендодатель Андропов" in document → unknown occurrence
         """
         all_phrases = [p for p in ([standard_position] + list(fallback_positions or []) + list(unacceptable_phrases or [])) if p]
+        logger.warning(f"[UnknownConcept] ENTRY std={standard_position!r} fallbacks={fallback_positions} unac={unacceptable_phrases} all_phrases={all_phrases}")
         if not all_phrases:
             return []
 
@@ -967,12 +1005,36 @@ class PlaybookChecker:
                     known_vars_mp = {w.lower() for w in real_words}
                     anchor_var_pairs.append((anchor, known_vars_mp))
 
+        # Fallback: phrases are bare names (e.g. "Абумов Е.Г." — no role word anchor).
+        # Infer the anchor from the document text at the already-found positions.
+        # E.g. if "Абумов" appears at pos 500 and "Собственник" precedes it, we get
+        # anchor="собственник", known_vars={"абумов"} and can detect "Собственник Усатых".
+        if not anchor_var_pairs and already_found_starts and document_text:
+            # Build known_vars from the name-words in all configured phrases
+            known_vars_from_phrases: set = set()
+            for phrase in all_phrases:
+                pts = [t.rstrip(".,;:()–-— ") for t in phrase.split() if t.strip()]
+                for t in pts:
+                    if t and t[0].isupper() and t.isalpha() and len(t) >= 3:
+                        known_vars_from_phrases.add(t.lower())
+                        break  # take the first proper noun per phrase
+            if known_vars_from_phrases:
+                for pos in sorted(already_found_starts):
+                    preceding = document_text[:pos].rstrip()
+                    word_m = re.search(r'([А-Яа-яёЁa-zA-Z]{3,})\s*$', preceding)
+                    if word_m:
+                        inferred_anchor = word_m.group(1).lower()
+                        anchor_var_pairs.append((inferred_anchor, known_vars_from_phrases))
+                        logger.warning(f"[UnknownConcept] inferred anchor={inferred_anchor!r} known_vars={known_vars_from_phrases}")
+                        break  # one anchor is enough
+
+        logger.warning(f"[UnknownConcept] anchor_var_pairs={anchor_var_pairs}")
         if not anchor_var_pairs:
             return []
 
         # DEBUG: log last 500 chars of document to see what OCR produced near the end
         if document_text:
-            logger.debug(f"[UnknownConcept] doc tail: {repr(document_text[-500:])}")
+            logger.warning(f"[UnknownConcept] doc tail: {repr(document_text[-500:])}")
 
         unknown_occurrences: List[Dict[str, Any]] = []
 
@@ -988,24 +1050,26 @@ class PlaybookChecker:
             else:
                 anchor_pat = re.escape(anchor)
                 sep_pat = r'[^А-Яа-яёЁA-Za-z]{0,40}'
+            # Optionally capture initials after the surname: "Усатых Е.Ж." → whole phrase
+            initials_pat = r'(?:\s+[А-ЯA-Z][.][^\S\n]*[А-ЯA-Z][.]?)?'
             pattern = re.compile(
-                r'\b' + anchor_pat + sep_pat + r'([А-Я][а-яёЁ]{2,})',
+                r'\b' + anchor_pat + sep_pat + r'([А-Я][а-яёЁ]{2,})' + initials_pat,
                 re.IGNORECASE,
             )
-            logger.debug(f"[UnknownConcept] anchor={anchor!r} pattern={pattern.pattern!r}")
+            logger.warning(f"[UnknownConcept] anchor={anchor!r} pattern={pattern.pattern!r}")
             for m in pattern.finditer(document_text):
                 var_match_str = m.group(1)
-                logger.debug(f"[UnknownConcept] match: {m.group(0)!r} var={var_match_str!r} pos={m.start()} var_pos={m.start(1)} already={sorted(already_found_starts)[:10]}")
+                logger.warning(f"[UnknownConcept] match: {m.group(0)!r} var={var_match_str!r} pos={m.start()} var_pos={m.start(1)} already={sorted(already_found_starts)[:10]}")
                 # Require genuine uppercase start — filters out non-proper-noun captures
                 # that IGNORECASE would otherwise allow (e.g. lowercase "государства").
                 if not var_match_str[0].isupper():
-                    logger.debug(f"[UnknownConcept] skip: not uppercase")
+                    logger.warning(f"[UnknownConcept] skip: not uppercase")
                     continue
                 var_word = var_match_str.lower()
                 pos = m.start()
                 # Skip already-found positions
                 if any(abs(pos - fp) <= 3 for fp in already_found_starts):
-                    logger.debug(f"[UnknownConcept] skip: anchor pos {pos} near already_found")
+                    logger.warning(f"[UnknownConcept] skip: anchor pos {pos} near already_found")
                     continue
                 # Also skip if the VARIABLE WORD position was already found.
                 # _find_all_name_variants adds the surname position (P2) to already_found_starts,
@@ -1013,10 +1077,11 @@ class PlaybookChecker:
                 # above fails. This second check catches that case.
                 var_pos = m.start(1)
                 if any(abs(var_pos - fp) <= 3 for fp in already_found_starts):
-                    logger.debug(f"[UnknownConcept] skip: var_pos {var_pos} near already_found")
+                    logger.warning(f"[UnknownConcept] skip: var_pos {var_pos} near already_found")
                     continue
                 # Skip if this is a known variable word
                 if var_word in known_vars:
+                    logger.warning(f"[UnknownConcept] skip: known var {var_word!r} in {known_vars}")
                     continue
                 # Skip if this is a declined/inflected form of a known variable word.
                 # E.g. "абумова" is genitive of "абумов" → same person, not unknown.
@@ -1025,6 +1090,7 @@ class PlaybookChecker:
                     len(kv) >= 5 and var_word.startswith(kv) and 1 <= len(var_word) - len(kv) <= 3
                     for kv in known_vars
                 ):
+                    logger.warning(f"[UnknownConcept] skip: declension of known var {var_word!r} in {known_vars}")
                     continue
                 phrase = m.group(0).rstrip(".,;: ")
                 ctx_start = max(0, pos - context_window)
@@ -1061,49 +1127,48 @@ class PlaybookChecker:
         for phrase in unacceptable_phrases:
             if not phrase:
                 continue
-            # Strip trailing punctuation to match "Абумов Е.Г," or "Абумов Е.Г" in doc
-            phrase_search = phrase.rstrip(".,;: ") or phrase
-            phrase_lower = phrase_search.lower()
+            fuzzy_pat = _build_fuzzy_pattern(phrase)
             start = 0
             while True:
-                pos = doc_lower.find(phrase_lower, start)
-                if pos == -1:
+                m = fuzzy_pat.search(document_text, start)
+                if not m:
                     break
+                pos, end = m.start(), m.end()
                 ctx_start = max(0, pos - context_window)
-                ctx_end = min(len(document_text), pos + len(phrase_search) + context_window)
+                ctx_end = min(len(document_text), end + context_window)
                 found_unacceptable.append({
                     "type": "unacceptable",
-                    "phrase": document_text[pos:pos + len(phrase_search)],
+                    "phrase": document_text[pos:end],
                     "char_start": pos,
-                    "char_end": pos + len(phrase_search),
+                    "char_end": end,
                     "context": document_text[ctx_start:ctx_end],
                 })
-                start = pos + len(phrase_search)
+                start = end
 
         for phrase in fallback_positions:
             if not phrase:
                 continue
-            # Strip trailing punctuation to match "phrase," or "phrase." variants
-            phrase_search = phrase.rstrip(".,;: ") or phrase
-            phrase_lower = phrase_search.lower()
+            phrase_search = phrase.rstrip(".,;: ") or phrase  # kept for prefix-match fallback
+            fuzzy_pat = _build_fuzzy_pattern(phrase)
             start = 0
             found_any_exact = False
             while True:
-                pos = doc_lower.find(phrase_lower, start)
-                if pos == -1:
+                m = fuzzy_pat.search(document_text, start)
+                if not m:
                     break
                 found_any_exact = True
+                pos, end = m.start(), m.end()
                 ctx_start = max(0, pos - context_window)
-                ctx_end = min(len(document_text), pos + len(phrase_search) + context_window)
+                ctx_end = min(len(document_text), end + context_window)
                 found_fallbacks.append({
                     "type": "fallback",
-                    "phrase": document_text[pos:pos + len(phrase_search)],
+                    "phrase": document_text[pos:end],
                     "char_start": pos,
-                    "char_end": pos + len(phrase_search),
+                    "char_end": end,
                     "context": document_text[ctx_start:ctx_end],
                 })
-                start = pos + len(phrase_search)
-            # If exact match failed, try blank-tolerant prefix match for template phrases
+                start = end
+            # If fuzzy match failed, try blank-tolerant prefix match for template phrases
             if not found_any_exact:
                 prefix_pos = self._get_blank_prefix_pos(phrase_search, doc_lower)
                 if prefix_pos is not None:
@@ -1130,26 +1195,25 @@ class PlaybookChecker:
         already_nv_starts: set = set()
 
         if standard_position:
-            # Strip trailing punctuation to match "Абумов Е.Г," when standard is "Абумов Е.Г."
-            std_search = standard_position.rstrip(".,;: ") or standard_position
-            std_lower = std_search.lower()
+            fuzzy_std = _build_fuzzy_pattern(standard_position)
             start = 0
             while True:
-                pos = doc_lower.find(std_lower, start)
-                if pos == -1:
+                m = fuzzy_std.search(document_text, start)
+                if not m:
                     break
+                pos, end = m.start(), m.end()
                 ctx_start = max(0, pos - context_window)
-                ctx_end = min(len(document_text), pos + len(std_search) + context_window)
+                ctx_end = min(len(document_text), end + context_window)
                 found_standard.append({
                     "type": "standard",
-                    "phrase": document_text[pos:pos + len(std_search)],
+                    "phrase": document_text[pos:end],
                     "char_start": pos,
-                    "char_end": pos + len(std_search),
+                    "char_end": end,
                     "context": document_text[ctx_start:ctx_end],
                 })
-                start = pos + len(std_search)
+                start = end
 
-            # If exact match failed, try number-fuzzy search (e.g. "до '20' июня" vs "до '21' июня")
+            # If fuzzy match failed, try number-fuzzy search (e.g. "до '20' июня" vs "до '21' июня")
             if not found_standard:
                 nv = self._number_fuzzy_search(std_search, document_text, context_window)
                 for item in nv:
@@ -1359,9 +1423,8 @@ class PlaybookChecker:
                     document_text, already_found,
                 )
                 if unknown_occs:
-                    # Remove standard_variant occurrences (accepted declined forms) from the
-                    # actionable list — they don't need replacement when genuinely wrong names exist.
-                    all_occurrences = [o for o in all_occurrences if o.get("type") != "standard_variant"]
+                    # Keep standard_variant occurrences — user still wants to see where the
+                    # correct name appears alongside the wrong ones.
                     all_occurrences = all_occurrences + unknown_occs
                     if status != "violation":
                         status = "warning"
