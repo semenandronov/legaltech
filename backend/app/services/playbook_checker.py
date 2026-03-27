@@ -992,16 +992,20 @@ class PlaybookChecker:
                 r'\b' + anchor_pat + sep_pat + r'([А-Я][а-яёЁ]{2,})',
                 re.IGNORECASE,
             )
+            logger.debug(f"[UnknownConcept] anchor={anchor!r} pattern={pattern.pattern!r}")
             for m in pattern.finditer(document_text):
                 var_match_str = m.group(1)
+                logger.debug(f"[UnknownConcept] match: {m.group(0)!r} var={var_match_str!r} pos={m.start()} var_pos={m.start(1)} already={sorted(already_found_starts)[:10]}")
                 # Require genuine uppercase start — filters out non-proper-noun captures
                 # that IGNORECASE would otherwise allow (e.g. lowercase "государства").
                 if not var_match_str[0].isupper():
+                    logger.debug(f"[UnknownConcept] skip: not uppercase")
                     continue
                 var_word = var_match_str.lower()
                 pos = m.start()
                 # Skip already-found positions
                 if any(abs(pos - fp) <= 3 for fp in already_found_starts):
+                    logger.debug(f"[UnknownConcept] skip: anchor pos {pos} near already_found")
                     continue
                 # Also skip if the VARIABLE WORD position was already found.
                 # _find_all_name_variants adds the surname position (P2) to already_found_starts,
@@ -1009,6 +1013,7 @@ class PlaybookChecker:
                 # above fails. This second check catches that case.
                 var_pos = m.start(1)
                 if any(abs(var_pos - fp) <= 3 for fp in already_found_starts):
+                    logger.debug(f"[UnknownConcept] skip: var_pos {var_pos} near already_found")
                     continue
                 # Skip if this is a known variable word
                 if var_word in known_vars:
