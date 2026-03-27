@@ -452,7 +452,8 @@ export const PlaybookResultsPanel = ({
 
                   {/* Occurrences + fix options */}
                   {ruleOccs.length > 0 ? ruleOccs.map((occ, occIdx) => {
-                    const baseOptions = (occ.type === 'standard' && rule.status === 'passed') ? [] : ruleSuggestedOptions
+                    const isCorrectOccurrence = occ.type === 'standard' || occ.type === 'standard_variant'
+                    const baseOptions = isCorrectOccurrence ? [] : ruleSuggestedOptions
                     // Skip options that would replace the phrase with itself (no-op diff)
                     const occOptions = baseOptions.filter(opt =>
                       opt.text.toLowerCase().trim() !== occ.phrase.toLowerCase().trim()
@@ -461,8 +462,8 @@ export const PlaybookResultsPanel = ({
                     const anyApplied = occOptions.some((_, oi) => appliedRules.has(`${occApplyPrefix}_${oi}`))
                     const nthOcc = ruleOccs.slice(0, occIdx).filter(o => o.phrase.trim().toLowerCase() === occ.phrase.trim().toLowerCase()).length
                     const ctxDisplay = (occ.context || occ.phrase).slice(0, 280) + ((occ.context || occ.phrase).length > 280 ? '…' : '')
-                    // Yellow for fallback occurrences, red for unacceptable
-                    const delColor = occ.type === 'fallback' ? '#ca8a04' : '#dc2626'
+                    // Green for correct occurrences, yellow for fallback, red for unacceptable/unknown
+                    const delColor = isCorrectOccurrence ? '#16a34a' : occ.type === 'fallback' ? '#ca8a04' : '#dc2626'
                     return (
                       <div key={occIdx} className="border-b" style={{ borderColor: 'var(--color-border)' }}>
                         {ruleOccs.length > 1 && (
@@ -488,7 +489,7 @@ export const PlaybookResultsPanel = ({
                             </button>
                           )}
                         </div>
-                        {occ.type === 'standard' && rule.status === 'passed' && (
+                        {isCorrectOccurrence && (
                           <div className="px-4 pb-3 flex items-center gap-1.5 text-xs" style={{ color: '#16a34a' }}>
                             <Check className="w-3.5 h-3.5" />
                             Соответствует стандарту
