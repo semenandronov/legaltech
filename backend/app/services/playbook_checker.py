@@ -226,8 +226,9 @@ def _build_fuzzy_pattern(phrase: str) -> re.Pattern:
     if not parts:
         return re.compile(re.escape(phrase.lower()), re.IGNORECASE)
 
-    # Words separated by flexible whitespace (1+ spaces, possibly with OCR line-break artifacts)
-    pattern_str = r'\s+'.join(parts)
+    # Words separated by spaces/tabs only (NOT newlines) to avoid matching across paragraphs.
+    # OCR may insert spaces within words but not paragraph breaks between name parts.
+    pattern_str = r'[^\S\n]+'.join(parts)
     return re.compile(pattern_str, re.IGNORECASE)
 
 
@@ -1046,10 +1047,12 @@ class PlaybookChecker:
             # For short anchors keep the exact match with 0-separator tolerance.
             if len(anchor) >= 8:
                 anchor_pat = re.escape(anchor[:-2]) + r'\w*\b'
-                sep_pat = r'[^А-Яа-яёЁA-Za-z]{1,40}'
+                # Separator: only whitespace and optional dash/comma (no periods/newlines).
+                # Prevents crossing sentence boundaries: "арендодателю. Оплата" or "Федерации. 7. Расторжение"
+                sep_pat = r'[\s,\-–—]{1,10}'
             else:
                 anchor_pat = re.escape(anchor)
-                sep_pat = r'[^А-Яа-яёЁA-Za-z]{0,40}'
+                sep_pat = r'[\s,\-–—]{0,10}'
             # Optionally capture initials after the surname: "Усатых Е.Ж." → whole phrase
             initials_pat = r'(?:\s+[А-ЯA-Z][.][^\S\n]*[А-ЯA-Z][.]?)?'
             pattern = re.compile(
