@@ -973,14 +973,28 @@ class PlaybookChecker:
         unknown_occurrences: List[Dict[str, Any]] = []
 
         for anchor, known_vars in anchor_var_pairs:
-            # Allow non-letter characters between anchor and name (e.g. ": _____ /")
-            # but stop at any Cyrillic/Latin letter to avoid skipping across words.
+            # For long anchors (≥8 chars), strip the last 2 chars and use \w+ to tolerate
+            # OCR word-ending errors. E.g. "собственник" → prefix "собственн" matches
+            # both "собственник" and OCR-garbled "собственние".
+            # Requires ≥1 separator so we don't match within the anchor word itself.
+            # For short anchors keep the exact match with 0-separator tolerance.
+            if len(anchor) >= 8:
+                anchor_pat = re.escape(anchor[:-2]) + r'\w+'
+                sep_pat = r'[^А-Яа-яёЁA-Za-z]{1,40}'
+            else:
+                anchor_pat = re.escape(anchor)
+                sep_pat = r'[^А-Яа-яёЁA-Za-z]{0,40}'
             pattern = re.compile(
-                r'\b' + re.escape(anchor) + r'[^А-Яа-яёЁA-Za-z]{0,40}([А-Я][а-яёЁ]{2,})',
+                r'\b' + anchor_pat + sep_pat + r'([А-Я][а-яёЁ]{2,})',
                 re.IGNORECASE,
             )
             for m in pattern.finditer(document_text):
-                var_word = m.group(1).lower()
+                var_match_str = m.group(1)
+                # Require genuine uppercase start — filters out non-proper-noun captures
+                # that IGNORECASE would otherwise allow (e.g. lowercase "государства").
+                if not var_match_str[0].isupper():
+                    continue
+                var_word = var_match_str.lower()
                 pos = m.start()
                 # Skip already-found positions
                 if any(abs(pos - fp) <= 3 for fp in already_found_starts):
