@@ -970,6 +970,10 @@ class PlaybookChecker:
         if not anchor_var_pairs:
             return []
 
+        # DEBUG: log last 500 chars of document to see what OCR produced near the end
+        if document_text:
+            logger.debug(f"[UnknownConcept] doc tail: {repr(document_text[-500:])}")
+
         unknown_occurrences: List[Dict[str, Any]] = []
 
         for anchor, known_vars in anchor_var_pairs:
@@ -979,7 +983,7 @@ class PlaybookChecker:
             # Requires ≥1 separator so we don't match within the anchor word itself.
             # For short anchors keep the exact match with 0-separator tolerance.
             if len(anchor) >= 8:
-                anchor_pat = re.escape(anchor[:-2]) + r'\w+'
+                anchor_pat = re.escape(anchor[:-2]) + r'\w*\b'
                 sep_pat = r'[^А-Яа-яёЁA-Za-z]{1,40}'
             else:
                 anchor_pat = re.escape(anchor)
