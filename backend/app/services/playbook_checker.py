@@ -1235,7 +1235,7 @@ class PlaybookChecker:
 
             # If fuzzy match failed, try number-fuzzy search (e.g. "до '20' июня" vs "до '21' июня")
             if not found_standard:
-                nv = self._number_fuzzy_search(std_search, document_text, context_window)
+                nv = self._number_fuzzy_search(standard_position, document_text, context_window)
                 for item in nv:
                     if not any(abs(item["char_start"] - s) <= 3 for s in already_nv_starts):
                         found_number_variants.append(item)
