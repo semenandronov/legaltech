@@ -850,6 +850,10 @@ class DocumentAIService:
             doc_plain = re.sub(r'<[^>]+>', '', document_content)
             return max(document_content.count(text), doc_plain.count(text))
 
+        def _strip_html(text: str) -> str:
+            """Remove HTML tags from text, normalizing whitespace."""
+            return re.sub(r'\s+', ' ', re.sub(r'<[^>]+>', '', text)).strip()
+
         def _fuzzy_find_in_doc(text: str, doc: str, doc_plain: str) -> Optional[str]:
             """Try to find the best matching fragment in the document when exact match fails.
 
@@ -884,6 +888,8 @@ class DocumentAIService:
                 if find_match and replace_match:
                     original_text = find_match.group(1).strip().strip('"\'')
                     new_text = replace_match.group(1).strip().strip('"\'')
+                    # Strip HTML tags from original_text — LLM sometimes copies HTML from document context
+                    original_text = _strip_html(original_text)
                     if original_text and new_text:
                         doc_plain = re.sub(r'<[^>]+>', '', document_content) if document_content else ""
                         found_in_doc = original_text in (document_content or "") or original_text in doc_plain
@@ -914,6 +920,7 @@ class DocumentAIService:
                 if raw_match:
                     original_text = raw_match.group(1).strip()
                     new_text = raw_match.group(2).strip()
+                    original_text = _strip_html(original_text)
                     if original_text and new_text:
                         doc_plain = re.sub(r'<[^>]+>', '', document_content) if document_content else ""
                         found_in_doc = original_text in (document_content or "") or original_text in doc_plain
