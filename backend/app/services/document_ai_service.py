@@ -850,6 +850,31 @@ class DocumentAIService:
             doc_plain = re.sub(r'<[^>]+>', '', document_content)
             return max(document_content.count(text), doc_plain.count(text))
 
+        def _fuzzy_find_in_doc(text: str, doc: str, doc_plain: str) -> Optional[str]:
+            """Try to find the best matching fragment in the document when exact match fails.
+
+            Strategy: split search text into tokens, find the longest contiguous
+            token subsequence that appears verbatim in the document, return the
+            actual document fragment of the same length.
+            Returns the exact document text that should be used as original_text,
+            or None if no reasonable match found.
+            """
+            if not text or not doc:
+                return None
+            tokens = text.split()
+            if not tokens:
+                return None
+            # Try progressively shorter windows from the full phrase down to half
+            min_tokens = max(2, len(tokens) // 2)
+            for length in range(len(tokens), min_tokens - 1, -1):
+                for start in range(len(tokens) - length + 1):
+                    candidate = " ".join(tokens[start:start + length])
+                    if candidate in doc:
+                        return candidate
+                    if candidate in doc_plain:
+                        return candidate
+            return None
+
         if use_targeted:
             edit_block_pattern = r'```edit\s*\n([\s\S]*?)```'
             for block_match in re.finditer(edit_block_pattern, answer, re.DOTALL | re.IGNORECASE):
@@ -862,6 +887,13 @@ class DocumentAIService:
                     if original_text and new_text:
                         doc_plain = re.sub(r'<[^>]+>', '', document_content) if document_content else ""
                         found_in_doc = original_text in (document_content or "") or original_text in doc_plain
+                        # If exact match failed — try fuzzy match to correct LLM hallucination in НАЙТИ
+                        if not found_in_doc:
+                            fuzzy_match = _fuzzy_find_in_doc(original_text, document_content or "", doc_plain)
+                            if fuzzy_match:
+                                original_text = fuzzy_match
+                                found_in_doc = True
+                                logger.info(f"[EditorHandler] Fuzzy match corrected НАЙТИ to: {original_text!r}")
                         occurrences = _count_occurrences(original_text)
                         structured_edits.append({
                             "id": f"edit-{uuid.uuid4().hex[:8]}",
@@ -885,6 +917,12 @@ class DocumentAIService:
                     if original_text and new_text:
                         doc_plain = re.sub(r'<[^>]+>', '', document_content) if document_content else ""
                         found_in_doc = original_text in (document_content or "") or original_text in doc_plain
+                        if not found_in_doc:
+                            fuzzy_match = _fuzzy_find_in_doc(original_text, document_content or "", doc_plain)
+                            if fuzzy_match:
+                                original_text = fuzzy_match
+                                found_in_doc = True
+                                logger.info(f"[EditorHandler] Fuzzy match (raw) corrected НАЙТИ to: {original_text!r}")
                         occurrences = _count_occurrences(original_text)
                         structured_edits.append({
                             "id": f"edit-{uuid.uuid4().hex[:8]}",
