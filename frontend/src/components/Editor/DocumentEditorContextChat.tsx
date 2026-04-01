@@ -963,6 +963,8 @@ export const DocumentEditorContextChat: React.FC<DocumentEditorContextChatProps>
                 {/* Draft text card with accept/reject */}
                 {message.draftInsertedText && (() => {
                   const draftStatus = editStatuses[message.id]?.['draft']
+                  const [draftExpanded, setDraftExpanded] = React.useState(false)
+                  const isLong = message.draftInsertedText.length > 300
                   return (
                     <div className="rounded-xl border overflow-hidden" style={{
                       borderColor: draftStatus === 'accepted' ? '#bbf7d0' : draftStatus === 'rejected' ? '#fecaca' : '#e5e7eb',
@@ -978,9 +980,21 @@ export const DocumentEditorContextChat: React.FC<DocumentEditorContextChatProps>
                           : <><FileText className="w-3 h-3" style={{ color: '#6b7280' }} /><span className="text-xs font-semibold" style={{ color: '#6b7280' }}>Черновик</span></>
                         }
                       </div>
-                      <div className="px-3 py-2 text-xs leading-relaxed text-gray-700 whitespace-pre-wrap line-clamp-4">
+                      <div className={`px-3 py-2 text-xs leading-relaxed text-gray-700 whitespace-pre-wrap${isLong && !draftExpanded ? ' line-clamp-4' : ''}`}>
                         {message.draftInsertedText}
                       </div>
+                      {isLong && (
+                        <button
+                          onClick={() => setDraftExpanded(e => !e)}
+                          className="flex items-center gap-1 px-3 pb-1.5 text-xs transition-opacity hover:opacity-70"
+                          style={{ color: '#6b7280' }}
+                        >
+                          {draftExpanded
+                            ? <><ChevronUp className="w-3 h-3" />Свернуть</>
+                            : <><ChevronDown className="w-3 h-3" />Читать полностью</>
+                          }
+                        </button>
+                      )}
                       {!draftStatus && (
                         <div className="flex items-center gap-2 px-3 pb-2.5 pt-1 border-t" style={{ borderColor: '#e5e7eb' }}>
                           <button
