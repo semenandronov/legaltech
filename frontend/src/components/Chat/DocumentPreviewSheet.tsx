@@ -18,6 +18,7 @@ import {
   ChevronLeft as ChevronLeftIcon,
   ChevronRight as ChevronRightIcon,
   OpenInNew as MaximizeIcon,
+  Close as CloseIcon,
 } from '@mui/icons-material'
 import { SourceInfo } from '@/services/api'
 import PDFViewer from '@/components/Documents/PDFViewer'
@@ -636,6 +637,11 @@ const DocumentPreviewSheet = ({
                   </IconButton>
                 </Tooltip>
               )}
+              <Tooltip title="Закрыть">
+                <IconButton size="small" onClick={onClose}>
+                  <CloseIcon fontSize="small" />
+                </IconButton>
+              </Tooltip>
             </Stack>
           </Box>
         </Box>
