@@ -362,29 +362,46 @@ const StructuredEditsBlock: React.FC<{
           )
         }
 
-        // Single-occurrence card (original behavior)
+        // Single-occurrence card
         const { edit } = item
         const isFound = edit.found_in_document !== false
         const status = statuses[edit.id]
+        const singleCtx = (isFound && documentContent)
+          ? findOccurrencesWithContext(edit.original_text, documentContent)[0]
+          : undefined
         return (
           <div key={edit.id} className="rounded-xl border overflow-hidden" style={{ borderColor: '#e5e7eb', background: '#f5f5f5' }}>
             <div className="px-3 pt-2.5 pb-1.5">
-              <div className="px-2 py-2 rounded-md" style={{ background: 'rgba(0,0,0,0.03)', lineHeight: '1.6' }}>
+              <div className="px-2 py-2 rounded-md text-xs leading-relaxed break-words" style={{ background: 'rgba(0,0,0,0.03)', lineHeight: '1.7' }}>
+                {singleCtx?.before && <span style={{ color: '#9ca3af' }}>…{singleCtx.before}</span>}
                 {renderInlineDiff(edit.original_text, edit.new_text)}
+                {singleCtx?.after && <span style={{ color: '#9ca3af' }}>{singleCtx.after}…</span>}
               </div>
               {!isFound && !status && (
                 <div className="text-xs text-amber-600 mt-1.5">⚠ Фрагмент не найден в документе</div>
               )}
             </div>
-            <div className="flex items-center justify-end gap-2 px-3 pb-2.5 pt-1 border-t" style={{ borderColor: '#ebebeb' }}>
-              {status
-                ? <StatusBadge status={status} />
-                : <EditActionButtons
-                    isFound={isFound}
-                    onAccept={() => onAccept(edit)}
-                    onDismiss={() => onDismiss(edit.id)}
-                  />
-              }
+            <div className="flex items-center justify-between gap-2 px-3 pb-2.5 pt-1 border-t" style={{ borderColor: '#ebebeb' }}>
+              {onScrollToText && isFound && !status && (
+                <button
+                  onClick={() => onScrollToText(edit.original_text, 0)}
+                  className="flex items-center gap-1 text-xs transition-opacity hover:opacity-70"
+                  style={{ color: 'var(--color-text-tertiary, #9ca3af)' }}
+                >
+                  <ArrowRight className="w-3 h-3" />
+                  Перейти
+                </button>
+              )}
+              <div className="flex items-center gap-2 ml-auto">
+                {status
+                  ? <StatusBadge status={status} />
+                  : <EditActionButtons
+                      isFound={isFound}
+                      onAccept={() => onAccept(edit)}
+                      onDismiss={() => onDismiss(edit.id)}
+                    />
+                }
+              </div>
             </div>
           </div>
         )
