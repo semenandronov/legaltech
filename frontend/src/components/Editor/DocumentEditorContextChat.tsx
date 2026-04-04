@@ -269,6 +269,71 @@ function buildItems(edits: StructuredEdit[], docContent: string | undefined): It
   })
 }
 
+const DraftCard: React.FC<{
+  text: string
+  status: EditStatus | undefined
+  onAccept: () => void
+  onReject: () => void
+}> = ({ text, status, onAccept, onReject }) => {
+  const [expanded, setExpanded] = useState(false)
+  const isLong = text.length > 300
+  return (
+    <div className="rounded-xl border overflow-hidden" style={{
+      borderColor: status === 'accepted' ? '#bbf7d0' : status === 'rejected' ? '#fecaca' : '#e5e7eb',
+      background: status === 'accepted' ? '#f0fdf4' : status === 'rejected' ? '#fef2f2' : '#f9fafb',
+    }}>
+      <div className="flex items-center gap-1.5 px-3 py-1.5 border-b" style={{
+        borderColor: status === 'accepted' ? '#bbf7d0' : status === 'rejected' ? '#fecaca' : '#e5e7eb',
+      }}>
+        {status === 'accepted'
+          ? <><Check className="w-3 h-3" style={{ color: '#16a34a' }} /><span className="text-xs font-semibold" style={{ color: '#16a34a' }}>Вставлено в документ</span></>
+          : status === 'rejected'
+          ? <><X className="w-3 h-3" style={{ color: '#ef4444' }} /><span className="text-xs font-semibold" style={{ color: '#ef4444' }}>Отклонено</span></>
+          : <><FileText className="w-3 h-3" style={{ color: '#6b7280' }} /><span className="text-xs font-semibold" style={{ color: '#6b7280' }}>Черновик</span></>
+        }
+      </div>
+      <div className={`px-3 py-2 text-xs leading-relaxed text-gray-700 whitespace-pre-wrap${isLong && !expanded ? ' line-clamp-4' : ''}`}>
+        {text}
+      </div>
+      {isLong && (
+        <button
+          onClick={() => setExpanded(e => !e)}
+          className="flex items-center gap-1 px-3 pb-1.5 text-xs transition-opacity hover:opacity-70"
+          style={{ color: '#6b7280' }}
+        >
+          {expanded
+            ? <><ChevronUp className="w-3 h-3" />Свернуть</>
+            : <><ChevronDown className="w-3 h-3" />Читать полностью</>
+          }
+        </button>
+      )}
+      {!status && (
+        <div className="flex items-center gap-2 px-3 pb-2.5 pt-1 border-t" style={{ borderColor: '#e5e7eb' }}>
+          <button
+            onClick={onReject}
+            className="text-xs font-medium px-3 py-1.5 rounded-lg border transition-colors"
+            style={{ borderColor: '#e5e7eb', color: '#9ca3af', background: 'transparent' }}
+            onMouseEnter={e => { const el = e.currentTarget; el.style.borderColor = '#fca5a5'; el.style.color = '#ef4444'; el.style.background = 'rgba(239,68,68,0.05)' }}
+            onMouseLeave={e => { const el = e.currentTarget; el.style.borderColor = '#e5e7eb'; el.style.color = '#9ca3af'; el.style.background = 'transparent' }}
+          >
+            Отклонить
+          </button>
+          <button
+            onClick={onAccept}
+            className="flex items-center gap-1 text-xs font-semibold px-3 py-1.5 rounded-lg border transition-colors"
+            style={{ borderColor: '#d1d5db', color: '#374151', background: 'transparent' }}
+            onMouseEnter={e => { const el = e.currentTarget; el.style.borderColor = '#10b981'; el.style.color = '#10b981'; el.style.background = 'rgba(16,185,129,0.07)' }}
+            onMouseLeave={e => { const el = e.currentTarget; el.style.borderColor = '#d1d5db'; el.style.color = '#374151'; el.style.background = 'transparent' }}
+          >
+            <Check className="w-3 h-3" />
+            Вставить
+          </button>
+        </div>
+      )}
+    </div>
+  )
+}
+
 const StructuredEditsBlock: React.FC<{
   edits: StructuredEdit[]
   statuses: Record<string, EditStatus>
@@ -978,74 +1043,22 @@ export const DocumentEditorContextChat: React.FC<DocumentEditorContextChatProps>
             return (
               <div key={message.id} className="space-y-2">
                 {/* Draft text card with accept/reject */}
-                {message.draftInsertedText && (() => {
-                  const draftStatus = editStatuses[message.id]?.['draft']
-                  const [draftExpanded, setDraftExpanded] = React.useState(false)
-                  const isLong = message.draftInsertedText.length > 300
-                  return (
-                    <div className="rounded-xl border overflow-hidden" style={{
-                      borderColor: draftStatus === 'accepted' ? '#bbf7d0' : draftStatus === 'rejected' ? '#fecaca' : '#e5e7eb',
-                      background: draftStatus === 'accepted' ? '#f0fdf4' : draftStatus === 'rejected' ? '#fef2f2' : '#f9fafb',
-                    }}>
-                      <div className="flex items-center gap-1.5 px-3 py-1.5 border-b" style={{
-                        borderColor: draftStatus === 'accepted' ? '#bbf7d0' : draftStatus === 'rejected' ? '#fecaca' : '#e5e7eb',
-                      }}>
-                        {draftStatus === 'accepted'
-                          ? <><Check className="w-3 h-3" style={{ color: '#16a34a' }} /><span className="text-xs font-semibold" style={{ color: '#16a34a' }}>Вставлено в документ</span></>
-                          : draftStatus === 'rejected'
-                          ? <><X className="w-3 h-3" style={{ color: '#ef4444' }} /><span className="text-xs font-semibold" style={{ color: '#ef4444' }}>Отклонено</span></>
-                          : <><FileText className="w-3 h-3" style={{ color: '#6b7280' }} /><span className="text-xs font-semibold" style={{ color: '#6b7280' }}>Черновик</span></>
-                        }
-                      </div>
-                      <div className={`px-3 py-2 text-xs leading-relaxed text-gray-700 whitespace-pre-wrap${isLong && !draftExpanded ? ' line-clamp-4' : ''}`}>
-                        {message.draftInsertedText}
-                      </div>
-                      {isLong && (
-                        <button
-                          onClick={() => setDraftExpanded(e => !e)}
-                          className="flex items-center gap-1 px-3 pb-1.5 text-xs transition-opacity hover:opacity-70"
-                          style={{ color: '#6b7280' }}
-                        >
-                          {draftExpanded
-                            ? <><ChevronUp className="w-3 h-3" />Свернуть</>
-                            : <><ChevronDown className="w-3 h-3" />Читать полностью</>
-                          }
-                        </button>
-                      )}
-                      {!draftStatus && (
-                        <div className="flex items-center gap-2 px-3 pb-2.5 pt-1 border-t" style={{ borderColor: '#e5e7eb' }}>
-                          <button
-                            onClick={() => { setStatus(message.id, 'draft', 'rejected') }}
-                            className="text-xs font-medium px-3 py-1.5 rounded-lg border transition-colors"
-                            style={{ borderColor: '#e5e7eb', color: '#9ca3af', background: 'transparent' }}
-                            onMouseEnter={e => { const el = e.currentTarget; el.style.borderColor = '#fca5a5'; el.style.color = '#ef4444'; el.style.background = 'rgba(239,68,68,0.05)' }}
-                            onMouseLeave={e => { const el = e.currentTarget; el.style.borderColor = '#e5e7eb'; el.style.color = '#9ca3af'; el.style.background = 'transparent' }}
-                          >
-                            Отклонить
-                          </button>
-                          <button
-                            onClick={() => {
-                              if (onReplaceRange && message.selectionRange) {
-                                onReplaceRange(message.selectionRange.from, message.selectionRange.to, message.draftInsertedText!)
-                              } else if (onApplyEdit) {
-                                onApplyEdit(message.draftInsertedText!)
-                              }
-                              setStatus(message.id, 'draft', 'accepted')
-                              toast.success('Текст вставлен')
-                            }}
-                            className="flex items-center gap-1 text-xs font-semibold px-3 py-1.5 rounded-lg border transition-colors"
-                            style={{ borderColor: '#d1d5db', color: '#374151', background: 'transparent' }}
-                            onMouseEnter={e => { const el = e.currentTarget; el.style.borderColor = '#10b981'; el.style.color = '#10b981'; el.style.background = 'rgba(16,185,129,0.07)' }}
-                            onMouseLeave={e => { const el = e.currentTarget; el.style.borderColor = '#d1d5db'; el.style.color = '#374151'; el.style.background = 'transparent' }}
-                          >
-                            <Check className="w-3 h-3" />
-                            Вставить
-                          </button>
-                        </div>
-                      )}
-                    </div>
-                  )
-                })()}
+                {message.draftInsertedText && (
+                  <DraftCard
+                    text={message.draftInsertedText}
+                    status={editStatuses[message.id]?.['draft']}
+                    onReject={() => setStatus(message.id, 'draft', 'rejected')}
+                    onAccept={() => {
+                      if (onReplaceRange && message.selectionRange) {
+                        onReplaceRange(message.selectionRange.from, message.selectionRange.to, message.draftInsertedText!)
+                      } else if (onApplyEdit) {
+                        onApplyEdit(message.draftInsertedText!)
+                      }
+                      setStatus(message.id, 'draft', 'accepted')
+                      toast.success('Текст вставлен')
+                    }}
+                  />
+                )}
                 {message.content && (
                   <div className="text-sm text-gray-700 leading-relaxed whitespace-pre-wrap">
                     {renderMarkdown(message.content)}
