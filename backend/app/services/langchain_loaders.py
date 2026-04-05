@@ -101,6 +101,31 @@ class DocumentLoaderService:
                         f"PDF {filename} has {len(documents)} pages but only {len(total_text)} chars of text. "
                         f"Attempting OCR for scanned PDF..."
                     )
+                    # Yandex Vision: лимит ~200 страниц на запрос — сервис режет PDF на чанки сам
+                    if getattr(config, "PDF_OCR_PREFER_YANDEX", True):
+                        try:
+                            from app.services.yandex_vision_ocr import (
+                                vision_api_configured,
+                                yandex_vision_ocr_pdf_documents_for_langchain,
+                            )
+
+                            if vision_api_configured():
+                                yandex_docs = yandex_vision_ocr_pdf_documents_for_langchain(
+                                    content, filename
+                                )
+                                if yandex_docs:
+                                    logger.info(
+                                        "PDF %s: Yandex Vision OCR, %s страниц с текстом",
+                                        filename,
+                                        len(yandex_docs),
+                                    )
+                                    return yandex_docs
+                        except Exception as yv_err:
+                            logger.warning(
+                                "Yandex Vision PDF OCR не удался (%s), пробуем Tesseract…",
+                                yv_err,
+                            )
+
                     ocr_docs = DocumentLoaderService._ocr_pdf(content, filename)
                     if ocr_docs:
                         return ocr_docs
@@ -295,74 +320,146 @@ class DocumentLoaderService:
             raise
     
     @staticmethod
+    def _xlsx_sheet_stream_to_document(sheet, sheet_name: str, filename: str) -> Optional[Document]:
+        """
+        Один лист → Document. Потоковый проход по строкам (без list(iter_rows) на весь лист).
+        Forward-fill по столбцам для типичных объединённых ячеек.
+        """
+        text_lines: List[str] = [f"=== Лист: {sheet_name} ==="]
+        header_row: Optional[List[str]] = None
+        last_values: List[Any] = []
+
+        for row in sheet.iter_rows(values_only=True):
+            if header_row is None:
+                if not row or not any(c is not None and str(c).strip() for c in row):
+                    continue
+                header_row = []
+                for j, cell in enumerate(row):
+                    if cell is not None and str(cell).strip():
+                        header_row.append(str(cell).strip())
+                    else:
+                        header_row.append(f"Колонка{j + 1}")
+                last_values = [None] * len(header_row)
+                continue
+
+            row_list = list(row) if row else []
+            while len(row_list) > len(header_row):
+                header_row.append(f"Колонка{len(header_row) + 1}")
+                last_values.append(None)
+            while len(row_list) < len(header_row):
+                row_list.append(None)
+
+            for j in range(len(header_row)):
+                if row_list[j] is None:
+                    row_list[j] = last_values[j]
+                else:
+                    last_values[j] = row_list[j]
+
+            parts = []
+            for j in range(len(header_row)):
+                cell = row_list[j]
+                val = str(cell).strip() if cell is not None else ""
+                if not val or val.lower() in ("none", "nan", "-"):
+                    continue
+                parts.append(f"{header_row[j]}: {val}")
+            if parts:
+                text_lines.append(", ".join(parts))
+
+        if header_row is None or len(text_lines) <= 1:
+            return None
+        sheet_text = "\n".join(text_lines)
+        if not sheet_text.strip():
+            return None
+        return Document(
+            page_content=sheet_text,
+            metadata={"source_file": filename, "sheet_name": sheet_name, "source_type": "excel"},
+        )
+
+    @staticmethod
     def load_xlsx(content: bytes, filename: str) -> List[Document]:
         """
-        Load Excel document (convert to text format).
-        Each data row is formatted as 'Header1: Value1, Header2: Value2, ...' so
-        column context is preserved. Merged cells are forward-filled so every row
-        carries the correct month/category label.
+        Конвертирует XLSX в текст по листам.
+
+        По умолчанию (если включено в конфиге и настроен Yandex Vision): **XLSX → PDF → Yandex OCR**
+        по чанкам PDF (лимит страниц на запрос). Иначе — потоковое чтение openpyxl (read_only).
+        Старый .xls здесь не поддерживается openpyxl — только текстовый fallback ниже не сработает для .xls.
         """
         try:
+            if (
+                filename.lower().endswith(".xlsx")
+                and getattr(config, "XLSX_OCR_VIA_PDF_YANDEX", True)
+            ):
+                try:
+                    from app.services.yandex_vision_ocr import (
+                        vision_api_configured,
+                        yandex_vision_ocr_pdf_documents_for_langchain,
+                    )
+                    from app.services.xlsx_pdf_for_vision import xlsx_bytes_to_pdf_bytes
+
+                    if vision_api_configured():
+                        pdf_bytes = xlsx_bytes_to_pdf_bytes(content)
+                        docs = yandex_vision_ocr_pdf_documents_for_langchain(pdf_bytes, filename)
+                        for d in docs:
+                            d.metadata["source_type"] = "excel"
+                            d.metadata["xlsx_via_pdf_yandex"] = True
+                        if docs:
+                            logger.info(
+                                "XLSX %s: PDF→Yandex Vision, фрагментов (стр./блоков) с текстом: %s",
+                                filename,
+                                len(docs),
+                            )
+                            return docs
+                except Exception as ex:
+                    logger.warning(
+                        "XLSX→PDF→Yandex Vision не удалось (%s), используем текстовое извлечение openpyxl",
+                        ex,
+                    )
+
             from openpyxl import load_workbook
 
-            workbook = load_workbook(io.BytesIO(content), data_only=True)
-            documents = []
+            documents: List[Document] = []
 
-            for sheet_name in workbook.sheetnames:
-                sheet = workbook[sheet_name]
-                all_rows = list(sheet.iter_rows(values_only=True))
-                if not all_rows:
-                    continue
-
-                # Find first non-empty row as header
-                header_row = None
-                data_start = 0
-                for i, row in enumerate(all_rows):
-                    if any(cell is not None and str(cell).strip() for cell in row):
-                        header_row = [
-                            str(cell).strip() if (cell is not None and str(cell).strip()) else f"Колонка{j + 1}"
-                            for j, cell in enumerate(row)
-                        ]
-                        data_start = i + 1
-                        break
-
-                if header_row is None:
-                    continue
-
-                # Forward-fill None values column-by-column to handle merged cells
-                filled_rows: List[list] = []
-                last_values: list = [None] * len(header_row)
-                for row in all_rows[data_start:]:
-                    new_row = list(row)
-                    for j in range(len(new_row)):
-                        if new_row[j] is None:
-                            new_row[j] = last_values[j]
-                        else:
-                            last_values[j] = new_row[j]
-                    filled_rows.append(new_row)
-
-                # Format each row as "Header: Value, ..."
-                text_lines = [f"=== Лист: {sheet_name} ==="]
-                for row in filled_rows:
-                    parts = []
-                    for j, cell in enumerate(row):
-                        val = str(cell).strip() if cell is not None else ""
-                        if not val or val.lower() in ("none", "nan", "-"):
-                            continue
-                        header = header_row[j] if j < len(header_row) else f"Колонка{j + 1}"
-                        parts.append(f"{header}: {val}")
-                    if parts:
-                        text_lines.append(", ".join(parts))
-
-                sheet_text = "\n".join(text_lines)
-                if sheet_text.strip():
-                    documents.append(Document(
-                        page_content=sheet_text,
-                        metadata={"source_file": filename, "sheet_name": sheet_name, "source_type": "excel"},
-                    ))
-
-            logger.info(f"Loaded XLSX {filename}: {len(documents)} sheets")
-            return documents
+            try:
+                wb = load_workbook(io.BytesIO(content), read_only=True, data_only=True)
+                try:
+                    for sheet_name in wb.sheetnames:
+                        sheet = wb[sheet_name]
+                        doc = DocumentLoaderService._xlsx_sheet_stream_to_document(
+                            sheet, sheet_name, filename
+                        )
+                        if doc:
+                            documents.append(doc)
+                finally:
+                    wb.close()
+                logger.info(
+                    "Loaded XLSX %s (read_only): %s sheets with text",
+                    filename,
+                    len(documents),
+                )
+                return documents
+            except Exception as e_ro:
+                logger.warning(
+                    "XLSX read_only недоступен (%s), открываю в обычном режиме",
+                    e_ro,
+                )
+                documents = []
+                wb2 = load_workbook(io.BytesIO(content), data_only=True)
+                try:
+                    for sheet_name in wb2.sheetnames:
+                        sheet = wb2[sheet_name]
+                        doc = DocumentLoaderService._xlsx_sheet_stream_to_document(
+                            sheet, sheet_name, filename
+                        )
+                        if doc:
+                            documents.append(doc)
+                finally:
+                    wb2.close()
+                logger.info(
+                    "Loaded XLSX %s (standard): %s sheets with text",
+                    filename,
+                    len(documents),
+                )
+                return documents
         except Exception as e:
             logger.error(f"Error loading XLSX {filename}: {e}", exc_info=True)
             raise

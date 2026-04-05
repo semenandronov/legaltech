@@ -5,6 +5,7 @@ sqlalchemy==2.0.36
 openai==2.30.0
 python-dotenv==1.0.1
 pypdf==4.3.1
+pymupdf>=1.24.0  # PDF по страницам: OCR сканов (Tesseract / Yandex Vision чанки)
 aiofiles==24.1.0
 pydantic==2.9.2
 email-validator==2.3.0

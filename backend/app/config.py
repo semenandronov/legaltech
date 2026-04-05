@@ -218,6 +218,16 @@ class Config:
     ]
     MAX_TOTAL_TEXT_CHARS: int = 2_000_000  # Ограничение суммарного текста
 
+    # Yandex Vision OCR: в одном запросе PDF не больше N страниц (квота сервиса)
+    YANDEX_VISION_MAX_PDF_PAGES: int = int(os.getenv("YANDEX_VISION_MAX_PDF_PAGES", "200"))
+    # Для «пустых» PDF (сканы) сначала Yandex Vision по частям, затем Tesseract
+    PDF_OCR_PREFER_YANDEX: bool = os.getenv("PDF_OCR_PREFER_YANDEX", "true").lower() == "true"
+
+    # XLSX: собрать PDF с таблицами и распознать через Yandex Vision (лимит страниц PDF — чанками)
+    XLSX_OCR_VIA_PDF_YANDEX: bool = os.getenv("XLSX_OCR_VIA_PDF_YANDEX", "true").lower() == "true"
+    XLSX_PDF_MAX_ROWS_PER_SHEET: int = int(os.getenv("XLSX_PDF_MAX_ROWS_PER_SHEET", "6000"))
+    XLSX_PDF_MAX_COLS: int = int(os.getenv("XLSX_PDF_MAX_COLS", "32"))
+
     # Кто может загружать общий правовой справочник (законы, обзоры) в pgvector; через запятую
     LEGAL_CORPUS_UPLOADER_EMAILS: str = os.getenv(
         "LEGAL_CORPUS_UPLOADER_EMAILS",
