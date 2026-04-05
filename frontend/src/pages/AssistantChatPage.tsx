@@ -516,7 +516,7 @@ function HarveyInput({
             ref={fileInputRef}
             type="file"
             multiple
-            accept=".pdf,.docx,.txt,.csv,.xlsx"
+                  accept=".pdf,.docx,.txt,.csv,.xlsx,.png,.jpg,.jpeg,.webp,.bmp,.tif,.tiff,.gif"
             className="hidden"
             onChange={(e) => {
               if (e.target.files) {

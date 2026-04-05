@@ -547,7 +547,21 @@ async def upload_file_for_assistant(
     content = await file.read()
 
     ext = filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
-    allowed = {"pdf", "docx", "txt", "csv", "xlsx"}
+    allowed = {
+        "pdf",
+        "docx",
+        "txt",
+        "csv",
+        "xlsx",
+        "png",
+        "jpg",
+        "jpeg",
+        "webp",
+        "bmp",
+        "tif",
+        "tiff",
+        "gif",
+    }
     if ext not in allowed:
         raise HTTPException(status_code=400, detail=f"Unsupported file type: .{ext}")
 

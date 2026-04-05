@@ -366,6 +366,27 @@ class DocumentLoaderService:
         except Exception as e:
             logger.error(f"Error loading XLSX {filename}: {e}", exc_info=True)
             raise
+
+    @staticmethod
+    def load_image_yandex_vision(content: bytes, filename: str) -> List[Document]:
+        """
+        Фото / скриншоты / сканы как отдельные файлы изображений — текст через Yandex Vision OCR.
+        """
+        from app.services.yandex_vision_ocr import yandex_vision_recognize_text
+
+        text = yandex_vision_recognize_text(content)
+        if not text.strip():
+            text = "[На изображении не обнаружен распознаваемый текст.]"
+        return [
+            Document(
+                page_content=text,
+                metadata={
+                    "source_file": filename,
+                    "ocr": True,
+                    "ocr_engine": "yandex_vision",
+                },
+            )
+        ]
     
     @staticmethod
     def load_document(content: bytes, filename: str) -> List[Document]:
@@ -395,6 +416,8 @@ class DocumentLoaderService:
             from app.utils.file_parser import parse_csv
             text = parse_csv(content, filename)
             return [Document(page_content=text, metadata={"source_file": filename, "source_type": "csv"})]
+        elif ext in ('.png', '.jpg', '.jpeg', '.webp', '.bmp', '.tif', '.tiff', '.gif'):
+            return DocumentLoaderService.load_image_yandex_vision(content, filename)
         else:
             raise ValueError(f"Unsupported file format: {ext}")
 

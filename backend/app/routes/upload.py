@@ -121,7 +121,7 @@ async def upload_files(
     """
     Upload files and extract text content
     
-    Supports: PDF, DOCX, TXT, XLSX
+    Supports: PDF, DOCX, TXT, XLSX, CSV, изображения (PNG, JPEG, WebP, …) через Yandex Vision OCR
     Returns: case_id, num_files, file_names, status, message
     """
     if not files:

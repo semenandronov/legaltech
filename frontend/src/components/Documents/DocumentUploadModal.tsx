@@ -276,7 +276,7 @@ const DocumentUploadModal = ({ isOpen, onClose, caseId, onUploadComplete }: Docu
               ref={fileInputRef}
               type="file"
               multiple
-              accept=".pdf,.docx,.txt,.xlsx,.csv"
+              accept=".pdf,.docx,.txt,.xlsx,.csv,.png,.jpg,.jpeg,.webp,.bmp,.tif,.tiff,.gif"
               onChange={handleFileInput}
               className="hidden"
             />
@@ -297,7 +297,7 @@ const DocumentUploadModal = ({ isOpen, onClose, caseId, onUploadComplete }: Docu
                 </p>
               </div>
               <p className="text-xs" style={{ color: 'var(--color-text-tertiary, #9ca3af)' }}>
-                PDF, DOCX, TXT, XLSX, CSV • Максимальный размер: {MAX_FILE_SIZE_MB} МБ
+                PDF, DOCX, TXT, XLSX, CSV, изображения (PNG, JPEG, WebP…) • Максимальный размер: {MAX_FILE_SIZE_MB} МБ
               </p>
             </div>
           </div>

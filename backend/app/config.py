@@ -201,7 +201,21 @@ class Config:
     
     # File Upload
     MAX_FILE_SIZE: int = 30 * 1024 * 1024  # 30 MB
-    ALLOWED_EXTENSIONS: List[str] = [".pdf", ".docx", ".txt", ".xlsx", ".csv"]
+    ALLOWED_EXTENSIONS: List[str] = [
+        ".pdf",
+        ".docx",
+        ".txt",
+        ".xlsx",
+        ".csv",
+        ".png",
+        ".jpg",
+        ".jpeg",
+        ".webp",
+        ".bmp",
+        ".tif",
+        ".tiff",
+        ".gif",
+    ]
     MAX_TOTAL_TEXT_CHARS: int = 2_000_000  # Ограничение суммарного текста
 
     # LLM context limits
