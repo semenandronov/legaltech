@@ -14,10 +14,10 @@ openpyxl==3.1.5
 python-jose[cryptography]==3.5.0
 passlib[bcrypt]==1.7.4
 bcrypt==5.0.0
-langchain==1.2.0
-langchain-openai==1.1.5
+langchain==1.2.15
+langchain-openai==1.1.12
 langchain-community==0.4.1
-langchain-core==1.2.2
+langchain-core==1.2.26
 langchain-classic==1.0.0
 # langchain-postgres temporarily removed due to incompatibility with langchain-core 1.2.2
 # Will use direct pgvector approach via SQLAlchemy
