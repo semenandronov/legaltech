@@ -1101,6 +1101,53 @@ export const getRelatedDocuments = async (caseId: string, fileId: string, limit?
   return response.data
 }
 
+// ─── Общий правовой справочник (глобальный ассистент) ───
+
+export interface LegalCorpusStatus {
+  chunk_count: number
+  has_corpus: boolean
+  is_uploader: boolean
+}
+
+export interface LegalCorpusFileRow {
+  corpus_file_id: string
+  source_filename: string
+  chunk_count: number
+}
+
+export const fetchLegalCorpusStatus = async (): Promise<LegalCorpusStatus> => {
+  const response = await apiClient.get<LegalCorpusStatus>(getApiUrl('/api/v2/legal-corpus/status'))
+  return response.data
+}
+
+export const fetchLegalCorpusFiles = async (): Promise<{ files: LegalCorpusFileRow[] }> => {
+  const response = await apiClient.get<{ files: LegalCorpusFileRow[] }>(getApiUrl('/api/v2/legal-corpus/files'))
+  return response.data
+}
+
+export interface LegalCorpusUploadResult {
+  indexed: Array<{ filename: string; corpus_file_id: string; chunks_indexed: number }>
+  errors: Array<{ filename: string; detail: string }>
+  chunk_count_total: number
+}
+
+export const uploadLegalCorpusFiles = async (files: File[]): Promise<LegalCorpusUploadResult> => {
+  const formData = new FormData()
+  for (const f of files) {
+    formData.append('files', f)
+  }
+  const response = await apiClient.post<LegalCorpusUploadResult>(
+    getApiUrl('/api/v2/legal-corpus/upload'),
+    formData,
+    { headers: { 'Content-Type': 'multipart/form-data' } }
+  )
+  return response.data
+}
+
+export const deleteLegalCorpusFile = async (corpusFileId: string): Promise<void> => {
+  await apiClient.delete(getApiUrl(`/api/v2/legal-corpus/file/${encodeURIComponent(corpusFileId)}`))
+}
+
 // Default export for convenience
 const api = {
   get: apiClient.get.bind(apiClient),

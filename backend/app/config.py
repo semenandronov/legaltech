@@ -218,6 +218,12 @@ class Config:
     ]
     MAX_TOTAL_TEXT_CHARS: int = 2_000_000  # Ограничение суммарного текста
 
+    # Кто может загружать общий правовой справочник (законы, обзоры) в pgvector; через запятую
+    LEGAL_CORPUS_UPLOADER_EMAILS: str = os.getenv(
+        "LEGAL_CORPUS_UPLOADER_EMAILS",
+        "semenandronov2004@mail.ru",
+    )
+
     # LLM context limits
     MAX_CONTEXT_CHARS: int = 60_000  # Приближённо к лимиту ~32k токенов
     

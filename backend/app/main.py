@@ -142,7 +142,7 @@ except: pass
 # #endregion
 
 try:
-    from app.routes import upload, chat, auth, cases, dashboard, analysis, reports, settings, websocket, tabular_review, prompts, workflows, folders, review_table, assistant_chat, assistant_chat_v2, workflow_execution, plan_execution, metrics, document_editor, playbooks, workflow_agentic, health
+    from app.routes import upload, chat, auth, cases, dashboard, analysis, reports, settings, websocket, tabular_review, prompts, workflows, folders, review_table, assistant_chat, assistant_chat_v2, legal_corpus, workflow_execution, plan_execution, metrics, document_editor, playbooks, workflow_agentic, health
     # #region agent log
     try:
         _debug_log("main.py:97", "Routes imported successfully", {"step": "routes_imported"})
@@ -395,6 +395,7 @@ app.include_router(upload.router, prefix="/api/upload", tags=["upload"])
 app.include_router(chat.router, prefix="/api/chat", tags=["chat"])
 app.include_router(assistant_chat.router, tags=["assistant-chat"])
 app.include_router(assistant_chat_v2.router, tags=["assistant-chat-v2"])
+app.include_router(legal_corpus.router, tags=["legal-corpus"])
 app.include_router(websocket.router, tags=["websocket"])
 app.include_router(tabular_review.router, prefix="/api/tabular-review", tags=["tabular-review"])
 app.include_router(review_table.router, prefix="/api/review-table", tags=["review-table"])

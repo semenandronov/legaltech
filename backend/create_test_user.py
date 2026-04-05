@@ -17,8 +17,20 @@ except ImportError:
     import psycopg2
     from psycopg2 import sql
 
-# Строка подключения к БД
-DATABASE_URL = "postgresql://neondb_owner:npg_c5L8QzZstGWd@ep-silent-mountain-ah9la27e-pooler.c-3.us-east-1.aws.neon.tech/neondb?sslmode=require&channel_binding=require"
+# Строка подключения к БД (приоритет: переменная окружения, затем .env)
+from pathlib import Path
+
+try:
+    from dotenv import load_dotenv
+    _env = Path(__file__).resolve().parent / ".env"
+    if _env.is_file():
+        load_dotenv(_env)
+except ImportError:
+    pass
+
+DATABASE_URL = os.environ.get("DATABASE_URL")
+if not DATABASE_URL:
+    DATABASE_URL = "postgresql://neondb_owner:npg_c5L8QzZstGWd@ep-silent-mountain-ah9la27e-pooler.c-3.us-east-1.aws.neon.tech/neondb?sslmode=require&channel_binding=require"
 
 def generate_password(length=12):
     """Генерирует безопасный пароль"""

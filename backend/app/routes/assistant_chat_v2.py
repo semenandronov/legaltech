@@ -349,6 +349,9 @@ async def assistant_global_chat(
     """
     Global assistant chat endpoint (no case_id required).
     Saves messages to GlobalAssistantSession for history.
+
+    Body (дополнительно):
+        use_legal_corpus: bool — подмешивать в контекст фрагменты из общего правового справочника (pgvector).
     """
     from app.models.case import GlobalAssistantSession, GlobalAssistantMessage
     from app.services.llm_factory import create_legal_llm
@@ -363,6 +366,7 @@ async def assistant_global_chat(
         draft_mode = _normalize_bool(body.get("draft_mode", False))
         document_context = body.get("document_context")  # current draft content for refinement
         attached_file_ids = body.get("attached_file_ids") or []
+        use_legal_corpus = _normalize_bool(body.get("use_legal_corpus", False))
 
         # Resolve attached case-file IDs → fetch text from DB
         if attached_file_ids:
@@ -455,6 +459,31 @@ async def assistant_global_chat(
                 "сразу после каждого утверждения, которое основано на конкретном прикреплённом документе. "
                 "Например: «Срок действия договора — 12 месяцев [1].»"
             )
+
+        if use_legal_corpus:
+            try:
+                from app.services import legal_corpus_service as _lcs
+
+                corpus_chunks = _lcs.count_corpus_chunks()
+                if corpus_chunks == 0:
+                    system_content += (
+                        "\n\n[Пользователь включил режим «Справочник законов и обзоров», "
+                        "но администратор ещё не загрузил материалы — отвечай по общим знаниям и приложенным файлам, "
+                        "кратко упомяни при необходимости, что справочник пуст.]"
+                    )
+                else:
+                    corpus_ctx = _lcs.retrieve_legal_corpus_context(question, k=8, max_chars=14000)
+                    if corpus_ctx:
+                        system_content += (
+                            "\n\n### Справочник платформы (законы, обзоры и др.)\n"
+                            "Ниже — фрагменты, подобранные по смыслу вопроса. Используй их, если они релевантны. "
+                            "При ссылке на норму указывай имя файла-источника из заголовка фрагмента. "
+                            "Если фрагментов недостаточно, дополняй рассуждение осторожно и помечай неопределённость.\n\n"
+                            + corpus_ctx
+                        )
+            except Exception as corpus_err:
+                logger.warning("Legal corpus injection skipped: %s", corpus_err, exc_info=True)
+
         lc_messages = [SystemMessage(content=system_content)]
         for m in messages:
             role = m.get("role", "user")

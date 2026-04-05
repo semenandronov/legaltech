@@ -1,13 +1,29 @@
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef, useCallback } from 'react'
 import { toast } from 'sonner'
 import { useLocation } from 'react-router-dom'
 import UnifiedSidebar from '../components/Layout/UnifiedSidebar'
 import {
   FolderOpen, MessageSquare, FileText, X, Plus,
   AlignJustify, SlidersHorizontal, Sparkles, Search, ChevronDown, Loader2, Download, Clock,
-  ChevronRight, Check, Mic, MicOff,
+  ChevronRight, Check, Mic, MicOff, BookOpen, Trash2,
 } from 'lucide-react'
-import { getApiUrl, getGlobalAssistantSession, saveSessionDraft, getCasesList, getCaseFiles, CaseListItem, UploadedFile, SourceInfo } from '../services/api'
+import {
+  getApiUrl,
+  getGlobalAssistantSession,
+  saveSessionDraft,
+  getCasesList,
+  getCaseFiles,
+  CaseListItem,
+  UploadedFile,
+  SourceInfo,
+  fetchLegalCorpusStatus,
+  fetchLegalCorpusFiles,
+  uploadLegalCorpusFiles,
+  deleteLegalCorpusFile,
+  type LegalCorpusStatus,
+  type LegalCorpusFileRow,
+  extractErrorMessage,
+} from '../services/api'
 import { DocumentEditor, DocumentEditorRef } from '../components/Editor/DocumentEditor'
 import MessageContent from '../components/Chat/MessageContent'
 import DocumentPreviewSheet from '../components/Chat/DocumentPreviewSheet'
@@ -382,6 +398,15 @@ interface HarveyInputProps {
   onRemoveCaseFile: (id: string) => void
   onOpenCasePicker: () => void
   placeholder?: string
+  /** Общий правовой справочник */
+  legalCorpusHasData: boolean
+  useLegalCorpus: boolean
+  onUseLegalCorpusChange: (v: boolean) => void
+  isLegalCorpusUploader: boolean
+  corpusFiles: LegalCorpusFileRow[]
+  corpusUploading: boolean
+  onCorpusFilesSelected: (files: File[]) => void
+  onDeleteCorpusFile: (corpusFileId: string) => void
 }
 
 function HarveyInput({
@@ -390,9 +415,18 @@ function HarveyInput({
   isStreaming, isDraftMode, onSetDraftMode,
   selectedCaseFiles, onRemoveCaseFile, onOpenCasePicker,
   placeholder = 'Спросите что угодно...',
+  legalCorpusHasData,
+  useLegalCorpus,
+  onUseLegalCorpusChange,
+  isLegalCorpusUploader,
+  corpusFiles,
+  corpusUploading,
+  onCorpusFilesSelected,
+  onDeleteCorpusFile,
 }: HarveyInputProps) {
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
+  const corpusFileInputRef = useRef<HTMLInputElement>(null)
   const settingsRef = useRef<HTMLDivElement>(null)
   const promptsRef = useRef<HTMLDivElement>(null)
   const [settingsOpen, setSettingsOpen] = useState(false)
@@ -665,8 +699,91 @@ function HarveyInput({
           {settingsOpen && (
             <div
               className="absolute bottom-full mb-1.5 left-0 bg-white rounded-lg border border-gray-200 overflow-hidden z-50"
-              style={{ minWidth: '130px', boxShadow: '0 4px 16px rgba(0,0,0,0.10)' }}
+              style={{ minWidth: '240px', maxWidth: 'min(92vw, 320px)', boxShadow: '0 4px 16px rgba(0,0,0,0.10)' }}
             >
+              {legalCorpusHasData && (
+                <>
+                  <div className="px-2.5 py-1.5 text-xs font-medium border-b border-gray-100" style={{ color: '#9CA3AF' }}>
+                    Справочник
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => onUseLegalCorpusChange(!useLegalCorpus)}
+                    className="w-full flex items-center gap-2 px-2.5 py-2 text-sm text-left transition-colors hover:bg-gray-50"
+                    style={{ color: useLegalCorpus ? '#0F766E' : '#374151' }}
+                  >
+                    <BookOpen className="w-4 h-4 flex-shrink-0" style={{ color: useLegalCorpus ? '#0D9488' : '#9CA3AF' }} />
+                    <span className="flex-1 min-w-0">Законы и обзоры (RAG)</span>
+                    <span
+                      className="w-2 h-2 rounded-full flex-shrink-0"
+                      style={{ backgroundColor: useLegalCorpus ? '#14B8A6' : '#D1D5DB' }}
+                    />
+                  </button>
+                </>
+              )}
+
+              {isLegalCorpusUploader && (
+                <>
+                  <div
+                    className="px-2.5 py-1.5 text-xs font-medium border-t border-b border-gray-100"
+                    style={{ color: '#9CA3AF', backgroundColor: '#FAFAFA' }}
+                  >
+                    Загрузка справочника (админ)
+                  </div>
+                  <div className="max-h-36 overflow-y-auto px-2 py-1.5 border-b border-gray-50">
+                    {corpusFiles.length === 0 ? (
+                      <p className="text-xs px-1" style={{ color: '#9CA3AF' }}>Файлов пока нет</p>
+                    ) : (
+                      corpusFiles.map((row) => (
+                        <div
+                          key={row.corpus_file_id}
+                          className="flex items-center gap-1 py-1 text-xs"
+                          style={{ color: '#374151' }}
+                        >
+                          <span className="flex-1 min-w-0 truncate" title={row.source_filename}>
+                            {row.source_filename}
+                          </span>
+                          <span className="text-gray-400 flex-shrink-0">{row.chunk_count}</span>
+                          <button
+                            type="button"
+                            onClick={() => onDeleteCorpusFile(row.corpus_file_id)}
+                            disabled={corpusUploading}
+                            className="p-0.5 rounded hover:bg-red-50 text-gray-400 hover:text-red-600 disabled:opacity-40"
+                            aria-label={`Удалить ${row.source_filename} из справочника`}
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+                      ))
+                    )}
+                  </div>
+                  <div className="px-2 py-2 flex items-center gap-2">
+                    <input
+                      ref={corpusFileInputRef}
+                      type="file"
+                      multiple
+                      accept=".pdf,.docx,.txt,.csv,.xlsx,.png,.jpg,.jpeg,.webp,.bmp,.tif,.tiff,.gif"
+                      className="hidden"
+                      onChange={(e) => {
+                        const list = e.target.files
+                        if (list?.length) onCorpusFilesSelected(Array.from(list))
+                        e.target.value = ''
+                      }}
+                    />
+                    <button
+                      type="button"
+                      disabled={corpusUploading || isStreaming}
+                      onClick={() => corpusFileInputRef.current?.click()}
+                      className="text-xs px-2 py-1 rounded-md border border-gray-200 hover:bg-gray-50 disabled:opacity-40"
+                      style={{ color: '#374151' }}
+                    >
+                      {corpusUploading ? 'Индексация…' : 'Добавить файлы'}
+                    </button>
+                    {corpusUploading && <Loader2 className="w-4 h-4 animate-spin text-teal-600" />}
+                  </div>
+                </>
+              )}
+
               <div className="px-2.5 py-1.5 text-xs font-medium border-b border-gray-100" style={{ color: '#9CA3AF' }}>
                 Режим
               </div>
@@ -774,6 +891,76 @@ const GlobalAssistantPage = () => {
   const [selectedCaseFiles, setSelectedCaseFiles] = useState<UploadedFile[]>([])
   const [showCasePicker, setShowCasePicker] = useState(false)
   const [citationPreview, setCitationPreview] = useState<SourceInfo | null>(null)
+
+  const [legalCorpusStatus, setLegalCorpusStatus] = useState<LegalCorpusStatus | null>(null)
+  const [corpusFilesList, setCorpusFilesList] = useState<LegalCorpusFileRow[]>([])
+  const [corpusUploading, setCorpusUploading] = useState(false)
+  const [useLegalCorpus, setUseLegalCorpus] = useState(() => {
+    try {
+      return typeof window !== 'undefined' && localStorage.getItem('ga_use_legal_corpus') === '1'
+    } catch {
+      return false
+    }
+  })
+
+  const refreshLegalCorpus = useCallback(async () => {
+    try {
+      const st = await fetchLegalCorpusStatus()
+      setLegalCorpusStatus(st)
+      if (st.is_uploader) {
+        const { files } = await fetchLegalCorpusFiles()
+        setCorpusFilesList(files)
+      } else {
+        setCorpusFilesList([])
+      }
+    } catch {
+      /* не блокируем чат */
+    }
+  }, [])
+
+  useEffect(() => {
+    void refreshLegalCorpus()
+  }, [refreshLegalCorpus])
+
+  const persistUseLegalCorpus = (v: boolean) => {
+    setUseLegalCorpus(v)
+    try {
+      localStorage.setItem('ga_use_legal_corpus', v ? '1' : '0')
+    } catch {
+      /* ignore */
+    }
+  }
+
+  const handleCorpusFilesSelected = async (files: File[]) => {
+    if (!files.length) return
+    setCorpusUploading(true)
+    try {
+      const res = await uploadLegalCorpusFiles(files)
+      if (res.indexed.length) {
+        toast.success(
+          `Справочник: добавлено файлов ${res.indexed.length}, всего фрагментов в индексе: ${res.chunk_count_total}`
+        )
+      }
+      if (res.errors.length) {
+        res.errors.forEach((e) => toast.error(`${e.filename}: ${e.detail}`))
+      }
+      await refreshLegalCorpus()
+    } catch (err: unknown) {
+      toast.error(extractErrorMessage(err))
+    } finally {
+      setCorpusUploading(false)
+    }
+  }
+
+  const handleDeleteCorpusFile = async (corpusFileId: string) => {
+    try {
+      await deleteLegalCorpusFile(corpusFileId)
+      toast.success('Файл удалён из справочника')
+      await refreshLegalCorpus()
+    } catch (err: unknown) {
+      toast.error(extractErrorMessage(err))
+    }
+  }
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
@@ -906,6 +1093,7 @@ const GlobalAssistantPage = () => {
           attached_file_ids: caseFileIdsToSend.length > 0 ? caseFileIdsToSend : undefined,
           draft_mode: isDraftMode,
           document_context: isDraftMode && currentDraft ? currentDraft.content : undefined,
+          use_legal_corpus: useLegalCorpus,
         }),
         signal: abortRef.current.signal,
       })
@@ -1221,6 +1409,14 @@ const GlobalAssistantPage = () => {
                       selectedCaseFiles={selectedCaseFiles}
                       onRemoveCaseFile={handleRemoveCaseFile}
                       onOpenCasePicker={() => setShowCasePicker(true)}
+                      legalCorpusHasData={Boolean(legalCorpusStatus?.has_corpus)}
+                      useLegalCorpus={useLegalCorpus}
+                      onUseLegalCorpusChange={persistUseLegalCorpus}
+                      isLegalCorpusUploader={Boolean(legalCorpusStatus?.is_uploader)}
+                      corpusFiles={corpusFilesList}
+                      corpusUploading={corpusUploading}
+                      onCorpusFilesSelected={handleCorpusFilesSelected}
+                      onDeleteCorpusFile={handleDeleteCorpusFile}
                     />
                   </div>
                 </div>
