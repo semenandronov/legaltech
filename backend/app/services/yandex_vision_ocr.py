@@ -1,12 +1,15 @@
-"""Yandex Cloud Vision OCR — изображения и PDF (PDF бьём на части ≤ лимита страниц)."""
+"""Yandex Cloud Vision OCR for images and PDF."""
 from __future__ import annotations
 
 import base64
 import json
 import logging
 import os
+import random
+import threading
 import time
-from typing import Any, Dict, List, Tuple
+import uuid
+from typing import Any, Dict, List, Sequence, Tuple
 
 import requests
 
@@ -15,38 +18,40 @@ from app.config import config
 logger = logging.getLogger(__name__)
 
 VISION_BATCH_ANALYZE_URL = "https://vision.api.cloud.yandex.net/vision/v1/batchAnalyze"
-DEBUG_LOG_PATH = "/Users/semyon_andronov04/Desktop/C ДВ/.cursor/debug-7dbe25.log"
 
-# Доп. ограничение Yandex: размер файла OCR (ориентир ~10 МБ); при превышении — меньше страниц в чанке
+# Service limits: file size ~= 10 MB, image size <= 20 MP, PDF <= 200 pages per request.
 YANDEX_VISION_PDF_BYTES_SOFT_LIMIT = 9 * 1024 * 1024
 YANDEX_VISION_IMAGE_BYTES_SOFT_LIMIT = 9 * 1024 * 1024
 YANDEX_VISION_MAX_RETRIES = 3
+YANDEX_VISION_MIN_REQUEST_INTERVAL_SEC = 1.1
+YANDEX_VISION_LANGUAGE_CODES = ("ru", "en")
+
+_request_gate_lock = threading.Lock()
+_last_request_monotonic = 0.0
 
 
-def _debug_log(location: str, message: str, data: dict, run_id: str, hypothesis_id: str) -> None:
-    try:
-        with open(DEBUG_LOG_PATH, "a", encoding="utf-8") as f:
-            f.write(
-                json.dumps(
-                    {
-                        "sessionId": "7dbe25",
-                        "runId": run_id,
-                        "hypothesisId": hypothesis_id,
-                        "location": location,
-                        "message": message,
-                        "data": data,
-                        "timestamp": int(time.time() * 1000),
-                    },
-                    ensure_ascii=False,
-                )
-                + "\n"
-            )
-    except Exception:
-        pass
+class YandexOCRTemporaryError(RuntimeError):
+    """Temporary upstream issue (rate limit, transient server/network)."""
+
+
+class YandexOCRQuotaError(YandexOCRTemporaryError):
+    """Rate-limit / quota exceeded."""
 
 
 def vision_api_configured() -> bool:
     return bool(config.YANDEX_API_KEY and config.YANDEX_FOLDER_ID)
+
+
+def _wait_rate_limit() -> None:
+    """Process-level pacing to reduce 429 under upload bursts."""
+    global _last_request_monotonic
+    min_interval = float(getattr(config, "YANDEX_OCR_MIN_REQUEST_INTERVAL_SEC", YANDEX_VISION_MIN_REQUEST_INTERVAL_SEC))
+    with _request_gate_lock:
+        now = time.monotonic()
+        wait_for = min_interval - (now - _last_request_monotonic)
+        if wait_for > 0:
+            time.sleep(wait_for)
+        _last_request_monotonic = time.monotonic()
 
 
 def _extract_lines_from_text_detection(td: Dict[str, Any]) -> List[str]:
@@ -116,6 +121,7 @@ def _call_batch_analyze_base64(
     b64_content: str,
     *,
     timeout_sec: int,
+    language_codes: Sequence[str] = YANDEX_VISION_LANGUAGE_CODES,
 ) -> Dict[str, Any]:
     if not vision_api_configured():
         raise ValueError(
@@ -131,19 +137,23 @@ def _call_batch_analyze_base64(
                     {
                         "type": "TEXT_DETECTION",
                         "text_detection_config": {
-                            "language_codes": ["ru", "en"],
+                            "language_codes": list(language_codes),
                         },
                     }
                 ],
             }
         ],
     }
+    max_retries = max(1, int(getattr(config, "YANDEX_OCR_MAX_RETRIES", YANDEX_VISION_MAX_RETRIES) or YANDEX_VISION_MAX_RETRIES))
     headers = {
         "Authorization": f"Api-Key {config.YANDEX_API_KEY}",
         "Content-Type": "application/json",
+        "x-client-request-id": str(uuid.uuid4()),
+        "x-data-logging-enabled": "true" if getattr(config, "YANDEX_OCR_DATA_LOGGING_ENABLED", True) else "false",
     }
     last_err: str | None = None
-    for attempt in range(1, YANDEX_VISION_MAX_RETRIES + 1):
+    for attempt in range(1, max_retries + 1):
+        _wait_rate_limit()
         try:
             resp = requests.post(
                 VISION_BATCH_ANALYZE_URL,
@@ -153,64 +163,86 @@ def _call_batch_analyze_base64(
             )
         except requests.RequestException as exc:
             last_err = str(exc)
-            if attempt < YANDEX_VISION_MAX_RETRIES:
-                sleep_s = min(8, 2 ** (attempt - 1))
+            if attempt < max_retries:
+                sleep_s = min(8.0, (2 ** (attempt - 1)) + random.uniform(0.0, 0.5))
                 logger.warning(
                     "Yandex Vision OCR network error (attempt %s/%s): %s. Retry in %ss.",
                     attempt,
-                    YANDEX_VISION_MAX_RETRIES,
+                    max_retries,
                     exc,
                     sleep_s,
                 )
                 time.sleep(sleep_s)
                 continue
-            raise RuntimeError(f"Yandex Vision OCR network error: {exc}") from exc
+            raise YandexOCRTemporaryError(f"Yandex Vision OCR network error: {exc}") from exc
 
         if resp.status_code == 200:
-            # #region agent log
-            _debug_log(
-                "backend/app/services/yandex_vision_ocr.py:_call_batch_analyze_base64:success",
-                "vision request success",
-                {"status_code": resp.status_code, "attempt": attempt},
-                "run1",
-                "H1",
-            )
-            # #endregion agent log
+            req_id = resp.headers.get("x-request-id")
+            trace_id = resp.headers.get("x-server-trace-id")
+            if req_id or trace_id:
+                logger.info(
+                    "Yandex OCR response headers: x-request-id=%s x-server-trace-id=%s",
+                    req_id,
+                    trace_id,
+                )
             try:
-                return resp.json()
+                data = resp.json()
             except json.JSONDecodeError as e:
                 raise RuntimeError(f"Yandex Vision: невалидный JSON: {e}") from e
+            for outer in data.get("results") or []:
+                if isinstance(outer, dict) and outer.get("error"):
+                    err = outer.get("error") or {}
+                    code = err.get("code")
+                    msg = str(err.get("message") or "")
+                    if str(code) == "8":
+                        raise YandexOCRQuotaError(f"Yandex OCR quota exceeded: {msg}")
+                    if str(code) in {"13"}:
+                        raise YandexOCRTemporaryError(f"Yandex OCR temporary server error: {msg}")
+                    if str(code) == "3":
+                        raise ValueError(f"Yandex OCR bad file/config: {msg}")
+            return data
 
         last_err = f"{resp.status_code}: {resp.text[:500]}"
-        # #region agent log
-        _debug_log(
-            "backend/app/services/yandex_vision_ocr.py:_call_batch_analyze_base64:error_status",
-            "vision request non-200",
-            {"status_code": resp.status_code, "attempt": attempt},
-            "run1",
-            "H1",
-        )
-        # #endregion agent log
+        req_id = resp.headers.get("x-request-id")
+        trace_id = resp.headers.get("x-server-trace-id")
         retryable = resp.status_code in (408, 429, 500, 502, 503, 504)
-        if retryable and attempt < YANDEX_VISION_MAX_RETRIES:
-            sleep_s = min(10, 2 ** attempt)
+        if retryable and attempt < max_retries:
+            retry_after = resp.headers.get("Retry-After")
+            backoff = 2 ** attempt
+            try:
+                backoff = max(backoff, float(retry_after)) if retry_after else backoff
+            except ValueError:
+                pass
+            sleep_s = min(20.0, backoff + random.uniform(0.0, 0.7))
             logger.warning(
-                "Yandex Vision OCR temporary error (attempt %s/%s): %s. Retry in %ss.",
+                "Yandex Vision OCR temporary error (attempt %s/%s): %s; req=%s trace=%s. Retry in %ss.",
                 attempt,
-                YANDEX_VISION_MAX_RETRIES,
+                max_retries,
                 last_err,
+                req_id,
+                trace_id,
                 sleep_s,
             )
             time.sleep(sleep_s)
             continue
 
-        logger.error("Yandex Vision OCR error: %s", last_err)
+        logger.error("Yandex Vision OCR error: %s; req=%s trace=%s", last_err, req_id, trace_id)
+        if resp.status_code == 429:
+            raise YandexOCRQuotaError(
+                f"Yandex Vision OCR rate limited (429). req={req_id} trace={trace_id}."
+            )
+        if resp.status_code in (408, 500, 502, 503, 504):
+            raise YandexOCRTemporaryError(
+                f"Yandex Vision OCR temporary error {resp.status_code}. req={req_id} trace={trace_id}."
+            )
         raise RuntimeError(
             f"Yandex Vision OCR вернул код {resp.status_code}. "
             f"Проверьте ключ API, каталог и роль ai.vision.user. Ответ: {resp.text[:500]}"
         )
 
-    raise RuntimeError(f"Yandex Vision OCR failed after retries: {last_err or 'unknown error'}")
+    raise YandexOCRTemporaryError(
+        f"Yandex Vision OCR failed after retries: {last_err or 'unknown error'}"
+    )
 
 
 def normalize_image_for_yandex(image_bytes: bytes, filename: str = "") -> bytes:
@@ -220,7 +252,12 @@ def normalize_image_for_yandex(image_bytes: bytes, filename: str = "") -> bytes:
     """
     _, ext = os.path.splitext((filename or "").lower())
     if ext in (".jpg", ".jpeg", ".png"):
-        return image_bytes
+        if len(image_bytes) <= YANDEX_VISION_IMAGE_BYTES_SOFT_LIMIT:
+            return image_bytes
+        # Too large JPEG/PNG: try to recompress to fit OCR limit.
+        ext = ".jpg"
+    else:
+        ext = ".png"
 
     try:
         from PIL import Image
@@ -231,15 +268,59 @@ def normalize_image_for_yandex(image_bytes: bytes, filename: str = "") -> bytes:
 
     from io import BytesIO
 
-    src = BytesIO(image_bytes)
-    dst = BytesIO()
-    with Image.open(src) as img:
+    with Image.open(BytesIO(image_bytes)) as img:
         if getattr(img, "n_frames", 1) > 1:
             img.seek(0)
         if img.mode not in ("RGB", "L"):
             img = img.convert("RGB")
-        img.save(dst, format="PNG")
-    return dst.getvalue()
+
+        # Keep 20MP max and try iterative compression for <= ~9MB payload.
+        max_px = 20_000_000
+        width, height = img.size
+        if width * height > max_px:
+            ratio = (max_px / float(width * height)) ** 0.5
+            img = img.resize((max(1, int(width * ratio)), max(1, int(height * ratio))))
+
+        for quality in (90, 80, 70, 60):
+            out = BytesIO()
+            if ext == ".png":
+                img.save(out, format="PNG", optimize=True)
+            else:
+                img.save(out, format="JPEG", quality=quality, optimize=True)
+            payload = out.getvalue()
+            if len(payload) <= YANDEX_VISION_IMAGE_BYTES_SOFT_LIMIT:
+                return payload
+        # Return best effort if still large; API may reject and we'll surface that clearly.
+        out = BytesIO()
+        img.save(out, format="JPEG", quality=55, optimize=True)
+        return out.getvalue()
+
+    # Unreachable fallback
+    return image_bytes
+
+
+def _preferred_language_codes() -> List[str]:
+    raw = str(getattr(config, "YANDEX_OCR_LANGUAGE_CODES", "ru,en") or "ru,en")
+    codes = [x.strip() for x in raw.split(",") if x.strip()]
+    return codes or list(YANDEX_VISION_LANGUAGE_CODES)
+
+
+def yandex_ocr_quota_or_temporary_message(exc: Exception) -> str:
+    if isinstance(exc, YandexOCRQuotaError):
+        return (
+            "OCR временно недоступен из-за лимитов Yandex (rate limit). "
+            "Повторите загрузку через 30-60 секунд."
+        )
+    if isinstance(exc, YandexOCRTemporaryError):
+        return (
+            "OCR временно недоступен из-за проблем на стороне Yandex. "
+            "Повторите попытку через 1-2 минуты."
+        )
+    return str(exc)
+
+
+def yandex_ocr_is_temporary(exc: Exception) -> bool:
+    return isinstance(exc, (YandexOCRQuotaError, YandexOCRTemporaryError))
 
 
 def yandex_vision_recognize_text(
@@ -248,19 +329,23 @@ def yandex_vision_recognize_text(
     filename: str = "",
     timeout_sec: int = 120,
 ) -> str:
-    """Одно изображение → текст."""
+    """Single image -> recognized text."""
     payload = normalize_image_for_yandex(image_bytes, filename=filename)
     if len(payload) > YANDEX_VISION_IMAGE_BYTES_SOFT_LIMIT:
-        logger.warning(
-            "Image %s is large for OCR (%s bytes). Consider compression/resizing.",
-            filename or "<unknown>",
-            len(payload),
+        raise ValueError(
+            f"Изображение '{filename or 'unknown'}' слишком большое для OCR после нормализации "
+            f"({len(payload)} bytes). Сожмите изображение до ~10 МБ и повторите."
         )
     b64 = base64.b64encode(payload).decode("ascii")
-    data = _call_batch_analyze_base64(b64, timeout_sec=timeout_sec)
+    data = _call_batch_analyze_base64(
+        b64,
+        timeout_sec=timeout_sec,
+        language_codes=_preferred_language_codes(),
+    )
     text = extract_text_from_vision_response(data)
     if not text:
-        logger.warning("Yandex Vision OCR: пустой текст (возможно, нет текста на изображении).")
+        logger.warning("Yandex Vision OCR: empty text result.")
+        return ""
     return text
 
 
@@ -355,7 +440,11 @@ def yandex_vision_ocr_pdf_to_page_documents(content: bytes, filename: str) -> Li
                 filename,
             )
             b64 = base64.b64encode(chunk_bytes).decode("ascii")
-            data = _call_batch_analyze_base64(b64, timeout_sec=timeout)
+            data = _call_batch_analyze_base64(
+                b64,
+                timeout_sec=timeout,
+                language_codes=_preferred_language_codes(),
+            )
             pairs = documents_from_vision_response(data, page_offset=p0, filename=filename)
             # Vision может вернуть меньше страниц, чем в чанке — заполняем пропуски пустыми не будем
             all_pages.extend(pairs)

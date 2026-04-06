@@ -226,6 +226,15 @@ class Config:
     PDF_OCR_MIN_EXPECTED_CHARS_PER_PAGE: int = int(
         os.getenv("PDF_OCR_MIN_EXPECTED_CHARS_PER_PAGE", "20")
     )
+    # OCR robust settings (quota/backoff/diagnostics)
+    YANDEX_OCR_MAX_RETRIES: int = int(os.getenv("YANDEX_OCR_MAX_RETRIES", "3"))
+    YANDEX_OCR_MIN_REQUEST_INTERVAL_SEC: float = float(
+        os.getenv("YANDEX_OCR_MIN_REQUEST_INTERVAL_SEC", "1.1")
+    )
+    YANDEX_OCR_LANGUAGE_CODES: str = os.getenv("YANDEX_OCR_LANGUAGE_CODES", "ru,en")
+    YANDEX_OCR_DATA_LOGGING_ENABLED: bool = os.getenv(
+        "YANDEX_OCR_DATA_LOGGING_ENABLED", "true"
+    ).lower() == "true"
 
     # XLSX: собрать PDF с таблицами и распознать через Yandex Vision (лимит страниц PDF — чанками)
     XLSX_OCR_VIA_PDF_YANDEX: bool = os.getenv("XLSX_OCR_VIA_PDF_YANDEX", "true").lower() == "true"

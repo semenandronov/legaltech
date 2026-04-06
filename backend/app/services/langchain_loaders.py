@@ -90,6 +90,7 @@ class DocumentLoaderService:
         """
         try:
             use_yandex = getattr(config, "PDF_OCR_PREFER_YANDEX", True)
+            yandex_rate_limited = False
             if use_yandex:
                 try:
                     from app.services.yandex_vision_ocr import (
@@ -119,11 +120,18 @@ class DocumentLoaderService:
                             filename,
                         )
                 except Exception as yv_err:
+                    from app.services.yandex_vision_ocr import (
+                        yandex_ocr_is_temporary,
+                        yandex_ocr_quota_or_temporary_message,
+                    )
+                    yandex_rate_limited = yandex_ocr_is_temporary(yv_err)
                     logger.warning(
                         "PDF %s: Yandex OCR не удался (%s), используем fallback.",
                         filename,
                         yv_err,
                     )
+                    if yandex_rate_limited:
+                        logger.warning("PDF %s: %s", filename, yandex_ocr_quota_or_temporary_message(yv_err))
 
             # Fallback #1: native text layer via PyPDF
             with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp_file:
@@ -142,7 +150,8 @@ class DocumentLoaderService:
                                 doc.metadata["source_page"] = int(page_match.group(1))
                         except Exception as e:
                             logger.debug("Could not extract page number from source '%s': %s", source, e)
-                if documents:
+                total_text = "".join((d.page_content or "").strip() for d in documents)
+                if documents and total_text.strip():
                     logger.info("PDF %s: fallback PyPDFLoader, %s pages", filename, len(documents))
                     return documents
             finally:
@@ -153,7 +162,14 @@ class DocumentLoaderService:
             ocr_docs = DocumentLoaderService._ocr_pdf(content, filename)
             if ocr_docs:
                 return ocr_docs
-            return []
+            if yandex_rate_limited:
+                raise ValueError(
+                    "OCR временно недоступен из-за лимитов Yandex (429), а локальный OCR не настроен. "
+                    "Повторите попытку позже или установите pytesseract/pymupdf."
+                )
+            raise ValueError(
+                "Не удалось извлечь текст из PDF: отсутствует текстовый слой и OCR не дал результата."
+            )
         except Exception as e:
             logger.error(f"Error loading PDF {filename}: {e}", exc_info=True)
             raise
