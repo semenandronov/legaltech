@@ -696,6 +696,7 @@ export const DocumentEditorContextChat: React.FC<DocumentEditorContextChatProps>
   // Locked selection: captured from editor when user starts typing in chat
   const [activeSelection, setActiveSelection] = useState<string>('')
   const [activeSelectionRange, setActiveSelectionRange] = useState<{ from: number; to: number } | null>(null)
+  const selectionClearedRef = useRef(false)
   // Per-message edit statuses: { messageId: { editId: 'accepted' | 'rejected' } }
   const [editStatuses, setEditStatuses] = useState<Record<string, Record<string, EditStatus>>>({})
   const [modeDropdownPos, setModeDropdownPos] = useState<{ top: number; left: number } | null>(null)
@@ -754,9 +755,12 @@ export const DocumentEditorContextChat: React.FC<DocumentEditorContextChatProps>
   // Capture selection/cursor when editor updates
   useEffect(() => {
     if (selectedText && selectedText.trim()) {
-      // Text is selected — capture it and its range
+      // New selection arrived from editor — reset the cleared flag and capture it
+      selectionClearedRef.current = false
       setActiveSelection(selectedText.trim())
       setActiveSelectionRange(selectionRange || null)
+    } else if (!selectedText && selectionClearedRef.current) {
+      // Selection was cleared externally — keep it cleared
     } else if (mode === 'draft' && selectionRange) {
       // Draft mode: always track cursor position even without a text selection
       setActiveSelectionRange(selectionRange)
@@ -765,6 +769,7 @@ export const DocumentEditorContextChat: React.FC<DocumentEditorContextChatProps>
   }, [selectedText, selectionRange, mode])
 
   const clearActiveSelection = () => {
+    selectionClearedRef.current = true
     setActiveSelection('')
     setActiveSelectionRange(null)
     onClearSelection?.()
