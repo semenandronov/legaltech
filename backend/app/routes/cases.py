@@ -1,4 +1,5 @@
 """Cases routes for Legal AI Vault"""
+import asyncio
 import logging
 import os
 from fastapi import APIRouter, HTTPException, Depends, Query, UploadFile, File
@@ -647,9 +648,11 @@ async def add_files_to_case(
                     detail=f"Файл '{filename}' слишком большой. Максимальный размер: {config.MAX_FILE_SIZE / 1024 / 1024} МБ"
                 )
             
-            # Parse file using LangChain loaders
+            # Parse file using LangChain loaders (run in thread — OCR can take minutes)
             try:
-                langchain_docs = DocumentLoaderService.load_document(content, filename)
+                langchain_docs = await asyncio.to_thread(
+                    DocumentLoaderService.load_document, content, filename
+                )
                 
                 if not langchain_docs:
                     raise HTTPException(

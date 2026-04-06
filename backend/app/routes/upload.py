@@ -1,4 +1,5 @@
 """Upload route for Legal AI Vault"""
+import asyncio
 import logging
 import json
 import os
@@ -178,10 +179,11 @@ async def upload_files(
                 detail=f"Файл '{filename}' слишком большой. Максимальный размер: {config.MAX_FILE_SIZE / 1024 / 1024} МБ"
             )
         
-        # Parse file using LangChain loaders
-        # ВАЖНО: Используем только LangChain loaders, никаких fallback
+        # Parse file using LangChain loaders (run in thread — OCR can take minutes)
         try:
-            langchain_docs = DocumentLoaderService.load_document(content, filename)
+            langchain_docs = await asyncio.to_thread(
+                DocumentLoaderService.load_document, content, filename
+            )
             
             if not langchain_docs:
                 raise HTTPException(
