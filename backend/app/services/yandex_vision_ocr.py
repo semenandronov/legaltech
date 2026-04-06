@@ -228,9 +228,9 @@ def yandex_vision_ocr_pdf_to_page_documents(content: bytes, filename: str) -> Li
         )
 
         all_pages: List[Tuple[int, str]] = []
-        timeout = min(600, 90 + 45 * max(1, ranges[0][1] - ranges[0][0]))
 
         for ri, (p0, p1) in enumerate(ranges):
+            timeout = min(600, 90 + 45 * max(1, p1 - p0))
             chunk_bytes = build_subpdf_bytes(p0, p1)
             logger.info(
                 "Yandex Vision PDF chunk %s/%s: pages %s–%s (%s bytes), file=%s",
