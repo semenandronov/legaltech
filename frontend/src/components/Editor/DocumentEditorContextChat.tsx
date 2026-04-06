@@ -755,15 +755,20 @@ export const DocumentEditorContextChat: React.FC<DocumentEditorContextChatProps>
   // Capture selection/cursor when editor updates
   useEffect(() => {
     if (selectedText && selectedText.trim()) {
-      // New selection arrived from editor — reset the cleared flag and capture it
+      // New text selected in editor — capture it
       selectionClearedRef.current = false
       setActiveSelection(selectedText.trim())
       setActiveSelectionRange(selectionRange || null)
-    } else if (!selectedText && selectionClearedRef.current) {
-      // Selection was cleared externally — keep it cleared
-    } else if (mode === 'draft' && selectionRange) {
-      // Draft mode: always track cursor position even without a text selection
-      setActiveSelectionRange(selectionRange)
+    } else if (!selectedText || !selectedText.trim()) {
+      // Selection removed in editor (user clicked away) — clear unless we just sent
+      // and the parent prop hasn't updated yet (selectionClearedRef guards that case)
+      if (!selectionClearedRef.current) {
+        setActiveSelection('')
+        if (mode !== 'draft') setActiveSelectionRange(null)
+      }
+      if (mode === 'draft' && selectionRange) {
+        setActiveSelectionRange(selectionRange)
+      }
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedText, selectionRange, mode])
