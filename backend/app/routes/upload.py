@@ -7,6 +7,7 @@ from fastapi import APIRouter, UploadFile, File, HTTPException, Depends, Form
 from pydantic import BaseModel, Field, field_validator
 from typing import List, Optional, Dict
 from sqlalchemy.orm import Session
+from sqlalchemy import text
 from app.services.langchain_loaders import DocumentLoaderService
 from app.utils.database import get_db
 from app.utils.auth import get_current_user
@@ -320,6 +321,13 @@ async def upload_files(
             detail="Не удалось извлечь текст из загруженных файлов"
         )
     
+    # Reconnect after long OCR — PostgreSQL drops idle SSL connections in ~60-120s
+    try:
+        db.execute(text("SELECT 1"))
+    except Exception:
+        logger.warning("DB connection lost after long OCR operation — reconnecting.")
+        db.close()
+
     # Parse case info if provided
     case_title = f"Дело из {len(file_names)} документов"
     case_description = None

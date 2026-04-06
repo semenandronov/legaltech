@@ -17,9 +17,25 @@ from app.services.langchain_loaders import DocumentLoaderService
 from app.services.document_classifier_service import DocumentClassifierService
 from app.services.document_processor import DocumentProcessor
 from fastapi import BackgroundTasks
+from sqlalchemy import text
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
+
+
+def _reconnect_db(db: Session) -> None:
+    """
+    Ensure the DB session has a live connection after a long operation (OCR, etc.).
+    pool_pre_ping only fires on pool checkout; a session that already holds a connection
+    may have it killed by PostgreSQL SSL keepalive timeout (~60-120s).
+    Closing the session releases the connection back to the pool; the next ORM call
+    checks it out fresh (with pool_pre_ping).
+    """
+    try:
+        db.execute(text("SELECT 1"))
+    except Exception:
+        logger.warning("DB connection lost after long operation — reconnecting.")
+        db.close()  # releases connection back to pool; next access gets a fresh one
 
 VALID_CASE_TYPES = ["litigation", "contracts", "dd", "compliance", "other"]
 VALID_STATUSES = ["pending", "processing", "completed", "failed"]
@@ -758,6 +774,9 @@ async def add_files_to_case(
                 detail="Не удалось обработать ни одного файла"
             )
         
+        # Reconnect after long OCR — PostgreSQL drops idle SSL connections in ~60-120s
+        _reconnect_db(db)
+
         # Create File entries in database
         new_file_ids = []
         for file_info in files_to_create:
