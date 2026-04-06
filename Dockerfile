@@ -10,11 +10,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends curl fonts-deja
 WORKDIR /app
 
 # Install Python dependencies
-# --mount=type=cache keeps pip cache between builds → only changed packages are re-downloaded
 COPY backend/requirements.txt /app/backend/requirements.txt
-RUN --mount=type=cache,target=/root/.cache/pip \
-    pip install --upgrade pip && \
-    pip install -r backend/requirements.txt
+RUN pip install --upgrade pip && \
+    pip install --no-cache-dir -r backend/requirements.txt
 
 # Build frontend
 # --mount=type=cache keeps npm cache between builds → only changed packages are re-downloaded
