@@ -19,7 +19,23 @@ logger = logging.getLogger(__name__)
 
 class DocumentLoaderService:
     """Service for loading documents using LangChain loaders"""
-    
+
+    @staticmethod
+    def _pdf_text_quality_ok(documents: List[Document]) -> bool:
+        """
+        Базовая эвристика качества OCR для PDF:
+        считаем результат приемлемым, если есть осмысленный суммарный объем текста.
+        """
+        if not documents:
+            return False
+        pages_with_text = sum(1 for d in documents if (d.page_content or "").strip())
+        total_chars = sum(len((d.page_content or "").strip()) for d in documents)
+        min_chars_per_page = max(
+            1, int(getattr(config, "PDF_OCR_MIN_EXPECTED_CHARS_PER_PAGE", 20) or 20)
+        )
+        min_total_chars = min_chars_per_page * max(1, pages_with_text)
+        return total_chars >= min_total_chars
+
     @staticmethod
     def _ocr_pdf(content: bytes, filename: str) -> List[Document]:
         """
@@ -70,71 +86,74 @@ class DocumentLoaderService:
     @staticmethod
     def load_pdf(content: bytes, filename: str) -> List[Document]:
         """
-        Load PDF document using PyPDFLoader with OCR fallback for scanned PDFs.
+        Load PDF using Yandex Vision OCR first (for all PDFs), with safe fallbacks.
         """
         try:
-            # Save to temporary file
-            with tempfile.NamedTemporaryFile(delete=False, suffix='.pdf') as tmp_file:
+            use_yandex = getattr(config, "PDF_OCR_PREFER_YANDEX", True)
+            if use_yandex:
+                try:
+                    from app.services.yandex_vision_ocr import (
+                        vision_api_configured,
+                        yandex_vision_ocr_pdf_documents_for_langchain,
+                    )
+
+                    if vision_api_configured():
+                        yandex_docs = yandex_vision_ocr_pdf_documents_for_langchain(
+                            content, filename
+                        )
+                        if yandex_docs and DocumentLoaderService._pdf_text_quality_ok(yandex_docs):
+                            logger.info(
+                                "PDF %s: Yandex Vision OCR успешно, %s страниц",
+                                filename,
+                                len(yandex_docs),
+                            )
+                            return yandex_docs
+                        logger.warning(
+                            "PDF %s: Yandex OCR вернул мало текста (%s docs), переключаемся на fallback.",
+                            filename,
+                            len(yandex_docs or []),
+                        )
+                    else:
+                        logger.warning(
+                            "PDF %s: Yandex OCR не сконфигурирован, используем fallback.",
+                            filename,
+                        )
+                except Exception as yv_err:
+                    logger.warning(
+                        "PDF %s: Yandex OCR не удался (%s), используем fallback.",
+                        filename,
+                        yv_err,
+                    )
+
+            # Fallback #1: native text layer via PyPDF
+            with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp_file:
                 tmp_file.write(content)
                 tmp_path = tmp_file.name
-
             try:
                 loader = PyPDFLoader(tmp_path)
                 documents = loader.load()
-
-                # Add filename and page info to metadata
                 for doc in documents:
                     doc.metadata["source_file"] = filename
                     source = doc.metadata.get("source", "")
                     if source and "page" in source.lower():
                         try:
-                            page_match = re.search(r'page[=:]?\s*(\d+)', source, re.IGNORECASE)
+                            page_match = re.search(r"page[=:]?\s*(\d+)", source, re.IGNORECASE)
                             if page_match:
                                 doc.metadata["source_page"] = int(page_match.group(1))
                         except Exception as e:
-                            logger.debug(f"Could not extract page number from source '{source}': {e}")
-
-                # Check if extracted text is meaningful (scanned PDFs return near-empty text)
-                total_text = "".join(doc.page_content.strip() for doc in documents)
-                if len(total_text) < 50 and len(documents) > 0:
-                    logger.info(
-                        f"PDF {filename} has {len(documents)} pages but only {len(total_text)} chars of text. "
-                        f"Attempting OCR for scanned PDF..."
-                    )
-                    # Yandex Vision: лимит ~200 страниц на запрос — сервис режет PDF на чанки сам
-                    if getattr(config, "PDF_OCR_PREFER_YANDEX", True):
-                        try:
-                            from app.services.yandex_vision_ocr import (
-                                vision_api_configured,
-                                yandex_vision_ocr_pdf_documents_for_langchain,
-                            )
-
-                            if vision_api_configured():
-                                yandex_docs = yandex_vision_ocr_pdf_documents_for_langchain(
-                                    content, filename
-                                )
-                                if yandex_docs:
-                                    logger.info(
-                                        "PDF %s: Yandex Vision OCR, %s страниц с текстом",
-                                        filename,
-                                        len(yandex_docs),
-                                    )
-                                    return yandex_docs
-                        except Exception as yv_err:
-                            logger.warning(
-                                "Yandex Vision PDF OCR не удался (%s), пробуем Tesseract…",
-                                yv_err,
-                            )
-
-                    ocr_docs = DocumentLoaderService._ocr_pdf(content, filename)
-                    if ocr_docs:
-                        return ocr_docs
-
-                logger.info(f"Loaded PDF {filename}: {len(documents)} pages")
-                return documents
+                            logger.debug("Could not extract page number from source '%s': %s", source, e)
+                if documents:
+                    logger.info("PDF %s: fallback PyPDFLoader, %s pages", filename, len(documents))
+                    return documents
             finally:
                 if os.path.exists(tmp_path):
                     os.unlink(tmp_path)
+
+            # Fallback #2: local Tesseract OCR
+            ocr_docs = DocumentLoaderService._ocr_pdf(content, filename)
+            if ocr_docs:
+                return ocr_docs
+            return []
         except Exception as e:
             logger.error(f"Error loading PDF {filename}: {e}", exc_info=True)
             raise
@@ -471,7 +490,7 @@ class DocumentLoaderService:
         """
         from app.services.yandex_vision_ocr import yandex_vision_recognize_text
 
-        text = yandex_vision_recognize_text(content)
+        text = yandex_vision_recognize_text(content, filename=filename)
         if not text.strip():
             text = "[На изображении не обнаружен распознаваемый текст.]"
         return [

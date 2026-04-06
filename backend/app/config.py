@@ -220,8 +220,12 @@ class Config:
 
     # Yandex Vision OCR: в одном запросе PDF не больше N страниц (квота сервиса)
     YANDEX_VISION_MAX_PDF_PAGES: int = int(os.getenv("YANDEX_VISION_MAX_PDF_PAGES", "200"))
-    # Для «пустых» PDF (сканы) сначала Yandex Vision по частям, затем Tesseract
+    # PDF: сначала Yandex Vision для всех документов, затем fallback при ошибках
     PDF_OCR_PREFER_YANDEX: bool = os.getenv("PDF_OCR_PREFER_YANDEX", "true").lower() == "true"
+    # Минимальная эвристика качества OCR-текста из PDF (символов на страницу с текстом)
+    PDF_OCR_MIN_EXPECTED_CHARS_PER_PAGE: int = int(
+        os.getenv("PDF_OCR_MIN_EXPECTED_CHARS_PER_PAGE", "20")
+    )
 
     # XLSX: собрать PDF с таблицами и распознать через Yandex Vision (лимит страниц PDF — чанками)
     XLSX_OCR_VIA_PDF_YANDEX: bool = os.getenv("XLSX_OCR_VIA_PDF_YANDEX", "true").lower() == "true"

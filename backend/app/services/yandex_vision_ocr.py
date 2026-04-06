@@ -4,6 +4,8 @@ from __future__ import annotations
 import base64
 import json
 import logging
+import os
+import time
 from typing import Any, Dict, List, Tuple
 
 import requests
@@ -16,6 +18,8 @@ VISION_BATCH_ANALYZE_URL = "https://vision.api.cloud.yandex.net/vision/v1/batchA
 
 # Доп. ограничение Yandex: размер файла OCR (ориентир ~10 МБ); при превышении — меньше страниц в чанке
 YANDEX_VISION_PDF_BYTES_SOFT_LIMIT = 9 * 1024 * 1024
+YANDEX_VISION_IMAGE_BYTES_SOFT_LIMIT = 9 * 1024 * 1024
+YANDEX_VISION_MAX_RETRIES = 3
 
 
 def vision_api_configured() -> bool:
@@ -115,35 +119,103 @@ def _call_batch_analyze_base64(
         "Authorization": f"Api-Key {config.YANDEX_API_KEY}",
         "Content-Type": "application/json",
     }
-    resp = requests.post(
-        VISION_BATCH_ANALYZE_URL,
-        data=json.dumps(body),
-        headers=headers,
-        timeout=timeout_sec,
-    )
-    if resp.status_code != 200:
-        logger.error(
-            "Yandex Vision OCR error: %s %s",
-            resp.status_code,
-            resp.text[:2000],
-        )
+    last_err: str | None = None
+    for attempt in range(1, YANDEX_VISION_MAX_RETRIES + 1):
+        try:
+            resp = requests.post(
+                VISION_BATCH_ANALYZE_URL,
+                data=json.dumps(body),
+                headers=headers,
+                timeout=timeout_sec,
+            )
+        except requests.RequestException as exc:
+            last_err = str(exc)
+            if attempt < YANDEX_VISION_MAX_RETRIES:
+                sleep_s = min(8, 2 ** (attempt - 1))
+                logger.warning(
+                    "Yandex Vision OCR network error (attempt %s/%s): %s. Retry in %ss.",
+                    attempt,
+                    YANDEX_VISION_MAX_RETRIES,
+                    exc,
+                    sleep_s,
+                )
+                time.sleep(sleep_s)
+                continue
+            raise RuntimeError(f"Yandex Vision OCR network error: {exc}") from exc
+
+        if resp.status_code == 200:
+            try:
+                return resp.json()
+            except json.JSONDecodeError as e:
+                raise RuntimeError(f"Yandex Vision: невалидный JSON: {e}") from e
+
+        last_err = f"{resp.status_code}: {resp.text[:500]}"
+        retryable = resp.status_code in (408, 429, 500, 502, 503, 504)
+        if retryable and attempt < YANDEX_VISION_MAX_RETRIES:
+            sleep_s = min(10, 2 ** attempt)
+            logger.warning(
+                "Yandex Vision OCR temporary error (attempt %s/%s): %s. Retry in %ss.",
+                attempt,
+                YANDEX_VISION_MAX_RETRIES,
+                last_err,
+                sleep_s,
+            )
+            time.sleep(sleep_s)
+            continue
+
+        logger.error("Yandex Vision OCR error: %s", last_err)
         raise RuntimeError(
             f"Yandex Vision OCR вернул код {resp.status_code}. "
             f"Проверьте ключ API, каталог и роль ai.vision.user. Ответ: {resp.text[:500]}"
         )
+
+    raise RuntimeError(f"Yandex Vision OCR failed after retries: {last_err or 'unknown error'}")
+
+
+def normalize_image_for_yandex(image_bytes: bytes, filename: str = "") -> bytes:
+    """
+    Нормализует изображение к PNG для форматов вне JPEG/PNG.
+    Это повышает стабильность OCR для WEBP/BMP/TIFF/GIF.
+    """
+    _, ext = os.path.splitext((filename or "").lower())
+    if ext in (".jpg", ".jpeg", ".png"):
+        return image_bytes
+
     try:
-        return resp.json()
-    except json.JSONDecodeError as e:
-        raise RuntimeError(f"Yandex Vision: невалидный JSON: {e}") from e
+        from PIL import Image
+    except ImportError as e:
+        raise RuntimeError(
+            "Для нормализации изображений нужен Pillow (pip install pillow)."
+        ) from e
+
+    from io import BytesIO
+
+    src = BytesIO(image_bytes)
+    dst = BytesIO()
+    with Image.open(src) as img:
+        if getattr(img, "n_frames", 1) > 1:
+            img.seek(0)
+        if img.mode not in ("RGB", "L"):
+            img = img.convert("RGB")
+        img.save(dst, format="PNG")
+    return dst.getvalue()
 
 
 def yandex_vision_recognize_text(
     image_bytes: bytes,
     *,
+    filename: str = "",
     timeout_sec: int = 120,
 ) -> str:
     """Одно изображение → текст."""
-    b64 = base64.b64encode(image_bytes).decode("ascii")
+    payload = normalize_image_for_yandex(image_bytes, filename=filename)
+    if len(payload) > YANDEX_VISION_IMAGE_BYTES_SOFT_LIMIT:
+        logger.warning(
+            "Image %s is large for OCR (%s bytes). Consider compression/resizing.",
+            filename or "<unknown>",
+            len(payload),
+        )
+    b64 = base64.b64encode(payload).decode("ascii")
     data = _call_batch_analyze_base64(b64, timeout_sec=timeout_sec)
     text = extract_text_from_vision_response(data)
     if not text:

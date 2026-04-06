@@ -56,4 +56,5 @@ beautifulsoup4>=4.12.0
 mammoth==1.7.0  # DOCX to HTML converter
 markitdown>=0.0.1a0  # Universal document converter (PDF, DOCX, PPTX, XLSX)
 markdown==3.7  # Markdown to HTML converter
+Pillow>=10.0.0  # Image normalization to PNG/JPEG before Yandex OCR
 
