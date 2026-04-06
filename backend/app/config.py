@@ -232,6 +232,8 @@ class Config:
         os.getenv("YANDEX_OCR_MIN_REQUEST_INTERVAL_SEC", "1.1")
     )
     YANDEX_OCR_LANGUAGE_CODES: str = os.getenv("YANDEX_OCR_LANGUAGE_CODES", "ru,en")
+    # Timeout (seconds) per chunk for new async OCR API
+    YANDEX_OCR_ASYNC_TIMEOUT_SEC: int = int(os.getenv("YANDEX_OCR_ASYNC_TIMEOUT_SEC", "300"))
     YANDEX_OCR_DATA_LOGGING_ENABLED: bool = os.getenv(
         "YANDEX_OCR_DATA_LOGGING_ENABLED", "true"
     ).lower() == "true"

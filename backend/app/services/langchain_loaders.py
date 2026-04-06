@@ -433,7 +433,10 @@ class DocumentLoaderService:
 
                     if vision_api_configured():
                         pdf_bytes = xlsx_bytes_to_pdf_bytes(content)
-                        docs = yandex_vision_ocr_pdf_documents_for_langchain(pdf_bytes, filename)
+                        # Use 'table' model from new OCR API — much better for Excel-derived PDFs
+                        docs = yandex_vision_ocr_pdf_documents_for_langchain(
+                            pdf_bytes, filename, model="table"
+                        )
                         for d in docs:
                             d.metadata["source_type"] = "excel"
                             d.metadata["xlsx_via_pdf_yandex"] = True

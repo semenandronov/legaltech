@@ -19,6 +19,11 @@ logger = logging.getLogger(__name__)
 
 VISION_BATCH_ANALYZE_URL = "https://vision.api.cloud.yandex.net/vision/v1/batchAnalyze"
 
+# New OCR API (supports model selection: page, table, handwritten, markdown, etc.)
+VISION_OCR_RECOGNIZE_TEXT_URL = "https://ocr.api.cloud.yandex.net/ocr/v1/recognizeText"
+VISION_OCR_RECOGNIZE_TEXT_ASYNC_URL = "https://ocr.api.cloud.yandex.net/ocr/v1/recognizeTextAsync"
+VISION_OCR_GET_RECOGNITION_URL = "https://ocr.api.cloud.yandex.net/ocr/v1/getRecognition"
+
 # Service limits: file size ~= 10 MB, image size <= 20 MP, PDF <= 200 pages per request.
 YANDEX_VISION_PDF_BYTES_SOFT_LIMIT = 9 * 1024 * 1024
 YANDEX_VISION_IMAGE_BYTES_SOFT_LIMIT = 9 * 1024 * 1024
@@ -323,6 +328,137 @@ def yandex_ocr_is_temporary(exc: Exception) -> bool:
     return isinstance(exc, (YandexOCRQuotaError, YandexOCRTemporaryError))
 
 
+def _text_from_new_ocr_annotation(ta: Dict[str, Any]) -> str:
+    """Extract text from new OCR API textAnnotation using fullText or blocks fallback."""
+    full_text = ta.get("fullText")
+    if full_text:
+        return full_text.strip()
+    lines = []
+    for block in (ta.get("blocks") or []):
+        for line in (block.get("lines") or []):
+            text = line.get("text") or ""
+            if text:
+                lines.append(text)
+    return "\n".join(lines).strip()
+
+
+def _new_ocr_headers() -> Dict[str, str]:
+    return {
+        "Authorization": f"Api-Key {config.YANDEX_API_KEY}",
+        "x-folder-id": config.YANDEX_FOLDER_ID,
+        "Content-Type": "application/json",
+    }
+
+
+def _call_new_ocr_async(
+    b64_content: str,
+    *,
+    model: str = "page",
+    timeout_sec: int = 600,
+    language_codes: Sequence[str] = ("*",),
+) -> List[Tuple[int, str]]:
+    """
+    New Yandex OCR API (async) for multi-page PDFs.
+    Sends recognizeTextAsync, polls getRecognition until done.
+    Returns list of (page_index_0based, text) sorted by page.
+    """
+    if not vision_api_configured():
+        raise ValueError("Yandex Vision: не заданы YANDEX_API_KEY или YANDEX_FOLDER_ID.")
+
+    headers = _new_ocr_headers()
+    body = {
+        "mimeType": "application/pdf",
+        "languageCodes": list(language_codes),
+        "model": model,
+        "content": b64_content,
+    }
+
+    # Start async operation
+    _wait_rate_limit()
+    resp = requests.post(
+        VISION_OCR_RECOGNIZE_TEXT_ASYNC_URL,
+        json=body,
+        headers=headers,
+        timeout=60,
+    )
+    if resp.status_code != 200:
+        raise RuntimeError(
+            f"recognizeTextAsync вернул {resp.status_code}: {resp.text[:400]}"
+        )
+    op_data = resp.json()
+    op_id = op_data.get("id")
+    if not op_id:
+        raise RuntimeError(
+            f"recognizeTextAsync: нет operation ID в ответе: {resp.text[:200]}"
+        )
+    logger.info("Yandex OCR async operation started: id=%s model=%s", op_id, model)
+
+    # Poll for results
+    poll_interval = 3.0
+    waited = 0.0
+    while waited < timeout_sec:
+        time.sleep(poll_interval)
+        waited += poll_interval
+        try:
+            r = requests.get(
+                VISION_OCR_GET_RECOGNITION_URL,
+                params={"operationId": op_id},
+                headers=headers,
+                timeout=30,
+            )
+        except requests.RequestException as exc:
+            logger.warning("getRecognition poll error: %s", exc)
+            continue
+
+        if r.status_code != 200:
+            logger.warning("getRecognition %s → %s", op_id, r.status_code)
+            continue
+
+        raw = r.text.strip()
+        if not raw:
+            continue
+
+        pages: List[Tuple[int, str]] = []
+
+        # Response may be JSON Lines (one per page) or a single JSON object
+        for line in raw.splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                item = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+
+            # Check for pending operation (not done yet)
+            if item.get("done") is False:
+                pages = []
+                break
+
+            # Unwrap: could be {result:{textAnnotation,page}} or {textAnnotation,page}
+            result = item.get("result") or item
+            ta = result.get("textAnnotation") or {}
+            text = _text_from_new_ocr_annotation(ta)
+            page_num = int(result.get("page", "0") or "0")
+            if text:
+                pages.append((page_num, text))
+
+        if pages:
+            pages.sort(key=lambda x: x[0])
+            logger.info(
+                "Yandex OCR async done: op=%s model=%s pages=%s waited=%.1fs",
+                op_id,
+                model,
+                len(pages),
+                waited,
+            )
+            return pages
+
+    raise YandexOCRTemporaryError(
+        f"recognizeTextAsync timed out after {timeout_sec}s for op={op_id}"
+    )
+
+
 def yandex_vision_recognize_text(
     image_bytes: bytes,
     *,
@@ -455,11 +591,103 @@ def yandex_vision_ocr_pdf_to_page_documents(content: bytes, filename: str) -> Li
         src.close()
 
 
-def yandex_vision_ocr_pdf_documents_for_langchain(content: bytes, filename: str):
-    """Обёртка под langchain_core.documents.Document (ленивый import)."""
+def yandex_vision_ocr_pdf_to_page_documents_new_api(
+    content: bytes,
+    filename: str,
+    *,
+    model: str = "page",
+) -> List[Tuple[int, str]]:
+    """
+    PDF → список (индекс_страницы_0_based, текст) через новый OCR API (async).
+    Поддерживает model='table' для PDF из Excel-таблиц.
+    Разбивает на чанки по 9 МБ / 200 страниц, как и старый метод.
+    """
+    try:
+        import fitz  # pymupdf
+    except ImportError as e:
+        raise RuntimeError(
+            "Для OCR больших PDF нужен пакет pymupdf. Установите: pip install pymupdf"
+        ) from e
+
+    if not vision_api_configured():
+        raise ValueError("Yandex Vision: не заданы API ключ или каталог.")
+
+    max_pages = max(1, int(getattr(config, "YANDEX_VISION_MAX_PDF_PAGES", 200) or 200))
+    timeout_per_chunk = max(120, int(getattr(config, "YANDEX_OCR_ASYNC_TIMEOUT_SEC", 300) or 300))
+    lang_codes = _preferred_language_codes()
+    # New API: ["*"] for auto-detect, which covers mixed documents better
+    ocr_langs = ["*"] if set(lang_codes) == {"ru", "en"} else lang_codes
+
+    src = fitz.open(stream=content, filetype="pdf")
+    try:
+        total = len(src)
+        if total == 0:
+            return []
+
+        def build_subpdf_bytes(p0: int, p1: int) -> bytes:
+            sub = fitz.open()
+            try:
+                sub.insert_pdf(src, from_page=p0, to_page=p1 - 1)
+                return sub.tobytes()
+            finally:
+                sub.close()
+
+        ranges = _pdf_chunk_page_ranges(
+            total,
+            max_pages,
+            lambda s, e: build_subpdf_bytes(s, e),
+        )
+
+        all_pages: List[Tuple[int, str]] = []
+
+        for ri, (p0, p1) in enumerate(ranges):
+            chunk_bytes = build_subpdf_bytes(p0, p1)
+            logger.info(
+                "Yandex OCR (new API, model=%s) chunk %s/%s: pages %s–%s (%s bytes), file=%s",
+                model,
+                ri + 1,
+                len(ranges),
+                p0 + 1,
+                p1,
+                len(chunk_bytes),
+                filename,
+            )
+            b64 = base64.b64encode(chunk_bytes).decode("ascii")
+            pairs = _call_new_ocr_async(
+                b64,
+                model=model,
+                timeout_sec=timeout_per_chunk,
+                language_codes=ocr_langs,
+            )
+            # Shift page indices by chunk offset
+            all_pages.extend((p0 + local_idx, text) for local_idx, text in pairs)
+
+        all_pages.sort(key=lambda x: x[0])
+        return all_pages
+    finally:
+        src.close()
+
+
+def yandex_vision_ocr_pdf_documents_for_langchain(
+    content: bytes,
+    filename: str,
+    *,
+    model: str | None = None,
+):
+    """
+    Обёртка под langchain_core.documents.Document.
+    model=None → старый batchAnalyze API (обратная совместимость).
+    model='table'/'page'/etc → новый OCR API с выбором модели.
+    """
     from langchain_core.documents import Document
 
-    pairs = yandex_vision_ocr_pdf_to_page_documents(content, filename)
+    if model is not None:
+        pairs = yandex_vision_ocr_pdf_to_page_documents_new_api(content, filename, model=model)
+        ocr_engine = f"yandex_vision_new_api_{model}"
+    else:
+        pairs = yandex_vision_ocr_pdf_to_page_documents(content, filename)
+        ocr_engine = "yandex_vision_pdf"
+
     return [
         Document(
             page_content=text,
@@ -467,7 +695,7 @@ def yandex_vision_ocr_pdf_documents_for_langchain(content: bytes, filename: str)
                 "source_file": filename,
                 "source_page": idx,
                 "ocr": True,
-                "ocr_engine": "yandex_vision_pdf",
+                "ocr_engine": ocr_engine,
             },
         )
         for idx, text in pairs
