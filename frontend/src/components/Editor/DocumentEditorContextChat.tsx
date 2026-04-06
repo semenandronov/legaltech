@@ -9,7 +9,7 @@ import { Loader } from "@/components/ai-elements/loader"
 import {
   Check, Edit3, HelpCircle, FileText,
   Sparkles, ListPlus, ArrowRight, ChevronDown, ChevronUp, X, Paperclip,
-  BookOpen, ChevronRight, Scissors, Mic, MicOff
+  BookOpen, ChevronRight, Mic, MicOff
 } from "lucide-react"
 
 // ==================== TYPES ====================
