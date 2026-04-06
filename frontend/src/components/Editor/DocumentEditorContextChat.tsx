@@ -1010,20 +1010,6 @@ export const DocumentEditorContextChat: React.FC<DocumentEditorContextChatProps>
             if (message.role === "user") {
               return (
                 <div key={message.id} className="flex flex-col items-end gap-1.5">
-                  {message.selectedTextSnapshot && (
-                    <div
-                      className="max-w-[85%] rounded-2xl rounded-tr-sm px-3 py-2 border"
-                      style={{ background: '#f5f5f5', borderColor: '#e5e7eb' }}
-                    >
-                      <div className="flex items-center gap-1.5 mb-1">
-                        <Scissors className="w-3 h-3 shrink-0" style={{ color: '#9ca3af' }} />
-                        <span className="text-xs font-semibold" style={{ color: '#9ca3af' }}>Выделенный текст</span>
-                      </div>
-                      <div className="text-xs leading-relaxed line-clamp-3" style={{ color: '#6b7280' }}>
-                        {message.selectedTextSnapshot.slice(0, 200)}{message.selectedTextSnapshot.length > 200 ? '…' : ''}
-                      </div>
-                    </div>
-                  )}
                   <div className="max-w-[85%] bg-gray-100 rounded-2xl rounded-tr-sm px-3 py-2 text-sm text-gray-800">
                     {message.content}
                   </div>
