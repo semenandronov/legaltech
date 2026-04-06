@@ -180,9 +180,11 @@ async def upload_files(
             )
         
         # Parse file using LangChain loaders (run in thread — OCR can take minutes)
+        # 20 min timeout: 2 chunks × 200 pages × ~5 min each
         try:
-            langchain_docs = await asyncio.to_thread(
-                DocumentLoaderService.load_document, content, filename
+            langchain_docs = await asyncio.wait_for(
+                asyncio.to_thread(DocumentLoaderService.load_document, content, filename),
+                timeout=1200,
             )
             
             if not langchain_docs:
@@ -242,6 +244,7 @@ async def upload_files(
             file_path = os.path.join(case_upload_dir, filename)
             with open(file_path, 'wb') as f:
                 f.write(content)
+            saved_file_paths.append(file_path)
             logger.info(f"Saved original file to {file_path}")
             
             # Remove NULL bytes (PostgreSQL doesn't allow them in strings)

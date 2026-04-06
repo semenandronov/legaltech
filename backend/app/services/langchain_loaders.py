@@ -31,7 +31,7 @@ class DocumentLoaderService:
         pages_with_text = sum(1 for d in documents if (d.page_content or "").strip())
         total_chars = sum(len((d.page_content or "").strip()) for d in documents)
         min_chars_per_page = max(
-            1, int(getattr(config, "PDF_OCR_MIN_EXPECTED_CHARS_PER_PAGE", 20) or 20)
+            1, int(getattr(config, "PDF_OCR_MIN_EXPECTED_CHARS_PER_PAGE", 5) or 5)
         )
         min_total_chars = min_chars_per_page * max(1, pages_with_text)
         return total_chars >= min_total_chars

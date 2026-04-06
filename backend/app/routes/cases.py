@@ -650,8 +650,9 @@ async def add_files_to_case(
             
             # Parse file using LangChain loaders (run in thread — OCR can take minutes)
             try:
-                langchain_docs = await asyncio.to_thread(
-                    DocumentLoaderService.load_document, content, filename
+                langchain_docs = await asyncio.wait_for(
+                    asyncio.to_thread(DocumentLoaderService.load_document, content, filename),
+                    timeout=1200,
                 )
                 
                 if not langchain_docs:
