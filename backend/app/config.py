@@ -224,7 +224,7 @@ class Config:
     PDF_OCR_PREFER_YANDEX: bool = os.getenv("PDF_OCR_PREFER_YANDEX", "true").lower() == "true"
     # Минимальная эвристика качества OCR-текста из PDF (символов на страницу с текстом)
     PDF_OCR_MIN_EXPECTED_CHARS_PER_PAGE: int = int(
-        os.getenv("PDF_OCR_MIN_EXPECTED_CHARS_PER_PAGE", "20")
+        os.getenv("PDF_OCR_MIN_EXPECTED_CHARS_PER_PAGE", "5")
     )
     # OCR robust settings (quota/backoff/diagnostics)
     YANDEX_OCR_MAX_RETRIES: int = int(os.getenv("YANDEX_OCR_MAX_RETRIES", "3"))

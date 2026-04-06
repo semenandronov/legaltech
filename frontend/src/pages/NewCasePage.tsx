@@ -67,6 +67,8 @@ const NewCasePage = () => {
     return (bytes / (1024 * 1024)).toFixed(1) + ' МБ'
   }
 
+  const [uploadStatus, setUploadStatus] = useState<string>('')
+
   const handleCreate = async () => {
     if (!title.trim()) {
       setError('Укажите название дела')
@@ -75,13 +77,18 @@ const NewCasePage = () => {
     setError(null)
     setIsCreating(true)
     setUploadProgress(0)
+    setUploadStatus('')
 
     try {
       const caseResponse = await createCase({ title: title.trim(), description: '' })
       const caseId = caseResponse.id
 
-      if (stagedFiles.length > 0) {
-        await addFilesToCase(caseId, stagedFiles, (percent) => {
+      // Upload files one by one to avoid platform request size limits and proxy timeouts
+      for (let i = 0; i < stagedFiles.length; i++) {
+        const file = stagedFiles[i]
+        setUploadStatus(`Загрузка файла ${i + 1} из ${stagedFiles.length}: ${file.name}`)
+        setUploadProgress(0)
+        await addFilesToCase(caseId, [file], (percent) => {
           setUploadProgress(percent)
         })
       }
@@ -91,6 +98,7 @@ const NewCasePage = () => {
       setError(err.response?.data?.detail || err.message || 'Ошибка при создании дела')
       setIsCreating(false)
       setUploadProgress(0)
+      setUploadStatus('')
     }
   }
 
@@ -280,10 +288,10 @@ const NewCasePage = () => {
         >
           {isCreating && stagedFiles.length > 0 && (
             <span className="text-xs mr-auto" style={{ color: 'var(--color-text-muted)' }}>
-              {uploadProgress < 100 && uploadProgress > 0
-                ? `Загрузка файлов… ${uploadProgress}%`
-                : uploadProgress >= 100
-                ? 'Обработка файлов… это может занять до минуты'
+              {uploadStatus && uploadProgress >= 100
+                ? uploadStatus.replace('Загрузка файла', 'Обработка файла') + '…'
+                : uploadStatus
+                ? `${uploadStatus}… ${uploadProgress > 0 ? uploadProgress + '%' : ''}`
                 : 'Загрузка файлов…'}
             </span>
           )}
