@@ -1640,6 +1640,14 @@ const GlobalAssistantPage = () => {
                   selectedCaseFiles={selectedCaseFiles}
                   onRemoveCaseFile={handleRemoveCaseFile}
                   onOpenCasePicker={() => setShowCasePicker(true)}
+                  legalCorpusHasData={Boolean(legalCorpusStatus?.has_corpus)}
+                  useLegalCorpus={useLegalCorpus}
+                  onUseLegalCorpusChange={persistUseLegalCorpus}
+                  isLegalCorpusUploader={Boolean(legalCorpusStatus?.is_uploader)}
+                  corpusFiles={corpusFilesList}
+                  corpusUploading={corpusUploading}
+                  onCorpusFilesSelected={handleCorpusFilesSelected}
+                  onDeleteCorpusFile={handleDeleteCorpusFile}
                 />
               </div>
 
