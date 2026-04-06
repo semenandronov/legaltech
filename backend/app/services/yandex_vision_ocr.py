@@ -24,9 +24,12 @@ VISION_OCR_RECOGNIZE_TEXT_URL = "https://ocr.api.cloud.yandex.net/ocr/v1/recogni
 VISION_OCR_RECOGNIZE_TEXT_ASYNC_URL = "https://ocr.api.cloud.yandex.net/ocr/v1/recognizeTextAsync"
 VISION_OCR_GET_RECOGNITION_URL = "https://ocr.api.cloud.yandex.net/ocr/v1/getRecognition"
 
-# Service limits: file size ~= 10 MB, image size <= 20 MP, PDF <= 200 pages per request.
-YANDEX_VISION_PDF_BYTES_SOFT_LIMIT = 9 * 1024 * 1024
-YANDEX_VISION_IMAGE_BYTES_SOFT_LIMIT = 9 * 1024 * 1024
+# Service limits:
+# Old batchAnalyze: gRPC body limit = 4 MB. Base64 adds ~33% overhead,
+# so raw PDF chunk must stay under 3 MB (3 MB * 1.33 ≈ 4 MB base64).
+# New OCR API: HTTP, limit = 10 MB raw.
+YANDEX_VISION_PDF_BYTES_SOFT_LIMIT = 3 * 1024 * 1024   # 3 MB for old batchAnalyze
+YANDEX_VISION_IMAGE_BYTES_SOFT_LIMIT = 9 * 1024 * 1024  # images use new API, 10 MB ok
 YANDEX_VISION_MAX_RETRIES = 3
 YANDEX_VISION_MIN_REQUEST_INTERVAL_SEC = 1.1
 YANDEX_VISION_LANGUAGE_CODES = ("ru", "en")
@@ -200,6 +203,12 @@ def _call_batch_analyze_base64(
                     code = err.get("code")
                     msg = str(err.get("message") or "")
                     if str(code) == "8":
+                        # gRPC RESOURCE_EXHAUSTED: could be quota OR message-too-large
+                        if "larger than max" in msg or "message larger" in msg:
+                            raise ValueError(
+                                f"Yandex OCR: PDF-чанк слишком большой для API ({msg}). "
+                                "Размер чанка автоматически уменьшится при следующем запросе."
+                            )
                         raise YandexOCRQuotaError(f"Yandex OCR quota exceeded: {msg}")
                     if str(code) in {"13"}:
                         raise YandexOCRTemporaryError(f"Yandex OCR temporary server error: {msg}")
@@ -233,6 +242,12 @@ def _call_batch_analyze_base64(
 
         logger.error("Yandex Vision OCR error: %s; req=%s trace=%s", last_err, req_id, trace_id)
         if resp.status_code == 429:
+            # 429 can also mean "message too large" wrapped in HTTP 429 by Yandex proxy
+            if "larger than max" in resp.text or "message larger" in resp.text:
+                raise ValueError(
+                    f"Yandex OCR: PDF-чанк слишком большой для API. "
+                    f"req={req_id}. Уменьшите размер файла или дождитесь обновления."
+                )
             raise YandexOCRQuotaError(
                 f"Yandex Vision OCR rate limited (429). req={req_id} trace={trace_id}."
             )

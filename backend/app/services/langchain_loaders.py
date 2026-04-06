@@ -99,8 +99,9 @@ class DocumentLoaderService:
                     )
 
                     if vision_api_configured():
+                        # Use new OCR API (model="page") — HTTP-based, 10 MB limit vs old gRPC 4 MB
                         yandex_docs = yandex_vision_ocr_pdf_documents_for_langchain(
-                            content, filename
+                            content, filename, model="page"
                         )
                         if yandex_docs and DocumentLoaderService._pdf_text_quality_ok(yandex_docs):
                             logger.info(
