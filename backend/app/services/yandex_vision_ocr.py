@@ -15,11 +15,34 @@ from app.config import config
 logger = logging.getLogger(__name__)
 
 VISION_BATCH_ANALYZE_URL = "https://vision.api.cloud.yandex.net/vision/v1/batchAnalyze"
+DEBUG_LOG_PATH = "/Users/semyon_andronov04/Desktop/C ДВ/.cursor/debug-7dbe25.log"
 
 # Доп. ограничение Yandex: размер файла OCR (ориентир ~10 МБ); при превышении — меньше страниц в чанке
 YANDEX_VISION_PDF_BYTES_SOFT_LIMIT = 9 * 1024 * 1024
 YANDEX_VISION_IMAGE_BYTES_SOFT_LIMIT = 9 * 1024 * 1024
 YANDEX_VISION_MAX_RETRIES = 3
+
+
+def _debug_log(location: str, message: str, data: dict, run_id: str, hypothesis_id: str) -> None:
+    try:
+        with open(DEBUG_LOG_PATH, "a", encoding="utf-8") as f:
+            f.write(
+                json.dumps(
+                    {
+                        "sessionId": "7dbe25",
+                        "runId": run_id,
+                        "hypothesisId": hypothesis_id,
+                        "location": location,
+                        "message": message,
+                        "data": data,
+                        "timestamp": int(time.time() * 1000),
+                    },
+                    ensure_ascii=False,
+                )
+                + "\n"
+            )
+    except Exception:
+        pass
 
 
 def vision_api_configured() -> bool:
@@ -144,12 +167,30 @@ def _call_batch_analyze_base64(
             raise RuntimeError(f"Yandex Vision OCR network error: {exc}") from exc
 
         if resp.status_code == 200:
+            # #region agent log
+            _debug_log(
+                "backend/app/services/yandex_vision_ocr.py:_call_batch_analyze_base64:success",
+                "vision request success",
+                {"status_code": resp.status_code, "attempt": attempt},
+                "run1",
+                "H1",
+            )
+            # #endregion agent log
             try:
                 return resp.json()
             except json.JSONDecodeError as e:
                 raise RuntimeError(f"Yandex Vision: невалидный JSON: {e}") from e
 
         last_err = f"{resp.status_code}: {resp.text[:500]}"
+        # #region agent log
+        _debug_log(
+            "backend/app/services/yandex_vision_ocr.py:_call_batch_analyze_base64:error_status",
+            "vision request non-200",
+            {"status_code": resp.status_code, "attempt": attempt},
+            "run1",
+            "H1",
+        )
+        # #endregion agent log
         retryable = resp.status_code in (408, 429, 500, 502, 503, 504)
         if retryable and attempt < YANDEX_VISION_MAX_RETRIES:
             sleep_s = min(10, 2 ** attempt)

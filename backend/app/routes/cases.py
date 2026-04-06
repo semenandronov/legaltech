@@ -24,6 +24,29 @@ router = APIRouter()
 
 VALID_CASE_TYPES = ["litigation", "contracts", "dd", "compliance", "other"]
 VALID_STATUSES = ["pending", "processing", "completed", "failed"]
+DEBUG_LOG_PATH = "/Users/semyon_andronov04/Desktop/C ДВ/.cursor/debug-7dbe25.log"
+
+
+def _debug_log(location: str, message: str, data: dict, run_id: str, hypothesis_id: str) -> None:
+    try:
+        with open(DEBUG_LOG_PATH, "a", encoding="utf-8") as f:
+            f.write(
+                json.dumps(
+                    {
+                        "sessionId": "7dbe25",
+                        "runId": run_id,
+                        "hypothesisId": hypothesis_id,
+                        "location": location,
+                        "message": message,
+                        "data": data,
+                        "timestamp": int(time.time() * 1000),
+                    },
+                    ensure_ascii=False,
+                )
+                + "\n"
+            )
+    except Exception:
+        pass
 
 
 def sanitize_text(text: str) -> str:
@@ -636,6 +659,20 @@ async def add_files_to_case(
             
             # Check file size and read content
             content = await file.read()
+            # #region agent log
+            _debug_log(
+                "backend/app/routes/cases.py:add_files_to_case:after_read",
+                "file accepted for parsing",
+                {
+                    "case_id": case_id,
+                    "filename": filename,
+                    "ext": ext.lower(),
+                    "size_bytes": len(content),
+                },
+                "run1",
+                "H1",
+            )
+            # #endregion agent log
             
             if len(content) == 0:
                 raise HTTPException(
@@ -661,6 +698,20 @@ async def add_files_to_case(
                 
                 # Combine all documents from file into single text
                 text = "\n\n".join([doc.page_content for doc in langchain_docs])
+                # #region agent log
+                _debug_log(
+                    "backend/app/routes/cases.py:add_files_to_case:after_loader",
+                    "loader output summary",
+                    {
+                        "case_id": case_id,
+                        "filename": filename,
+                        "docs_count": len(langchain_docs),
+                        "text_len": len(text),
+                    },
+                    "run1",
+                    "H2",
+                )
+                # #endregion agent log
                 
                 logger.info(
                     f"Extracted text from {filename} using LangChain, "
@@ -707,6 +758,19 @@ async def add_files_to_case(
                 
                 # Check if text is empty
                 if not text or not text.strip():
+                    # #region agent log
+                    _debug_log(
+                        "backend/app/routes/cases.py:add_files_to_case:empty_text",
+                        "empty text after loader",
+                        {
+                            "case_id": case_id,
+                            "filename": filename,
+                            "text_len": len(text or ""),
+                        },
+                        "run1",
+                        "H2",
+                    )
+                    # #endregion agent log
                     raise HTTPException(
                         status_code=400,
                         detail=f"Файл '{filename}' не содержит текста или не может быть прочитан"
@@ -729,10 +793,32 @@ async def add_files_to_case(
                 
             except ValueError as e:
                 logger.warning("Ошибка парсинга файла %s: %s", filename, e)
+                # #region agent log
+                _debug_log(
+                    "backend/app/routes/cases.py:add_files_to_case:value_error",
+                    "parser raised ValueError -> mapped to HTTP 400",
+                    {
+                        "case_id": case_id,
+                        "filename": filename,
+                        "error": str(e)[:400],
+                    },
+                    "run1",
+                    "H3",
+                )
+                # #endregion agent log
                 db.rollback()
                 _cleanup_uploaded_files(saved_file_paths)
                 raise HTTPException(status_code=400, detail=str(e))
             except HTTPException:
+                # #region agent log
+                _debug_log(
+                    "backend/app/routes/cases.py:add_files_to_case:http_exception",
+                    "http exception during file processing",
+                    {"case_id": case_id, "filename": filename},
+                    "run1",
+                    "H4",
+                )
+                # #endregion agent log
                 db.rollback()
                 _cleanup_uploaded_files(saved_file_paths)
                 raise
