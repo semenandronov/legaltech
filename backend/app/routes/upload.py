@@ -325,8 +325,15 @@ async def upload_files(
     try:
         db.execute(text("SELECT 1"))
     except Exception:
-        logger.warning("DB connection lost after long OCR operation — reconnecting.")
-        db.close()
+        logger.warning("DB connection lost after long OCR operation — invalidating and reconnecting.")
+        try:
+            db.connection().invalidate()
+        except Exception:
+            pass
+        try:
+            db.rollback()
+        except Exception:
+            pass
 
     # Parse case info if provided
     case_title = f"Дело из {len(file_names)} документов"

@@ -28,14 +28,28 @@ def _reconnect_db(db: Session) -> None:
     Ensure the DB session has a live connection after a long operation (OCR, etc.).
     pool_pre_ping only fires on pool checkout; a session that already holds a connection
     may have it killed by PostgreSQL SSL keepalive timeout (~60-120s).
-    Closing the session releases the connection back to the pool; the next ORM call
-    checks it out fresh (with pool_pre_ping).
+
+    Strategy: ping with SELECT 1. If it fails, invalidate the underlying DBAPI connection
+    and rollback the session — SQLAlchemy will check out a fresh connection (with
+    pool_pre_ping) on the next ORM call. We must NOT call db.close() because that makes
+    the session itself unusable for further operations.
     """
     try:
         db.execute(text("SELECT 1"))
     except Exception:
-        logger.warning("DB connection lost after long operation — reconnecting.")
-        db.close()  # releases connection back to pool; next access gets a fresh one
+        logger.warning("DB connection lost after long OCR operation — invalidating and reconnecting.")
+        # Invalidate tells SQLAlchemy the DBAPI connection is dead without talking to it
+        try:
+            db.connection().invalidate()
+        except Exception:
+            pass
+        # Rollback clears session transaction state and releases the dead connection
+        try:
+            db.rollback()
+        except Exception:
+            pass
+        # pool_pre_ping=True ensures the next checkout from pool gets a live connection
+        logger.info("DB session reset — will get fresh connection on next operation.")
 
 VALID_CASE_TYPES = ["litigation", "contracts", "dd", "compliance", "other"]
 VALID_STATUSES = ["pending", "processing", "completed", "failed"]

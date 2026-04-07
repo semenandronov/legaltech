@@ -433,9 +433,17 @@ def _call_new_ocr_async(
         if not raw:
             continue
 
-        pages: List[Tuple[int, str]] = []
+        # Try to detect whether the operation is done.
+        # Possible response formats from Yandex:
+        #   Still pending (single JSON):  {"done": false, "id": "..."}
+        #   Done (JSON Lines, one per page): {"result": {"textAnnotation":{...}, "page":"0"}}
+        #   Done (alt key):               {"response": {"textAnnotation":{...}, "page":"0"}}
+        #   Done (top-level done=true):   {"done": true, "response": {...}}
 
-        # Response may be JSON Lines (one per page) or a single JSON object
+        found_pending = False
+        found_done = False
+        page_results: List[Tuple[int, str]] = []  # (page_num, text), text may be empty
+
         for line in raw.splitlines():
             line = line.strip()
             if not line:
@@ -445,29 +453,44 @@ def _call_new_ocr_async(
             except json.JSONDecodeError:
                 continue
 
-            # Check for pending operation (not done yet)
+            # Explicitly pending
             if item.get("done") is False:
-                pages = []
+                found_pending = True
                 break
 
-            # Unwrap: could be {result:{textAnnotation,page}} or {textAnnotation,page}
-            result = item.get("result") or item
-            ta = result.get("textAnnotation") or {}
-            text = _text_from_new_ocr_annotation(ta)
-            page_num = int(result.get("page", "0") or "0")
-            if text:
-                pages.append((page_num, text))
+            # Explicitly done with wrapped response
+            if item.get("done") is True:
+                inner = item.get("response") or item.get("result") or {}
+                ta = inner.get("textAnnotation") or {}
+                text = _text_from_new_ocr_annotation(ta)
+                page_num = int((inner.get("page") or "0"))
+                page_results.append((page_num, text))
+                found_done = True
+                continue
 
-        if pages:
-            pages.sort(key=lambda x: x[0])
-            logger.info(
-                "Yandex OCR async done: op=%s model=%s pages=%s waited=%.1fs",
-                op_id,
-                model,
-                len(pages),
-                waited,
-            )
-            return pages
+            # No "done" field — treat as a result line (JSON Lines format)
+            inner = item.get("result") or item.get("response") or item
+            ta = inner.get("textAnnotation") or {}
+            text = _text_from_new_ocr_annotation(ta)
+            page_num = int((inner.get("page") or "0"))
+            page_results.append((page_num, text))
+            found_done = True
+
+        if found_pending or not found_done:
+            continue
+
+        # Operation is done — filter out empty pages and return
+        pages = [(n, t) for n, t in page_results if t.strip()]
+        pages.sort(key=lambda x: x[0])
+        logger.info(
+            "Yandex OCR async done: op=%s model=%s pages_with_text=%s/%s waited=%.1fs",
+            op_id,
+            model,
+            len(pages),
+            len(page_results),
+            waited,
+        )
+        return pages
 
     raise YandexOCRTemporaryError(
         f"recognizeTextAsync timed out after {timeout_sec}s for op={op_id}"
@@ -504,14 +527,16 @@ def _pdf_chunk_page_ranges(
     total_pages: int,
     max_pages: int,
     pdf_bytes_factory,
+    bytes_soft_limit: int = 0,
 ) -> List[Tuple[int, int]]:
     """
     Диапазоны [start, end) в страницах 0-based, чтобы каждый под-PDF не превышал max_pages
-    и по возможности YANDEX_VISION_PDF_BYTES_SOFT_LIMIT.
+    и bytes_soft_limit байт (по умолчанию — YANDEX_VISION_PDF_BYTES_SOFT_LIMIT).
     pdf_bytes_factory(start, end) -> bytes для проверки размера.
     """
     if total_pages <= 0 or max_pages <= 0:
         return []
+    limit = bytes_soft_limit if bytes_soft_limit > 0 else YANDEX_VISION_PDF_BYTES_SOFT_LIMIT
     ranges: List[Tuple[int, int]] = []
     start = 0
     while start < total_pages:
@@ -519,7 +544,7 @@ def _pdf_chunk_page_ranges(
         # Уменьшаем end пока размер > soft limit (минимум 1 страница)
         while end > start + 1:
             chunk = pdf_bytes_factory(start, end)
-            if len(chunk) <= YANDEX_VISION_PDF_BYTES_SOFT_LIMIT:
+            if len(chunk) <= limit:
                 break
             end = start + max(1, (end - start) // 2)
         ranges.append((start, end))
@@ -647,10 +672,13 @@ def yandex_vision_ocr_pdf_to_page_documents_new_api(
             finally:
                 sub.close()
 
+        # New OCR API uses HTTP (not gRPC), so 10 MB limit applies — use 9 MB soft limit
+        NEW_API_BYTES_SOFT_LIMIT = 9 * 1024 * 1024
         ranges = _pdf_chunk_page_ranges(
             total,
             max_pages,
             lambda s, e: build_subpdf_bytes(s, e),
+            bytes_soft_limit=NEW_API_BYTES_SOFT_LIMIT,
         )
 
         all_pages: List[Tuple[int, str]] = []
