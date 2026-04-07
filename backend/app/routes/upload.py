@@ -1,5 +1,4 @@
 """Upload route for Legal AI Vault"""
-import asyncio
 import logging
 import json
 import os
@@ -7,15 +6,10 @@ from fastapi import APIRouter, UploadFile, File, HTTPException, Depends, Form
 from pydantic import BaseModel, Field, field_validator
 from typing import List, Optional, Dict
 from sqlalchemy.orm import Session
-from sqlalchemy import text
-from app.services.langchain_loaders import DocumentLoaderService
 from app.utils.database import get_db
 from app.utils.auth import get_current_user
 from app.models.case import Case, File as FileModel
 from app.models.user import User
-from app.services.document_processor import DocumentProcessor
-from app.services.document_classifier_service import DocumentClassifierService
-from langchain_core.documents import Document
 from app.config import config
 import uuid
 
@@ -132,12 +126,9 @@ async def upload_files(
     # Validate file extensions
     allowed_extensions = [ext.replace(".", "") for ext in config.ALLOWED_EXTENSIONS]
     file_names: List[str] = []
-    text_parts: List[str] = []
-    total_text_len = 0
     files_to_create: List[dict] = []
-    original_files: Dict[str, bytes] = {}  # Store original file content for Yandex Vector Store
-    
-    # Создаем директорию для сохранения оригинальных файлов
+    original_files: Dict[str, bytes] = {}
+
     upload_dir = config.UPLOAD_DIR
     os.makedirs(upload_dir, exist_ok=True)
 
@@ -147,202 +138,69 @@ async def upload_files(
     # Список путей к сохранённым файлам для отката при ошибке
     saved_file_paths = []
 
-    # Обрабатываем каждый загруженный файл
+    # Save each file immediately (bytes only); OCR runs in background
+    case_upload_dir = os.path.join(upload_dir, case_id)
+    os.makedirs(case_upload_dir, exist_ok=True)
+
     for file in files:
         if not file.filename:
             raise HTTPException(status_code=400, detail="Пустое имя файла недопустимо")
-        
-        # Sanitize filename to prevent path traversal
+
         filename = file.filename.replace("..", "").replace("/", "").replace("\\", "")
         if filename != file.filename:
             logger.warning(f"Sanitized filename from {file.filename} to {filename}")
-        
-        # Check extension
+
         _, ext = filename.rsplit(".", 1) if "." in filename else (filename, "")
         if ext.lower() not in allowed_extensions:
             raise HTTPException(
                 status_code=400,
                 detail=f"Файл '{filename}' имеет неподдерживаемый формат. Поддерживаются: {', '.join(allowed_extensions)}"
             )
-        
-        # Check file size and read content
+
         content = await file.read()
-        
+
         if len(content) == 0:
-            raise HTTPException(
-                status_code=400,
-                detail=f"Файл '{filename}' пуст или не может быть прочитан"
-            )
-        
+            raise HTTPException(status_code=400, detail=f"Файл '{filename}' пуст")
+
         if len(content) > config.MAX_FILE_SIZE:
             raise HTTPException(
                 status_code=400,
-                detail=f"Файл '{filename}' слишком большой. Максимальный размер: {config.MAX_FILE_SIZE / 1024 / 1024} МБ"
+                detail=f"Файл '{filename}' слишком большой. Максимум: {config.MAX_FILE_SIZE / 1024 / 1024:.0f} МБ"
             )
-        
-        # Parse file using LangChain loaders (run in thread — OCR can take minutes)
-        # 20 min timeout: 2 chunks × 200 pages × ~5 min each
-        try:
-            langchain_docs = await asyncio.wait_for(
-                asyncio.to_thread(DocumentLoaderService.load_document, content, filename),
-                timeout=1200,
-            )
-            
-            if not langchain_docs:
-                raise HTTPException(
-                    status_code=400,
-                    detail=f"LangChain loader не вернул документы для файла '{filename}'"
-                )
-            
-            # Combine all documents from file into single text (для валидации)
-            text = "\n\n".join([doc.page_content for doc in langchain_docs])
-            
-            logger.info(
-                f"Extracted text from {filename} using LangChain, "
-                f"total text length: {len(text)} chars"
-            )
-            
-            # Классификация документа
-            file_classification = None
-            try:
-                logger.info(f"Classifying document: {filename}")
-                classifier_service = DocumentClassifierService()
-                classification_result = classifier_service.classify_document(
-                    text=text,
-                    filename=filename,
-                    case_context=None
-                )
-                
-                logger.info(
-                    f"Classified {filename}: type={classification_result['doc_type']}, "
-                    f"confidence={classification_result['confidence']:.2f}, "
-                    f"needs_review={classification_result['needs_human_review']}"
-                )
-                
-                file_classification = classification_result
-            except Exception as e:
-                logger.warning(f"Error classifying document {filename}: {e}", exc_info=True)
-                # Не прерываем загрузку при ошибке классификации
-                file_classification = {
-                    "doc_type": "other",
-                    "tags": [],
-                    "confidence": 0.0,
-                    "needs_human_review": True,
-                    "reasoning": f"Ошибка классификации: {str(e)}",
-                    "classifier": "error"
-                }
-            
-            # ВАЖНО: Сохраняем оригинальный файл для загрузки в Yandex Vector Store
-            # content уже прочитан выше (await file.read()), сохраняем его в original_files
-            original_files[filename] = content
-            
-            # Сохраняем оригинальный файл на диск для просмотра
-            # Создаем поддиректорию для case_id
-            case_upload_dir = os.path.join(upload_dir, case_id)
-            os.makedirs(case_upload_dir, exist_ok=True)
-            
-            # Сохраняем файл
-            file_path = os.path.join(case_upload_dir, filename)
-            with open(file_path, 'wb') as f:
-                f.write(content)
-            saved_file_paths.append(file_path)
-            logger.info(f"Saved original file to {file_path}")
-            
-            # Remove NULL bytes (PostgreSQL doesn't allow them in strings)
-            text = text.replace('\x00', '')
-            
-            # Check if text is empty after parsing
-            if not text or not text.strip():
-                raise HTTPException(
-                    status_code=400,
-                    detail=f"Файл '{filename}' не содержит текста или не может быть прочитан"
-                )
-            
-            total_text_len += len(text)
-            if total_text_len > config.MAX_TOTAL_TEXT_CHARS:
-                raise HTTPException(
-                    status_code=400,
-                    detail=f"Суммарный размер текста превышает лимит {config.MAX_TOTAL_TEXT_CHARS} символов"
-                )
-            # Add separator with filename
-            text_parts.append(f"[{filename}]\n{text}")
-            file_names.append(filename)
 
-            # Путь к сохраненному файлу (относительно upload_dir)
-            relative_file_path = os.path.join(case_id, filename)
-            
-            files_to_create.append(
-                {
-                    "case_id": case_id,
-                    "filename": filename,
-                    "file_type": ext.lower(),
-                    "original_text": sanitize_text(text),
-                    "file_path": relative_file_path,
-                    "file_content": content,
-                    "file_classification": file_classification,
-                    # Keep per-page langchain_docs for page-aware chunk indexing
-                    "langchain_docs": langchain_docs,
-                }
-            )
-        except ValueError as e:
-            logger.warning("Ошибка парсинга файла %s: %s", filename, e)
-            # Откатываем транзакцию и удаляем сохранённые файлы
-            db.rollback()
-            _cleanup_uploaded_files(saved_file_paths)
-            raise HTTPException(status_code=400, detail=str(e))
-        except Exception as e:
-            logger.exception("Неизвестная ошибка при обработке файла %s", filename)
-            # Откатываем транзакцию и удаляем сохранённые файлы
-            db.rollback()
-            _cleanup_uploaded_files(saved_file_paths)
-            raise HTTPException(
-                status_code=500,
-                detail=f"Ошибка при обработке файла '{filename}'. Попробуйте загрузить файл снова."
-            )
-    
-    # Check if we have any valid text content
-    if not text_parts or not any(text.strip() for text in text_parts):
+        original_files[filename] = content
+
+        file_path = os.path.join(case_upload_dir, filename)
+        with open(file_path, "wb") as f:
+            f.write(content)
+        saved_file_paths.append(file_path)
+        logger.info(f"Saved original file to {file_path}")
+
+        file_names.append(filename)
+        relative_file_path = os.path.join(case_id, filename)
+        files_to_create.append(
+            {
+                "case_id": case_id,
+                "filename": filename[:255],
+                "file_type": ext.lower()[:50],
+                "original_text": "",           # filled by background task
+                "file_path": relative_file_path,
+                "file_content": content,
+                "processing_status": "pending",
+            }
+        )
+
+    if not files_to_create:
         db.rollback()
         _cleanup_uploaded_files(saved_file_paths)
-        raise HTTPException(
-            status_code=400,
-            detail="Все загруженные файлы пусты или не содержат текста. Пожалуйста, загрузите файлы с текстовым содержимым."
-        )
-    
-    # Combine all text
-    full_text = "\n\n".join(text_parts)
-    # Remove NULL bytes (PostgreSQL doesn't allow them in strings)
-    full_text = full_text.replace('\x00', '')
-    
-    # Final check: ensure full_text is not empty
-    if not full_text.strip():
-        db.rollback()
-        _cleanup_uploaded_files(saved_file_paths)
-        raise HTTPException(
-            status_code=400,
-            detail="Не удалось извлечь текст из загруженных файлов"
-        )
-    
-    # Reconnect after long OCR — PostgreSQL drops idle SSL connections in ~60-120s
-    try:
-        db.execute(text("SELECT 1"))
-    except Exception:
-        logger.warning("DB connection lost after long OCR operation — invalidating and reconnecting.")
-        try:
-            db.connection().invalidate()
-        except Exception:
-            pass
-        try:
-            db.rollback()
-        except Exception:
-            pass
+        raise HTTPException(status_code=400, detail="Не удалось сохранить ни одного файла")
 
     # Parse case info if provided
     case_title = f"Дело из {len(file_names)} документов"
     case_description = None
     case_type = None
     analysis_config = None
-    
+
     if case_info:
         try:
             info_data = json.loads(case_info)
@@ -352,230 +210,73 @@ async def upload_files(
             analysis_config = info_data.get("analysis_config")
         except Exception as e:
             logger.warning(f"Ошибка при парсинге case_info: {e}")
-    
-    # Create case
-    logger.info(
-        f"Creating case for user {current_user.id}",
-        extra={
-            "user_id": current_user.id,
-            "case_id": case_id,
-            "num_files": len(file_names),
-            "total_text_length": len(full_text),
-        }
-    )
-    
-    # Убеждаемся, что full_text не пустой и не содержит NULL байты
-    sanitized_full_text = sanitize_text(full_text)
-    if not sanitized_full_text or not sanitized_full_text.strip():
-        db.rollback()
-        _cleanup_uploaded_files(saved_file_paths)
-        raise HTTPException(
-            status_code=400,
-            detail="Не удалось извлечь текст из загруженных файлов"
-        )
-    
-    # Проверяем размер full_text (PostgreSQL Text может хранить до 1GB, но лучше ограничить)
-    MAX_TEXT_LENGTH = 100 * 1024 * 1024  # 100 MB
-    if len(sanitized_full_text) > MAX_TEXT_LENGTH:
-        logger.warning(f"Full text is very large: {len(sanitized_full_text)} bytes, truncating to {MAX_TEXT_LENGTH}")
-        sanitized_full_text = sanitized_full_text[:MAX_TEXT_LENGTH]
-    
-    # Убеждаемся, что file_names - это список
-    if not isinstance(file_names, list):
-        file_names = list(file_names) if file_names else []
-    
-    # Валидация: убеждаемся, что у нас есть хотя бы один файл
-    if not file_names:
-        db.rollback()
-        _cleanup_uploaded_files(saved_file_paths)
-        raise HTTPException(
-            status_code=400,
-            detail="Не удалось обработать ни одного файла"
-        )
-    
+
     case = Case(
         id=case_id,
         user_id=current_user.id,
-        full_text=sanitized_full_text,
+        full_text="",              # filled by background task after OCR
         num_documents=len(file_names),
         file_names=file_names,
-        title=case_title[:255] if case_title else None,  # Ограничиваем длину title
+        title=case_title[:255] if case_title else None,
         description=sanitize_text(case_description) if case_description else None,
         case_type=case_type,
-        status="pending",
-        analysis_config=analysis_config if analysis_config else None
+        status="processing",
+        analysis_config=analysis_config if analysis_config else None,
     )
-    
+
+    new_file_ids: List[str] = []
+
     try:
         db.add(case)
-        db.flush()  # Flush to get case.id
-        
-        # Create File entries
-        # ВАЖНО: LangChain больше НЕ используется для сохранения chunks в БД
-        # LangChain использовался только для извлечения текста (уже сделано выше)
-        # Оригинальные файлы загружаются напрямую в Yandex Vector Store
-        document_processor = DocumentProcessor()
-        
+        db.flush()
+
         for file_info in files_to_create:
-            # Убеждаемся, что original_text не пустой
-            sanitized_original_text = sanitize_text(file_info["original_text"])
-            if not sanitized_original_text or not sanitized_original_text.strip():
-                logger.warning(f"Skipping file {file_info['filename']} - empty text after sanitization")
+            filename = file_info["filename"]
+            file_type = file_info["file_type"]
+
+            if not filename.strip() or not file_type.strip():
                 continue
-            
-            # Проверяем размер original_text
-            MAX_FILE_TEXT_LENGTH = 50 * 1024 * 1024  # 50 MB per file
-            if len(sanitized_original_text) > MAX_FILE_TEXT_LENGTH:
-                logger.warning(
-                    f"File {file_info['filename']} text is very large: {len(sanitized_original_text)} bytes, "
-                    f"truncating to {MAX_FILE_TEXT_LENGTH}"
-                )
-                sanitized_original_text = sanitized_original_text[:MAX_FILE_TEXT_LENGTH]
-            
-            # Ограничиваем длину filename (String(255))
-            filename = file_info["filename"][:255] if len(file_info["filename"]) > 255 else file_info["filename"]
-            # Ограничиваем длину file_type (String(50))
-            file_type = file_info["file_type"][:50] if len(file_info["file_type"]) > 50 else file_info["file_type"]
-            
-            # Валидация обязательных полей
-            if not filename or not filename.strip():
-                logger.warning(f"Skipping file with empty filename")
-                continue
-            if not file_type or not file_type.strip():
-                logger.warning(f"Skipping file {filename} - empty file_type")
-                continue
-            
+
             try:
-                file_path = file_info.get("file_path")  # Путь к оригинальному файлу
-                file_content = file_info.get("file_content")  # Бинарное содержимое файла
                 file_model = FileModel(
                     case_id=case_id,
                     filename=filename,
                     file_type=file_type,
-                    original_text=sanitized_original_text,
-                    file_path=file_path,  # Сохраняем путь к оригинальному файлу
-                    file_content=file_content,  # Сохраняем бинарное содержимое файла в БД
+                    original_text="",          # filled by background task
+                    file_path=file_info.get("file_path"),
+                    file_content=file_info.get("file_content"),
+                    processing_status="pending",
                 )
                 db.add(file_model)
-                db.flush()  # Flush to get file_model.id
-                
-                # Phase 1: Сохраняем file_id в file_info для использования в split_documents
-                file_info["file_id"] = file_model.id
-                
-                # Сохраняем классификацию документа
-                if file_info.get("file_classification"):
-                    from app.models.analysis import DocumentClassification
-                    classification = file_info["file_classification"]
-                    
-                    doc_classification = DocumentClassification(
-                        case_id=case_id,
-                        file_id=file_model.id,
-                        doc_type=classification.get("doc_type", "other"),
-                        relevance_score=0,  # Можно вычислить на основе типа
-                        is_privileged="false",
-                        privilege_type="none",
-                        key_topics=classification.get("tags", []),
-                        confidence=str(classification.get("confidence", 0.0)),
-                        reasoning=classification.get("reasoning", ""),
-                        needs_human_review="true" if classification.get("needs_human_review", False) else "false",
-                        prompt_version="v1"
-                    )
-                    db.add(doc_classification)
-                    logger.info(f"Saved classification for file {file_model.id}: {classification.get('doc_type', 'unknown')}")
+                db.flush()
+                new_file_ids.append(file_model.id)
+                logger.info(f"Queued {filename} (file_id={file_model.id}) for background processing")
             except Exception as file_error:
-                logger.warning(
-                    f"Error creating File model for {filename}: {file_error}",
-                    exc_info=True
-                )
-                # Продолжаем с другими файлами, но логируем ошибку
+                logger.warning(f"Error creating File model for {filename}: {file_error}", exc_info=True)
                 continue
-            
-            # ВАЖНО: LangChain больше НЕ используется для сохранения chunks в БД
-            # LangChain использовался только для извлечения текста (уже сделано выше)
-            # Оригинальные файлы загружаются напрямую в Yandex Vector Store
-            # Сохраняем только информацию о файле (File model) в БД
-            logger.info(
-                f"Saved file info for {file_info['filename']} "
-                f"(case {case_id}, file_id {file_model.id})"
-            )
-        
-        # Коммитим транзакцию - все файлы и Case успешно созданы
+
         db.commit()
-        logger.info(f"Successfully committed case {case_id} with {len(file_names)} files")
-        
-        # Store documents in PGVector
-        logger.info(
-            f"Preparing documents for PGVector storage for case {case_id}",
-            extra={"case_id": case_id, "num_files": len(file_names)}
-        )
-        
-        # Create documents from all files using document_processor
-        all_documents = []
-        for file_info in files_to_create:
-            filename = file_info["filename"]
-            text = file_info["original_text"]
-            
-            # Получаем классификацию для этого файла
-            classification = file_info.get("file_classification", {})
-            
-            # Подготавливаем метаданные с классификацией
-            metadata = {
-                "case_id": case_id,
-            }
-            
-            # Добавляем информацию о классификации в метаданные
-            if classification:
-                metadata["doc_type"] = classification.get("doc_type", "other")
-                metadata["classification_confidence"] = classification.get("confidence", 0.0)
-                metadata["is_privileged"] = classification.get("is_privileged", False)
-                metadata["key_topics"] = classification.get("tags", [])
-                metadata["relevance_score"] = classification.get("relevance_score", 0)
-            
-            # Split text into chunks with metadata
-            # Phase 1: Pass file_id for doc_id generation
-            file_id = file_info.get("file_id")  # Получаем file_id, сохранённый при создании File
-            file_documents = document_processor.split_documents(
-                text=text,
-                filename=filename,
-                metadata=metadata,
-                file_id=file_id,
-                langchain_docs=file_info.get("langchain_docs"),
-            )
-            all_documents.extend(file_documents)
-        
-        logger.info(
-            f"Storing {len(all_documents)} document chunks in PGVector for case {case_id}",
-            extra={"case_id": case_id, "num_chunks": len(all_documents)}
-        )
-        
-        collection_name = document_processor.store_in_vector_db(
-            case_id=case_id,
-            documents=all_documents,
-            db=db,
-            original_files=None  # Not used for PGVector
-        )
-        logger.info(f"Successfully stored {len(all_documents)} document chunks in PGVector collection '{collection_name}' for case {case_id}")
-        
-        # PGVector: No assistant needed, we use direct RAG with YandexGPT
-        logger.info(f"PGVector: Skipping assistant creation for case {case_id} (using direct RAG)")
-        
-        db.refresh(case)
-        
-        logger.info(
-            f"Successfully uploaded {len(file_names)} files for case {case_id}",
-            extra={
-                "case_id": case_id,
-                "num_files": len(file_names),
-                "user_id": current_user.id,
-            }
-        )
-        
+        logger.info(f"Committed case {case_id} with {len(new_file_ids)} pending files")
+
+        # Launch background processing
+        import asyncio as _asyncio
+        from app.services.file_processor_bg import process_files_background
+
+        async def _bg() -> None:
+            try:
+                await _asyncio.to_thread(process_files_background, new_file_ids, case_id)
+            except Exception as _e:
+                logger.error(f"Background processing error for case {case_id}: {_e}", exc_info=True)
+
+        _asyncio.create_task(_bg())
+        logger.info(f"Background processing started for case {case_id}")
+
         return {
             "case_id": case_id,
-            "num_files": len(file_names),
+            "num_files": len(new_file_ids),
             "file_names": file_names,
-            "status": "success",
-            "message": f"Загружено {len(file_names)} файлов. Готово к чату!"
+            "status": "processing",
+            "message": f"Загружено {len(new_file_ids)} файлов. Обработка идёт в фоне.",
         }
     except Exception as e:
         db.rollback()

@@ -481,6 +481,26 @@ export const addFilesToCase = async (
   return response.data
 }
 
+export interface FileProcessingStatus {
+  id: string
+  filename: string
+  status: 'pending' | 'processing' | 'ready' | 'error'
+  error?: string | null
+}
+
+export interface ProcessingStatusResponse {
+  case_id: string
+  files: FileProcessingStatus[]
+  all_done: boolean
+  any_processing: boolean
+  has_errors: boolean
+}
+
+export const getProcessingStatus = async (caseId: string): Promise<ProcessingStatusResponse> => {
+  const response = await apiClient.get(getApiUrl(`/api/cases/${caseId}/processing-status`))
+  return response.data
+}
+
 export const deleteFileFromCase = async (
   caseId: string,
   fileId: string

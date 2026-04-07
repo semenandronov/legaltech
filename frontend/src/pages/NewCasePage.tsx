@@ -1,7 +1,7 @@
-import { useState, useRef } from 'react'
+import { useState, useRef, useEffect, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { FolderOpen, MessageSquare, Upload, X, FileText } from 'lucide-react'
-import { createCase, addFilesToCase } from '../services/api'
+import { FolderOpen, MessageSquare, Upload, X, FileText, CheckCircle, AlertCircle, Loader } from 'lucide-react'
+import { createCase, addFilesToCase, getProcessingStatus, FileProcessingStatus } from '../services/api'
 import UnifiedSidebar from '../components/Layout/UnifiedSidebar'
 
 const MAX_FILE_SIZE_MB = 30
@@ -21,6 +21,9 @@ const NewCasePage = () => {
   const [uploadProgress, setUploadProgress] = useState(0)
   const [error, setError] = useState<string | null>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
+  const [processingFiles, setProcessingFiles] = useState<FileProcessingStatus[]>([])
+  const [caseIdForPolling, setCaseIdForPolling] = useState<string | null>(null)
+  const pollingRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
   const addStagedFiles = (files: File[]) => {
     const oversized = files.find(f => f.size > MAX_FILE_SIZE_BYTES)
@@ -69,6 +72,32 @@ const NewCasePage = () => {
 
   const [uploadStatus, setUploadStatus] = useState<string>('')
 
+  // Stop polling when component unmounts
+  useEffect(() => {
+    return () => {
+      if (pollingRef.current) clearInterval(pollingRef.current)
+    }
+  }, [])
+
+  const startPolling = useCallback((caseId: string) => {
+    setCaseIdForPolling(caseId)
+    pollingRef.current = setInterval(async () => {
+      try {
+        const status = await getProcessingStatus(caseId)
+        setProcessingFiles(status.files)
+        if (status.all_done) {
+          if (pollingRef.current) clearInterval(pollingRef.current)
+          pollingRef.current = null
+          setIsCreating(false)
+          // Auto-navigate after a short pause so user can see "ready" state
+          setTimeout(() => navigate(`/cases/${caseId}`), 800)
+        }
+      } catch {
+        // ignore transient polling errors
+      }
+    }, 3000)
+  }, [navigate])
+
   const handleCreate = async () => {
     if (!title.trim()) {
       setError('Укажите название дела')
@@ -83,17 +112,31 @@ const NewCasePage = () => {
       const caseResponse = await createCase({ title: title.trim(), description: '' })
       const caseId = caseResponse.id
 
-      // Upload files one by one to avoid platform request size limits and proxy timeouts
+      if (stagedFiles.length === 0) {
+        navigate(`/cases/${caseId}`)
+        return
+      }
+
+      // Upload file bytes one by one (fast — no OCR during upload)
       for (let i = 0; i < stagedFiles.length; i++) {
         const file = stagedFiles[i]
         setUploadStatus(`Загрузка файла ${i + 1} из ${stagedFiles.length}: ${file.name}`)
         setUploadProgress(0)
-        await addFilesToCase(caseId, [file], (percent) => {
+        const result = await addFilesToCase(caseId, [file], (percent) => {
           setUploadProgress(percent)
         })
+        // Show initial pending statuses from the response
+        if (result.files) {
+          setProcessingFiles(prev => {
+            const existing = new Map(prev.map(f => [f.id, f]))
+            result.files!.forEach((f: any) => existing.set(f.id, { id: f.id, filename: f.filename, status: f.processing_status || 'pending' }))
+            return Array.from(existing.values())
+          })
+        }
       }
 
-      navigate(`/cases/${caseId}`)
+      setUploadStatus('Обработка файлов…')
+      startPolling(caseId)
     } catch (err: any) {
       setError(err.response?.data?.detail || err.message || 'Ошибка при создании дела')
       setIsCreating(false)
@@ -241,40 +284,51 @@ const NewCasePage = () => {
               {/* Staged file list */}
               {stagedFiles.length > 0 && (
                 <div className="mt-3 space-y-2">
-                  {stagedFiles.map((file, i) => (
-                    <div
-                      key={i}
-                      className="flex items-center gap-3 px-4 py-3 rounded-lg border"
-                      style={{
-                        borderColor: 'var(--color-border)',
-                        backgroundColor: 'var(--color-bg-elevated)',
-                      }}
-                    >
-                      <FileText
-                        className="w-4 h-4 flex-shrink-0"
-                        style={{ color: 'var(--color-text-muted)' }}
-                      />
-                      <span
-                        className="flex-1 text-sm truncate"
-                        style={{ color: 'var(--color-text-primary)' }}
+                  {stagedFiles.map((file, i) => {
+                    const ps = processingFiles.find(p => p.filename === file.name)
+                    return (
+                      <div
+                        key={i}
+                        className="flex items-center gap-3 px-4 py-3 rounded-lg border"
+                        style={{
+                          borderColor: ps?.status === 'error' ? 'var(--color-error, #dc2626)' : 'var(--color-border)',
+                          backgroundColor: 'var(--color-bg-elevated)',
+                        }}
                       >
-                        {file.name}
-                      </span>
-                      <span
-                        className="text-xs flex-shrink-0"
-                        style={{ color: 'var(--color-text-muted)' }}
-                      >
-                        {formatFileSize(file.size)}
-                      </span>
-                      <button
-                        onClick={() => removeFile(i)}
-                        className="flex-shrink-0 p-0.5 rounded transition-colors hover:opacity-70"
-                        style={{ color: 'var(--color-text-muted)' }}
-                      >
-                        <X className="w-3.5 h-3.5" />
-                      </button>
-                    </div>
-                  ))}
+                        {ps?.status === 'ready' ? (
+                          <CheckCircle className="w-4 h-4 flex-shrink-0 text-green-500" />
+                        ) : ps?.status === 'error' ? (
+                          <AlertCircle className="w-4 h-4 flex-shrink-0" style={{ color: 'var(--color-error, #dc2626)' }} />
+                        ) : ps?.status === 'processing' || ps?.status === 'pending' ? (
+                          <Loader className="w-4 h-4 flex-shrink-0 animate-spin" style={{ color: 'var(--color-text-muted)' }} />
+                        ) : (
+                          <FileText className="w-4 h-4 flex-shrink-0" style={{ color: 'var(--color-text-muted)' }} />
+                        )}
+                        <span className="flex-1 text-sm truncate" style={{ color: 'var(--color-text-primary)' }}>
+                          {file.name}
+                        </span>
+                        {ps?.status === 'error' && ps.error && (
+                          <span className="text-xs flex-shrink-0 max-w-[200px] truncate" style={{ color: 'var(--color-error, #dc2626)' }} title={ps.error}>
+                            {ps.error}
+                          </span>
+                        )}
+                        {!ps && (
+                          <span className="text-xs flex-shrink-0" style={{ color: 'var(--color-text-muted)' }}>
+                            {formatFileSize(file.size)}
+                          </span>
+                        )}
+                        {!isCreating && (
+                          <button
+                            onClick={() => removeFile(i)}
+                            className="flex-shrink-0 p-0.5 rounded transition-colors hover:opacity-70"
+                            style={{ color: 'var(--color-text-muted)' }}
+                          >
+                            <X className="w-3.5 h-3.5" />
+                          </button>
+                        )}
+                      </div>
+                    )
+                  })}
                 </div>
               )}
             </div>
@@ -286,18 +340,22 @@ const NewCasePage = () => {
           className="border-t flex items-center justify-end gap-3 px-8 py-4"
           style={{ borderTopColor: 'var(--color-border)' }}
         >
-          {isCreating && stagedFiles.length > 0 && (
-            <span className="text-xs mr-auto" style={{ color: 'var(--color-text-muted)' }}>
-              {uploadStatus && uploadProgress >= 100
-                ? uploadStatus.replace('Загрузка файла', 'Обработка файла') + '…'
+          {isCreating && (
+            <span className="text-xs mr-auto flex items-center gap-1.5" style={{ color: 'var(--color-text-muted)' }}>
+              <Loader className="w-3 h-3 animate-spin" />
+              {caseIdForPolling
+                ? (() => {
+                    const ready = processingFiles.filter(f => f.status === 'ready').length
+                    const total = processingFiles.length
+                    return total > 0
+                      ? `Обработка файлов… ${ready} из ${total} готово`
+                      : 'Обработка файлов…'
+                  })()
                 : uploadStatus
-                ? `${uploadStatus}… ${uploadProgress > 0 ? uploadProgress + '%' : ''}`
+                ? `${uploadStatus}${uploadProgress > 0 && uploadProgress < 100 ? ` ${uploadProgress}%` : ''}`
+                : stagedFiles.length === 0
+                ? 'Создание дела…'
                 : 'Загрузка файлов…'}
-            </span>
-          )}
-          {isCreating && stagedFiles.length === 0 && (
-            <span className="text-xs mr-auto" style={{ color: 'var(--color-text-muted)' }}>
-              Создание дела…
             </span>
           )}
           <button
@@ -312,21 +370,34 @@ const NewCasePage = () => {
           >
             Отмена
           </button>
-          <button
-            onClick={handleCreate}
-            disabled={isCreating || !title.trim()}
-            className="px-4 py-2 text-sm font-medium rounded-lg transition-colors"
-            style={{
-              backgroundColor: isCreating || !title.trim()
-                ? 'var(--color-text-muted)'
-                : 'var(--color-text-primary)',
-              color: 'var(--color-bg-primary)',
-              opacity: isCreating || !title.trim() ? 0.5 : 1,
-              cursor: isCreating || !title.trim() ? 'not-allowed' : 'pointer',
-            }}
-          >
-            {isCreating ? 'Создание…' : 'Создать дело'}
-          </button>
+          {caseIdForPolling ? (
+            <button
+              onClick={() => navigate(`/cases/${caseIdForPolling}`)}
+              className="px-4 py-2 text-sm font-medium rounded-lg transition-colors"
+              style={{
+                backgroundColor: 'var(--color-text-primary)',
+                color: 'var(--color-bg-primary)',
+              }}
+            >
+              Перейти к делу →
+            </button>
+          ) : (
+            <button
+              onClick={handleCreate}
+              disabled={isCreating || !title.trim()}
+              className="px-4 py-2 text-sm font-medium rounded-lg transition-colors"
+              style={{
+                backgroundColor: isCreating || !title.trim()
+                  ? 'var(--color-text-muted)'
+                  : 'var(--color-text-primary)',
+                color: 'var(--color-bg-primary)',
+                opacity: isCreating || !title.trim() ? 0.5 : 1,
+                cursor: isCreating || !title.trim() ? 'not-allowed' : 'pointer',
+              }}
+            >
+              {isCreating ? 'Загрузка…' : 'Создать дело'}
+            </button>
+          )}
         </div>
       </div>
     </div>

@@ -357,6 +357,27 @@ def ensure_schema():
     except Exception as e:
         logger.error(f"Error checking/adding file_path column: {e}", exc_info=True)
     
+    # Ensure files.processing_status / processing_error columns exist
+    try:
+        if "files" in inspector.get_table_names():
+            columns = {col["name"]: col for col in inspector.get_columns("files")}
+            with engine.begin() as conn:
+                if "processing_status" not in columns:
+                    conn.execute(text(
+                        "ALTER TABLE files ADD COLUMN IF NOT EXISTS processing_status VARCHAR(50) DEFAULT 'ready'"
+                    ))
+                    conn.execute(text(
+                        "UPDATE files SET processing_status = 'ready' WHERE processing_status IS NULL"
+                    ))
+                    logger.info("✅ Added processing_status column to files table")
+                if "processing_error" not in columns:
+                    conn.execute(text(
+                        "ALTER TABLE files ADD COLUMN IF NOT EXISTS processing_error TEXT"
+                    ))
+                    logger.info("✅ Added processing_error column to files table")
+    except Exception as e:
+        logger.error(f"Error adding processing columns to files table: {e}", exc_info=True)
+
     # Ensure document_classifications.needs_human_review column exists
     try:
         if "document_classifications" in inspector.get_table_names():

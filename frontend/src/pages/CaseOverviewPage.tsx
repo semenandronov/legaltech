@@ -3,13 +3,14 @@ import { useParams, useNavigate } from 'react-router-dom'
 import {
   MessageSquare, FolderOpen, FileText, FileEdit, Table, BookOpen, Workflow,
   Search, Upload, Plus, ChevronRight, File, Loader2,
-  MoreHorizontal, Trash2, ArrowRight, Check, X, Pencil,
+  MoreHorizontal, Trash2, ArrowRight, Check, X, Pencil, AlertCircle,
 } from 'lucide-react'
 import { Drawer } from '@mui/material'
 import { toast } from 'sonner'
 import {
   getCase, getDocuments, getChatSessionsForCase, addFilesToCase, createFolder, getCaseFolders,
   moveFileToFolder, deleteFileFromCase, deleteFolder, renameFolder,
+  getProcessingStatus,
   CaseResponse, FolderItem,
 } from '../services/api'
 import { createDocumentFromFile } from '../services/documentEditorApi'
@@ -136,6 +137,10 @@ const CaseOverviewPage = () => {
   const [renameTarget, setRenameTarget] = useState<FolderItem | null>(null)
   const [renameName, setRenameName] = useState('')
 
+  // Per-file processing status (fileId → status string)
+  const [processingMap, setProcessingMap] = useState<Record<string, string>>({})
+  const processingPollRef = useRef<ReturnType<typeof setInterval> | null>(null)
+
   // Harvey-style query creation flow
   const [showQueryTypeModal, setShowQueryTypeModal] = useState(false)
   const [showFilePicker, setShowFilePicker] = useState(false)
@@ -147,6 +152,48 @@ const CaseOverviewPage = () => {
     if (!caseId) return
     loadAll()
   }, [caseId])
+
+  // Poll processing status while any files are pending/processing
+  useEffect(() => {
+    if (!caseId) return
+
+    const checkAndSchedule = async () => {
+      try {
+        const status = await getProcessingStatus(caseId)
+        const map: Record<string, string> = {}
+        status.files.forEach(f => { map[f.id] = f.status })
+        setProcessingMap(map)
+
+        if (status.any_processing) {
+          // Start polling if not already running
+          if (!processingPollRef.current) {
+            processingPollRef.current = setInterval(async () => {
+              try {
+                const s = await getProcessingStatus(caseId)
+                const m: Record<string, string> = {}
+                s.files.forEach(f => { m[f.id] = f.status })
+                setProcessingMap(m)
+                if (s.all_done) {
+                  clearInterval(processingPollRef.current!)
+                  processingPollRef.current = null
+                  // Reload files to get updated doc_type, size, etc.
+                  reloadFiles()
+                }
+              } catch { /* ignore */ }
+            }, 4000)
+          }
+        }
+      } catch { /* ignore */ }
+    }
+
+    checkAndSchedule()
+    return () => {
+      if (processingPollRef.current) {
+        clearInterval(processingPollRef.current)
+        processingPollRef.current = null
+      }
+    }
+  }, [caseId]) // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     const handler = (e: MouseEvent) => {
@@ -582,6 +629,35 @@ const CaseOverviewPage = () => {
 
             {/* Project files section */}
             <section>
+              {/* Processing banner */}
+              {(() => {
+                const pending = Object.values(processingMap).filter(s => s === 'pending' || s === 'processing').length
+                const ready = Object.values(processingMap).filter(s => s === 'ready').length
+                const total = Object.values(processingMap).length
+                if (total === 0 || pending === 0) return null
+                return (
+                  <div
+                    className="flex items-center gap-2 px-4 py-2.5 mb-3 rounded-lg text-sm"
+                    style={{
+                      backgroundColor: 'var(--color-bg-elevated)',
+                      border: '1px solid var(--color-border)',
+                      color: 'var(--color-text-secondary)',
+                    }}
+                  >
+                    <Loader2 className="w-4 h-4 animate-spin flex-shrink-0" style={{ color: 'var(--color-text-muted)' }} />
+                    <span>
+                      Обработка файлов…{' '}
+                      <span style={{ color: 'var(--color-text-primary)', fontWeight: 500 }}>
+                        {ready} из {total} готово
+                      </span>
+                    </span>
+                    <span className="text-xs ml-auto" style={{ color: 'var(--color-text-muted)' }}>
+                      Вы можете работать с готовыми файлами, остальные появятся автоматически
+                    </span>
+                  </div>
+                )
+              })()}
+
               <div className="flex items-center justify-between mb-3">
                 <h2
                   className="text-sm font-medium"
@@ -979,6 +1055,9 @@ const CaseOverviewPage = () => {
                   {filteredFiles.map((file) => {
                     const isSelected = selectedIds.has(file.id)
                     const menuOpen = activeMenu === file.id
+                    const fileStatus = processingMap[file.id]
+                    const isProcessing = fileStatus === 'pending' || fileStatus === 'processing'
+                    const isError = fileStatus === 'error'
                     return (
                       <div
                         key={file.id}
@@ -987,6 +1066,7 @@ const CaseOverviewPage = () => {
                           gridTemplateColumns: '28px 1fr 120px 100px 80px 32px',
                           borderBottom: '1px solid var(--color-border)',
                           backgroundColor: isSelected ? 'var(--color-bg-hover)' : undefined,
+                          opacity: isProcessing ? 0.7 : 1,
                         }}
                       >
                         <input
@@ -998,15 +1078,26 @@ const CaseOverviewPage = () => {
                         />
                         <div
                           className="flex items-center gap-2.5 min-w-0 pl-2 cursor-pointer"
-                          onClick={() => setViewerDoc({ id: file.id, filename: file.filename, file_type: file.file_type || '', created_at: file.created_at || '', classification: file.classification })}
+                          onClick={() => !isProcessing && setViewerDoc({ id: file.id, filename: file.filename, file_type: file.file_type || '', created_at: file.created_at || '', classification: file.classification })}
                         >
-                          <File className="w-3.5 h-3.5 flex-shrink-0" style={{ color: 'var(--color-text-muted)' }} />
+                          {isProcessing ? (
+                            <Loader2 className="w-3.5 h-3.5 flex-shrink-0 animate-spin" style={{ color: 'var(--color-text-muted)' }} />
+                          ) : isError ? (
+                            <AlertCircle className="w-3.5 h-3.5 flex-shrink-0" style={{ color: 'var(--color-error, #dc2626)' }} />
+                          ) : (
+                            <File className="w-3.5 h-3.5 flex-shrink-0" style={{ color: 'var(--color-text-muted)' }} />
+                          )}
                           <span className="text-sm truncate hover:underline" style={{ color: 'var(--color-text-primary)' }}>
                             {file.filename}
                           </span>
+                          {isProcessing && (
+                            <span className="text-xs flex-shrink-0" style={{ color: 'var(--color-text-muted)' }}>
+                              {fileStatus === 'processing' ? 'Обработка…' : 'Ожидание…'}
+                            </span>
+                          )}
                         </div>
                         <span className="text-xs" style={{ color: 'var(--color-text-muted)' }}>
-                          {file.doc_type || file.file_type || '—'}
+                          {isProcessing ? '—' : (file.doc_type ? formatDocType(file.doc_type) : file.file_type || '—')}
                         </span>
                         <span className="text-xs" style={{ color: 'var(--color-text-muted)' }}>
                           {formatDate(file.created_at)}

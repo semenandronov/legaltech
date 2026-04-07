@@ -616,374 +616,137 @@ async def add_files_to_case(
     current_user: User = Depends(get_current_user)
 ):
     """
-    Add files to an existing case and index them in PGVector for RAG
-    
-    Files are saved to database, classified, and indexed in vector store.
+    Add files to an existing case.
+
+    Files are saved immediately (bytes only) and returned at once.
+    OCR, classification, and PGVector indexing run in the background.
+    Poll GET /{case_id}/processing-status to track progress.
     """
     if not files:
         raise HTTPException(status_code=400, detail="Не загружено ни одного файла")
-    
+
     # Verify case exists and user has access
     case = db.query(Case).filter(
         Case.id == case_id,
         Case.user_id == current_user.id
     ).first()
-    
+
     if not case:
         raise HTTPException(status_code=404, detail="Дело не найдено")
-    
-    # Validate file extensions
+
     allowed_extensions = [ext.replace(".", "") for ext in config.ALLOWED_EXTENSIONS]
-    file_names: List[str] = []
-    files_to_create: List[dict] = []
     saved_file_paths: List[str] = []
-    
-    # Создаем директорию для сохранения оригинальных файлов
+    new_file_ids: List[str] = []
+
     upload_dir = config.UPLOAD_DIR
     os.makedirs(upload_dir, exist_ok=True)
     case_upload_dir = os.path.join(upload_dir, case_id)
     os.makedirs(case_upload_dir, exist_ok=True)
-    
+
     try:
-        # Process each file
         for file in files:
             if not file.filename:
                 raise HTTPException(status_code=400, detail="Пустое имя файла недопустимо")
-            
-            # Sanitize filename
+
             filename = file.filename.replace("..", "").replace("/", "").replace("\\", "")
-            if filename != file.filename:
-                logger.warning(f"Sanitized filename from {file.filename} to {filename}")
-            
-            # Check extension
             _, ext = filename.rsplit(".", 1) if "." in filename else (filename, "")
             if ext.lower() not in allowed_extensions:
                 raise HTTPException(
                     status_code=400,
                     detail=f"Файл '{filename}' имеет неподдерживаемый формат. Поддерживаются: {', '.join(allowed_extensions)}"
                 )
-            
-            # Check file size and read content
+
             content = await file.read()
-            
+
             if len(content) == 0:
-                raise HTTPException(
-                    status_code=400,
-                    detail=f"Файл '{filename}' пуст или не может быть прочитан"
-                )
-            
+                raise HTTPException(status_code=400, detail=f"Файл '{filename}' пуст")
+
             if len(content) > config.MAX_FILE_SIZE:
                 raise HTTPException(
                     status_code=400,
-                    detail=f"Файл '{filename}' слишком большой. Максимальный размер: {config.MAX_FILE_SIZE / 1024 / 1024} МБ"
+                    detail=f"Файл '{filename}' слишком большой. Максимум: {config.MAX_FILE_SIZE / 1024 / 1024:.0f} МБ"
                 )
-            
-            # Parse file using LangChain loaders (run in thread — OCR can take minutes)
-            try:
-                langchain_docs = await asyncio.wait_for(
-                    asyncio.to_thread(DocumentLoaderService.load_document, content, filename),
-                    timeout=1200,
-                )
-                
-                if not langchain_docs:
-                    raise HTTPException(
-                        status_code=400,
-                        detail=f"LangChain loader не вернул документы для файла '{filename}'"
-                    )
-                
-                # Combine all documents from file into single text
-                text = "\n\n".join([doc.page_content for doc in langchain_docs])
-                
-                logger.info(
-                    f"Extracted text from {filename} using LangChain, "
-                    f"total text length: {len(text)} chars"
-                )
-                
-                # Classify document
-                file_classification = None
-                try:
-                    logger.info(f"Classifying document: {filename}")
-                    classifier_service = DocumentClassifierService()
-                    classification_result = classifier_service.classify_document(
-                        text=text,
-                        filename=filename,
-                        case_context=None
-                    )
-                    
-                    logger.info(
-                        f"Classified {filename}: type={classification_result['doc_type']}, "
-                        f"confidence={classification_result['confidence']:.2f}"
-                    )
-                    
-                    file_classification = classification_result
-                except Exception as e:
-                    logger.warning(f"Error classifying document {filename}: {e}", exc_info=True)
-                    file_classification = {
-                        "doc_type": "other",
-                        "tags": [],
-                        "confidence": 0.0,
-                        "needs_human_review": True,
-                        "reasoning": f"Ошибка классификации: {str(e)}",
-                        "classifier": "error"
-                    }
-                
-                # Save original file to disk
-                file_path = os.path.join(case_upload_dir, filename)
-                with open(file_path, 'wb') as f:
-                    f.write(content)
-                saved_file_paths.append(file_path)
-                logger.info(f"Saved original file to {file_path}")
-                
-                # Remove NULL bytes
-                text = text.replace('\x00', '')
-                
-                # Check if text is empty
-                if not text or not text.strip():
-                    raise HTTPException(
-                        status_code=400,
-                        detail=f"Файл '{filename}' не содержит текста или не может быть прочитан"
-                    )
-                
-                file_names.append(filename)
-                
-                # Relative file path
-                relative_file_path = os.path.join(case_id, filename)
-                
-                files_to_create.append({
-                    "case_id": case_id,
-                    "filename": filename,
-                    "file_type": ext.lower(),
-                    "original_text": sanitize_text(text),
-                    "file_path": relative_file_path,
-                    "file_content": content,
-                    "file_classification": file_classification,
-                    # Keep per-page langchain_docs for page-aware chunk indexing
-                    "langchain_docs": langchain_docs,
-                })
-                
-            except ValueError as e:
-                logger.warning("Ошибка парсинга файла %s: %s", filename, e)
-                db.rollback()
-                _cleanup_uploaded_files(saved_file_paths)
-                if "OCR временно недоступен" in str(e):
-                    raise HTTPException(status_code=503, detail=str(e))
-                raise HTTPException(status_code=400, detail=str(e))
-            except HTTPException:
-                db.rollback()
-                _cleanup_uploaded_files(saved_file_paths)
-                raise
-            except Exception as e:
-                logger.exception("Неизвестная ошибка при обработке файла %s", filename)
-                db.rollback()
-                _cleanup_uploaded_files(saved_file_paths)
-                raise HTTPException(
-                    status_code=500,
-                    detail=f"Ошибка при обработке файла '{filename}'. Попробуйте загрузить файл снова."
-                )
-        
-        # Check if we have any valid files
-        if not files_to_create:
+
+            # Save file to disk
+            file_path = os.path.join(case_upload_dir, filename)
+            with open(file_path, "wb") as f:
+                f.write(content)
+            saved_file_paths.append(file_path)
+
+            relative_file_path = os.path.join(case_id, filename)
+            file_type = ext.lower()[:50]
+            filename = filename[:255]
+
+            file_model = FileModel(
+                case_id=case_id,
+                filename=filename,
+                file_type=file_type,
+                original_text="",          # filled by background task
+                file_path=relative_file_path,
+                file_content=content,
+                processing_status="pending",
+            )
+            db.add(file_model)
+            db.flush()
+            new_file_ids.append(file_model.id)
+            logger.info(f"Queued file {file_model.id} ({filename}) for background processing")
+
+        if not new_file_ids:
             db.rollback()
             _cleanup_uploaded_files(saved_file_paths)
-            raise HTTPException(
-                status_code=400,
-                detail="Не удалось обработать ни одного файла"
-            )
-        
-        # Reconnect after long OCR — PostgreSQL drops idle SSL connections in ~60-120s
-        _reconnect_db(db)
+            raise HTTPException(status_code=400, detail="Не удалось сохранить ни одного файла")
 
-        # Create File entries in database
-        new_file_ids = []
-        for file_info in files_to_create:
-            sanitized_original_text = sanitize_text(file_info["original_text"])
-            if not sanitized_original_text or not sanitized_original_text.strip():
-                logger.warning(f"Skipping file {file_info['filename']} - empty text after sanitization")
-                continue
-            
-            # Check text length
-            MAX_FILE_TEXT_LENGTH = 50 * 1024 * 1024  # 50 MB per file
-            if len(sanitized_original_text) > MAX_FILE_TEXT_LENGTH:
-                logger.warning(
-                    f"File {file_info['filename']} text is very large: {len(sanitized_original_text)} bytes, "
-                    f"truncating to {MAX_FILE_TEXT_LENGTH}"
-                )
-                sanitized_original_text = sanitized_original_text[:MAX_FILE_TEXT_LENGTH]
-            
-            # Limit filename and file_type length
-            filename = file_info["filename"][:255] if len(file_info["filename"]) > 255 else file_info["filename"]
-            file_type = file_info["file_type"][:50] if len(file_info["file_type"]) > 50 else file_info["file_type"]
-            
-            if not filename or not filename.strip():
-                logger.warning(f"Skipping file with empty filename")
-                continue
-            if not file_type or not file_type.strip():
-                logger.warning(f"Skipping file {filename} - empty file_type")
-                continue
-            
-            try:
-                file_path = file_info.get("file_path")
-                file_content = file_info.get("file_content")
-                
-                file_model = FileModel(
-                    case_id=case_id,
-                    filename=filename,
-                    file_type=file_type,
-                    original_text=sanitized_original_text,
-                    file_path=file_path,
-                    file_content=file_content,
-                )
-                db.add(file_model)
-                db.flush()  # Flush to get file_model.id
-                new_file_ids.append(file_model.id)
-                
-                # Save classification
-                if file_info.get("file_classification"):
-                    from app.models.analysis import DocumentClassification
-                    classification = file_info["file_classification"]
-                    
-                    doc_classification = DocumentClassification(
-                        case_id=case_id,
-                        file_id=file_model.id,
-                        doc_type=classification.get("doc_type", "other"),
-                        relevance_score=0,
-                        is_privileged="false",
-                        privilege_type="none",
-                        key_topics=classification.get("tags", []),
-                        confidence=str(classification.get("confidence", 0.0)),
-                        reasoning=classification.get("reasoning", ""),
-                        needs_human_review="true" if classification.get("needs_human_review", False) else "false",
-                        prompt_version="v1"
-                    )
-                    db.add(doc_classification)
-                    logger.info(f"Saved classification for file {file_model.id}: {classification.get('doc_type', 'unknown')}")
-                    
-            except Exception as file_error:
-                logger.warning(
-                    f"Error creating File model for {filename}: {file_error}",
-                    exc_info=True
-                )
-                continue
-        
-        # Commit transaction first to ensure all files are saved
-        db.commit()
-        
-        # Refresh case and update file count and file names after commit
-        db.refresh(case)
+        # Update case file list
         existing_files = db.query(FileModel).filter(FileModel.case_id == case_id).all()
-        case.num_documents = len(existing_files)
-        case.file_names = [f.filename for f in existing_files]
+        case.num_documents = len(existing_files) + len(new_file_ids) - len(
+            [f for f in existing_files if f.id in new_file_ids]
+        )
+        case.file_names = [f.filename for f in existing_files if f.id not in new_file_ids] + [
+            fm.filename for fid in new_file_ids
+            for fm in [next((f for f in existing_files if f.id == fid), None)]
+            if fm
+        ]
+        # simpler: just refresh after flush
         db.commit()
-        logger.info(f"Successfully added {len(new_file_ids)} files to case {case_id}")
-        
-        # Index new files in PGVector for RAG
-        new_files_for_indexing = db.query(FileModel).filter(FileModel.id.in_(new_file_ids)).all()
-        if new_files_for_indexing:
+
+        # Re-read for accurate counts
+        all_files = db.query(FileModel).filter(FileModel.case_id == case_id).all()
+        case.num_documents = len(all_files)
+        case.file_names = [f.filename for f in all_files]
+        db.commit()
+
+        # Launch background processing task
+        import asyncio as _asyncio
+        from app.services.file_processor_bg import process_files_background
+
+        async def _bg() -> None:
             try:
-                logger.info(f"Indexing {len(new_files_for_indexing)} new files in PGVector for case {case_id}")
-                
-                document_processor = DocumentProcessor()
-                all_documents = []
-                
-                # Get classifications for new files
-                from app.models.analysis import DocumentClassification
-                classifications = db.query(DocumentClassification).filter(
-                    DocumentClassification.file_id.in_(new_file_ids)
-                ).all()
-                classification_map = {c.file_id: c for c in classifications if c.file_id}
-                
-                # Build filename → langchain_docs map for page-aware indexing
-                langchain_docs_by_filename = {
-                    fi["filename"]: fi.get("langchain_docs")
-                    for fi in files_to_create
-                    if fi.get("langchain_docs")
-                }
+                await _asyncio.to_thread(process_files_background, new_file_ids, case_id)
+            except Exception as _e:
+                logger.error(f"Background processing task error for case {case_id}: {_e}", exc_info=True)
 
-                for file in new_files_for_indexing:
-                    if not file.original_text:
-                        continue
+        _asyncio.create_task(_bg())
+        logger.info(f"Background processing started for {len(new_file_ids)} files in case {case_id}")
 
-                    # Build metadata
-                    metadata = {
-                        "source": file.filename,
-                        "file_id": file.id,
-                        "file_type": file.file_type or "unknown",
-                    }
-
-                    # Add classification metadata if available
-                    classification = classification_map.get(file.id)
-                    if classification:
-                        metadata["doc_type"] = classification.doc_type or "other"
-                        metadata["is_privileged"] = str(classification.is_privileged) if classification.is_privileged else "false"
-                        metadata["relevance_score"] = classification.relevance_score or 0
-
-                    # Split text into chunks; pass langchain_docs for page-aware indexing
-                    file_documents = document_processor.split_documents(
-                        text=file.original_text,
-                        filename=file.filename,
-                        metadata=metadata,
-                        langchain_docs=langchain_docs_by_filename.get(file.filename),
-                    )
-                    all_documents.extend(file_documents)
-                
-                if all_documents:
-                    logger.info(
-                        f"Storing {len(all_documents)} document chunks in PGVector for case {case_id}",
-                        extra={"case_id": case_id, "num_chunks": len(all_documents)}
-                    )
-                    
-                    collection_name = document_processor.store_in_vector_db(
-                        case_id=case_id,
-                        documents=all_documents,
-                        db=db,
-                        original_files=None
-                    )
-                    
-                    logger.info(f"Successfully indexed {len(all_documents)} document chunks in PGVector collection '{collection_name}' for case {case_id}")
-                
-                # Update case full_text with new files
-                text_parts = []
-                for file in existing_files:
-                    if file.original_text:
-                        text_parts.append(f"[{file.filename}]\n{file.original_text}")
-                
-                if text_parts:
-                    full_text = "\n\n".join(text_parts)
-                    MAX_TEXT_LENGTH = 100 * 1024 * 1024  # 100 MB limit
-                    sanitized_full_text = sanitize_text(full_text)
-                    if len(sanitized_full_text) > MAX_TEXT_LENGTH:
-                        sanitized_full_text = sanitized_full_text[:MAX_TEXT_LENGTH]
-                    case.full_text = sanitized_full_text
-                    case.status = "completed"
-                    db.commit()
-                    logger.info(f"Updated case {case_id} full_text with all files, status=completed")
-                    
-            except Exception as index_error:
-                logger.error(f"Error indexing files in PGVector for case {case_id}: {index_error}", exc_info=True)
-                # Don't fail the request, files are already saved
-        
-        # Get updated file list
-        updated_files = db.query(FileModel).filter(FileModel.case_id == case_id).all()
-        
-        # Возвращаем только новые файлы для удобства фронтенда
-        new_files = [f for f in updated_files if f.id in new_file_ids]
+        new_file_objs = db.query(FileModel).filter(FileModel.id.in_(new_file_ids)).all()
         return {
             "files": [
                 {
                     "id": f.id,
                     "filename": f.filename,
                     "file_type": f.file_type,
+                    "processing_status": f.processing_status,
                     "created_at": f.created_at.isoformat() if f.created_at else None,
                 }
-                for f in new_files
+                for f in new_file_objs
             ],
-            "total": len(updated_files),
+            "total": len(all_files),
             "added": len(new_file_ids),
-            "new_file_ids": new_file_ids  # Явно возвращаем ID новых файлов
+            "new_file_ids": new_file_ids,
+            "status": "processing",
         }
-        
+
     except HTTPException:
-        # Re-raise HTTP exceptions
         raise
     except Exception as e:
         db.rollback()
@@ -993,6 +756,43 @@ async def add_files_to_case(
             status_code=500,
             detail=f"Ошибка при добавлении файлов к делу: {str(e)}"
         )
+
+
+@router.get("/{case_id}/processing-status")
+async def get_processing_status(
+    case_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """Return per-file processing status for a case."""
+    case = db.query(Case).filter(
+        Case.id == case_id,
+        Case.user_id == current_user.id
+    ).first()
+    if not case:
+        raise HTTPException(status_code=404, detail="Дело не найдено")
+
+    files = db.query(FileModel).filter(FileModel.case_id == case_id).all()
+    file_statuses = [
+        {
+            "id": f.id,
+            "filename": f.filename,
+            "status": f.processing_status or "ready",
+            "error": f.processing_error,
+        }
+        for f in files
+    ]
+
+    all_done = all(s["status"] in ("ready", "error") for s in file_statuses)
+    any_processing = any(s["status"] in ("pending", "processing") for s in file_statuses)
+
+    return {
+        "case_id": case_id,
+        "files": file_statuses,
+        "all_done": all_done,
+        "any_processing": any_processing,
+        "has_errors": any(s["status"] == "error" for s in file_statuses),
+    }
 
 
 @router.delete("/{case_id}/files/{file_id}")

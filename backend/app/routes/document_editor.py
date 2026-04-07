@@ -295,6 +295,7 @@ async def create_document_from_file(
         
         # Convert to HTML
         converter_service = DocumentConverterService()
+        html_content = None
         try:
             html_content = converter_service.convert_to_html(
                 file_content=file_content,
@@ -302,7 +303,18 @@ async def create_document_from_file(
                 file_type=file.file_type
             )
         except ValueError as e:
-            raise HTTPException(status_code=400, detail=str(e))
+            # For scanned PDFs pypdf returns no text — fall back to OCR text
+            if file.file_type == 'pdf' and file.original_text and file.original_text.strip():
+                import html as _html
+                paragraphs = "\n".join(
+                    f"<p>{_html.escape(p.strip())}</p>"
+                    for p in file.original_text.split("\n")
+                    if p.strip()
+                )
+                html_content = f'<div class="pdf-content">{paragraphs}</div>'
+                logger.info(f"PDF {file_id}: pypdf extraction empty, using OCR text as HTML fallback")
+            else:
+                raise HTTPException(status_code=400, detail=str(e))
         except Exception as e:
             logger.error(f"Error converting file {file_id} to HTML: {e}", exc_info=True)
             raise HTTPException(status_code=500, detail=f"Ошибка при конвертации файла: {str(e)}")
