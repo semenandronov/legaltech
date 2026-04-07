@@ -58,53 +58,71 @@ class DocumentProcessor:
         text: str,
         filename: str,
         metadata: Dict[str, Any] = None,
-        file_id: Optional[str] = None
+        file_id: Optional[str] = None,
+        langchain_docs: Optional[List[Document]] = None,
     ) -> List[Document]:
         """
-        Split document text into chunks with provenance metadata
-        
-        Phase 1: Updated to use split_documents_with_metadata for char_start/char_end tracking
-        
-        Args:
-            text: Document text
-            filename: Source filename
-            metadata: Additional metadata
-            file_id: File ID for generating doc_id (optional)
-            
+        Split document text into chunks with provenance metadata.
+
+        If langchain_docs is provided (e.g. from OCR returning per-page Documents with
+        source_page in their metadata), each chunk is annotated with source_page based on
+        where its char_start falls within the concatenated text.  text must have been built
+        as '\\n\\n'.join(doc.page_content for doc in langchain_docs) for the offsets to align.
+
         Returns:
-            List of Document objects with metadata including char_start, char_end, doc_id
+            List of Document objects with metadata including char_start, char_end, doc_id,
+            and source_page (when page info is available).
         """
         import uuid
-        
+
         # Create base metadata
         doc_metadata = {
             "source_file": filename,
             **(metadata or {})
         }
-        
-        # Generate doc_id for this document (Phase 1.4)
-        # Use file_id if available, otherwise generate UUID
+
         doc_id = file_id if file_id else str(uuid.uuid4())
         doc_metadata["doc_id"] = doc_id
-        
-        # Store file_id separately for filtering in workflows
+
         if file_id:
             doc_metadata["file_id"] = file_id
-        
-        # Use split_documents_with_metadata to get char_start and char_end
+
         documents = self.text_splitter.split_documents_with_metadata(
             text=text,
             filename=filename,
             metadata=doc_metadata
         )
-        
-        # Ensure all documents have doc_id and file_id in metadata
+
         for doc in documents:
             doc.metadata["doc_id"] = doc_id
             if file_id:
                 doc.metadata["file_id"] = file_id
-            # char_start and char_end are already added by split_documents_with_metadata
-        
+
+        # Annotate chunks with source_page when per-page OCR documents are available.
+        # text was built as "\n\n".join(page.page_content), so each page occupies
+        # [cumulative_offset, cumulative_offset + len(page_content)) in text.
+        if langchain_docs:
+            page_boundaries: List[tuple] = []  # (start, end_excl, source_page)
+            pos = 0
+            separator_len = 2  # len("\n\n")
+            for page_doc in langchain_docs:
+                sp = page_doc.metadata.get("source_page")
+                page_len = len(page_doc.page_content)
+                if sp is not None:
+                    page_boundaries.append((pos, pos + page_len, int(sp)))
+                pos += page_len + separator_len
+
+            if page_boundaries:
+                for chunk in documents:
+                    cs = chunk.metadata.get("char_start", 0)
+                    for start, end, page in page_boundaries:
+                        if start <= cs < end:
+                            chunk.metadata["source_page"] = page
+                            break
+                    else:
+                        # char_start beyond last boundary — assign last page
+                        chunk.metadata.setdefault("source_page", page_boundaries[-1][2])
+
         return documents
     
     def create_embeddings(self, documents: List[Document], batch_size: int = 100) -> List[List[float]]:

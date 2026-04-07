@@ -556,9 +556,9 @@ const DocumentPreviewSheet = ({
                 {source.file}
               </Typography>
               <Stack direction="row" spacing={1} sx={{ mt: 1, flexWrap: 'wrap' }}>
-                {source.page && (
+                {source.page != null && (
                   <Chip
-                    label={`Стр. ${source.page}`}
+                    label={`Стр. ${source.page + 1}`}
                     size="small"
                     variant="outlined"
                   />
@@ -699,7 +699,7 @@ const DocumentPreviewSheet = ({
                   caseId={caseId}
                   filename={fileInfo.filename}
                   fileApiBase={filesApiBase}
-                  initialPage={source.page || 1} // Переход на страницу из citation
+                  initialPage={source.page != null ? source.page + 1 : 1} // source_page is 0-based; PDFViewer is 1-based
                   highlightText={source.quote?.replace(/\.{3}$/, '').substring(0, 150)} // Убираем "..." и берём первые 150 символов
                   showTabs={false}
                   showAbout={false}

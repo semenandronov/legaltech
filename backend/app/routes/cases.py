@@ -757,6 +757,8 @@ async def add_files_to_case(
                     "file_path": relative_file_path,
                     "file_content": content,
                     "file_classification": file_classification,
+                    # Keep per-page langchain_docs for page-aware chunk indexing
+                    "langchain_docs": langchain_docs,
                 })
                 
             except ValueError as e:
@@ -890,29 +892,37 @@ async def add_files_to_case(
                 ).all()
                 classification_map = {c.file_id: c for c in classifications if c.file_id}
                 
+                # Build filename → langchain_docs map for page-aware indexing
+                langchain_docs_by_filename = {
+                    fi["filename"]: fi.get("langchain_docs")
+                    for fi in files_to_create
+                    if fi.get("langchain_docs")
+                }
+
                 for file in new_files_for_indexing:
                     if not file.original_text:
                         continue
-                    
+
                     # Build metadata
                     metadata = {
                         "source": file.filename,
                         "file_id": file.id,
                         "file_type": file.file_type or "unknown",
                     }
-                    
+
                     # Add classification metadata if available
                     classification = classification_map.get(file.id)
                     if classification:
                         metadata["doc_type"] = classification.doc_type or "other"
                         metadata["is_privileged"] = str(classification.is_privileged) if classification.is_privileged else "false"
                         metadata["relevance_score"] = classification.relevance_score or 0
-                    
-                    # Split text into chunks
+
+                    # Split text into chunks; pass langchain_docs for page-aware indexing
                     file_documents = document_processor.split_documents(
                         text=file.original_text,
                         filename=file.filename,
                         metadata=metadata,
+                        langchain_docs=langchain_docs_by_filename.get(file.filename),
                     )
                     all_documents.extend(file_documents)
                 

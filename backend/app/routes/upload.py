@@ -277,9 +277,11 @@ async def upload_files(
                     "filename": filename,
                     "file_type": ext.lower(),
                     "original_text": sanitize_text(text),
-                    "file_path": relative_file_path,  # Сохраняем путь к оригинальному файлу (для обратной совместимости)
-                    "file_content": content,  # Сохраняем бинарное содержимое файла в БД
-                    "file_classification": file_classification,  # Добавляем классификацию
+                    "file_path": relative_file_path,
+                    "file_content": content,
+                    "file_classification": file_classification,
+                    # Keep per-page langchain_docs for page-aware chunk indexing
+                    "langchain_docs": langchain_docs,
                 }
             )
         except ValueError as e:
@@ -536,7 +538,8 @@ async def upload_files(
                 text=text,
                 filename=filename,
                 metadata=metadata,
-                file_id=file_id
+                file_id=file_id,
+                langchain_docs=file_info.get("langchain_docs"),
             )
             all_documents.extend(file_documents)
         
