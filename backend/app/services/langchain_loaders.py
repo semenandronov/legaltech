@@ -431,8 +431,26 @@ class DocumentLoaderService:
                         yandex_vision_ocr_pdf_documents_for_langchain,
                     )
                     from app.services.xlsx_pdf_for_vision import xlsx_bytes_to_pdf_bytes
+                    import io as _io
+                    from openpyxl import load_workbook as _load_workbook
 
-                    if vision_api_configured():
+                    # Skip PDF→OCR path for large files — ReportLab LongTable is very slow on 1000+ rows
+                    _xlsx_ocr_max_rows = int(getattr(config, "XLSX_OCR_MAX_ROWS", 1000) or 1000)
+                    _wb_check = _load_workbook(_io.BytesIO(content), read_only=True, data_only=True)
+                    try:
+                        _total_rows = sum(
+                            _ws.max_row or 0 for _ws in _wb_check.worksheets
+                        )
+                    finally:
+                        _wb_check.close()
+                    _use_ocr = _total_rows <= _xlsx_ocr_max_rows
+                    if not _use_ocr:
+                        logger.info(
+                            "XLSX %s: %d строк > лимит %d, пропускаем PDF→OCR, используем openpyxl",
+                            filename, _total_rows, _xlsx_ocr_max_rows,
+                        )
+
+                    if vision_api_configured() and _use_ocr:
                         pdf_bytes = xlsx_bytes_to_pdf_bytes(content)
                         # Use 'table' model from new OCR API — much better for Excel-derived PDFs
                         docs = yandex_vision_ocr_pdf_documents_for_langchain(
