@@ -347,8 +347,18 @@ const NewCasePage = () => {
                 ? (() => {
                     const ready = processingFiles.filter(f => f.status === 'ready').length
                     const total = processingFiles.length
+                    const pendingFiles = stagedFiles.filter(f => {
+                      const ps = processingFiles.find(p => p.filename === f.name)
+                      return !ps || ps.status === 'pending' || ps.status === 'processing'
+                    })
+                    const totalSec = pendingFiles.reduce((sum, f) => {
+                      const ext = f.name.split('.').pop()?.toLowerCase() || ''
+                      const mb = f.size / (1024 * 1024)
+                      return sum + Math.max(15, Math.round(mb * (ext === 'pdf' ? 30 : 5)))
+                    }, 0)
+                    const estimate = totalSec < 60 ? `~${totalSec} сек` : `~${Math.ceil(totalSec / 60)} мин`
                     return total > 0
-                      ? `Обработка файлов… ${ready} из ${total} готово`
+                      ? `Обработка файлов… ${ready} из ${total} готово · ещё ${estimate}`
                       : 'Обработка файлов…'
                   })()
                 : uploadStatus

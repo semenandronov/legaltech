@@ -42,6 +42,19 @@ const formatSize = (bytes?: number) => {
   return (bytes / (1024 * 1024)).toFixed(1) + ' МБ'
 }
 
+const estimateProcessingSeconds = (filename: string, sizeBytes?: number): number => {
+  const mb = (sizeBytes || 0) / (1024 * 1024)
+  const ext = filename.split('.').pop()?.toLowerCase() || ''
+  const secPerMb = ext === 'pdf' ? 30 : 5
+  return Math.max(15, Math.round(mb * secPerMb))
+}
+
+const formatEstimate = (seconds: number): string => {
+  if (seconds < 60) return `~${seconds} сек`
+  const mins = Math.ceil(seconds / 60)
+  return `~${mins} мин`
+}
+
 const DOC_TYPE_LABELS: Record<string, string> = {
   contract: 'Договор',
   power_of_attorney: 'Доверенность',
@@ -631,10 +644,15 @@ const CaseOverviewPage = () => {
             <section>
               {/* Processing banner */}
               {(() => {
-                const pending = Object.values(processingMap).filter(s => s === 'pending' || s === 'processing').length
+                const pendingFiles = files.filter(f => {
+                  const s = processingMap[f.id]
+                  return s === 'pending' || s === 'processing'
+                })
                 const ready = Object.values(processingMap).filter(s => s === 'ready').length
                 const total = Object.values(processingMap).length
-                if (total === 0 || pending === 0) return null
+                if (total === 0 || pendingFiles.length === 0) return null
+                const totalSec = pendingFiles.reduce((sum, f) => sum + estimateProcessingSeconds(f.filename, f.size), 0)
+                const estimate = formatEstimate(totalSec)
                 return (
                   <div
                     className="flex items-center gap-2 px-4 py-2.5 mb-3 rounded-lg text-sm"
@@ -650,6 +668,7 @@ const CaseOverviewPage = () => {
                       <span style={{ color: 'var(--color-text-primary)', fontWeight: 500 }}>
                         {ready} из {total} готово
                       </span>
+                      <span style={{ color: 'var(--color-text-muted)' }}>{' '}· ещё {estimate}</span>
                     </span>
                     <span className="text-xs ml-auto" style={{ color: 'var(--color-text-muted)' }}>
                       Вы можете работать с готовыми файлами, остальные появятся автоматически
