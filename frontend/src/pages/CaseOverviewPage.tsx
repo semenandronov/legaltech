@@ -1694,7 +1694,7 @@ const CaseOverviewPage = () => {
 
               return (
                 <div>
-                  {allItems.map((item, i) => (
+                  {allItems.map((item) => (
                     <button
                       key={item.kind === 'chat' ? `chat-${item.session_id}` : `review-${item.id}`}
                       onClick={() => {
