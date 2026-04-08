@@ -153,6 +153,8 @@ const CaseOverviewPage = () => {
   const elapsedTimerRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const processingStartedAtRef = useRef<number | null>(null)
 
+  const [showAllActions, setShowAllActions] = useState(false)
+
   // Harvey-style query creation flow
   const [showQueryTypeModal, setShowQueryTypeModal] = useState(false)
   const [showFilePicker, setShowFilePicker] = useState(false)
@@ -281,7 +283,7 @@ const CaseOverviewPage = () => {
       .catch(() => setSessions([]))
       .finally(() => setLoadingSessions(false))
 
-    tabularReviewApi.listReviews(caseId, 0, 10)
+    tabularReviewApi.listReviews(caseId, 0, 200)
       .then(d => setReviews(d.reviews))
       .catch(() => setReviews([]))
       .finally(() => setLoadingReviews(false))
@@ -578,12 +580,20 @@ const CaseOverviewPage = () => {
 
             {/* Recent actions section */}
             <section className="mb-8">
-              <h2
-                className="text-sm font-medium mb-3"
-                style={{ color: 'var(--color-text-primary)' }}
-              >
-                Последние действия
-              </h2>
+              <div className="flex items-center justify-between mb-3">
+                <h2 className="text-sm font-medium" style={{ color: 'var(--color-text-primary)' }}>
+                  Последние действия
+                </h2>
+                {(sessions.length + reviews.length) > 5 && (
+                  <button
+                    onClick={() => setShowAllActions(true)}
+                    className="text-xs hover:underline"
+                    style={{ color: 'var(--color-text-muted)' }}
+                  >
+                    Все действия ({sessions.length + reviews.length})
+                  </button>
+                )}
+              </div>
               {(loadingSessions || loadingReviews) ? (
                 <div className="space-y-2">
                   {[...Array(3)].map((_, i) => (
@@ -1636,6 +1646,94 @@ const CaseOverviewPage = () => {
             {viewerDoc && caseId && (
               <DocumentViewer document={viewerDoc} caseId={caseId} />
             )}
+          </div>
+        </div>
+      </Drawer>
+
+      {/* All actions drawer */}
+      <Drawer anchor="right" open={showAllActions} onClose={() => setShowAllActions(false)}>
+        <div style={{ width: 480, height: '100%', display: 'flex', flexDirection: 'column', backgroundColor: 'var(--color-bg-primary)' }}>
+          <div
+            className="flex items-center justify-between px-4 py-3 border-b shrink-0"
+            style={{ borderBottomColor: 'var(--color-border)', backgroundColor: 'var(--color-bg-elevated)' }}
+          >
+            <span className="font-medium text-sm" style={{ color: 'var(--color-text-primary)' }}>
+              Все действия
+            </span>
+            <button
+              onClick={() => setShowAllActions(false)}
+              className="p-1.5 rounded-lg transition-colors hover:bg-[var(--color-bg-hover)]"
+              style={{ color: 'var(--color-text-muted)' }}
+            >
+              <X className="w-4 h-4" />
+            </button>
+          </div>
+          <div className="flex-1 overflow-auto">
+            {(() => {
+              type ActionItem =
+                | { kind: 'chat'; session_id: string; first_message: string; last_message_at: string | null; message_count: number; date: number }
+                | { kind: 'review'; id: string; name: string; status: string; date: number }
+
+              const chatItems: ActionItem[] = sessions.map(s => ({
+                kind: 'chat' as const, ...s,
+                date: s.last_message_at ? new Date(s.last_message_at).getTime() : 0,
+              }))
+              const reviewItems: ActionItem[] = reviews.map(r => ({
+                kind: 'review' as const, ...r,
+                date: r.updated_at ? new Date(r.updated_at).getTime() : (r.created_at ? new Date(r.created_at).getTime() : 0),
+              }))
+              const allItems = [...chatItems, ...reviewItems].sort((a, b) => b.date - a.date)
+
+              if (allItems.length === 0) {
+                return (
+                  <p className="text-sm px-4 py-8" style={{ color: 'var(--color-text-muted)' }}>
+                    Действий пока нет
+                  </p>
+                )
+              }
+
+              return (
+                <div>
+                  {allItems.map((item, i) => (
+                    <button
+                      key={item.kind === 'chat' ? `chat-${item.session_id}` : `review-${item.id}`}
+                      onClick={() => {
+                        setShowAllActions(false)
+                        if (item.kind === 'chat') navigate(`/cases/${caseId}/chat?session=${item.session_id}`)
+                        else navigate(`/cases/${caseId}/tabular-review/${item.id}`)
+                      }}
+                      className="w-full flex items-center justify-between px-4 py-3 text-left hover:bg-[var(--color-bg-hover)] transition-colors"
+                      style={{ borderBottom: '1px solid var(--color-border)' }}
+                    >
+                      <div className="flex items-center gap-3 min-w-0">
+                        {item.kind === 'chat' ? (
+                          <MessageSquare className="w-3.5 h-3.5 flex-shrink-0" style={{ color: 'var(--color-text-muted)' }} />
+                        ) : (
+                          <Table className="w-3.5 h-3.5 flex-shrink-0" style={{ color: 'var(--color-text-muted)' }} />
+                        )}
+                        <span className="text-sm truncate" style={{ color: 'var(--color-text-primary)' }}>
+                          {item.kind === 'chat' ? (item.first_message || 'Сессия') : item.name}
+                        </span>
+                      </div>
+                      <div className="flex items-center gap-3 flex-shrink-0 ml-4">
+                        <span
+                          className="text-xs px-1.5 py-0.5 rounded"
+                          style={{
+                            color: item.kind === 'chat' ? 'var(--color-accent)' : 'rgba(16,185,129,0.9)',
+                            backgroundColor: item.kind === 'chat' ? 'var(--color-accent-subtle, rgba(99,102,241,0.08))' : 'rgba(16,185,129,0.08)',
+                          }}
+                        >
+                          {item.kind === 'chat' ? 'Ассистент' : 'Таблица'}
+                        </span>
+                        <span className="text-xs flex-shrink-0" style={{ color: 'var(--color-text-muted)' }}>
+                          {formatDate(item.date ? new Date(item.date).toISOString() : undefined)}
+                        </span>
+                      </div>
+                    </button>
+                  ))}
+                </div>
+              )
+            })()}
           </div>
         </div>
       </Drawer>
