@@ -722,10 +722,17 @@ class DocumentAIService:
             "исправь", "исправить", "измени", "изменить",
             "фио", "фамили", "замените", "поменяйте",
             "сделай", "сделайте", "укажите", "поставьте", "впишите",
+            "будет ", "пусть ", "составит", "составляет", "равно", "равна",
+            "установи", "установить", "назначь", "назначить",
+            "укажи", "укажите", "впиши", "впишите",
+            "стоимость", "сумма", "цена", "размер", "срок", "дата",
         ]
         has_file_reference = "[файл:" in question.lower() or "[file:" in question.lower()
+        # If question contains digits — likely a specific value change → targeted
+        import re as _re
+        has_number = bool(_re.search(r'\d', question))
         # selected_text forces targeted mode — user is working on a specific fragment
-        use_targeted = bool(selected_text) or any(kw in question.lower() for kw in targeted_keywords) or has_file_reference
+        use_targeted = bool(selected_text) or any(kw in question.lower() for kw in targeted_keywords) or has_file_reference or has_number
 
         if selected_text:
             # ── Selected-text mode ──────────────────────────────────────────────
