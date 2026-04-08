@@ -486,6 +486,7 @@ export interface FileProcessingStatus {
   filename: string
   status: 'pending' | 'processing' | 'ready' | 'error' | 'cancelled'
   error?: string | null
+  processing_started_at?: string | null
 }
 
 export interface ProcessingStatusResponse {

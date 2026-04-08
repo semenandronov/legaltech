@@ -177,10 +177,14 @@ const CaseOverviewPage = () => {
         setProcessingMap(map)
 
         if (status.any_processing) {
-          // Start elapsed timer
+          // Start elapsed timer — use earliest processing_started_at from backend if available
           if (!elapsedTimerRef.current) {
-            processingStartedAtRef.current = Date.now()
-            setElapsedSeconds(0)
+            const startedAts = status.files
+              .filter(f => f.processing_started_at)
+              .map(f => new Date(f.processing_started_at!).getTime())
+            const earliest = startedAts.length > 0 ? Math.min(...startedAts) : Date.now()
+            processingStartedAtRef.current = earliest
+            setElapsedSeconds(Math.floor((Date.now() - earliest) / 1000))
             elapsedTimerRef.current = setInterval(() => {
               const secs = Math.floor((Date.now() - (processingStartedAtRef.current ?? Date.now())) / 1000)
               setElapsedSeconds(secs)

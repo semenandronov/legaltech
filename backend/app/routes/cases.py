@@ -779,6 +779,7 @@ async def get_processing_status(
             "filename": f.filename,
             "status": f.processing_status or "ready",
             "error": f.processing_error,
+            "processing_started_at": f.processing_started_at.isoformat() if f.processing_started_at else None,
         }
         for f in files
     ]

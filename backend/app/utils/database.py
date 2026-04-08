@@ -375,6 +375,11 @@ def ensure_schema():
                         "ALTER TABLE files ADD COLUMN IF NOT EXISTS processing_error TEXT"
                     ))
                     logger.info("✅ Added processing_error column to files table")
+                if "processing_started_at" not in columns:
+                    conn.execute(text(
+                        "ALTER TABLE files ADD COLUMN IF NOT EXISTS processing_started_at TIMESTAMP"
+                    ))
+                    logger.info("✅ Added processing_started_at column to files table")
 
             # Reset stuck files (pending/processing) left over from a crashed/restarted process
             try:

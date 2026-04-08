@@ -116,8 +116,9 @@ class File(Base):
     file_content = Column(LargeBinary, nullable=True)  # Binary content of the original file stored in DB
     html_content = Column(Text, nullable=True)  # Cached HTML representation of the file for faster viewing
     folder_id = Column(String, ForeignKey("folders.id", ondelete="SET NULL"), nullable=True, index=True)
-    processing_status = Column(String(50), default="ready")  # pending, processing, ready, error
+    processing_status = Column(String(50), default="ready")  # pending, processing, ready, error, cancelled
     processing_error = Column(Text, nullable=True)
+    processing_started_at = Column(DateTime, nullable=True)
     # metadata удалено - не существует в БД, используем другие поля для хранения метаданных
     created_at = Column(DateTime, default=datetime.utcnow)
 

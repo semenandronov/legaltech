@@ -118,7 +118,9 @@ def _process_one_file(
         return
 
     # Mark as processing
+    from datetime import datetime as _dt
     file_model.processing_status = "processing"
+    file_model.processing_started_at = _dt.utcnow()
     db.commit()
     logger.info(f"▶ Processing file {file_id} ({filename}), {len(content)} bytes")
 
