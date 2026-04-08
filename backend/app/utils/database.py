@@ -375,6 +375,19 @@ def ensure_schema():
                         "ALTER TABLE files ADD COLUMN IF NOT EXISTS processing_error TEXT"
                     ))
                     logger.info("✅ Added processing_error column to files table")
+
+            # Reset stuck files (pending/processing) left over from a crashed/restarted process
+            try:
+                with engine.begin() as conn:
+                    result = conn.execute(text(
+                        "UPDATE files SET processing_status = 'error', "
+                        "processing_error = 'Обработка прервана при перезапуске сервера. Загрузите файл снова.' "
+                        "WHERE processing_status IN ('pending', 'processing')"
+                    ))
+                    if result.rowcount:
+                        logger.warning(f"⚠️  Reset {result.rowcount} stuck files to 'error' on startup")
+            except Exception as e:
+                logger.error(f"Error resetting stuck files on startup: {e}", exc_info=True)
     except Exception as e:
         logger.error(f"Error adding processing columns to files table: {e}", exc_info=True)
 
