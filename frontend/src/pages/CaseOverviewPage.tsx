@@ -42,18 +42,6 @@ const formatSize = (bytes?: number) => {
   return (bytes / (1024 * 1024)).toFixed(1) + ' МБ'
 }
 
-const estimateProcessingSeconds = (filename: string, sizeBytes?: number): number => {
-  const mb = (sizeBytes || 0) / (1024 * 1024)
-  const ext = filename.split('.').pop()?.toLowerCase() || ''
-  const secPerMb = ext === 'pdf' ? 30 : 5
-  return Math.max(15, Math.round(mb * secPerMb))
-}
-
-const formatEstimate = (seconds: number): string => {
-  if (seconds < 60) return `~${seconds} сек`
-  const mins = Math.ceil(seconds / 60)
-  return `~${mins} мин`
-}
 
 const DOC_TYPE_LABELS: Record<string, string> = {
   contract: 'Договор',
@@ -153,6 +141,9 @@ const CaseOverviewPage = () => {
   // Per-file processing status (fileId → status string)
   const [processingMap, setProcessingMap] = useState<Record<string, string>>({})
   const processingPollRef = useRef<ReturnType<typeof setInterval> | null>(null)
+  const [elapsedSeconds, setElapsedSeconds] = useState(0)
+  const elapsedTimerRef = useRef<ReturnType<typeof setInterval> | null>(null)
+  const processingStartedAtRef = useRef<number | null>(null)
 
   // Harvey-style query creation flow
   const [showQueryTypeModal, setShowQueryTypeModal] = useState(false)
@@ -178,6 +169,15 @@ const CaseOverviewPage = () => {
         setProcessingMap(map)
 
         if (status.any_processing) {
+          // Start elapsed timer
+          if (!elapsedTimerRef.current) {
+            processingStartedAtRef.current = Date.now()
+            setElapsedSeconds(0)
+            elapsedTimerRef.current = setInterval(() => {
+              const secs = Math.floor((Date.now() - (processingStartedAtRef.current ?? Date.now())) / 1000)
+              setElapsedSeconds(secs)
+            }, 1000)
+          }
           // Start polling if not already running
           if (!processingPollRef.current) {
             processingPollRef.current = setInterval(async () => {
@@ -189,6 +189,8 @@ const CaseOverviewPage = () => {
                 if (s.all_done) {
                   clearInterval(processingPollRef.current!)
                   processingPollRef.current = null
+                  clearInterval(elapsedTimerRef.current!)
+                  elapsedTimerRef.current = null
                   // Reload files to get updated doc_type, size, etc.
                   reloadFiles()
                 }
@@ -204,6 +206,10 @@ const CaseOverviewPage = () => {
       if (processingPollRef.current) {
         clearInterval(processingPollRef.current)
         processingPollRef.current = null
+      }
+      if (elapsedTimerRef.current) {
+        clearInterval(elapsedTimerRef.current)
+        elapsedTimerRef.current = null
       }
     }
   }, [caseId]) // eslint-disable-line react-hooks/exhaustive-deps
@@ -660,8 +666,9 @@ const CaseOverviewPage = () => {
                 const ready = Object.values(processingMap).filter(s => s === 'ready').length
                 const total = Object.values(processingMap).length
                 if (total === 0 || pendingFiles.length === 0) return null
-                const totalSec = pendingFiles.reduce((sum, f) => sum + estimateProcessingSeconds(f.filename, f.size), 0)
-                const estimate = formatEstimate(totalSec)
+                const elapsedStr = elapsedSeconds < 60
+                  ? `${elapsedSeconds} сек`
+                  : `${Math.floor(elapsedSeconds / 60)} мин ${elapsedSeconds % 60} сек`
                 return (
                   <div
                     className="flex items-center gap-2 px-4 py-2.5 mb-3 rounded-lg text-sm"
@@ -677,7 +684,7 @@ const CaseOverviewPage = () => {
                       <span style={{ color: 'var(--color-text-primary)', fontWeight: 500 }}>
                         {ready} из {total} готово
                       </span>
-                      <span style={{ color: 'var(--color-text-muted)' }}>{' '}· ещё {estimate}</span>
+                      <span style={{ color: 'var(--color-text-muted)' }}>{' '}· {elapsedStr}</span>
                     </span>
                     <span className="text-xs ml-auto" style={{ color: 'var(--color-text-muted)' }}>
                       Вы можете работать с готовыми файлами, остальные появятся автоматически
