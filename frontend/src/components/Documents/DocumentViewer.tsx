@@ -4,6 +4,9 @@ import PDFViewer from './PDFViewer'
 import DOCXViewer from './DOCXViewer'
 import './Documents.css'
 
+// File types that browsers cannot display inline — must be downloaded
+const DOWNLOAD_ONLY_TYPES = new Set(['xlsx', 'xls', 'csv', 'pptx', 'ppt', 'ods', 'odt'])
+
 interface DocumentViewerProps {
   document: DocumentWithMetadata | null
   caseId: string
@@ -21,8 +24,10 @@ const DocumentViewer: React.FC<DocumentViewerProps> = ({
     // Загружаем файл и создаем blob URL только для файлов, которые не PDF и не DOCX
     // (DOCX загружается в DOCXViewer, PDF загружается в PDFViewer)
     const isDocx = document?.file_type === 'docx' || document?.filename.toLowerCase().endsWith('.docx')
-    
-    if (document?.id && document.file_type !== 'pdf' && !isDocx && caseId) {
+    const ext = (document?.file_type || document?.filename?.split('.').pop() || '').toLowerCase()
+    const isDownloadOnly = DOWNLOAD_ONLY_TYPES.has(ext)
+
+    if (document?.id && document.file_type !== 'pdf' && !isDocx && !isDownloadOnly && caseId) {
       const loadFile = async () => {
         try {
           const baseUrl = import.meta.env.VITE_API_URL || ''
@@ -83,6 +88,8 @@ const DocumentViewer: React.FC<DocumentViewerProps> = ({
 
   // Определяем, является ли файл DOCX
   const isDocx = document.file_type === 'docx' || document.filename.toLowerCase().endsWith('.docx')
+  const ext = (document.file_type || document.filename.split('.').pop() || '').toLowerCase()
+  const isDownloadOnly = DOWNLOAD_ONLY_TYPES.has(ext)
 
   return (
     <div className="document-viewer" style={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
@@ -108,15 +115,34 @@ const DocumentViewer: React.FC<DocumentViewerProps> = ({
             }}
             showAbout={false}
           />
+        ) : isDownloadOnly ? (
+          <div style={{ padding: '40px 24px', textAlign: 'center', color: 'var(--color-text-secondary)' }}>
+            <div style={{ fontSize: 40, marginBottom: 16 }}>📊</div>
+            <p style={{ marginBottom: 8, fontWeight: 500 }}>Предпросмотр недоступен</p>
+            <p style={{ fontSize: 13, marginBottom: 24, color: 'var(--color-text-muted)' }}>
+              Файлы формата {ext.toUpperCase()} нельзя открыть в браузере.<br />
+              Скачайте файл, чтобы открыть его в Excel или другом приложении.
+            </p>
+            <a
+              href={`${import.meta.env.VITE_API_URL || ''}/api/cases/${caseId}/files/${document.id}/content`}
+              download={document.filename}
+              style={{
+                display: 'inline-block',
+                padding: '8px 20px',
+                borderRadius: 8,
+                border: '1px solid var(--color-border)',
+                color: 'var(--color-text-primary)',
+                fontSize: 13,
+                textDecoration: 'none',
+              }}
+            >
+              Скачать {document.filename}
+            </a>
+          </div>
         ) : fileUrl ? (
           <iframe
             src={fileUrl}
-            style={{
-              width: '100%',
-              height: '100%',
-              border: 'none',
-              flex: 1
-            }}
+            style={{ width: '100%', height: '100%', border: 'none', flex: 1 }}
             title={document.filename}
           />
         ) : (
