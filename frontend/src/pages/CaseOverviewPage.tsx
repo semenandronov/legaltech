@@ -43,6 +43,14 @@ const formatSize = (bytes?: number) => {
 }
 
 
+// Estimate seconds to process a single file based on type and size
+const estimateFileSecs = (filename: string, sizeBytes?: number): number => {
+  const mb = (sizeBytes || 0) / (1024 * 1024)
+  const ext = filename.split('.').pop()?.toLowerCase() || ''
+  const secPerMb = ext === 'pdf' ? 30 : 5
+  return Math.max(15, Math.round(mb * secPerMb))
+}
+
 const DOC_TYPE_LABELS: Record<string, string> = {
   contract: 'Договор',
   power_of_attorney: 'Доверенность',
@@ -191,7 +199,6 @@ const CaseOverviewPage = () => {
                   processingPollRef.current = null
                   clearInterval(elapsedTimerRef.current!)
                   elapsedTimerRef.current = null
-                  // Reload files to get updated doc_type, size, etc.
                   reloadFiles()
                 }
               } catch { /* ignore */ }
@@ -666,9 +673,15 @@ const CaseOverviewPage = () => {
                 const ready = Object.values(processingMap).filter(s => s === 'ready').length
                 const total = Object.values(processingMap).length
                 if (total === 0 || pendingFiles.length === 0) return null
-                const elapsedStr = elapsedSeconds < 60
-                  ? `${elapsedSeconds} сек`
-                  : `${Math.floor(elapsedSeconds / 60)} мин ${elapsedSeconds % 60} сек`
+
+                // Recalculate estimate from remaining pending files
+                const estimatedSecs = pendingFiles.reduce((sum, f) => sum + estimateFileSecs(f.filename, f.size), 0)
+                const remaining = Math.max(0, estimatedSecs - elapsedSeconds)
+                const countdownStr = remaining === 0
+                  ? 'завершается…'
+                  : remaining < 60
+                  ? `ещё ~${remaining} сек`
+                  : `ещё ~${Math.ceil(remaining / 60)} мин`
                 return (
                   <div
                     className="flex items-center gap-2 px-4 py-2.5 mb-3 rounded-lg text-sm"
@@ -684,7 +697,7 @@ const CaseOverviewPage = () => {
                       <span style={{ color: 'var(--color-text-primary)', fontWeight: 500 }}>
                         {ready} из {total} готово
                       </span>
-                      <span style={{ color: 'var(--color-text-muted)' }}>{' '}· {elapsedStr}</span>
+                      <span style={{ color: 'var(--color-text-muted)' }}>{' '}· {countdownStr}</span>
                     </span>
                     <span className="text-xs ml-auto" style={{ color: 'var(--color-text-muted)' }}>
                       Вы можете работать с готовыми файлами, остальные появятся автоматически
