@@ -783,7 +783,7 @@ async def get_processing_status(
         for f in files
     ]
 
-    all_done = all(s["status"] in ("ready", "error") for s in file_statuses)
+    all_done = all(s["status"] in ("ready", "error", "cancelled") for s in file_statuses)
     any_processing = any(s["status"] in ("pending", "processing") for s in file_statuses)
 
     return {
@@ -793,6 +793,29 @@ async def get_processing_status(
         "any_processing": any_processing,
         "has_errors": any(s["status"] == "error" for s in file_statuses),
     }
+
+
+@router.post("/{case_id}/files/{file_id}/cancel")
+async def cancel_file_processing(
+    case_id: str,
+    file_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """Cancel processing of a pending or processing file."""
+    case = db.query(Case).filter(Case.id == case_id, Case.user_id == current_user.id).first()
+    if not case:
+        raise HTTPException(status_code=404, detail="Дело не найдено")
+    file = db.query(FileModel).filter(FileModel.id == file_id, FileModel.case_id == case_id).first()
+    if not file:
+        raise HTTPException(status_code=404, detail="Файл не найден")
+    if file.processing_status not in ("pending", "processing"):
+        raise HTTPException(status_code=400, detail="Файл не находится в обработке")
+    file.processing_status = "cancelled"
+    file.processing_error = "Обработка отменена пользователем"
+    db.commit()
+    logger.info(f"File {file_id} ({file.filename}) cancelled by user {current_user.id}")
+    return {"status": "cancelled"}
 
 
 @router.delete("/{case_id}/files/{file_id}")

@@ -112,6 +112,11 @@ def _process_one_file(
         _set_error(db, file_id, "Нет содержимого файла в базе данных")
         return
 
+    # Check if cancelled before starting
+    if file_model.processing_status == "cancelled":
+        logger.info(f"File {file_id} ({filename}) was cancelled, skipping")
+        return
+
     # Mark as processing
     file_model.processing_status = "processing"
     db.commit()
@@ -157,6 +162,10 @@ def _process_one_file(
     _reconnect(db)
     file_model = db.query(FileModel).filter(FileModel.id == file_id).first()
     if not file_model:
+        return
+    # Re-check if cancelled during OCR (which can take minutes)
+    if file_model.processing_status == "cancelled":
+        logger.info(f"File {file_id} ({filename}) was cancelled during OCR, skipping")
         return
     file_model.original_text = text
     db.flush()

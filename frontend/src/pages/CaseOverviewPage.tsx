@@ -10,7 +10,7 @@ import { toast } from 'sonner'
 import {
   getCase, getDocuments, getChatSessionsForCase, addFilesToCase, createFolder, getCaseFolders,
   moveFileToFolder, deleteFileFromCase, deleteFolder, renameFolder,
-  getProcessingStatus,
+  getProcessingStatus, cancelFileProcessing,
   CaseResponse, FolderItem,
 } from '../services/api'
 import { createDocumentFromFile } from '../services/documentEditorApi'
@@ -351,6 +351,15 @@ const CaseOverviewPage = () => {
       setActiveMenu(null)
       reloadFiles()
     } catch { toast.error('Не удалось удалить файл') }
+  }
+
+  const handleCancelFile = async (fileId: string) => {
+    if (!caseId) return
+    try {
+      await cancelFileProcessing(caseId, fileId)
+      setActiveMenu(null)
+      setProcessingMap(prev => ({ ...prev, [fileId]: 'cancelled' }))
+    } catch { toast.error('Не удалось отменить обработку') }
   }
 
   const handleDeleteFolderItem = async (folderId: string) => {
@@ -1077,6 +1086,7 @@ const CaseOverviewPage = () => {
                     const fileStatus = processingMap[file.id]
                     const isProcessing = fileStatus === 'pending' || fileStatus === 'processing'
                     const isError = fileStatus === 'error'
+                    const isCancelled = fileStatus === 'cancelled'
                     return (
                       <div
                         key={file.id}
@@ -1103,12 +1113,17 @@ const CaseOverviewPage = () => {
                             <Loader2 className="w-3.5 h-3.5 flex-shrink-0 animate-spin" style={{ color: 'var(--color-text-muted)' }} />
                           ) : isError ? (
                             <AlertCircle className="w-3.5 h-3.5 flex-shrink-0" style={{ color: 'var(--color-error, #dc2626)' }} />
+                          ) : isCancelled ? (
+                            <X className="w-3.5 h-3.5 flex-shrink-0" style={{ color: 'var(--color-text-muted)' }} />
                           ) : (
                             <File className="w-3.5 h-3.5 flex-shrink-0" style={{ color: 'var(--color-text-muted)' }} />
                           )}
                           <span className="text-sm truncate hover:underline" style={{ color: 'var(--color-text-primary)' }}>
                             {file.filename}
                           </span>
+                          {isCancelled && (
+                            <span className="text-xs flex-shrink-0" style={{ color: 'var(--color-text-muted)' }}>Отменено</span>
+                          )}
                           {isProcessing && (
                             <span className="text-xs flex-shrink-0" style={{ color: 'var(--color-text-muted)' }}>
                               {fileStatus === 'processing' ? 'Обработка…' : 'Ожидание…'}
@@ -1172,6 +1187,16 @@ const CaseOverviewPage = () => {
                                 Переместить
                               </button>
                               <div style={{ borderTop: '1px solid var(--color-border)' }} />
+                              {isProcessing && (
+                                <button
+                                  onClick={() => handleCancelFile(file.id)}
+                                  className="w-full flex items-center gap-2 px-3 py-2 text-xs text-left transition-colors hover:bg-[var(--color-bg-hover)]"
+                                  style={{ color: 'var(--color-text-secondary)' }}
+                                >
+                                  <X className="w-3.5 h-3.5 flex-shrink-0" />
+                                  Отменить обработку
+                                </button>
+                              )}
                               <button
                                 onClick={() => handleDeleteFile(file.id)}
                                 className="w-full flex items-center gap-2 px-3 py-2 text-xs text-left transition-colors"
