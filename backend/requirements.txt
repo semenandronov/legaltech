@@ -1,3 +1,7 @@
+# Docling тянет PyTorch. Без CPU-индекса pip на Linux ставит CUDA-сборку + nvidia_* (~1GB+), сборка на App Platform таймаутится.
+# Официально для Linux CPU: https://docling-project.github.io/docling/getting_started/installation/
+--extra-index-url https://download.pytorch.org/whl/cpu
+
 fastapi==0.115.0
 uvicorn[standard]==0.32.0
 python-multipart==0.0.12
@@ -12,7 +16,8 @@ pymupdf>=1.24.0  # PDF по страницам: OCR сканов (Tesseract / Ya
 aiofiles==24.1.0
 pydantic==2.9.2
 email-validator==2.3.0
-psycopg2-binary==2.9.10
+# >=2.9.11: лучше покрытие готовых wheels (cp312/macOS arm64), без сборки через pg_config
+psycopg2-binary>=2.9.11,<3
 psycopg[binary]>=3.1.0  # Required for langgraph-checkpoint-postgres
 openpyxl==3.1.5
 python-jose[cryptography]==3.5.0
