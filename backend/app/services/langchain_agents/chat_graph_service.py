@@ -230,7 +230,10 @@ class ChatGraphService:
         stream_mode: str = "updates",
         enable_token_streaming: bool = False,
         existing_messages: List[BaseMessage] = None,
-        editor_mode_hint: str = None
+        editor_mode_hint: str = None,
+        template_system_id: str = None,
+        template_file_id: str = None,
+        template_file_content: str = None,
     ) -> AsyncGenerator[str, None]:
         """
         Streaming ответ через ChatGraph.
@@ -263,6 +266,15 @@ class ChatGraphService:
         if not case:
             yield f"data: {json.dumps({'error': 'Дело не найдено'})}\n\n"
             return
+
+        from app.services.draft_template_context import resolve_draft_template_context
+
+        template_context, template_label = resolve_draft_template_context(
+            self.db,
+            template_system_id=template_system_id,
+            template_file_content=template_file_content,
+            template_file_id=template_file_id,
+        )
         
         # Получаем session_id
         session_id = self._get_or_create_session(case_id)
@@ -296,6 +308,10 @@ class ChatGraphService:
                     current_state["draft_approved"] = False
                 if "waiting_for_approval" not in current_state:
                     current_state["waiting_for_approval"] = False
+                if "template_context" not in current_state:
+                    current_state["template_context"] = ""
+                if "template_label" not in current_state:
+                    current_state["template_label"] = None
                 # Добавляем новое сообщение пользователя
                 current_messages = current_state.get("messages", [])
                 current_messages.append(HumanMessage(content=question))
@@ -312,6 +328,8 @@ class ChatGraphService:
                     current_state["selected_text"] = selected_text
                 if editor_mode_hint:
                     current_state["editor_mode_hint"] = editor_mode_hint
+                current_state["template_context"] = template_context or ""
+                current_state["template_label"] = template_label
                 # Очищаем предыдущий ответ для нового запроса
                 current_state["response"] = None
                 current_state["rag_context"] = None
@@ -337,25 +355,29 @@ class ChatGraphService:
                     document_id=document_id,
                     selected_text=selected_text,
                     existing_messages=existing_messages,
-                    editor_mode_hint=editor_mode_hint
+                    editor_mode_hint=editor_mode_hint,
+                    template_context=template_context or None,
+                    template_label=template_label,
                 )
                 logger.info(f"[ChatGraphService] Starting new dialog, thread_id: {thread_id}")
         except Exception as e:
             # Если не удалось загрузить состояние, создаём новое
             logger.warning(f"[ChatGraphService] Failed to load state from checkpoint: {e}, creating new state")
-        initial_state = create_initial_chat_state(
-            case_id=case_id,
-            user_id=str(user.id),
-            question=question,
-            mode=mode,
-            enable_garant=legal_research or mode == "garant",
-            enable_citations=True,
-            document_context=document_context,
-            document_id=document_id,
-            selected_text=selected_text,
-            existing_messages=existing_messages,
-            editor_mode_hint=editor_mode_hint
-        )
+            initial_state = create_initial_chat_state(
+                case_id=case_id,
+                user_id=str(user.id),
+                question=question,
+                mode=mode,
+                enable_garant=legal_research or mode == "garant",
+                enable_citations=True,
+                document_context=document_context,
+                document_id=document_id,
+                selected_text=selected_text,
+                existing_messages=existing_messages,
+                editor_mode_hint=editor_mode_hint,
+                template_context=template_context or None,
+                template_label=template_label,
+            )
         
         full_response = ""
         citations = []
@@ -516,7 +538,10 @@ class ChatGraphService:
         document_context: str = None,
         document_id: str = None,
         selected_text: str = None,
-        existing_messages: List[BaseMessage] = None
+        existing_messages: List[BaseMessage] = None,
+        template_system_id: str = None,
+        template_file_id: str = None,
+        template_file_content: str = None,
     ) -> AsyncGenerator[str, None]:
         """
         Streaming ответ с токенами через astream_events.
@@ -550,6 +575,15 @@ class ChatGraphService:
         if not case:
             yield create_finish_event("error", "Дело не найдено")
             return
+
+        from app.services.draft_template_context import resolve_draft_template_context
+
+        template_context, template_label = resolve_draft_template_context(
+            self.db,
+            template_system_id=template_system_id,
+            template_file_content=template_file_content,
+            template_file_id=template_file_id,
+        )
         
         # Получаем session_id
         session_id = self._get_or_create_session(case_id)
@@ -583,6 +617,10 @@ class ChatGraphService:
                     current_state["draft_approved"] = False
                 if "waiting_for_approval" not in current_state:
                     current_state["waiting_for_approval"] = False
+                if "template_context" not in current_state:
+                    current_state["template_context"] = ""
+                if "template_label" not in current_state:
+                    current_state["template_label"] = None
                 # Добавляем новое сообщение пользователя
                 current_messages = current_state.get("messages", [])
                 current_messages.append(HumanMessage(content=question))
@@ -598,6 +636,8 @@ class ChatGraphService:
                     current_state["document_id"] = document_id
                 if selected_text:
                     current_state["selected_text"] = selected_text
+                current_state["template_context"] = template_context or ""
+                current_state["template_label"] = template_label
                 # Очищаем предыдущий ответ для нового запроса
                 current_state["response"] = None
                 current_state["rag_context"] = None
@@ -623,24 +663,28 @@ class ChatGraphService:
                     document_context=document_context,
                     document_id=document_id,
                     selected_text=selected_text,
-                    existing_messages=existing_messages
+                    existing_messages=existing_messages,
+                    template_context=template_context or None,
+                    template_label=template_label,
                 )
                 logger.info(f"[ChatGraphService] Starting new dialog (token stream), thread_id: {thread_id}")
         except Exception as e:
             # Если не удалось загрузить состояние, создаём новое
             logger.warning(f"[ChatGraphService] Failed to load state from checkpoint (token stream): {e}, creating new state")
-        initial_state = create_initial_chat_state(
-            case_id=case_id,
-            user_id=str(user.id),
-            question=question,
-            mode=mode,
-            enable_garant=legal_research or mode == "garant",
-            enable_citations=True,
-            document_context=document_context,
-            document_id=document_id,
-            selected_text=selected_text,
-            existing_messages=existing_messages
-        )
+            initial_state = create_initial_chat_state(
+                case_id=case_id,
+                user_id=str(user.id),
+                question=question,
+                mode=mode,
+                enable_garant=legal_research or mode == "garant",
+                enable_citations=True,
+                document_context=document_context,
+                document_id=document_id,
+                selected_text=selected_text,
+                existing_messages=existing_messages,
+                template_context=template_context or None,
+                template_label=template_label,
+            )
         
         full_response = ""
         citations = []
@@ -725,6 +769,15 @@ class ChatGraphService:
         if not case:
             yield format_sse_event(StreamEvent(type="error", data={"error": "Дело не найдено"}))
             return
+
+        from app.services.draft_template_context import resolve_draft_template_context
+
+        template_context, template_label = resolve_draft_template_context(
+            self.db,
+            template_system_id=kwargs.get("template_system_id"),
+            template_file_content=kwargs.get("template_file_content"),
+            template_file_id=kwargs.get("template_file_id"),
+        )
         
         # Получаем session_id
         session_id = self._get_or_create_session(case_id)
@@ -755,6 +808,10 @@ class ChatGraphService:
                     current_state["draft_approved"] = False
                 if "waiting_for_approval" not in current_state:
                     current_state["waiting_for_approval"] = False
+                if "template_context" not in current_state:
+                    current_state["template_context"] = ""
+                if "template_label" not in current_state:
+                    current_state["template_label"] = None
                 # Добавляем новое сообщение пользователя
                 current_messages = current_state.get("messages", [])
                 current_messages.append(HumanMessage(content=question))
@@ -770,6 +827,8 @@ class ChatGraphService:
                     current_state["document_id"] = kwargs.get("document_id")
                 if kwargs.get("selected_text"):
                     current_state["selected_text"] = kwargs.get("selected_text")
+                current_state["template_context"] = template_context or ""
+                current_state["template_label"] = template_label
                 # Очищаем предыдущий ответ для нового запроса
                 current_state["response"] = None
                 current_state["rag_context"] = None
@@ -795,24 +854,28 @@ class ChatGraphService:
                     document_context=kwargs.get("document_context"),
                     document_id=kwargs.get("document_id"),
                     selected_text=kwargs.get("selected_text"),
-                    existing_messages=kwargs.get("existing_messages")
+                    existing_messages=kwargs.get("existing_messages"),
+                    template_context=template_context or None,
+                    template_label=template_label,
                 )
                 logger.info(f"[ChatGraphService] Starting new dialog (stream_with_mode), thread_id: {thread_id}")
         except Exception as e:
             # Если не удалось загрузить состояние, создаём новое
             logger.warning(f"[ChatGraphService] Failed to load state from checkpoint (stream_with_mode): {e}, creating new state")
-        initial_state = create_initial_chat_state(
-            case_id=case_id,
-            user_id=str(user.id),
-            question=question,
-            mode=mode,
-            enable_garant=kwargs.get("legal_research", False) or mode == "garant",
-            enable_citations=True,
-            document_context=kwargs.get("document_context"),
-            document_id=kwargs.get("document_id"),
-            selected_text=kwargs.get("selected_text"),
-            existing_messages=kwargs.get("existing_messages")
-        )
+            initial_state = create_initial_chat_state(
+                case_id=case_id,
+                user_id=str(user.id),
+                question=question,
+                mode=mode,
+                enable_garant=kwargs.get("legal_research", False) or mode == "garant",
+                enable_citations=True,
+                document_context=kwargs.get("document_context"),
+                document_id=kwargs.get("document_id"),
+                selected_text=kwargs.get("selected_text"),
+                existing_messages=kwargs.get("existing_messages"),
+                template_context=template_context or None,
+                template_label=template_label,
+            )
         
         full_response = ""
         citations = []

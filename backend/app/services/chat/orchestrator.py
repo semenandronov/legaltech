@@ -55,6 +55,7 @@ class ChatRequest:
     editor_mode_hint: Optional[str] = None  # 'edit' or 'ask' from UI toggle
     
     # Шаблон для draft mode
+    template_system_id: Optional[str] = None  # id из системной библиотеки (manifest)
     template_file_id: Optional[str] = None
     template_file_content: Optional[str] = None
     
@@ -338,7 +339,8 @@ class ChatOrchestrator:
                 current_user=request.current_user,
                 chat_history=chat_history,
                 template_file_id=request.template_file_id,
-                template_file_content=request.template_file_content
+                template_file_content=request.template_file_content,
+                template_system_id=request.template_system_id,
             ):
                 yield event
         

@@ -33,6 +33,7 @@ class DraftHandler:
         chat_history: Optional[str] = None,
         template_file_id: Optional[str] = None,
         template_file_content: Optional[str] = None,
+        template_system_id: Optional[str] = None,
     ) -> AsyncGenerator[str, None]:
         """
         Обработать запрос на создание документа.
@@ -44,8 +45,12 @@ class DraftHandler:
             # 1. Извлекаем название документа (быстрый LLM-вызов)
             document_title = await self._extract_document_title(question)
 
-            # 2. Загружаем шаблон если есть
-            template_context = await self._load_template(template_file_id, template_file_content)
+            # 2. Шаблон: системный id > вложение > файл из БД
+            template_context, _tpl_label = self._resolve_template(
+                template_system_id=template_system_id,
+                template_file_id=template_file_id,
+                template_file_content=template_file_content,
+            )
 
             # 3. Запускаем граф — он yield-ит SSE reasoning-события и в конце _draft_content
             content: Optional[str] = None
@@ -130,20 +135,20 @@ class DraftHandler:
             logger.warning(f"[DraftHandler] title extraction failed: {e}")
             return "Новый документ"
 
-    async def _load_template(
+    def _resolve_template(
         self,
+        *,
+        template_system_id: Optional[str],
         template_file_id: Optional[str],
         template_file_content: Optional[str],
-    ) -> str:
-        """Вернуть текст шаблона (из аргумента или из БД)."""
-        if template_file_content:
-            return template_file_content[:5000]
-        if template_file_id:
-            try:
-                from app.models.case import File as FileModel
-                rec = self.db.query(FileModel).filter(FileModel.id == template_file_id).first()
-                if rec and rec.original_text:
-                    return rec.original_text[:5000]
-            except Exception as e:
-                logger.warning(f"[DraftHandler] template load failed: {e}")
-        return ""
+    ) -> tuple[str, Optional[str]]:
+        """Единая сборка текста шаблона для draft_graph_agent."""
+        from app.services.draft_template_context import resolve_draft_template_context
+
+        text, label = resolve_draft_template_context(
+            self.db,
+            template_system_id=template_system_id,
+            template_file_content=template_file_content,
+            template_file_id=template_file_id,
+        )
+        return text or "", label

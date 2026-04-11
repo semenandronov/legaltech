@@ -5,6 +5,9 @@ sqlalchemy==2.0.36
 openai==2.30.0
 python-dotenv==1.0.1
 pypdf==4.3.1
+# Docling: структурированный разбор PDF/DOCX для RAG/LLM (https://github.com/docling-project/docling)
+# extras: docling[easyocr] и т.д. — для тяжёлого OCR сканов при необходимости
+docling>=2.10.0
 pymupdf>=1.24.0  # PDF по страницам: OCR сканов (Tesseract / Yandex Vision чанки)
 aiofiles==24.1.0
 pydantic==2.9.2

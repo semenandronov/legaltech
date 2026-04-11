@@ -59,8 +59,22 @@ from app.services.langchain_agents.utils.message_utils import (
 )
 from sqlalchemy.orm import Session
 import logging
+import re as _re
 
 logger = logging.getLogger(__name__)
+
+
+def _draft_headings_from_html(html: str) -> List[str]:
+    if not html or not html.strip():
+        return []
+    heads = _re.findall(r"<h[12][^>]*>([\s\S]*?)</h[12]>", html, _re.IGNORECASE)
+    out: List[str] = []
+    for h in heads:
+        t = _re.sub(r"<[^>]+>", "", h)
+        t = _re.sub(r"\s+", " ", t).strip()
+        if t:
+            out.append(t)
+    return out if out else ["Документ"]
 
 
 # ============== State Definition ==============
@@ -148,6 +162,9 @@ class ChatGraphState(TypedDict):
     draft_plan: Optional[Dict[str, Any]]  # План документа для подтверждения
     draft_approved: bool  # Подтверждён ли план пользователем
     waiting_for_approval: bool  # Ожидает ли граф подтверждения
+    # Шаблон draft (системный или файл)
+    template_context: Optional[str]
+    template_label: Optional[str]
     
     # Метаданные
     messages: Annotated[List[BaseMessage], add_messages]  # add_messages поддерживает RemoveMessage и перезапись по ID
@@ -165,7 +182,9 @@ def create_initial_chat_state(
     document_id: str = None,
     selected_text: str = None,
     existing_messages: List[BaseMessage] = None,
-    editor_mode_hint: str = None
+    editor_mode_hint: str = None,
+    template_context: str = None,
+    template_label: str = None,
 ) -> ChatGraphState:
     """
     Создать начальное состояние для графа чата.
@@ -211,6 +230,8 @@ def create_initial_chat_state(
         draft_plan=None,  # HITL для draft mode
         draft_approved=False,  # HITL для draft mode
         waiting_for_approval=False,  # HITL для draft mode
+        template_context=template_context,
+        template_label=template_label,
         messages=messages,
         errors=None
     )
@@ -878,6 +899,34 @@ def generate_draft_plan_node(
         
         llm = create_legal_llm(use_rate_limiting=False)
         
+        tc = (state.get("template_context") or "").strip()
+        if tc:
+            headings = _draft_headings_from_html(tc)
+            ttl = (state.get("template_label") or "").strip() or (
+                question[:80] if len(question) > 3 else "Документ"
+            )
+            draft_plan = {
+                "title": ttl,
+                "type": "По шаблону",
+                "sections": [
+                    {"name": h, "description": "Заполнить по запросу и документам дела"}
+                    for h in headings
+                ],
+                "required_fields": [],
+                "estimated_length": "Средняя",
+            }
+            new_state["draft_plan"] = draft_plan
+            new_state["response"] = f"""📋 План документа (по шаблону):
+
+**Название:** {draft_plan.get('title', 'Новый документ')}
+**Разделов:** {len(draft_plan.get('sections', []))}
+
+Подтвердите создание документа или отмените операцию."""
+            new_state["messages"] = [AIMessage(content=new_state["response"])]
+            new_state["waiting_for_approval"] = True
+            logger.info("[GenerateDraftPlan] Plan from template skeleton")
+            return new_state
+        
         # Генерируем план документа
         plan_prompt = f"""На основе описания создай план юридического документа.
 
@@ -1008,6 +1057,14 @@ def draft_node(
             for s in draft_plan.get("sections", [])
         ])
         
+        tc = (state.get("template_context") or "").strip()
+        template_block = ""
+        if tc:
+            template_block = (
+                f"\n\nОБЯЗАТЕЛЬНЫЙ ШАБЛОН — сохрани заголовки разделов и порядок; "
+                f"подставь факты из запроса, остальное [ЗАПОЛНИТЬ]:\n{tc[:16000]}\n"
+            )
+
         content_prompt = f"""Создай юридический документ на основе плана.
 
 НАЗВАНИЕ: {title}
@@ -1017,6 +1074,7 @@ def draft_node(
 {sections_text}
 
 ОПИСАНИЕ: {question}
+{template_block}
 
 Создай профессиональный юридический документ в формате HTML.
 Используй стандартную структуру для данного типа документа.

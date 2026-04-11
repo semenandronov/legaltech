@@ -102,6 +102,65 @@ class DocumentConverterService:
     
     def _convert_pdf(self, file_content: bytes) -> str:
         """
+        PDF → HTML: сначала Docling (структура, таблицы, лучше для сложных макетов),
+        при ошибке или пустом результате — pypdf.
+        Docling: https://github.com/docling-project/docling
+        """
+        try:
+            return self._convert_pdf_docling(file_content)
+        except Exception as e:
+            logger.warning("Docling PDF conversion failed, using pypdf fallback: %s", e)
+            return self._convert_pdf_pypdf(file_content)
+
+    def _convert_pdf_docling(self, file_content: bytes) -> str:
+        """Конвертация PDF через Docling (export_to_html или markdown → HTML)."""
+        from docling.document_converter import DocumentConverter
+
+        if not file_content:
+            raise ValueError("File content is empty")
+
+        with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as tmp:
+            tmp.write(file_content)
+            tmp_path = tmp.name
+
+        try:
+            converter = DocumentConverter()
+            result = converter.convert(tmp_path)
+            doc = result.document
+
+            html_body: Optional[str] = None
+            if hasattr(doc, "export_to_html"):
+                try:
+                    html_body = doc.export_to_html()
+                except Exception as ex:
+                    logger.debug("Docling export_to_html failed: %s", ex)
+            if not html_body or not str(html_body).strip():
+                import markdown as md_lib
+
+                md_text = doc.export_to_markdown()
+                if not md_text or not md_text.strip():
+                    raise ValueError("Docling returned empty document")
+                html_body = md_lib.markdown(md_text, extensions=["extra", "nl2br"])
+
+            inner = str(html_body).strip()
+            # Полный HTML-документ от Docling — оставляем как есть в обёртке для единообразия селекторов
+            if inner.lower().startswith("<!doctype") or (
+                inner.lower().startswith("<html") and "</html>" in inner.lower()
+            ):
+                wrapped = f'<div class="pdf-content pdf-content--docling">{inner}</div>'
+            else:
+                wrapped = f'<div class="pdf-content pdf-content--docling">{inner}</div>'
+
+            logger.info("Successfully converted PDF to HTML via Docling")
+            return wrapped
+        finally:
+            try:
+                os.unlink(tmp_path)
+            except OSError:
+                pass
+
+    def _convert_pdf_pypdf(self, file_content: bytes) -> str:
+        """
         Convert PDF to HTML using pypdf with improved paragraph detection.
 
         pypdf returns text with single \\n between lines (not double \\n),
@@ -146,7 +205,7 @@ class DocumentConverterService:
             if html == '<div class="pdf-content">\n</div>':
                 raise ValueError("Не удалось извлечь текст из PDF файла")
 
-            logger.info(f"Successfully converted PDF to HTML ({len(pdf_reader.pages)} pages)")
+            logger.info(f"Successfully converted PDF to HTML via pypdf ({len(pdf_reader.pages)} pages)")
             return html
 
         except ImportError:

@@ -1,0 +1,32 @@
+[
+  {
+    "id": "rtk_claim_st71",
+    "title": "Заявление о включении требования в реестр (ст. 71 127-ФЗ)",
+    "description": "Типовая структура заявления кредитора о включении требования в реестр требований кредиторов",
+    "file": "rtk_claim_st71.html"
+  },
+  {
+    "id": "generic_motion",
+    "title": "Ходатайство (универсальное)",
+    "description": "Каркас ходатайства в арбитражный суд по делу о банкротстве",
+    "file": "generic_motion.html"
+  },
+  {
+    "id": "uploaded_doc1",
+    "title": "Документ 1 (PDF)",
+    "description": "Шаблон из файла doc1.pdf",
+    "file": "doc1.pdf"
+  },
+  {
+    "id": "uploaded_doc2",
+    "title": "Документ 2 (PDF)",
+    "description": "Шаблон из файла doc2.pdf",
+    "file": "doc2.pdf"
+  },
+  {
+    "id": "uploaded_doc3",
+    "title": "Документ 3 (PDF)",
+    "description": "Шаблон из файла doc3.pdf",
+    "file": "doc3.pdf"
+  }
+]

@@ -437,6 +437,28 @@ async def debug_routes():
 frontend_dist = Path(__file__).parent.parent.parent / "frontend" / "dist"
 
 if frontend_dist.exists():
+    def _build_index_response(index_path: Path) -> FileResponse:
+        """
+        Return SPA index with no-cache headers to avoid stale hashed assets after deploys.
+        """
+        response = FileResponse(str(index_path))
+        csp_policy = (
+            "default-src 'self'; "
+            "script-src 'self' 'unsafe-eval' 'unsafe-inline' https: http:; "
+            "style-src 'self' 'unsafe-inline' https: http: data:; "
+            "img-src 'self' data: blob: https: http:; "
+            "font-src 'self' data: blob: https: http:; "
+            "connect-src 'self' blob: https: http:; "
+            "worker-src 'self' blob:; "
+            "frame-src 'self' https: http:; "
+            "object-src 'self' blob:;"
+        )
+        response.headers["Content-Security-Policy"] = csp_policy
+        response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+        response.headers["Pragma"] = "no-cache"
+        response.headers["Expires"] = "0"
+        return response
+
     # Mount static assets
     assets_dir = frontend_dist / "assets"
     if assets_dir.exists():
@@ -466,21 +488,7 @@ if frontend_dist.exists():
         # For SPA: serve index.html for all non-API routes
         index_path = frontend_dist / "index.html"
         if index_path.exists():
-            response = FileResponse(str(index_path))
-            # Ensure CSP header is set for HTML files
-            csp_policy = (
-                "default-src 'self'; "
-                "script-src 'self' 'unsafe-eval' 'unsafe-inline' https: http:; "
-                "style-src 'self' 'unsafe-inline' https: http: data:; "
-                "img-src 'self' data: blob: https: http:; "
-                "font-src 'self' data: blob: https: http:; "
-                "connect-src 'self' blob: https: http:; "
-                "worker-src 'self' blob:; "
-                "frame-src 'self' https: http:; "
-                "object-src 'self' blob:;"
-            )
-            response.headers["Content-Security-Policy"] = csp_policy
-            return response
+            return _build_index_response(index_path)
         
         return JSONResponse(
             {"error": "Frontend not built. Please run: cd frontend && npm install && npm run build"},

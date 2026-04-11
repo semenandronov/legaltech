@@ -56,6 +56,7 @@ async def assistant_chat_v2(
         - selected_text: выделенный текст
         - template_file_id: ID файла-шаблона
         - template_file_content: контент локального шаблона
+        - template_system_id: id системного шаблона (библиотека банкротства)
         - attached_file_ids: прикреплённые файлы
         
     Returns:
@@ -146,6 +147,7 @@ async def assistant_chat_v2(
         editor_mode_hint = body.get("editor_mode_hint")  # 'edit' or 'ask' from UI toggle
         template_file_id = body.get("template_file_id")
         template_file_content = body.get("template_file_content")
+        template_system_id = body.get("template_system_id")
         attached_file_ids = body.get("attached_file_ids")
         session_id = body.get("session_id") or None
 
@@ -166,6 +168,7 @@ async def assistant_chat_v2(
             selected_text=selected_text,
             template_file_id=template_file_id,
             template_file_content=template_file_content,
+            template_system_id=template_system_id,
             attached_file_ids=attached_file_ids,
             editor_mode_hint=editor_mode_hint,
             session_id=session_id
@@ -212,6 +215,16 @@ async def assistant_chat_v2(
         # #endregion
         logger.error(f"Error in assistant_chat_v2: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/api/v2/assistant/document-templates")
+async def list_document_templates_v2(
+    current_user: User = Depends(get_current_user),
+):
+    """Системные шаблоны документов (банкротство) для режима Draft."""
+    from app.services.bankruptcy_templates import list_public_templates
+
+    return {"templates": list_public_templates()}
 
 
 @router.get("/api/v2/assistant/chat/{case_id}/sessions")

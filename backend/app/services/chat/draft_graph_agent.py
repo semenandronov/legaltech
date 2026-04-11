@@ -29,6 +29,7 @@ MAX_ITERATIONS = 3
 COVERAGE_THRESHOLD = 0.70   # stop looping when LLM scores ≥ this
 MAX_CHUNKS_PER_SECTION = 3  # RAG hits per section per iteration
 MAX_CONTEXT_CHARS = 18_000  # total chars fed to generate node
+MAX_TEMPLATE_IN_PROMPT = 16_000  # фрагмент системного/файлового шаблона в промпте генерации
 
 
 # ── State ─────────────────────────────────────────────────────────────────────
@@ -96,6 +97,20 @@ async def _rag_search(case_id: str, query: str, db: Session, k: int = MAX_CHUNKS
         return []
 
 
+def _headings_from_template(html: str) -> List[str]:
+    """Извлечь названия разделов из HTML-шаблона (h1/h2)."""
+    if not html or not html.strip():
+        return []
+    heads = re.findall(r"<h[12][^>]*>([\s\S]*?)</h[12]>", html, re.IGNORECASE)
+    out: List[str] = []
+    for h in heads:
+        t = re.sub(r"<[^>]+>", "", h)
+        t = re.sub(r"\s+", " ", t).strip()
+        if t:
+            out.append(t)
+    return out if out else ["Документ"]
+
+
 def _parse_json_block(text: str) -> Any:
     """Extract and parse the first JSON object/array found in text."""
     match = re.search(r'\{[\s\S]*\}|\[[\s\S]*\]', text)
@@ -118,6 +133,24 @@ async def plan_node(state: DraftState, queue: asyncio.Queue) -> DraftState:
         phase="draft_plan", step=1, total_steps=5,
         content="Определяю структуру документа и нужные разделы…"
     ))
+
+    tc = (state.get("template_context") or "").strip()
+    if tc:
+        sections = _headings_from_template(tc)
+        doc_type = state.get("title") or "Процессуальный документ"
+        qbase = state["query"][:300] if state.get("query") else ""
+        queries = {s: f"{s} {doc_type} {qbase}" for s in sections}
+        logger.info(f"[DraftGraph] plan: using template skeleton, sections={sections}")
+        return {
+            **state,
+            "document_type": doc_type,
+            "sections": sections,
+            "section_queries": queries,
+            "gathered": {},
+            "gaps": list(sections),
+            "coverage_score": 0.0,
+            "iterations": 0,
+        }
 
     prompt = f"""Ты помощник юриста. Пользователь хочет составить документ:
 
@@ -262,6 +295,11 @@ gaps: список разделов/аспектов которых всё ещ�
 
     logger.info(f"[DraftGraph] evaluate: score={score:.2f}, gaps={gaps}, comment={comment}")
 
+    if (state.get("template_context") or "").strip():
+        # С фиксированным шаблоном не крутим лишние итерации RAG — хватает данных из дела + [ЗАПОЛНИТЬ]
+        score = max(float(score), 0.78)
+        gaps = []
+
     return {**state, "coverage_score": score, "gaps": gaps}
 
 
@@ -334,8 +372,25 @@ async def generate_node(state: DraftState, queue: asyncio.Queue) -> DraftState:
     context_text = "\n\n".join(context_parts) if context_parts else "(данные из документов не найдены)"
 
     template_part = ""
-    if state.get("template_context"):
-        template_part = f"\n\nШАБЛОН (используй как основу структуры):\n{state['template_context'][:4000]}"
+    tpl = (state.get("template_context") or "").strip()
+    has_template = bool(tpl)
+    if has_template:
+        template_part = (
+            f"\n\nОБЯЗАТЕЛЬНЫЙ ШАБЛОН (сохрани порядок разделов и заголовки; "
+            f"замени плейсхолдеры в квадратных скобках на факты из дела или [ЗАПОЛНИТЬ]):\n"
+            f"{tpl[:MAX_TEMPLATE_IN_PROMPT]}"
+        )
+
+    instr_template = ""
+    if has_template:
+        instr_template = (
+            "- Не выдумывай новую структуру: следуй шаблону выше (заголовки разделов как в шаблоне).\n"
+            "- Подставляй данные из «ДАННЫЕ ИЗ ДОКУМЕНТОВ ДЕЛА»; недостающее — [ЗАПОЛНИТЬ].\n"
+        )
+    else:
+        instr_template = (
+            "- Структура: все стандартные разделы для данного типа документа.\n"
+        )
 
     prompt = f"""Составь профессиональный юридический документ.
 
@@ -351,7 +406,7 @@ async def generate_node(state: DraftState, queue: asyncio.Queue) -> DraftState:
 - Создай полноценный документ в формате HTML
 - Используй реальные данные из раздела «ДАННЫЕ ИЗ ДОКУМЕНТОВ ДЕЛА» (имена, реквизиты, суммы, сроки)
 - Если конкретного значения нет — пиши [ЗАПОЛНИТЬ]
-- Структура: все стандартные разделы для данного типа документа
+{instr_template}
 - Форматирование: h1, h2, p, ul, li, table где нужно
 - Отвечай ТОЛЬКО HTML-кодом, без markdown-обёрток и комментариев"""
 

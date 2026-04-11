@@ -380,6 +380,7 @@ async def assistant_chat(
         template_file_id = body.get("template_file_id")
         # Template file content for draft mode (optional) - для локальных файлов
         template_file_content = body.get("template_file_content")
+        template_system_id = body.get("template_system_id")
         
         # Attached file IDs for regular messages (optional) - для явного указания файлов
         attached_file_ids = body.get("attached_file_ids")
@@ -415,7 +416,10 @@ async def assistant_chat(
                 document_context=document_context,
                 document_id=document_id,
                 selected_text=selected_text,
-                editor_mode_hint=editor_mode_hint
+                editor_mode_hint=editor_mode_hint,
+                template_system_id=template_system_id,
+                template_file_id=template_file_id,
+                template_file_content=template_file_content,
             ),
             media_type="text/event-stream",
             headers={
