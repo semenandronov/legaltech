@@ -13,11 +13,11 @@ RUN apt-get update && apt-get install -y \
     curl \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy requirements first for caching
-COPY requirements.txt .
+# Только ядро (без Docling/PyTorch) — быстрее сборка образа LangGraph
+COPY requirements-core.txt .
 
 # Install Python dependencies
-RUN pip install --no-cache-dir -r requirements.txt
+RUN pip install --no-cache-dir -r requirements-core.txt
 
 # Install LangGraph CLI
 RUN pip install --no-cache-dir langgraph-cli

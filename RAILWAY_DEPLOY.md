@@ -15,7 +15,7 @@ Railway автоматически обнаружит `Dockerfile` в корне
 1. Откройте настройки вашего сервиса в Railway
 2. Установите **Root Directory** на `backend/`
 3. Обновите команды сборки и запуска:
-   - Build Command: `pip install --upgrade pip && pip install -r requirements.txt && cd ../frontend && npm install --legacy-peer-deps && npm run type-check && npm run build`
+   - Build Command: `pip install --upgrade pip && pip install -r requirements-core.txt && cd ../frontend && npm install --legacy-peer-deps && npm run type-check && npm run build`
    - Start Command: `uvicorn app.main:app --host 0.0.0.0 --port $PORT`
 
 ### Решение 3: Использовать nixpacks.toml

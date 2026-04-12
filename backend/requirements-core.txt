@@ -1,0 +1,44 @@
+# Ядро приложения: API, БД, LangChain/LangGraph, конвертеры без PyTorch/Docling.
+# Установка: pip install -r requirements-core.txt
+# (быстрый деплой; PDF в редакторе — через pypdf; PPTX — fallback без markitdown)
+#
+# Полный стек с Docling + markitdown: pip install -r requirements.txt
+
+fastapi==0.115.0
+uvicorn[standard]==0.32.0
+python-multipart==0.0.12
+sqlalchemy==2.0.36
+openai==2.30.0
+python-dotenv==1.0.1
+pypdf==4.3.1
+aiofiles==24.1.0
+pymupdf>=1.24.0
+pydantic==2.9.2
+email-validator==2.3.0
+psycopg2-binary>=2.9.11,<3
+psycopg[binary]>=3.1.0
+openpyxl==3.1.5
+python-jose[cryptography]==3.5.0
+passlib[bcrypt]==1.7.4
+bcrypt==5.0.0
+langchain==1.2.15
+langchain-openai==1.1.12
+langchain-community==0.4.1
+langchain-core==1.2.26
+langchain-classic==1.0.0
+langgraph==1.1.6
+langgraph-checkpoint-postgres==3.0.5
+pgvector==0.3.4
+python-dateutil>=2.8.2
+python-docx==1.2.0
+reportlab==4.4.6
+jsonlines>=4.0.0
+yandex-cloud-ml-sdk==0.17.1
+yandexcloud>=0.359.0
+requests>=2.32.5
+gigachat>=0.1.37
+rank-bm25>=0.2.2
+beautifulsoup4>=4.12.0
+mammoth==1.7.0
+markdown==3.7
+Pillow>=10.0.0

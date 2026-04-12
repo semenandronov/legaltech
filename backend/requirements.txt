@@ -1,68 +1,10 @@
-# Docling тянет PyTorch. Без CPU-индекса pip на Linux ставит CUDA-сборку + nvidia_* (~1GB+), сборка на App Platform таймаутится.
-# Официально для Linux CPU: https://docling-project.github.io/docling/getting_started/installation/
+# Полная установка (локальная разработка, максимальное качество PDF/PPTX).
+# Docling тянет PyTorch. Без CPU-индекса pip на Linux может взять CUDA-сборку.
+# Официально: https://docling-project.github.io/docling/getting_started/installation/
+#
+# Быстрый production / CI без таймаутов pip:
+#   pip install -r backend/requirements-core.txt
+#
 --extra-index-url https://download.pytorch.org/whl/cpu
-
-fastapi==0.115.0
-uvicorn[standard]==0.32.0
-python-multipart==0.0.12
-sqlalchemy==2.0.36
-openai==2.30.0
-python-dotenv==1.0.1
-pypdf==4.3.1
-# Docling: структурированный разбор PDF/DOCX для RAG/LLM (https://github.com/docling-project/docling)
-# extras: docling[easyocr] и т.д. — для тяжёлого OCR сканов при необходимости
-docling>=2.10.0
-pymupdf>=1.24.0  # PDF по страницам: OCR сканов (Tesseract / Yandex Vision чанки)
-aiofiles==24.1.0
-pydantic==2.9.2
-email-validator==2.3.0
-# >=2.9.11: лучше покрытие готовых wheels (cp312/macOS arm64), без сборки через pg_config
-psycopg2-binary>=2.9.11,<3
-psycopg[binary]>=3.1.0  # Required for langgraph-checkpoint-postgres
-openpyxl==3.1.5
-python-jose[cryptography]==3.5.0
-passlib[bcrypt]==1.7.4
-bcrypt==5.0.0
-langchain==1.2.15
-langchain-openai==1.1.12
-langchain-community==0.4.1
-langchain-core==1.2.26
-langchain-classic==1.0.0
-# langchain-postgres temporarily removed due to incompatibility with langchain-core 1.2.2
-# Will use direct pgvector approach via SQLAlchemy
-# langchain-postgres==0.0.16  # Requires langchain-core<0.3, incompatible with 1.2.2
-langgraph==1.1.6
-langgraph-checkpoint-postgres==3.0.5
-pgvector==0.3.4  # PostgreSQL vector extension Python bindings
-# unstructured removed — pulled in spacy, onnxruntime, numba, llvmlite (huge ML stack, 8+ min pip install)
-# DOCX loading fallback: python-docx (primary) → mammoth (fallback), both already in requirements
-# langdetect removed — not directly used in codebase
-# chromadb removed — not used in codebase
-python-dateutil>=2.8.2  # Used in date_validator.py (was transitive dep of removed packages)
-python-docx==1.2.0
-reportlab==4.4.6
-jsonlines>=4.0.0
-# Yandex Cloud services
-yandex-cloud-ml-sdk==0.17.1  # Официальный SDK для YandexGPT и Embeddings
-yandexcloud>=0.359.0  # Обновлено для совместимости с yandex-cloud-ml-sdk (требует >=0.359.0)
-requests>=2.32.5  # Обновлено для совместимости с langchain-community
-
-# GigaChat (Сбер) - используем кастомный wrapper (совместим с langchain-core 1.2.2)
-# langchain-gigachat требует langchain-core<0.4, что несовместимо с нашими версиями
-gigachat>=0.1.37  # Официальный SDK для GigaChat с поддержкой functions (используется в нашем кастомном wrapper)
-# langchain-gigachat>=0.1.0  # Несовместим с langchain-core==1.2.2, используем кастомный wrapper
-
-# LexNLP удален - используется только regex для русского языка
-
-# BM25 - алгоритм для sparse search (hybrid search)
-rank-bm25>=0.2.2
-
-# HTML parsing для ГАРАНТ API
-beautifulsoup4>=4.12.0
-
-# Document conversion to HTML
-mammoth==1.7.0  # DOCX to HTML converter
-markitdown>=0.0.1a0  # Universal document converter (PDF, DOCX, PPTX, XLSX)
-markdown==3.7  # Markdown to HTML converter
-Pillow>=10.0.0  # Image normalization to PNG/JPEG before Yandex OCR
-
+-r requirements-core.txt
+-r requirements-heavy.txt

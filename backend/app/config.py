@@ -4,6 +4,7 @@ import logging
 import sys
 import json
 from datetime import datetime
+from pathlib import Path
 from typing import List, Optional
 from dotenv import load_dotenv
 
@@ -30,7 +31,9 @@ try:
 except: pass
 # #endregion
 
-load_dotenv()
+_PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
+load_dotenv(_PROJECT_ROOT / ".env")
+load_dotenv()  # CWD (например backend/.env) переопределяет корень
 
 # #region agent log
 try:

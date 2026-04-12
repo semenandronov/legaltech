@@ -1,0 +1,5 @@
+# Тяжёлые конвертеры: Docling (PyTorch, pandas, lxml, docling-parse…) + markitdown.
+# Подключаются через requirements.txt; для production обычно не нужны.
+
+docling>=2.10.0
+markitdown>=0.0.1a0

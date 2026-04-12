@@ -16,8 +16,7 @@ REQUIRED_PACKAGES = {
     "uvicorn": ">=0.32.0",
     "sqlalchemy": ">=2.0.36",
     "pydantic": ">=2.9.2",
-    "psycopg2-binary": ">=2.9.10",
-    "chromadb": ">=0.4.0",
+    "psycopg2-binary": ">=2.9.11",
     "openai": ">=1.0.0",
 }
 
@@ -80,7 +79,8 @@ def main():
     else:
         print("❌ Некоторые зависимости отсутствуют или имеют проблемы")
         print("\nУстановите недостающие пакеты:")
-        print("pip install -r backend/requirements.txt")
+        print("pip install -r backend/requirements-core.txt")
+        print("(полный стек с Docling: pip install -r backend/requirements.txt)")
         return 1
 
 

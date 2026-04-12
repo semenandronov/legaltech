@@ -9,12 +9,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends curl fonts-deja
 
 WORKDIR /app
 
-# Install Python dependencies
-# Сначала CPU-only torch/torchvision с индекса PyTorch — иначе pip возьмёт CUDA-колёса с PyPI (тяжёлый стек).
-COPY backend/requirements.txt /app/backend/requirements.txt
+# Python: только requirements-core (без Docling/PyTorch — быстрее сборка образа).
+# Полный стек: скопировать requirements.txt + requirements-heavy.txt и поставить -r requirements.txt
+COPY backend/requirements-core.txt /app/backend/requirements-core.txt
 RUN pip install --upgrade pip && \
-    pip install --no-cache-dir torch torchvision --index-url https://download.pytorch.org/whl/cpu
-RUN pip install --no-cache-dir -r backend/requirements.txt
+    pip install --no-cache-dir -r backend/requirements-core.txt
 
 # Build frontend
 # --mount=type=cache keeps npm cache between builds → only changed packages are re-downloaded

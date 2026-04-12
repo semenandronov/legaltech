@@ -1,0 +1,5 @@
+# Production / деплой: только ядро (без Docling, markitdown, PyTorch).
+# PDF → HTML в редакторе использует pypdf; при необходимости Docling ставьте отдельно:
+#   pip install -r backend/requirements-heavy.txt
+# (предварительно с --extra-index-url для CPU torch, см. requirements.txt).
+-r requirements-core.txt

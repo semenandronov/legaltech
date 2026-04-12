@@ -62,8 +62,11 @@ cp .env.example .env
 python3 -m venv venv
 source venv/bin/activate  # Windows: venv\Scripts\activate
 
-# Установить зависимости
+# Установить зависимости (полный стек: Docling/markitdown + PyTorch CPU — долго, но лучше PDF/PPTX)
 pip install -r backend/requirements.txt
+
+# Или только ядро без тяжёлых пакетов (быстрее; PDF в редакторе через pypdf):
+# pip install -r backend/requirements-core.txt
 ```
 
 4. **Frontend установка**
@@ -107,7 +110,10 @@ legaltech/
 │   │   ├── services/ # Бизнес-логика
 │   │   ├── core/     # Ядро (auth, logging, errors)
 │   │   └── utils/    # Утилиты
-│   ├── requirements.txt
+│   ├── requirements.txt          # core + heavy (Docling); для prod см. requirements-core.txt
+│   ├── requirements-core.txt
+│   ├── requirements-heavy.txt
+│   ├── requirements-production.txt
 │   └── langgraph.json
 ├── frontend/          # React приложение
 │   ├── src/
@@ -635,6 +641,8 @@ MAX_PARALLEL_LLM_CALLS="8"
    - Multi-stage build
    - Python 3.12 + Node.js 20
    - Production-ready
+
+**Зависимости pip:** для деплоя используйте `pip install -r backend/requirements-core.txt` (ядро без Docling/markitdown и без PyTorch — быстрее и без таймаутов). Полная локальная установка с улучшенным PDF: `requirements.txt`.
 
 ### Чеклист для production
 

@@ -1,0 +1,21 @@
+# Локальная PostgreSQL с расширением pgvector (совпадает с .env.example: user/password, БД legal_ai)
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: legal-ai-vault-db
+    environment:
+      POSTGRES_USER: user
+      POSTGRES_PASSWORD: password
+      POSTGRES_DB: legal_ai
+    ports:
+      - "5432:5432"
+    volumes:
+      - legal_ai_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U user -d legal_ai"]
+      interval: 5s
+      timeout: 5s
+      retries: 8
+
+volumes:
+  legal_ai_pgdata:
