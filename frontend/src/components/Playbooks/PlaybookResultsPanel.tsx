@@ -291,7 +291,7 @@ export const PlaybookResultsPanel = ({
           <div className="h-full flex flex-col items-center justify-center px-4 text-center">
             {isChecking ? (
               <>
-                <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600 mb-3" />
+                <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary mb-3" />
                 <p className="text-sm" style={{ color: 'var(--color-text-secondary)' }}>
                   Идёт проверка документа по playbook…
                 </p>
@@ -642,7 +642,7 @@ export const PlaybookResultsPanel = ({
           <ul className="space-y-1.5">
             {result.recommendations.slice(0, 3).map((rec, idx) => (
               <li key={idx} className="flex items-start gap-2 text-xs" style={{ color: 'var(--color-text-secondary)' }}>
-                <span className="text-blue-500">•</span>
+                <span className="text-accent-muted">•</span>
                 {rec}
               </li>
             ))}

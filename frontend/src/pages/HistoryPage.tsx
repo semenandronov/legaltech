@@ -1,12 +1,13 @@
 import { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { FolderOpen, MessageSquare, Table2, Clock, Bot } from 'lucide-react'
+import { FolderOpen, MessageSquare, Table2, Clock, Bot, Workflow } from 'lucide-react'
 import UnifiedSidebar from '../components/Layout/UnifiedSidebar'
 import { getRecentActivity, RecentActivityItem } from '../services/api'
 
 const navItems = [
   { id: 'cases', label: 'Дела', icon: FolderOpen, path: '/cases' },
   { id: 'assistant', label: 'Ассистент', icon: MessageSquare, path: '/assistant' },
+  { id: 'workflows', label: 'Workflows', icon: Workflow, path: '/workflows' },
   { id: 'history', label: 'История', icon: Clock, path: '/history' },
 ]
 

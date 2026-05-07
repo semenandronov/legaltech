@@ -52,7 +52,7 @@ const CATEGORY_LABELS = {
 }
 
 const CATEGORY_COLORS = {
-  vault: 'bg-blue-500/10 text-blue-600 border-blue-500/20',
+  vault: 'bg-secondary0/10 text-accent-muted border-primary/20',
   web: 'bg-green-500/10 text-green-600 border-green-500/20',
   legal: 'bg-purple-500/10 text-purple-600 border-purple-500/20',
   custom: 'bg-orange-500/10 text-orange-600 border-orange-500/20',

@@ -1,9 +1,12 @@
 """Utility for setting up PostgreSQL checkpointer tables with connection pooling"""
+import asyncio
 from contextlib import contextmanager
-from typing import Optional
+from typing import Any, Optional
+
 from langgraph.checkpoint.postgres import PostgresSaver
 from langgraph.checkpoint.memory import MemorySaver
 from app.config import config
+from app.utils.postgres_dsn import canonicalize_postgres_dsn
 import logging
 from sqlalchemy import create_engine
 from sqlalchemy.pool import QueuePool
@@ -16,6 +19,11 @@ _checkpointer_setup_done = False
 # Global checkpointer instance for reuse (connection pooling)
 _global_checkpointer: Optional[PostgresSaver] = None
 
+# LangGraph graph.astream / ainvoke require async checkpointer (aget_tuple). Sync PostgresSaver does not.
+_global_async_checkpointer: Optional[Any] = None
+_global_async_pool: Optional[Any] = None
+_async_checkpointer_init_lock: Optional[asyncio.Lock] = None
+
 
 def _create_checkpointer_with_pooling():
     """
@@ -27,11 +35,7 @@ def _create_checkpointer_with_pooling():
     from langgraph.checkpoint.postgres import PostgresSaver
     
     # Convert DATABASE_URL to format required by PostgresSaver
-    db_url = config.DATABASE_URL
-    if db_url.startswith("postgresql+psycopg://"):
-        db_url = db_url.replace("postgresql+psycopg://", "postgresql://", 1)
-    elif db_url.startswith("postgresql+psycopg2://"):
-        db_url = db_url.replace("postgresql+psycopg2://", "postgresql://", 1)
+    db_url = canonicalize_postgres_dsn(config.DATABASE_URL).dsn
     
     # Настройка connection pooling через переменные окружения
     # PostgresSaver использует asyncpg, который читает ASYNCPG_POOL_MAX_SIZE
@@ -267,6 +271,83 @@ def setup_checkpointer():
     except Exception as e:
         logger.error(f"Failed to setup PostgreSQL checkpointer: {e}", exc_info=True)
         return False
+
+
+def _async_checkpointer_lock() -> asyncio.Lock:
+    global _async_checkpointer_init_lock
+    if _async_checkpointer_init_lock is None:
+        _async_checkpointer_init_lock = asyncio.Lock()
+    return _async_checkpointer_init_lock
+
+
+async def get_async_postgres_checkpointer() -> Any:
+    """
+    Singleton AsyncPostgresSaver for LangGraph async APIs (astream, ainvoke).
+
+    Sync ``PostgresSaver`` from ``langgraph.checkpoint.postgres`` does not implement
+    ``aget_tuple``; using it with ``graph.astream`` raises NotImplementedError.
+    """
+    global _global_async_checkpointer, _global_async_pool
+
+    if _global_async_checkpointer is not None:
+        return _global_async_checkpointer
+
+    async with _async_checkpointer_lock():
+        if _global_async_checkpointer is not None:
+            return _global_async_checkpointer
+
+        from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
+        from psycopg.rows import dict_row
+        from psycopg_pool import AsyncConnectionPool
+
+        db_url = canonicalize_postgres_dsn(config.DATABASE_URL).dsn
+
+        pool_max = config.LANGGRAPH_POSTGRES_POOL_MAX_SIZE
+        # Match app.utils.database TCP keepalives — serverless/Neon often closes idle TCP
+        # without them; LangGraph then reads a dead socket ("server closed the connection").
+        pool = AsyncConnectionPool(
+            conninfo=db_url,
+            kwargs={
+                "autocommit": True,
+                "prepare_threshold": 0,
+                "row_factory": dict_row,
+                "connect_timeout": 15,
+                "keepalives": 1,
+                "keepalives_idle": 30,
+                "keepalives_interval": 10,
+                "keepalives_count": 3,
+            },
+            min_size=1,
+            max_size=pool_max,
+            check=AsyncConnectionPool.check_connection,
+            open=False,
+        )
+        await pool.open(wait=True, timeout=60.0)
+        saver = AsyncPostgresSaver(conn=pool)
+        await saver.setup()
+        _global_async_pool = pool
+        _global_async_checkpointer = saver
+        logger.info("AsyncPostgresSaver initialized for LangGraph async execution (pool max_size=%s)", pool_max)
+        return _global_async_checkpointer
+
+
+async def reset_async_postgres_checkpointer() -> None:
+    """Close the singleton async checkpoint pool so the next call creates a fresh one.
+
+    Use after ``psycopg.OperationalError`` from checkpoint I/O or when connections go stale.
+    """
+    global _global_async_checkpointer, _global_async_pool
+
+    async with _async_checkpointer_lock():
+        pool = _global_async_pool
+        _global_async_pool = None
+        _global_async_checkpointer = None
+
+    if pool is not None:
+        try:
+            await pool.close()
+        except Exception as exc:
+            logger.warning("reset_async_postgres_checkpointer: pool.close failed: %s", exc)
 
 
 if __name__ == "__main__":

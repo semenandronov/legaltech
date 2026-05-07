@@ -91,6 +91,9 @@ from app.services.langchain_agents.legacy_stubs import (
     AnalysisState,
 )
 
+# Planning Agent для /api/chat/task
+from app.services.langchain_agents.planning_agent import PlanningAgent
+
 # Utils
 from app.services.langchain_agents.utils.reducers import (
     merge_dicts_reducer,
@@ -150,7 +153,6 @@ from app.services.langchain_agents.assistants import (
 # Subgraphs
 from app.services.langchain_agents.graphs.subgraphs import (
     create_rag_retrieval_subgraph,
-    create_garant_retrieval_subgraph,
     create_thinking_subgraph,
     create_file_extraction_subgraph,
 )
@@ -185,6 +187,9 @@ __all__ = [
     # Legacy для обратной совместимости
     "AgentCoordinator",
     "AnalysisState",
+
+    # Planning
+    "PlanningAgent",
     
     # Utils - Reducers
     "merge_dicts_reducer",

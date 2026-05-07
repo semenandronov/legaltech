@@ -27,7 +27,7 @@ export const AgentStepsView: React.FC<AgentStepsViewProps> = ({ steps, isStreami
       case 'completed':
         return <CheckCircle2 className="w-5 h-5 text-green-600" />
       case 'running':
-        return <Loader2 className="w-5 h-5 text-blue-600 animate-spin" />
+        return <Loader2 className="w-5 h-5 text-accent-muted animate-spin" />
       case 'error':
         return <AlertCircle className="w-5 h-5 text-red-600" />
       case 'pending':
@@ -41,7 +41,7 @@ export const AgentStepsView: React.FC<AgentStepsViewProps> = ({ steps, isStreami
       case 'completed':
         return 'border-green-200 bg-green-50'
       case 'running':
-        return 'border-blue-200 bg-blue-50'
+        return 'border-border bg-secondary'
       case 'error':
         return 'border-red-200 bg-red-50'
       case 'pending':

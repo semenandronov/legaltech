@@ -11,7 +11,7 @@ Reflection Service - Сервис самопроверки ответов аге
 3. Если есть проблемы — возвращает критику для улучшения
 4. Выдаёт confidence score
 
-Используется в ReActChatAgent для повышения качества ответов на 30-40%.
+Используется в quality pipeline ассистента для повышения качества ответов.
 """
 from typing import Dict, Any, List, Optional, Tuple
 from dataclasses import dataclass
@@ -207,13 +207,14 @@ class ReflectionService:
     
     def _create_llm(self):
         """Создать LLM для рефлексии"""
-        from app.config import config
-        
+        from app.services.llm_factory import legal_deep_extra_kwargs
+
         if self.deep_think:
-            model = config.GIGACHAT_PRO_MODEL or "GigaChat-Pro"
-            return create_legal_llm(model=model, temperature=0.1)
-        else:
-            return create_legal_llm(temperature=0.1)
+            return create_legal_llm(
+                temperature=0.1,
+                **legal_deep_extra_kwargs(),
+            )
+        return create_legal_llm(temperature=0.1)
     
     async def reflect(
         self,

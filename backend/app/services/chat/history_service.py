@@ -10,7 +10,7 @@ Chat History Service - Управление историей чата
 from typing import List, Optional, Dict, Any
 from sqlalchemy.orm import Session
 from sqlalchemy import func, desc
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 import uuid
 import logging
 
@@ -63,7 +63,14 @@ class ChatHistoryService:
             ).order_by(ChatMessage.created_at.desc()).first()
             
             if last_message and last_message.created_at:
-                time_diff = datetime.utcnow() - last_message.created_at
+                now_utc = datetime.now(timezone.utc)
+                last_created = last_message.created_at
+                if last_created.tzinfo is None:
+                    # Legacy rows are stored as naive UTC timestamps.
+                    last_created = last_created.replace(tzinfo=timezone.utc)
+                else:
+                    last_created = last_created.astimezone(timezone.utc)
+                time_diff = now_utc - last_created
                 if time_diff < timedelta(minutes=self.SESSION_TIMEOUT_MINUTES):
                     if last_message.session_id:
                         logger.debug(f"Continuing session {last_message.session_id} for case {case_id}")
@@ -138,6 +145,7 @@ class ChatHistoryService:
             role="assistant",
             content="",
             source_references=None,
+            reasoning_steps=None,
             session_id=session_id
         )
         
@@ -151,7 +159,8 @@ class ChatHistoryService:
         self,
         message_id: str,
         content: str,
-        source_references: Optional[List[Dict[str, Any]]] = None
+        source_references: Optional[Any] = None,
+        reasoning_steps: Optional[List[Dict[str, Any]]] = None,
     ) -> bool:
         """
         Обновить сообщение ассистента (после streaming)
@@ -160,6 +169,7 @@ class ChatHistoryService:
             message_id: ID сообщения
             content: Полный текст ответа
             source_references: Источники (опционально)
+            reasoning_steps: Сохранённые шаги reasoning (SSE), опционально
             
         Returns:
             True если успешно, False если сообщение не найдено
@@ -176,6 +186,8 @@ class ChatHistoryService:
             message.content = content
             if source_references:
                 message.source_references = source_references
+            if reasoning_steps is not None:
+                message.reasoning_steps = reasoning_steps if reasoning_steps else None
             
             self.db.commit()
             logger.debug(f"Updated assistant message {message_id}")
@@ -212,6 +224,7 @@ class ChatHistoryService:
             role="assistant",
             content=content,
             source_references=source_references,
+            reasoning_steps=None,
             session_id=session_id
         )
         
@@ -328,43 +341,57 @@ class ChatHistoryService:
             ChatMessage.session_id.isnot(None)
         ).group_by(ChatMessage.session_id).order_by(desc('last_message_at')).all()
         
+        if not sessions_query:
+            return []
+
+        session_ids = [row.session_id for row in sessions_query if row.session_id]
+        message_rows = self.db.query(
+            ChatMessage.session_id,
+            ChatMessage.content,
+            ChatMessage.created_at,
+        ).filter(
+            ChatMessage.case_id == case_id,
+            ChatMessage.session_id.in_(session_ids),
+            ChatMessage.content.isnot(None),
+            ChatMessage.content != "",
+        ).order_by(
+            ChatMessage.session_id.asc(),
+            ChatMessage.created_at.asc(),
+        ).all()
+
+        previews: Dict[str, Dict[str, Any]] = {}
+        for row in message_rows:
+            sid = row.session_id
+            if not sid:
+                continue
+            content = row.content or ""
+            if sid not in previews:
+                previews[sid] = {
+                    "first_content": content,
+                    "first_created_at": row.created_at,
+                    "last_content": content,
+                    "last_created_at": row.created_at,
+                }
+            else:
+                previews[sid]["last_content"] = content
+                previews[sid]["last_created_at"] = row.created_at
+
         sessions = []
         for session_row in sessions_query:
             session_id = session_row.session_id
-            
-            # Получаем первое и последнее сообщение для превью
-            first_message = self.db.query(ChatMessage).filter(
-                ChatMessage.case_id == case_id,
-                ChatMessage.session_id == session_id,
-                ChatMessage.content.isnot(None),
-                ChatMessage.content != ""
-            ).order_by(ChatMessage.created_at.asc()).first()
-            
-            last_message = self.db.query(ChatMessage).filter(
-                ChatMessage.case_id == case_id,
-                ChatMessage.session_id == session_id,
-                ChatMessage.content.isnot(None),
-                ChatMessage.content != ""
-            ).order_by(ChatMessage.created_at.desc()).first()
-            
-            first_preview = ""
-            if first_message and first_message.content:
-                first_preview = first_message.content[:100]
-                if len(first_message.content) > 100:
-                    first_preview += "…"
-            
-            last_preview = ""
-            if last_message and last_message.content:
-                last_preview = last_message.content[:100]
-                if len(last_message.content) > 100:
-                    last_preview += "…"
-            
+            preview = previews.get(session_id or "", {})
+            first_content = str(preview.get("first_content") or "")
+            last_content = str(preview.get("last_content") or "")
+            first_preview = f"{first_content[:100]}…" if len(first_content) > 100 else first_content
+            last_preview = f"{last_content[:100]}…" if len(last_content) > 100 else last_content
+            first_created_at = preview.get("first_created_at")
+            last_created_at = preview.get("last_created_at")
             sessions.append({
                 "session_id": session_id,
                 "first_message": first_preview,
                 "last_message": last_preview,
-                "first_message_at": first_message.created_at.isoformat() if first_message and first_message.created_at else None,
-                "last_message_at": last_message.created_at.isoformat() if last_message and last_message.created_at else None,
+                "first_message_at": first_created_at.isoformat() if first_created_at else None,
+                "last_message_at": last_created_at.isoformat() if last_created_at else None,
                 "message_count": session_row.message_count
             })
         

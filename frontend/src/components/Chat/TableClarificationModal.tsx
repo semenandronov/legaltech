@@ -195,7 +195,7 @@ export const TableClarificationModal: React.FC<TableClarificationModalProps> = (
             <Button
               onClick={handleSubmit}
               disabled={isSubmitting || (selectedDocTypes.length === 0 && !columnsClarification.trim())}
-              className="bg-blue-600 hover:bg-blue-700"
+              className="bg-primary hover:opacity-90 text-primary-foreground"
             >
               {isSubmitting ? (
                 <>

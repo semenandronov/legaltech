@@ -251,9 +251,10 @@ def get_reranker_service() -> RerankerService:
     if _reranker is None:
         # Check for Cohere API key
         cohere_key = getattr(config, 'COHERE_API_KEY', None)
+        model_name = getattr(config, "RERANKER_MODEL_NAME", "") or "cross-encoder/ms-marco-MiniLM-L-6-v2"
         
         _reranker = RerankerService(
-            model_name="cross-encoder/ms-marco-MiniLM-L-6-v2",
+            model_name=model_name,
             use_cohere=bool(cohere_key),
             cohere_api_key=cohere_key
         )

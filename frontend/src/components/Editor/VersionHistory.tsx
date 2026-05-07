@@ -91,7 +91,7 @@ export const VersionHistory: React.FC<VersionHistoryProps> = ({
           <ScrollArea className="max-h-[60vh]">
             {loading ? (
               <div className="flex items-center justify-center py-8">
-                <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
+                <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary"></div>
               </div>
             ) : versions.length === 0 ? (
               <div className="text-center py-8 text-muted-foreground">
@@ -104,7 +104,7 @@ export const VersionHistory: React.FC<VersionHistoryProps> = ({
                     key={version.id}
                     className={`${
                       version.version === currentVersion
-                        ? 'border-blue-500 bg-blue-50'
+                        ? 'border-primary bg-secondary'
                         : ''
                     }`}
                   >
@@ -114,7 +114,7 @@ export const VersionHistory: React.FC<VersionHistoryProps> = ({
                           <div className="flex items-center gap-2 mb-1">
                             <span className="font-semibold">Версия {version.version}</span>
                             {version.version === currentVersion && (
-                              <span className="text-xs bg-blue-100 text-blue-700 px-2 py-0.5 rounded">
+                              <span className="text-xs bg-muted text-foreground px-2 py-0.5 rounded">
                                 Текущая
                               </span>
                             )}

@@ -99,7 +99,7 @@ export function ResponseSources({ sources, className, onSourceClick }: ResponseS
               href={href}
               target="_blank"
               rel="noopener noreferrer"
-              className="inline-flex items-center gap-1.5 px-2.5 py-1 text-xs font-medium bg-blue-50 text-blue-700 rounded-md hover:bg-blue-100 transition-colors cursor-pointer"
+              className="inline-flex items-center gap-1.5 px-2.5 py-1 text-xs font-medium bg-secondary text-foreground rounded-md hover:bg-muted transition-colors cursor-pointer"
               onClick={(e) => {
                 if (onSourceClick && source.file) {
                   e.preventDefault()
@@ -109,7 +109,7 @@ export function ResponseSources({ sources, className, onSourceClick }: ResponseS
             >
               <span>{displayText}</span>
               {source.page && (
-                <span className="text-blue-500">• стр. {source.page}</span>
+                <span className="text-accent-muted">• стр. {source.page}</span>
               )}
             </a>
           )

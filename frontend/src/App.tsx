@@ -1,7 +1,7 @@
 import { lazy, Suspense } from 'react'
-import { Routes, Route, Navigate, useParams } from 'react-router-dom'
+import { Routes, Route, Navigate, useParams, useSearchParams } from 'react-router-dom'
 import { Box, CircularProgress } from '@mui/material'
-import { MessageSquare, FileEdit, BookOpen, Workflow } from 'lucide-react'
+import { MessageSquare, FileEdit, BookOpen, Workflow, Scissors } from 'lucide-react'
 import ProtectedRoute from './components/ProtectedRoute'
 import LoginPage from './pages/LoginPage'
 import RegisterPage from './pages/RegisterPage'
@@ -16,13 +16,28 @@ const AnalysisPage = lazy(() => import('./pages/AnalysisPage'))
 const ReportsPage = lazy(() => import('./pages/ReportsPage'))
 const TabularReviewPage = lazy(() => import('./pages/TabularReviewPage'))
 const DocumentEditorPage = lazy(() => import('./pages/DocumentEditorPage'))
+const CaseWorkflowFilePage = lazy(() => import('./pages/CaseWorkflowFilePage'))
 const PlaybooksPage = lazy(() => import('./pages/PlaybooksPage'))
 const WorkflowsPage = lazy(() => import('./pages/WorkflowsPage'))
 const GlobalAssistantPage = lazy(() => import('./pages/GlobalAssistantPage'))
+const LegalCorpusManagePage = lazy(() => import('./pages/LegalCorpusManagePage'))
+const DraftTemplatesAdminPage = lazy(() => import('./pages/DraftTemplatesAdminPage'))
 const CaseOverviewPage = lazy(() => import('./pages/CaseOverviewPage'))
 const HistoryPage = lazy(() => import('./pages/HistoryPage'))
+const ChunkPreviewPage = lazy(() => import('./pages/ChunkPreviewPage'))
+const ChunkLabPage = lazy(() => import('./pages/ChunkLabPage'))
 
 // Loading fallback
+/** Старые ссылки /editor/case-file/... → стабильный маршрут черновика workflow */
+function WorkflowCaseFileRedirect() {
+  const { caseId, fileId } = useParams<{ caseId: string; fileId: string }>()
+  const [searchParams] = useSearchParams()
+  const returnTo = searchParams.get('returnTo')
+  const suffix = returnTo ? `?returnTo=${encodeURIComponent(returnTo)}` : ''
+  if (!caseId || !fileId) return <Navigate to="/cases" replace />
+  return <Navigate to={`/cases/${caseId}/workflow-file/${fileId}${suffix}`} replace />
+}
+
 const PageLoader = () => (
   <Box
     sx={{
@@ -80,11 +95,51 @@ function App() {
         }
       />
       <Route
+        path="/workflows"
+        element={
+          <ProtectedRoute>
+            <Suspense fallback={<PageLoader />}>
+              <WorkflowsPage />
+            </Suspense>
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/legal-corpus"
+        element={
+          <ProtectedRoute>
+            <Suspense fallback={<PageLoader />}>
+              <LegalCorpusManagePage />
+            </Suspense>
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/admin/draft-templates"
+        element={
+          <ProtectedRoute>
+            <Suspense fallback={<PageLoader />}>
+              <DraftTemplatesAdminPage />
+            </Suspense>
+          </ProtectedRoute>
+        }
+      />
+      <Route
         path="/cases/new"
         element={
           <ProtectedRoute>
             <Suspense fallback={<PageLoader />}>
               <NewCasePage />
+            </Suspense>
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/chunk-preview"
+        element={
+          <ProtectedRoute>
+            <Suspense fallback={<PageLoader />}>
+              <ChunkPreviewPage />
             </Suspense>
           </ProtectedRoute>
         }
@@ -104,6 +159,16 @@ function App() {
         element={
           <ProtectedRoute>
             <CaseChatPage />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/cases/:caseId/chunk-lab"
+        element={
+          <ProtectedRoute>
+            <Suspense fallback={<PageLoader />}>
+              <ChunkLabPage />
+            </Suspense>
           </ProtectedRoute>
         }
       />
@@ -148,11 +213,29 @@ function App() {
         }
       />
       <Route
+        path="/cases/:caseId/editor/case-file/:fileId"
+        element={
+          <ProtectedRoute>
+            <WorkflowCaseFileRedirect />
+          </ProtectedRoute>
+        }
+      />
+      <Route
         path="/cases/:caseId/editor/:documentId?"
         element={
           <ProtectedRoute>
             <Suspense fallback={<PageLoader />}>
               <DocumentEditorPage />
+            </Suspense>
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/cases/:caseId/workflow-file/:fileId"
+        element={
+          <ProtectedRoute>
+            <Suspense fallback={<PageLoader />}>
+              <CaseWorkflowFilePage />
             </Suspense>
           </ProtectedRoute>
         }
@@ -187,6 +270,7 @@ const CaseChatPage = () => {
 
   const navItems = [
     { id: 'chat', label: 'Ассистент', icon: MessageSquare, path: `/cases/${caseId}/chat` },
+    { id: 'chunk-lab', label: 'Чанки', icon: Scissors, path: `/cases/${caseId}/chunk-lab` },
     { id: 'editor', label: 'Редактор', icon: FileEdit, path: `/cases/${caseId}/editor` },
     { id: 'playbooks', label: 'Playbooks', icon: BookOpen, path: `/cases/${caseId}/playbooks` },
     { id: 'workflows', label: 'Workflows', icon: Workflow, path: `/cases/${caseId}/workflows` },

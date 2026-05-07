@@ -10,7 +10,6 @@ Sub-graphs обеспечивают:
 Доступные sub-graphs:
 - file_extraction: Извлечение данных из одного файла (TabularGraph)
 - rag_retrieval: RAG поиск в документах дела
-- garant_retrieval: Поиск в правовой базе ГАРАНТ
 - thinking: Пошаговое мышление (deep_think)
 
 # ИСПОЛЬЗОВАНИЕ
@@ -47,12 +46,6 @@ from app.services.langchain_agents.graphs.subgraphs.rag_retrieval import (
     create_initial_rag_state,
 )
 
-from app.services.langchain_agents.graphs.subgraphs.garant_retrieval import (
-    GarantRetrievalState,
-    create_garant_retrieval_subgraph,
-    create_initial_garant_state,
-)
-
 from app.services.langchain_agents.graphs.subgraphs.thinking import (
     ThinkingState,
     ThinkingStep,
@@ -69,10 +62,6 @@ __all__ = [
     "RAGRetrievalState",
     "create_rag_retrieval_subgraph",
     "create_initial_rag_state",
-    # GARANT Retrieval
-    "GarantRetrievalState",
-    "create_garant_retrieval_subgraph",
-    "create_initial_garant_state",
     # Thinking
     "ThinkingState",
     "ThinkingStep",

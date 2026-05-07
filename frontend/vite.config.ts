@@ -1,9 +1,14 @@
-import { defineConfig } from 'vite'
+import { defineConfig } from 'vitest/config'
 import react from '@vitejs/plugin-react'
 import path from 'path'
 
 export default defineConfig({
   plugins: [react()],
+  test: {
+    environment: 'node',
+    include: ['src/**/*.test.ts', 'src/**/*.test.tsx'],
+    globals: true,
+  },
   resolve: {
     alias: {
       "@": path.resolve(__dirname, "./src"),
@@ -16,6 +21,21 @@ export default defineConfig({
       '/api': {
         target: 'http://localhost:8000',
         changeOrigin: true,
+        // SSE: не держать ответ в буфере прокси до конца стрима
+        configure: (proxy) => {
+          proxy.on('proxyReq', (proxyReq, req) => {
+            if (req.url?.includes('/stream')) {
+              proxyReq.setHeader('Accept', 'text/event-stream')
+              proxyReq.setHeader('Cache-Control', 'no-cache')
+            }
+          })
+          proxy.on('proxyRes', (proxyRes) => {
+            const ct = proxyRes.headers['content-type']
+            if (ct && String(ct).includes('text/event-stream')) {
+              delete proxyRes.headers['content-length']
+            }
+          })
+        },
       },
     },
   },

@@ -1,0 +1,115 @@
+/* Локальные алиасы страницы глобального ассистента → глобальные design-tokens */
+
+.ga-legora {
+  --ga-font-display: var(--font-display);
+  --ga-font-body: var(--font-body);
+
+  --ga-canvas: var(--color-bg-primary);
+  --ga-surface: var(--color-bg-elevated);
+  --ga-surface-warm: var(--color-bg-secondary);
+  --ga-surface-subtle: var(--color-bg-hover);
+  --ga-surface-muted: var(--color-bg-tertiary);
+
+  --ga-ink: var(--color-text-primary);
+  --ga-ink-2: var(--color-text-secondary);
+  --ga-ink-3: var(--color-text-muted);
+  --ga-ink-4: var(--color-text-disabled);
+
+  --ga-line: var(--color-border);
+  --ga-line-muted: var(--color-border-strong);
+
+  --ga-primary: var(--color-accent);
+  --ga-on-primary: var(--color-on-accent);
+
+  --ga-accent: var(--color-accent-muted);
+  --ga-accent-strong: var(--color-accent);
+  --ga-accent-muted: var(--color-text-muted);
+  --ga-tint: var(--color-bg-hover);
+  --ga-tint-border: var(--color-border-strong);
+
+  --ga-info: var(--color-info);
+  --ga-corpus-ink: #2d3d34;
+  --ga-corpus-icon: #3d5246;
+  --ga-corpus-dot: #4f6658;
+
+  --ga-deep: #3f3d46;
+  --ga-deep-dot: #5a5662;
+
+  font-family: var(--ga-font-body);
+  color: var(--ga-ink);
+  background-color: var(--ga-canvas);
+}
+
+.ga-legora__hero-title {
+  font-family: var(--ga-font-display);
+  font-weight: 400;
+  letter-spacing: -0.02em;
+  text-wrap: balance;
+}
+
+.ga-legora .border-gray-100 {
+  border-color: var(--ga-line) !important;
+}
+.ga-legora .border-gray-50 {
+  border-color: color-mix(in srgb, var(--ga-line) 55%, transparent) !important;
+}
+.ga-legora .border-gray-200 {
+  border-color: var(--ga-line) !important;
+}
+.ga-legora .hover\:border-gray-300:hover {
+  border-color: var(--ga-line-muted) !important;
+}
+
+.ga-legora .bg-white {
+  background-color: var(--ga-surface) !important;
+}
+.ga-legora .bg-gray-50 {
+  background-color: var(--ga-surface-subtle) !important;
+}
+.ga-legora .hover\:bg-gray-50:hover {
+  background-color: var(--ga-surface-subtle) !important;
+}
+.ga-legora .hover\:bg-gray-100:hover {
+  background-color: var(--ga-surface-muted) !important;
+}
+
+.ga-legora .text-gray-400 {
+  color: var(--ga-ink-4) !important;
+}
+.ga-legora .hover\:text-gray-700:hover {
+  color: var(--ga-ink-2) !important;
+}
+.ga-legora .hover\:text-gray-900:hover {
+  color: var(--ga-ink) !important;
+}
+
+.ga-legora .text-white {
+  color: var(--ga-on-primary) !important;
+}
+
+.ga-legora .border-indigo-200 {
+  border-color: var(--ga-tint-border) !important;
+}
+.ga-legora .bg-indigo-50 {
+  background-color: var(--ga-tint) !important;
+}
+.ga-legora .bg-indigo-500 {
+  background-color: var(--ga-accent) !important;
+}
+
+.ga-legora .border-blue-200 {
+  border-color: color-mix(in srgb, var(--ga-info) 30%, var(--ga-line)) !important;
+}
+.ga-legora .bg-blue-50 {
+  background-color: color-mix(in srgb, var(--ga-info) 10%, var(--ga-surface)) !important;
+}
+
+.ga-legora .text-teal-600 {
+  color: var(--ga-corpus-dot) !important;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ga-legora * {
+    transition-duration: 0.01ms !important;
+  }
+}

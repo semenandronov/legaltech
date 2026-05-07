@@ -657,6 +657,11 @@ async def get_cell_details(
             "highlight_mode": highlight_mode,
             "candidates": cell.candidates if cell.candidates else None,
             "conflict_resolution": cell.conflict_resolution if cell.conflict_resolution else None,
+            # Phase 4: Deep link fields for assistant-like highlighting
+            "primary_source_doc_id": getattr(cell, "primary_source_doc_id", None),
+            "primary_source_char_start": getattr(cell, "primary_source_char_start", None),
+            "primary_source_char_end": getattr(cell, "primary_source_char_end", None),
+            "verified_flag": getattr(cell, "verified_flag", None),
         }
     except HTTPException:
         raise

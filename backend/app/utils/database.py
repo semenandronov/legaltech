@@ -2,6 +2,7 @@
 from sqlalchemy import create_engine, text, inspect
 from sqlalchemy.orm import sessionmaker, Session
 from app.config import config
+from app.utils.postgres_dsn import canonicalize_postgres_dsn
 from app.models.case import Base, Case, ChatMessage, File, GlobalAssistantSession, GlobalAssistantMessage  # Import models to register them
 from app.models.user import User, UserSession  # Import user models to register them
 from app.models.analysis import AnalysisResult, Discrepancy, TimelineEvent, DocumentChunk  # Import analysis models to register them
@@ -13,16 +14,30 @@ import logging
 logger = logging.getLogger(__name__)
 
 # Create engine with connection pooling and SSL connection management
-# pool_pre_ping: Verify connections before using (prevents SSL connection closed errors)
-# pool_recycle: Recycle connections after 1 hour (prevents stale connections)
-engine = create_engine(
-    config.DATABASE_URL,
-    echo=False,
-    pool_pre_ping=True,  # Verify connections before using
-    pool_recycle=3600,  # Recycle connections after 1 hour
-    pool_size=5,  # Number of connections to maintain
-    max_overflow=10  # Maximum overflow connections
-)
+# pool_pre_ping: verify before checkout (stale Neon/SSL connections)
+# pool_recycle: Neon/serverless Postgres often closes idle conns; recycle well below typical idle limits
+_engine_kwargs = {
+    "echo": False,
+    "pool_pre_ping": True,
+    "pool_recycle": 180,
+    "pool_size": max(1, config.SQLALCHEMY_POOL_SIZE),
+    "max_overflow": max(0, config.SQLALCHEMY_MAX_OVERFLOW),
+    "pool_timeout": max(1, config.SQLALCHEMY_POOL_TIMEOUT),
+    # Prefer recently used conns; reduces stale idle sockets on serverless Postgres
+    "pool_use_lifo": True,
+}
+# TCP keepalives reduce "SSL connection has been closed unexpectedly" on long-lived requests (e.g. SSE)
+canonical_db_url = canonicalize_postgres_dsn(config.DATABASE_URL).dsn
+if canonical_db_url.startswith("postgresql"):
+    _engine_kwargs["connect_args"] = {
+        "connect_timeout": 15,
+        "keepalives": 1,
+        "keepalives_idle": 30,
+        "keepalives_interval": 10,
+        "keepalives_count": 3,
+    }
+
+engine = create_engine(canonical_db_url, **_engine_kwargs)
 
 # Create session factory
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
@@ -126,6 +141,21 @@ def ensure_schema():
                 )
         except Exception as e:
             logger.warning(f"Could not create index ix_chat_messages_case_id: {e}")
+        
+        # reasoning_steps для истории чата по делу (JSON)
+        try:
+            cols = {c["name"] for c in inspector.get_columns("chat_messages")}
+            if "reasoning_steps" not in cols:
+                with engine.begin() as conn:
+                    conn.execute(
+                        text(
+                            "ALTER TABLE chat_messages "
+                            "ADD COLUMN IF NOT EXISTS reasoning_steps JSONB"
+                        )
+                    )
+                logger.info("✅ Added chat_messages.reasoning_steps")
+        except Exception as e:
+            logger.warning(f"Could not add reasoning_steps to chat_messages: {e}")
     
     # Ensure cases table has yandex fields
     if "cases" in inspector.get_table_names():
@@ -138,6 +168,27 @@ def ensure_schema():
             if "yandex_assistant_id" not in columns:
                 conn.execute(
                     text("ALTER TABLE cases ADD COLUMN IF NOT EXISTS yandex_assistant_id VARCHAR(255)")
+                )
+
+    # Ensure files table has ingest-summary fields (backward-compatible migration)
+    if "files" in inspector.get_table_names():
+        file_columns = [col["name"] for col in inspector.get_columns("files")]
+        with engine.begin() as conn:
+            if "doc_summary_short" not in file_columns:
+                conn.execute(
+                    text("ALTER TABLE files ADD COLUMN IF NOT EXISTS doc_summary_short TEXT")
+                )
+            if "doc_key_points" not in file_columns:
+                conn.execute(
+                    text("ALTER TABLE files ADD COLUMN IF NOT EXISTS doc_key_points JSON")
+                )
+            if "summary_version" not in file_columns:
+                conn.execute(
+                    text("ALTER TABLE files ADD COLUMN IF NOT EXISTS summary_version VARCHAR(32)")
+                )
+            if "summary_content_hash" not in file_columns:
+                conn.execute(
+                    text("ALTER TABLE files ADD COLUMN IF NOT EXISTS summary_content_hash VARCHAR(64)")
                 )
     
     # Create pgvector indexes for optimization
@@ -829,6 +880,23 @@ def init_db():
                 logger.info("✅ Added draft columns to global_assistant_sessions")
     except Exception as e:
         logger.warning(f"Could not add draft columns to global_assistant_sessions: {e}", exc_info=True)
+
+    # reasoning_steps для глобального ассистента
+    try:
+        inspector_ga = inspect(engine)
+        if "global_assistant_messages" in inspector_ga.get_table_names():
+            cols = {c["name"] for c in inspector_ga.get_columns("global_assistant_messages")}
+            if "reasoning_steps" not in cols:
+                with engine.begin() as conn:
+                    conn.execute(
+                        text(
+                            "ALTER TABLE global_assistant_messages "
+                            "ADD COLUMN IF NOT EXISTS reasoning_steps JSONB"
+                        )
+                    )
+                logger.info("✅ Added global_assistant_messages.reasoning_steps")
+    except Exception as e:
+        logger.warning(f"Could not add reasoning_steps to global_assistant_messages: {e}", exc_info=True)
 
     # Setup LangGraph checkpointer tables
     try:

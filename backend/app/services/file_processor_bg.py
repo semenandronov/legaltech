@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import logging
 from typing import List
+import hashlib
 
 from sqlalchemy.orm import Session
 
@@ -21,6 +22,23 @@ def _sanitize(text: str) -> str:
         return ""
     text = text.replace("\x00", "")
     return "".join(ch for ch in text if ord(ch) >= 32 or ch in "\n\r\t")
+
+
+def _generate_llm_document_passport(
+    *,
+    text: str,
+    filename: str,
+    hint_doc_type: str,
+) -> tuple[str, List[str], str, str]:
+    """Returns (summary, key_points, doc_type, summary_version)."""
+    from app.services.document_passport_graph import generate_document_passport
+
+    return generate_document_passport(
+        text=text,
+        filename=filename,
+        hint_doc_type=hint_doc_type,
+        max_attempts=3,
+    )
 
 
 def _reconnect(db: Session) -> None:
@@ -54,17 +72,19 @@ def process_files_background(file_ids: List[str], case_id: str) -> None:
     """
     from app.services.langchain_loaders import DocumentLoaderService
     from app.services.document_classifier_service import DocumentClassifierService
-    from app.services.document_processor import DocumentProcessor
+    from app.services.document_processor import DocumentProcessor, get_document_processor
+    from app.services.chat.entity_index_service import merge_case_entity_index
     from app.models.case import File as FileModel, Case
     from app.models.analysis import DocumentClassification
 
     db = SessionLocal()
     document_processor: DocumentProcessor | None = None
+    prewarm_documents = []
 
     try:
         # Initialise DocumentProcessor once for the whole batch (expensive: YandexEmbeddings)
         try:
-            document_processor = DocumentProcessor()
+            document_processor = get_document_processor()
         except Exception as e:
             logger.error(f"Cannot initialise DocumentProcessor for case {case_id}: {e}", exc_info=True)
             # Mark all files as error
@@ -74,13 +94,21 @@ def process_files_background(file_ids: List[str], case_id: str) -> None:
 
         for file_id in file_ids:
             try:
-                _process_one_file(db, file_id, case_id, document_processor)
+                file_documents = _process_one_file(db, file_id, case_id, document_processor)
+                if file_documents:
+                    prewarm_documents.extend(file_documents)
             except Exception as e:
                 logger.error(f"Unhandled error processing file {file_id}: {e}", exc_info=True)
                 _set_error(db, file_id, str(e)[:1000])
 
         # After all files are processed, update Case stats
         _update_case_stats(db, case_id)
+        if prewarm_documents:
+            document_processor.prewarm_bm25_index(
+                case_id,
+                documents=prewarm_documents,
+                force_rebuild=True,
+            )
 
     finally:
         db.close()
@@ -94,7 +122,8 @@ def _process_one_file(
 ) -> None:
     from app.services.langchain_loaders import DocumentLoaderService
     from app.services.document_classifier_service import DocumentClassifierService
-    from app.models.case import File as FileModel
+    from app.services.chat.entity_index_service import merge_case_entity_index
+    from app.models.case import Case, File as FileModel
     from app.models.analysis import DocumentClassification
 
     _reconnect(db)
@@ -102,7 +131,7 @@ def _process_one_file(
     file_model = db.query(FileModel).filter(FileModel.id == file_id).first()
     if not file_model:
         logger.error(f"File {file_id} not found in DB")
-        return
+        return []
 
     filename = file_model.filename
     content: bytes | None = file_model.file_content
@@ -110,12 +139,12 @@ def _process_one_file(
     if not content:
         logger.error(f"File {file_id} ({filename}) has no binary content stored")
         _set_error(db, file_id, "Нет содержимого файла в базе данных")
-        return
+        return []
 
     # Check if cancelled before starting
     if file_model.processing_status == "cancelled":
         logger.info(f"File {file_id} ({filename}) was cancelled, skipping")
-        return
+        return []
 
     # Mark as processing
     from datetime import datetime as _dt
@@ -130,18 +159,18 @@ def _process_one_file(
     except Exception as e:
         logger.error(f"OCR failed for {filename} ({file_id}): {e}", exc_info=True)
         _set_error(db, file_id, f"Ошибка OCR: {str(e)[:800]}")
-        return
+        return []
 
     if not langchain_docs:
         _set_error(db, file_id, "Файл не содержит текста или не может быть прочитан")
-        return
+        return []
 
     text = "\n\n".join(doc.page_content for doc in langchain_docs)
     text = _sanitize(text)
 
     if not text.strip():
         _set_error(db, file_id, "Файл не содержит текста после обработки")
-        return
+        return []
 
     MAX_TEXT = 50 * 1024 * 1024
     if len(text) > MAX_TEXT:
@@ -164,12 +193,71 @@ def _process_one_file(
     _reconnect(db)
     file_model = db.query(FileModel).filter(FileModel.id == file_id).first()
     if not file_model:
-        return
+        return []
     # Re-check if cancelled during OCR (which can take minutes)
     if file_model.processing_status == "cancelled":
         logger.info(f"File {file_id} ({filename}) was cancelled during OCR, skipping")
-        return
+        return []
+    try:
+        passport_summary, passport_key_points, passport_doc_type, passport_version = _generate_llm_document_passport(
+            text=text,
+            filename=filename,
+            hint_doc_type=file_classification.get("doc_type", "other"),
+        )
+    except Exception as e:
+        logger.error("Document passport generation failed for %s (%s): %s", filename, file_id, e, exc_info=True)
+        _set_error(
+            db,
+            file_id,
+            (
+                "Ошибка генерации паспорта документа через LLM. "
+                "Паспорт обязателен и не может быть заменен фрагментом текста. "
+                f"Детали: {str(e)[:400]}"
+            ),
+        )
+        return []
+    if not str(passport_summary or "").strip():
+        _set_error(
+            db,
+            file_id,
+            (
+                "Ошибка генерации паспорта документа через LLM: пустое summary. "
+                "Паспорт обязателен, fallback отключен."
+            ),
+        )
+        return []
+    if not isinstance(passport_key_points, list) or not passport_key_points:
+        _set_error(
+            db,
+            file_id,
+            (
+                "Ошибка генерации паспорта документа через LLM: отсутствуют key points. "
+                "Паспорт обязателен, fallback отключен."
+            ),
+        )
+        return []
+    logger.info(
+        "Document passport generated for %s: version=%s summary_len=%s key_points=%s doc_type=%s",
+        filename,
+        passport_version,
+        len(passport_summary or ""),
+        len(passport_key_points or []),
+        passport_doc_type,
+    )
+
     file_model.original_text = text
+    file_model.doc_summary_short = passport_summary
+    file_model.doc_key_points = passport_key_points
+    file_model.summary_version = passport_version
+    file_model.summary_content_hash = hashlib.sha256(text.encode("utf-8")).hexdigest()
+    case_model = db.query(Case).filter(Case.id == case_id).first()
+    if case_model:
+        merge_case_entity_index(
+            case_model,
+            file_id=file_id,
+            filename=filename,
+            text=text,
+        )
     db.flush()
 
     # Save classification
@@ -181,7 +269,7 @@ def _process_one_file(
             doc_cls = DocumentClassification(
                 case_id=case_id,
                 file_id=file_id,
-                doc_type=file_classification.get("doc_type", "other"),
+                doc_type=passport_doc_type or file_classification.get("doc_type", "other"),
                 relevance_score=0,
                 is_privileged="false",
                 privilege_type="none",
@@ -198,7 +286,7 @@ def _process_one_file(
     db.commit()
     logger.info(f"✅ Text saved for {filename} ({file_id}), {len(text)} chars")
 
-    # --- Split + embed + index ---
+    # --- Build direct Docling chunks + embed + index ---
     try:
         ext = filename.rsplit(".", 1)[-1].lower() if "." in filename else "unknown"
         metadata = {
@@ -216,20 +304,34 @@ def _process_one_file(
             langchain_docs=langchain_docs,
         )
 
-        if file_documents:
-            _reconnect(db)
-            document_processor.store_in_vector_db(
-                case_id=case_id,
-                documents=file_documents,
-                db=db,
+        if not file_documents:
+            _set_error(
+                db,
+                file_id,
+                (
+                    "Ошибка чанкинга: не удалось сформировать ни одного чанка. "
+                    "Fallback-режимы отключены, загрузка остановлена."
+                ),
             )
-            logger.info(f"✅ Indexed {len(file_documents)} chunks for {filename}")
-        else:
-            logger.warning(f"No chunks generated for {filename}")
+            return []
+
+        _reconnect(db)
+        document_processor.store_in_vector_db(
+            case_id=case_id,
+            documents=file_documents,
+            db=db,
+        )
+        docling_count = sum(1 for d in file_documents if d.metadata.get("chunk_level") == "docling")
+        logger.info(
+            "✅ Indexed %s chunks for %s (docling=%s)",
+            len(file_documents),
+            filename,
+            docling_count,
+        )
     except Exception as e:
         logger.error(f"Indexing failed for {filename} ({file_id}): {e}", exc_info=True)
         _set_error(db, file_id, f"Ошибка индексирования: {str(e)[:500]}")
-        return
+        return []
 
     # Mark ready
     _reconnect(db)
@@ -239,6 +341,7 @@ def _process_one_file(
         file_model.processing_error = None
         db.commit()
     logger.info(f"✅ File {file_id} ({filename}) is ready")
+    return file_documents
 
 
 def _set_error(db: Session, file_id: str, message: str) -> None:
@@ -282,8 +385,16 @@ def _update_case_stats(db: Session, case_id: str) -> None:
             case.full_text = full_text
 
         pending = [f for f in files if f.processing_status in ("pending", "processing")]
+        errors = [f for f in files if f.processing_status == "error"]
+        ready = [f for f in files if f.processing_status == "ready"]
+
         if not pending:
-            case.status = "completed"
+            if errors and not ready:
+                case.status = "failed"
+            elif errors:
+                case.status = "completed_with_errors"
+            else:
+                case.status = "completed"
 
         case.num_documents = len(files)
         case.file_names = [f.filename for f in files]

@@ -227,45 +227,65 @@ def append_errors_reducer(
     return result if result else None
 
 
+def _citation_merge_key(citation: Dict[str, Any]) -> tuple:
+    """
+    Ключ дедупа: предпочтительно (file_id, chunk_id), иначе (source_id, char offsets),
+    иначе fallback на (source|source_id, page) для старых payload.
+    """
+    sid = str(citation.get("source_id") or citation.get("source") or "")
+    chunk_id = citation.get("chunk_id")
+    if chunk_id:
+        return ("chunk", sid, str(chunk_id))
+    cs = citation.get("char_start")
+    ce = citation.get("char_end")
+    if cs is not None and ce is not None:
+        try:
+            return ("off", sid, int(cs), int(ce), citation.get("page"))
+        except (TypeError, ValueError):
+            pass
+    legacy_source = str(citation.get("source") or sid)
+    page = citation.get("page")
+    return ("legacy", legacy_source, page)
+
+
 def merge_citations_reducer(
-    existing: Optional[List[Dict[str, Any]]], 
+    existing: Optional[List[Dict[str, Any]]],
     new: Optional[List[Dict[str, Any]]]
 ) -> List[Dict[str, Any]]:
     """
     Редьюсер для объединения цитат.
-    
-    Объединяет списки цитат, удаляя дубликаты по source + page.
-    Перенумеровывает индексы.
-    
-    Args:
-        existing: Существующий список цитат
-        new: Новый список цитат
-    
-    Returns:
-        Объединённый список цитат с уникальными индексами
+
+    Объединяет списки цитат, удаляя дубликаты по (source_id, chunk_id) или offsets.
+    Порядок — по первому появлению ключа (как в existing+new), но поля из более поздних
+    записей накладываются поверх (важно: после RAG retrieval приходит enrich_structured_citations
+    с quote_anchor, debug_docling_prov_page_nos и т.д. — их нельзя отбрасывать).
+    Опционально проставляет поле index (1..n) для обратной совместимости.
     """
     if existing is None:
         existing = []
     if new is None:
         new = []
-    
-    # Собираем уникальные цитаты по source + page
-    seen = set()
-    result = []
-    
+
+    by_key: Dict[tuple, Dict[str, Any]] = {}
+    order_keys: List[tuple] = []
+
     for citation in existing + new:
-        source = citation.get("source", "")
-        page = citation.get("page")
-        key = (source, page)
-        
-        if key not in seen:
-            seen.add(key)
-            result.append(citation)
-    
-    # Перенумеровываем
+        if not isinstance(citation, dict):
+            continue
+        key = _citation_merge_key(citation)
+        if key not in by_key:
+            order_keys.append(key)
+            by_key[key] = dict(citation)
+        else:
+            merged = dict(by_key[key])
+            merged.update(citation)
+            by_key[key] = merged
+
+    result = [by_key[k] for k in order_keys]
+
     for i, citation in enumerate(result, 1):
         citation["index"] = i
-    
+
     return result
 
 

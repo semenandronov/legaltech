@@ -165,14 +165,14 @@ export const ClauseLibrary = ({
         {/* Header */}
         <div className="flex items-center justify-between p-6 border-b border-gray-200">
           <div className="flex items-center gap-3">
-            <FolderOpen className="w-6 h-6 text-blue-600" aria-hidden="true" />
+            <FolderOpen className="w-6 h-6 text-accent-muted" aria-hidden="true" />
             <h2 id="clause-library-title" className="text-xl font-semibold text-gray-900">
               Библиотека клауз
             </h2>
           </div>
           <button
             onClick={onClose}
-            className="p-2 hover:bg-gray-100 rounded-lg transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
+            className="p-2 hover:bg-gray-100 rounded-lg transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
             aria-label="Закрыть"
           >
             <X className="w-5 h-5 text-gray-500" aria-hidden="true" />
@@ -192,7 +192,7 @@ export const ClauseLibrary = ({
               placeholder="Поиск по названию, содержанию или тегам…"
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+              className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-ring focus:border-transparent"
               aria-label="Поиск клауз"
             />
           </div>
@@ -203,7 +203,7 @@ export const ClauseLibrary = ({
               onClick={() => setSelectedCategory(null)}
               className={`px-3 py-1.5 text-sm rounded-full transition-colors ${
                 selectedCategory === null
-                  ? 'bg-blue-100 text-blue-700 font-medium'
+                  ? 'bg-muted text-foreground font-medium'
                   : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
               }`}
               aria-pressed={selectedCategory === null}
@@ -216,7 +216,7 @@ export const ClauseLibrary = ({
                 onClick={() => setSelectedCategory(category)}
                 className={`px-3 py-1.5 text-sm rounded-full transition-colors ${
                   selectedCategory === category
-                    ? 'bg-blue-100 text-blue-700 font-medium'
+                    ? 'bg-muted text-foreground font-medium'
                     : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
                 }`}
                 aria-pressed={selectedCategory === category}
@@ -259,7 +259,7 @@ export const ClauseLibrary = ({
               {sortedClauses.map((clause) => (
                 <div
                   key={clause.id}
-                  className="border border-gray-200 rounded-lg p-4 hover:border-blue-300 hover:shadow-sm transition-all"
+                  className="border border-gray-200 rounded-lg p-4 hover:border-border-strong hover:shadow-sm transition-all"
                 >
                   <div className="flex items-start justify-between gap-4">
                     <div className="flex-1 min-w-0">
@@ -274,7 +274,7 @@ export const ClauseLibrary = ({
                         {clause.tags.map((tag) => (
                           <span
                             key={tag}
-                            className="px-2 py-0.5 text-xs bg-blue-50 text-blue-600 rounded"
+                            className="px-2 py-0.5 text-xs bg-secondary text-accent-muted rounded"
                           >
                             #{tag}
                           </span>
@@ -299,7 +299,7 @@ export const ClauseLibrary = ({
                       </button>
                       <button
                         onClick={() => handleCopy(clause)}
-                        className="p-2 hover:bg-gray-100 rounded-lg transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
+                        className="p-2 hover:bg-gray-100 rounded-lg transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                         aria-label="Копировать"
                       >
                         {copiedId === clause.id ? (
@@ -310,7 +310,7 @@ export const ClauseLibrary = ({
                       </button>
                       <button
                         onClick={() => handleInsert(clause)}
-                        className="flex items-center gap-1.5 px-3 py-1.5 bg-blue-600 text-white text-sm rounded-lg hover:bg-blue-700 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2"
+                        className="flex items-center gap-1.5 px-3 py-1.5 bg-primary text-primary-foreground text-sm rounded-lg hover:opacity-90 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
                         aria-label={`Вставить клаузу "${clause.title}"`}
                       >
                         <Plus className="w-4 h-4" aria-hidden="true" />

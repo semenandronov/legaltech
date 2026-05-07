@@ -8,14 +8,9 @@ import { useState } from 'react'
 import {
   X,
   Play,
-  RefreshCw,
-  CheckCircle,
-  Clock,
-  AlertTriangle,
   ChevronRight,
   Loader2,
   Brain,
-  Lightbulb,
   Zap,
   FileText,
   Table,
@@ -62,31 +57,18 @@ interface WorkflowPlanningPhaseProps {
 // Иконки для инструментов
 const toolIcons: Record<string, React.ReactNode> = {
   'tabular_review': <Table className="w-5 h-5" />,
-  'rag_search': <FileSearch className="w-5 h-5" />,
-  'web_search': <Globe className="w-5 h-5" />,
-  'playbook': <BookOpen className="w-5 h-5" />,
+  'rag': <FileSearch className="w-5 h-5" />,
+  'legal_db': <Globe className="w-5 h-5" />,
+  'playbook_check': <BookOpen className="w-5 h-5" />,
   'summarize': <FileText className="w-5 h-5" />,
   'extract_entities': <Target className="w-5 h-5" />,
-  'document_compare': <Database className="w-5 h-5" />,
-  'risk_analysis': <AlertTriangle className="w-5 h-5" />,
-}
-
-const toolColors: Record<string, string> = {
-  'tabular_review': '#6366f1',
-  'rag_search': '#8b5cf6',
-  'web_search': '#06b6d4',
-  'playbook': '#10b981',
-  'summarize': '#f59e0b',
-  'extract_entities': '#ec4899',
-  'document_compare': '#3b82f6',
-  'risk_analysis': '#ef4444',
+  'document_draft': <Database className="w-5 h-5" />,
 }
 
 export const WorkflowPlanningPhase = ({
   plan,
   isLoading,
   onApprove,
-  onRegenerate,
   onEditStep,
   onClose
 }: WorkflowPlanningPhaseProps) => {
@@ -114,12 +96,6 @@ export const WorkflowPlanningPhase = ({
     }
   }
 
-  const getConfidenceColor = (score: number) => {
-    if (score >= 80) return 'text-green-600 bg-green-50'
-    if (score >= 60) return 'text-yellow-600 bg-yellow-50'
-    return 'text-red-600 bg-red-50'
-  }
-
   if (isLoading) {
     return (
       <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
@@ -129,9 +105,21 @@ export const WorkflowPlanningPhase = ({
         >
           <div className="text-center">
             <div className="relative w-20 h-20 mx-auto mb-6">
-              <div className="absolute inset-0 rounded-full border-4 border-gray-200"></div>
-              <div className="absolute inset-0 rounded-full border-4 border-t-indigo-500 animate-spin"></div>
-              <Brain className="absolute inset-0 m-auto w-8 h-8 text-indigo-500" />
+              <div
+                className="absolute inset-0 rounded-full border-4"
+                style={{ borderColor: 'var(--color-border)' }}
+              ></div>
+              <div
+                className="absolute inset-0 rounded-full border-4 animate-spin"
+                style={{
+                  borderColor: 'var(--color-border)',
+                  borderTopColor: 'var(--color-accent)',
+                }}
+              ></div>
+              <Brain
+                className="absolute inset-0 m-auto w-8 h-8"
+                style={{ color: 'var(--color-accent)' }}
+              />
             </div>
             <h2 className="text-xl font-semibold mb-2" style={{ color: 'var(--color-text-primary)' }}>
               AI планирует выполнение...
@@ -188,7 +176,7 @@ export const WorkflowPlanningPhase = ({
           </button>
         </div>
 
-        {/* Goal & Strategy */}
+        {/* Goal */}
         <div className="p-5 border-b space-y-4" style={{ borderColor: 'var(--color-border)' }}>
           <div className="flex items-start gap-3">
             <Target className="w-5 h-5 mt-0.5 shrink-0" style={{ color: 'var(--color-accent)' }} />
@@ -199,38 +187,6 @@ export const WorkflowPlanningPhase = ({
               <p className="text-sm" style={{ color: 'var(--color-text-secondary)' }}>
                 {plan.goal}
               </p>
-            </div>
-          </div>
-
-          <div className="flex items-start gap-3">
-            <Lightbulb className="w-5 h-5 mt-0.5 shrink-0" style={{ color: '#f59e0b' }} />
-            <div>
-              <h3 className="text-sm font-medium mb-1" style={{ color: 'var(--color-text-primary)' }}>
-                Стратегия
-              </h3>
-              <p className="text-sm" style={{ color: 'var(--color-text-secondary)' }}>
-                {plan.strategy}
-              </p>
-            </div>
-          </div>
-
-          {/* Stats */}
-          <div className="flex items-center gap-6 pt-2">
-            <div className="flex items-center gap-2">
-              <Clock className="w-4 h-4" style={{ color: 'var(--color-text-tertiary)' }} />
-              <span className="text-sm" style={{ color: 'var(--color-text-secondary)' }}>
-                ~{plan.total_estimated_time}
-              </span>
-            </div>
-            <div className="flex items-center gap-2">
-              <Zap className="w-4 h-4" style={{ color: 'var(--color-text-tertiary)' }} />
-              <span className="text-sm" style={{ color: 'var(--color-text-secondary)' }}>
-                {plan.steps.length} шагов
-              </span>
-            </div>
-            <div className={`flex items-center gap-2 px-2 py-1 rounded-full text-sm font-medium ${getConfidenceColor(plan.confidence_score)}`}>
-              <CheckCircle className="w-4 h-4" />
-              Уверенность: {plan.confidence_score}%
             </div>
           </div>
         </div>
@@ -251,14 +207,17 @@ export const WorkflowPlanningPhase = ({
             <div className="space-y-4">
               {plan.steps.map((step, index) => {
                 const isExpanded = expandedSteps.has(step.id)
-                const toolColor = toolColors[step.tool] || 'var(--color-accent)'
 
                 return (
                   <div key={step.id} className="relative flex gap-4">
                     {/* Step number */}
                     <div
                       className="w-12 h-12 rounded-xl flex items-center justify-center shrink-0 relative z-10"
-                      style={{ backgroundColor: `${toolColor}20`, color: toolColor }}
+                      style={{
+                        backgroundColor: 'var(--color-bg-secondary)',
+                        color: 'var(--color-accent)',
+                        border: '1px solid var(--color-border)',
+                      }}
                     >
                       {toolIcons[step.tool] || <Zap className="w-5 h-5" />}
                     </div>
@@ -278,7 +237,10 @@ export const WorkflowPlanningPhase = ({
                         <div>
                           <div className="flex items-center gap-2 mb-1">
                             <span className="text-xs font-medium px-2 py-0.5 rounded-full"
-                              style={{ backgroundColor: `${toolColor}20`, color: toolColor }}
+                              style={{
+                                backgroundColor: 'var(--color-bg-hover)',
+                                color: 'var(--color-text-secondary)',
+                              }}
                             >
                               Шаг {index + 1}
                             </span>
@@ -291,9 +253,6 @@ export const WorkflowPlanningPhase = ({
                           </p>
                         </div>
                         <div className="flex items-center gap-2 shrink-0 ml-4">
-                          <span className="text-xs" style={{ color: 'var(--color-text-tertiary)' }}>
-                            ~{step.estimated_time}
-                          </span>
                           <ChevronRight
                             className={`w-4 h-4 transition-transform ${isExpanded ? 'rotate-90' : ''}`}
                             style={{ color: 'var(--color-text-tertiary)' }}
@@ -346,7 +305,7 @@ export const WorkflowPlanningPhase = ({
                                       e.stopPropagation()
                                       onEditStep(step.id, step.parameters!)
                                     }}
-                                    className="flex items-center gap-1 text-xs text-blue-600 hover:text-blue-700"
+                                    className="flex items-center gap-1 text-xs text-accent-muted hover:opacity-90"
                                   >
                                     <Edit3 className="w-3 h-3" />
                                     Изменить
@@ -377,18 +336,9 @@ export const WorkflowPlanningPhase = ({
 
         {/* Footer */}
         <div
-          className="flex items-center justify-between p-5 border-t shrink-0"
+          className="flex items-center justify-end p-5 border-t shrink-0"
           style={{ borderColor: 'var(--color-border)' }}
         >
-          <button
-            onClick={onRegenerate}
-            className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-colors hover:bg-gray-100"
-            style={{ color: 'var(--color-text-secondary)' }}
-          >
-            <RefreshCw className="w-4 h-4" />
-            Перегенерировать план
-          </button>
-
           <div className="flex items-center gap-3">
             <button
               onClick={onClose}

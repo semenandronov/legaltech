@@ -1,9 +1,9 @@
 import { useState, useEffect, useRef, useCallback, forwardRef, useImperativeHandle } from 'react'
 import { toast } from 'sonner'
 import { useParams } from 'react-router-dom'
-import { getApiUrl, getDocuments, getDocumentContent } from '@/services/api'
+import { getApiUrl, getDocuments, getDocumentContent, sendAssistantFeedback } from '@/services/api'
 import { logger } from '@/lib/logger'
-import { loadChatHistory } from '@/services/chatHistoryService'
+import { loadChatHistory, normalizeReasoningStepsFromApi, parseStoredSourceReferences } from '@/services/chatHistoryService'
 import { uploadTemplateFile } from '@/services/documentEditorApi'
 import { Conversation, ConversationContent } from '../ai-elements/conversation'
 import { UserMessage, AssistantMessage } from '../ai-elements/message'
@@ -57,6 +57,25 @@ type MessageType = 'question' | 'edit'
 function detectMessageType(content: string): MessageType {
   const lowerContent = content.toLowerCase()
   return EDIT_KEYWORDS.some(keyword => lowerContent.includes(keyword)) ? 'edit' : 'question'
+}
+
+function makeLocalMessageId(prefix: 'user' | 'assistant'): string {
+  try {
+    if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+      return `${prefix}-${crypto.randomUUID()}`
+    }
+  } catch {
+    // ignore
+  }
+  return `${prefix}-${Date.now()}-${Math.random().toString(16).slice(2)}`
+}
+
+function stripInlineCitationMarkers(text: string): string {
+  if (!text) return text
+  // Remove legacy inline markers that UI can turn into clickable badges.
+  return text
+    .replace(/\[Источник\s+\d+(?:[^\]]*)\]/gi, '')
+    .replace(/\[\d+\]/g, '')
 }
 
 /**
@@ -229,17 +248,27 @@ interface Message {
   }>
   // Структурированные citations для подсветки в документах
   citations?: Array<{  // EnhancedCitation
+    citation_id?: string
     source_id: string
     file_name: string
-    page: number
+    page?: number
     quote: string
+    quote_anchor?: string
+    /** Полный текст чанка (как в chunk-lab) для подсветки в PDF */
+    text_preview?: string
+    chunk_id?: string
     char_start: number
     char_end: number
     context_before?: string
     context_after?: string
+    bbox?: { x0?: number; y0?: number; x1?: number; y1?: number }
+    bbox_regions?: Array<{ x0?: number; y0?: number; x1?: number; y1?: number }>
+    page_bbox?: { width?: number; height?: number }
     url?: string
     source_type?: string
   }>
+  /** Phase 2: блоки ответа со stable citation_id */
+  answerBlocks?: Array<{ block_id: string; markdown_text: string; citation_ids: string[] }>
   // Фаза 9.3: Human feedback request
   feedbackRequest?: {
     requestId: string
@@ -278,6 +307,8 @@ interface Message {
   }>
   // Тип сообщения пользователя
   messageType?: 'question' | 'edit'
+  traceId?: string
+  feedbackRating?: 'positive' | 'negative'
 }
 
 interface RiskItem {
@@ -386,7 +417,7 @@ const FileChip = ({
           e.stopPropagation();
           onRemove();
         }}
-          className="flex-shrink-0 p-1 rounded-md hover:bg-gray-200/60 transition-colors focus:outline-none focus:ring-2 focus:ring-blue-500"
+          className="flex-shrink-0 p-1 rounded-md hover:bg-gray-200/60 transition-colors focus:outline-none focus:ring-2 focus:ring-ring"
           aria-label={`Удалить файл ${filename}`}
       >
           <X className="w-4 h-4 text-gray-500" aria-hidden="true" />
@@ -628,7 +659,7 @@ const PromptInputWithDrop = ({
                     id="system-template-select"
                     value={systemTemplateId}
                     onChange={(e) => onSystemTemplateIdChange?.(e.target.value)}
-                    className="text-sm rounded-lg border border-[#E7EAF0] bg-white px-2 py-1.5 min-w-0 flex-1 max-w-md focus:outline-none focus:ring-2 focus:ring-blue-500/30"
+                    className="text-sm rounded-lg border border-[#E7EAF0] bg-white px-2 py-1.5 min-w-0 flex-1 max-w-md focus:outline-none focus:ring-2 focus:ring-ring/40"
                     aria-label="Системный шаблон документа"
                   >
                     <option value="">— без системного шаблона (только свой файл) —</option>
@@ -801,6 +832,7 @@ export const AssistantUIChat = forwardRef<AssistantUIChatRef, AssistantUIChatPro
   const [draftMode, setDraftMode] = useState(false)
   const [systemTemplates, setSystemTemplates] = useState<SystemDocumentTemplate[]>([])
   const [systemTemplateId, setSystemTemplateId] = useState('')
+  const [globalSessionId, setGlobalSessionId] = useState<string | null>(null)
   const abortControllerRef = useRef<AbortController | null>(null)
   const [previewOpen, setPreviewOpen] = useState(false)
   const [previewSource, setPreviewSource] = useState<SourceInfo | null>(null)
@@ -897,7 +929,7 @@ export const AssistantUIChat = forwardRef<AssistantUIChatRef, AssistantUIChatPro
       ? (editorChatMode === 'ask' ? 'question' : detectMessageType(userMessage))
       : undefined
     const userMsg: Message = {
-      id: `user-${Date.now()}`,
+      id: makeLocalMessageId('user'),
       role: 'user',
       content: userMessage,
       attachments: currentAttachments.length > 0 ? currentAttachments : undefined,
@@ -907,7 +939,7 @@ export const AssistantUIChat = forwardRef<AssistantUIChatRef, AssistantUIChatPro
     setIsLoading(true)
 
     // Create assistant message placeholder
-    const assistantMsgId = `assistant-${Date.now()}`
+    const assistantMsgId = makeLocalMessageId('assistant')
     const assistantMsg: Message = {
       id: assistantMsgId,
       role: 'assistant',
@@ -933,6 +965,13 @@ export const AssistantUIChat = forwardRef<AssistantUIChatRef, AssistantUIChatPro
         legal_research: legalResearch,
         deep_think: deepThink,
         draft_mode: draftMode,
+        trace_id:
+          typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
+            ? crypto.randomUUID()
+            : `trace-${Date.now()}-${Math.random().toString(16).slice(2)}`,
+      }
+      if (globalMode && globalSessionId) {
+        requestBody.session_id = globalSessionId
       }
 
       // Обработка файлов-шаблонов в draft mode
@@ -1020,7 +1059,18 @@ export const AssistantUIChat = forwardRef<AssistantUIChatRef, AssistantUIChatPro
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${token}`,
         },
-        body: JSON.stringify(globalMode ? { messages: requestBody.messages } : requestBody),
+        body: JSON.stringify(
+          globalMode
+            ? {
+                messages: requestBody.messages,
+                session_id: requestBody.session_id,
+                draft_mode: requestBody.draft_mode,
+                legal_research: requestBody.legal_research,
+                deep_think: requestBody.deep_think,
+                trace_id: requestBody.trace_id,
+              }
+            : requestBody
+        ),
         signal: abortControllerRef.current.signal,
       })
 
@@ -1056,6 +1106,18 @@ export const AssistantUIChat = forwardRef<AssistantUIChatRef, AssistantUIChatPro
                       : msg
                   )
                 )
+              }
+              if (data.type === 'trace' && data.trace_id) {
+                setMessages((prev) =>
+                  prev.map((msg) =>
+                    msg.id === assistantMsgId
+                      ? { ...msg, traceId: data.trace_id }
+                      : msg
+                  )
+                )
+              }
+              if (data.session_id && globalMode) {
+                setGlobalSessionId(String(data.session_id))
               }
               // Обработка плана для одобрения
               if (data.type === 'plan_ready' && data.planId && data.plan) {
@@ -1138,16 +1200,41 @@ export const AssistantUIChat = forwardRef<AssistantUIChatRef, AssistantUIChatPro
                       ? {
                           ...msg,
                           citations: data.citations.map((citation: any) => ({
+                            citation_id: citation.citation_id || undefined,
                             source_id: citation.source_id,
                             file_name: citation.file_name,
-                            page: citation.page || undefined,
+                            page: (citation.page ?? citation.source_page) ?? undefined,
                             quote: citation.quote || '',
+                            quote_anchor: citation.quote_anchor || undefined,
+                            text_preview: citation.text_preview || undefined,
+                            chunk_id: citation.chunk_id || undefined,
                             char_start: citation.char_start,
                             char_end: citation.char_end,
                             context_before: citation.context_before || '',
                             context_after: citation.context_after || '',
+                            bbox: citation.bbox,
+                            bbox_regions: citation.bbox_regions,
+                            page_bbox: citation.page_bbox,
                             url: citation.url || '',
                             source_type: citation.source_type || 'document',
+                          })),
+                        }
+                      : msg
+                  )
+                )
+              }
+              if (data.type === 'answer_blocks' && Array.isArray(data.blocks)) {
+                setMessages((prev) =>
+                  prev.map((msg) =>
+                    msg.id === assistantMsgId
+                      ? {
+                          ...msg,
+                          answerBlocks: data.blocks.map((b: any) => ({
+                            block_id: String(b.block_id || ''),
+                            markdown_text: stripInlineCitationMarkers(String(b.markdown_text || '')).trim(),
+                            citation_ids: Array.isArray(b.citation_ids)
+                              ? b.citation_ids.map((x: any) => String(x))
+                              : [],
                           })),
                         }
                       : msg
@@ -1578,11 +1665,39 @@ export const AssistantUIChat = forwardRef<AssistantUIChatRef, AssistantUIChatPro
               }
             })
           }
+          const rawRefs = (msg as { source_references?: unknown }).source_references
+          const parsed = parseStoredSourceReferences(rawRefs)
+          let citations: Message['citations'] | undefined
+          if (parsed.citations?.length) {
+            citations = parsed.citations.map((citation: Record<string, unknown>) => ({
+              citation_id: (citation.citation_id as string) || undefined,
+              source_id: String(citation.source_id ?? ''),
+              file_name: String(citation.file_name ?? ''),
+              page: (citation.page as number) ?? (citation.source_page as number) ?? undefined,
+              quote: String(citation.quote ?? ''),
+              quote_anchor: (citation.quote_anchor as string) || undefined,
+              chunk_id: (citation.chunk_id as string) || undefined,
+              char_start: citation.char_start as number,
+              char_end: citation.char_end as number,
+              context_before: String(citation.context_before ?? ''),
+              context_after: String(citation.context_after ?? ''),
+              bbox: citation.bbox as any,
+              bbox_regions: citation.bbox_regions as any,
+              page_bbox: citation.page_bbox as any,
+              url: String(citation.url ?? ''),
+              source_type: (citation.source_type as string) || 'document',
+            })) as Message['citations']
+          }
           return {
             id: `msg-${msg.created_at || Date.now()}-${index}`,
             role: msg.role,
             content: msg.content || '',
+            reasoningSteps: normalizeReasoningStepsFromApi(
+              (msg as { reasoning_steps?: unknown }).reasoning_steps
+            ),
             sources: sources.length > 0 ? sources : undefined,
+            citations,
+            answerBlocks: parsed.answerBlocks,
           }
         })
         setMessages(convertedMessages)
@@ -1686,7 +1801,7 @@ export const AssistantUIChat = forwardRef<AssistantUIChatRef, AssistantUIChatPro
                     <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium ${
                       msgType === 'edit' 
                         ? 'bg-amber-100 text-amber-700' 
-                        : 'bg-blue-100 text-blue-700'
+                        : 'bg-muted text-foreground'
                     }`}>
                       {msgType === 'edit' ? (
                         <>
@@ -1734,6 +1849,7 @@ export const AssistantUIChat = forwardRef<AssistantUIChatRef, AssistantUIChatPro
               response={message.response}
               sources={message.sources}
               citations={message.citations}
+              answerBlocks={message.answerBlocks}
               isStreaming={isLoading && message.id === messages[messages.length - 1]?.id}
               onSourceClick={(source) => {
                 // External sources (pravo.gov.ru) — always open in new tab, never local preview
@@ -1750,13 +1866,19 @@ export const AssistantUIChat = forwardRef<AssistantUIChatRef, AssistantUIChatPro
                     file: source.file || source.title || '',
                     title: source.title || source.file || '',
                     page: source.page,
+                    citation_id: (source as any).citation_id,
                     text_preview: (source as any).text_preview || source.quote,
                     char_start: source.char_start,
                     char_end: source.char_end,
                     quote: source.quote,
+                    quote_anchor: (source as any).quote_anchor,
                     source_id: source.source_id,
+                    chunk_id: (source as any).chunk_id,
                     context_before: (source as any).context_before,
                     context_after: (source as any).context_after,
+                    bbox: (source as any).bbox,
+                    bbox_regions: (source as any).bbox_regions,
+                    page_bbox: (source as any).page_bbox,
                     url: source.url,
                     source_type: (source as any).source_type,
                   }
@@ -1769,11 +1891,17 @@ export const AssistantUIChat = forwardRef<AssistantUIChatRef, AssistantUIChatPro
                         file: c.file_name,
                         title: c.file_name,
                         page: c.page,
+                        citation_id: (c as any).citation_id,
                         text_preview: c.quote,
                         char_start: c.char_start,
                         char_end: c.char_end,
                         quote: c.quote,
+                        quote_anchor: (c as any).quote_anchor,
                         source_id: c.source_id,
+                        chunk_id: (c as any).chunk_id,
+                        bbox: (c as any).bbox,
+                        bbox_regions: (c as any).bbox_regions,
+                        page_bbox: (c as any).page_bbox,
                         url: c.url,
                         source_type: c.source_type,
                       }))
@@ -1789,6 +1917,57 @@ export const AssistantUIChat = forwardRef<AssistantUIChatRef, AssistantUIChatPro
                 }
               }}
             >
+              {message.traceId && !message.feedbackRating && (
+                <div className="mt-2 mb-1 flex items-center gap-2">
+                  <button
+                    type="button"
+                    className="px-2 py-1 text-xs rounded-md border border-green-300 text-green-700 hover:bg-green-50"
+                    onClick={async () => {
+                      try {
+                        await sendAssistantFeedback({
+                          trace_id: message.traceId!,
+                          rating: 'positive',
+                        })
+                        setMessages((prev) =>
+                          prev.map((msg) =>
+                            msg.id === message.id ? { ...msg, feedbackRating: 'positive' } : msg
+                          )
+                        )
+                      } catch (err) {
+                        logger.error('sendAssistantFeedback positive failed', err)
+                      }
+                    }}
+                  >
+                    Полезно
+                  </button>
+                  <button
+                    type="button"
+                    className="px-2 py-1 text-xs rounded-md border border-red-300 text-red-700 hover:bg-red-50"
+                    onClick={async () => {
+                      try {
+                        await sendAssistantFeedback({
+                          trace_id: message.traceId!,
+                          rating: 'negative',
+                        })
+                        setMessages((prev) =>
+                          prev.map((msg) =>
+                            msg.id === message.id ? { ...msg, feedbackRating: 'negative' } : msg
+                          )
+                        )
+                      } catch (err) {
+                        logger.error('sendAssistantFeedback negative failed', err)
+                      }
+                    }}
+                  >
+                    Не полезно
+                  </button>
+                </div>
+              )}
+              {message.traceId && message.feedbackRating && (
+                <div className="mt-2 mb-1 text-xs text-muted-foreground">
+                  Спасибо за обратную связь
+                </div>
+              )}
               {message.planId && message.plan && (
                 <PlanApprovalCard
                   planId={message.planId}

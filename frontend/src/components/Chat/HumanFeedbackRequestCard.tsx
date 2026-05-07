@@ -115,13 +115,13 @@ export const HumanFeedbackRequestCard: React.FC<HumanFeedbackRequestCardProps> =
                   aria-pressed={selectedOption === option.id}
                   className={`w-full text-left px-4 py-2 rounded-lg border-2 transition-colors ${
                     selectedOption === option.id
-                      ? 'border-blue-500 bg-blue-50 text-blue-900'
+                      ? 'border-primary bg-secondary text-foreground'
                       : 'border-gray-200 bg-white hover:border-gray-300 text-gray-700'
                   } ${isSubmitting ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'}`}
                 >
                   <div className="flex items-center gap-2">
                     {selectedOption === option.id ? (
-                      <CheckCircle2 className="w-4 h-4 text-blue-600" />
+                      <CheckCircle2 className="w-4 h-4 text-accent-muted" />
                     ) : (
                       <div className="w-4 h-4 rounded-full border-2 border-gray-300" />
                     )}
@@ -174,7 +174,7 @@ export const HumanFeedbackRequestCard: React.FC<HumanFeedbackRequestCardProps> =
                     setError(null)
                   }}
                   placeholder={inputSchema.placeholder || 'Введите ответ…'}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-ring"
                   disabled={isSubmitting}
                 />
               )}
@@ -209,7 +209,7 @@ export const HumanFeedbackRequestCard: React.FC<HumanFeedbackRequestCardProps> =
             <Button
               onClick={handleSubmit}
               disabled={isSubmitting || (!selectedOption && !customResponse.trim())}
-              className="bg-blue-600 hover:bg-blue-700"
+              className="bg-primary hover:opacity-90 text-primary-foreground"
               aria-label="Отправить ответ"
             >
               {isSubmitting ? (

@@ -1,9 +1,8 @@
 import { useState, useEffect } from 'react'
 import { getCasesList, deleteCase, CasesListResponse } from '../services/api'
-import { tabularReviewApi } from '../services/tabularReviewApi'
 import CasesGrid from '../components/Cases/CasesGrid'
 import UnifiedSidebar from '../components/Layout/UnifiedSidebar'
-import { FolderOpen, MessageSquare, Clock } from 'lucide-react'
+import { FolderOpen, MessageSquare, Clock, Workflow } from 'lucide-react'
 import { toast } from 'sonner'
 
 const CasesListPage = () => {
@@ -18,6 +17,7 @@ const CasesListPage = () => {
   const mainNavItems = [
     { id: 'cases', label: 'Дела', icon: FolderOpen, path: '/cases' },
     { id: 'assistant', label: 'Ассистент', icon: MessageSquare, path: '/assistant' },
+    { id: 'workflows', label: 'Workflows', icon: Workflow, path: '/workflows' },
     { id: 'history', label: 'История', icon: Clock, path: '/history' },
   ]
 
@@ -33,16 +33,11 @@ const CasesListPage = () => {
       const fetchedCases = data.cases || []
       setCases(fetchedCases)
       setTotal(data.total || 0)
-
-      // Fetch tabular review counts for all cases in parallel
-      const counts = await Promise.all(
-        fetchedCases.map(c =>
-          tabularReviewApi.listReviews(c.id, 0, 1)
-            .then(r => ({ id: c.id, count: r.total ?? r.reviews.length }))
-            .catch(() => ({ id: c.id, count: 0 }))
+      setReviewCounts(
+        Object.fromEntries(
+          fetchedCases.map((c) => [c.id, c.tabular_reviews_count ?? 0])
         )
       )
-      setReviewCounts(Object.fromEntries(counts.map(c => [c.id, c.count])))
     } catch (error: any) {
       console.error('Ошибка при загрузке дел:', error)
     } finally {

@@ -14,8 +14,7 @@ logging.basicConfig(
     level=logging.DEBUG,
     format='%(asctime)s [%(levelname)s] %(name)s: %(message)s',
     handlers=[
-        logging.StreamHandler(sys.stderr),  # Always use stderr for Docker
-        logging.StreamHandler(sys.stdout),   # Also stdout for visibility
+        logging.StreamHandler(sys.stderr),  # один поток — иначе каждая строка дублируется
         _log_file_handler,
     ],
     force=True  # Override any existing configuration
@@ -52,12 +51,8 @@ try:
         "data": {"step": "very_early_start"},
         "timestamp": int(datetime.now().timestamp() * 1000)
     })
-    # Print to both stderr and stdout, multiple times for visibility
-    for stream in [sys.stderr, sys.stdout]:
-        for _ in range(3):
-            print(f"[DEBUG] {log_entry}", file=stream, flush=True)
-    # Also use logging
-    logging.error(f"[DEBUG] {log_entry}")
+    # Single write to stderr to avoid noisy duplicated startup logs.
+    print(f"[DEBUG] {log_entry}", file=sys.stderr, flush=True)
     with open('/tmp/debug.log', 'a') as f:
         f.write(log_entry + '\n')
 except Exception as e:
@@ -83,6 +78,7 @@ import sys
 from datetime import datetime
 import json
 import traceback
+import asyncio
 
 # #region agent log
 def _debug_log(location, message, data, hypothesis_id="A", run_id="startup"):
@@ -142,7 +138,7 @@ except: pass
 # #endregion
 
 try:
-    from app.routes import upload, chat, auth, cases, dashboard, analysis, reports, settings, websocket, tabular_review, prompts, workflows, folders, review_table, assistant_chat, assistant_chat_v2, legal_corpus, workflow_execution, plan_execution, metrics, document_editor, playbooks, workflow_agentic, health
+    from app.routes import upload, chat, auth, cases, dashboard, analysis, reports, settings, websocket, tabular_review, prompts, workflows, folders, review_table, assistant_chat_v2, legal_corpus, draft_admin_templates, workflow_execution, plan_execution, metrics, document_editor, playbooks, workflow_agentic, health
     # #region agent log
     try:
         _debug_log("main.py:97", "Routes imported successfully", {"step": "routes_imported"})
@@ -190,6 +186,11 @@ try:
     from app.core.errors import register_exception_handlers
     from app.core.logging import setup_logging, RequestLoggingMiddleware
     from app.core.rate_limiter import RateLimitMiddleware
+    from app.services.observability.langfuse_service import (
+        init_langfuse,
+        flush_langfuse,
+        check_langfuse_auth_health,
+    )
     # #region agent log
     try:
         _debug_log("main.py:120", "Core modules imported successfully", {"step": "core_imported"})
@@ -262,6 +263,86 @@ try:
     _debug_log("main.py:49", "FastAPI app created", {"step": "app_created"}, hypothesis_id="C")
 except: pass
 # #endregion
+
+
+@app.on_event("startup")
+async def _redact_uvicorn_access_tokens():
+    """Не писать JWT из ?token= в access-log (EventSource не шлёт Authorization)."""
+    import re
+
+    class _RedactAccessTokenFilter(logging.Filter):
+        _pat = re.compile(r"([?&])token=[^&\s\"]+", re.I)
+
+        def filter(self, record: logging.LogRecord) -> bool:
+            try:
+                if isinstance(record.args, tuple) and record.args:
+                    record.args = tuple(
+                        self._pat.sub(r"\1token=<redacted>", a) if isinstance(a, str) else a
+                        for a in record.args
+                    )
+                if isinstance(record.msg, str):
+                    record.msg = self._pat.sub(r"\1token=<redacted>", record.msg)
+            except Exception:
+                pass
+            return True
+
+    logging.getLogger("uvicorn.access").addFilter(_RedactAccessTokenFilter())
+
+
+@app.on_event("startup")
+async def _warm_deepagents_async_checkpointer():
+    """Avoid multi-minute stall on first workflow: checkpoint pool is ready before astream."""
+    if not config.WORKFLOW_DEEPAGENTS_CHECKPOINTER_ENABLED:
+        return
+    try:
+        from app.utils.checkpointer_setup import get_async_postgres_checkpointer
+
+        await get_async_postgres_checkpointer()
+        logger.info("DeepAgents AsyncPostgresSaver pre-warmed at startup")
+    except Exception as exc:
+        logger.warning("DeepAgents async checkpointer pre-warm skipped: %s", exc, exc_info=True)
+
+
+@app.on_event("startup")
+async def _init_langfuse_observability():
+    """Initialize Langfuse client once on startup."""
+    initialized = init_langfuse()
+    if not initialized:
+        logger.warning("Langfuse startup health: init_failed_or_disabled")
+        return
+    ok, reason = check_langfuse_auth_health(timeout_sec=5.0)
+    if ok:
+        logger.info("Langfuse startup health: auth_ok")
+    else:
+        logger.warning("Langfuse startup health: auth_failed (%s)", reason)
+
+
+@app.on_event("startup")
+async def _prewarm_case_assistant_runtime():
+    """
+    Prewarm heavy case-assistant dependencies to avoid first-request cold-start.
+    """
+    try:
+        from app.services.chat.orchestrator import prewarm_chat_runtime
+
+        prewarm_report = await asyncio.to_thread(prewarm_chat_runtime)
+        logger.info(
+            "Case assistant runtime pre-warmed: dp=%s rag=%s classifier=%s legal_llm=%s elapsed_ms=%s",
+            bool(prewarm_report.get("document_processor_ready")),
+            bool(prewarm_report.get("rag_service_ready")),
+            bool(prewarm_report.get("classifier_ready")),
+            bool(prewarm_report.get("legal_llm_ready")),
+            int(prewarm_report.get("elapsed_ms") or 0),
+        )
+    except Exception as exc:
+        logger.warning("Case assistant runtime prewarm skipped: %s", exc, exc_info=True)
+
+
+@app.on_event("shutdown")
+async def _flush_langfuse_observability():
+    """Flush buffered Langfuse events on shutdown."""
+    flush_langfuse()
+
 
 # Обработчик ошибок валидации
 @app.exception_handler(RequestValidationError)
@@ -393,9 +474,9 @@ app.include_router(reports.router, prefix="/api/reports", tags=["reports"])
 app.include_router(settings.router, prefix="/api/settings", tags=["settings"])
 app.include_router(upload.router, prefix="/api/upload", tags=["upload"])
 app.include_router(chat.router, prefix="/api/chat", tags=["chat"])
-app.include_router(assistant_chat.router, tags=["assistant-chat"])
 app.include_router(assistant_chat_v2.router, tags=["assistant-chat-v2"])
 app.include_router(legal_corpus.router, tags=["legal-corpus"])
+app.include_router(draft_admin_templates.router, tags=["admin-draft-templates"])
 app.include_router(websocket.router, tags=["websocket"])
 app.include_router(tabular_review.router, prefix="/api/tabular-review", tags=["tabular-review"])
 app.include_router(review_table.router, prefix="/api/review-table", tags=["review-table"])
@@ -518,13 +599,13 @@ async def get_version():
         "version": APP_VERSION,
         "commit": APP_COMMIT,
         "build_date": APP_BUILD_DATE,
-        "chat_orchestrator": "v5.0 (ReActChatAgent)",
+        "chat_orchestrator": "v6.0 (fast/deep/clarify routing)",
         "features": [
-            "ReAct Agent with 11+ tools",
-            "ГАРАНТ integration",
-            "Deep Think (7 phases)",
-            "Reflection Pattern",
-            "Citation Verification"
+            "Deterministic fast path",
+            "Deep path routing gates",
+            "LangGraph V2 rollout",
+            "Citation Verification",
+            "Quality/Budget gates"
         ]
     }
 

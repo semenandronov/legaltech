@@ -115,6 +115,7 @@ class DocumentEditorService:
         user_id: str,
         content: str,
         title: Optional[str] = None,
+        metadata: Optional[Dict[str, Any]] = None,
         create_version: bool = True
     ) -> Document:
         """
@@ -147,6 +148,15 @@ class DocumentEditorService:
         
         if title:
             document.title = title
+
+        if metadata is not None:
+            # Merge, do not overwrite unrelated keys
+            current = document.document_metadata or {}
+            if not isinstance(current, dict):
+                current = {}
+            if isinstance(metadata, dict):
+                current.update(metadata)
+            document.document_metadata = current
         
         self.db.commit()
         self.db.refresh(document)

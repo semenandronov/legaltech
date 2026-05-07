@@ -679,6 +679,19 @@ def apply_edits_node(
     if not structured_edits:
         logger.warning("[ApplyEdits] No structured_edits to apply")
         return state
+
+    # Guardrail: массовые правки требуют подтверждения пользователя.
+    # Это снижает риск разрушительных замен.
+    max_auto_apply = 10
+    edits_approved = bool(state.get("edits_approved", False))
+    if len(structured_edits) > max_auto_apply and not edits_approved:
+        new_state = dict(state)
+        new_state["waiting_for_edits_approval"] = True
+        new_state["response"] = (
+            f"Я подготовил {len(structured_edits)} правок — это много, поэтому перед применением нужно подтверждение.\n\n"
+            "Напишите «одобряю правки», чтобы применить, или «отмена», чтобы отменить."
+        )
+        return new_state
     
     logger.info(f"[ApplyEdits] Applying {len(structured_edits)} edits")
     

@@ -2,9 +2,12 @@
 import asyncio
 import logging
 import os
+import importlib.util
 from fastapi import APIRouter, HTTPException, Depends, Query, UploadFile, File
 from pydantic import BaseModel, Field, field_validator
 from sqlalchemy.orm import Session
+from sqlalchemy.orm import load_only
+from sqlalchemy.exc import OperationalError
 from typing import List, Optional
 from datetime import datetime
 from app.utils.database import get_db
@@ -15,7 +18,8 @@ from app.config import config
 from fastapi.responses import Response, StreamingResponse, JSONResponse
 from app.services.langchain_loaders import DocumentLoaderService
 from app.services.document_classifier_service import DocumentClassifierService
-from app.services.document_processor import DocumentProcessor
+from app.services.document_processor import DocumentProcessor, get_document_processor
+from app.services.chat.entity_index_service import merge_case_entity_index
 from fastapi import BackgroundTasks
 from sqlalchemy import text
 
@@ -235,7 +239,20 @@ async def get_case(
     current_user: User = Depends(get_current_user)
 ):
     """Get case details"""
-    case = db.query(Case).filter(
+    case = db.query(Case).options(
+        load_only(
+            Case.id,
+            Case.user_id,
+            Case.title,
+            Case.description,
+            Case.case_type,
+            Case.status,
+            Case.num_documents,
+            Case.file_names,
+            Case.created_at,
+            Case.updated_at,
+        )
+    ).filter(
         Case.id == case_id,
         Case.user_id == current_user.id
     ).first()
@@ -501,7 +518,7 @@ async def get_case_files(
     from app.models.analysis import DocumentClassification
     
     # Verify case ownership
-    case = db.query(Case).filter(
+    case = db.query(Case).options(load_only(Case.id, Case.user_id)).filter(
         Case.id == case_id,
         Case.user_id == current_user.id
     ).first()
@@ -512,8 +529,16 @@ async def get_case_files(
     from app.models.analysis import DocumentChunk
     from sqlalchemy import func
 
-    # Get all files for the case
-    files = db.query(FileModel).filter(FileModel.case_id == case_id).all()
+    # Get all files for the case without loading heavy blob/text payloads
+    files = db.query(
+        FileModel.id,
+        FileModel.filename,
+        FileModel.file_type,
+        FileModel.folder_id,
+        FileModel.created_at,
+        func.octet_length(FileModel.file_content).label("file_size"),
+        func.length(FileModel.original_text).label("text_length"),
+    ).filter(FileModel.case_id == case_id).all()
 
     # Get classifications for all files
     file_ids = [file.id for file in files]
@@ -541,7 +566,7 @@ async def get_case_files(
                 "file_type": file.file_type,
                 "folder_id": file.folder_id,
                 "created_at": file.created_at.isoformat() if file.created_at else None,
-                "size": len(file.file_content) if file.file_content else (len(file.original_text.encode("utf-8")) if file.original_text else None),
+                "size": int(file.file_size) if file.file_size is not None else (int(file.text_length) if file.text_length is not None else None),
                 "page_count": page_count_map.get(file.id),
                 "doc_type": classification.doc_type if (classification := classification_map.get(file.id)) else None,
                 "classification": {
@@ -561,8 +586,85 @@ async def get_case_files(
     }
 
 
+@router.get("/{case_id}/files/{file_id}/indexed-chunks")
+async def get_file_indexed_chunks(
+    case_id: str,
+    file_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """
+    Все чанки файла из PGVector (как после Docling + индексации) + citation payload для превью в UI.
+    """
+    case = db.query(Case).options(load_only(Case.id, Case.user_id)).filter(
+        Case.id == case_id,
+        Case.user_id == current_user.id,
+    ).first()
+    if not case:
+        raise HTTPException(status_code=404, detail="Дело не найдено")
+
+    file_row = (
+        db.query(FileModel)
+        .filter(FileModel.id == file_id, FileModel.case_id == case_id)
+        .first()
+    )
+    if not file_row:
+        raise HTTPException(status_code=404, detail="Файл не найден")
+
+    processor = get_document_processor()
+    docs = processor.vector_store.list_chunks_by_file(case_id, file_id)
+    if not docs:
+        return {
+            "file": {
+                "id": file_row.id,
+                "filename": file_row.filename,
+                "file_type": file_row.file_type,
+                "processing_status": file_row.processing_status,
+            },
+            "chunks": [],
+            "total": 0,
+        }
+
+    from app.services.chat.citation_payload import (
+        build_retrieval_citations,
+        fetch_original_text_map_for_case,
+    )
+
+    originals = fetch_original_text_map_for_case(db, case_id)
+    citations = build_retrieval_citations(
+        docs,
+        original_text_by_file_id=originals or None,
+    )
+    chunks_out = []
+    for idx, (doc, cit) in enumerate(zip(docs, citations)):
+        chunks_out.append(
+            {
+                "chunk_index": doc.metadata.get("chunk_index", idx),
+                "chunk_id": doc.metadata.get("chunk_id"),
+                "text_preview": (doc.page_content or "")[:400],
+                "citation": cit,
+            }
+        )
+
+    return {
+        "file": {
+            "id": file_row.id,
+            "filename": file_row.filename,
+            "file_type": file_row.file_type,
+            "processing_status": file_row.processing_status,
+        },
+        "chunks": chunks_out,
+        "total": len(chunks_out),
+    }
+
+
 class MoveFileRequest(BaseModel):
     folder_id: Optional[str] = None
+
+
+class UpdateCaseFileTextRequest(BaseModel):
+    """Replace stored plain text for a case file (e.g. workflow document_draft .txt)."""
+    text: str = Field(..., description="UTF-8 plain text body")
 
 
 @router.patch("/{case_id}/files/{file_id}")
@@ -644,6 +746,20 @@ async def add_files_to_case(
     os.makedirs(case_upload_dir, exist_ok=True)
 
     try:
+        # Strict mode: PDF ingest requires Docling runtime.
+        has_pdf = any(
+            (f.filename and "." in f.filename and f.filename.rsplit(".", 1)[-1].lower() == "pdf")
+            for f in files
+        )
+        if has_pdf and importlib.util.find_spec("docling") is None:
+            raise HTTPException(
+                status_code=503,
+                detail=(
+                    "Загрузка PDF временно недоступна: не установлен пакет 'docling'. "
+                    "Установите зависимости (`pip install -r requirements.txt`) и перезапустите backend."
+                ),
+            )
+
         for file in files:
             if not file.filename:
                 raise HTTPException(status_code=400, detail="Пустое имя файла недопустимо")
@@ -686,8 +802,22 @@ async def add_files_to_case(
                 file_content=content,
                 processing_status="pending",
             )
-            db.add(file_model)
-            db.flush()
+            try:
+                with db.begin_nested():
+                    db.add(file_model)
+                    _reconnect_db(db)
+                    db.flush()
+            except OperationalError as op_err:
+                logger.warning(
+                    "OperationalError on files flush (case_id=%s, filename=%s): %s. Retrying once with fresh connection.",
+                    case_id,
+                    filename,
+                    op_err,
+                )
+                _reconnect_db(db)
+                with db.begin_nested():
+                    db.add(file_model)
+                    db.flush()
             new_file_ids.append(file_model.id)
             logger.info(f"Queued file {file_model.id} ({filename}) for background processing")
 
@@ -765,14 +895,20 @@ async def get_processing_status(
     current_user: User = Depends(get_current_user)
 ):
     """Return per-file processing status for a case."""
-    case = db.query(Case).filter(
+    case = db.query(Case).options(load_only(Case.id, Case.user_id)).filter(
         Case.id == case_id,
         Case.user_id == current_user.id
     ).first()
     if not case:
         raise HTTPException(status_code=404, detail="Дело не найдено")
 
-    files = db.query(FileModel).filter(FileModel.case_id == case_id).all()
+    files = db.query(
+        FileModel.id,
+        FileModel.filename,
+        FileModel.processing_status,
+        FileModel.processing_error,
+        FileModel.processing_started_at,
+    ).filter(FileModel.case_id == case_id).all()
     file_statuses = [
         {
             "id": f.id,
@@ -945,7 +1081,7 @@ async def reindex_case_files(
     try:
         logger.info(f"Reindexing {len(files)} files for case {case_id}")
         
-        document_processor = DocumentProcessor()
+        document_processor = get_document_processor()
         all_documents = []
         
         # Get classifications for files
@@ -981,6 +1117,12 @@ async def reindex_case_files(
                 filename=file.filename,
                 metadata=metadata,
             )
+            merge_case_entity_index(
+                case,
+                file_id=file.id,
+                filename=file.filename,
+                text=file.original_text,
+            )
             all_documents.extend(file_documents)
             indexed_count += 1
         
@@ -992,6 +1134,11 @@ async def reindex_case_files(
                 documents=all_documents,
                 db=db,
                 original_files=None
+            )
+            document_processor.prewarm_bm25_index(
+                case_id=case_id,
+                documents=all_documents,
+                force_rebuild=True,
             )
             
             logger.info(f"Successfully reindexed {len(all_documents)} document chunks for case {case_id}")
@@ -1051,7 +1198,7 @@ async def reindex_all_cases(
     
     logger.info(f"Reindexing all files for {len(cases)} cases (user: {current_user.id})")
     
-    document_processor = DocumentProcessor()
+    document_processor = get_document_processor()
     total_files = 0
     total_chunks = 0
     cases_processed = 0
@@ -1099,6 +1246,12 @@ async def reindex_all_cases(
                     filename=file.filename,
                     metadata=metadata,
                 )
+                merge_case_entity_index(
+                    case,
+                    file_id=file.id,
+                    filename=file.filename,
+                    text=file.original_text,
+                )
                 all_documents.extend(file_documents)
                 total_files += 1
             
@@ -1108,6 +1261,11 @@ async def reindex_all_cases(
                     documents=all_documents,
                     db=db,
                     original_files=None
+                )
+                document_processor.prewarm_bm25_index(
+                    case_id=case.id,
+                    documents=all_documents,
+                    force_rebuild=True,
                 )
                 total_chunks += len(all_documents)
                 
@@ -1227,7 +1385,7 @@ async def process_case_files(
                 extra={"case_id": case_id, "num_files": len(process_files)}
             )
             
-            document_processor = DocumentProcessor()
+            document_processor = get_document_processor()
             all_documents = []
             
             # Get classifications for files
@@ -1262,6 +1420,12 @@ async def process_case_files(
                     metadata=metadata,
                     file_id=file.id
                 )
+                merge_case_entity_index(
+                    process_case,
+                    file_id=file.id,
+                    filename=file.filename,
+                    text=file.original_text,
+                )
                 all_documents.extend(file_documents)
             
             if all_documents:
@@ -1275,6 +1439,11 @@ async def process_case_files(
                     documents=all_documents,
                     db=process_db,
                     original_files=None  # Not used for PGVector
+                )
+                document_processor.prewarm_bm25_index(
+                    case_id=case_id,
+                    documents=all_documents,
+                    force_rebuild=True,
                 )
                 
                 logger.info(f"Successfully stored {len(all_documents)} document chunks in PGVector collection '{collection_name}' for case {case_id}")
@@ -1516,6 +1685,74 @@ async def get_file_content(
         headers={
             "Content-Disposition": content_disposition
         }
+    )
+
+
+@router.put("/{case_id}/files/{file_id}/text")
+async def update_case_file_text(
+    case_id: str,
+    file_id: str,
+    body: UpdateCaseFileTextRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Update UTF-8 plain text stored on a case file (original_text)."""
+    case = db.query(Case).filter(
+        Case.id == case_id,
+        Case.user_id == current_user.id
+    ).first()
+    if not case:
+        raise HTTPException(status_code=404, detail="Дело не найдено")
+
+    file = db.query(FileModel).filter(
+        FileModel.id == file_id,
+        FileModel.case_id == case_id
+    ).first()
+    if not file:
+        raise HTTPException(status_code=404, detail="Файл не найдено")
+
+    file.original_text = body.text
+    if file.file_content is not None:
+        file.file_content = body.text.encode("utf-8")
+    db.commit()
+    return {"id": file.id, "filename": file.filename, "updated": True}
+
+
+@router.get("/{case_id}/files/{file_id}/text")
+async def get_case_file_text(
+    case_id: str,
+    file_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """
+    Возвращает текстовый контент файла для подсветки цитат (File.original_text).
+
+    ВАЖНО: это не "скачивание оригинала". Для бинарника используйте /content.
+    Этот endpoint нужен, чтобы offsets (char_start/char_end) совпадали с текстом в UI.
+    """
+    case = db.query(Case).filter(
+        Case.id == case_id,
+        Case.user_id == current_user.id
+    ).first()
+    if not case:
+        raise HTTPException(status_code=404, detail="Дело не найдено")
+
+    file = db.query(FileModel).filter(
+        FileModel.id == file_id,
+        FileModel.case_id == case_id
+    ).first()
+    if not file:
+        raise HTTPException(status_code=404, detail="Файл не найден")
+
+    text = (file.original_text or "")
+    return Response(
+        content=text.encode("utf-8"),
+        media_type="text/plain; charset=utf-8",
+        headers={
+            "X-Text-Source": "original_text",
+            "X-Full-Text-Length": str(len(text)),
+        },
     )
 
 

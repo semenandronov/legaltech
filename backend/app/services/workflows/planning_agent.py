@@ -3,7 +3,7 @@ from typing import List, Dict, Any, Optional
 from dataclasses import dataclass, field
 from langchain_core.prompts import ChatPromptTemplate
 from app.services.llm_factory import create_llm
-from app.models.workflow import WorkflowDefinition, WORKFLOW_TOOLS
+from app.models.workflow import WorkflowDefinition, WORKFLOW_TOOLS, normalize_workflow_tool_name
 import logging
 import json
 import re
@@ -147,13 +147,26 @@ PLANNING_PROMPT = """Ты - AI-агент для юридического ана
 
 ПРАВИЛА:
 1. Выбери ПОДХОДЯЩИЙ сценарий или создай свой
-2. **ОБЯЗАТЕЛЬНО используй ВСЕ доступные инструменты из списка ДОСТУПНЫЕ ИНСТРУМЕНТЫ** - пользователь специально их выбрал
-3. Если инструмент не подходит для задачи напрямую, найди способ его использовать (например, для дополнительной проверки)
-4. Шаги без зависимостей могут выполняться параллельно
-5. Верни ТОЛЬКО JSON, без текста до или после"""
+2. Используй ТОЛЬКО те инструменты, которые реально нужны для решения задачи
+3. Не добавляй шаги "для галочки": каждый шаг должен иметь практическую ценность
+4. Формируй последовательный план: результат каждого шага должен помогать следующему
+5. Если нужны параллельные шаги, добавляй это только когда это действительно ускоряет задачу
+6. Верни ТОЛЬКО JSON, без текста до или после"""
 
 
 class PlanningAgent:
+    def _enforce_progressive_dependencies(self, steps: List[PlanStep]) -> List[PlanStep]:
+        """
+        Ensure a predictable sequential chain for workflow execution.
+        If a step has no explicit dependency, it depends on previous step.
+        """
+        if not steps:
+            return steps
+        for i in range(1, len(steps)):
+            if not steps[i].depends_on:
+                steps[i].depends_on = [steps[i - 1].id]
+        return steps
+
     """
     Agentic AI для планирования задач.
     
@@ -213,6 +226,8 @@ class PlanningAgent:
         Returns:
             ExecutionPlan with goals and steps
         """
+        available_tools = [normalize_workflow_tool_name(t) for t in available_tools or []]
+
         # If workflow has a default plan, use it as a template
         if workflow_definition and workflow_definition.default_plan:
             return self._adapt_default_plan(
@@ -262,17 +277,18 @@ class PlanningAgent:
         for i, ts in enumerate(agentic_plan.tool_selections):
             # Ensure file_ids are in params for document tools
             params = ts.params.copy() if ts.params else {}
+            tool_name = normalize_workflow_tool_name(ts.tool_name)
             document_tools = ["summarize", "extract_entities", "rag", "playbook_check", "tabular_review"]
-            if ts.tool_name in document_tools and file_ids:
+            if tool_name in document_tools and file_ids:
                 if "file_ids" not in params:
                     params["file_ids"] = file_ids
             
             steps.append(PlanStep(
                 id=f"step_{i + 1}",
-                name=ts.tool_name,
+                name=tool_name,
                 description=ts.reason,
                 step_type="tool_call",
-                tool_name=ts.tool_name,
+                tool_name=tool_name,
                 tool_params=params,
                 depends_on=[],
                 expected_output=ts.expected_output,
@@ -294,6 +310,7 @@ class PlanningAgent:
         
         logger.info(f"AgenticPlanner created plan: {agentic_plan.task_type.value} with {len(steps)} steps")
         
+        steps = self._enforce_progressive_dependencies(steps)
         return ExecutionPlan(
             goals=goals,
             steps=steps,
@@ -332,7 +349,7 @@ class PlanningAgent:
         
         for i, step_data in enumerate(default_plan.get("steps", [])):
             step_id = step_data.get("id", f"step_{i + 1}")
-            tool_name = step_data.get("tool")
+            tool_name = normalize_workflow_tool_name(step_data.get("tool"))
             
             # Build tool params based on tool type
             tool_params = step_data.get("tool_params", {}).copy()
@@ -363,6 +380,7 @@ class PlanningAgent:
         # Calculate total duration
         total_duration = sum(s.estimated_duration_seconds for s in steps)
         
+        steps = self._enforce_progressive_dependencies(steps)
         return ExecutionPlan(
             goals=goals,
             steps=steps,
@@ -494,7 +512,7 @@ class PlanningAgent:
             
             for i, step_data in enumerate(data.get("steps", [])):
                 tool_params = step_data.get("tool_params", {})
-                tool_name = step_data.get("tool_name")
+                tool_name = normalize_workflow_tool_name(step_data.get("tool_name"))
                 
                 # Auto-inject file_ids for document-related tools
                 document_tools = ["tabular_review", "rag", "summarize", "extract_entities", "playbook_check"]
@@ -519,6 +537,9 @@ class PlanningAgent:
                 )
                 steps.append(step)
             
+            # Enforce progressive data flow between steps
+            steps = self._enforce_progressive_dependencies(steps)
+
             # Calculate total duration
             total_duration = sum(s.estimated_duration_seconds for s in steps)
             

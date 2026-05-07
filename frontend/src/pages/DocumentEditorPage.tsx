@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
-import { useParams, useNavigate } from 'react-router-dom'
+import { useParams, useNavigate, useSearchParams } from 'react-router-dom'
 import { Download, ArrowLeft, MessageSquare, FileText, FileEdit, History, BookOpen, Workflow, ChevronDown } from 'lucide-react'
 import { toast } from 'sonner'
 import UnifiedSidebar from '../components/Layout/UnifiedSidebar'
@@ -13,6 +13,8 @@ import { getDocument, createDocument, updateDocument, exportDocx, exportPdf, lis
 import { getPlaybooks, checkDocument as runPlaybookCheck, getCheck, Playbook } from '../services/playbooksApi'
 import { DocumentsList } from '../components/Editor/DocumentsList'
 import { PlaybookResultsPanel } from '../components/Playbooks/PlaybookResultsPanel'
+import { normalizeLegalDocumentHtml } from '../utils/legalDocumentHtmlNormalize'
+import type { CommentItem } from '../components/Editor/extensions/Comment'
 
 interface DocumentData {
   id: string
@@ -23,14 +25,17 @@ interface DocumentData {
   metadata?: Record<string, any>
 }
 
-const DocumentEditorPage = () => {
+const DocumentEditorPage = ({ embedded = false }: { embedded?: boolean }) => {
   const { caseId, documentId } = useParams<{ caseId: string; documentId?: string }>()
   const navigate = useNavigate()
+  const [searchParams] = useSearchParams()
+  const returnTo = searchParams.get('returnTo')
   const [document, setDocument] = useState<DocumentData | null>(null)
   const [content, setContent] = useState('')
   const [title, setTitle] = useState('Новый документ')
   const [selectedText, setSelectedText] = useState('')
   const [selectionRange, setSelectionRange] = useState<{ from: number; to: number } | null>(null)
+  const [comments, setComments] = useState<CommentItem[]>([])
   const [showVersionHistory, setShowVersionHistory] = useState(false)
   // showComments removed — CommentsPanel was overlapping the chat sidebar
   const [showTemplateSelector, setShowTemplateSelector] = useState(false)
@@ -99,7 +104,8 @@ const DocumentEditorPage = () => {
           const doc = await getDocument(documentId)
           setDocument(doc)
           setTitle(doc.title)
-          setContent(doc.content || '')
+          setContent(normalizeLegalDocumentHtml(doc.content || ''))
+          setComments((doc.metadata?.comments as CommentItem[]) || [])
         } catch (error: any) {
           toast.error(error.message || 'Ошибка при загрузке документа')
           navigate(`/cases/${caseId}/editor`)
@@ -157,14 +163,17 @@ const DocumentEditorPage = () => {
 
       if (documentId && document) {
         // Update existing document
-        await updateDocument(documentId, content, title)
+        await updateDocument(documentId, content, title, {
+          ...(document.metadata || {}),
+          comments,
+        })
         if (showToast) {
           toast.success('Документ сохранен')
         }
         setHasUnsavedChanges(false)
       } else {
         // Create new document
-        const newDoc = await createDocument(caseId, title, content)
+        const newDoc = await createDocument(caseId, title, content, { comments })
         setDocument(newDoc)
         navigate(`/cases/${caseId}/editor/${newDoc.id}`, { replace: true })
         if (showToast) {
@@ -280,7 +289,7 @@ const DocumentEditorPage = () => {
   }
 
   const handleVersionRestored = (restoredContent: string) => {
-    setContent(restoredContent)
+    setContent(normalizeLegalDocumentHtml(restoredContent))
     setHasUnsavedChanges(true)
     // Reload document to get updated version
     if (documentId) {
@@ -298,14 +307,16 @@ const DocumentEditorPage = () => {
                                  .replace(/<\/body>[\s\S]*?<\/html>/i, '')
                                  .trim() || cleanHtml
 
+    const laidOut = normalizeLegalDocumentHtml(bodyContent)
+
     if (editorRef.current) {
       // Already inside editor — just set content
-      editorRef.current.setContent(bodyContent)
+      editorRef.current.setContent(laidOut)
       setHasUnsavedChanges(true)
     } else {
       // In list mode — create a new document with the imported content
       try {
-        const doc = await createDocument(caseId!, 'Импортированный документ', bodyContent)
+        const doc = await createDocument(caseId!, 'Импортированный документ', laidOut)
         toast.success('Документ импортирован')
         navigate(`/cases/${caseId}/editor/${doc.id}`)
       } catch (err: any) {
@@ -398,11 +409,11 @@ const DocumentEditorPage = () => {
   // Show loading state
   if (loading || loadingDocuments) {
     return (
-      <div className="h-screen bg-bg-primary flex">
-        {caseId && <UnifiedSidebar navItems={navItems} title="Legal AI"  />}
+      <div className={`${embedded ? 'h-full' : 'h-screen'} bg-bg-primary flex`}>
+        {caseId && !embedded && <UnifiedSidebar navItems={navItems} title="Legal AI"  />}
         <div className="flex-1 flex items-center justify-center">
           <div className="text-center">
-            <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto mb-4"></div>
+            <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary mx-auto mb-4"></div>
             <p className="text-gray-600">
               {documentId ? 'Загрузка документа...' : 'Загрузка списка документов...'}
             </p>
@@ -415,8 +426,8 @@ const DocumentEditorPage = () => {
   // Show documents list if no documentId
   if (!documentId) {
     return (
-      <div className="h-screen bg-bg-primary flex">
-        {caseId && <UnifiedSidebar navItems={navItems} title="Legal AI"  />}
+      <div className={`${embedded ? 'h-full' : 'h-screen'} bg-bg-primary flex`}>
+        {caseId && !embedded && <UnifiedSidebar navItems={navItems} title="Legal AI"  />}
         <div className="flex-1 flex flex-col" style={{ backgroundColor: 'var(--color-bg-primary)' }}>
           <DocumentsList
             documents={documentsList}
@@ -438,20 +449,31 @@ const DocumentEditorPage = () => {
 
   // Show editor for specific document
   return (
-    <div className="h-screen bg-bg-primary flex">
-      {caseId && <UnifiedSidebar navItems={navItems} title="Legal AI"  />}
+    <div className={`${embedded ? 'h-full' : 'h-screen'} bg-bg-primary flex`}>
+      {caseId && !embedded && <UnifiedSidebar navItems={navItems} title="Legal AI"  />}
       <div className="flex-1 flex flex-col" style={{ backgroundColor: 'var(--color-bg-primary)' }}>
       {/* Toolbar */}
       <div className="flex items-center justify-between px-4 py-3 border-b gap-2" style={{ borderBottomColor: 'var(--color-border)' }}>
         <div className="flex items-center gap-3 min-w-0 flex-1">
           <div className="flex items-center gap-2 flex-shrink-0">
             <button
-              onClick={() => navigate(`/cases/${caseId}/editor`)}
+              type="button"
+              onClick={() => {
+                if (returnTo) {
+                  try {
+                    navigate(decodeURIComponent(returnTo))
+                  } catch {
+                    navigate(`/cases/${caseId}/editor`)
+                  }
+                } else {
+                  navigate(`/cases/${caseId}/editor`)
+                }
+              }}
               className="flex items-center gap-1.5 px-2.5 py-1.5 text-sm font-medium rounded-lg transition-all duration-150 hover:bg-gray-100"
               style={{ color: 'var(--color-text-secondary)' }}
             >
               <ArrowLeft className="w-4 h-4" />
-              Назад
+              {returnTo ? 'Назад в переписку' : 'Назад'}
             </button>
             {!documentId && (
               <button
@@ -531,16 +553,6 @@ const DocumentEditorPage = () => {
           </div>
           {documentId && (
             <button
-              onClick={handleOpenPlaybookModal}
-              className="flex items-center gap-1.5 px-3 py-2 text-sm border rounded-lg hover:bg-gray-50 transition-colors"
-              style={{ borderColor: 'var(--color-border)' }}
-            >
-              <BookOpen className="w-4 h-4" />
-              Проверить playbook
-            </button>
-          )}
-          {documentId && (
-            <button
               onClick={() => setShowVersionHistory(true)}
               className="flex items-center gap-1.5 px-3 py-2 text-sm border rounded-lg hover:bg-gray-50 transition-colors"
               style={{ borderColor: 'var(--color-border)' }}
@@ -572,6 +584,11 @@ const DocumentEditorPage = () => {
             caseId={caseId}
             documentId={documentId}
             onInsertText={handleInsertText}
+            comments={comments}
+            onCommentsChange={(next) => {
+              setComments(next)
+              setHasUnsavedChanges(true)
+            }}
           />
         </div>
 
@@ -703,7 +720,7 @@ const DocumentEditorPage = () => {
             <div className="p-6 overflow-y-auto max-h-[60vh]">
               {loadingPlaybooks ? (
                 <div className="flex items-center justify-center py-8">
-                  <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
+                  <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary"></div>
                 </div>
               ) : playbooks.length === 0 ? (
                 <div className="text-center py-8 text-gray-500">
@@ -711,7 +728,7 @@ const DocumentEditorPage = () => {
                   <p>Нет доступных Playbooks</p>
                   <button
                     onClick={() => navigate(`/cases/${caseId}/playbooks`)}
-                    className="mt-4 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
+                    className="mt-4 px-4 py-2 bg-primary text-primary-foreground rounded-lg hover:opacity-90 transition-colors"
                   >
                     Создать Playbook
                   </button>
@@ -726,7 +743,7 @@ const DocumentEditorPage = () => {
                       key={pb.id}
                       onClick={() => handleRunPlaybook(pb.id)}
                       disabled={runningPlaybookId !== null}
-                      className="w-full p-4 border rounded-lg text-left hover:border-blue-300 hover:bg-blue-50 transition-all disabled:opacity-50"
+                      className="w-full p-4 border rounded-lg text-left hover:border-border-strong hover:bg-secondary transition-all disabled:opacity-50"
                       style={{ borderColor: 'var(--color-border)' }}
                     >
                       <div className="flex items-center justify-between">
@@ -746,7 +763,7 @@ const DocumentEditorPage = () => {
                           </div>
                         </div>
                         {runningPlaybookId === pb.id && (
-                          <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-blue-600"></div>
+                          <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-primary"></div>
                         )}
                       </div>
                     </button>

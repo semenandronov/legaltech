@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { FolderOpen, MessageSquare, Upload, X, FileText, CheckCircle, AlertCircle, Loader } from 'lucide-react'
+import { FolderOpen, MessageSquare, Upload, X, FileText, CheckCircle, AlertCircle, Loader, Workflow } from 'lucide-react'
 import { createCase, addFilesToCase, getProcessingStatus, FileProcessingStatus } from '../services/api'
 import UnifiedSidebar from '../components/Layout/UnifiedSidebar'
 
@@ -10,6 +10,7 @@ const MAX_FILE_SIZE_BYTES = MAX_FILE_SIZE_MB * 1024 * 1024
 const mainNavItems = [
   { id: 'cases', label: 'Дела', icon: FolderOpen, path: '/cases' },
   { id: 'assistant', label: 'Ассистент', icon: MessageSquare, path: '/assistant' },
+  { id: 'workflows', label: 'Workflows', icon: Workflow, path: '/workflows' },
 ]
 
 const NewCasePage = () => {

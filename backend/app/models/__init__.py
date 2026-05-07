@@ -1,7 +1,7 @@
 # Models module
 """SQLAlchemy models for Legal AI Vault"""
 
-from app.models.case import Base, Case, ChatMessage, File
+from app.models.case import Base, Case, ChatMessage, File, LegalCorpusFile
 from app.models.user import User
 from app.models.analysis import (
     AnalysisResult,
@@ -52,6 +52,7 @@ __all__ = [
     "Case",
     "ChatMessage",
     "File",
+    "LegalCorpusFile",
     "User",
     # Analysis models
     "AnalysisResult",

@@ -1,4 +1,4 @@
-"""Legal Database Tool for Workflows - ГАРАНТ Integration"""
+"""Legal Database Tool for Workflows - uploaded legal corpus search."""
 from typing import Dict, Any, List, Optional
 from app.services.workflows.tool_registry import BaseTool, ToolResult
 import logging
@@ -8,32 +8,16 @@ logger = logging.getLogger(__name__)
 
 class LegalDBTool(BaseTool):
     """
-    Tool for searching ГАРАНТ legal database.
-    
-    ГАРАНТ - одна из крупнейших правовых информационных систем России.
-    Содержит законы, нормативные акты, судебную практику, комментарии.
-    
-    API v2.1.0: https://api.garant.ru
+    Tool for searching uploaded legal corpus ("Справочник").
+    Primary source is local legal corpus files uploaded by the team.
     """
     
     name = "legal_db"
-    display_name = "Legal Database (ГАРАНТ)"
-    description = "Поиск в правовой базе ГАРАНТ (законы, судебная практика, нормативные акты)"
+    display_name = "Legal Database (Справочник)"
+    description = "Поиск по загруженному правовому справочнику (кодексы, законы, практика)"
     
     def __init__(self, db):
         super().__init__(db)
-        self._garant_source = None
-        self._init_source()
-    
-    def _init_source(self):
-        """Initialize ГАРАНТ source"""
-        try:
-            from app.services.external_sources.garant_source import GarantSource
-            self._garant_source = GarantSource()
-            logger.info("LegalDBTool: Initialized with ГАРАНТ API")
-        except Exception as e:
-            logger.warning(f"LegalDBTool: Failed to initialize ГАРАНТ: {e}")
-            self._garant_source = None
     
     def validate_params(self, params: Dict[str, Any]) -> List[str]:
         """Validate parameters"""
@@ -46,83 +30,52 @@ class LegalDBTool(BaseTool):
     
     async def execute(self, params: Dict[str, Any], context: Dict[str, Any]) -> ToolResult:
         """
-        Execute legal database search in ГАРАНТ
+        Execute search in uploaded legal corpus.
         
         Params:
             query: Search query (поисковый запрос)
             max_results: Maximum results (default: 10)
-            get_full_text: Get full document text (default: False)
-            doc_type: Document type filter: "law", "court_decision", "article", "commentary"
-            date_from: Start date filter (YYYY-MM-DD)
-            date_to: End date filter (YYYY-MM-DD)
             
         Context:
             user_id: User ID
             case_id: Case ID
         """
         try:
+            legal_research_enabled = bool(context.get("legal_research", False))
+            if not legal_research_enabled:
+                return ToolResult(
+                    success=False,
+                    error=(
+                        "Инструмент legal_db отключен: включите тумблер СПРАВОЧНИК в чате, "
+                        "чтобы использовать правовой справочник."
+                    ),
+                )
+
             query = params.get("query", "")
             max_results = params.get("max_results", 10)
             get_full_text = params.get("get_full_text", False)
             
-            if not self._garant_source:
-                self._init_source()
-            
-            if not self._garant_source:
-                return ToolResult(
-                    success=False,
-                    error="ГАРАНТ source not available"
-                )
-            
-            # Initialize source
-            await self._garant_source.initialize()
-            
-            if not self._garant_source.enabled:
-                return ToolResult(
-                    success=False,
-                    error="ГАРАНТ API key not configured"
-                )
-            
-            # Build filters
-            filters: Dict[str, Any] = {}
-            if params.get("doc_type"):
-                filters["doc_type"] = params.get("doc_type")
-            if params.get("date_from"):
-                filters["date_from"] = params.get("date_from")
-            if params.get("date_to"):
-                filters["date_to"] = params.get("date_to")
-            
-            # Execute search
-            source_results = await self._garant_source.search(
-                query=query,
-                max_results=max_results,
-                filters=filters if filters else None,
-                get_full_text=get_full_text
-            )
-            
-            # Convert to serializable format
+            from app.services.legal_corpus_service import retrieve_legal_corpus_documents
+            docs = retrieve_legal_corpus_documents(query=query, k=max_results)
             results = []
-            for result in source_results:
+            for i, doc in enumerate(docs, start=1):
+                meta = doc.metadata or {}
                 results.append({
-                    "title": result.title,
-                    "content": result.content[:2000] if result.content else "",
-                    "url": result.url,
-                    "source": "ГАРАНТ",
-                    "relevance_score": result.relevance_score,
-                    "doc_id": result.metadata.get("doc_id"),
-                    "doc_type": result.metadata.get("doc_type"),
-                    "doc_date": result.metadata.get("doc_date"),
-                    "doc_number": result.metadata.get("doc_number"),
-                    "issuing_authority": result.metadata.get("issuing_authority")
+                    "title": meta.get("source_filename", f"Фрагмент {i}"),
+                    "content": (doc.page_content or "")[:2000],
+                    "source": "legal_corpus",
+                    "corpus_file_id": meta.get("corpus_file_id"),
+                    "chunk_index": meta.get("chunk_index"),
+                    "source_page": meta.get("source_page"),
                 })
             
             # Generate summary
             if results:
-                summary = f"Найдено {len(results)} документов в ГАРАНТ по запросу: '{query}'"
+                summary = f"Найдено {len(results)} фрагментов в загруженном справочнике по запросу: '{query}'"
                 if results[0].get("title"):
                     summary += f". Топ результат: {results[0]['title'][:100]}"
             else:
-                summary = f"По запросу '{query}' документов не найдено в ГАРАНТ"
+                summary = f"По запросу '{query}' в загруженном справочнике ничего не найдено"
             
             return ToolResult(
                 success=True,
@@ -130,13 +83,12 @@ class LegalDBTool(BaseTool):
                     "query": query,
                     "results": results,
                     "total_found": len(results),
-                    "source": "ГАРАНТ",
-                    "filters_applied": filters
+                    "source": "legal_corpus"
                 },
                 output_summary=summary,
                 artifacts=[{
                     "type": "legal_search_results",
-                    "source": "garant",
+                    "source": "legal_corpus",
                     "query": query,
                     "result_count": len(results)
                 }]
@@ -150,49 +102,10 @@ class LegalDBTool(BaseTool):
             )
     
     async def get_document_full_text(self, doc_id: str, format: str = "html") -> Optional[str]:
-        """
-        Get full document text from ГАРАНТ
-        
-        Args:
-            doc_id: Document ID (topic)
-            format: Export format (html, rtf, pdf, odt)
-            
-        Returns:
-            Full document text or None
-        """
-        if not self._garant_source:
-            return None
-        
-        return await self._garant_source.get_document_full_text(doc_id, format)
-    
+        return None
+
     async def get_document_info(self, doc_id: str) -> Optional[Dict[str, Any]]:
-        """
-        Get document metadata from ГАРАНТ
-        
-        Args:
-            doc_id: Document ID (topic)
-            
-        Returns:
-            Document info dict or None
-        """
-        if not self._garant_source:
-            return None
-        
-        return await self._garant_source.get_document_info(doc_id)
-    
+        return None
+
     async def insert_links(self, text: str) -> Optional[str]:
-        """
-        Insert ГАРАНТ links into text
-        
-        Automatically finds document references in text and adds links.
-        
-        Args:
-            text: Text to process (max 20MB)
-            
-        Returns:
-            Text with inserted links or None
-        """
-        if not self._garant_source:
-            return None
-        
-        return await self._garant_source.insert_links(text)
+        return None

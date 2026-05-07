@@ -103,7 +103,7 @@ export const DocumentComparison = ({
         {/* Header */}
         <div className="flex items-center justify-between p-4 border-b border-gray-200 bg-gray-50">
           <div className="flex items-center gap-3">
-            <ArrowLeftRight className="w-5 h-5 text-blue-600" aria-hidden="true" />
+            <ArrowLeftRight className="w-5 h-5 text-accent-muted" aria-hidden="true" />
             <h2 id="comparison-title" className="text-lg font-semibold text-gray-900">
               Сравнение версий документа
             </h2>
@@ -115,7 +115,7 @@ export const DocumentComparison = ({
                 onClick={() => setViewMode('inline')}
                 className={`px-3 py-1.5 text-sm transition-colors ${
                   viewMode === 'inline'
-                    ? 'bg-blue-600 text-white'
+                    ? 'bg-primary text-primary-foreground'
                     : 'bg-white text-gray-600 hover:bg-gray-50'
                 }`}
                 aria-pressed={viewMode === 'inline'}
@@ -126,7 +126,7 @@ export const DocumentComparison = ({
                 onClick={() => setViewMode('side-by-side')}
                 className={`px-3 py-1.5 text-sm transition-colors ${
                   viewMode === 'side-by-side'
-                    ? 'bg-blue-600 text-white'
+                    ? 'bg-primary text-primary-foreground'
                     : 'bg-white text-gray-600 hover:bg-gray-50'
                 }`}
                 aria-pressed={viewMode === 'side-by-side'}
@@ -136,7 +136,7 @@ export const DocumentComparison = ({
             </div>
             <button
               onClick={onClose}
-              className="p-2 hover:bg-gray-100 rounded-lg transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
+              className="p-2 hover:bg-gray-100 rounded-lg transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
               aria-label="Закрыть"
             >
               <X className="w-5 h-5 text-gray-500" aria-hidden="true" />
@@ -150,7 +150,7 @@ export const DocumentComparison = ({
             <button
               onClick={() => navigateVersions('prev')}
               disabled={versions.length <= 1}
-              className="p-1.5 rounded hover:bg-gray-100 disabled:opacity-50 disabled:cursor-not-allowed focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
+              className="p-1.5 rounded hover:bg-gray-100 disabled:opacity-50 disabled:cursor-not-allowed focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
               aria-label="Предыдущая версия"
             >
               <ChevronLeft className="w-5 h-5" aria-hidden="true" />
@@ -174,7 +174,7 @@ export const DocumentComparison = ({
             <button
               onClick={() => navigateVersions('next')}
               disabled={versions.length <= 1}
-              className="p-1.5 rounded hover:bg-gray-100 disabled:opacity-50 disabled:cursor-not-allowed focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
+              className="p-1.5 rounded hover:bg-gray-100 disabled:opacity-50 disabled:cursor-not-allowed focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
               aria-label="Следующая версия"
             >
               <ChevronRight className="w-5 h-5" aria-hidden="true" />
@@ -202,7 +202,7 @@ export const DocumentComparison = ({
               const version = versions.find((v) => v.id === e.target.value)
               if (version) setSelectedVersion(version)
             }}
-            className="px-3 py-1.5 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+            className="px-3 py-1.5 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-ring"
             aria-label="Выбрать версию"
           >
             {versions.map((v) => (
@@ -290,7 +290,7 @@ export const DocumentComparison = ({
             <button
               onClick={handleApplyVersion}
               disabled={!selectedVersion}
-              className="flex items-center gap-2 px-4 py-2 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2"
+              className="flex items-center gap-2 px-4 py-2 text-sm bg-primary text-primary-foreground rounded-lg hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
             >
               <Check className="w-4 h-4" aria-hidden="true" />
               Восстановить эту версию

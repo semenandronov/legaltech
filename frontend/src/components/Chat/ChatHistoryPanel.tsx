@@ -233,7 +233,7 @@ export const ChatHistoryPanel: React.FC<ChatHistoryPanelProps> = ({
               </Typography>
               <button
                 onClick={loadHistory}
-                className="text-sm text-blue-600 hover:underline"
+                className="text-sm text-accent-muted hover:underline"
               >
                 Попробовать снова
               </button>

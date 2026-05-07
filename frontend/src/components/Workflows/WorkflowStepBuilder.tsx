@@ -14,8 +14,6 @@ import {
   BookOpen,
   FileText,
   Target,
-  Database,
-  AlertTriangle,
   Zap,
 } from 'lucide-react'
 import type { WorkflowStep } from '../../services/workflowsApi'
@@ -29,24 +27,22 @@ export interface ToolOption {
 
 const DEFAULT_TOOLS: ToolOption[] = [
   { name: 'tabular_review', display_name: 'Tabular Review', description: 'Создание таблицы для массового анализа документов', icon: Table },
-  { name: 'rag_search', display_name: 'RAG Search', description: 'Поиск по документам с AI', icon: FileSearch },
-  { name: 'web_search', display_name: 'Web Search', description: 'Поиск информации в интернете', icon: Globe },
-  { name: 'playbook', display_name: 'Playbook Check', description: 'Проверка документов по правилам', icon: BookOpen },
+  { name: 'rag', display_name: 'RAG Search', description: 'Поиск по документам с AI', icon: FileSearch },
+  { name: 'legal_db', display_name: 'Legal DB', description: 'Поиск по правовой базе', icon: Globe },
+  { name: 'playbook_check', display_name: 'Playbook Check', description: 'Проверка документов по правилам', icon: BookOpen },
   { name: 'summarize', display_name: 'Summarize', description: 'Создание резюме документов', icon: FileText },
   { name: 'extract_entities', display_name: 'Extract Entities', description: 'Извлечение сущностей (даты, суммы, лица)', icon: Target },
-  { name: 'document_compare', display_name: 'Document Compare', description: 'Сравнение документов', icon: Database },
-  { name: 'risk_analysis', display_name: 'Risk Analysis', description: 'Анализ рисков', icon: AlertTriangle },
+  { name: 'document_draft', display_name: 'Document Draft', description: 'Подготовка проекта документа', icon: FileText },
 ]
 
 const toolColors: Record<string, string> = {
   'tabular_review': '#6366f1',
-  'rag_search': '#8b5cf6',
-  'web_search': '#06b6d4',
-  'playbook': '#10b981',
+  'rag': '#8b5cf6',
+  'legal_db': '#06b6d4',
+  'playbook_check': '#10b981',
   'summarize': '#f59e0b',
   'extract_entities': '#ec4899',
-  'document_compare': '#3b82f6',
-  'risk_analysis': '#ef4444',
+  'document_draft': '#3b82f6',
 }
 
 interface WorkflowStepBuilderProps {
@@ -78,7 +74,7 @@ export const WorkflowStepBuilder = ({
   const addStep = () => {
     const newStep: WorkflowStep = {
       name: `Шаг ${steps.length + 1}`,
-      tool: availableTools[0]?.name || 'rag_search',
+      tool: availableTools[0]?.name || 'rag',
       description: '',
       params: {},
       depends_on: [],

@@ -12,11 +12,13 @@ interface PlanApprovalCardProps {
   planId: string
   plan: {
     reasoning?: string
+    task_understanding?: string
     analysis_types?: string[]
     confidence?: number
     goals?: Array<{ description: string }>
     steps?: Array<{ description: string; agent_name?: string; estimated_time?: string }>
     strategy?: string
+    questions_for_lawyer?: string[]
     tables_to_create?: Array<{
       table_name?: string
       columns?: Array<{
@@ -30,6 +32,9 @@ interface PlanApprovalCardProps {
   onApproved?: () => void
   onRejected?: () => void
   onModified?: (modifications: string) => void
+  approvalApiPath?: string
+  onApproveRequest?: (planId: string) => Promise<void>
+  onRejectRequest?: (planId: string) => Promise<void>
 }
 
 export const PlanApprovalCard: React.FC<PlanApprovalCardProps> = ({
@@ -38,6 +43,9 @@ export const PlanApprovalCard: React.FC<PlanApprovalCardProps> = ({
   onApproved,
   onRejected,
   onModified,
+  approvalApiPath = '/api/chat/approve-plan',
+  onApproveRequest,
+  onRejectRequest,
 }) => {
   const [isApproving, setIsApproving] = useState(false)
   const [isRejecting, setIsRejecting] = useState(false)
@@ -47,25 +55,29 @@ export const PlanApprovalCard: React.FC<PlanApprovalCardProps> = ({
   const handleApprove = async () => {
     setIsApproving(true)
     try {
-      const token = localStorage.getItem('access_token')
-      const response = await fetch(getApiUrl('/api/chat/approve-plan'), {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`,
-        },
-        body: JSON.stringify({
-          plan_id: planId,
-          approved: true,
-        }),
-      })
+      if (onApproveRequest) {
+        await onApproveRequest(planId)
+      } else {
+        const token = localStorage.getItem('access_token')
+        const response = await fetch(getApiUrl(approvalApiPath), {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${token}`,
+          },
+          body: JSON.stringify({
+            plan_id: planId,
+            approved: true,
+          }),
+        })
 
-      if (!response.ok) {
-        throw new Error('Failed to approve plan')
+        if (!response.ok) {
+          throw new Error('Failed to approve plan')
+        }
+
+        const data = await response.json()
+        logger.info('Plan approved:', data)
       }
-
-      const data = await response.json()
-      logger.info('Plan approved:', data)
       // Call onApproved with planId to start streaming
       onApproved?.()
     } catch (error) {
@@ -79,21 +91,25 @@ export const PlanApprovalCard: React.FC<PlanApprovalCardProps> = ({
   const handleReject = async () => {
     setIsRejecting(true)
     try {
-      const token = localStorage.getItem('access_token')
-      const response = await fetch(getApiUrl('/api/chat/approve-plan'), {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`,
-        },
-        body: JSON.stringify({
-          plan_id: planId,
-          approved: false,
-        }),
-      })
+      if (onRejectRequest) {
+        await onRejectRequest(planId)
+      } else {
+        const token = localStorage.getItem('access_token')
+        const response = await fetch(getApiUrl(approvalApiPath), {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${token}`,
+          },
+          body: JSON.stringify({
+            plan_id: planId,
+            approved: false,
+          }),
+        })
 
-      if (!response.ok) {
-        throw new Error('Failed to reject plan')
+        if (!response.ok) {
+          throw new Error('Failed to reject plan')
+        }
       }
 
       onRejected?.()
@@ -113,33 +129,15 @@ export const PlanApprovalCard: React.FC<PlanApprovalCardProps> = ({
     }
   }
 
-  const strategyNames: Record<string, string> = {
-    comprehensive_analysis: 'Комплексный анализ',
-    parallel_optimized: 'Параллельная оптимизация',
-    sequential_dependent: 'Последовательное выполнение с зависимостями',
-    simple_sequential: 'Простое последовательное выполнение',
-    dependent_sequential: 'Последовательное выполнение зависимых анализов',
-    parallel_independent: 'Параллельное выполнение независимых анализов',
-  }
-
   return (
-    <Plan className="border-2 border-blue-200 bg-blue-50 my-4" defaultOpen={true}>
+    <Plan className="border-2 border-border bg-secondary my-4" defaultOpen={true}>
       <PlanHeader>
         <div className="flex items-start justify-between w-full">
           <div className="flex-1">
-            <PlanTitle>План анализа</PlanTitle>
-            {plan.confidence !== undefined && (
-              <PlanDescription>
-                {`Уверенность: ${(plan.confidence * 100).toFixed(0)}%`}
-              </PlanDescription>
-            )}
+            <PlanTitle>Как ИИ понял задачу</PlanTitle>
+            <PlanDescription>Подтвердите, отклоните или дополните перед генерацией черновика.</PlanDescription>
           </div>
           <div className="flex items-center gap-2">
-            {plan.confidence !== undefined && (
-              <Badge variant="outline" className="text-sm">
-                {(plan.confidence * 100).toFixed(0)}%
-              </Badge>
-            )}
             <PlanTrigger />
           </div>
         </div>
@@ -154,36 +152,10 @@ export const PlanApprovalCard: React.FC<PlanApprovalCardProps> = ({
           </div>
         )}
 
-        {plan.analysis_types && plan.analysis_types.length > 0 && (
+        {plan.task_understanding && (
           <div>
-            <h4 className="text-sm font-semibold text-gray-700 mb-2">Типы анализов:</h4>
-            <div className="flex flex-wrap gap-2">
-              {plan.analysis_types.map((type, idx) => (
-                <Badge key={idx} variant="secondary" className="bg-blue-100 text-blue-800">
-                  {type}
-                </Badge>
-              ))}
-            </div>
-          </div>
-        )}
-
-        {plan.goals && plan.goals.length > 0 && (
-          <div>
-            <h4 className="text-sm font-semibold text-gray-700 mb-2">Цели:</h4>
-            <ul className="list-disc list-inside space-y-1 text-sm text-gray-700">
-              {plan.goals.map((goal, idx) => (
-                <li key={idx}>{goal.description}</li>
-              ))}
-            </ul>
-          </div>
-        )}
-
-        {plan.strategy && (
-          <div>
-            <h4 className="text-sm font-semibold text-gray-700 mb-1">Стратегия:</h4>
-            <p className="text-sm text-gray-700">
-              {strategyNames[plan.strategy] || plan.strategy}
-            </p>
+            <h4 className="text-sm font-semibold text-gray-700 mb-2">Понимание задачи:</h4>
+            <p className="text-sm text-gray-700">{plan.task_understanding}</p>
           </div>
         )}
 
@@ -204,6 +176,17 @@ export const PlanApprovalCard: React.FC<PlanApprovalCardProps> = ({
                 <li className="text-gray-500">… и ещё {plan.steps.length - 5} шагов</li>
               )}
             </ol>
+          </div>
+        )}
+
+        {plan.questions_for_lawyer && plan.questions_for_lawyer.length > 0 && (
+          <div>
+            <h4 className="text-sm font-semibold text-gray-700 mb-2">Вопросы к юристу:</h4>
+            <ul className="list-disc list-inside space-y-1 text-sm text-gray-700">
+              {plan.questions_for_lawyer.map((question, idx) => (
+                <li key={idx}>{question}</li>
+              ))}
+            </ul>
           </div>
         )}
 
@@ -266,7 +249,7 @@ export const PlanApprovalCard: React.FC<PlanApprovalCardProps> = ({
               value={modifyText}
               onChange={(e) => setModifyText(e.target.value)}
               placeholder="Опишите, какие изменения нужно внести в план…"
-              className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+              className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-ring"
               rows={3}
               aria-label="Изменения к плану"
             />
@@ -274,7 +257,7 @@ export const PlanApprovalCard: React.FC<PlanApprovalCardProps> = ({
               <Button
                 onClick={handleModify}
                 disabled={!modifyText.trim()}
-                className="bg-blue-600 hover:bg-blue-700"
+                className="bg-primary hover:opacity-90 text-primary-foreground"
                 aria-label="Отправить изменения к плану"
               >
                 Отправить изменения
@@ -314,7 +297,7 @@ export const PlanApprovalCard: React.FC<PlanApprovalCardProps> = ({
             <Button
               onClick={() => setShowModifyInput(true)}
               disabled={isApproving || isRejecting}
-              className="bg-blue-600 hover:bg-blue-700"
+              className="bg-primary hover:opacity-90 text-primary-foreground"
               aria-label="Изменить план"
             >
               <Edit2 className="w-4 h-4 mr-2" />

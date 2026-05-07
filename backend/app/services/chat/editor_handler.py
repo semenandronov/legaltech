@@ -69,11 +69,13 @@ class EditorHandler:
             logger.info(f"[EditorHandler] Processing request for document {document_id}")
             logger.info(f"[EditorHandler] Document length: {len(document_context)}, selected: {len(selected_text) if selected_text else 0}")
             
-            # Формируем enhanced question с контекстом документа
+            # Важно: НЕ смешиваем инструкции/данные документа с user-сообщением.
+            # Документ и выделение передаются отдельными полями (document_context/selected_text),
+            # а в question оставляем только намерение пользователя.
             enhanced_question = self._build_enhanced_question(
                 question=question,
-                document_context=document_context,
-                selected_text=selected_text
+                selected_text=selected_text,
+                editor_mode_hint=editor_mode_hint,
             )
             
             # Используем ChatGraphService вместо legacy ChatAgent
@@ -105,55 +107,27 @@ class EditorHandler:
     def _build_enhanced_question(
         self,
         question: str,
-        document_context: str,
-        selected_text: Optional[str]
+        selected_text: Optional[str],
+        editor_mode_hint: Optional[str],
     ) -> str:
         """
-        Построить enhanced question с контекстом документа
+        Построить user-вопрос без prompt-injection из документа.
+        Документальный контекст передаётся отдельно через document_context.
         """
-        context_parts = []
-        
-        # Добавляем документ (с лимитом)
-        doc_limit = 15000
-        doc_preview = document_context[:doc_limit]
-        context_parts.append(f"\n\n=== ПОЛНЫЙ ТЕКСТ ДОКУМЕНТА В РЕДАКТОРЕ ===\n{doc_preview}")
-        if len(document_context) > doc_limit:
-            context_parts.append(f"\n[… документ обрезан, показано {doc_limit} из {len(document_context)} символов …]")
-        
-        # Добавляем выделенный текст
+        q = (question or "").strip()
+        if not q:
+            return ""
+        parts = [q]
+        if editor_mode_hint:
+            parts.append(f"\n\n[editor_mode_hint={editor_mode_hint}]")
         if selected_text:
-            context_parts.append(f"\n\n=== ВЫДЕЛЕННЫЙ ТЕКСТ (фокус внимания) ===\n{selected_text}")
-        
-        # Инструкции для редактирования
-        editor_instructions = """
-
-=== РЕЖИМ РЕДАКТОРА ДОКУМЕНТА ===
-
-Ты можешь отвечать на вопросы о документе и вносить точечные правки.
-
-ФОРМАТ ОТВЕТА ПРИ РЕДАКТИРОВАНИИ:
-1. Объясни какие изменения нужно внести
-2. Укажи ТОЧНУЮ команду замены:
-
-```edit
-НАЙТИ: <точный текст из документа>
-ЗАМЕНИТЬ: <новый текст>
-```
-
-ПРИМЕР:
-Пользователь: 'Добавь номер 123'
-Ответ: 'Добавляю номер в заголовок.
-```edit
-НАЙТИ: Договор поставки
-ЗАМЕНИТЬ: Договор поставки №123
-```'
-
-ВАЖНО: В НАЙТИ указывай ТОЧНЫЙ текст из документа!
-Если просто вопрос — отвечай без блока edit.
-"""
-        context_parts.append(editor_instructions)
-        
-        return question + "".join(context_parts)
+            # Передаём только факт наличия выделения и небольшой фрагмент для фокуса,
+            # но НЕ подмешиваем полный документ (он уже передаётся отдельно).
+            preview = (selected_text or "").strip()
+            if len(preview) > 1200:
+                preview = preview[:1200].rstrip() + "…"
+            parts.append("\n\n[selected_text_preview]\n" + preview)
+        return "".join(parts)
     
 
 

@@ -1,8 +1,10 @@
 """Document Draft Tool for Workflows - Full Implementation"""
-from typing import Dict, Any, List, Optional
+import html as html_module
+from typing import Dict, Any, List, Optional, Tuple
 from app.services.workflows.tool_registry import BaseTool, ToolResult
 from app.services.llm_factory import create_llm
-from app.models.case import File
+from app.services.document_editor_service import DocumentEditorService
+from app.models.case import File, GlobalAssistantFile
 from langchain_core.prompts import ChatPromptTemplate
 import logging
 import json
@@ -10,6 +12,17 @@ import uuid
 from datetime import datetime
 
 logger = logging.getLogger(__name__)
+
+
+def _plain_text_to_editor_html(text: str) -> str:
+    """Текст черновика → безопасный HTML для юридического редактора."""
+    raw = (text or "").replace("\r\n", "\n")
+    parts = [p.strip() for p in raw.split("\n") if p.strip()]
+    if not parts:
+        body = f"<p>{html_module.escape(raw[:100_000])}</p>"
+    else:
+        body = "\n".join(f"<p>{html_module.escape(p)}</p>" for p in parts)
+    return f'<div class="workflow-draft legal-doc">{body}</div>'
 
 
 # Шаблоны для разных типов документов
@@ -208,11 +221,13 @@ class DocumentDraftTool(BaseTool):
             if not title:
                 title = f"{template['name']} - черновик от {datetime.now().strftime('%d.%m.%Y')}"
             
-            # Save to case if requested
+            # Save output: to case file (if case_id exists) or to global assistant storage.
             saved_file_id = None
+            editor_document_id = None
+            saved_global_file_id = None
             if save_to_case and case_id and user_id:
                 try:
-                    saved_file_id = await self._save_draft_to_case(
+                    saved_file_id, editor_document_id = await self._save_draft_to_case(
                         content=draft_content,
                         title=title,
                         document_type=document_type,
@@ -221,11 +236,32 @@ class DocumentDraftTool(BaseTool):
                     )
                 except Exception as e:
                     logger.warning(f"Failed to save draft to case: {e}")
+            elif save_to_case and user_id:
+                try:
+                    saved_global_file_id = await self._save_draft_to_global_assistant(
+                        content=draft_content,
+                        title=title,
+                        document_type=document_type,
+                        user_id=user_id
+                    )
+                except Exception as e:
+                    logger.warning(f"Failed to save draft to global assistant files: {e}")
             
             # Calculate statistics
             word_count = len(draft_content.split())
             char_count = len(draft_content)
-            
+
+            artifact_dict: Dict[str, Any] = {
+                "type": "document_draft",
+                "id": saved_file_id or saved_global_file_id or str(uuid.uuid4()),
+                "title": title,
+                "document_type": document_type,
+                "word_count": word_count,
+                "storage": "case" if saved_file_id else ("global_assistant" if saved_global_file_id else "memory"),
+            }
+            if editor_document_id:
+                artifact_dict["document_id"] = editor_document_id
+
             return ToolResult(
                 success=True,
                 data={
@@ -236,18 +272,18 @@ class DocumentDraftTool(BaseTool):
                     "word_count": word_count,
                     "char_count": char_count,
                     "sections_included": template["sections"],
-                    "saved_file_id": saved_file_id
+                    "saved_file_id": saved_file_id,
+                    "editor_document_id": editor_document_id,
+                    "saved_global_file_id": saved_global_file_id
                 },
                 output_summary=f"Создан черновик '{title}' ({template['name']}): {word_count} слов, "
                               f"{len(template['sections'])} разделов" + 
-                              (f". Сохранён в дело." if saved_file_id else ""),
-                artifacts=[{
-                    "type": "document_draft",
-                    "id": saved_file_id or str(uuid.uuid4()),
-                    "title": title,
-                    "document_type": document_type,
-                    "word_count": word_count
-                }],
+                              (
+                                  f". Сохранён в дело."
+                                  if saved_file_id
+                                  else (f". Сохранён в глобальные файлы ассистента." if saved_global_file_id else "")
+                              ),
+                artifacts=[artifact_dict],
                 llm_calls=1
             )
             
@@ -265,34 +301,94 @@ class DocumentDraftTool(BaseTool):
         document_type: str,
         case_id: str,
         user_id: str
-    ) -> Optional[str]:
-        """Save draft document to case as a file"""
+    ) -> Tuple[Optional[str], Optional[str]]:
+        """Save draft as case File and mirror into Document Editor so it appears in /editor.
+
+        Returns:
+            (case_file_id, editor_document_id or None)
+        """
         try:
-            # Create file record
             file_id = str(uuid.uuid4())
-            
+            safe_title = (title or "Черновик").strip()
+            if not safe_title.lower().endswith(".txt"):
+                filename = f"{safe_title}.txt"
+            else:
+                filename = safe_title
+            display_title = filename[:-4] if filename.lower().endswith(".txt") else filename
+
             file = File(
                 id=file_id,
                 case_id=case_id,
-                filename=f"{title}.txt",
+                filename=filename,
                 file_type="text/plain",
-                file_size=len(content.encode('utf-8')),
                 original_text=content,
-                status="processed",
-                metadata={
-                    "document_type": document_type,
-                    "generated_by": "workflow_document_draft",
-                    "created_at": datetime.utcnow().isoformat()
-                }
+                processing_status="ready",
             )
-            
+
             self.db.add(file)
             self.db.commit()
-            
+
             logger.info(f"Saved draft document to case {case_id}: {file_id}")
-            return file_id
-            
+
+            editor_document_id: Optional[str] = None
+            try:
+                doc_service = DocumentEditorService(self.db)
+                html_content = _plain_text_to_editor_html(content)
+                editor_doc = doc_service.create_document(
+                    case_id=case_id,
+                    user_id=user_id,
+                    title=display_title,
+                    content=html_content,
+                    metadata={
+                        "source": "workflow_document_draft",
+                        "source_case_file_id": file_id,
+                        "document_type": document_type,
+                    },
+                )
+                editor_document_id = str(editor_doc.id)
+                logger.info(
+                    "Mirrored workflow draft to editor document %s (case file %s)",
+                    editor_document_id,
+                    file_id,
+                )
+            except Exception as edoc_exc:
+                logger.warning(
+                    "Could not create editor Document for workflow draft (file %s): %s",
+                    file_id,
+                    edoc_exc,
+                    exc_info=True,
+                )
+
+            return file_id, editor_document_id
+
         except Exception as e:
             logger.error(f"Failed to save draft: {e}")
+            self.db.rollback()
+            return None, None
+
+    async def _save_draft_to_global_assistant(
+        self,
+        content: str,
+        title: str,
+        document_type: str,
+        user_id: str
+    ) -> Optional[str]:
+        """Save draft document into global assistant file storage."""
+        try:
+            file_id = str(uuid.uuid4())
+            file = GlobalAssistantFile(
+                id=file_id,
+                user_id=user_id,
+                filename=f"{title}.txt",
+                file_type=document_type or "txt",
+                original_text=content,
+                file_content=content.encode("utf-8"),
+            )
+            self.db.add(file)
+            self.db.commit()
+            logger.info("Saved draft document to global assistant files: %s", file_id)
+            return file_id
+        except Exception as e:
+            logger.error(f"Failed to save draft to global assistant files: {e}")
             self.db.rollback()
             return None

@@ -1,11 +1,6 @@
-/* Import fonts first (must be before other CSS rules) */
-/* Display font for headings - Cormorant Garamond (Harvey style) */
-@import url('https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@300;400;500;600;700&display=swap');
-/* Fallback display font - Playfair Display */
-@import url('https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;500;600;700&display=swap');
-/* Body font - Inter (Harvey/Legora style) */
+/* Шрифты: Instrument Serif (заголовки), Inter (UI), JetBrains Mono */
+@import url('https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&display=swap');
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
-/* Monospace - JetBrains Mono */
 @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&display=swap');
 
 /* Import design tokens (must be before other styles) */
@@ -23,161 +18,105 @@
 @tailwind components;
 @tailwind utilities;
 
-/* Theme CSS Variables for Dark and Light Modes */
-/* Dark Mode - Default (Perplexity style) */
+/* Устаревшие --bg-primary / --text-primary: синхронизация с design-tokens */
 :root {
-  /* Background colors - Perplexity dark */
-  --bg-primary: #0F0F23;
-  --bg-secondary: #1A1B2E;
-  --bg-tertiary: #242538;
-  --border: #2A2B3E;
-  
-  /* Text colors */
-  --text-primary: #FFFFFF;
-  --text-secondary: #B0B3C0;
-  --text-disabled: #5A5D6E;
-  
-  /* Accent colors - Perplexity cyan + purple */
-  --primary: #00D4FF;
-  --primary-hover: #00B8E6;
-  --secondary: #7C3AED;
-  --success: #28C76F;
-  --warning: #FFB547;
-  --error: #FF5370;
-  --info: #00D4FF;
-  
-  /* Document type colors */
-  --doc-contract: #9C27B0;
-  --doc-email: #FF6F00;
-  --doc-court: #D32F2F;
-  --doc-sanction: #880E4F;
-  --doc-compliance: #00838F;
-  
-  /* Chat variables - Perplexity dark theme */
-  --color-bg: #0F0F23;
-  --color-surface: #1A1B2E;
-  --color-surface-alt: #242538;
-  --color-border: #2A2B3E;
-  --color-text: #FFFFFF;
-  --color-text-secondary: #B0B3C0;
-  --color-text-muted: #5A5D6E;
-  --color-primary: #00D4FF;
-  --color-primary-hover: #00B8E6;
-  --color-secondary: #7C3AED;
-  --color-hover: #242538;
-  --color-active: #2A2B3E;
-  --color-message-user: #00D4FF;
-  --color-message-assistant: #1A1B2E;
-  --color-error: #FF5370;
+  --bg-primary: var(--color-bg-primary);
+  --bg-secondary: var(--color-bg-secondary);
+  --bg-tertiary: var(--color-bg-tertiary);
+  --border: var(--color-border);
+  --text-primary: var(--color-text-primary);
+  --text-secondary: var(--color-text-secondary);
+  --text-disabled: var(--color-text-disabled);
+  --primary: var(--color-accent);
+  --primary-hover: var(--color-accent-hover);
+  --secondary: var(--color-accent-muted);
+  --success: var(--color-success);
+  --warning: var(--color-warning);
+  --error: var(--color-error);
+  --info: var(--color-info);
+  --doc-contract: #6b4a6f;
+  --doc-email: #8a6040;
+  --doc-court: #a84840;
+  --doc-sanction: #6b3a50;
+  --doc-compliance: #3d5c55;
+  --color-message-user: var(--color-accent);
+  --color-message-assistant: var(--color-bg-elevated);
+  --color-primary-hover: var(--color-accent-hover);
+  --color-secondary: var(--color-accent-muted);
 }
 
-/* Light Mode - Perplexity Style */
-:root[data-theme="light"] {
-  /* Background colors */
-  --bg-primary: #FFFFFF;
-  --bg-secondary: #F8F9FA;
-  --bg-tertiary: #F0F2F5;
-  --border: #E5E8EB;
-  
-  /* Text colors */
-  --text-primary: #0F1419;
-  --text-secondary: #666B78;
-  --text-disabled: #B8BCC5;
-  
-  /* Accent colors */
-  --primary: #00BDD4;
-  --primary-hover: #00A8BD;
-  --success: #22AB94;
-  --warning: #F59E0B;
-  --error: #DC3545;
-  --info: #00BDD4;
-  
-  /* Document type colors */
-  --doc-contract: #7B1FA2;
-  --doc-email: #E65100;
-  --doc-court: #C62828;
-  --doc-sanction: #880E4F;
-  --doc-compliance: #00838F;
-  
-  /* Chat variables - Light theme (Perplexity) */
-  --color-bg: #FFFFFF;
-  --color-surface: #F8F9FA;
-  --color-surface-alt: #F0F2F5;
-  --color-border: #E5E8EB;
-  --color-text: #0F1419;
-  --color-text-secondary: #666B78;
-  --color-text-muted: #B8BCC5;
-  --color-primary: #00BDD4;
-  --color-primary-hover: #00A8BD;
-  --color-hover: #F0F2F5;
-  --color-active: #E5E8EB;
-  --color-message-user: #00BDD4;
-  --color-message-assistant: #F8F9FA;
-  --color-error: #DC3545;
+:root[data-theme='light'] {
+  --bg-primary: var(--color-bg-primary);
+  --bg-secondary: var(--color-bg-secondary);
+  --bg-tertiary: var(--color-bg-tertiary);
+  --border: var(--color-border);
+  --text-primary: var(--color-text-primary);
+  --text-secondary: var(--color-text-secondary);
+  --text-disabled: var(--color-text-disabled);
 }
 
 /* shadcn-ui CSS Variables */
 @layer base {
   :root {
-    --background: 0 0% 100%;
-    --foreground: 222.2 84% 4.9%;
-    --card: 0 0% 100%;
-    --card-foreground: 222.2 84% 4.9%;
-    --popover: 0 0% 100%;
-    --popover-foreground: 222.2 84% 4.9%;
-    --primary: 188 100% 50%;
-    --primary-foreground: 222.2 47.4% 11.2%;
-    --secondary: 210 40% 96.1%;
-    --secondary-foreground: 222.2 47.4% 11.2%;
-    --muted: 210 40% 96.1%;
-    --muted-foreground: 215.4 16.3% 46.9%;
-    --accent: 210 40% 96.1%;
-    --accent-foreground: 222.2 47.4% 11.2%;
-    --destructive: 0 84.2% 60.2%;
-    --destructive-foreground: 210 40% 98%;
-    --border: 214.3 31.8% 91.4%;
-    --input: 214.3 31.8% 91.4%;
-    --ring: 188 100% 50%;
+    --background: 40 14% 95%;
+    --foreground: 30 10% 8%;
+    --card: 40 20% 99%;
+    --card-foreground: 30 10% 8%;
+    --popover: 40 20% 99%;
+    --popover-foreground: 30 10% 8%;
+    --primary: 30 6% 12%;
+    --primary-foreground: 40 20% 97%;
+    --secondary: 38 12% 92%;
+    --secondary-foreground: 30 10% 12%;
+    --muted: 38 10% 91%;
+    --muted-foreground: 30 6% 38%;
+    --accent: 38 12% 92%;
+    --accent-foreground: 30 10% 12%;
+    --destructive: 8 55% 42%;
+    --destructive-foreground: 40 25% 98%;
+    --border: 35 12% 86%;
+    --input: 35 12% 86%;
+    --ring: 30 6% 28%;
     --radius: 0.5rem;
-    --sidebar-background: 0 0% 98%;
-    --sidebar-foreground: 240 5.3% 26.1%;
-    --sidebar-primary: 240 5.9% 10%;
-    --sidebar-primary-foreground: 0 0% 98%;
-    --sidebar-accent: 240 4.8% 95.9%;
-    --sidebar-accent-foreground: 240 5.9% 10%;
-    --sidebar-border: 220 13% 91%;
-    --sidebar-ring: 217.2 91.2% 59.8%;
+    --sidebar-background: 38 14% 91%;
+    --sidebar-foreground: 30 8% 18%;
+    --sidebar-primary: 30 6% 12%;
+    --sidebar-primary-foreground: 40 20% 97%;
+    --sidebar-accent: 38 12% 87%;
+    --sidebar-accent-foreground: 30 10% 12%;
+    --sidebar-border: 35 11% 84%;
+    --sidebar-ring: 30 6% 28%;
   }
 
   .dark,
-  [data-theme="dark"] {
-    --background: 15 23% 9%;
-    --foreground: 0 0% 98%;
-    --card: 26 25% 16%;
-    --card-foreground: 0 0% 98%;
-    --popover: 26 25% 16%;
-    --popover-foreground: 0 0% 98%;
-    --primary: 188 100% 50%;
-    --primary-foreground: 15 23% 9%;
-    --secondary: 26 25% 22%;
-    --secondary-foreground: 0 0% 98%;
-    --muted: 26 25% 22%;
-    --muted-foreground: 215 20.2% 65.1%;
-    --accent: 26 25% 22%;
-    --accent-foreground: 0 0% 98%;
-    --destructive: 0 62.8% 50%;
-    --destructive-foreground: 0 0% 98%;
-    --border: 26 25% 30%;
-    --input: 26 25% 30%;
-    --ring: 188 100% 50%;
-    --sidebar-background: 26 25% 16%;
-    --sidebar-foreground: 0 0% 98%;
-    --sidebar-primary: 188 100% 50%;
-    --sidebar-primary-foreground: 15 23% 9%;
-    --sidebar-accent: 26 25% 22%;
-    --sidebar-accent-foreground: 0 0% 98%;
-    --sidebar-border: 26 25% 30%;
-    --sidebar-ring: 188 100% 50%;
+  [data-theme='dark'] {
+    --background: 30 8% 10%;
+    --foreground: 40 15% 96%;
+    --card: 30 7% 14%;
+    --card-foreground: 40 15% 96%;
+    --popover: 30 7% 14%;
+    --popover-foreground: 40 15% 96%;
+    --primary: 40 15% 92%;
+    --primary-foreground: 30 8% 10%;
+    --secondary: 30 6% 18%;
+    --secondary-foreground: 40 15% 96%;
+    --muted: 30 6% 18%;
+    --muted-foreground: 35 8% 68%;
+    --accent: 30 6% 20%;
+    --accent-foreground: 40 15% 96%;
+    --destructive: 8 45% 48%;
+    --destructive-foreground: 40 25% 98%;
+    --border: 30 6% 22%;
+    --input: 30 6% 22%;
+    --ring: 38 12% 70%;
+    --sidebar-background: 30 7% 12%;
+    --sidebar-foreground: 40 12% 92%;
+    --sidebar-primary: 40 15% 92%;
+    --sidebar-primary-foreground: 30 8% 10%;
+    --sidebar-accent: 30 6% 18%;
+    --sidebar-accent-foreground: 40 15% 96%;
+    --sidebar-border: 30 6% 20%;
+    --sidebar-ring: 38 12% 70%;
   }
 }
 
@@ -305,6 +244,20 @@
     font-family: var(--font-mono);
   }
 
+  /* Ответ ассистента в чате: локальная типографика, без глобальных display-размеров заголовков */
+  .assistant-markdown h1,
+  .assistant-markdown h2,
+  .assistant-markdown h3,
+  .assistant-markdown h4 {
+    font-family: var(--font-body);
+    letter-spacing: -0.02em;
+  }
+
+  .inline-citation-badge:focus-visible {
+    outline: 2px solid var(--color-accent);
+    outline-offset: 2px;
+  }
+
   #root {
     @apply min-h-screen;
   }
@@ -344,6 +297,6 @@
 
 .citation-badge:hover {
   transform: translateY(-1px);
-  box-shadow: 0 2px 8px rgba(59, 130, 246, 0.25);
+  box-shadow: 0 2px 8px rgba(19, 18, 16, 0.12);
 }
 

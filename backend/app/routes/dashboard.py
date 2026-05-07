@@ -7,6 +7,7 @@ from typing import List, Optional
 from app.utils.database import get_db
 from app.utils.auth import get_current_user
 from app.models.case import Case
+from app.models.tabular_review import TabularReview
 from app.models.user import User
 from app.models.analysis import AnalysisResult
 from pydantic import BaseModel
@@ -31,6 +32,7 @@ class CaseListItem(BaseModel):
     case_type: Optional[str]
     status: str
     num_documents: int
+    tabular_reviews_count: int = 0
     created_at: str
     updated_at: str
 
@@ -122,8 +124,28 @@ async def get_cases_list(
     # Get total count
     total = query.count()
     
-    # Get cases
-    cases = query.order_by(desc(Case.updated_at)).offset(skip).limit(limit).all()
+    reviews_count_subquery = (
+        db.query(
+            TabularReview.case_id.label("case_id"),
+            func.count(TabularReview.id).label("tabular_reviews_count"),
+        )
+        .filter(TabularReview.user_id == current_user.id)
+        .group_by(TabularReview.case_id)
+        .subquery()
+    )
+
+    # Get cases with aggregated tabular review counters in a single query
+    cases_with_counts = (
+        query.outerjoin(reviews_count_subquery, Case.id == reviews_count_subquery.c.case_id)
+        .with_entities(
+            Case,
+            func.coalesce(reviews_count_subquery.c.tabular_reviews_count, 0).label("tabular_reviews_count"),
+        )
+        .order_by(desc(Case.updated_at))
+        .offset(skip)
+        .limit(limit)
+        .all()
+    )
     
     return CasesListResponse(
         cases=[
@@ -133,10 +155,11 @@ async def get_cases_list(
                 case_type=case.case_type or None,
                 status=case.status or "pending",
                 num_documents=case.num_documents or 0,
+                tabular_reviews_count=int(tabular_reviews_count or 0),
                 created_at=case.created_at.isoformat() if case.created_at else datetime.utcnow().isoformat(),
                 updated_at=case.updated_at.isoformat() if case.updated_at else datetime.utcnow().isoformat()
             )
-            for case in cases
+            for case, tabular_reviews_count in cases_with_counts
         ],
         total=total,
         skip=skip,
@@ -162,6 +185,7 @@ async def get_recent_cases(
             case_type=case.case_type or None,
             status=case.status or "pending",
             num_documents=case.num_documents or 0,
+            tabular_reviews_count=0,
             created_at=case.created_at.isoformat() if case.created_at else datetime.utcnow().isoformat(),
             updated_at=case.updated_at.isoformat() if case.updated_at else datetime.utcnow().isoformat()
         )

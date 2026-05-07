@@ -53,6 +53,11 @@ class Config:
         "DATABASE_URL", 
         _default_db_url
     )
+
+    # SQLAlchemy QueuePool (увеличить при SSE + параллельных запросах)
+    SQLALCHEMY_POOL_SIZE: int = int(os.getenv("SQLALCHEMY_POOL_SIZE", "10"))
+    SQLALCHEMY_MAX_OVERFLOW: int = int(os.getenv("SQLALCHEMY_MAX_OVERFLOW", "20"))
+    SQLALCHEMY_POOL_TIMEOUT: int = int(os.getenv("SQLALCHEMY_POOL_TIMEOUT", "60"))
     
     # Validate DATABASE_URL on initialization
     @staticmethod
@@ -252,15 +257,47 @@ class Config:
         "semenandronov2004@mail.ru",
     )
 
+    # Chunking budgets (safety limits)
+    # budget <= 0 means "no truncation"
+    LEGAL_CHUNKING_BUDGET_MAX_TOTAL_CHUNKS: int = int(
+        os.getenv("LEGAL_CHUNKING_BUDGET_MAX_TOTAL_CHUNKS", "4000") or "4000"
+    )
+    # Optional override for GLOBAL_LEGAL_CORPUS indexing (legal reference library)
+    LEGAL_CORPUS_BUDGET_MAX_TOTAL_CHUNKS: int = int(
+        os.getenv("LEGAL_CORPUS_BUDGET_MAX_TOTAL_CHUNKS", "8000") or "8000"
+    )
+
     # LLM context limits
     MAX_CONTEXT_CHARS: int = 60_000  # Приближённо к лимиту ~32k токенов
     
     # RAG Settings
     RAG_USE_RERANKER: bool = os.getenv("RAG_USE_RERANKER", "false").lower() == "true"  # Use cross-encoder reranker for relevance scoring
+    RERANKER_MODEL_NAME: str = os.getenv(
+        "RERANKER_MODEL_NAME",
+        "BAAI/bge-reranker-v2-m3",
+    ).strip()
     RAG_MIN_RELEVANCE_SCORE: float = float(os.getenv("RAG_MIN_RELEVANCE_SCORE", "0.5"))  # Minimum relevance score threshold
     RAG_LLM_EVALUATION_ENABLED: bool = os.getenv("RAG_LLM_EVALUATION_ENABLED", "true").lower() == "true"  # Enable LLM-based relevance evaluation
     RAG_REQUIRE_SOURCES: bool = os.getenv("RAG_REQUIRE_SOURCES", "true").lower() == "true"  # Require source citations in answers
     RAG_ALLOW_UNCERTAINTY: bool = os.getenv("RAG_ALLOW_UNCERTAINTY", "true").lower() == "true"  # Allow model to express uncertainty when information is insufficient
+    RAG_LANGGRAPH_STRUCTURED_CITATIONS_ENABLED: bool = (
+        os.getenv("RAG_LANGGRAPH_STRUCTURED_CITATIONS_ENABLED", "true").lower() == "true"
+    )
+
+    # Fast retrieval tuning (case assistant / LangGraph RAG node)
+    # Avoid multi-query LLM expansion + multi-pass k_schedule for depth_tier=fast by default.
+    RAG_FAST_RETRIEVAL_STRATEGY: str = os.getenv(
+        "RAG_FAST_RETRIEVAL_STRATEGY", "similarity"
+    ).strip().lower()
+    # Per-retrieve_context call wall timeout (seconds). 0 disables.
+    RAG_FAST_RETRIEVAL_CALL_TIMEOUT_SEC: float = float(
+        os.getenv("RAG_FAST_RETRIEVAL_CALL_TIMEOUT_SEC", "25") or "25"
+    )
+    # If fast single-pass returns fewer than N docs, allow one multi_query fallback (extra LLM call).
+    RAG_FAST_MULTIQUERY_FALLBACK: bool = os.getenv(
+        "RAG_FAST_MULTIQUERY_FALLBACK", "true"
+    ).lower() == "true"
+    RAG_FAST_FALLBACK_MIN_DOCS: int = int(os.getenv("RAG_FAST_FALLBACK_MIN_DOCS", "2") or "2")
     
     # Structured RAG Output Settings
     RAG_USE_STRUCTURED_OUTPUT: bool = os.getenv("RAG_USE_STRUCTURED_OUTPUT", "true").lower() == "true"  # Use structured JSON output with mandatory citations
@@ -321,6 +358,13 @@ class Config:
     # Формат: gpt://<folder-id>/yandexgpt-lite/latest или emb://<folder-id>/text-search-query/latest
     YANDEX_GPT_MODEL_URI: str = os.getenv("YANDEX_GPT_MODEL_URI", "")
     YANDEX_EMBEDDING_MODEL_URI: str = os.getenv("YANDEX_EMBEDDING_MODEL_URI", "")
+    # Классификатор документов (Yandex AI Studio). Если пусто — используем YANDEX_AI_STUDIO_CLASSIFIER_ID или LLM fallback.
+    YANDEX_CLASSIFIER_MODEL_URI: str = os.getenv("YANDEX_CLASSIFIER_MODEL_URI", "")
+
+    # Embeddings transport:
+    # - "openai": HTTPS OpenAI-compatible endpoint (ai.api.cloud.yandex.net) — fastest/most stable in dev/VPN/proxy envs
+    # - "grpc": official YCloudML gRPC transport (may fail/hang on DNS/service discovery in some networks)
+    YANDEX_EMBEDDINGS_TRANSPORT: str = os.getenv("YANDEX_EMBEDDINGS_TRANSPORT", "openai").strip().lower()
     
     # GigaChat (Сбер) - с поддержкой function calling
     GIGACHAT_CREDENTIALS: str = os.getenv("GIGACHAT_CREDENTIALS", "")  # Authorization Key (base64 encoded ClientID:ClientSecret)
@@ -347,6 +391,15 @@ class Config:
     LANGSMITH_PROJECT: str = os.getenv("LANGSMITH_PROJECT", "legal-ai-vault")
     LANGSMITH_TRACING: bool = os.getenv("LANGCHAIN_TRACING_V2", "false").lower() == "true"
     LANGSMITH_ENDPOINT: str = os.getenv("LANGCHAIN_ENDPOINT", "https://api.smith.langchain.com")
+
+    # Langfuse (LLM observability)
+    LANGFUSE_ENABLED: bool = os.getenv("LANGFUSE_ENABLED", "false").lower() == "true"
+    LANGFUSE_PUBLIC_KEY: str = os.getenv("LANGFUSE_PUBLIC_KEY", "").strip()
+    LANGFUSE_SECRET_KEY: str = os.getenv("LANGFUSE_SECRET_KEY", "").strip()
+    LANGFUSE_HOST: str = os.getenv("LANGFUSE_HOST", "").strip().rstrip("/")
+    LANGFUSE_SAMPLE_RATE: float = float(os.getenv("LANGFUSE_SAMPLE_RATE", "1.0") or "1.0")
+    LANGFUSE_DEBUG: bool = os.getenv("LANGFUSE_DEBUG", "false").lower() == "true"
+    LANGFUSE_FLUSH_ON_END: bool = os.getenv("LANGFUSE_FLUSH_ON_END", "true").lower() == "true"
     
     # File Storage
     UPLOAD_DIR: str = os.getenv("UPLOAD_DIR", "./uploads")
@@ -365,6 +418,50 @@ class Config:
     # LangGraph Postgres Checkpointer Pool Settings
     LANGGRAPH_POSTGRES_POOL_MAX_SIZE: int = int(os.getenv("LANGGRAPH_POSTGRES_POOL_MAX_SIZE", "20"))  # Max connections in pool
 
+    # Workflow DeepAgents integration flags (used in app.main startup + workflow engine)
+    WORKFLOW_DEEPAGENTS_CHECKPOINTER_ENABLED: bool = os.getenv(
+        "WORKFLOW_DEEPAGENTS_CHECKPOINTER_ENABLED", "true"
+    ).lower() == "true"
+    WORKFLOW_DEEPAGENTS_HITL_ENABLED: bool = os.getenv(
+        "WORKFLOW_DEEPAGENTS_HITL_ENABLED", "false"
+    ).lower() == "true"
+    WORKFLOW_DEEPAGENTS_SKILLS_PATHS: str = os.getenv("WORKFLOW_DEEPAGENTS_SKILLS_PATHS", "")
+    WORKFLOW_DEEPAGENTS_MEMORY_PATHS: str = os.getenv("WORKFLOW_DEEPAGENTS_MEMORY_PATHS", "")
+    WORKFLOW_DEEPAGENTS_MIDDLEWARE: str = os.getenv("WORKFLOW_DEEPAGENTS_MIDDLEWARE", "")
+    WORKFLOW_DEEPAGENTS_TOOL_CALL_RUN_LIMIT: int = int(
+        os.getenv("WORKFLOW_DEEPAGENTS_TOOL_CALL_RUN_LIMIT", "0") or "0"
+    )
+    WORKFLOW_DEEPAGENTS_MODEL_CALL_RUN_LIMIT: int = int(
+        os.getenv("WORKFLOW_DEEPAGENTS_MODEL_CALL_RUN_LIMIT", "0") or "0"
+    )
+    WORKFLOW_DEEPAGENTS_INTERRUPT_ON_TOOLS: str = os.getenv(
+        "WORKFLOW_DEEPAGENTS_INTERRUPT_ON_TOOLS",
+        "document_draft,tabular_review,playbook_check",
+    )
+    WORKFLOW_DEEPAGENTS_COMPOSITE_BACKEND_ENABLED: bool = os.getenv(
+        "WORKFLOW_DEEPAGENTS_COMPOSITE_BACKEND_ENABLED", "true"
+    ).lower() == "true"
+    WORKFLOW_DEEPAGENTS_MEMORIES_DIR: str = os.getenv(
+        "WORKFLOW_DEEPAGENTS_MEMORIES_DIR", "/memories"
+    ).strip()
+    WORKFLOW_DEEPAGENTS_PERMISSIONS_ENABLED: bool = os.getenv(
+        "WORKFLOW_DEEPAGENTS_PERMISSIONS_ENABLED", "true"
+    ).lower() == "true"
+    WORKFLOW_DEEPAGENTS_ALLOWED_READ_PATHS: str = os.getenv(
+        "WORKFLOW_DEEPAGENTS_ALLOWED_READ_PATHS",
+        "/memories,/tmp,/app/uploads,./uploads",
+    )
+    WORKFLOW_DEEPAGENTS_ALLOWED_WRITE_PATHS: str = os.getenv(
+        "WORKFLOW_DEEPAGENTS_ALLOWED_WRITE_PATHS",
+        "/memories,/tmp,./uploads",
+    )
+    WORKFLOW_DEEPAGENTS_LANGSMITH_TRACING: bool = os.getenv(
+        "WORKFLOW_DEEPAGENTS_LANGSMITH_TRACING", "false"
+    ).lower() == "true"
+    WORKFLOW_DEEPAGENTS_SUBAGENTS_ENABLED: bool = os.getenv(
+        "WORKFLOW_DEEPAGENTS_SUBAGENTS_ENABLED", "true"
+    ).lower() == "true"
+
 
 # Create config instance
 config = Config()
@@ -372,7 +469,12 @@ config = Config()
 # Validate DATABASE_URL on module import
 # #region agent log
 try:
-    _debug_log("config.py:322", "Before DATABASE_URL validation", {"step": "before_validation", "db_url_set": bool(os.getenv("DATABASE_URL")), "db_url_preview": os.getenv("DATABASE_URL", "")[:50] if os.getenv("DATABASE_URL") else "NOT_SET"})
+    # Never log DATABASE_URL preview: it may contain credentials.
+    _debug_log(
+        "config.py:322",
+        "Before DATABASE_URL validation",
+        {"step": "before_validation", "db_url_set": bool(os.getenv("DATABASE_URL"))},
+    )
 except: pass
 # #endregion
 try:

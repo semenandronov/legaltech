@@ -13,7 +13,7 @@ class WorkflowDefinition(Base):
     Workflow - это Agentic AI система, которая:
     1. Понимает задачу на natural language
     2. Планирует шаги выполнения
-    3. Использует инструменты (Tabular Review, Web Search, Legal DB)
+    3. Использует инструменты workflow-ядра
     4. Проверяет результаты
     5. Генерирует структурированный отчёт
     """
@@ -40,7 +40,7 @@ class WorkflowDefinition(Base):
     
     # Доступные инструменты для этого workflow
     available_tools = Column(JSON, nullable=False, default=list)
-    # Например: ["tabular_review", "web_search", "legal_db", "rag", "playbook_check", "document_draft"]
+    # Например: ["tabular_review", "legal_db", "rag", "playbook_check", "document_draft"]
     
     # Схема выходного формата (JSON Schema)
     output_schema = Column(JSON, nullable=True)
@@ -301,7 +301,7 @@ class WorkflowStep(Base):
     description = Column(Text, nullable=True)
     
     # Конфигурация инструмента
-    tool_name = Column(String(100), nullable=True)  # tabular_review, web_search, legal_db, rag, playbook_check
+    tool_name = Column(String(100), nullable=True)  # tabular_review, legal_db, rag, playbook_check, summarize, extract_entities, document_draft
     tool_params = Column(JSON, nullable=True)  # Параметры вызова инструмента
     
     # Зависимости
@@ -363,7 +363,7 @@ WORKFLOW_CATEGORIES = [
     {"name": "custom", "display_name": "Custom", "description": "Пользовательский workflow"},
 ]
 
-# Доступные инструменты (web_search отключен)
+# Доступные инструменты workflow
 WORKFLOW_TOOLS = [
     {
         "name": "tabular_review",
@@ -381,8 +381,8 @@ WORKFLOW_TOOLS = [
     },
     {
         "name": "legal_db",
-        "display_name": "ГАРАНТ",
-        "description": "Поиск в правовой базе ГАРАНТ (законы, судебная практика)",
+        "display_name": "Справочник",
+        "description": "Поиск по загруженному правовому справочнику",
         "params_schema": {
             "type": "object",
             "properties": {
@@ -465,223 +465,118 @@ WORKFLOW_TOOLS = [
     },
 ]
 
+# Алиасы отключены: поддерживаем только канонические имена инструментов.
+WORKFLOW_TOOL_ALIASES = {}
+
+
+def normalize_workflow_tool_name(tool_name: str) -> str:
+    """Normalize workflow tool name to canonical value."""
+    if not tool_name:
+        return tool_name
+    return WORKFLOW_TOOL_ALIASES.get(tool_name, tool_name)
+
 # Предустановленные шаблоны workflow
 SYSTEM_WORKFLOW_TEMPLATES = [
     {
-        "name": "ma_due_diligence",
-        "display_name": "M&A Due Diligence",
-        "description": "Комплексный анализ документов для сделок слияний и поглощений",
-        "category": "due_diligence",
-        "available_tools": ["tabular_review", "rag", "playbook_check", "summarize"],
-        "default_plan": {
-            "goals": [
-                "Проанализировать все контракты целевой компании",
-                "Выявить риски и проблемные положения",
-                "Подготовить отчёт для инвестиционного комитета"
-            ],
-            "steps": [
-                {
-                    "id": "categorize",
-                    "name": "Категоризация документов",
-                    "tool": "tabular_review",
-                    "depends_on": []
-                },
-                {
-                    "id": "extract_key_terms",
-                    "name": "Извлечение ключевых условий",
-                    "tool": "tabular_review",
-                    "depends_on": ["categorize"]
-                },
-                {
-                    "id": "check_compliance",
-                    "name": "Проверка соответствия",
-                    "tool": "playbook_check",
-                    "depends_on": ["categorize"]
-                },
-                {
-                    "id": "identify_risks",
-                    "name": "Выявление рисков",
-                    "tool": "rag",
-                    "depends_on": ["extract_key_terms"]
-                },
-                {
-                    "id": "generate_report",
-                    "name": "Генерация отчёта",
-                    "tool": "summarize",
-                    "depends_on": ["check_compliance", "identify_risks"]
-                }
-            ]
-        }
-    },
-    {
-        "name": "litigation_discovery",
-        "display_name": "Litigation Discovery",
-        "description": "Подготовка к судебному разбирательству: хронология, ключевые лица, важные документы",
-        "category": "litigation",
-        "available_tools": ["tabular_review", "rag", "extract_entities", "summarize"],
-        "default_plan": {
-            "goals": [
-                "Построить хронологию событий",
-                "Идентифицировать ключевых участников",
-                "Найти важные доказательства (smoking guns)"
-            ],
-            "steps": [
-                {
-                    "id": "extract_dates",
-                    "name": "Извлечение дат и событий",
-                    "tool": "tabular_review",
-                    "depends_on": []
-                },
-                {
-                    "id": "extract_people",
-                    "name": "Идентификация участников",
-                    "tool": "extract_entities",
-                    "depends_on": []
-                },
-                {
-                    "id": "build_timeline",
-                    "name": "Построение хронологии",
-                    "tool": "rag",
-                    "depends_on": ["extract_dates", "extract_people"]
-                },
-                {
-                    "id": "find_key_docs",
-                    "name": "Поиск ключевых документов",
-                    "tool": "rag",
-                    "depends_on": ["build_timeline"]
-                },
-                {
-                    "id": "generate_report",
-                    "name": "Генерация отчёта",
-                    "tool": "summarize",
-                    "depends_on": ["find_key_docs"]
-                }
-            ]
-        }
-    },
-    {
-        "name": "compliance_check",
-        "display_name": "Compliance Update",
-        "description": "Массовая проверка документов на соответствие новым требованиям",
-        "category": "compliance",
-        "available_tools": ["tabular_review", "playbook_check", "summarize"],
-        "default_plan": {
-            "goals": [
-                "Проверить все документы на соответствие требованиям",
-                "Составить список необходимых изменений"
-            ],
-            "steps": [
-                {
-                    "id": "batch_check",
-                    "name": "Массовая проверка",
-                    "tool": "playbook_check",
-                    "depends_on": []
-                },
-                {
-                    "id": "aggregate_results",
-                    "name": "Агрегация результатов",
-                    "tool": "tabular_review",
-                    "depends_on": ["batch_check"]
-                },
-                {
-                    "id": "generate_report",
-                    "name": "Генерация отчёта об изменениях",
-                    "tool": "summarize",
-                    "depends_on": ["aggregate_results"]
-                }
-            ]
-        }
-    },
-    {
-        "name": "contract_analysis",
-        "display_name": "Deep Contract Analysis",
-        "description": "Глубокий анализ одного контракта",
+        "name": "rf_contract_risk_review",
+        "display_name": "РФ: Проверка договора на риски",
+        "description": "Базовая проверка договора по праву РФ: условия, риски, соответствие playbook и итоговые правки.",
         "category": "contract_analysis",
-        "available_tools": ["rag", "playbook_check", "summarize", "extract_entities"],
+        "available_tools": ["extract_entities", "summarize", "playbook_check", "legal_db", "document_draft"],
         "default_plan": {
             "goals": [
-                "Полный анализ условий контракта",
-                "Выявление рисков и проблемных положений"
+                "Извлечь ключевые условия договора",
+                "Проверить соответствие внутренним правилам",
+                "Подготовить итоговый пакет правок"
             ],
             "steps": [
-                {
-                    "id": "extract_structure",
-                    "name": "Анализ структуры",
-                    "tool": "rag",
-                    "depends_on": []
-                },
-                {
-                    "id": "extract_parties",
-                    "name": "Извлечение сторон",
-                    "tool": "extract_entities",
-                    "depends_on": []
-                },
-                {
-                    "id": "check_playbook",
-                    "name": "Проверка по Playbook",
-                    "tool": "playbook_check",
-                    "depends_on": []
-                },
-                {
-                    "id": "analyze_risks",
-                    "name": "Анализ рисков",
-                    "tool": "rag",
-                    "depends_on": ["extract_structure", "check_playbook"]
-                },
-                {
-                    "id": "generate_summary",
-                    "name": "Генерация резюме",
-                    "tool": "summarize",
-                    "depends_on": ["analyze_risks", "extract_parties"]
-                }
+                {"id": "extract_terms", "name": "Извлечь ключевые условия", "tool": "extract_entities", "depends_on": []},
+                {"id": "contract_summary", "name": "Собрать структурное резюме", "tool": "summarize", "depends_on": ["extract_terms"]},
+                {"id": "playbook_check", "name": "Проверить по playbook", "tool": "playbook_check", "depends_on": ["contract_summary"]},
+                {"id": "law_links", "name": "Подобрать правовые обоснования", "tool": "legal_db", "depends_on": ["playbook_check"]},
+                {"id": "final_draft", "name": "Сформировать итоговый документ", "tool": "document_draft", "depends_on": ["law_links"]},
             ]
         }
     },
     {
-        "name": "legal_research",
-        "display_name": "Legal Research",
-        "description": "Юридическое исследование с использованием внешних источников",
-        "category": "research",
-        "available_tools": ["web_search", "legal_db", "rag", "summarize"],
+        "name": "rf_litigation_position",
+        "display_name": "РФ: Подготовка правовой позиции",
+        "description": "Подготовка позиции по спору в РФ: факты по материалам дела, нормы и итоговый проект документа.",
+        "category": "litigation",
+        "available_tools": ["rag", "legal_db", "summarize", "document_draft"],
         "default_plan": {
             "goals": [
-                "Найти релевантную судебную практику",
-                "Изучить применимое законодательство",
-                "Подготовить исследовательский отчёт"
+                "Собрать фактическую базу по делу",
+                "Найти релевантные нормы и практику",
+                "Подготовить финальный документ позиции"
             ],
             "steps": [
-                {
-                    "id": "search_legislation",
-                    "name": "Поиск законодательства",
-                    "tool": "legal_db",
-                    "depends_on": []
-                },
-                {
-                    "id": "search_cases",
-                    "name": "Поиск судебной практики",
-                    "tool": "legal_db",
-                    "depends_on": []
-                },
-                {
-                    "id": "web_research",
-                    "name": "Исследование в интернете",
-                    "tool": "web_search",
-                    "depends_on": []
-                },
-                {
-                    "id": "analyze_sources",
-                    "name": "Анализ источников",
-                    "tool": "rag",
-                    "depends_on": ["search_legislation", "search_cases", "web_research"]
-                },
-                {
-                    "id": "generate_report",
-                    "name": "Генерация отчёта",
-                    "tool": "summarize",
-                    "depends_on": ["analyze_sources"]
-                }
+                {"id": "fact_collection", "name": "Извлечь факты из материалов дела", "tool": "rag", "depends_on": []},
+                {"id": "law_research", "name": "Подобрать нормы и практику", "tool": "legal_db", "depends_on": ["fact_collection"]},
+                {"id": "position_summary", "name": "Собрать тезисы позиции", "tool": "summarize", "depends_on": ["law_research"]},
+                {"id": "position_draft", "name": "Подготовить документ позиции", "tool": "document_draft", "depends_on": ["position_summary"]},
             ]
         }
-    }
+    },
+    {
+        "name": "rf_legal_research_memo",
+        "display_name": "РФ: Юридическое исследование и memo",
+        "description": "Юридическое исследование по праву РФ с подбором норм/практики и итоговым memo.",
+        "category": "research",
+        "available_tools": ["legal_db", "rag", "summarize", "document_draft"],
+        "default_plan": {
+            "goals": [
+                "Найти релевантные нормы и практику",
+                "Собрать ключевые аргументы",
+                "Подготовить итоговый memo"
+            ],
+            "steps": [
+                {"id": "search_law", "name": "Поиск норм и практики", "tool": "legal_db", "depends_on": []},
+                {"id": "collect_case_context", "name": "Сбор контекста из материалов дела", "tool": "rag", "depends_on": ["search_law"]},
+                {"id": "research_summary", "name": "Сводный анализ", "tool": "summarize", "depends_on": ["collect_case_context"]},
+                {"id": "research_memo", "name": "Подготовить итоговый memo", "tool": "document_draft", "depends_on": ["research_summary"]},
+            ]
+        }
+    },
+    {
+        "name": "rf_bankruptcy_creditor_analysis",
+        "display_name": "РФ Банкротство: Анализ требований кредитора",
+        "description": "Анализ обоснованности требований кредитора в делах о банкротстве РФ и подготовка процессуальной позиции.",
+        "category": "litigation",
+        "available_tools": ["extract_entities", "legal_db", "summarize", "document_draft"],
+        "default_plan": {
+            "goals": [
+                "Структурировать данные по требованию кредитора",
+                "Проверить правовые основания по банкротству РФ",
+                "Подготовить документ позиции"
+            ],
+            "steps": [
+                {"id": "creditor_entities", "name": "Извлечь суммы, даты, основания", "tool": "extract_entities", "depends_on": []},
+                {"id": "creditor_law", "name": "Подобрать нормы по банкротству РФ", "tool": "legal_db", "depends_on": ["creditor_entities"]},
+                {"id": "creditor_summary", "name": "Сформировать правовой вывод", "tool": "summarize", "depends_on": ["creditor_law"]},
+                {"id": "creditor_draft", "name": "Подготовить проект позиции", "tool": "document_draft", "depends_on": ["creditor_summary"]},
+            ]
+        }
+    },
+    {
+        "name": "rf_bankruptcy_transaction_challenge",
+        "display_name": "РФ Банкротство: Оспаривание сделок должника",
+        "description": "Выявление подозрительных сделок и подготовка проекта документа об оспаривании в процедуре банкротства РФ.",
+        "category": "litigation",
+        "available_tools": ["rag", "tabular_review", "legal_db", "document_draft"],
+        "default_plan": {
+            "goals": [
+                "Найти сделки с признаками оспаривания",
+                "Собрать доказательную таблицу по сделкам",
+                "Подготовить проект процессуального документа"
+            ],
+            "steps": [
+                {"id": "tx_candidates", "name": "Выявить сделки-кандидаты", "tool": "rag", "depends_on": []},
+                {"id": "tx_table", "name": "Собрать таблицу признаков оспаривания", "tool": "tabular_review", "depends_on": ["tx_candidates"]},
+                {"id": "tx_law", "name": "Подобрать правовые основания", "tool": "legal_db", "depends_on": ["tx_table"]},
+                {"id": "tx_draft", "name": "Подготовить проект заявления", "tool": "document_draft", "depends_on": ["tx_law"]},
+            ]
+        }
+    },
 ]
 

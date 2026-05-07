@@ -53,6 +53,7 @@ class TabularReviewTool(BaseTool):
             file_ids = params.get("file_ids", [])
             questions = params.get("questions", [])
             review_name = params.get("review_name", "Workflow Review")
+            wait_for_completion = bool(params.get("wait_for_completion", False))
             
             if not case_id:
                 return ToolResult(
@@ -88,26 +89,53 @@ class TabularReviewTool(BaseTool):
                 )
                 column_ids.append(column.id)
             
-            # Start extraction in background - don't wait for it to complete
-            # This prevents workflow from hanging on large document sets with rate limiting
+            if wait_for_completion:
+                extraction_result = await service.run_extraction(review_id, user_id)
+                review_data = service.get_table_data(review_id, user_id)
+                row_count = review_data.get("row_count", 0)
+                return ToolResult(
+                    success=True,
+                    data={
+                        "review_id": review_id,
+                        "columns": column_ids,
+                        "row_count": row_count,
+                        "review_name": review_name,
+                        "extraction_status": "completed",
+                        "extraction_result": extraction_result,
+                        "table": review_data,
+                    },
+                    output_summary=(
+                        f"Таблица '{review_name}' заполнена: {len(column_ids)} колонок, {row_count} документов."
+                    ),
+                    artifacts=[
+                        {
+                            "type": "tabular_review",
+                            "id": review_id,
+                            "review_id": review_id,
+                            "name": review_name,
+                            "note": "Извлечение завершено. Откройте таблицу для просмотра результатов.",
+                        }
+                    ],
+                )
+
+            # Default behavior: run extraction in background (non-blocking)
             import asyncio
-            
+
             async def run_extraction_background():
                 """Run extraction in background task"""
                 try:
                     extraction_result = await service.run_extraction(review_id, user_id)
-                    logger.info(f"Background extraction completed: {extraction_result.get('extracted_count', 0)} cells for review {review_id}")
+                    logger.info(
+                        f"Background extraction completed: {extraction_result.get('extracted_count', 0)} cells for review {review_id}"
+                    )
                 except Exception as e:
                     logger.error(f"Background extraction failed for review {review_id}: {e}")
-            
-            # Schedule background task - don't await it
+
             asyncio.create_task(run_extraction_background())
             logger.info(f"Started background extraction for review {review_id} with {len(column_ids)} columns")
-            
-            # Get current row count from selected files
+
             review_data = service.get_table_data(review_id, user_id)
             row_count = review_data.get("row_count", 0)
-            
             return ToolResult(
                 success=True,
                 data={
@@ -115,16 +143,21 @@ class TabularReviewTool(BaseTool):
                     "columns": column_ids,
                     "row_count": row_count,
                     "review_name": review_name,
-                    "extraction_status": "in_progress"
+                    "extraction_status": "in_progress",
                 },
-                output_summary=f"Создана таблица '{review_name}' с {len(column_ids)} колонками для {row_count} документов. Извлечение данных запущено в фоне.",
-                artifacts=[{
-                    "type": "tabular_review",
-                    "id": review_id,
-                    "review_id": review_id,  # For frontend compatibility
-                    "name": review_name,
-                    "note": "Извлечение данных выполняется в фоновом режиме. Откройте таблицу для просмотра результатов."
-                }]
+                output_summary=(
+                    f"Создана таблица '{review_name}' с {len(column_ids)} колонками для {row_count} документов. "
+                    "Извлечение данных запущено в фоне."
+                ),
+                artifacts=[
+                    {
+                        "type": "tabular_review",
+                        "id": review_id,
+                        "review_id": review_id,
+                        "name": review_name,
+                        "note": "Извлечение данных выполняется в фоновом режиме. Откройте таблицу для просмотра результатов.",
+                    }
+                ],
             )
             
         except Exception as e:

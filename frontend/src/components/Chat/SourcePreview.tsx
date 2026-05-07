@@ -66,7 +66,7 @@ export const SourcePreview: React.FC<SourcePreviewProps> = ({
                     e.preventDefault()
                     onOpenDocument(source)
                   }}
-                  className="flex items-center gap-1.5 px-2 py-1 text-xs font-medium text-blue-600 hover:text-blue-700 hover:bg-blue-50 rounded transition-colors"
+                  className="flex items-center gap-1.5 px-2 py-1 text-xs font-medium text-accent-muted hover:opacity-90 hover:bg-secondary rounded transition-colors"
                 >
                   <ExternalLink className="w-3 h-3" />
                   Открыть документ

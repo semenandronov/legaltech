@@ -7,9 +7,6 @@ from app.services.workflows.tools.extract_entities_tool import ExtractEntitiesTo
 from app.services.workflows.tools.legal_db_tool import LegalDBTool
 from app.services.workflows.tools.document_draft_tool import DocumentDraftTool
 
-# WebSearchTool отключен - Yandex Search API не настроен
-# from app.services.workflows.tools.web_search_tool import WebSearchTool
-
 __all__ = [
     "TabularReviewTool",
     "RAGTool", 

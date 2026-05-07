@@ -6,16 +6,26 @@ Provides endpoints for:
 - Rate limiter status
 - Health check with metrics
 """
-from fastapi import APIRouter, Response, Depends
+from fastapi import APIRouter, Response, Depends, HTTPException
 from typing import Dict, Any
+from pydantic import BaseModel, Field
 from app.middleware.metrics import get_metrics, get_prometheus_metrics
 from app.utils.auth import get_current_user
 from app.models.user import User
+from app.services.observability.langfuse_service import record_score
+from app.services.chat.metrics import get_metrics as get_chat_metrics
 import logging
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+
+
+class AssistantFeedbackRequest(BaseModel):
+    trace_id: str = Field(..., description="Langfuse trace id")
+    rating: str = Field(..., description="positive|negative")
+    reason: str | None = Field(default=None, description="Код причины")
+    comment: str | None = Field(default=None, description="Свободный комментарий")
 
 
 @router.get("/")
@@ -147,4 +157,34 @@ async def get_agent_metrics(
         "agent_executions": metrics.get("agent_executions", {}),
         "prometheus": metrics.get("prometheus", {})
     }
+
+
+@router.post("/assistant-feedback")
+async def submit_assistant_feedback(
+    payload: AssistantFeedbackRequest,
+    current_user: User = Depends(get_current_user),
+) -> Dict[str, Any]:
+    """
+    Сохранить feedback по ответу ассистента и отправить score в Langfuse.
+    """
+    rating = (payload.rating or "").strip().lower()
+    if rating not in {"positive", "negative"}:
+        raise HTTPException(status_code=400, detail="rating must be 'positive' or 'negative'")
+
+    score_value = 1.0 if rating == "positive" else 0.0
+    score_name = "assistant_user_feedback"
+    metadata = {
+        "user_id": str(current_user.id),
+        "reason": payload.reason,
+        "rating": rating,
+    }
+    score_sent = record_score(
+        trace_id=payload.trace_id.strip(),
+        name=score_name,
+        value=score_value,
+        comment=payload.comment,
+        metadata=metadata,
+    )
+    get_chat_metrics().record_feedback(rating)
+    return {"ok": True, "score_sent": score_sent}
 

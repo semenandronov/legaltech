@@ -1,11 +1,10 @@
 """
 Chat module - модуль обработки чат-запросов
 
-v5.0: ReActChatAgent с 11+ универсальными инструментами
+v6.0: маршрутизация fast/deep/clarify + graph runtime
 
 Содержит:
 - ChatOrchestrator: главный оркестратор запросов
-- ReActChatAgent: ReAct агент с 11+ инструментами
 - universal_tools: универсальные инструменты для агента
 - RequestClassifier: классификация запросов (для метрик)
 - DraftHandler: создание документов
@@ -14,13 +13,11 @@ v5.0: ReActChatAgent с 11+ универсальными инструмента�
 - SSE события и сериализатор
 - Метрики
 
-Ключевые возможности v5.0:
-- ReActChatAgent использует классический ReAct цикл
-- 11+ универсальных инструментов (документы, ГАРАНТ, генерация, playbook, расчёты)
-- Агент САМ выбирает какие инструменты использовать
-- Think → Act → Observe → Repeat
-- Интеграция с ГАРАНТ (когда legal_research=True)
-- Интеграция с ThinkingService (когда deep_think=True)
+Ключевые возможности v6.0:
+- Deterministic fast path для простых case-вопросов
+- Deep path gating через feature flags
+- Clarification path без legacy runtime
+- Интеграция quality/budget gates
 """
 
 from app.services.chat.events import (
@@ -38,17 +35,17 @@ from app.services.chat.events import (
 )
 from app.services.chat.classifier import RequestClassifier, ClassificationResult
 from app.services.chat.history_service import ChatHistoryService
-from app.services.chat.orchestrator import ChatOrchestrator, ChatRequest, get_chat_orchestrator
-from app.services.chat.react_chat_agent import ReActChatAgent
 from app.services.chat.universal_tools import get_universal_tools
 from app.services.chat.draft_handler import DraftHandler
 from app.services.chat.editor_handler import EditorHandler
 from app.services.chat.metrics import ChatMetrics, get_metrics, MetricTimer, Timer
+from app.services.chat.conversation_policy_service import ConversationPolicyService, RunContext
+from app.services.chat.legal_quality_gates import LegalQualityGates, GateResult
 
-# Legacy imports (для обратной совместимости)
-from app.services.chat.rag_handler import RAGHandler
-from app.services.chat.agent_handler import AgentHandler
-from app.services.chat.chat_tools import get_chat_tools
+# Orchestrator surface (used by assistant_chat_v2 routes)
+from app.services.chat.orchestrator import ChatOrchestrator, ChatRequest, get_chat_orchestrator
+
+# Legacy imports removed: keep module surface minimal and production-only.
 
 __all__ = [
     # Events
@@ -67,23 +64,22 @@ __all__ = [
     "RequestClassifier",
     "ClassificationResult",
     "ChatHistoryService",
-    # Orchestrator
-    "ChatOrchestrator",
-    "ChatRequest",
-    "get_chat_orchestrator",
-    # ReAct Agent (v5.0)
-    "ReActChatAgent",
+    # Tools
     "get_universal_tools",
     # Handlers
     "DraftHandler",
     "EditorHandler",
-    # Legacy (for backwards compatibility)
-    "RAGHandler",
-    "AgentHandler",
-    "get_chat_tools",
     # Metrics
     "ChatMetrics",
     "get_metrics",
     "MetricTimer",
     "Timer",
+    "ConversationPolicyService",
+    "RunContext",
+    "LegalQualityGates",
+    "GateResult",
+    # Orchestrator API
+    "ChatOrchestrator",
+    "ChatRequest",
+    "get_chat_orchestrator",
 ]

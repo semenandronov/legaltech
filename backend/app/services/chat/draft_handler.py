@@ -50,6 +50,7 @@ class DraftHandler:
                 template_system_id=template_system_id,
                 template_file_id=template_file_id,
                 template_file_content=template_file_content,
+                user_question=question,
             )
 
             # 3. Запускаем граф — он yield-ит SSE reasoning-события и в конце _draft_content
@@ -141,6 +142,7 @@ class DraftHandler:
         template_system_id: Optional[str],
         template_file_id: Optional[str],
         template_file_content: Optional[str],
+        user_question: Optional[str] = None,
     ) -> tuple[str, Optional[str]]:
         """Единая сборка текста шаблона для draft_graph_agent."""
         from app.services.draft_template_context import resolve_draft_template_context
@@ -150,5 +152,6 @@ class DraftHandler:
             template_system_id=template_system_id,
             template_file_content=template_file_content,
             template_file_id=template_file_id,
+            user_question=user_question,
         )
         return text or "", label

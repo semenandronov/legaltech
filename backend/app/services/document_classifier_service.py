@@ -110,7 +110,10 @@ class DocumentClassifierService:
                     "message": "Initializing classifiers",
                     "data": {
                         "has_yandex_key": bool(config.YANDEX_API_KEY or config.YANDEX_IAM_TOKEN),
-                        "has_classifier_id": bool(config.YANDEX_AI_STUDIO_CLASSIFIER_ID)
+                        "has_classifier_id": bool(
+                            config.YANDEX_CLASSIFIER_MODEL_URI
+                            or config.YANDEX_AI_STUDIO_CLASSIFIER_ID
+                        )
                     },
                     "timestamp": int(__import__("time").time() * 1000)
                 }, ensure_ascii=False) + "\n")
@@ -119,7 +122,9 @@ class DocumentClassifierService:
         # #endregion
         
         # Пытаемся использовать Yandex AI Studio классификатор
-        if (config.YANDEX_API_KEY or config.YANDEX_IAM_TOKEN) and config.YANDEX_AI_STUDIO_CLASSIFIER_ID:
+        if (config.YANDEX_API_KEY or config.YANDEX_IAM_TOKEN) and (
+            config.YANDEX_CLASSIFIER_MODEL_URI or config.YANDEX_AI_STUDIO_CLASSIFIER_ID
+        ):
             try:
                 self.yandex_classifier = YandexDocumentClassifier()
                 if self.yandex_classifier.is_available():
@@ -176,7 +181,11 @@ class DocumentClassifierService:
             except Exception:
                 pass
             # #endregion
-            logger.info("✅ Using GigaChat LLM for document classification")
+            _prov = (config.LLM_PROVIDER or "yandex").lower()
+            logger.info(
+                "✅ Using LLM for document classification (provider=%s via create_llm)",
+                _prov,
+            )
         except Exception as e:
             # #region debug log
             try:
@@ -443,6 +452,10 @@ class DocumentClassifierService:
   "is_privileged": false,
   "privilege_type": "none"
 }}"""
+        # ChatPromptTemplate интерпретирует фигурные скобки как шаблонные переменные.
+        # Экранируем их, чтобы JSON-схема не ломала structured output.
+        system_prompt_escaped = system_prompt.replace("{", "{{").replace("}", "}}")
+        user_prompt_escaped = user_prompt.replace("{", "{{").replace("}", "}}")
 
         try:
             # #region debug log
@@ -473,8 +486,8 @@ class DocumentClassifierService:
             try:
                 structured_llm = self.llm.with_structured_output(DocumentClassificationModel)
                 prompt = ChatPromptTemplate.from_messages([
-                    ("system", system_prompt),
-                    ("human", user_prompt)
+                    ("system", system_prompt_escaped),
+                    ("human", user_prompt_escaped)
                 ])
                 chain = prompt | structured_llm
                 classification = chain.invoke({})

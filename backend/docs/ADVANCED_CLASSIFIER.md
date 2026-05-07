@@ -56,7 +56,7 @@
 ```python
 from app.services.langchain_agents.advanced_complexity_classifier import AdvancedComplexityClassifier
 from app.services.llm_factory import create_llm
-from app.routes.assistant_chat import get_classification_cache
+from app.services.chat.classifier import get_classification_cache
 
 # Создание классификатора
 llm = create_llm(temperature=0.0, top_p=1.0, max_tokens=500)

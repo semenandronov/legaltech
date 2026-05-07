@@ -1,17 +1,29 @@
 """PGVector Vector Store service for multi-tenant document storage using direct SQLAlchemy approach"""
 from typing import List, Dict, Any, Optional
-from sqlalchemy.orm import Session
-from sqlalchemy import create_engine, text, Column, String, JSON, bindparam, Table, MetaData
-from sqlalchemy.ext.declarative import declarative_base
-from langchain_core.documents import Document
-from app.config import config
-from app.services.yandex_embeddings import YandexEmbeddings
+import threading
 import logging
 import json
 import uuid
+import re
+
+from sqlalchemy.orm import Session
+from sqlalchemy import text, Column, String, JSON, bindparam, Table, MetaData
+from sqlalchemy.ext.declarative import declarative_base
+from langchain_core.documents import Document
 from pgvector.sqlalchemy import Vector
 
+from app.config import config
+from app.services.yandex_embeddings import YandexEmbeddings
+from app.utils.database import engine as _shared_db_engine
+
 logger = logging.getLogger(__name__)
+
+# One engine for the whole app: each ``CaseVectorStore()`` used to call ``create_engine()`` and
+# open a *new* pool (5 + 10 overflow per instance). Parallel HTTP handlers then multiplied
+# connections to Neon/serverless Postgres, hit connection limits, and the server started closing
+# sockets — including LangGraph's AsyncPostgresSaver pool (OperationalError).
+_pgvector_schema_lock = threading.Lock()
+_pgvector_schema_ready = False
 
 # Base for vector store table
 VectorBase = declarative_base()
@@ -47,32 +59,19 @@ class CaseVectorStore:
             self.embeddings = YandexEmbeddings()
         else:
             self.embeddings = embeddings
-        
-        # Create engine for direct SQL operations
-        self.db_url = config.DATABASE_URL
-        # Ensure postgresql:// format (not postgresql+psycopg://)
-        if self.db_url.startswith("postgresql+psycopg://"):
-            self.db_url = self.db_url.replace("postgresql+psycopg://", "postgresql://")
-        
-        # Create engine with connection pooling and SSL connection management
-        # pool_pre_ping: Verify connections before using (prevents SSL connection closed errors)
-        # pool_recycle: Recycle connections after 1 hour (prevents stale connections)
-        self.engine = create_engine(
-            self.db_url,
-            echo=False,
-            pool_pre_ping=True,  # Verify connections before using
-            pool_recycle=3600,  # Recycle connections after 1 hour
-            pool_size=5,  # Number of connections to maintain
-            max_overflow=10  # Maximum overflow connections
-        )
-        
+
+        self.engine = _shared_db_engine
+
         # Collection name for storing vectors
         self.collection_name = "legal_ai_vault_vectors"
-        
-        # Ensure table exists
-        self._ensure_table_exists()
-        
-        logger.info("✅ PGVector store initialized successfully (direct SQLAlchemy approach)")
+
+        global _pgvector_schema_ready
+        with _pgvector_schema_lock:
+            if not _pgvector_schema_ready:
+                self._ensure_table_exists()
+                _pgvector_schema_ready = True
+
+        logger.info("✅ PGVector store ready (shared SQLAlchemy engine / single pool)")
     
     def _ensure_table_exists(self):
         """Ensure the vector embedding table exists"""
@@ -147,6 +146,12 @@ class CaseVectorStore:
                 conn.execute(text(f"""
                     CREATE INDEX IF NOT EXISTS idx_{VectorEmbedding.__tablename__}_document_gin 
                     ON {VectorEmbedding.__tablename__} USING GIN (document)
+                """))
+                # Native PostgreSQL FTS index on document text for sparse keyword search.
+                conn.execute(text(f"""
+                    CREATE INDEX IF NOT EXISTS idx_{VectorEmbedding.__tablename__}_fts
+                    ON {VectorEmbedding.__tablename__}
+                    USING GIN (to_tsvector('russian', COALESCE(document->>'page_content', '')))
                 """))
                 
         except Exception as e:
@@ -417,8 +422,19 @@ class CaseVectorStore:
                 
                 # Add additional filters using parameterized queries for JSONB
                 for key, value in search_filter.items():
+                    if isinstance(value, (list, tuple, set)):
+                        values = [str(v) for v in value if str(v).strip()]
+                        if not values:
+                            continue
+                        placeholders = ", ".join(["%s"] * len(values))
+                        filter_conditions.append(
+                            f"document->'metadata'->>%s IN ({placeholders})"
+                        )
+                        params.append(key)
+                        params.extend(values)
+                        continue
                     # Use parameterized query for JSONB access
-                    filter_conditions.append(f"document->'metadata'->>%s = %s")
+                    filter_conditions.append("document->'metadata'->>%s = %s")
                     params.extend([key, str(value)])
                 
                 where_sql = " AND ".join(filter_conditions)
@@ -511,8 +527,19 @@ class CaseVectorStore:
                 
                 # Add additional filters using parameterized queries for JSONB
                 for key, value in search_filter.items():
+                    if isinstance(value, (list, tuple, set)):
+                        values = [str(v) for v in value if str(v).strip()]
+                        if not values:
+                            continue
+                        placeholders = ", ".join(["%s"] * len(values))
+                        filter_conditions.append(
+                            f"document->'metadata'->>%s IN ({placeholders})"
+                        )
+                        params.append(key)
+                        params.extend(values)
+                        continue
                     # Use parameterized query for JSONB access
-                    filter_conditions.append(f"document->'metadata'->>%s = %s")
+                    filter_conditions.append("document->'metadata'->>%s = %s")
                     params.extend([key, str(value)])
                 
                 where_sql = " AND ".join(filter_conditions)
@@ -566,7 +593,262 @@ class CaseVectorStore:
         except Exception as e:
             logger.error(f"Failed to search PGVector store with scores: {e}", exc_info=True)
             raise
+
+    def keyword_search(
+        self,
+        query: str,
+        case_id: str,
+        k: int = 10,
+        filter: Optional[Dict[str, Any]] = None,
+    ) -> List[Document]:
+        """
+        PostgreSQL Full-Text Search (FTS) over stored page_content.
+
+        Uses websearch_to_tsquery for robust parsing of user queries and ranks
+        matches with ts_rank_cd.
+        """
+        search_filter = {}
+        if filter:
+            search_filter.update(filter)
+        try:
+            with self.engine.connect() as conn:
+                filter_conditions = ["collection_id = %s", "case_id = %s"]
+                params = [self.collection_name, case_id]
+                for key, value in search_filter.items():
+                    if isinstance(value, (list, tuple, set)):
+                        values = [str(v) for v in value if str(v).strip()]
+                        if not values:
+                            continue
+                        placeholders = ", ".join(["%s"] * len(values))
+                        filter_conditions.append(
+                            f"document->'metadata'->>%s IN ({placeholders})"
+                        )
+                        params.append(key)
+                        params.extend(values)
+                        continue
+                    filter_conditions.append("document->'metadata'->>%s = %s")
+                    params.extend([key, str(value)])
+
+                where_sql = " AND ".join(filter_conditions)
+                table_name = VectorEmbedding.__tablename__
+                sql = f"""
+                    SELECT
+                        document,
+                        ts_rank_cd(
+                            to_tsvector('russian', COALESCE(document->>'page_content', '')),
+                            websearch_to_tsquery('russian', %s)
+                        ) AS fts_rank
+                    FROM {table_name}
+                    WHERE {where_sql}
+                      AND to_tsvector('russian', COALESCE(document->>'page_content', ''))
+                          @@ websearch_to_tsquery('russian', %s)
+                    ORDER BY fts_rank DESC
+                    LIMIT %s
+                """
+                # query in SELECT rank + query in WHERE + k limit
+                sql_params = [query] + params + [query, k]
+                raw_conn = conn.connection
+                cursor = raw_conn.cursor()
+                try:
+                    cursor.execute(sql, sql_params)
+                    docs: List[Document] = []
+                    for row in cursor.fetchall():
+                        doc_data = row[0]
+                        fts_rank = row[1] if len(row) > 1 else 0.0
+                        if isinstance(doc_data, str):
+                            doc_data = json.loads(doc_data)
+                        elif not isinstance(doc_data, dict):
+                            doc_data = {}
+                        doc = Document(
+                            page_content=doc_data.get("page_content", ""),
+                            metadata=doc_data.get("metadata", {}),
+                        )
+                        doc.metadata["fts_rank"] = float(fts_rank or 0.0)
+                        docs.append(doc)
+                finally:
+                    cursor.close()
+                return docs
+        except Exception as e:
+            logger.error("Failed to run PostgreSQL FTS search: %s", e, exc_info=True)
+            return []
+
+    def anchor_substring_search(
+        self,
+        *,
+        query: str,
+        case_id: str,
+        k: int = 10,
+        filter: Optional[Dict[str, Any]] = None,
+    ) -> List[Document]:
+        """
+        Deterministic substring retrieval for "address/anchor" queries like "пункт 6.8", "6.8.1", etc.
+
+        Motivation:
+        - Vector similarity is not reliable for purely-address queries.
+        - FTS (websearch_to_tsquery) can miss numeric dotted anchors depending on parsing.
+        - Substring match guarantees recall when the anchor exists in chunk text.
+        """
+        q = (query or "").strip()
+        if not q:
+            return []
+
+        anchors = re.findall(r"\b\d+(?:[.,]\d+)+\b", q)
+        if not anchors:
+            return []
+
+        # Small set of tolerant variants (dot/comma differences).
+        patterns: List[str] = []
+        seen = set()
+        for a in anchors[:5]:
+            for v in (a, a.replace(",", "."), a.replace(".", ",")):
+                v = v.strip()
+                if not v or v in seen:
+                    continue
+                seen.add(v)
+                patterns.append(v)
+
+        if not patterns:
+            return []
+
+        search_filter: Dict[str, Any] = {}
+        if filter:
+            search_filter.update(filter)
+
+        try:
+            with self.engine.connect() as conn:
+                filter_conditions = ["collection_id = %s", "case_id = %s"]
+                params: List[Any] = [self.collection_name, case_id]
+
+                for key, value in search_filter.items():
+                    if isinstance(value, (list, tuple, set)):
+                        values = [str(v) for v in value if str(v).strip()]
+                        if not values:
+                            continue
+                        placeholders = ", ".join(["%s"] * len(values))
+                        filter_conditions.append(
+                            f"document->'metadata'->>%s IN ({placeholders})"
+                        )
+                        params.append(key)
+                        params.extend(values)
+                        continue
+                    filter_conditions.append("document->'metadata'->>%s = %s")
+                    params.extend([key, str(value)])
+
+                where_sql = " AND ".join(filter_conditions)
+                table_name = VectorEmbedding.__tablename__
+
+                or_clauses: List[str] = []
+                pos_exprs: List[str] = []
+                like_params: List[Any] = []
+                pos_params: List[Any] = []
+
+                for p in patterns:
+                    or_clauses.append("COALESCE(document->>'page_content','') ILIKE %s")
+                    like_params.append(f"%{p}%")
+                    pos_exprs.append(
+                        "NULLIF(POSITION(lower(%s) IN lower(COALESCE(document->>'page_content',''))), 0)"
+                    )
+                    pos_params.append(p)
+
+                # Order by earliest anchor position in text (smaller is better).
+                min_pos_sql = "LEAST(" + ", ".join([f"COALESCE({e}, 2147483647)" for e in pos_exprs]) + ")"
+
+                sql = f"""
+                    SELECT
+                        document,
+                        {min_pos_sql} AS anchor_pos
+                    FROM {table_name}
+                    WHERE {where_sql}
+                      AND ({' OR '.join(or_clauses)})
+                    ORDER BY anchor_pos ASC
+                    LIMIT %s
+                """
+
+                # Parameter order must match placeholder order in SQL *appearance*.
+                # Placeholders in the SELECT list appear before placeholders in WHERE.
+                # Order:
+                # - POSITION needles used in SELECT (min_pos_sql),
+                # - THEN WHERE params (collection_id, case_id, metadata_filter),
+                # - THEN ILIKE patterns used in WHERE,
+                # - THEN LIMIT.
+                sql_params = pos_params + params + like_params + [k]
+                raw_conn = conn.connection
+                cursor = raw_conn.cursor()
+                try:
+                    cursor.execute(sql, sql_params)
+                    docs: List[Document] = []
+                    for row in cursor.fetchall():
+                        doc_data = row[0]
+                        anchor_pos = row[1] if len(row) > 1 else None
+
+                        if isinstance(doc_data, str):
+                            doc_data = json.loads(doc_data)
+                        elif not isinstance(doc_data, dict):
+                            doc_data = {}
+
+                        doc = Document(
+                            page_content=doc_data.get("page_content", "") or "",
+                            metadata=doc_data.get("metadata", {}) or {},
+                        )
+                        try:
+                            doc.metadata["anchor_pos"] = int(anchor_pos) if anchor_pos is not None else None
+                        except Exception:
+                            doc.metadata["anchor_pos"] = None
+                        docs.append(doc)
+                finally:
+                    cursor.close()
+
+                return docs
+        except Exception as e:
+            logger.error("anchor_substring_search failed: %s", e, exc_info=True)
+            return []
     
+    def list_chunks_by_file(self, case_id: str, file_id: str) -> List[Document]:
+        """
+        Все проиндексированные чанки файла в PGVector (порядок как при индексации: chunk_index, uuid).
+
+        Используется лабораторией чанков / отладкой цитат; не для retrieval по смыслу.
+        """
+        fid = str(file_id).strip()
+        if not fid:
+            return []
+        try:
+            table_name = VectorEmbedding.__tablename__
+            sql = text(f"""
+                SELECT document
+                FROM {table_name}
+                WHERE collection_id = :collection_id
+                  AND case_id = :case_id
+                  AND document->'metadata'->>'file_id' = :file_id
+                ORDER BY COALESCE((document->'metadata'->>'chunk_index')::int, 2147483647), uuid
+            """)
+            with self.engine.connect() as conn:
+                rows = conn.execute(
+                    sql,
+                    {
+                        "collection_id": self.collection_name,
+                        "case_id": str(case_id),
+                        "file_id": fid,
+                    },
+                ).fetchall()
+            docs: List[Document] = []
+            for row in rows:
+                doc_data = row[0]
+                if isinstance(doc_data, str):
+                    doc_data = json.loads(doc_data)
+                elif not isinstance(doc_data, dict):
+                    continue
+                docs.append(
+                    Document(
+                        page_content=doc_data.get("page_content", "") or "",
+                        metadata=dict(doc_data.get("metadata") or {}),
+                    )
+                )
+            return docs
+        except Exception as e:
+            logger.error("list_chunks_by_file failed case=%s file=%s: %s", case_id, fid, e, exc_info=True)
+            return []
+
     def delete_case_vectors(self, case_id: str) -> bool:
         """
         Delete all vectors for a specific case

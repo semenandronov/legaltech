@@ -48,10 +48,10 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({
     onDeepThinkChange(checked)
   }
 
-  // Обработчик для ГАРАНТ - выключает другие функции
+  // Обработчик для КОДЕКС - выключает другие функции
   const handleLegalResearchChange = (checked: boolean) => {
     if (checked) {
-      // Если включаем ГАРАНТ, выключаем остальные
+      // Если включаем КОДЕКС, выключаем остальные
       onDeepThinkChange(false)
       onWebSearchChange(false)
       onDraftModeChange(false)
@@ -82,8 +82,8 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({
     },
     {
       id: 'legalResearch',
-      label: 'Pravo.gov.ru',
-      description: 'Поиск НПА на официальном портале publication.pravo.gov.ru: законы, постановления, приказы, приказы. ИИ находит нужный акт, загружает его текст и сравнивает с документами дела.',
+      label: 'КОДЕКС',
+      description: 'Подключает справочник с законами для ответа. Если тумблер выключен, ИИ использует только материалы вашего дела.',
       icon: Scale,
       value: legalResearch,
       onChange: handleLegalResearchChange,
@@ -120,9 +120,9 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({
                     }}
                     aria-pressed={setting.value}
                     aria-label={`${setting.label}: ${setting.value ? 'включено' : 'выключено'}`}
-                    className={`flex items-center justify-center w-8 h-8 rounded-lg transition-colors focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-1 ${
+                    className={`flex items-center justify-center w-8 h-8 rounded-lg transition-colors focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-1 ${
                       setting.value
-                        ? 'bg-blue-50 text-blue-600 border border-blue-200'
+                        ? 'bg-secondary text-accent-muted border border-border'
                         : 'bg-transparent text-gray-400 hover:text-gray-600 hover:bg-gray-100'
                     }`}
                   >
@@ -150,7 +150,7 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({
                     <Icon 
                       className={`w-5 h-5 transition-colors ${
                         setting.value 
-                          ? 'text-blue-600' 
+                          ? 'text-accent-muted' 
                           : 'text-gray-400 group-hover:text-gray-600'
                       }`} 
                     />

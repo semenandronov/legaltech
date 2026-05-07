@@ -123,6 +123,7 @@ class DocumentUpdateRequest(BaseModel):
     """Request model for updating a document"""
     content: str = Field(..., description="HTML content")
     title: Optional[str] = Field(None, max_length=255, description="Document title")
+    metadata: Optional[dict] = None
 
 
 class AIAssistRequest(BaseModel):
@@ -423,7 +424,8 @@ async def update_document(
             document_id=document_id,
             user_id=current_user.id,
             content=request.content,
-            title=request.title
+            title=request.title,
+            metadata=request.metadata
         )
 
         # Sync edits back to RAG

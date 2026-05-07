@@ -233,8 +233,8 @@ export const TextHighlighter: React.FC<TextHighlighterProps> = ({
             className={
               part.isHighlight
                 ? part.isSearch
-                  ? "bg-blue-400 dark:bg-blue-500/50 px-1 rounded"
-                  : "bg-blue-200 dark:bg-blue-600/50 px-1 rounded"
+                  ? "bg-accent-muted/40 dark:bg-secondary0/50 px-1 rounded"
+                  : "bg-muted dark:bg-primary/50 px-1 rounded"
                 : ""
             }
           >

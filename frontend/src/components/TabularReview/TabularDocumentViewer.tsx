@@ -24,10 +24,19 @@ interface CellData {
   verbatimExtract?: string | null
   cellValue?: string | null
   sourcePage?: number | null
+  /**
+   * Как интерпретировать sourcePage для PDF:
+   * - 'zero' — 0-based (исторически PyMuPDF / табличный review)
+   * - 'one' — 1-based (контракт чата / Docling, как в DocumentPreviewSheet)
+   */
+  sourcePageBasis?: 'zero' | 'one'
   sourceSection?: string | null
   columnType?: string
   highlightMode?: 'verbatim' | 'page' | 'none'
   sourceReferences?: SourceReference[]
+  highlightBBox?: { x0?: number; y0?: number; x1?: number; y1?: number }
+  highlightBBoxRegions?: Array<{ x0?: number; y0?: number; x1?: number; y1?: number }>
+  highlightPageBBox?: { width?: number; height?: number }
   // Phase 4: Deep link fields
   docId?: string | null
   charStart?: number | null
@@ -331,6 +340,23 @@ export const TabularDocumentViewer: React.FC<TabularDocumentViewerProps> = ({
   const highlightMode = cellData?.highlightMode || "none"
   const activeDoc = documentTabs[activeTab]
 
+  const pageBasis = cellData?.sourcePageBasis ?? "zero"
+  const viewerPdfPageFromSourcePage =
+    cellData?.sourcePage == null || Number.isNaN(Number(cellData.sourcePage))
+      ? undefined
+      : pageBasis === "one"
+        ? Math.max(1, Number(cellData.sourcePage))
+        : Number(cellData.sourcePage) + 1
+  /** sourceReferences в таблице по-прежнему считаем 0-based */
+  const viewerPdfPageFromRef =
+    cellData?.sourceReferences?.[0]?.page == null ||
+    Number.isNaN(Number(cellData.sourceReferences[0].page))
+      ? undefined
+      : Number(cellData.sourceReferences[0].page) + 1
+
+  const pdfInitialAndHighlightPage =
+    viewerPdfPageFromSourcePage ?? viewerPdfPageFromRef ?? undefined
+
   // Collect all texts to highlight for non-PDF documents
   // Include verbatim extract and all source references
   const highlightTexts: string[] = []
@@ -454,17 +480,12 @@ export const TabularDocumentViewer: React.FC<TabularDocumentViewerProps> = ({
                 fileId={currentFileId}
               caseId={caseId}
                 filename={activeDoc?.fileName || ""}
-              initialPage={
-                // Backend stores source_page as 0-indexed (PyMuPDF range()), PDFViewer expects 1-indexed
-                highlightMode === "page" && cellData?.sourcePage != null
-                  ? cellData.sourcePage + 1
-                  : highlightMode === "verbatim" && cellData?.sourcePage != null
-                  ? cellData.sourcePage + 1
-                  : cellData?.sourceReferences?.[0]?.page != null
-                  ? cellData.sourceReferences[0].page + 1
-                  : undefined
-              }
+              initialPage={pdfInitialAndHighlightPage}
+              highlightPage={pdfInitialAndHighlightPage}
               highlightText={cellData?.verbatimExtract || cellData?.sourceReferences?.[0]?.text || cellData?.cellValue || undefined}
+              highlightBBox={cellData?.highlightBBox}
+              highlightBBoxRegions={cellData?.highlightBBoxRegions}
+              highlightPageBBox={cellData?.highlightPageBBox}
               onError={(err) => {
                 setError(err.message || "Ошибка при загрузке PDF")
               }}

@@ -15,6 +15,46 @@ export default {
   	},
   	extend: {
   		colors: {
+  			/* Тёплая шкала вместо холодного Tailwind gray — все bg-gray-*, text-gray-* */
+  			gray: {
+  				50: '#faf9f6',
+  				100: '#f3f2ee',
+  				200: '#e8e6e0',
+  				300: '#d4cfc6',
+  				400: '#a39e96',
+  				500: '#7a756d',
+  				600: '#5c5852',
+  				700: '#4a4844',
+  				800: '#3d3a36',
+  				900: '#1e1d1b',
+  				950: '#131210',
+  			},
+  			slate: {
+  				50: '#faf9f6',
+  				100: '#f3f2ee',
+  				200: '#e8e6e0',
+  				300: '#d4cfc6',
+  				400: '#a39e96',
+  				500: '#7a756d',
+  				600: '#5c5852',
+  				700: '#4a4844',
+  				800: '#3d3a36',
+  				900: '#1e1d1b',
+  				950: '#131210',
+  			},
+  			zinc: {
+  				50: '#faf9f6',
+  				100: '#f3f2ee',
+  				200: '#e8e6e0',
+  				300: '#d4cfc6',
+  				400: '#a39e96',
+  				500: '#7a756d',
+  				600: '#5c5852',
+  				700: '#4a4844',
+  				800: '#3d3a36',
+  				900: '#1e1d1b',
+  				950: '#131210',
+  			},
   			// Design tokens from design-tokens.css
   			bg: {
   				primary: 'var(--color-bg-primary)',
@@ -61,7 +101,7 @@ export default {
   			foreground: 'var(--color-text-primary)',
   			primary: {
   				DEFAULT: 'var(--color-accent)',
-  				foreground: 'var(--color-bg-primary)',
+  				foreground: 'var(--color-on-accent)',
   			},
   			secondary: {
   				DEFAULT: 'var(--color-bg-secondary)',
@@ -73,7 +113,7 @@ export default {
   			},
   			destructive: {
   				DEFAULT: 'var(--color-error)',
-  				foreground: 'var(--color-text-primary)',
+  				foreground: 'var(--color-on-accent)',
   			},
   			card: {
   				DEFAULT: 'var(--color-bg-elevated)',
@@ -85,12 +125,11 @@ export default {
   			},
   			input: 'var(--color-border)',
   			ring: 'var(--color-border-strong)',
-  			// Document type colors (keep for compatibility)
-  			'doc-contract': '#9C27B0',
-  			'doc-email': '#FF6F00',
-  			'doc-court': '#D32F2F',
-  			'doc-sanction': '#880E4F',
-  			'doc-compliance': '#00838F',
+  			'doc-contract': '#6b4a6f',
+  			'doc-email': '#8a6040',
+  			'doc-court': '#a84840',
+  			'doc-sanction': '#6b3a50',
+  			'doc-compliance': '#3d5c55',
   		},
 		fontFamily: {
 			sans: [
@@ -101,8 +140,9 @@ export default {
 				'sans-serif'
 			],
 			display: [
-				'Cormorant Garamond',
-				'Playfair Display',
+				'Instrument Serif',
+				'Georgia',
+				'Times New Roman',
 				'serif'
 			],
 			mono: [

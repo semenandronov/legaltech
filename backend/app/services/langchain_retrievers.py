@@ -90,9 +90,10 @@ class AdvancedRetrieverService:
         self.document_processor = document_processor
         # Use GigaChat via factory with rate limiting for direct calls
         from app.services.llm_factory import create_llm, create_llm_without_rate_limiting
-        self.llm = create_llm(temperature=0.7)
+        # Utility LLM calls for retrieval query expansion should be non-streaming for stability.
+        self.llm = create_llm(temperature=0.7, streaming=False)
         # Use LLM without rate limiting for LangChain methods (they need direct Runnable)
-        self.llm_for_langchain = create_llm_without_rate_limiting(temperature=0.7)
+        self.llm_for_langchain = create_llm_without_rate_limiting(temperature=0.7, streaming=False)
     
     def _get_base_documents(self, case_id: str, query: str, k: int = 5, db: Optional[Session] = None) -> List[Document]:
         """

@@ -25,6 +25,30 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
+_TASK_COMMAND_RE = re.compile(
+    r"\b(?:"
+    r"проанализируй|анализируй|выполни|найди|извлеки|создай|сделай|запусти|проведи|провести|"
+    r"analyze|extract|find|create|generate|run|perform|execute"
+    r")\b",
+    re.IGNORECASE,
+)
+_QUESTION_PREFIX_RE = re.compile(r"^\s*(как|что|почему|зачем|когда|где|кто|какие?)\b", re.IGNORECASE)
+
+
+def is_task_request(text: str) -> bool:
+    """
+    Быстро определить, является ли запрос "задачей" (task) для /api/chat/task,
+    а не вопросом для обычного RAG-ответа.
+    """
+
+    q = (text or "").strip()
+    if not q:
+        return False
+    # Явные вопросы — не task, даже если содержат "командное" слово
+    if _QUESTION_PREFIX_RE.search(q) or "?" in q:
+        return False
+    return bool(_TASK_COMMAND_RE.search(q))
+
 
 class ChatRequest(BaseModel):
     """Request model for chat"""
@@ -408,6 +432,7 @@ async def execute_task(
         logger.info(f"Task execution request for case {request.case_id}: {request.task[:100]}...")
         
         # Create Planning Agent
+        from app.services.langchain_agents.planning_agent import PlanningAgent
         planning_agent = PlanningAgent()
         
         # Plan analysis

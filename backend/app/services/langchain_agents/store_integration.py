@@ -32,7 +32,7 @@ def my_node(state: MyState, config: dict) -> MyState:
 - Connection pooling через DATABASE_URL
 - Namespace-based организация данных
 """
-from typing import Optional, Any
+from typing import Optional, Any, Dict
 from app.config import config
 import logging
 
@@ -41,6 +41,33 @@ logger = logging.getLogger(__name__)
 # Global store instance for reuse (connection pooling)
 _global_store: Optional[Any] = None
 _store_setup_done: bool = False
+
+
+def _build_semantic_index_config() -> Optional[Dict[str, Any]]:
+    """
+    Build index config for PostgresStore semantic search.
+    Uses Yandex embeddings when available.
+    """
+    if not getattr(config, "GLOBAL_MEMORY_SEMANTIC_ENABLED", True):
+        return None
+    try:
+        from app.services.yandex_embeddings import YandexEmbeddings
+
+        emb = YandexEmbeddings()
+        if not emb.is_available():
+            logger.warning("Semantic memory index disabled: embeddings unavailable")
+            return None
+
+        # Compatibility-first shape used by LangGraph stores:
+        # - embed: callable for texts -> vectors
+        # - dims: vector dimension
+        return {
+            "embed": emb.embed_documents,
+            "dims": 256,
+        }
+    except Exception as ex:
+        logger.warning("Failed to initialize semantic memory index config: %s", ex)
+        return None
 
 
 def _create_postgres_store():
@@ -76,8 +103,16 @@ def _create_postgres_store():
         
         # Create PostgresStore
         # Check for from_conn_string method (newer API)
+        semantic_index = _build_semantic_index_config()
         if hasattr(PostgresStore, 'from_conn_string'):
-            conn_manager = PostgresStore.from_conn_string(db_url)
+            # Try semantic index first; fallback to plain store if signature differs.
+            try:
+                if semantic_index:
+                    conn_manager = PostgresStore.from_conn_string(db_url, index=semantic_index)
+                else:
+                    conn_manager = PostgresStore.from_conn_string(db_url)
+            except TypeError:
+                conn_manager = PostgresStore.from_conn_string(db_url)
             
             # Check if it's a context manager
             is_context_manager = hasattr(conn_manager, "__enter__") and hasattr(conn_manager, "__exit__")
@@ -94,7 +129,13 @@ def _create_postgres_store():
                 logger.info("✅ Created PostgresStore with from_conn_string (direct)")
         else:
             # Fallback: try direct constructor
-            store = PostgresStore(db_url)
+            try:
+                if semantic_index:
+                    store = PostgresStore(db_url, index=semantic_index)
+                else:
+                    store = PostgresStore(db_url)
+            except TypeError:
+                store = PostgresStore(db_url)
             logger.info("✅ Created PostgresStore using direct constructor")
         
         return store

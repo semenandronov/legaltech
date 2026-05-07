@@ -35,7 +35,7 @@
 .app-title {
   font-size: 20px;
   font-weight: 600;
-  color: #1f2937;
+  color: var(--color-text-primary);
   display: flex;
   align-items: center;
   gap: 8px;
@@ -73,9 +73,9 @@
 }
 
 .back-button:hover {
-  background-color: #f3f4f6;
+  background-color: var(--color-bg-hover);
   border-color: var(--color-primary);
-  color: #1f2937;
+  color: var(--color-text-primary);
   transform: translateY(-1px);
 }
 

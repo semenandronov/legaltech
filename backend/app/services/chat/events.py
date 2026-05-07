@@ -16,19 +16,46 @@ import json
 
 class Citation(BaseModel):
     """Цитата из документа"""
+    citation_id: Optional[str] = Field(
+        None,
+        description="Стабильный идентификатор цитаты (ключ для UI; не зависит от позиции в массиве)",
+    )
     source_id: str = Field(..., description="ID источника")
     file_name: str = Field(..., description="Имя файла")
     page: Optional[int] = Field(None, description="Номер страницы")
     quote: Optional[str] = Field(None, description="Текст цитаты")
+    quote_anchor: Optional[str] = Field(
+        None,
+        description="Якорь для поиска в original_text (срез по char_start:char_end или fallback)",
+    )
+    text_preview: Optional[str] = Field(
+        None,
+        description="Полный текст чанка (page_content) для подсветки в PDF, как на странице chunk-lab",
+    )
+    chunk_id: Optional[str] = Field(None, description="Идентификатор чанка (дедуп/диагностика)")
     char_start: Optional[int] = Field(None, description="Начало цитаты в документе")
     char_end: Optional[int] = Field(None, description="Конец цитаты в документе")
     context_before: Optional[str] = Field(None, description="Контекст до цитаты")
     context_after: Optional[str] = Field(None, description="Контекст после цитаты")
-    url: Optional[str] = Field(None, description="URL источника (для ГАРАНТ)")
-    source_type: Literal["document", "garant", "web", "external"] = Field("document", description="Тип источника")
+    url: Optional[str] = Field(None, description="URL источника (для справочных правовых источников)")
+    source_type: Literal["document", "legal_reference", "web", "external", "legal_corpus"] = Field("document", description="Тип источника")
     doc_type: Optional[str] = Field(None, description="Тип документа")
     doc_date: Optional[str] = Field(None, description="Дата документа")
     doc_number: Optional[str] = Field(None, description="Номер документа")
+    bbox: Optional[Dict[str, float]] = Field(None, description="Bounding box coordinates: {x0, y0, x1, y1}")
+    bbox_regions: Optional[List[Dict[str, float]]] = Field(
+        None,
+        description="All Docling prov bboxes for the chunk (PDF user space), for multi-region highlights",
+    )
+    page_bbox: Optional[Dict[str, float]] = Field(None, description="Page dimensions: {width, height}")
+    index: Optional[int] = Field(
+        None,
+        description="Порядковый номер цитаты в ответе (1..n), см. citations_merge_reducer",
+    )
+    debug_docling_prov_page_nos: Optional[List[int]] = Field(
+        None,
+        description="Только dev: сырые prov.page_no из Docling для диагностики нумерации страниц",
+    )
 
 
 class DocumentInfo(BaseModel):
@@ -84,7 +111,11 @@ class TextDeltaEvent(BaseModel):
     
     def to_sse(self) -> str:
         """Сериализация в SSE формат (совместимый с assistant-ui)"""
-        return f"data: {json.dumps({'textDelta': self.text_delta}, ensure_ascii=False)}\n\n"
+        return (
+            "data: "
+            f"{json.dumps({'type': 'text_delta', 'text_delta': self.text_delta, 'textDelta': self.text_delta}, ensure_ascii=False)}"
+            "\n\n"
+        )
 
 
 class CitationsEvent(BaseModel):
@@ -94,6 +125,28 @@ class CitationsEvent(BaseModel):
     
     def to_sse(self) -> str:
         return f"data: {json.dumps({'type': 'citations', 'citations': [c.model_dump() for c in self.citations]}, ensure_ascii=False)}\n\n"
+
+
+class AnswerBlock(BaseModel):
+    """Фрагмент ответа с привязкой к citation_id (Phase 2)."""
+
+    block_id: str = Field(..., description="Идентификатор блока")
+    markdown_text: str = Field(..., description="Markdown блока без [N] маркеров")
+    citation_ids: List[str] = Field(default_factory=list, description="Стабильные citation_id из каталога")
+
+
+class AnswerBlocksEvent(BaseModel):
+    """Структурированные блоки ответа для UI (NotebookLM-style)."""
+
+    type: Literal["answer_blocks"] = "answer_blocks"
+    blocks: List[AnswerBlock] = Field(..., description="Блоки ответа")
+
+    def to_sse(self) -> str:
+        payload = {
+            "type": "answer_blocks",
+            "blocks": [b.model_dump() for b in self.blocks],
+        }
+        return f"data: {json.dumps(payload, ensure_ascii=False)}\n\n"
 
 
 class ReasoningEvent(BaseModel):
@@ -254,7 +307,7 @@ class CitationVerificationEvent(BaseModel):
     """
     Событие с результатами проверки цитат
     
-    NEW v3.0: Показывает какие цитаты подтверждены в ГАРАНТ
+    NEW v3.0: Показывает какие цитаты подтверждены в справочном правовом источнике
     """
     type: Literal["citation_verification"] = "citation_verification"
     total_citations: int = Field(..., description="Всего цитат")
@@ -318,6 +371,7 @@ class PlaybookCheckResultEvent(BaseModel):
 SSEEvent = Union[
     TextDeltaEvent,
     CitationsEvent,
+    AnswerBlocksEvent,
     ReasoningEvent,
     DocumentCreatedEvent,
     StructuredEditsEvent,
@@ -390,6 +444,27 @@ class SSESerializer:
                 # Skip malformed citations rather than failing entirely
                 continue
         return CitationsEvent(citations=citation_objects).to_sse()
+
+    @staticmethod
+    def answer_blocks(blocks: List[Dict[str, Any]]) -> str:
+        """Phase 2: блоки ответа с citation_ids."""
+        objs: List[AnswerBlock] = []
+        for b in blocks or []:
+            if not isinstance(b, dict):
+                continue
+            try:
+                objs.append(
+                    AnswerBlock(
+                        block_id=str(b.get("block_id") or ""),
+                        markdown_text=str(b.get("markdown_text") or ""),
+                        citation_ids=[str(x) for x in (b.get("citation_ids") or []) if x is not None],
+                    )
+                )
+            except Exception:
+                continue
+        if not objs:
+            return ""
+        return AnswerBlocksEvent(blocks=objs).to_sse()
     
     @staticmethod
     def document_created(doc_id: str, title: str, case_id: str, content: Optional[str] = None) -> str:
@@ -459,5 +534,37 @@ class SSESerializer:
     def playbook_check_result(check: Dict[str, Any]) -> str:
         """Быстрый метод для playbook_check_result"""
         return PlaybookCheckResultEvent(check=check).to_sse()
+
+    @staticmethod
+    def session(session_id: str) -> str:
+        """Единое событие с идентификатором сессии."""
+        return f"data: {json.dumps({'type': 'session', 'session_id': session_id}, ensure_ascii=False)}\n\n"
+
+    @staticmethod
+    def trace(trace_id: str) -> str:
+        """Единое событие с trace идентификатором."""
+        return f"data: {json.dumps({'type': 'trace', 'trace_id': trace_id}, ensure_ascii=False)}\n\n"
+
+    @staticmethod
+    def status(phase: str, **payload: Any) -> str:
+        """Единое событие статуса выполнения."""
+        data: Dict[str, Any] = {"type": "status", "phase": phase}
+        data.update(payload)
+        return f"data: {json.dumps(data, ensure_ascii=False)}\n\n"
+
+    @staticmethod
+    def finish(
+        finish_reason: str = "stop",
+        *,
+        draft_state: Optional[str] = None,
+        mode: Optional[str] = None,
+    ) -> str:
+        """Единое событие завершения потока."""
+        data: Dict[str, Any] = {"type": "finish", "finishReason": finish_reason}
+        if draft_state:
+            data["draft_state"] = draft_state
+        if mode:
+            data["mode"] = mode
+        return f"data: {json.dumps(data, ensure_ascii=False)}\n\n"
 
 

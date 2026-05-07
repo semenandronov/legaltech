@@ -77,9 +77,9 @@ export const CommentsPanel: React.FC<CommentsPanelProps> = ({
       </CardHeader>
       <CardContent className="p-3 overflow-y-auto" style={{ maxHeight: 'calc(100vh - 120px)' }}>
         {selectedText && selectedRange && (
-          <div className="mb-4 p-3 bg-blue-50 border border-blue-200 rounded-lg">
-            <div className="text-xs font-medium text-blue-700 mb-1">Выделенный текст:</div>
-            <div className="text-sm text-blue-900 mb-2 line-clamp-2">{selectedText}</div>
+          <div className="mb-4 p-3 bg-secondary border border-border rounded-lg">
+            <div className="text-xs font-medium text-foreground mb-1">Выделенный текст:</div>
+            <div className="text-sm text-foreground mb-2 line-clamp-2">{selectedText}</div>
             {!showAddForm ? (
               <Button
                 onClick={() => setShowAddForm(true)}

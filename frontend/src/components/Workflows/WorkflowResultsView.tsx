@@ -29,24 +29,22 @@ import type { WorkflowExecution, WorkflowExecutionStep } from '../../services/wo
 
 const toolColors: Record<string, string> = {
   'tabular_review': '#6366f1',
-  'rag_search': '#8b5cf6',
-  'web_search': '#06b6d4',
-  'playbook': '#10b981',
+  'rag': '#8b5cf6',
+  'legal_db': '#06b6d4',
+  'playbook_check': '#10b981',
   'summarize': '#f59e0b',
   'extract_entities': '#ec4899',
-  'document_compare': '#3b82f6',
-  'risk_analysis': '#ef4444',
+  'document_draft': '#3b82f6',
 }
 
 const toolIcons: Record<string, React.ReactNode> = {
   'tabular_review': <Table className="w-4 h-4" />,
-  'rag_search': <FileSearch className="w-4 h-4" />,
-  'web_search': <Globe className="w-4 h-4" />,
-  'playbook': <BookOpen className="w-4 h-4" />,
+  'rag': <FileSearch className="w-4 h-4" />,
+  'legal_db': <Globe className="w-4 h-4" />,
+  'playbook_check': <BookOpen className="w-4 h-4" />,
   'summarize': <FileText className="w-4 h-4" />,
   'extract_entities': <Target className="w-4 h-4" />,
-  'document_compare': <Database className="w-4 h-4" />,
-  'risk_analysis': <AlertTriangle className="w-4 h-4" />,
+  'document_draft': <Database className="w-4 h-4" />,
 }
 
 interface WorkflowResultsViewProps {

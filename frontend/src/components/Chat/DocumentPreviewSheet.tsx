@@ -25,6 +25,109 @@ import PDFViewer from '@/components/Documents/PDFViewer'
 import { DocumentHighlighter } from '@/components/Documents/DocumentHighlighter'
 import { TextHighlighter } from '@/components/TabularReview/TextHighlighter'
 
+const FILE_LIST_TTL_MS = 5 * 60 * 1000
+type CachedFileList = { ts: number; documents: any[] }
+const fileListCache = new Map<string, CachedFileList>()
+const textContentCache = new Map<string, string>()
+const htmlContentCache = new Map<string, string>()
+const binaryContentCache = new Map<string, Blob>()
+
+const authHeaders = () => ({
+  'Authorization': `Bearer ${localStorage.getItem('access_token')}`
+})
+
+const extToType = (name?: string): string => {
+  const file = (name || '').toLowerCase()
+  if (file.endsWith('.pdf')) return 'pdf'
+  if (file.endsWith('.docx')) return 'docx'
+  if (file.endsWith('.txt')) return 'txt'
+  if (file.endsWith('.html')) return 'html'
+  if (file.endsWith('.md')) return 'md'
+  if (file.endsWith('.json')) return 'json'
+  if (file.endsWith('.xml')) return 'xml'
+  if (file.endsWith('.csv')) return 'csv'
+  return 'txt'
+}
+
+const normalizeCitationPageForViewer = (page?: number | null): number | undefined => {
+  if (page == null || Number.isNaN(page)) return undefined
+  // Contract v1: citation page is 1-based (same as PDF viewer).
+  // Keep a tiny legacy fallback: if backend ever sends 0-based, convert 0 → 1.
+  return page <= 0 ? 1 : page
+}
+
+const getFileListCached = async (apiBase: string, force = false): Promise<any[]> => {
+  const cached = fileListCache.get(apiBase)
+  const fresh = cached && (Date.now() - cached.ts) < FILE_LIST_TTL_MS
+  if (!force && fresh) {
+    return cached.documents
+  }
+  const filesResponse = await fetch(`${apiBase}/files`, {
+    headers: authHeaders()
+  })
+  if (!filesResponse.ok) {
+    throw new Error('Ошибка загрузки списка документов')
+  }
+  const filesData = await filesResponse.json()
+  const docs = filesData.documents || []
+  fileListCache.set(apiBase, { ts: Date.now(), documents: docs })
+  return docs
+}
+
+const prefetchSourceContent = async (apiBase: string, fileId: string, fileType: string): Promise<void> => {
+  const cacheKey = `${apiBase}:${fileId}`
+  const fileTypeLower = fileType.toLowerCase()
+  const isTextFile = ['txt', 'html', 'md', 'json', 'xml', 'csv'].includes(fileTypeLower)
+  const isDocx = fileTypeLower === 'docx'
+
+  if (isDocx) {
+    if (htmlContentCache.has(cacheKey)) return
+    const htmlRes = await fetch(`${apiBase}/files/${fileId}/html`, { headers: authHeaders() })
+    if (htmlRes.ok) {
+      const htmlData = await htmlRes.json()
+      htmlContentCache.set(cacheKey, htmlData.html || '')
+    }
+    return
+  }
+
+  if (isTextFile) {
+    if (textContentCache.has(cacheKey)) return
+    // Use extracted original_text for reliable citation offsets/highlights
+    const textRes = await fetch(`${apiBase}/files/${fileId}/text`, { headers: authHeaders() })
+    if (textRes.ok) {
+      textContentCache.set(cacheKey, await textRes.text())
+    }
+    return
+  }
+
+  if (!binaryContentCache.has(cacheKey)) {
+    const response = await fetch(`${apiBase}/files/${fileId}/content`, { headers: authHeaders() })
+    if (response.ok) {
+      binaryContentCache.set(cacheKey, await response.blob())
+    }
+  }
+}
+
+export const prefetchGlobalCitationSource = async (source: SourceInfo): Promise<void> => {
+  const apiBase = source.source_type === 'legal_corpus'
+    ? '/api/v2/legal-corpus-preview'
+    : '/api/v2/assistant'
+  const sourceId = (source as any).source_id as string | undefined
+  const filename = source.file || source.title || ''
+  if (!sourceId) return
+  try {
+    // Warm file list cache for instant id -> metadata resolution.
+    await getFileListCached(apiBase)
+  } catch {
+    // best effort
+  }
+  try {
+    await prefetchSourceContent(apiBase, sourceId, extToType(filename))
+  } catch {
+    // best effort
+  }
+}
+
 
 interface DocumentPreviewSheetProps {
   isOpen: boolean
@@ -35,6 +138,8 @@ interface DocumentPreviewSheetProps {
   onNavigate?: (source: SourceInfo) => void
   /** Override the API base used for file loading. Defaults to /api/cases/{caseId}. */
   filesApiBase?: string
+  /** Global assistant flow: render immediately, network in background. */
+  instantOpen?: boolean
 }
 
 const DocumentPreviewSheet = ({
@@ -45,6 +150,7 @@ const DocumentPreviewSheet = ({
   allSources = [],
   onNavigate,
   filesApiBase,
+  instantOpen = false,
 }: DocumentPreviewSheetProps) => {
   // Compute API base: custom override or default case-based path
   const apiBase = filesApiBase ?? `/api/cases/${caseId}`
@@ -53,43 +159,83 @@ const DocumentPreviewSheet = ({
   const [documentText, setDocumentText] = useState<string | null>(null) // Текстовый контент для подсветки
   const [documentHtml, setDocumentHtml] = useState<string | null>(null) // HTML контент для DOCX
   const [loading, setLoading] = useState(false)
-  const [fileInfo, setFileInfo] = useState<{ id: string; file_type: string; filename: string } | null>(null)
+  const [fileInfo, setFileInfo] = useState<{ id: string; file_type: string; filename: string; legacy_fallback?: boolean } | null>(null)
   const [fileUrl, setFileUrl] = useState<string | null>(null)
+  const delayedHighlightTimerRef = useRef<number | null>(null)
 
-  const currentIndex = source ? allSources.findIndex(s => s.file === source.file) : -1
+  const currentIndex = source
+    ? allSources.findIndex((s) => {
+        // Строгое сопоставление: никаких fallback по page/filename.
+        // Иначе клики могут "прыгать" на другой смысловой блок того же документа.
+        const sid = (s as any).source_id as string | undefined
+        if (!source.source_id || !sid || source.source_id !== sid) return false
+
+        const srcChunk = source.chunk_id
+        const sChunk = (s as any).chunk_id as string | undefined
+        if (srcChunk && sChunk) return srcChunk === sChunk
+
+        const srcStart = source.char_start
+        const srcEnd = source.char_end
+        const sStart = (s as any).char_start as number | undefined
+        const sEnd = (s as any).char_end as number | undefined
+        if (
+          typeof srcStart === 'number' &&
+          typeof srcEnd === 'number' &&
+          typeof sStart === 'number' &&
+          typeof sEnd === 'number'
+        ) {
+          return srcStart === sStart && srcEnd === sEnd
+        }
+
+        return false
+      })
+    : -1
   const hasPrev = currentIndex > 0
   const hasNext = currentIndex < allSources.length - 1
   
   // Состояние для найденных позиций цитаты в документе
   const [foundHighlights, setFoundHighlights] = useState<Array<{char_start: number; char_end: number}>>([])
+  /** Та же логика, что ChunkLabPage: якорь → краткая цитата → полный текст чанка. */
+  const anchorText =
+    (source?.quote_anchor && String(source.quote_anchor).trim()) ||
+    (source?.quote && String(source.quote).trim()) ||
+    (source?.text_preview && String(source.text_preview).trim()) ||
+    ''
+
+  const startHighlightLoad = (fileId: string, fileType: string, src: SourceInfo, delayMs = 0) => {
+    if (delayedHighlightTimerRef.current !== null) {
+      window.clearTimeout(delayedHighlightTimerRef.current)
+      delayedHighlightTimerRef.current = null
+    }
+    if (delayMs > 0) {
+      delayedHighlightTimerRef.current = window.setTimeout(() => {
+        delayedHighlightTimerRef.current = null
+        void loadDocumentContentForHighlight(fileId, fileType, src)
+      }, delayMs)
+      return
+    }
+    void loadDocumentContentForHighlight(fileId, fileType, src)
+  }
   
   /**
-   * НОВАЯ ЛОГИКА ПОДСВЕТКИ (Harvey/Lexis+ style):
-   * 
-   * 1. ПРИОРИТЕТ: Используем ТОЧНЫЕ координаты char_start/char_end из chunk
-   *    - Эти координаты сохранены при индексации и ГАРАНТИРОВАННО точные
-   *    - Не нужен поиск по тексту - просто подсвечиваем по координатам
-   * 
-   * 2. FALLBACK: Если координат нет - ищем по тексту quote
+   * Подсветка: приоритет char_start/char_end в чанке, иначе поиск quote в documentText.
+   * PDF: PDFViewer — приоритет bbox_regions (Docling), иначе text layer по quote.
    */
   useEffect(() => {
-    // Приоритет 1: Используем ТОЧНЫЕ координаты из chunk (если есть)
-    const hasExactCoordinates = 
-      source?.char_start !== undefined && 
-      source?.char_end !== undefined && 
-      source.char_start >= 0 && 
+    const hasExactCoordinates =
+      source?.char_start !== undefined &&
+      source?.char_end !== undefined &&
+      source.char_start >= 0 &&
       source.char_end > source.char_start &&
-      source.char_end - source.char_start > 10 // Минимум 10 символов
+      source.char_end - source.char_start > 10
 
     if (hasExactCoordinates) {
       const chunkStart = source!.char_start!
       const chunkEnd = source!.char_end!
       const chunkLen = chunkEnd - chunkStart
 
-      // If chunk is large AND we have a quote, try to find the quote WITHIN the chunk
-      // to get a tighter highlight instead of highlighting the whole chunk.
-      if (chunkLen > 150 && source?.quote && documentText && source.quote.length >= 10) {
-        const quoteLower = source.quote.trim().toLowerCase().replace(/\.{3}$/, '')
+      if (chunkLen > 150 && anchorText && documentText && anchorText.trim().length >= 10) {
+        const quoteLower = anchorText.trim().toLowerCase().replace(/\.{3}$/, '')
         const chunkText = documentText.toLowerCase().substring(chunkStart, chunkEnd)
         let qIdx = chunkText.indexOf(quoteLower)
         if (qIdx === -1 && quoteLower.length > 60) {
@@ -97,92 +243,77 @@ const DocumentPreviewSheet = ({
         }
         if (qIdx !== -1) {
           const ql = qIdx === -1 ? 0 : Math.min(quoteLower.length, 120)
-          console.log('[DocumentPreview] ✓ Narrowed chunk highlight via quote at offset', qIdx)
           setFoundHighlights([{ char_start: chunkStart + qIdx, char_end: chunkStart + qIdx + ql }])
           return
         }
       }
 
-      // Chunk is small or no quote match — highlight the chunk, cap at 200 chars
       const cappedEnd = chunkLen > 200 ? chunkStart + 200 : chunkEnd
-      console.log('[DocumentPreview] ✓ Using chunk coordinates (len=%d)', chunkLen)
       setFoundHighlights([{ char_start: chunkStart, char_end: cappedEnd }])
       return
     }
-    
-    // Fallback: Поиск по тексту quote (для старых документов без chunk_id)
-    if (!documentText || !source?.quote) {
+
+    if (!documentText || !anchorText) {
       setFoundHighlights([])
       return
     }
-    
-    const quoteToFind = source.quote.trim()
+
+    const quoteToFind = anchorText.trim()
     const textLower = documentText.toLowerCase()
-    const quoteLower = quoteToFind.toLowerCase().replace(/\.{3}$/, '') // Убираем "..."
-    
+    const quoteLower = quoteToFind.toLowerCase().replace(/\.{3}$/, '')
+
     if (quoteToFind.length < 10) {
       setFoundHighlights([])
       return
     }
-    
-    console.log('[DocumentPreview] Fallback: Searching for quote in document...')
-    console.log('[DocumentPreview] Quote length:', quoteToFind.length)
-    
+
     let startIdx = -1
     let matchLength = quoteLower.length
-    
-    // Стратегия 1: Точное совпадение
+
     startIdx = textLower.indexOf(quoteLower)
-    if (startIdx !== -1) {
-      console.log('[DocumentPreview] ✓ Found exact match at:', startIdx)
-    }
-    
-    // Стратегия 2: Первые 100 символов
     if (startIdx === -1 && quoteLower.length > 100) {
       const shortQuote = quoteLower.substring(0, 100)
       startIdx = textLower.indexOf(shortQuote)
-      if (startIdx !== -1) {
-        matchLength = 100
-        console.log('[DocumentPreview] ✓ Found first 100 chars at:', startIdx)
-      }
+      if (startIdx !== -1) matchLength = 100
     }
-    
-    // Стратегия 3: Первые 50 символов
     if (startIdx === -1 && quoteLower.length > 50) {
       const shortQuote = quoteLower.substring(0, 50)
       startIdx = textLower.indexOf(shortQuote)
-      if (startIdx !== -1) {
-        matchLength = 50
-        console.log('[DocumentPreview] ✓ Found first 50 chars at:', startIdx)
-      }
+      if (startIdx !== -1) matchLength = 50
     }
-    
+
     if (startIdx !== -1) {
-      setFoundHighlights([{
-        char_start: startIdx,
-        char_end: startIdx + matchLength
-      }])
+      setFoundHighlights([{ char_start: startIdx, char_end: startIdx + matchLength }])
     } else {
-      console.log('[DocumentPreview] ✗ Quote not found in document (fallback failed)')
       setFoundHighlights([])
     }
-  }, [documentText, source?.quote, source?.char_start, source?.char_end, source?.chunk_id])
+  }, [documentText, anchorText, source?.char_start, source?.char_end, source?.chunk_id])
   
   // Используем найденные позиции
   const highlights = foundHighlights
 
   useEffect(() => {
     if (source && isOpen) {
+      if (delayedHighlightTimerRef.current !== null) {
+        window.clearTimeout(delayedHighlightTimerRef.current)
+        delayedHighlightTimerRef.current = null
+      }
       console.log('[DocumentPreview] Opening source (Harvey/Lexis+ style):', {
         file: source.file,
         page: source.page,
         chunk_id: source.chunk_id,  // Уникальный ID chunk'а
         char_start: source.char_start,  // ТОЧНЫЕ координаты
         char_end: source.char_end,      // ТОЧНЫЕ координаты
-        quote_preview: source.quote?.substring(0, 80),
+        quote_preview: anchorText.substring(0, 80),
         source_id: source.source_id
       })
       loadDocumentInfo()
+    }
+    return () => {
+      if (delayedHighlightTimerRef.current !== null) {
+        window.clearTimeout(delayedHighlightTimerRef.current)
+        delayedHighlightTimerRef.current = null
+      }
     }
   }, [source, isOpen])
 
@@ -198,34 +329,41 @@ const DocumentPreviewSheet = ({
       return
     }
 
-    setLoading(true)
-    setFileInfo(null)
+    const sourceId = (source as any).source_id as string | undefined
+    const inferredType = extToType(source.file || source.title)
+
+    // Instant path for Global Assistant: render viewer immediately from known citation id.
+    const useInstantPath = instantOpen && !!sourceId
+    const didStartInstantHighlight = useInstantPath && inferredType !== 'pdf' && apiBase !== '/api/v2/legal-corpus-preview'
+    if (useInstantPath) {
+      setFileInfo({
+        id: sourceId,
+        file_type: inferredType,
+        filename: source.file || source.title || 'Документ',
+      })
+      setLoading(false)
+      // Start highlight/content loading in background for non-PDF.
+      if (didStartInstantHighlight) {
+        startHighlightLoad(sourceId, inferredType, source)
+      }
+    } else {
+      setLoading(true)
+      setFileInfo(null)
+    }
     setDocumentContent(null)
     setDocumentText(null)
     setDocumentHtml(null)
 
     try {
-      // Get list of files to find file by filename or id
-      const filesResponse = await fetch(`${apiBase}/files`, {
-        headers: {
-          'Authorization': `Bearer ${localStorage.getItem('access_token')}`
-        }
-      })
-      
-      if (!filesResponse.ok) {
-        setDocumentContent('Ошибка загрузки списка документов')
-        return
-      }
-      
-      const filesData = await filesResponse.json()
+      const documents = await getFileListCached(apiBase)
       
       // Try to find file: first by source_id (if available), then by filename, then by id
       let file = null
       if ((source as any).source_id) {
-        file = filesData.documents?.find((f: any) => f.id === (source as any).source_id)
+        file = documents.find((f: any) => f.id === (source as any).source_id)
       }
       if (!file && source.file) {
-        file = filesData.documents?.find((f: any) => f.filename === source.file || f.id === source.file)
+        file = documents.find((f: any) => f.filename === source.file || f.id === source.file)
       }
       
       if (file) {
@@ -233,11 +371,17 @@ const DocumentPreviewSheet = ({
         setFileInfo({
           id: file.id,
           file_type: file.file_type || 'txt',
-          filename: file.filename
+          filename: file.filename,
+          legacy_fallback: Boolean(file.legacy_fallback),
         })
-        
-        // Загружаем контент для подсветки в зависимости от типа файла
-        await loadDocumentContentForHighlight(file.id, file.file_type || 'txt', source)
+
+        // Загружаем подсветку в фоне. Для PDF подсветка работает через text layer в PDFViewer.
+        const resolvedType = file.file_type || 'txt'
+        const shouldStartNow =
+          !didStartInstantHighlight || file.id !== sourceId || resolvedType !== inferredType
+        if (shouldStartNow && resolvedType !== 'pdf') {
+          startHighlightLoad(file.id, resolvedType, source)
+        }
       } else {
         // File not found - show preview text if available
         setDocumentContent(source.text_preview || 'Документ не найден')
@@ -260,7 +404,7 @@ const DocumentPreviewSheet = ({
     // char_start может быть 0 для начала документа - это валидно
     const hasCoordinates = source.char_start !== undefined && source.char_end !== undefined && 
                            source.char_end > source.char_start && source.char_end > 0
-    const hasQuote = !!source.quote && source.quote.length > 10
+    const hasQuote = !!anchorText && anchorText.length > 10
     
     console.log('[DocumentPreview] Loading highlight data:', {
       fileType,
@@ -268,7 +412,7 @@ const DocumentPreviewSheet = ({
       hasQuote,
       char_start: source.char_start,
       char_end: source.char_end,
-      quote: source.quote?.substring(0, 50)
+      quote: anchorText.substring(0, 50)
     })
     
     if (!hasCoordinates && !hasQuote) {
@@ -282,16 +426,23 @@ const DocumentPreviewSheet = ({
       const isDocx = fileTypeLower === 'docx'
       const isPdf = fileTypeLower === 'pdf'
       
-      const authHeaders = { 'Authorization': `Bearer ${localStorage.getItem('access_token')}` }
+      const auth = authHeaders()
+      const cacheKey = `${apiBase}:${fileId}`
 
       // Для DOCX - загружаем HTML версию
       if (isDocx) {
+        const cachedHtml = htmlContentCache.get(cacheKey)
+        if (cachedHtml !== undefined) {
+          setDocumentHtml(cachedHtml)
+          return
+        }
         try {
           console.log('[DocumentPreview] Loading DOCX as HTML for highlighting')
-          const htmlRes = await fetch(`${apiBase}/files/${fileId}/html`, { headers: authHeaders })
+          const htmlRes = await fetch(`${apiBase}/files/${fileId}/html`, { headers: auth })
           if (htmlRes.ok) {
             const htmlData = await htmlRes.json()
             setDocumentHtml(htmlData.html)
+            htmlContentCache.set(cacheKey, htmlData.html || '')
             console.log('[DocumentPreview] DOCX HTML loaded, length:', htmlData.html?.length)
           }
         } catch (error) {
@@ -302,12 +453,18 @@ const DocumentPreviewSheet = ({
 
       // Для текстовых файлов - загружаем текст
       if (isTextFile) {
+        const cachedText = textContentCache.get(cacheKey)
+        if (cachedText !== undefined) {
+          setDocumentText(cachedText)
+          return
+        }
         try {
           console.log('[DocumentPreview] Loading text file for highlighting')
-          const textRes = await fetch(`${apiBase}/files/${fileId}/content`, { headers: authHeaders })
+          const textRes = await fetch(`${apiBase}/files/${fileId}/text`, { headers: auth })
           if (textRes.ok) {
             const text = await textRes.text()
             setDocumentText(text)
+            textContentCache.set(cacheKey, text)
             console.log('[DocumentPreview] Text loaded, length:', text?.length)
           }
         } catch (error) {
@@ -325,11 +482,12 @@ const DocumentPreviewSheet = ({
       // Для остальных файлов - пробуем загрузить как текст
       try {
         console.log('[DocumentPreview] Trying to load unknown file type as text')
-        const textRes = await fetch(`${apiBase}/files/${fileId}/content`, { headers: authHeaders })
+        const textRes = await fetch(`${apiBase}/files/${fileId}/text`, { headers: auth })
         if (textRes.ok) {
           const text = await textRes.text()
           if (text && text.length > 0 && !text.includes('\x00')) {
             setDocumentText(text)
+            textContentCache.set(cacheKey, text)
             console.log('[DocumentPreview] File loaded as text, length:', text?.length)
           }
         }
@@ -347,17 +505,21 @@ const DocumentPreviewSheet = ({
     if (isOpen && fileInfo && fileInfo.file_type !== 'pdf' && fileInfo.file_type !== 'docx' && fileInfo.id && (caseId || filesApiBase)) {
       const loadFile = async () => {
         try {
-          const baseUrl = import.meta.env.VITE_API_URL || ''
-          const url = `${baseUrl}${apiBase}/files/${fileInfo.id}/content`
+          const cacheKey = `${apiBase}:${fileInfo.id}`
+          const cachedBlob = binaryContentCache.get(cacheKey)
+          if (cachedBlob) {
+            const cachedBlobUrl = window.URL.createObjectURL(cachedBlob)
+            setFileUrl(cachedBlobUrl)
+            return
+          }
 
-          const response = await fetch(url, {
-            headers: {
-              'Authorization': `Bearer ${localStorage.getItem('access_token')}`
-            }
+          const response = await fetch(`${apiBase}/files/${fileInfo.id}/content`, {
+            headers: authHeaders()
           })
           
           if (response.ok) {
             const blob = await response.blob()
+            binaryContentCache.set(cacheKey, blob)
             const blobUrl = window.URL.createObjectURL(blob)
             setFileUrl(blobUrl)
           }
@@ -517,8 +679,22 @@ const DocumentPreviewSheet = ({
   return (
     <Drawer
       anchor="right"
+      // Important: temporary Drawer uses Modal that can intercept clicks outside the panel
+      // even when backdrop is hidden. Persistent drawer allows interacting with the chat
+      // while keeping the preview open.
+      variant="persistent"
       open={isOpen}
       onClose={onClose}
+      // Важно: Drawer по умолчанию модальный и рисует backdrop поверх всего экрана.
+      // Из-за этого после открытия документа клики по другим [N] "не проходят".
+      // Делаем панель немодальной, чтобы можно было продолжать кликать по ссылкам в чате.
+      ModalProps={{
+        hideBackdrop: true,
+        disableEnforceFocus: true,
+        disableAutoFocus: true,
+        disableRestoreFocus: true,
+        keepMounted: true,
+      }}
       PaperProps={{
         sx: {
           width: { xs: '100%', sm: '500px', lg: '600px' },
@@ -558,7 +734,7 @@ const DocumentPreviewSheet = ({
               <Stack direction="row" spacing={1} sx={{ mt: 1, flexWrap: 'wrap' }}>
                 {source.page != null && (
                   <Chip
-                    label={`Стр. ${source.page + 1}`}
+                    label={`Стр. ${normalizeCitationPageForViewer(source.page) ?? 1}`}
                     size="small"
                     variant="outlined"
                   />
@@ -655,6 +831,13 @@ const DocumentPreviewSheet = ({
             flexDirection: 'column',
           }}
         >
+          {fileInfo?.legacy_fallback && (
+            <Box sx={{ px: 2, py: 1, bgcolor: 'warning.light', borderBottom: '1px solid', borderColor: 'warning.main' }}>
+              <Typography variant="caption" color="warning.dark">
+                Legacy-режим: оригинальный файл не сохранен, показан восстановленный текст из индекса.
+              </Typography>
+            </Box>
+          )}
           {source?.url && source.url.startsWith('http') ? (
             // External source (pravo.gov.ru) — show link to open in browser
             <Box sx={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', p: 4, gap: 2 }}>
@@ -681,6 +864,34 @@ const DocumentPreviewSheet = ({
                 Открыть на pravo.gov.ru ↗
               </a>
             </Box>
+          ) : fileInfo && fileInfo.file_type === 'pdf' ? (
+            // PDF viewer - render immediately once file id is known
+            <Box sx={{ flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
+              <Box sx={{ flex: 1, overflow: 'hidden' }}>
+                <PDFViewer
+                  fileId={fileInfo.id}
+                  caseId={caseId}
+                  filename={fileInfo.filename}
+                  fileApiBase={filesApiBase}
+                  initialPage={normalizeCitationPageForViewer(source.page) ?? 1}
+                  highlightPage={normalizeCitationPageForViewer(source.page)}
+                  highlightText={
+                    (() => {
+                      const t = anchorText
+                        .replace(/\u2026/g, '...')
+                        .replace(/(\.{3}|…)\s*$/u, '')
+                        .trim()
+                      return t.length >= 2 ? t : undefined
+                    })()
+                  }
+                  highlightBBox={source.bbox}
+                  highlightBBoxRegions={source.bbox_regions}
+                  highlightPageBBox={source.page_bbox}
+                  showTabs={false}
+                  showAbout={false}
+                />
+              </Box>
+            </Box>
           ) : loading ? (
             <Box sx={{ p: 2 }}>
               <Stack spacing={1}>
@@ -689,23 +900,6 @@ const DocumentPreviewSheet = ({
                 <Skeleton variant="text" width="50%" />
               </Stack>
             </Box>
-          ) : fileInfo && fileInfo.file_type === 'pdf' ? (
-            // PDF viewer - like on Documents page, with highlighting support
-            // Используем quote из chunk для поиска в PDF (координаты char_start/char_end не работают для PDF)
-            <Box sx={{ flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
-              <Box sx={{ flex: 1, overflow: 'hidden' }}>
-                <PDFViewer
-                  fileId={fileInfo.id}
-                  caseId={caseId}
-                  filename={fileInfo.filename}
-                  fileApiBase={filesApiBase}
-                  initialPage={source.page != null ? source.page + 1 : 1} // source_page is 0-based; PDFViewer is 1-based
-                  highlightText={source.quote?.replace(/\.{3}$/, '').substring(0, 150)} // Убираем "..." и берём первые 150 символов
-                  showTabs={false}
-                  showAbout={false}
-                />
-              </Box>
-            </Box>
           ) : fileInfo && documentHtml && fileInfo.file_type === 'docx' ? (
             // DOCX - отображаем HTML с подсветкой цитаты через <mark>
             <Box sx={{ flex: 1, overflow: 'auto', p: 2 }}>
@@ -713,7 +907,7 @@ const DocumentPreviewSheet = ({
                 ref={docxContainerRef}
                 component="div"
                 dangerouslySetInnerHTML={{
-                  __html: source.quote ? insertMarkInHtml(documentHtml, source.quote) : documentHtml
+                  __html: anchorText ? insertMarkInHtml(documentHtml, anchorText) : documentHtml
                 }}
                 sx={{ fontSize: '0.875rem', fontFamily: 'inherit' }}
               />
@@ -727,11 +921,11 @@ const DocumentPreviewSheet = ({
                   highlights={highlights}
                   className="whitespace-pre-wrap text-sm"
                 />
-              ) : source.quote ? (
+              ) : anchorText ? (
                 // Fallback: подсветка по тексту цитаты через TextHighlighter
                 <TextHighlighter
                   text={documentText}
-                  highlightText={source.quote}
+                  highlightText={anchorText}
                   className="whitespace-pre-wrap text-sm font-mono"
                 />
               ) : (

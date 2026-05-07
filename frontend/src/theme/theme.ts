@@ -1,78 +1,72 @@
 import { createTheme, ThemeOptions } from '@mui/material/styles'
 import { PaletteMode } from '@mui/material'
 
-// Harvey-style color palette
+const displayFont = '"Instrument Serif", Georgia, "Times New Roman", serif'
+
+// Палитра в духе Legora: графит, тёплые нейтрали
 const harveyColors = {
-  // Primary colors (Harvey blue/purple gradient)
   primary: {
-    main: '#3B82F6', // Blue
-    light: '#60A5FA',
-    dark: '#2563EB',
-    contrastText: '#FFFFFF',
+    main: '#1a1917',
+    light: '#3d3a36',
+    dark: '#0e0e0d',
+    contrastText: '#f8f7f4',
   },
-  // Secondary colors (Purple accent)
   secondary: {
-    main: '#8B5CF6', // Purple
-    light: '#A78BFA',
-    dark: '#7C3AED',
-    contrastText: '#FFFFFF',
+    main: '#5c5852',
+    light: '#7a756d',
+    dark: '#3d3a36',
+    contrastText: '#f8f7f4',
   },
-  // Success (Green)
   success: {
-    main: '#10B981',
-    light: '#34D399',
-    dark: '#059669',
-    contrastText: '#FFFFFF',
+    main: '#3d5c45',
+    light: '#5a7a62',
+    dark: '#2c422f',
+    contrastText: '#f8f7f4',
   },
-  // Warning (Yellow/Orange)
   warning: {
-    main: '#F59E0B',
-    light: '#FBBF24',
-    dark: '#D97706',
-    contrastText: '#FFFFFF',
+    main: '#8a5f2b',
+    light: '#a67a45',
+    dark: '#6b481f',
+    contrastText: '#f8f7f4',
   },
-  // Error (Red)
   error: {
-    main: '#EF4444',
-    light: '#F87171',
-    dark: '#DC2626',
-    contrastText: '#FFFFFF',
+    main: '#b03a32',
+    light: '#c85a4a',
+    dark: '#8a2e28',
+    contrastText: '#f8f7f4',
   },
-  // Info (Cyan)
   info: {
-    main: '#00BDD4',
-    light: '#22D3EE',
-    dark: '#0891B2',
-    contrastText: '#FFFFFF',
+    main: '#2f4f6f',
+    light: '#4a6b8c',
+    dark: '#243d56',
+    contrastText: '#f8f7f4',
   },
 }
 
-// Dark theme palette
 const darkPalette: ThemeOptions['palette'] = {
   mode: 'dark',
   ...harveyColors,
   background: {
-    default: '#0F1419', // Dark background
-    paper: '#1A2332', // Card background
+    default: '#1a1917',
+    paper: '#242220',
   },
   text: {
-    primary: '#F5F5F5',
-    secondary: '#A0A8B8',
-    disabled: '#5A6476',
+    primary: '#f4f3f0',
+    secondary: '#c4c0b8',
+    disabled: '#7a756d',
   },
-  divider: '#3A4556',
-  // Custom colors for Harvey
+  divider: '#3d3a36',
   grey: {
-    50: '#F5F5F5',
-    100: '#E5E7EB',
-    200: '#D1D5DB',
-    300: '#9CA3AF',
-    400: '#6B7280',
-    500: '#5A6476',
-    600: '#4B5563',
-    700: '#3A4556',
-    800: '#242F3F',
-    900: '#1A2332',
+    50: '#f4f3f0',
+    100: '#e4e2dc',
+    200: '#cfc9c0',
+    300: '#a39e96',
+    400: '#7a756d',
+    500: '#5c5852',
+    600: '#4a4844',
+    700: '#3d3a36',
+    800: '#2a2826',
+    900: '#1a1917',
   },
 }
 
@@ -81,30 +75,29 @@ const lightPalette: ThemeOptions['palette'] = {
   mode: 'light',
   ...harveyColors,
   background: {
-    default: '#FFFFFF',
-    paper: '#F8F9FA',
+    default: '#f4f3f0',
+    paper: '#ffffff',
   },
   text: {
-    primary: '#0F1419',
-    secondary: '#666B78',
-    disabled: '#B8BCC5',
+    primary: '#131210',
+    secondary: '#4a4844',
+    disabled: '#a39e96',
   },
-  divider: '#E5E8EB',
+  divider: '#ded9d1',
   grey: {
-    50: '#F8F9FA',
-    100: '#F0F2F5',
-    200: '#E5E8EB',
-    300: '#D1D5DB',
-    400: '#B8BCC5',
-    500: '#9CA3AF',
-    600: '#666B78',
-    700: '#4B5563',
-    800: '#374151',
-    900: '#0F1419',
+    50: '#faf9f6',
+    100: '#f0efe9',
+    200: '#e4e2dc',
+    300: '#cfc9c0',
+    400: '#a39e96',
+    500: '#7a756d',
+    600: '#5c5852',
+    700: '#4a4844',
+    800: '#3d3a36',
+    900: '#131210',
   },
 }
 
-// Typography (Inter font family)
 const typography: ThemeOptions['typography'] = {
   fontFamily: [
     'Inter',
@@ -117,26 +110,32 @@ const typography: ThemeOptions['typography'] = {
     'sans-serif',
   ].join(','),
   h1: {
+    fontFamily: displayFont,
     fontSize: '32px',
-    fontWeight: 600,
+    fontWeight: 400,
     lineHeight: 1.2,
     letterSpacing: '-0.02em',
   },
   h2: {
+    fontFamily: displayFont,
     fontSize: '24px',
-    fontWeight: 600,
+    fontWeight: 400,
     lineHeight: 1.3,
-    letterSpacing: '-0.01em',
+    letterSpacing: '-0.02em',
   },
   h3: {
+    fontFamily: displayFont,
     fontSize: '20px',
-    fontWeight: 600,
-    lineHeight: 1.4,
+    fontWeight: 400,
+    lineHeight: 1.35,
+    letterSpacing: '-0.02em',
   },
   h4: {
+    fontFamily: displayFont,
     fontSize: '18px',
-    fontWeight: 600,
+    fontWeight: 400,
     lineHeight: 1.4,
+    letterSpacing: '-0.01em',
   },
   h5: {
     fontSize: '16px',
@@ -247,19 +246,19 @@ export const createHarveyTheme = (mode: PaletteMode = 'dark') => {
         styleOverrides: {
           body: {
             scrollbarWidth: 'thin',
-            scrollbarColor: mode === 'dark' ? '#3A4556 #1A2332' : '#D1D5DB #F8F9FA',
+            scrollbarColor: mode === 'dark' ? '#4a4844 #1a1917' : '#cfc9c0 #ebe8e2',
             '&::-webkit-scrollbar': {
               width: '8px',
               height: '8px',
             },
             '&::-webkit-scrollbar-track': {
-              background: mode === 'dark' ? '#1A2332' : '#F8F9FA',
+              background: mode === 'dark' ? '#1a1917' : '#ebe8e2',
             },
             '&::-webkit-scrollbar-thumb': {
-              background: mode === 'dark' ? '#3A4556' : '#D1D5DB',
+              background: mode === 'dark' ? '#4a4844' : '#cfc9c0',
               borderRadius: '4px',
               '&:hover': {
-                background: mode === 'dark' ? '#4B5563' : '#9CA3AF',
+                background: mode === 'dark' ? '#5c5852' : '#a39e96',
               },
             },
           },
@@ -327,7 +326,7 @@ export const createHarveyTheme = (mode: PaletteMode = 'dark') => {
       MuiDrawer: {
         styleOverrides: {
           paper: {
-            borderRight: `1px solid ${mode === 'dark' ? '#3A4556' : '#E5E8EB'}`,
+            borderRight: `1px solid ${mode === 'dark' ? '#3d3a36' : '#ded9d1'}`,
           },
         },
       },

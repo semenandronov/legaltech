@@ -717,7 +717,7 @@ function PlaybookCard({
 }
 
 // ── Main Page ─────────────────────────────────────────────────────────────────
-export default function PlaybooksPage() {
+export default function PlaybooksPage({ embedded = false }: { embedded?: boolean } = {}) {
   const { caseId } = useParams<{ caseId: string }>()
 
   const [playbooks, setPlaybooks] = useState<Playbook[]>([])
@@ -823,8 +823,8 @@ export default function PlaybooksPage() {
 
   if (loading) {
     return (
-      <div className="flex h-screen" style={{ backgroundColor: C.bg }}>
-        <UnifiedSidebar navItems={navItems} title="Legal AI" />
+      <div className={`flex ${embedded ? 'h-full' : 'h-screen'}`} style={{ backgroundColor: C.bg }}>
+        {!embedded && <UnifiedSidebar navItems={navItems} title="Legal AI" />}
         <div className="flex-1 flex items-center justify-center">
           <Loader2 className="w-6 h-6 animate-spin" style={{ color: C.subtle }} />
         </div>
@@ -834,8 +834,8 @@ export default function PlaybooksPage() {
 
   if (editingPlaybook) {
     return (
-      <div className="flex h-screen" style={{ backgroundColor: 'white' }}>
-        <UnifiedSidebar navItems={navItems} title="Legal AI" />
+      <div className={`flex ${embedded ? 'h-full' : 'h-screen'}`} style={{ backgroundColor: 'white' }}>
+        {!embedded && <UnifiedSidebar navItems={navItems} title="Legal AI" />}
         <div className="flex-1 overflow-hidden">
           <PlaybookEditor
             playbook={editingPlaybook}
@@ -849,8 +849,8 @@ export default function PlaybooksPage() {
   }
 
   return (
-    <div className="flex h-screen" style={{ backgroundColor: 'white' }}>
-      <UnifiedSidebar navItems={navItems} title="Legal AI" />
+    <div className={`flex ${embedded ? 'h-full' : 'h-screen'}`} style={{ backgroundColor: 'white' }}>
+      {!embedded && <UnifiedSidebar navItems={navItems} title="Legal AI" />}
 
       <div className="flex-1 flex flex-col overflow-hidden">
         {/* Header */}

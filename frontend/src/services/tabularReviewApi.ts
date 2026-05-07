@@ -220,7 +220,8 @@ export const tabularReviewApi = {
     limit: number
   }> {
     try {
-      const params: any = { skip, limit }
+      const safeLimit = Math.min(100, Math.max(1, Math.floor(Number(limit) || 20)))
+      const params: any = { skip, limit: safeLimit }
       if (caseId) {
         params.case_id = caseId
       }

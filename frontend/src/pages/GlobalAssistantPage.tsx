@@ -1,11 +1,11 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { toast } from 'sonner'
-import { useLocation } from 'react-router-dom'
+import { useLocation, useNavigate } from 'react-router-dom'
 import UnifiedSidebar from '../components/Layout/UnifiedSidebar'
 import {
   FolderOpen, MessageSquare, FileText, X, Plus,
   AlignJustify, SlidersHorizontal, Sparkles, Search, ChevronDown, Loader2, Download, Clock,
-  ChevronRight, Check, Mic, MicOff, BookOpen, Trash2,
+  ChevronRight, Check, Mic, MicOff, BookOpen, Trash2, Workflow,
 } from 'lucide-react'
 import {
   getApiUrl,
@@ -24,9 +24,17 @@ import {
   type LegalCorpusFileRow,
   extractErrorMessage,
 } from '../services/api'
+import { citationRecordToSourceInfo } from '../services/chatHistoryService'
 import { DocumentEditor, DocumentEditorRef } from '../components/Editor/DocumentEditor'
 import MessageContent from '../components/Chat/MessageContent'
+import ThinkingBlock, {
+  type WorkflowAgentTodoItem,
+  type WorkflowPlanOutlineRow,
+} from '../components/Chat/ThinkingBlock'
 import DocumentPreviewSheet from '../components/Chat/DocumentPreviewSheet'
+import { WorkflowArtifactCards } from '../components/Workflow/WorkflowArtifactCards'
+import { useWorkflowLiveExecution } from '../workflow/useWorkflowLiveExecution'
+import { countWorkflowArtifacts, type WorkflowArtifactsPayload } from '../workflow/workflowLiveHelpers'
 
 function inlineFmt(text: string): string {
   return text
@@ -69,6 +77,20 @@ interface ChatMessage {
   content: string
   attachedFiles?: Array<{ id: string; filename: string }>
   sources?: SourceInfo[]
+  reasoningSteps?: Array<{
+    phase: string
+    step: number
+    totalSteps: number
+    content: string
+    status?: 'pending' | 'running' | 'completed' | 'error'
+    toolName?: string
+  }>
+  workflowArtifacts?: WorkflowArtifactsPayload
+  workflowProgressPercent?: number
+  workflowStatus?: 'running' | 'completed' | 'failed'
+  workflowPlanOutline?: WorkflowPlanOutlineRow[]
+  workflowAgentTodos?: WorkflowAgentTodoItem[]
+  workflowPlanSource?: 'deepagents' | 'definition'
 }
 
 interface FileContext {
@@ -87,6 +109,7 @@ interface DraftDocument {
 const navItems = [
   { id: 'cases', label: 'Дела', icon: FolderOpen, path: '/cases' },
   { id: 'assistant', label: 'Ассистент', icon: MessageSquare, path: '/assistant' },
+  { id: 'workflows', label: 'Workflows', icon: Workflow, path: '/workflows' },
   { id: 'history', label: 'История', icon: Clock, path: '/history' },
 ]
 
@@ -874,6 +897,7 @@ function HarveyInput({
 // ─────────────────────────────────────────────────────────
 const GlobalAssistantPage = () => {
   const location = useLocation()
+  const navigate = useNavigate()
   const [question, setQuestion] = useState('')
   const [fileContexts, setFileContexts] = useState<FileContext[]>([])
   const [uploadingFiles, setUploadingFiles] = useState<string[]>([])
@@ -891,6 +915,10 @@ const GlobalAssistantPage = () => {
   const [selectedCaseFiles, setSelectedCaseFiles] = useState<UploadedFile[]>([])
   const [showCasePicker, setShowCasePicker] = useState(false)
   const [citationPreview, setCitationPreview] = useState<SourceInfo | null>(null)
+  const [artifactReturnPath, setArtifactReturnPath] = useState('/assistant')
+  const onWorkflowReturnPath = useCallback((path: string) => {
+    setArtifactReturnPath(path)
+  }, [])
 
   const [legalCorpusStatus, setLegalCorpusStatus] = useState<LegalCorpusStatus | null>(null)
   const [corpusFilesList, setCorpusFilesList] = useState<LegalCorpusFileRow[]>([])
@@ -922,6 +950,14 @@ const GlobalAssistantPage = () => {
     void refreshLegalCorpus()
   }, [refreshLegalCorpus])
 
+  useWorkflowLiveExecution({
+    locationSearch: location.search,
+    setMessages,
+    setIsStreaming,
+    onReturnPath: onWorkflowReturnPath,
+    defaultReturnChatPath: '/assistant',
+  })
+
   const persistUseLegalCorpus = (v: boolean) => {
     setUseLegalCorpus(v)
     try {
@@ -929,6 +965,12 @@ const GlobalAssistantPage = () => {
     } catch {
       /* ignore */
     }
+  }
+
+  const resolveConversationMode = (): 'research' | 'case_advice' | 'drafting' | 'review' | 'comparison' | 'clarify' => {
+    if (isDraftMode) return 'drafting'
+    if (useLegalCorpus) return 'research'
+    return 'case_advice'
   }
 
   const handleCorpusFilesSelected = async (files: File[]) => {
@@ -1087,6 +1129,7 @@ const GlobalAssistantPage = () => {
           Authorization: `Bearer ${token}`,
         },
         body: JSON.stringify({
+          mode: resolveConversationMode(),
           messages: allMessages.map((m) => ({ role: m.role, content: m.content })),
           session_id: sessionId,
           file_contexts: contextsToSend.map((fc) => ({ file_id: fc.file_id, filename: fc.filename, text: fc.text })),
@@ -1127,19 +1170,14 @@ const GlobalAssistantPage = () => {
                 { role: 'assistant', content: assistantContent },
               ])
             } else if (data.type === 'citations' && Array.isArray(data.citations)) {
-              const sources: SourceInfo[] = data.citations.map((c: any) => ({
-                file: c.file_name || c.file || '',
-                title: c.file_name || c.file,
-                page: c.page ?? undefined,
-                text_preview: c.quote,
-                source_id: c.source_id,
-                quote: c.quote,
-                char_start: c.char_start,
-                char_end: c.char_end,
-                url: c.url || '',
-                source_type: c.source_type || 'document',
-                case_id: c.case_id || undefined,
-              }))
+              const sources: SourceInfo[] = data.citations.map((c: unknown) => {
+                const s = citationRecordToSourceInfo(c as Record<string, unknown>)
+                const raw = c as Record<string, unknown>
+                if (typeof raw.case_id === 'string') {
+                  s.case_id = raw.case_id
+                }
+                return s
+              })
               setMessages((prev) => [
                 ...prev.slice(0, -1),
                 { ...prev[prev.length - 1], sources },
@@ -1242,9 +1280,12 @@ const GlobalAssistantPage = () => {
     setShowDraftPanel(false)
     setEditorContent(null)
     editorHtmlRef.current = ''
+    setArtifactReturnPath('/assistant')
+    navigate('/assistant', { replace: true })
   }
 
-  const chatActive = messages.length > 0
+  const workflowExecParam = new URLSearchParams(location.search).get('workflow_execution_id')
+  const chatActive = messages.length > 0 || Boolean(workflowExecParam)
 
   return (
     <div className="h-screen flex overflow-hidden bg-white">
@@ -1297,7 +1338,20 @@ const GlobalAssistantPage = () => {
               <div className="flex flex-col overflow-hidden" style={{ width: showDraftPanel ? '45%' : '100%', transition: 'width 0.2s ease' }}>
                 <div className="flex-1 overflow-y-auto">
                   <div style={{ maxWidth: '960px', margin: '0 auto' }} className="px-6 py-8 space-y-6">
-                    {messages.map((msg, idx) => (
+                    {messages.map((msg, idx) => {
+                      const wfArtifactN = countWorkflowArtifacts(msg.workflowArtifacts)
+                      const hideMainTextForRunningWorkflowDraft =
+                        Boolean(draftDocument) &&
+                        idx === messages.length - 1 &&
+                        msg.workflowStatus === 'running'
+                      const showAssistantTextBody =
+                        ((msg.content && msg.content.trim()) || wfArtifactN > 0) &&
+                        !hideMainTextForRunningWorkflowDraft
+                      const assistantTextBody =
+                        (msg.content && msg.content.trim()) ||
+                        (wfArtifactN > 0 ? 'Готово. Откройте нужный результат ниже.' : '')
+
+                      return (
                       <div key={idx} className={msg.role === 'user' ? 'flex justify-end' : 'flex justify-start'}>
                         {msg.role === 'user' ? (
                           <div className="max-w-[75%] flex flex-col items-end gap-1.5">
@@ -1327,9 +1381,32 @@ const GlobalAssistantPage = () => {
                             className="max-w-[90%] text-sm leading-relaxed"
                             style={{ color: '#111827' }}
                           >
-                            {msg.content && !(draftDocument && idx === messages.length - 1) ? (
+                            {((msg.reasoningSteps && msg.reasoningSteps.length > 0) ||
+                              (msg.workflowPlanOutline && msg.workflowPlanOutline.length > 0) ||
+                              (msg.workflowAgentTodos && msg.workflowAgentTodos.length > 0) ||
+                              msg.workflowStatus === 'running') && (
+                              <ThinkingBlock
+                                steps={msg.reasoningSteps || []}
+                                planOutline={msg.workflowPlanOutline}
+                                planOutlineTitle={
+                                  msg.workflowPlanSource === 'deepagents'
+                                    ? 'План и подзадачи (Deep Agents)'
+                                    : undefined
+                                }
+                                agentTodos={msg.workflowAgentTodos}
+                                isStreaming={
+                                  isStreaming &&
+                                  idx === messages.length - 1 &&
+                                  (!msg.content || msg.workflowStatus === 'running')
+                                }
+                                progressPercent={msg.workflowProgressPercent}
+                                workflowStatus={msg.workflowStatus}
+                                defaultOpen={true}
+                              />
+                            )}
+                            {showAssistantTextBody ? (
                               <MessageContent
-                                content={msg.content}
+                                content={assistantTextBody}
                                 sources={msg.sources || []}
                                 isStreaming={isStreaming && idx === messages.length - 1 && !isDraftMode}
                                 onCitationClick={(source) => {
@@ -1352,6 +1429,13 @@ const GlobalAssistantPage = () => {
                                   ))}
                                 </div>
                               )
+                            )}
+                            {msg.workflowArtifacts && (
+                              <WorkflowArtifactCards
+                                artifacts={msg.workflowArtifacts}
+                                navigate={navigate}
+                                returnChatPath={artifactReturnPath}
+                              />
                             )}
                             {/* Draft indicator */}
                             {(isDraftMode || draftDocument) && idx === messages.length - 1 && (
@@ -1388,7 +1472,8 @@ const GlobalAssistantPage = () => {
                           </div>
                         )}
                       </div>
-                    ))}
+                      )
+                    })}
                     <div ref={messagesEndRef} />
                   </div>
                 </div>

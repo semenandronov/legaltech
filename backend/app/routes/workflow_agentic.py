@@ -10,24 +10,149 @@ from app.models.workflow import (
     WorkflowStep,
     WORKFLOW_CATEGORIES,
     WORKFLOW_TOOLS,
-    SYSTEM_WORKFLOW_TEMPLATES
+    SYSTEM_WORKFLOW_TEMPLATES,
+    normalize_workflow_tool_name,
 )
 from app.models.case import File
-from app.services.workflows.execution_engine import ExecutionEngine, ExecutionEvent
+from app.services.workflows.execution_engine import ExecutionEngine
+from app.services.workflows.events import ExecutionEvent
 from app.services.workflows.planning_agent import PlanningAgent
+from app.services.workflows.deepagents_planning_service import DeepAgentsPlanningService
 from app.services.workflows.tool_registry import ToolRegistry
 from app.services.workflows.result_validator import ResultValidator
-from app.utils.database import get_db
+from app.utils.database import get_db, SessionLocal
+from sqlalchemy.exc import OperationalError as SAOperationalError, TimeoutError as SATimeoutError
 from app.utils.auth import get_current_user
 from app.models.user import User
 from datetime import datetime
 import logging
 import json
 import asyncio
+import time
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/workflow-agentic", tags=["workflow-agentic"])
+
+
+def _normalize_tool_list(tool_names: Optional[List[str]]) -> List[str]:
+    canonical = []
+    seen = set()
+    for name in tool_names or []:
+        normalized = normalize_workflow_tool_name(name)
+        if normalized and normalized not in seen:
+            seen.add(normalized)
+            canonical.append(normalized)
+    return canonical
+
+
+def _known_tools() -> set[str]:
+    return {t["name"] for t in WORKFLOW_TOOLS}
+
+
+def _validate_known_tools(
+    available_tools: Optional[List[str]],
+    default_plan: Optional[dict]
+) -> None:
+    known = _known_tools()
+    unknown = set()
+
+    for tool_name in available_tools or []:
+        normalized = normalize_workflow_tool_name(tool_name)
+        if normalized and normalized not in known:
+            unknown.add(tool_name)
+
+    if isinstance(default_plan, dict):
+        for step in default_plan.get("steps", []) or []:
+            if not isinstance(step, dict):
+                continue
+            tool_name = step.get("tool_name") or step.get("tool")
+            if not tool_name:
+                continue
+            normalized = normalize_workflow_tool_name(tool_name)
+            if normalized not in known:
+                unknown.add(tool_name)
+
+    if unknown:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                "Unknown workflow tools: "
+                + ", ".join(sorted(unknown))
+                + f". Allowed tools: {', '.join(sorted(known))}"
+            ),
+        )
+
+
+def _normalize_default_plan(default_plan: Optional[dict]) -> Optional[dict]:
+    if not isinstance(default_plan, dict):
+        return default_plan
+    steps = default_plan.get("steps")
+    if not isinstance(steps, list):
+        return default_plan
+    normalized_steps = []
+    for step in steps:
+        if not isinstance(step, dict):
+            normalized_steps.append(step)
+            continue
+        tool_name = step.get("tool_name") or step.get("tool")
+        normalized_tool = normalize_workflow_tool_name(tool_name) if tool_name else tool_name
+        normalized_step = dict(step)
+        if "tool" in normalized_step and normalized_tool:
+            normalized_step["tool"] = normalized_tool
+        if "tool_name" in normalized_step and normalized_tool:
+            normalized_step["tool_name"] = normalized_tool
+        normalized_steps.append(normalized_step)
+    out = dict(default_plan)
+    out["steps"] = normalized_steps
+    return out
+
+
+def _ensure_system_definitions(db: Session) -> None:
+    """
+    Upsert system workflow definitions from SYSTEM_WORKFLOW_TEMPLATES.
+    Ensures new templates become available in existing databases.
+    """
+    all_system_rows = db.query(WorkflowDefinition).filter(WorkflowDefinition.is_system == True).all()
+    existing = {row.name: row for row in all_system_rows}
+    desired_names = {t["name"] for t in SYSTEM_WORKFLOW_TEMPLATES}
+    changed = False
+    for template in SYSTEM_WORKFLOW_TEMPLATES:
+        normalized_tools = _normalize_tool_list(template.get("available_tools", []))
+        normalized_plan = _normalize_default_plan(template.get("default_plan"))
+        _validate_known_tools(normalized_tools, normalized_plan)
+        row = existing.get(template["name"])
+        if row:
+            row.display_name = template["display_name"]
+            row.description = template.get("description")
+            row.category = template["category"]
+            row.available_tools = normalized_tools
+            row.default_plan = normalized_plan
+            row.is_system = True
+            row.is_public = True
+            row.updated_at = datetime.utcnow()
+            changed = True
+            continue
+        db.add(
+            WorkflowDefinition(
+                name=template["name"],
+                display_name=template["display_name"],
+                description=template.get("description"),
+                category=template["category"],
+                available_tools=normalized_tools,
+                default_plan=normalized_plan,
+                is_system=True,
+                is_public=True,
+            )
+        )
+        changed = True
+    # Delete obsolete system templates that are no longer in SYSTEM_WORKFLOW_TEMPLATES.
+    for row in all_system_rows:
+        if row.name not in desired_names:
+            db.delete(row)
+            changed = True
+    if changed:
+        db.commit()
 
 
 # ==================== PYDANTIC MODELS ====================
@@ -82,6 +207,12 @@ class PlanWorkflowRequest(BaseModel):
     file_ids: Optional[List[str]] = None
 
 
+class ResumeWorkflowRequest(BaseModel):
+    """Request to resume HITL-paused workflow."""
+    answer: str = Field(..., description="Lawyer answer/comment")
+    approved: Optional[bool] = Field(None, description="Explicit approve/reject action")
+
+
 # ==================== METADATA ENDPOINTS ====================
 
 @router.get("/metadata/categories")
@@ -103,9 +234,11 @@ async def get_workflow_tools(
 
 @router.get("/metadata/system-templates")
 async def get_system_templates(
+    db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
     """Get system workflow templates"""
+    _ensure_system_definitions(db)
     return SYSTEM_WORKFLOW_TEMPLATES
 
 
@@ -122,6 +255,7 @@ async def list_definitions(
     current_user: User = Depends(get_current_user)
 ):
     """List workflow definitions"""
+    _ensure_system_definitions(db)
     query = db.query(WorkflowDefinition)
     
     # Visibility filter
@@ -178,13 +312,17 @@ async def create_definition(
     if existing:
         raise HTTPException(status_code=400, detail="Definition name already exists")
     
+    normalized_tools = _normalize_tool_list(request.available_tools)
+    normalized_plan = _normalize_default_plan(request.default_plan)
+    _validate_known_tools(normalized_tools, normalized_plan)
+
     definition = WorkflowDefinition(
         name=request.name,
         display_name=request.display_name,
         description=request.description,
         category=request.category,
-        available_tools=request.available_tools,
-        default_plan=request.default_plan,
+        available_tools=normalized_tools,
+        default_plan=normalized_plan,
         output_schema=request.output_schema,
         planning_prompt=request.planning_prompt,
         summary_prompt=request.summary_prompt,
@@ -222,6 +360,14 @@ async def update_definition(
         raise HTTPException(status_code=403, detail="Cannot modify this definition")
     
     updates = request.model_dump(exclude_unset=True)
+    if "available_tools" in updates:
+        updates["available_tools"] = _normalize_tool_list(updates.get("available_tools"))
+    if "default_plan" in updates:
+        updates["default_plan"] = _normalize_default_plan(updates.get("default_plan"))
+    _validate_known_tools(
+        updates.get("available_tools", definition.available_tools),
+        updates.get("default_plan", definition.default_plan),
+    )
     for field, value in updates.items():
         setattr(definition, field, value)
     
@@ -292,12 +438,25 @@ async def create_plan(
         
         # Create plan
         planning_agent = PlanningAgent()
-        plan = await planning_agent.create_plan(
+        deep_planner = DeepAgentsPlanningService()
+        decision = await deep_planner.create_plan(
             user_task=request.user_task,
             available_documents=documents,
             available_tools=available_tools,
             workflow_definition=definition
         )
+        if decision.clarification_required or not decision.plan:
+            return {
+                "plan": None,
+                "validation_errors": [],
+                "is_valid": False,
+                "estimated_duration_seconds": 0,
+                "clarification_required": True,
+                "clarification_question": decision.clarification_question,
+                "clarification_options": decision.clarification_options or [],
+                "reason": decision.reason,
+            }
+        plan = decision.plan
         
         # Validate
         errors = planning_agent.validate_plan(plan)
@@ -306,7 +465,8 @@ async def create_plan(
             "plan": planning_agent.plan_to_dict(plan),
             "validation_errors": errors,
             "is_valid": len(errors) == 0,
-            "estimated_duration_seconds": plan.estimated_total_duration_seconds
+            "estimated_duration_seconds": plan.estimated_total_duration_seconds,
+            "used_fallback": decision.used_fallback,
         }
     except Exception as e:
         logger = logging.getLogger(__name__)
@@ -425,21 +585,312 @@ async def stream_execution(
     if selected_file_ids:
         files = db.query(File).filter(File.id.in_(selected_file_ids)).all()
         documents = [{"id": f.id, "filename": f.filename, "type": f.file_type} for f in files]
+
+    async def poll_execution_until_terminal(
+        *,
+        idle_seconds: float = 1.0,
+    ) -> AsyncIterator[str]:
+        """
+        Пока основной runner в другом SSE держит plan_and_execute, гранулярные события
+        туда не попадают — но прогресс и status_message пишутся в БД. Этот цикл
+        отдаёт их второму/переподключившемуся клиенту до terminal-состояния.
+
+        Корни проблем UX: (1) один процесс стримит live-события; поздний join = только poll;
+        (2) раньше второй клиент получал одно сообщение и обрыв — исправлено ниже.
+
+        Каждый poll — отдельная короткая сессия (не держим соединение пула на весь SSE-цикл).
+        При OperationalError/TimeoutError — событие status + backoff, поток не рвём.
+        """
+        def _fetch_execution_poll_row():
+            sess = SessionLocal()
+            try:
+                row = (
+                    sess.query(WorkflowExecution)
+                    .filter(
+                        WorkflowExecution.id == execution_id,
+                        WorkflowExecution.user_id == current_user.id,
+                    )
+                    .first()
+                )
+                if not row:
+                    return None
+                return {
+                    "status": row.status,
+                    "progress_percent": row.progress_percent,
+                    "status_message": row.status_message or "",
+                    "summary": row.summary,
+                    "artifacts": row.artifacts,
+                    "error_message": row.error_message,
+                    "results": row.results,
+                    "total_llm_calls": row.total_llm_calls,
+                    "total_tokens_used": row.total_tokens_used,
+                }
+            finally:
+                sess.close()
+
+        terminal_statuses = {"completed", "failed", "cancelled", "completed_with_errors"}
+        last_snapshot = None
+        last_comment = 0.0
+        consecutive_db_errors = 0
+        while True:
+            try:
+                current = _fetch_execution_poll_row()
+                consecutive_db_errors = 0
+            except (SAOperationalError, SATimeoutError) as poll_err:
+                consecutive_db_errors += 1
+                logger.warning(
+                    "workflow SSE poll DB error for %s: %s (consecutive=%s)",
+                    execution_id,
+                    poll_err,
+                    consecutive_db_errors,
+                )
+                backoff = min(30.0, idle_seconds * (2 ** min(consecutive_db_errors, 5)))
+                if last_snapshot is not None:
+                    st_retry, pr_retry, _ = last_snapshot
+                else:
+                    st_retry, pr_retry = execution_status, execution_progress
+                retry_payload = {
+                    "type": "status",
+                    "event_type": "status",
+                    "execution_id": execution_id,
+                    "status": st_retry,
+                    "progress": pr_retry,
+                    "progress_percent": pr_retry,
+                    "message": "Временная ошибка подключения к базе, повторяю опрос…",
+                }
+                yield f"data: {json.dumps(retry_payload, ensure_ascii=False)}\n\n"
+                await asyncio.sleep(backoff)
+                continue
+
+            if not current:
+                break
+
+            snapshot = (
+                current["status"],
+                current["progress_percent"],
+                current["status_message"] or "",
+            )
+            if snapshot != last_snapshot:
+                status_payload = {
+                    "type": "status",
+                    "event_type": "status",
+                    "execution_id": execution_id,
+                    "status": current["status"],
+                    "progress": current["progress_percent"],
+                    "progress_percent": current["progress_percent"],
+                    "message": current["status_message"] or "Текущее состояние workflow обновлено.",
+                }
+                if current["status"] == "waiting_for_lawyer":
+                    status_payload["required_action"] = "upload_documents"
+                yield f"data: {json.dumps(status_payload, ensure_ascii=False)}\n\n"
+                last_snapshot = snapshot
+
+            if current["status"] in terminal_statuses:
+                final_type = (
+                    "completed"
+                    if current["status"] in {"completed", "completed_with_errors"}
+                    else current["status"]
+                )
+                final_payload = {
+                    "type": final_type,
+                    "event_type": final_type,
+                    "execution_id": execution_id,
+                    "status": current["status"],
+                    "progress": current["progress_percent"],
+                    "progress_percent": current["progress_percent"],
+                    "message": current["status_message"]
+                    or (
+                        "Workflow завершён."
+                        if final_type == "completed"
+                        else "Workflow завершён с ошибкой."
+                    ),
+                    "data": {
+                        "summary": current["summary"],
+                        "artifacts": current["artifacts"],
+                        "error": current["error_message"],
+                        "results": current["results"],
+                        "run_stats": {
+                            "total_llm_calls": int(current["total_llm_calls"] or 0),
+                            "total_tokens_used": int(current["total_tokens_used"] or 0),
+                        },
+                    },
+                }
+                yield f"data: {json.dumps(final_payload, ensure_ascii=False)}\n\n"
+                break
+
+            now = time.monotonic()
+            if now - last_comment >= 20.0:
+                yield ": keepalive\n\n"
+                last_comment = now
+
+            await asyncio.sleep(idle_seconds)
     
     async def event_generator() -> AsyncIterator[str]:
         """Generate SSE events"""
+        # Комментарии (: ...) не вызывают EventSource.onmessage — без data: клиент минутами
+        # «висит» на «Подключение к потоку», хотя соединение уже открыто.
+        yield ": stream-open\n\n"
+        connected_payload = {
+            "type": "status",
+            "event_type": "status",
+            "execution_id": execution_id,
+            "status": execution_status,
+            "progress": execution_progress,
+            "progress_percent": execution_progress,
+            "message": (
+                "Поток событий подключён, идёт подготовка плана и запуск workflow…"
+                if execution_status == "planning"
+                else "Поток событий подключён, передаю прогресс из выполнения…"
+            ),
+        }
+        yield f"data: {json.dumps(connected_payload, ensure_ascii=False)}\n\n"
+        await asyncio.sleep(0)
         # If execution is already planning, start execution
         if execution_status == "planning":
+            # Idempotency guard: only one stream runner can own planning start.
+            lock_marker = "__stream_lock__"
+            owner_marker = f"{lock_marker}:{execution_id}"
+            fresh = db.query(WorkflowExecution).filter(
+                WorkflowExecution.id == execution_id
+            ).first()
+            if fresh and fresh.status == "planning" and (fresh.status_message or "").startswith(lock_marker):
+                # Another runner already started execution; live events go to the first SSE only.
+                payload = {
+                    "type": "status",
+                    "event_type": "status",
+                    "execution_id": execution_id,
+                    "status": fresh.status,
+                    "progress": fresh.progress_percent,
+                    "progress_percent": fresh.progress_percent,
+                    "message": "Workflow уже запущен в другом потоке стриминга.",
+                }
+                yield f"data: {json.dumps(payload, ensure_ascii=False)}\n\n"
+                async for chunk in poll_execution_until_terminal(idle_seconds=0.5):
+                    yield chunk
+                return
+            if fresh and fresh.status == "planning":
+                fresh.status_message = owner_marker
+                db.commit()
+
             engine = ExecutionEngine(db)
-            
-            # Use plan_and_execute which properly uses PlanningAgent and ToolRegistry
-            # This respects the available_tools from workflow definition
-            async for event in engine.plan_and_execute(execution, definition, documents):
-                yield f"data: {json.dumps(event_to_dict(event), ensure_ascii=False)}\n\n"
-                await asyncio.sleep(0.1)
+
+            # DeepAgents: create_deep_agent via WorkflowDeepAgentsHarness + ToolRegistry (plan_and_execute)
+            try:
+                saw_terminal_event = False
+                async for event in engine.plan_and_execute(execution, definition, documents):
+                    # Defensive sync: if execution paused for lawyer input, persist explicit state
+                    # in this route too so lock marker never stays as final status_message.
+                    if event.event_type == "waiting_for_lawyer":
+                        paused = db.query(WorkflowExecution).filter(
+                            WorkflowExecution.id == execution_id
+                        ).first()
+                        if paused:
+                            paused.status = "waiting_for_lawyer"
+                            paused.status_message = event.message or "Ожидание действий юриста"
+                            db.commit()
+                    if event.event_type in {"completed", "failed", "cancelled", "completed_with_errors"}:
+                        saw_terminal_event = True
+                    yield f"data: {json.dumps(event_to_dict(event), ensure_ascii=False)}\n\n"
+                    await asyncio.sleep(0)
+
+                # Safety net: if generator stopped without explicit terminal event,
+                # always emit a synthetic terminal event from DB state.
+                current_after_run = db.query(WorkflowExecution).filter(
+                    WorkflowExecution.id == execution_id
+                ).first()
+                if not saw_terminal_event and current_after_run:
+                    terminal_statuses = {"completed", "failed", "cancelled", "completed_with_errors"}
+                    if current_after_run.status not in terminal_statuses:
+                        current_after_run.status = "failed"
+                        current_after_run.error_message = (
+                            "Workflow stream завершился без terminal-события. Выполнение остановлено safeguard-логикой."
+                        )
+                        current_after_run.status_message = current_after_run.error_message
+                        current_after_run.completed_at = datetime.utcnow()
+                        db.commit()
+                    final_type = (
+                        "completed"
+                        if current_after_run.status in {"completed", "completed_with_errors"}
+                        else "failed"
+                    )
+                    safeguard_terminal = ExecutionEvent(
+                        event_type=final_type,
+                        execution_id=execution_id,
+                        data={
+                            "summary": current_after_run.summary,
+                            "artifacts": current_after_run.artifacts,
+                            "error": current_after_run.error_message,
+                            "results": current_after_run.results,
+                            "run_stats": {
+                                "total_llm_calls": int(current_after_run.total_llm_calls or 0),
+                                "total_tokens_used": int(current_after_run.total_tokens_used or 0),
+                                "forced_finalize": True,
+                            },
+                        },
+                        message=current_after_run.status_message
+                        or (
+                            "Workflow завершён safeguard-терминатором."
+                            if final_type == "completed"
+                            else "Workflow остановлен safeguard-терминатором."
+                        ),
+                        progress_percent=(
+                            100 if final_type == "completed" else (current_after_run.progress_percent or 0)
+                        ),
+                    )
+                    yield f"data: {json.dumps(event_to_dict(safeguard_terminal), ensure_ascii=False)}\n\n"
+            except Exception as exc:
+                logger.error(
+                    "Workflow stream crashed for execution %s: %s",
+                    execution_id,
+                    exc,
+                    exc_info=True,
+                )
+                crashed = db.query(WorkflowExecution).filter(
+                    WorkflowExecution.id == execution_id
+                ).first()
+                if crashed:
+                    crashed.status = "failed"
+                    crashed.error_message = (
+                        crashed.error_message
+                        or f"Ошибка stream runtime: {str(exc)}"
+                    )
+                    crashed.status_message = crashed.error_message
+                    crashed.completed_at = datetime.utcnow()
+                    db.commit()
+                crash_event = ExecutionEvent(
+                    event_type="failed",
+                    execution_id=execution_id,
+                    data={
+                        "error": str(exc),
+                        "summary": crashed.summary if crashed else None,
+                        "artifacts": crashed.artifacts if crashed else {},
+                        "results": crashed.results if crashed else {},
+                        "run_stats": {
+                            "total_llm_calls": int((crashed.total_llm_calls if crashed else 0) or 0),
+                            "total_tokens_used": int((crashed.total_tokens_used if crashed else 0) or 0),
+                            "forced_finalize": True,
+                        },
+                    },
+                    message=f"Workflow аварийно остановлен: {str(exc)}",
+                    progress_percent=(crashed.progress_percent if crashed else 0) or 0,
+                )
+                yield f"data: {json.dumps(event_to_dict(crash_event), ensure_ascii=False)}\n\n"
+            finally:
+                # Always release stream lock marker if execution never left planning.
+                current = db.query(WorkflowExecution).filter(
+                    WorkflowExecution.id == execution_id
+                ).first()
+                if (
+                    current
+                    and current.status == "planning"
+                    and (current.status_message or "").startswith(lock_marker)
+                ):
+                    current.status_message = "Ожидание продолжения выполнения workflow."
+                    db.commit()
         else:
-            # Already running or completed - just return current status
-            yield f"data: {json.dumps({'event_type': 'status', 'status': execution_status, 'progress': execution_progress}, ensure_ascii=False)}\n\n"
+            # Уже executing / позднее подключение: только снимки из БД (гранулярные события — у первого SSE).
+            async for chunk in poll_execution_until_terminal(idle_seconds=0.5):
+                yield chunk
     
     return StreamingResponse(
         event_generator(),
@@ -447,6 +898,7 @@ async def stream_execution(
         headers={
             "Cache-Control": "no-cache",
             "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
         }
     )
 
@@ -460,6 +912,7 @@ def event_to_dict(event: ExecutionEvent) -> dict:
         "step_id": event.step_id,
         "data": event.data,
         "timestamp": event.timestamp.isoformat(),
+        "progress": event.progress_percent,
         "progress_percent": event.progress_percent,
         "message": event.message
     }
@@ -533,6 +986,38 @@ async def cancel_execution(
         raise HTTPException(status_code=400, detail="Cannot cancel this execution")
     
     return {"message": "Execution cancelled"}
+
+
+@router.post("/executions/{execution_id}/resume")
+async def resume_execution(
+    execution_id: str,
+    request: ResumeWorkflowRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """Resume execution paused for HITL."""
+    execution = db.query(WorkflowExecution).filter(
+        WorkflowExecution.id == execution_id,
+        WorkflowExecution.user_id == current_user.id
+    ).first()
+    if not execution:
+        raise HTTPException(status_code=404, detail="Execution not found")
+
+    engine = ExecutionEngine(db)
+    try:
+        event = await engine.resume_execution_with_human_input(
+            execution,
+            answer=request.answer,
+            approved=request.approved,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    return {
+        "message": "Execution resumed",
+        "event": event_to_dict(event),
+        "status": execution.status,
+    }
 
 
 @router.get("/executions/{execution_id}/results")

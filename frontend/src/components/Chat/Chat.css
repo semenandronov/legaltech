@@ -1,4 +1,4 @@
-/* Quick Buttons Styles - Perplexity dark style */
+/* Quick Buttons */
 .chat-quick-buttons {
   padding: 16px 24px;
   border-bottom: 1px solid var(--color-border);
@@ -29,7 +29,7 @@
   cursor: pointer;
   font-size: 13px;
   font-weight: 500;
-  transition: all 0.15s;
+  transition: background-color 0.15s ease, border-color 0.15s ease, transform 0.15s ease;
 }
 
 .chat-quick-button:hover {
@@ -37,7 +37,7 @@
   border-color: var(--color-primary);
 }
 
-/* Autocomplete Styles - Perplexity dark style */
+/* Autocomplete */
 .chat-input-container {
   position: relative;
   flex: 1;
@@ -55,7 +55,7 @@
   background: var(--color-surface);
   border: 1px solid var(--color-border);
   border-radius: 12px;
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+  box-shadow: 0 8px 24px color-mix(in srgb, var(--color-text-primary) 14%, transparent);
   z-index: 100;
   max-height: 200px;
   overflow-y: auto;
@@ -92,7 +92,7 @@
   color: var(--color-primary);
 }
 
-/* Confidence Badge Styles - Perplexity dark style */
+/* Confidence Badge */
 .chat-confidence-badge {
   display: inline-block;
   padding: 4px 10px;
@@ -103,24 +103,24 @@
 }
 
 .chat-confidence-badge.high {
-  background: rgba(40, 199, 111, 0.2);
-  color: #28C76F;
-  border: 1px solid rgba(40, 199, 111, 0.3);
+  background: var(--color-success-bg);
+  color: var(--color-success);
+  border: 1px solid color-mix(in srgb, var(--color-success) 28%, transparent);
 }
 
 .chat-confidence-badge.medium {
-  background: rgba(255, 181, 71, 0.2);
-  color: #FFB547;
-  border: 1px solid rgba(255, 181, 71, 0.3);
+  background: var(--color-warning-bg);
+  color: var(--color-warning);
+  border: 1px solid color-mix(in srgb, var(--color-warning) 28%, transparent);
 }
 
 .chat-confidence-badge.low {
-  background: rgba(255, 83, 112, 0.2);
-  color: #FF5370;
-  border: 1px solid rgba(255, 83, 112, 0.3);
+  background: var(--color-error-bg);
+  color: var(--color-error);
+  border: 1px solid color-mix(in srgb, var(--color-error) 28%, transparent);
 }
 
-/* Citation Link Styles - Perplexity dark style */
+/* Citation Link */
 .chat-citation-link {
   display: inline-block;
   padding: 8px 12px;
@@ -132,14 +132,14 @@
   cursor: pointer;
   font-size: 13px;
   font-weight: 500;
-  transition: all 0.15s;
+  transition: background-color 0.15s ease, border-color 0.15s ease, transform 0.15s ease, box-shadow 0.15s ease;
 }
 
 .chat-citation-link:hover {
   background: var(--color-hover);
   border-color: var(--color-primary);
   transform: translateY(-1px);
-  box-shadow: 0 0 8px rgba(0, 212, 255, 0.3);
+  box-shadow: 0 4px 12px color-mix(in srgb, var(--color-text-primary) 10%, transparent);
 }
 
 /* Chat Message Improvements */
@@ -180,13 +180,13 @@
 .chat-batch-action-btn {
   padding: 8px 16px;
   background: var(--color-primary);
-  color: #0F0F23;
+  color: var(--color-on-accent);
   border: none;
   border-radius: 8px;
   cursor: pointer;
   font-size: 13px;
   font-weight: 500;
-  transition: all 0.15s;
+  transition: background-color 0.15s ease, opacity 0.15s ease;
 }
 
 .chat-batch-action-btn:hover {
@@ -204,7 +204,7 @@
   border-color: var(--color-primary);
 }
 
-/* Statistics Chart Styles - Perplexity dark style */
+/* Statistics Chart */
 .chat-statistics-chart {
   margin-top: 20px;
   padding: 20px;
@@ -225,79 +225,87 @@
   height: 300px;
 }
 
-/* Light theme overrides */
+/* Light theme overrides (алиасы к тем же токенам) */
 :root[data-theme="light"] .chat-quick-buttons {
-  background: #F8F9FA;
-  border-bottom: 1px solid #E5E8EB;
+  background: var(--color-bg-secondary);
+  border-bottom: 1px solid var(--color-border);
 }
 
 :root[data-theme="light"] .chat-quick-button {
-  background: #FFFFFF;
-  border: 1px solid #E5E8EB;
-  color: #0F1419;
+  background: var(--color-bg-elevated);
+  border: 1px solid var(--color-border);
+  color: var(--color-text-primary);
 }
 
 :root[data-theme="light"] .chat-quick-button:hover {
-  background: #F0F2F5;
-  border-color: #00BDD4;
+  background: var(--color-bg-hover);
+  border-color: var(--color-border-strong);
 }
 
 :root[data-theme="light"] .chat-autocomplete {
-  background: #FFFFFF;
-  border: 1px solid #E5E8EB;
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.1);
+  background: var(--color-bg-elevated);
+  border: 1px solid var(--color-border);
+  box-shadow: 0 4px 16px color-mix(in srgb, var(--color-text-primary) 10%, transparent);
 }
 
 :root[data-theme="light"] .chat-autocomplete-item:hover,
 :root[data-theme="light"] .chat-autocomplete-item.selected {
-  background: #F8F9FA;
+  background: var(--color-bg-hover);
 }
 
 :root[data-theme="light"] .chat-citation-link {
-  background: #F8F9FA;
-  border: 1px solid #E5E8EB;
-  color: #00BDD4;
+  background: var(--color-bg-secondary);
+  border: 1px solid var(--color-border);
+  color: var(--color-accent-muted);
 }
 
 :root[data-theme="light"] .chat-citation-link:hover {
-  background: #F0F2F5;
-  border-color: #00BDD4;
+  background: var(--color-bg-hover);
+  border-color: var(--color-border-strong);
 }
 
 :root[data-theme="light"] .chat-statistics-chart {
-  background: #F8F9FA;
-  border: 1px solid #E5E8EB;
+  background: var(--color-bg-secondary);
+  border: 1px solid var(--color-border);
 }
 
 :root[data-theme="light"] .chat-statistics-chart-title {
-  color: #0F1419;
+  color: var(--color-text-primary);
 }
 
-/* ===== CLICKABLE CITATION STYLES - Harvey/Modern Style ===== */
+/* ===== CLICKABLE CITATION ===== */
 .inline-citation-clickable {
   display: inline-flex;
   align-items: center;
   gap: 4px;
   padding: 3px 10px 3px 8px;
   margin: 0 3px;
-  background: linear-gradient(135deg, rgba(59, 130, 246, 0.12) 0%, rgba(139, 92, 246, 0.08) 100%);
-  border: 1px solid rgba(59, 130, 246, 0.25);
+  background: linear-gradient(
+    135deg,
+    color-mix(in srgb, var(--color-accent-muted) 14%, transparent) 0%,
+    color-mix(in srgb, var(--color-text-muted) 10%, transparent) 100%
+  );
+  border: 1px solid color-mix(in srgb, var(--color-border-strong) 85%, transparent);
   border-radius: 6px;
   cursor: pointer;
   font-size: 12px;
   font-weight: 500;
-  color: #3B82F6;
-  transition: all 0.2s ease;
+  color: var(--color-accent-muted);
+  transition: background 0.2s ease, border-color 0.2s ease, transform 0.2s ease, box-shadow 0.2s ease;
   position: relative;
   vertical-align: middle;
   text-decoration: none;
 }
 
 .inline-citation-clickable:hover {
-  background: linear-gradient(135deg, rgba(59, 130, 246, 0.2) 0%, rgba(139, 92, 246, 0.15) 100%);
-  border-color: rgba(59, 130, 246, 0.5);
+  background: linear-gradient(
+    135deg,
+    color-mix(in srgb, var(--color-accent-muted) 22%, transparent) 0%,
+    color-mix(in srgb, var(--color-text-muted) 14%, transparent) 100%
+  );
+  border-color: color-mix(in srgb, var(--color-accent) 35%, transparent);
   transform: translateY(-1px);
-  box-shadow: 0 4px 12px rgba(59, 130, 246, 0.25);
+  box-shadow: 0 4px 12px color-mix(in srgb, var(--color-text-primary) 12%, transparent);
 }
 
 .inline-citation-clickable:active {
@@ -338,10 +346,10 @@
   min-width: 280px;
   max-width: 360px;
   padding: 14px;
-  background: var(--color-surface, #1A1A2E);
-  border: 1px solid var(--color-border, #2D2D44);
+  background: var(--color-bg-elevated);
+  border: 1px solid var(--color-border);
   border-radius: 12px;
-  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4), 0 0 0 1px rgba(255,255,255,0.05);
+  box-shadow: 0 8px 32px color-mix(in srgb, var(--color-text-primary) 16%, transparent);
   z-index: 1000;
   animation: tooltipFadeIn 0.2s ease;
 }
@@ -365,9 +373,9 @@
   transform: translateX(-50%) rotate(45deg);
   width: 12px;
   height: 12px;
-  background: var(--color-surface, #1A1A2E);
-  border-right: 1px solid var(--color-border, #2D2D44);
-  border-bottom: 1px solid var(--color-border, #2D2D44);
+  background: var(--color-bg-elevated);
+  border-right: 1px solid var(--color-border);
+  border-bottom: 1px solid var(--color-border);
 }
 
 .tooltip-header {
@@ -376,7 +384,7 @@
   gap: 8px;
   font-weight: 600;
   font-size: 13px;
-  color: var(--color-text, #FFFFFF);
+  color: var(--color-text-primary);
   margin-bottom: 8px;
 }
 
@@ -389,22 +397,22 @@
 
 .tooltip-page {
   font-size: 11px;
-  color: var(--color-primary, #3B82F6);
+  color: var(--color-accent-muted);
   margin-bottom: 4px;
 }
 
 .tooltip-relevance {
   font-size: 11px;
-  color: #10B981;
+  color: var(--color-success);
   margin-bottom: 8px;
 }
 
 .tooltip-preview {
   font-size: 12px;
-  color: var(--color-text-secondary, #94A3B8);
+  color: var(--color-text-secondary);
   line-height: 1.5;
   padding: 10px;
-  background: rgba(0, 0, 0, 0.2);
+  background: color-mix(in srgb, var(--color-text-primary) 6%, transparent);
   border-radius: 8px;
   margin-bottom: 8px;
   max-height: 100px;
@@ -413,44 +421,11 @@
 
 .tooltip-action {
   font-size: 11px;
-  color: #3B82F6;
+  color: var(--color-accent-muted);
   font-weight: 500;
   padding-top: 8px;
-  border-top: 1px solid var(--color-border, #2D2D44);
+  border-top: 1px solid var(--color-border);
   text-align: center;
-}
-
-/* Light theme */
-:root[data-theme="light"] .inline-citation-clickable {
-  background: linear-gradient(135deg, rgba(59, 130, 246, 0.08) 0%, rgba(139, 92, 246, 0.05) 100%);
-  border-color: rgba(59, 130, 246, 0.2);
-  color: #2563EB;
-}
-
-:root[data-theme="light"] .inline-citation-clickable:hover {
-  background: linear-gradient(135deg, rgba(59, 130, 246, 0.15) 0%, rgba(139, 92, 246, 0.1) 100%);
-  border-color: rgba(59, 130, 246, 0.4);
-  box-shadow: 0 4px 12px rgba(59, 130, 246, 0.2);
-}
-
-:root[data-theme="light"] .inline-citation-tooltip-modern {
-  background: #FFFFFF;
-  border-color: #E5E7EB;
-  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.12);
-}
-
-:root[data-theme="light"] .inline-citation-tooltip-modern::after {
-  background: #FFFFFF;
-  border-color: #E5E7EB;
-}
-
-:root[data-theme="light"] .tooltip-header {
-  color: #1F2937;
-}
-
-:root[data-theme="light"] .tooltip-preview {
-  background: #F3F4F6;
-  color: #4B5563;
 }
 
 /* Legacy badge style (fallback) */
@@ -462,11 +437,11 @@
   height: 20px;
   padding: 0 6px;
   margin: 0 2px;
-  background: rgba(59, 130, 246, 0.15);
+  background: color-mix(in srgb, var(--color-accent-muted) 18%, transparent);
   border-radius: 4px;
   font-size: 11px;
   font-weight: 600;
-  color: #3B82F6;
+  color: var(--color-accent-muted);
   vertical-align: middle;
 }
 
@@ -515,11 +490,9 @@
 .thinking-progress-shimmer {
   background: linear-gradient(
     90deg,
-    rgba(59, 130, 246, 0.8) 0%,
-    rgba(139, 92, 246, 0.8) 25%,
-    rgba(16, 185, 129, 0.8) 50%,
-    rgba(139, 92, 246, 0.8) 75%,
-    rgba(59, 130, 246, 0.8) 100%
+    color-mix(in srgb, var(--color-accent-muted) 55%, transparent) 0%,
+    color-mix(in srgb, var(--color-text-muted) 45%, transparent) 50%,
+    color-mix(in srgb, var(--color-accent-muted) 55%, transparent) 100%
   );
   background-size: 200% 100%;
   animation: gradient-shimmer 2s linear infinite;

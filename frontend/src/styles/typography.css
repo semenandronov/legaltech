@@ -1,13 +1,4 @@
-/* Typography Styles - Harvey/Legora style */
-
-/* Display font - Cormorant Garamond (Harvey style) */
-@import url('https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@300;400;500;600;700&display=swap');
-
-/* Body font - Inter */
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
-
-/* Monospace - JetBrains Mono */
-@import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&display=swap');
+/* Типографика: шрифты подключаются в index.css */
 
 /* Typography utility classes using CSS variables */
 .text-h1 {

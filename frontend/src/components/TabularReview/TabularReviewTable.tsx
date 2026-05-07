@@ -512,27 +512,8 @@ export const TabularReviewTable = React.memo(({ reviewId, tableData, onTableData
         const cell: TabularCell = row.getValue(col.id)
         let cellValue = cell?.cell_value || "-"
 
-        // Parse JSON if cell_value is a JSON string (backend may return structured extraction result)
-        if (cellValue !== "-" && typeof cellValue === "string" && cellValue.trim().startsWith("{")) {
-          try {
-            // Remove trailing commas before closing braces/brackets (LLM may produce non-standard JSON)
-            const cleanJson = cellValue.replace(/,\s*([}\]])/g, '$1')
-            const parsed = JSON.parse(cleanJson)
-            if (parsed && typeof parsed === "object" && "cell_value" in parsed) {
-              const inner = parsed.cell_value
-              cellValue = (inner !== null && inner !== undefined && inner !== "") ? String(inner) : "-"
-            }
-          } catch (e) {
-            // JSON.parse failed — try regex fallback to extract cell_value
-            const match = cellValue.match(/"cell_value"\s*:\s*"([^"]*)"/)
-            if (match && match[1] !== undefined) {
-              cellValue = match[1] || "-"
-            } else {
-              // Cannot extract — treat as not found
-              cellValue = "-"
-            }
-          }
-        }
+        // IMPORTANT: UI should never try to parse JSON-in-string cell values.
+        // Cleanliness/normalization must happen on the backend (structured output + normalization).
 
         // Normalize empty/placeholder values to "-" (not found)
         if (typeof cellValue === "string") {

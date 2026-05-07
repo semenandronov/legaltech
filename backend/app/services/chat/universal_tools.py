@@ -1,5 +1,5 @@
 """
-Universal Tools - 12 универсальных инструментов для ReAct Chat Agent
+Universal Tools - 12 универсальных инструментов для case assistant runtime
 
 Агент САМ решает, какие инструменты вызвать на основе вопроса пользователя.
 Каждый инструмент имеет подробное описание для LLM.
@@ -1099,7 +1099,7 @@ def analyze_all_documents(question: str, task_type: str = "answer") -> str:
         # Normalize: move any [N] markers that ended up at start of sentence to end
         response = _normalize_citation_positions(response)
 
-        # Store as direct result so react_chat_agent bypasses outer GigaChat synthesis
+        # Store as direct result so orchestrator can stream deterministic output
         global _last_direct_result
         _last_direct_result = response
 
@@ -1716,7 +1716,7 @@ def list_templates() -> str:
 # БЛОК 4: PLAYBOOK (2 инструмента)
 # =============================================================================
 
-# Global to store last playbook check result for SSE emission by react_chat_agent
+# Global to store last playbook check result for SSE emission by assistant runtime
 _last_playbook_check: Optional[Dict] = None
 
 
@@ -1939,7 +1939,7 @@ def validate_with_playbook(document_name: str, playbook_name: str = "") -> str:
                 )
             )
 
-            # Store structured result for SSE emission by react_chat_agent
+            # Store structured result for SSE emission by assistant runtime
             _last_playbook_check = {
                 'check_id': check_result.check_id,
                 'playbook_id': check_result.playbook_id,
@@ -2197,7 +2197,7 @@ def get_universal_tools(
         rag_service: RAG сервис
         case_id: ID дела
         user_id: ID пользователя (опционально)
-        legal_research: Включить инструменты ГАРАНТ
+        legal_research: Включить инструменты справочного правового поиска
         web_search: Включить веб-поиск (пока не реализован)
     
     Returns:

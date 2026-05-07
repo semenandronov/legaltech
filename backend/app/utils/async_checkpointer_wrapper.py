@@ -151,62 +151,32 @@ def _add_aget_tuple_to_instance(postgres_saver: PostgresSaver):
         Returns:
             Tuple from checkpoint or None
         """
-        logger.debug(f"aget_tuple called with config: {config}")
-        # Get sync method from the captured instance
-        sync_get_tuple = getattr(postgres_saver, 'get_tuple', None)
-        if sync_get_tuple is None:
-            # If method doesn't exist, raise NotImplementedError to match base behavior
-            raise NotImplementedError("get_tuple not available in PostgresSaver")
-        
-        # Run sync method in executor to avoid blocking event loop
-        # Use retry logic for connection errors
+        # IMPORTANT:
+        # We intentionally do NOT call sync PostgresSaver.get_tuple here.
+        # Sync saver connections are prone to SSL idle disconnects and psycopg Pipeline BAD states.
+        # For async graph execution (astream / astream_events), always delegate to AsyncPostgresSaver
+        # backed by an AsyncConnectionPool (see app.utils.checkpointer_setup).
+        from app.utils.checkpointer_setup import (
+            get_async_postgres_checkpointer,
+            reset_async_postgres_checkpointer,
+        )
+
         async def _execute():
-            loop = asyncio.get_event_loop()
-            # Use None for executor to use default ThreadPoolExecutor
-            return await loop.run_in_executor(
-                None,  # Use default executor
-                sync_get_tuple,
-                config
-            )
-        
+            saver = await get_async_postgres_checkpointer()
+            return await saver.aget_tuple(config)
+
         try:
-            result = await _retry_on_connection_error(_execute, max_retries=3)
-            logger.debug(f"aget_tuple completed successfully")
-            return result
+            return await _retry_on_connection_error(_execute, max_retries=3)
         except Exception as e:
-            # If connection error, try to recreate checkpointer and retry once
             if _is_connection_error(e):
-                logger.warning(f"Checkpoint connection error in aget_tuple: {e}. Attempting to recreate checkpointer...")
-                try:
-                    # Reset and recreate the checkpointer for future requests
-                    from app.utils.checkpointer_setup import reset_checkpointer_instance, get_checkpointer_instance
-                    reset_checkpointer_instance()
-                    new_checkpointer = get_checkpointer_instance()
-                    
-                    if new_checkpointer:
-                        logger.info("✅ Recreated checkpointer instance after connection error")
-                        
-                        # Try one more time with the new checkpointer
-                        new_sync_get_tuple = getattr(new_checkpointer, 'get_tuple', None)
-                        if new_sync_get_tuple:
-                            loop = asyncio.get_event_loop()
-                            try:
-                                result = await loop.run_in_executor(None, new_sync_get_tuple, config)
-                                logger.info("✅ Successfully loaded checkpoint after reconnection")
-                                return result
-                            except Exception as retry_error:
-                                logger.warning(f"Retry with new checkpointer failed: {retry_error}")
-                                # Fall through to return None
-                except Exception as recreate_error:
-                    logger.error(f"Failed to recreate checkpointer: {recreate_error}", exc_info=True)
-                
-                # If reconnection failed, return None to allow graph to continue
-                # The checkpointer has been reset, so future requests will use a fresh connection
-                logger.warning(f"Checkpoint unavailable for this request, returning None. Checkpointer recreated for future requests.")
-                return None
-            else:
-                logger.error(f"Error in aget_tuple wrapper after retries: {e}", exc_info=True)
-                raise
+                logger.warning(
+                    "Checkpoint connection error in aget_tuple (async saver): %s. Resetting async pool and retrying once...",
+                    e,
+                )
+                await reset_async_postgres_checkpointer()
+                saver = await get_async_postgres_checkpointer()
+                return await saver.aget_tuple(config)
+            raise
     
     # Bind the async method to the instance
     # For async methods, we need to assign directly (not using MethodType which doesn't work well with async)
@@ -242,58 +212,27 @@ def _add_aput_to_instance(postgres_saver: PostgresSaver):
             metadata: Metadata dict
             new_versions: New versions dict
         """
-        logger.debug(f"aput called with config: {config}")
-        # Get sync method from the captured instance
-        sync_put = getattr(postgres_saver, 'put', None)
-        if sync_put is None:
-            # If method doesn't exist, raise NotImplementedError to match base behavior
-            raise NotImplementedError("put not available in PostgresSaver")
-        
-        # Run sync method in executor to avoid blocking event loop
-        # Use retry logic for connection errors
+        from app.utils.checkpointer_setup import (
+            get_async_postgres_checkpointer,
+            reset_async_postgres_checkpointer,
+        )
+
         async def _execute():
-            loop = asyncio.get_event_loop()
-            # Use None for executor to use default ThreadPoolExecutor
-            await loop.run_in_executor(
-                None,  # Use default executor
-                sync_put,
-                config,
-                checkpoint,
-                metadata,
-                new_versions
-            )
-        
+            saver = await get_async_postgres_checkpointer()
+            await saver.aput(config, checkpoint, metadata, new_versions)
+
         try:
             await _retry_on_connection_error(_execute, max_retries=3)
-            logger.debug(f"aput completed successfully")
         except Exception as e:
-            # If connection error, try to recreate checkpointer and retry once
             if _is_connection_error(e):
-                logger.warning(f"Checkpoint connection error in aput: {e}. Attempting to recreate checkpointer...")
-                try:
-                    from app.utils.checkpointer_setup import reset_checkpointer_instance, get_checkpointer_instance
-                    reset_checkpointer_instance()
-                    new_checkpointer = get_checkpointer_instance()
-                    
-                    if new_checkpointer:
-                        logger.info("✅ Recreated checkpointer instance after connection error")
-                        new_sync_put = getattr(new_checkpointer, 'put', None)
-                        if new_sync_put:
-                            loop = asyncio.get_event_loop()
-                            await loop.run_in_executor(
-                                None,
-                                new_sync_put,
-                                config,
-                                checkpoint,
-                                metadata,
-                                new_versions
-                            )
-                            logger.info("✅ Successfully saved checkpoint after reconnection")
-                            return
-                except Exception as recreate_error:
-                    logger.error(f"Failed to recreate checkpointer: {recreate_error}", exc_info=True)
-            
-            logger.error(f"Error in aput wrapper after retries: {e}", exc_info=True)
+                logger.warning(
+                    "Checkpoint connection error in aput (async saver): %s. Resetting async pool and retrying once...",
+                    e,
+                )
+                await reset_async_postgres_checkpointer()
+                saver = await get_async_postgres_checkpointer()
+                await saver.aput(config, checkpoint, metadata, new_versions)
+                return
             raise
     
     # Bind the async method to the instance
@@ -336,51 +275,27 @@ def _add_aput_writes_to_instance(postgres_saver: PostgresSaver):
         writes = args[1]
         task_id = args[2]
         
-        logger.debug(f"aput_writes called with config type: {type(config)}, writes type: {type(writes)}, task_id: {task_id}")
-        
-        # Get sync put_writes method
-        sync_put_writes = getattr(postgres_saver, 'put_writes', None)
-        
-        if sync_put_writes is None:
-            # If put_writes doesn't exist, this version of PostgresSaver doesn't support it
-            # Raise NotImplementedError to match base class behavior
-            raise NotImplementedError("put_writes not available in this version of PostgresSaver")
-        
-        # Run sync put_writes in executor to avoid blocking event loop
-        # Use functools.partial to properly bind arguments for the executor
-        # Use retry logic for connection errors
+        from app.utils.checkpointer_setup import (
+            get_async_postgres_checkpointer,
+            reset_async_postgres_checkpointer,
+        )
+
         async def _execute():
-            loop = asyncio.get_event_loop()
-            # Use partial to bind arguments to the sync method
-            # sync_put_writes is a bound method, so partial will bind (config, writes, task_id) to it
-            bound_put_writes = partial(sync_put_writes, config, writes, task_id)
-            await loop.run_in_executor(None, bound_put_writes)
-        
+            saver = await get_async_postgres_checkpointer()
+            await saver.aput_writes(config, writes, task_id)
+
         try:
             await _retry_on_connection_error(_execute, max_retries=3)
-            logger.debug(f"aput_writes completed successfully")
         except Exception as e:
-            # If connection error, try to recreate checkpointer and retry once
             if _is_connection_error(e):
-                logger.warning(f"Checkpoint connection error in aput_writes: {e}. Attempting to recreate checkpointer...")
-                try:
-                    from app.utils.checkpointer_setup import reset_checkpointer_instance, get_checkpointer_instance
-                    reset_checkpointer_instance()
-                    new_checkpointer = get_checkpointer_instance()
-                    
-                    if new_checkpointer:
-                        logger.info("✅ Recreated checkpointer instance after connection error")
-                        new_sync_put_writes = getattr(new_checkpointer, 'put_writes', None)
-                        if new_sync_put_writes:
-                            loop = asyncio.get_event_loop()
-                            bound_put_writes = partial(new_sync_put_writes, config, writes, task_id)
-                            await loop.run_in_executor(None, bound_put_writes)
-                            logger.info("✅ Successfully saved checkpoint writes after reconnection")
-                            return
-                except Exception as recreate_error:
-                    logger.error(f"Failed to recreate checkpointer: {recreate_error}", exc_info=True)
-            
-            logger.error(f"Error in aput_writes wrapper after retries: {e}", exc_info=True)
+                logger.warning(
+                    "Checkpoint connection error in aput_writes (async saver): %s. Resetting async pool and retrying once...",
+                    e,
+                )
+                await reset_async_postgres_checkpointer()
+                saver = await get_async_postgres_checkpointer()
+                await saver.aput_writes(config, writes, task_id)
+                return
             raise
     
     # Bind the async method to the instance

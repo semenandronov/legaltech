@@ -25,14 +25,14 @@ export const Tool = React.memo(function Tool({
   
   const statusIcons = {
     pending: <Clock className="w-4 h-4 text-gray-400" />,
-    running: <Loader2 className="w-4 h-4 text-blue-600 animate-spin" />,
+    running: <Loader2 className="w-4 h-4 text-accent-muted animate-spin" />,
     completed: <CheckCircle2 className="w-4 h-4 text-green-600" />,
     error: <AlertCircle className="w-4 h-4 text-red-600" />
   }
 
   const statusColors = {
     pending: "border-gray-200 bg-gray-50",
-    running: "border-blue-200 bg-blue-50",
+    running: "border-border bg-secondary",
     completed: "border-green-200 bg-green-50",
     error: "border-red-200 bg-red-50"
   }

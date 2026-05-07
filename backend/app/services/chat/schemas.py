@@ -39,9 +39,9 @@ class ChatRequest(BaseModel):
     case_id: str = Field(..., description="ID дела", alias="caseId")
     
     # Режимы
-    web_search: bool = Field(False, description="Включить веб-поиск")
-    legal_research: bool = Field(False, description="Включить поиск в ГАРАНТ")
-    deep_think: bool = Field(False, description="Включить глубокое мышление (GigaChat Pro)")
+    web_search: bool = Field(False, description="Legacy-флаг (игнорируется в internal assistant)")
+    legal_research: bool = Field(False, description="Включить СПРАВОЧНИК")
+    deep_think: bool = Field(False, description="Legacy-флаг (игнорируется в internal assistant)")
     draft_mode: bool = Field(False, description="Режим создания документа")
     
     # Контекст редактора
@@ -92,8 +92,8 @@ class CitationResponse(BaseModel):
     quote: str = Field(..., description="Текст цитаты")
     char_start: Optional[int] = Field(None, description="Начало цитаты в документе")
     char_end: Optional[int] = Field(None, description="Конец цитаты в документе")
-    url: Optional[str] = Field(None, description="URL источника (для ГАРАНТ)")
-    source_type: Literal["document", "garant", "web"] = Field("document", description="Тип источника")
+    url: Optional[str] = Field(None, description="URL источника (для справочных правовых источников)")
+    source_type: Literal["document", "legal_reference", "web"] = Field("document", description="Тип источника")
     
     class Config:
         json_schema_extra = {

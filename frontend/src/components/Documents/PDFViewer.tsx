@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react'
+import React, { useState, useEffect, useRef, useMemo } from 'react'
 import { Document, Page, pdfjs } from 'react-pdf'
 import 'react-pdf/dist/esm/Page/AnnotationLayer.css'
 import 'react-pdf/dist/esm/Page/TextLayer.css'
@@ -29,15 +29,28 @@ import {
 } from '@mui/icons-material'
 import './Documents.css'
 
+/** Сначала подсветка текста в text layer; если фрагмент не найден — оверлей по bbox (как в chunk-lab при наличии координат). */
+const PDF_CITATION_HIGHLIGHT = {
+  fill: 'rgba(250, 204, 21, 0.42)',
+  border: '1px solid rgba(234, 179, 8, 0.6)',
+  textMark: 'rgba(250, 204, 21, 0.5)',
+} as const
+
 // Set up PDF.js worker
 pdfjs.GlobalWorkerOptions.workerSrc = `//cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjs.version}/pdf.worker.min.js`
+
+type PdfBBoxCompat = { x0?: number; y0?: number; x1?: number; y1?: number }
 
 interface PDFViewerProps {
   fileId: string
   caseId: string
   filename: string
   initialPage?: number
-  highlightText?: string // Текст для автоматического поиска и подсветки (для citations)
+  highlightText?: string
+  highlightPage?: number
+  highlightBBox?: PdfBBoxCompat
+  highlightBBoxRegions?: PdfBBoxCompat[]
+  highlightPageBBox?: { width?: number; height?: number }
   onError?: (error: Error) => void
   showTabs?: boolean
   tabs?: Array<{ id: string; label: string; fileId: string }>
@@ -49,7 +62,7 @@ interface PDFViewerProps {
     file_size?: number
     [key: string]: any
   }
-  fileApiBase?: string // Override API base (e.g. for global assistant files)
+  fileApiBase?: string
 }
 
 const PDFViewer: React.FC<PDFViewerProps> = ({
@@ -58,6 +71,10 @@ const PDFViewer: React.FC<PDFViewerProps> = ({
   filename: _filename,
   initialPage,
   highlightText,
+  highlightPage: highlightPageProp,
+  highlightBBox,
+  highlightBBoxRegions,
+  highlightPageBBox,
   onError,
   showTabs = false,
   tabs = [],
@@ -80,9 +97,9 @@ const PDFViewer: React.FC<PDFViewerProps> = ({
   const [showAboutPanel, setShowAboutPanel] = useState(showAbout)
   const searchInputRef = useRef<HTMLInputElement>(null)
   const containerRef = useRef<HTMLDivElement>(null)
-  // customTextRenderer approach: work with pdf.js text items directly
   const [pageTextItems, setPageTextItems] = useState<any[]>([])
   const [highlightItemIndices, setHighlightItemIndices] = useState<number[]>([])
+  const [derivedPageBBox, setDerivedPageBBox] = useState<{ width: number; height: number } | null>(null)
 
   useEffect(() => {
     loadPDF()
@@ -91,23 +108,38 @@ const PDFViewer: React.FC<PDFViewerProps> = ({
         URL.revokeObjectURL(pdfUrl)
       }
     }
-  }, [fileId, caseId])
+  }, [fileId, caseId, apiBase])
 
-  // Reset text items when page changes
+  useEffect(() => {
+    if (!initialPage || !numPages) return
+    if (initialPage >= 1 && initialPage <= numPages) {
+      setPageNumber(initialPage)
+    }
+  }, [initialPage, numPages])
+
   useEffect(() => {
     setPageTextItems([])
     setHighlightItemIndices([])
   }, [pageNumber, fileId])
 
-  // Called by react-pdf when page text content is ready
+  const handlePageLoadSuccess = (page: any) => {
+    try {
+      const viewport = page?.getViewport?.({ scale: 1 })
+      const width = viewport?.width
+      const height = viewport?.height
+      if (typeof width === 'number' && typeof height === 'number' && width > 0 && height > 0) {
+        setDerivedPageBBox({ width, height })
+      }
+    } catch {
+      // ignore
+    }
+  }
+
   const handleGetTextSuccess = (textContent: any) => {
-    // Keep ALL TextItems (with 'str' property) to preserve index alignment with
-    // customTextRenderer's itemIndex, which counts all str-items including empty ones
     const items = (textContent.items as any[]).filter(item => 'str' in item)
     setPageTextItems(items)
   }
 
-  // Normalize text: lowercase, strip punctuation/quotes, collapse spaces
   const normText = (s: string) =>
     s.toLowerCase()
       .replace(/[«»""„''‟]/g, ' ')
@@ -115,7 +147,52 @@ const PDFViewer: React.FC<PDFViewerProps> = ({
       .replace(/\s+/g, ' ')
       .trim()
 
-  // Compute which item indices to highlight
+  const bboxRegionsToDraw = useMemo((): PdfBBoxCompat[] => {
+    if (highlightBBoxRegions && highlightBBoxRegions.length > 0) {
+      return highlightBBoxRegions.filter(
+        (r) =>
+          r.x0 != null &&
+          r.y0 != null &&
+          r.x1 != null &&
+          r.y1 != null &&
+          r.x1 > r.x0 &&
+          r.y1 > r.y0,
+      )
+    }
+    if (
+      highlightBBox &&
+      highlightBBox.x0 != null &&
+      highlightBBox.y0 != null &&
+      highlightBBox.x1 != null &&
+      highlightBBox.y1 != null &&
+      highlightBBox.x1 > highlightBBox.x0 &&
+      highlightBBox.y1 > highlightBBox.y0
+    ) {
+      return [highlightBBox]
+    }
+    return []
+  }, [highlightBBoxRegions, highlightBBox])
+
+  const effectivePageBBox = highlightPageBBox ?? derivedPageBBox ?? null
+  const pageW = effectivePageBBox?.width
+  const pageH = effectivePageBBox?.height
+
+  const preferTextHighlight = (highlightText?.trim().length ?? 0) >= 2
+  const textLayerReady = pageTextItems.length > 0
+  const textMatchFound = highlightItemIndices.length > 0
+  /** Не показывать bbox, пока ждём text layer (если хотим искать по тексту). */
+  const waitingTextLayer = preferTextHighlight && !textLayerReady
+
+  const useBboxHighlight =
+    !waitingTextLayer &&
+    bboxRegionsToDraw.length > 0 &&
+    typeof pageW === 'number' &&
+    typeof pageH === 'number' &&
+    pageW > 0 &&
+    pageH > 0 &&
+    (highlightPageProp == null || highlightPageProp === pageNumber) &&
+    (!preferTextHighlight || !textMatchFound)
+
   useEffect(() => {
     if (!highlightText || pageTextItems.length === 0) {
       setHighlightItemIndices([])
@@ -124,19 +201,14 @@ const PDFViewer: React.FC<PDFViewerProps> = ({
 
     const hlNorm = normText(highlightText)
 
-    // Build normalized full text with per-item positions
-    // Sort by reading order (y DESC = top-of-page first, then x ASC = left-to-right)
-    // PDF items are NOT guaranteed to be in reading order — sorting fixes multi-word matches
     type RawItem = { origIdx: number; str: string; tx: number; ty: number }
     const rawItems: RawItem[] = []
     pageTextItems.forEach((item, origIdx) => {
-      if (!item.str.trim()) return // skip empty items (origIdx still tracks for itemIndex alignment)
+      if (!item.str.trim()) return
       const [,,,, tx, ty] = item.transform || [1, 0, 0, 1, 0, 0]
-      if (Math.abs(tx) < 1 && Math.abs(ty) < 1) return // skip ghost items at PDF origin
+      if (Math.abs(tx) < 1 && Math.abs(ty) < 1) return
       rawItems.push({ origIdx, str: item.str, tx, ty })
     })
-    // Sort: higher ty = higher on page (PDF y=0 is bottom); same line → left to right by tx
-    // Use 8pt threshold — font baseline shifts (superscripts, quotes) can differ by a few units
     rawItems.sort((a, b) => {
       const tyDiff = b.ty - a.ty
       if (Math.abs(tyDiff) > 8) return tyDiff
@@ -153,8 +225,6 @@ const PDFViewer: React.FC<PDFViewerProps> = ({
     const normFullText = itemPositions.map(ip => normText(ip.str)).join(' ')
 
     const hlWords = hlNorm.split(/\s+/)
-    // Sliding window variants: try every 4-word window to find verbatim substrings
-    // even when the quote starts with non-verbatim label text (e.g. "[сумма] 495 000,00 р.")
     const windowVariants: string[] = []
     for (let i = 0; i < hlWords.length - 3; i++) {
       windowVariants.push(hlWords.slice(i, i + 4).join(' '))
@@ -162,13 +232,17 @@ const PDFViewer: React.FC<PDFViewerProps> = ({
 
     const variants = [
       hlNorm,
+      hlNorm.substring(0, 200),
       hlNorm.substring(0, 100),
       hlNorm.substring(0, 60),
+      hlWords.slice(0, 10).join(' '),
+      hlWords.slice(0, 8).join(' '),
       hlWords.slice(0, 6).join(' '),
       hlWords.slice(0, 4).join(' '),
       hlWords.slice(0, 3).join(' '),
+      hlWords.slice(0, 2).join(' '),
       ...windowVariants,
-    ].filter(v => v.length > 5)
+    ].filter((v) => v.length >= 3)
 
     for (const text of variants) {
       const idx = normFullText.indexOf(text)
@@ -177,8 +251,6 @@ const PDFViewer: React.FC<PDFViewerProps> = ({
       if (matched.length > 0) {
         const indices = matched.map(ip => ip.origIdx)
 
-        // Spatial extension: also highlight hlNorm words on the same visual line(s)
-        // This handles cases where item ty differs slightly (e.g. quoted numbers «28»)
         const matchedTys = indices.map(oi => {
           const [,,,, , ty] = (pageTextItems[oi].transform || [1,0,0,1,0,0])
           return ty as number
@@ -189,13 +261,10 @@ const PDFViewer: React.FC<PDFViewerProps> = ({
           if (indices.includes(ri.origIdx)) continue
           if (ri.ty < minTy - 8 || ri.ty > maxTy + 8) continue
           const norm = normText(ri.str)
-          // Check if item text (single or multi-word) is contained in hlNorm
-          // min length 1 to catch abbreviated suffixes like "г." (год), "р." (рублей)
           if (norm.length >= 1 && hlNorm.includes(norm)) indices.push(ri.origIdx)
         }
 
         setHighlightItemIndices(indices)
-        // Scroll to first highlighted element after render
         setTimeout(() => {
           const mark = containerRef.current?.querySelector('[data-pdf-mark]')
           if (mark) mark.scrollIntoView({ behavior: 'smooth', block: 'center' })
@@ -204,16 +273,24 @@ const PDFViewer: React.FC<PDFViewerProps> = ({
       }
     }
     setHighlightItemIndices([])
-  }, [highlightText, pageTextItems])
+  }, [highlightText, pageTextItems, pageNumber])
 
-  // customTextRenderer: wrap matching items in a highlighted mark
+  useEffect(() => {
+    if (!useBboxHighlight) return
+    const t = window.setTimeout(() => {
+      const mark = containerRef.current?.querySelector('[data-pdf-mark]')
+      if (mark) mark.scrollIntoView({ behavior: 'smooth', block: 'center' })
+    }, 300)
+    return () => window.clearTimeout(t)
+  }, [useBboxHighlight, pageNumber, bboxRegionsToDraw])
+
   const customTextRenderer = ({ str, itemIndex }: { str: string; itemIndex: number }) => {
     if (!highlightItemIndices.includes(itemIndex)) return str
     const escaped = str
       .replace(/&/g, '&amp;')
       .replace(/</g, '&lt;')
       .replace(/>/g, '&gt;')
-    return `<mark data-pdf-mark="true" style="background-color:rgba(59,130,246,0.45);border-radius:2px;color:inherit;">${escaped}</mark>`
+    return `<mark data-pdf-mark="true" style="background-color:${PDF_CITATION_HIGHLIGHT.textMark};border-radius:2px;color:inherit;">${escaped}</mark>`
   }
 
   const loadPDF = async () => {
@@ -221,7 +298,6 @@ const PDFViewer: React.FC<PDFViewerProps> = ({
       setLoading(true)
       setError(null)
 
-      // Try to get PDF content from API
       const response = await fetch(
         `${apiBase}/files/${fileId}/content`,
         {
@@ -252,7 +328,6 @@ const PDFViewer: React.FC<PDFViewerProps> = ({
 
   const onDocumentLoadSuccess = ({ numPages }: { numPages: number }) => {
     setNumPages(numPages)
-    // Set to initialPage if provided and valid, otherwise start at page 1
     if (initialPage && initialPage >= 1 && initialPage <= numPages) {
       setPageNumber(initialPage)
     } else {
@@ -284,7 +359,6 @@ const PDFViewer: React.FC<PDFViewerProps> = ({
     setZoomFactor(prev => Math.max(0.3, prev - 0.2))
   }
 
-
   const handleSearch = (query: string) => {
     setSearchQuery(query)
     if (!query.trim()) {
@@ -292,12 +366,7 @@ const PDFViewer: React.FC<PDFViewerProps> = ({
       setCurrentSearchIndex(0)
       return
     }
-    
-    // Basic search - in a real implementation, this would use PDF.js text layer
-    // For now, we'll just highlight the query in the text layer
-    // This is a simplified version - full implementation would require PDF.js text extraction
     const results: number[] = []
-    // TODO: Implement proper PDF text search using PDF.js
     setSearchResults(results)
     setCurrentSearchIndex(0)
   }
@@ -374,7 +443,6 @@ const PDFViewer: React.FC<PDFViewerProps> = ({
 
   return (
     <Box sx={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
-      {/* Tabs for multiple documents */}
       {showTabs && tabs.length > 0 && (
         <Tabs
           value={activeTab}
@@ -389,7 +457,6 @@ const PDFViewer: React.FC<PDFViewerProps> = ({
         </Tabs>
       )}
 
-      {/* Toolbar */}
       <Paper
         elevation={0}
         sx={{
@@ -401,7 +468,6 @@ const PDFViewer: React.FC<PDFViewerProps> = ({
           gap: 1,
         }}
       >
-        {/* Navigation */}
         <Stack direction="row" spacing={0.5} alignItems="center">
           <IconButton
             size="small"
@@ -426,7 +492,6 @@ const PDFViewer: React.FC<PDFViewerProps> = ({
 
         <Divider orientation="vertical" flexItem sx={{ mx: 1 }} />
 
-        {/* Search */}
         <TextField
           inputRef={searchInputRef}
           size="small"
@@ -471,7 +536,6 @@ const PDFViewer: React.FC<PDFViewerProps> = ({
 
         <Box sx={{ flexGrow: 1 }} />
 
-        {/* Zoom controls */}
         <Stack direction="row" spacing={0.5} alignItems="center">
           <IconButton size="small" onClick={handleZoomOut} aria-label="Уменьшить">
             <ZoomOutIcon />
@@ -486,7 +550,6 @@ const PDFViewer: React.FC<PDFViewerProps> = ({
 
         <Divider orientation="vertical" flexItem sx={{ mx: 1 }} />
 
-        {/* Actions */}
         <Stack direction="row" spacing={0.5}>
           {showAbout && (
             <IconButton
@@ -506,10 +569,8 @@ const PDFViewer: React.FC<PDFViewerProps> = ({
         </Stack>
       </Paper>
 
-      {/* Content area */}
       <Box sx={{ flex: 1, overflow: 'auto', position: 'relative', display: 'flex' }}>
-        {/* PDF Viewer */}
-        <Box 
+        <Box
           ref={containerRef}
           sx={{ flex: 1, overflow: 'auto', p: 2, display: 'flex', justifyContent: 'center' }}
         >
@@ -526,18 +587,49 @@ const PDFViewer: React.FC<PDFViewerProps> = ({
               </Box>
           }
         >
-          <Page
-            pageNumber={pageNumber}
-            scale={zoomFactor}
-            renderTextLayer={true}
-            renderAnnotationLayer={true}
-            onGetTextSuccess={handleGetTextSuccess}
-            customTextRenderer={customTextRenderer}
-          />
+          <Box sx={{ position: 'relative', display: 'inline-block' }}>
+            <Page
+              pageNumber={pageNumber}
+              scale={zoomFactor}
+              renderTextLayer={true}
+              renderAnnotationLayer={true}
+              onLoadSuccess={handlePageLoadSuccess}
+              onGetTextSuccess={handleGetTextSuccess}
+              customTextRenderer={useBboxHighlight ? undefined : customTextRenderer}
+            />
+            {useBboxHighlight &&
+              bboxRegionsToDraw.map((r, i) => {
+                const x0 = r.x0 ?? 0
+                const y0 = r.y0 ?? 0
+                const x1 = r.x1 ?? 0
+                const y1 = r.y1 ?? 0
+                const leftPct = (x0 / (pageW as number)) * 100
+                const topPct = (((pageH as number) - y1) / (pageH as number)) * 100
+                const wPct = ((x1 - x0) / (pageW as number)) * 100
+                const hPct = ((y1 - y0) / (pageH as number)) * 100
+                return (
+                  <Box
+                    key={`bbox-${i}`}
+                    data-pdf-mark="true"
+                    sx={{
+                      position: 'absolute',
+                      left: `${leftPct}%`,
+                      top: `${topPct}%`,
+                      width: `${wPct}%`,
+                      height: `${hPct}%`,
+                      bgcolor: PDF_CITATION_HIGHLIGHT.fill,
+                      border: PDF_CITATION_HIGHLIGHT.border,
+                      borderRadius: '2px',
+                      pointerEvents: 'none',
+                      boxSizing: 'border-box',
+                    }}
+                  />
+                )
+              })}
+          </Box>
         </Document>
         </Box>
 
-        {/* About/Metadata Panel */}
         {showAboutPanel && metadata && (
           <Paper
             elevation={0}

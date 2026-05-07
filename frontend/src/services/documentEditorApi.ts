@@ -63,7 +63,8 @@ export interface DocumentVersion {
 export async function createDocument(
   caseId: string,
   title: string,
-  content: string = ''
+  content: string = '',
+  metadata?: Record<string, any>
 ): Promise<Document> {
   try {
     const response = await apiClient.post<Document>(
@@ -72,6 +73,7 @@ export async function createDocument(
         case_id: caseId,
         title,
         initial_content: content,
+        metadata: metadata ?? undefined,
       }
     )
     return response.data
@@ -120,7 +122,8 @@ export async function getDocument(documentId: string): Promise<Document> {
 export async function updateDocument(
   documentId: string,
   content: string,
-  title?: string
+  title?: string,
+  metadata?: Record<string, any>
 ): Promise<Document> {
   try {
     const response = await apiClient.put<Document>(
@@ -128,6 +131,7 @@ export async function updateDocument(
       {
         content,
         title,
+        metadata: metadata ?? undefined,
       }
     )
     return response.data

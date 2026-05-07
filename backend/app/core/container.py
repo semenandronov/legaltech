@@ -182,22 +182,6 @@ class Container:
             classifier=self.create_classifier()
         )
     
-    def create_rag_handler(self, db: Session):
-        """
-        Создать RAGHandler
-        
-        Args:
-            db: SQLAlchemy сессия
-        """
-        if "rag_handler" in self._overrides:
-            return self._overrides["rag_handler"]
-        
-        from app.services.chat.rag_handler import RAGHandler
-        return RAGHandler(
-            rag_service=self.rag_service,
-            db=db
-        )
-    
     def create_draft_handler(self, db: Session):
         """
         Создать DraftHandler

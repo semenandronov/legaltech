@@ -13,7 +13,6 @@ import {
   Clock,
   CheckCircle,
   XCircle,
-  AlertTriangle,
   Loader2,
   ChevronRight,
   Plus,
@@ -41,7 +40,7 @@ import {
 import { toast } from 'sonner'
 import UnifiedSidebar from '../components/Layout/UnifiedSidebar'
 import * as workflowsApi from '../services/workflowsApi'
-import { getCaseFiles, addFilesToCase } from '../services/api'
+import { getCaseFiles, addFilesToCase, getCasesList, getRecentCases, type CaseListItem } from '../services/api'
 import type { WorkflowDefinition, WorkflowExecution, WorkflowEvent } from '../services/workflowsApi'
 import { WorkflowPlanningPhase } from '../components/Workflows/WorkflowPlanningPhase'
 import { WorkflowExecutionPanel } from '../components/Workflows/WorkflowExecutionPanel'
@@ -52,13 +51,12 @@ import { savePendingWorkflowResult, WorkflowResultData } from '../services/workf
 // Иконки для инструментов workflow
 const toolIcons: Record<string, React.ReactNode> = {
   'tabular_review': <Table className="w-5 h-5" />,
-  'rag_search': <FileSearch className="w-5 h-5" />,
-  'web_search': <Globe className="w-5 h-5" />,
-  'playbook': <BookOpen className="w-5 h-5" />,
+  'rag': <FileSearch className="w-5 h-5" />,
+  'legal_db': <Globe className="w-5 h-5" />,
+  'playbook_check': <BookOpen className="w-5 h-5" />,
   'summarize': <FileText className="w-5 h-5" />,
   'extract_entities': <Target className="w-5 h-5" />,
-  'document_compare': <Database className="w-5 h-5" />,
-  'risk_analysis': <AlertTriangle className="w-5 h-5" />,
+  'document_draft': <Database className="w-5 h-5" />,
 }
 
 // Карточка Workflow Definition
@@ -227,34 +225,61 @@ const WorkflowCard = ({
 // Диалог запуска workflow
 const RunWorkflowDialog = ({
   workflow,
-  caseId,
+  initialCaseId,
   onClose,
   onRun
 }: {
   workflow: WorkflowDefinition
-  caseId: string
+  initialCaseId?: string
   onClose: () => void
-  onRun: (documents: string[], options: Record<string, any>) => void
+  onRun: (caseId: string, documents: string[], options: Record<string, any>) => void
 }) => {
+  const [selectedCaseId, setSelectedCaseId] = useState(initialCaseId || '')
+  const [availableCases, setAvailableCases] = useState<CaseListItem[]>([])
+  const [loadingCases, setLoadingCases] = useState(false)
   const [uploadedFiles, setUploadedFiles] = useState<File[]>([])
   const [existingFiles, setExistingFiles] = useState<Array<{ id: string; filename: string; file_type: string; selected: boolean }>>([])
   const [loadingFiles, setLoadingFiles] = useState(true)
   const [uploading, setUploading] = useState(false)
   const [uploadProgress, setUploadProgress] = useState(0)
-  const [options, setOptions] = useState({
-    detailLevel: 'comprehensive',
-    includeWebSearch: true,
-    priority: 'normal',
-    notifyOnComplete: true
-  })
   const fileInputRef = useRef<HTMLInputElement>(null)
 
-  // Загружаем существующие файлы из Case
+  // Загружаем список дел (для глобального /workflows)
+  useEffect(() => {
+    if (initialCaseId) return
+    const loadCases = async () => {
+      try {
+        setLoadingCases(true)
+        // Для модалки workflow берём "recent" как в глобальном ассистенте:
+        // это заметно легче и быстрее, чем полный список дел.
+        const recent = await getRecentCases(20)
+        setAvailableCases(recent || [])
+      } catch (error) {
+        console.error('Failed to load cases:', error)
+        try {
+          const response = await getCasesList(0, 100)
+          setAvailableCases(response.cases || [])
+        } catch {
+          toast.error('Не удалось загрузить список дел')
+        }
+      } finally {
+        setLoadingCases(false)
+      }
+    }
+    loadCases()
+  }, [initialCaseId])
+
+  // Загружаем существующие файлы из выбранного дела
   useEffect(() => {
     const loadExistingFiles = async () => {
+      if (!selectedCaseId) {
+        setExistingFiles([])
+        setLoadingFiles(false)
+        return
+      }
       try {
         setLoadingFiles(true)
-        const response = await getCaseFiles(caseId)
+        const response = await getCaseFiles(selectedCaseId)
         setExistingFiles(response.files.map(f => ({ ...f, selected: true }))) // По умолчанию все выбраны
       } catch (error) {
         console.error('Failed to load case files:', error)
@@ -263,7 +288,7 @@ const RunWorkflowDialog = ({
       }
     }
     loadExistingFiles()
-  }, [caseId])
+  }, [selectedCaseId])
 
   const handleDrop = (e: React.DragEvent) => {
     e.preventDefault()
@@ -293,7 +318,7 @@ const RunWorkflowDialog = ({
 
       // Загружаем новые файлы на сервер если есть
       if (uploadedFiles.length > 0) {
-        const response = await addFilesToCase(caseId, uploadedFiles, setUploadProgress)
+        const response = await addFilesToCase(selectedCaseId, uploadedFiles, setUploadProgress)
         newFileIds = response.files.map(f => f.id)
       }
 
@@ -305,12 +330,17 @@ const RunWorkflowDialog = ({
       // Объединяем все ID файлов
       const allFileIds = [...selectedExistingIds, ...newFileIds]
 
+      if (!selectedCaseId) {
+        toast.error('Выберите дело')
+        return
+      }
+
       if (allFileIds.length === 0) {
         toast.error('Выберите хотя бы один документ')
         return
       }
 
-      onRun(allFileIds, options)
+      onRun(selectedCaseId, allFileIds, {})
     } catch (error) {
       console.error('Failed to upload files:', error)
       toast.error('Ошибка загрузки файлов')
@@ -358,6 +388,46 @@ const RunWorkflowDialog = ({
 
         {/* Content */}
         <div className="flex-1 overflow-y-auto p-5 space-y-6">
+          {/* Case selector (global workflows page) */}
+          {!initialCaseId && (
+            <div>
+              <h3 className="text-sm font-medium mb-3" style={{ color: 'var(--color-text-primary)' }}>
+                Выберите дело
+              </h3>
+              {loadingCases ? (
+                <div className="flex items-center gap-2 text-sm" style={{ color: 'var(--color-text-secondary)' }}>
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                  Загрузка дел…
+                </div>
+              ) : (
+                <>
+                  <select
+                    value={selectedCaseId}
+                    onChange={(e) => setSelectedCaseId(e.target.value)}
+                    className="w-full rounded-lg border px-3 py-2.5 text-sm"
+                    style={{
+                      backgroundColor: 'var(--color-bg-secondary)',
+                      borderColor: 'var(--color-border)',
+                      color: 'var(--color-text-primary)',
+                    }}
+                  >
+                    <option value="">— Выберите дело —</option>
+                    {availableCases.map((c) => (
+                      <option key={c.id} value={c.id}>
+                        {c.title || `Дело ${c.id.slice(0, 8)}`}
+                      </option>
+                    ))}
+                  </select>
+                  {availableCases.length === 0 && (
+                    <p className="text-xs mt-2" style={{ color: 'var(--color-text-tertiary)' }}>
+                      Список дел пуст. Проверьте, что дела созданы, и обновите страницу.
+                    </p>
+                  )}
+                </>
+              )}
+            </div>
+          )}
+
           {/* Existing Files from Case */}
           <div>
             <h3 className="text-sm font-medium mb-3" style={{ color: 'var(--color-text-primary)' }}>
@@ -497,106 +567,6 @@ const RunWorkflowDialog = ({
             )}
           </div>
 
-          {/* Options */}
-          <div>
-            <h3 className="text-sm font-medium mb-3" style={{ color: 'var(--color-text-primary)' }}>
-              Параметры выполнения
-            </h3>
-            
-            <div className="space-y-4">
-              {/* Detail Level */}
-              <div>
-                <label className="block text-sm mb-2" style={{ color: 'var(--color-text-secondary)' }}>
-                  Уровень детализации
-                </label>
-                <div className="grid grid-cols-3 gap-2">
-                  {[
-                    { value: 'quick', label: 'Быстрый', desc: '~2 мин' },
-                    { value: 'comprehensive', label: 'Полный', desc: '~10 мин' },
-                    { value: 'deep_dive', label: 'Глубокий', desc: '~30 мин' }
-                  ].map(opt => (
-                    <button
-                      key={opt.value}
-                      className="p-3 rounded-lg border text-left transition-colors"
-                      style={{ 
-                        backgroundColor: options.detailLevel === opt.value 
-                          ? 'rgba(99, 102, 241, 0.1)' 
-                          : 'var(--color-bg-secondary)',
-                        borderColor: options.detailLevel === opt.value 
-                          ? 'var(--color-accent)' 
-                          : 'var(--color-border)'
-                      }}
-                      onClick={() => setOptions({ ...options, detailLevel: opt.value })}
-                    >
-                      <div className="font-medium text-sm" style={{ color: 'var(--color-text-primary)' }}>
-                        {opt.label}
-                      </div>
-                      <div className="text-xs" style={{ color: 'var(--color-text-tertiary)' }}>
-                        {opt.desc}
-                      </div>
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              {/* Toggles */}
-              <div className="flex items-center gap-6">
-                <label className="flex items-center gap-2 cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={options.includeWebSearch}
-                    onChange={(e) => setOptions({ ...options, includeWebSearch: e.target.checked })}
-                    className="w-4 h-4 rounded"
-                  />
-                  <span className="text-sm" style={{ color: 'var(--color-text-primary)' }}>
-                    Включить веб-поиск
-                  </span>
-                </label>
-
-                <label className="flex items-center gap-2 cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={options.notifyOnComplete}
-                    onChange={(e) => setOptions({ ...options, notifyOnComplete: e.target.checked })}
-                    className="w-4 h-4 rounded"
-                  />
-                  <span className="text-sm" style={{ color: 'var(--color-text-primary)' }}>
-                    Уведомить по завершении
-                  </span>
-                </label>
-              </div>
-
-              {/* Priority */}
-              <div>
-                <label className="block text-sm mb-2" style={{ color: 'var(--color-text-secondary)' }}>
-                  Приоритет
-                </label>
-                <div className="flex items-center gap-2">
-                  {[
-                    { value: 'normal', label: 'Обычный' },
-                    { value: 'high', label: 'Высокий', premium: true }
-                  ].map(opt => (
-                    <button
-                      key={opt.value}
-                      className="px-4 py-2 rounded-lg border text-sm transition-colors"
-                      style={{ 
-                        backgroundColor: options.priority === opt.value 
-                          ? 'rgba(99, 102, 241, 0.1)' 
-                          : 'var(--color-bg-secondary)',
-                        borderColor: options.priority === opt.value 
-                          ? 'var(--color-accent)' 
-                          : 'var(--color-border)',
-                        color: 'var(--color-text-primary)'
-                      }}
-                      onClick={() => setOptions({ ...options, priority: opt.value })}
-                    >
-                      {opt.label}
-                    </button>
-                  ))}
-                </div>
-              </div>
-            </div>
-          </div>
         </div>
 
         {/* Footer */}
@@ -817,17 +787,16 @@ const ExecutionMonitor = ({
 // Доступные инструменты Workflow
 const AVAILABLE_TOOLS = [
   { name: 'tabular_review', display_name: 'Tabular Review', description: 'Создание таблицы для массового анализа документов', icon: Table },
-  { name: 'rag_search', display_name: 'RAG Search', description: 'Поиск по документам с AI', icon: FileSearch },
-  { name: 'web_search', display_name: 'Web Search', description: 'Поиск информации в интернете', icon: Globe },
-  { name: 'playbook', display_name: 'Playbook Check', description: 'Проверка документов по правилам', icon: BookOpen },
+  { name: 'rag', display_name: 'RAG Search', description: 'Поиск по документам с AI', icon: FileSearch },
+  { name: 'legal_db', display_name: 'Legal DB', description: 'Поиск в правовой базе', icon: Globe },
+  { name: 'playbook_check', display_name: 'Playbook Check', description: 'Проверка документов по правилам', icon: BookOpen },
   { name: 'summarize', display_name: 'Summarize', description: 'Создание резюме документов', icon: FileText },
   { name: 'extract_entities', display_name: 'Extract Entities', description: 'Извлечение сущностей (даты, суммы, лица)', icon: Target },
-  { name: 'document_compare', display_name: 'Document Compare', description: 'Сравнение документов', icon: Database },
-  { name: 'risk_analysis', display_name: 'Risk Analysis', description: 'Анализ рисков', icon: AlertTriangle },
+  { name: 'document_draft', display_name: 'Document Draft', description: 'Подготовка проекта документа', icon: Database },
 ]
 
 // Главная страница
-export default function WorkflowsPage() {
+export default function WorkflowsPage({ embedded = false }: { embedded?: boolean } = {}) {
   const { caseId } = useParams<{ caseId: string }>()
   const navigate = useNavigate()
 
@@ -852,18 +821,25 @@ export default function WorkflowsPage() {
   const [pendingDocuments, setPendingDocuments] = useState<string[]>([])
   const [pendingOptions, setPendingOptions] = useState<Record<string, any>>({})
   const [pendingWorkflow, setPendingWorkflow] = useState<WorkflowDefinition | null>(null)
+  const [pendingCaseId, setPendingCaseId] = useState<string>('')
   
   // Enhanced Execution Panel
   const [showExecutionPanel, setShowExecutionPanel] = useState(false)
   const [executionDetails, setExecutionDetails] = useState<any>(null)
 
   // Навигация
-  const navItems = [
-    { id: 'chat', label: 'Ассистент', icon: MessageSquare, path: `/cases/${caseId}/chat` },
-    { id: 'editor', label: 'Редактор', icon: FileEdit, path: `/cases/${caseId}/editor` },
-    { id: 'playbooks', label: 'Playbooks', icon: BookOpen, path: `/cases/${caseId}/playbooks` },
-    { id: 'workflows', label: 'Workflows', icon: Workflow, path: `/cases/${caseId}/workflows` },
-  ]
+  const navItems = caseId
+    ? [
+        { id: 'chat', label: 'Ассистент', icon: MessageSquare, path: `/cases/${caseId}/chat` },
+        { id: 'editor', label: 'Редактор', icon: FileEdit, path: `/cases/${caseId}/editor` },
+        { id: 'playbooks', label: 'Playbooks', icon: BookOpen, path: `/cases/${caseId}/playbooks` },
+        { id: 'workflows', label: 'Workflows', icon: Workflow, path: `/cases/${caseId}/workflows` },
+      ]
+    : [
+        { id: 'cases', label: 'Дела', icon: FolderUp, path: '/cases' },
+        { id: 'assistant', label: 'Ассистент', icon: MessageSquare, path: '/assistant' },
+        { id: 'workflows', label: 'Workflows', icon: Workflow, path: '/workflows' },
+      ]
 
   // Загрузка данных
   useEffect(() => {
@@ -873,7 +849,7 @@ export default function WorkflowsPage() {
 
         const [workflowsData, executionsData] = await Promise.all([
           workflowsApi.getWorkflowDefinitions(),
-          workflowsApi.getWorkflowExecutions({ case_id: caseId, limit: 50 })
+          workflowsApi.getWorkflowExecutions({ case_id: caseId || undefined, limit: 50 })
         ])
 
         setWorkflows(workflowsData)
@@ -886,18 +862,17 @@ export default function WorkflowsPage() {
       }
     }
 
-    if (caseId) {
-      loadData()
-    }
+    loadData()
   }, [caseId])
 
   // Запуск workflow - сначала показываем Planning Phase
-  const handleRunWorkflow = async (documents: string[], options: Record<string, any>) => {
-    if (!selectedWorkflow || !caseId) return
+  const handleRunWorkflow = async (runCaseId: string, documents: string[], options: Record<string, any>) => {
+    if (!selectedWorkflow || !runCaseId) return
 
     // Сохраняем параметры для последующего запуска
     const workflowToRun = selectedWorkflow
     setPendingWorkflow(workflowToRun)
+    setPendingCaseId(runCaseId)
     setPendingDocuments(documents)
     setPendingOptions(options)
     
@@ -908,7 +883,7 @@ export default function WorkflowsPage() {
 
     try {
       // Генерируем план выполнения (mock для демонстрации)
-      const plan = await generateWorkflowPlan(workflowToRun, documents, options)
+      const plan = await generateWorkflowPlan(workflowToRun, documents, options, runCaseId)
       setWorkflowPlan(plan)
     } catch (error) {
       console.error('Failed to generate plan:', error)
@@ -920,7 +895,12 @@ export default function WorkflowsPage() {
   }
 
   // Генерация плана через реальный API
-  const generateWorkflowPlan = async (workflow: WorkflowDefinition, documents: string[], _options: Record<string, any>) => {
+  const generateWorkflowPlan = async (
+    workflow: WorkflowDefinition,
+    documents: string[],
+    _options: Record<string, any>,
+    runCaseId: string
+  ) => {
     // Если у workflow есть настроенные шаги — используем их напрямую
     const configuredSteps = workflow.config?.steps
     if (configuredSteps && configuredSteps.length > 0) {
@@ -953,7 +933,7 @@ export default function WorkflowsPage() {
       const planResponse = await workflowsApi.createPlan({
         definition_id: workflow.id,
         user_task: `Выполнить workflow "${workflow.display_name}" для анализа ${documents.length} документов`,
-        case_id: caseId || undefined,
+        case_id: runCaseId || undefined,
         file_ids: documents
       })
 
@@ -991,7 +971,7 @@ export default function WorkflowsPage() {
     } catch (error) {
       console.error('API plan generation failed, using fallback:', error)
       // Fallback: генерируем шаги из available_tools
-      const tools = workflow.available_tools || ['rag_search', 'summarize']
+      const tools = workflow.available_tools || ['rag', 'summarize']
       const steps = tools.map((tool, idx) => ({
         id: `step_${idx + 1}`,
         tool: tool,
@@ -1021,13 +1001,12 @@ export default function WorkflowsPage() {
   const getToolDescription = (tool: string, documents: string[]) => {
     const descriptions: Record<string, string> = {
       'tabular_review': `Создание сводной таблицы для анализа ${documents.length} документов`,
-      'rag_search': 'Семантический поиск по загруженным документам',
-      'web_search': 'Поиск актуальной информации в интернете',
-      'playbook': 'Проверка документов по правилам playbook',
+      'rag': 'Семантический поиск по загруженным документам',
+      'legal_db': 'Поиск в правовой базе и судебной практике',
+      'playbook_check': 'Проверка документов по правилам playbook',
       'summarize': `Создание резюме для ${documents.length} документов`,
       'extract_entities': 'Извлечение ключевых сущностей: даты, суммы, стороны',
-      'document_compare': 'Сравнительный анализ документов',
-      'risk_analysis': 'Анализ юридических рисков'
+      'document_draft': 'Подготовка проекта юридического документа'
     }
     return descriptions[tool] || 'Обработка документов'
   }
@@ -1035,13 +1014,12 @@ export default function WorkflowsPage() {
   const getEstimatedTime = (tool: string) => {
     const times: Record<string, string> = {
       'tabular_review': '3-5 мин',
-      'rag_search': '1-2 мин',
-      'web_search': '2-3 мин',
-      'playbook': '5-10 мин',
+      'rag': '1-2 мин',
+      'legal_db': '2-3 мин',
+      'playbook_check': '5-10 мин',
       'summarize': '2-4 мин',
       'extract_entities': '1-2 мин',
-      'document_compare': '3-5 мин',
-      'risk_analysis': '5-8 мин'
+      'document_draft': '4-8 мин'
     }
     return times[tool] || '2-5 мин'
   }
@@ -1049,13 +1027,12 @@ export default function WorkflowsPage() {
   const getToolReasoning = (tool: string) => {
     const reasons: Record<string, string> = {
       'tabular_review': 'Структурированное представление данных упрощает анализ большого количества документов',
-      'rag_search': 'Семантический поиск позволяет найти релевантную информацию даже при неточных запросах',
-      'web_search': 'Внешние источники помогают верифицировать информацию и найти актуальные данные',
-      'playbook': 'Автоматическая проверка по правилам снижает риск пропуска важных нарушений',
+      'rag': 'Семантический поиск позволяет найти релевантную информацию даже при неточных запросах',
+      'legal_db': 'Правовая база нужна для валидации выводов и подбора релевантной практики',
+      'playbook_check': 'Автоматическая проверка по правилам снижает риск пропуска важных нарушений',
       'summarize': 'Краткие резюме экономят время при работе с большим объемом текста',
       'extract_entities': 'Автоматическое извлечение ключевых данных ускоряет анализ',
-      'document_compare': 'Сравнение версий помогает выявить изменения и расхождения',
-      'risk_analysis': 'Систематический анализ рисков защищает от юридических проблем'
+      'document_draft': 'Автоматическая подготовка черновика ускоряет следующий этап работы юриста'
     }
     return reasons[tool] || 'Этот инструмент необходим для выполнения задачи'
   }
@@ -1073,309 +1050,49 @@ export default function WorkflowsPage() {
 
   // Одобрение плана и запуск через реальный API
   const handleApprovePlan = async () => {
-    if (!workflowPlan || !caseId || !pendingWorkflow) return
+    if (!workflowPlan || !pendingCaseId || !pendingWorkflow) return
 
     setShowPlanningPhase(false)
-    setShowExecutionPanel(true)
-
-    const startTime = Date.now()
 
     try {
-      // Инициализируем детали выполнения
-      setExecutionDetails({
-        id: `exec_${Date.now()}`,
-        workflow_id: workflowPlan.workflow_id,
-        workflow_name: workflowPlan.workflow_name,
-        status: 'running',
-        progress: 0,
-        current_step: 0,
-        total_steps: workflowPlan.steps.length,
-        steps: workflowPlan.steps.map((s: any, idx: number) => ({
-          id: s.id,
-          step_number: idx + 1,
-          name: s.tool_display_name,
-          status: idx === 0 ? 'running' : 'pending',
-          tools_used: [{
-            id: `tool_${idx}`,
-            tool_name: s.tool,
-            tool_display_name: s.tool_display_name,
-            status: idx === 0 ? 'running' : 'pending'
-          }]
-        })),
-        started_at: new Date().toISOString(),
-        documents_processed: 0,
-        total_documents: pendingDocuments.length,
-        ai_thoughts: [
-          'Запускаю workflow через API...',
-          `Анализирую ${pendingDocuments.length} документов...`
-        ]
-      })
-
       // Запускаем реальное выполнение через API
       const execution = await workflowsApi.executeWorkflowWithDocs(
         pendingWorkflow.id,
         {
-          case_id: caseId,
+          case_id: pendingCaseId,
           document_ids: pendingDocuments,
           options: pendingOptions
         }
       )
 
       const executionId = execution.id
+      try {
+        const workflowLaunchContext = {
+          execution_id: executionId,
+          workflow_id: pendingWorkflow.id,
+          workflow_name: pendingWorkflow.display_name || workflowPlan.workflow_name,
+          case_id: pendingCaseId,
+          return_chat_path: `/cases/${pendingCaseId}/chat`,
+          document_ids: pendingDocuments,
+          steps: Array.isArray(workflowPlan.steps) ? workflowPlan.steps.map((s: any, idx: number) => ({
+            id: s.id || `step_${idx + 1}`,
+            name: s.tool_display_name || s.name || s.tool || `Шаг ${idx + 1}`,
+            tool: s.tool || s.name || `tool_${idx + 1}`,
+            order: idx + 1,
+          })) : [],
+          started_at: new Date().toISOString(),
+        }
+        localStorage.setItem('pending_workflow_live_run', JSON.stringify(workflowLaunchContext))
+      } catch (storageError) {
+        console.error('Failed to save workflow launch context:', storageError)
+      }
 
-      // Обновляем ID выполнения
-      setExecutionDetails((prev: any) => ({
-        ...prev,
-        id: executionId,
-        ai_thoughts: [
-          ...prev.ai_thoughts,
-          `Execution ID: ${executionId}`,
-          'Получаю события выполнения в реальном времени...'
-        ]
-      }))
-
-      // Подписываемся на SSE stream для получения событий в реальном времени
-      await executeWithStream(executionId, startTime)
+      toast.success('Workflow запущен. Открываю чат дела…')
+      navigate(`/cases/${pendingCaseId}/chat?workflow_execution_id=${encodeURIComponent(executionId)}`)
 
     } catch (error) {
       console.error('Execution failed:', error)
       toast.error('Ошибка выполнения workflow')
-      
-      // Показываем ошибку в UI
-      setExecutionDetails((prev: any) => prev ? ({
-        ...prev,
-        status: 'failed',
-        error: error instanceof Error ? error.message : 'Неизвестная ошибка',
-        ai_thoughts: [
-          ...(prev.ai_thoughts || []),
-          `❌ Ошибка: ${error instanceof Error ? error.message : 'Неизвестная ошибка'}`
-        ]
-      }) : null)
-    }
-  }
-
-  // Выполнение с реальным SSE stream
-  const executeWithStream = async (executionId: string, startTime: number) => {
-    try {
-      // Используем async generator для получения событий
-      for await (const event of workflowsApi.streamWorkflowEvents(executionId)) {
-        handleWorkflowEvent(event, startTime)
-        
-        // Проверяем завершение
-        if (event.type === 'completed' || event.type === 'failed') {
-          break
-        }
-      }
-    } catch (error) {
-      console.error('Stream error, falling back to polling:', error)
-      // Fallback на polling если SSE не работает
-      await pollExecutionStatus(executionId, startTime)
-    }
-  }
-
-  // Обработка событий workflow
-  const handleWorkflowEvent = (event: workflowsApi.WorkflowEvent, startTime: number) => {
-    const elapsedSeconds = Math.floor((Date.now() - startTime) / 1000)
-    const elapsedTime = `${Math.floor(elapsedSeconds / 60)}:${String(elapsedSeconds % 60).padStart(2, '0')}`
-
-    setExecutionDetails((prev: any) => {
-      if (!prev) return null
-
-      switch (event.type) {
-        case 'started':
-          return {
-            ...prev,
-            status: 'running',
-            ai_thoughts: [...prev.ai_thoughts, event.message || 'Выполнение начато']
-          }
-        
-        case 'step_started':
-          return {
-            ...prev,
-            current_step: prev.steps.findIndex((s: any) => s.id === event.step_id),
-            steps: prev.steps.map((s: any) => ({
-              ...s,
-              status: s.id === event.step_id ? 'running' : s.status,
-              tools_used: s.tools_used.map((t: any) => ({
-                ...t,
-                status: s.id === event.step_id ? 'running' : t.status
-              }))
-            })),
-            ai_thoughts: [...prev.ai_thoughts, event.message || `Выполняю шаг: ${event.step_id}`]
-          }
-        
-        case 'step_completed':
-          const stepIndex = prev.steps.findIndex((s: any) => s.id === event.step_id)
-          return {
-            ...prev,
-            progress: event.progress_percent || Math.round(((stepIndex + 1) / prev.total_steps) * 100),
-            documents_processed: Math.min(stepIndex + 1, prev.total_documents),
-            steps: prev.steps.map((s: any) => ({
-              ...s,
-              status: s.id === event.step_id ? 'completed' : s.status,
-              completed_at: s.id === event.step_id ? new Date().toISOString() : s.completed_at,
-              tools_used: s.tools_used.map((t: any) => ({
-                ...t,
-                status: s.id === event.step_id ? 'completed' : t.status,
-                output_summary: s.id === event.step_id ? (event.data?.output_summary || 'Успешно') : t.output_summary
-              })),
-              result_preview: s.id === event.step_id ? (event.data?.result_preview || 'Результаты доступны') : s.result_preview
-            })),
-            ai_thoughts: [...prev.ai_thoughts, event.message || `✅ Шаг завершён: ${event.step_id}`]
-          }
-        
-        case 'step_failed':
-          return {
-            ...prev,
-            steps: prev.steps.map((s: any) => ({
-              ...s,
-              status: s.id === event.step_id ? 'failed' : s.status,
-              tools_used: s.tools_used.map((t: any) => ({
-                ...t,
-                status: s.id === event.step_id ? 'failed' : t.status,
-                error: s.id === event.step_id ? event.data?.error : t.error
-              }))
-            })),
-            ai_thoughts: [...prev.ai_thoughts, `❌ Ошибка в шаге: ${event.data?.error || event.step_id}`]
-          }
-        
-        case 'completed':
-          // Workflow успешно завершён
-          const completedAt = new Date().toISOString()
-          
-          // Сохраняем результат для чата
-          const workflowResult: WorkflowResultData = {
-            execution_id: prev.id,
-            workflow_id: prev.workflow_id,
-            workflow_name: prev.workflow_name,
-            case_id: caseId || '',
-            status: 'completed',
-            summary: event.data?.summary || `Workflow "${prev.workflow_name}" успешно выполнен.`,
-            documents_processed: prev.total_documents,
-            elapsed_time: elapsedTime,
-            started_at: prev.started_at,
-            completed_at: completedAt,
-            artifacts: event.data?.artifacts || {
-              reports: [],
-              tables: [],
-              documents: pendingDocuments.map((docId, idx) => ({ id: docId, name: `Документ ${idx + 1}` })),
-              checks: []
-            },
-            results: event.data?.results || {},
-            steps_completed: prev.total_steps,
-            total_steps: prev.total_steps
-          }
-          
-          savePendingWorkflowResult(workflowResult)
-          toast.success('Workflow успешно завершён! Переход в чат...')
-          
-          setTimeout(() => {
-            setShowExecutionPanel(false)
-            setExecutionDetails(null)
-            navigate(`/cases/${caseId}/chat`)
-          }, 1500)
-          
-          return {
-            ...prev,
-            status: 'completed',
-            progress: 100,
-            completed_at: completedAt,
-            elapsed_time: elapsedTime,
-            result_url: event.data?.result_url,
-            ai_thoughts: [...prev.ai_thoughts, '✨ Workflow успешно завершён!']
-          }
-        
-        case 'failed':
-          toast.error('Workflow завершился с ошибкой')
-          return {
-            ...prev,
-            status: 'failed',
-            error: event.data?.error || event.message,
-            elapsed_time: elapsedTime,
-            ai_thoughts: [...prev.ai_thoughts, `❌ Workflow завершился с ошибкой: ${event.data?.error || event.message}`]
-          }
-        
-        default:
-          // Другие события (progress updates и т.д.)
-          if (event.progress_percent !== undefined) {
-            return {
-              ...prev,
-              progress: event.progress_percent,
-              elapsed_time: elapsedTime
-            }
-          }
-          return prev
-      }
-    })
-  }
-
-  // Fallback polling если SSE не работает
-  const pollExecutionStatus = async (executionId: string, startTime: number) => {
-    let isCompleted = false
-    
-    while (!isCompleted) {
-      try {
-        await new Promise(resolve => setTimeout(resolve, 2000)) // Poll every 2 seconds
-        
-        const executions = await workflowsApi.getExecutions({ case_id: caseId || undefined, limit: 100 })
-        const execution = executions.find(e => e.id === executionId)
-        
-        if (execution) {
-          const elapsedSeconds = Math.floor((Date.now() - startTime) / 1000)
-          const elapsedTime = `${Math.floor(elapsedSeconds / 60)}:${String(elapsedSeconds % 60).padStart(2, '0')}`
-          
-          setExecutionDetails((prev: any) => prev ? ({
-            ...prev,
-            status: execution.status,
-            progress: execution.progress_percent || execution.progress || 0,
-            elapsed_time: elapsedTime,
-            documents_processed: execution.documents_processed || 0
-          }) : null)
-          
-          if (execution.status === 'completed' || execution.status === 'failed') {
-            isCompleted = true
-            
-            if (execution.status === 'completed') {
-              // Получаем полные результаты
-              try {
-                const results = await workflowsApi.getExecutionResults(executionId)
-                
-                const workflowResult: WorkflowResultData = {
-                  execution_id: executionId,
-                  workflow_id: execution.definition_id || '',
-                  workflow_name: execution.workflow_name || 'Workflow',
-                  case_id: caseId || '',
-                  status: 'completed',
-                  summary: results.summary || `Workflow завершён успешно`,
-                  documents_processed: execution.documents_processed || pendingDocuments.length,
-                  elapsed_time: elapsedTime,
-                  started_at: execution.started_at,
-                  completed_at: execution.completed_at || new Date().toISOString(),
-                  artifacts: results.artifacts || { reports: [], tables: [], documents: [], checks: [] },
-                  results: results.results || {},
-                  steps_completed: execution.total_steps_completed || 0,
-                  total_steps: execution.total_steps_completed || 0
-                }
-                
-                savePendingWorkflowResult(workflowResult)
-              } catch (e) {
-                console.error('Failed to get results:', e)
-              }
-              
-              toast.success('Workflow успешно завершён! Переход в чат...')
-              setTimeout(() => {
-                setShowExecutionPanel(false)
-                setExecutionDetails(null)
-                navigate(`/cases/${caseId}/chat`)
-              }, 1500)
-            } else {
-              toast.error('Workflow завершился с ошибкой')
-            }
-          }
-        }
-      } catch (error) {
-        console.error('Polling error:', error)
-      }
     }
   }
 
@@ -1384,7 +1101,7 @@ export default function WorkflowsPage() {
     if (!pendingWorkflow) return
     setPlanningLoading(true)
     try {
-      const plan = await generateWorkflowPlan(pendingWorkflow, pendingDocuments, pendingOptions)
+      const plan = await generateWorkflowPlan(pendingWorkflow, pendingDocuments, pendingOptions, pendingCaseId)
       setWorkflowPlan(plan)
     } catch (error) {
       toast.error('Ошибка генерации плана')
@@ -1399,13 +1116,14 @@ export default function WorkflowsPage() {
     w.description?.toLowerCase().includes(searchQuery.toLowerCase())
   )
 
-  const runningExecutions = executions.filter(e => e.status === 'running')
-  const completedExecutions = executions.filter(e => e.status !== 'running')
+  const runningStatuses = new Set(['running', 'planning', 'executing', 'waiting_for_lawyer'])
+  const runningExecutions = executions.filter(e => runningStatuses.has(e.status))
+  const completedExecutions = executions.filter(e => !runningStatuses.has(e.status))
 
   if (loading) {
     return (
-      <div className="flex h-screen" style={{ backgroundColor: 'var(--color-bg-primary)' }}>
-        <UnifiedSidebar navItems={navItems} title="Legal AI" />
+      <div className={`flex ${embedded ? 'h-full' : 'h-screen'}`} style={{ backgroundColor: 'var(--color-bg-primary)' }}>
+        {!embedded && <UnifiedSidebar navItems={navItems} title="Legal AI" />}
         <div className="flex-1 flex items-center justify-center">
           <Loader2 className="w-8 h-8 animate-spin" style={{ color: 'var(--color-accent)' }} />
         </div>
@@ -1414,8 +1132,8 @@ export default function WorkflowsPage() {
   }
 
   return (
-    <div className="flex h-screen" style={{ backgroundColor: 'var(--color-bg-primary)' }}>
-      <UnifiedSidebar navItems={navItems} title="Legal AI" />
+    <div className={`flex ${embedded ? 'h-full' : 'h-screen'}`} style={{ backgroundColor: 'var(--color-bg-primary)' }}>
+      {!embedded && <UnifiedSidebar navItems={navItems} title="Legal AI" />}
 
       <div className="flex-1 flex flex-col overflow-hidden">
         {/* Header */}
@@ -1548,7 +1266,9 @@ export default function WorkflowsPage() {
                 <WorkflowCard
                   key={workflow.id}
                   workflow={workflow}
-                  onRun={() => setSelectedWorkflow(workflow)}
+                  onRun={() => {
+                    setSelectedWorkflow(workflow)
+                  }}
                   onEdit={() => setEditingWorkflow(workflow)}
                   onDelete={async () => {
                     if (!confirm(`Удалить "${workflow.display_name}"?`)) return
@@ -1673,7 +1393,7 @@ export default function WorkflowsPage() {
                             execution_id: exec.id,
                             workflow_id: exec.definition_id || '',
                             workflow_name: exec.workflow_name || 'Workflow',
-                            case_id: caseId || '',
+                            case_id: exec.case_id || pendingCaseId || '',
                             status: 'completed',
                             summary: exec.summary || `Результаты выполнения workflow "${exec.workflow_name}"`,
                             documents_processed: exec.documents_processed || 0,
@@ -1686,7 +1406,12 @@ export default function WorkflowsPage() {
                             total_steps: exec.total_steps_completed || 0
                           }
                           savePendingWorkflowResult(result)
-                          navigate(`/cases/${caseId}/chat`)
+                          const targetCaseId = exec.case_id || pendingCaseId || caseId
+                          if (targetCaseId) {
+                            navigate(`/cases/${targetCaseId}/chat`)
+                          } else {
+                            toast.info('Не удалось открыть чат: у выполнения не найдено дело')
+                          }
                           toast.success('Открываем результаты в чате...')
                         }}
                         className="flex items-center gap-1 px-3 py-1.5 rounded-lg text-sm"
@@ -1735,10 +1460,10 @@ export default function WorkflowsPage() {
       </div>
 
       {/* Run Workflow Dialog */}
-      {selectedWorkflow && caseId && (
+      {selectedWorkflow && (
         <RunWorkflowDialog
           workflow={selectedWorkflow}
-          caseId={caseId}
+          initialCaseId={caseId}
           onClose={() => setSelectedWorkflow(null)}
           onRun={handleRunWorkflow}
         />
@@ -1781,12 +1506,12 @@ export default function WorkflowsPage() {
           }}
           onDownloadResult={() => {
             // Если есть executionDetails, сохраняем результат и переходим в чат
-            if (executionDetails && caseId) {
+            if (executionDetails && pendingCaseId) {
               const result: WorkflowResultData = {
                 execution_id: executionDetails.id || `exec_${Date.now()}`,
                 workflow_id: executionDetails.workflow_id || '',
                 workflow_name: executionDetails.workflow_name || 'Workflow',
-                case_id: caseId,
+                case_id: pendingCaseId,
                 status: executionDetails.status === 'completed' ? 'completed' : 'failed',
                 summary: `Результаты выполнения workflow "${executionDetails.workflow_name}"`,
                 documents_processed: executionDetails.documents_processed || 0,
@@ -1807,7 +1532,7 @@ export default function WorkflowsPage() {
               savePendingWorkflowResult(result)
               setShowExecutionPanel(false)
               setExecutionDetails(null)
-              navigate(`/cases/${caseId}/chat`)
+              navigate(`/cases/${pendingCaseId}/chat`)
               toast.success('Открываем результаты в чате...')
             }
           }}
@@ -1854,12 +1579,13 @@ export default function WorkflowsPage() {
           onClose={() => setViewingExecutionId(null)}
           onOpenInChat={(execId) => {
             const exec = executions.find(e => e.id === execId)
-            if (exec && caseId) {
+            const targetCaseId = exec?.case_id || pendingCaseId || caseId
+            if (exec && targetCaseId) {
               const result: WorkflowResultData = {
                 execution_id: exec.id,
                 workflow_id: exec.definition_id || '',
                 workflow_name: exec.workflow_name || 'Workflow',
-                case_id: caseId,
+                case_id: targetCaseId,
                 status: exec.status === 'completed' ? 'completed' : 'failed',
                 summary: exec.summary || `Результаты выполнения workflow "${exec.workflow_name}"`,
                 documents_processed: exec.documents_processed || 0,
@@ -1873,7 +1599,7 @@ export default function WorkflowsPage() {
               }
               savePendingWorkflowResult(result)
               setViewingExecutionId(null)
-              navigate(`/cases/${caseId}/chat`)
+              navigate(`/cases/${targetCaseId}/chat`)
               toast.success('Открываем результаты в чате...')
             }
           }}

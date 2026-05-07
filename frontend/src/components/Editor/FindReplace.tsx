@@ -25,6 +25,37 @@ export const FindReplace = ({ editor, isOpen, onClose }: FindReplaceProps) => {
   const [showReplace, setShowReplace] = useState(false)
   const findInputRef = useRef<HTMLInputElement>(null)
 
+  const charToPmPos = useCallback((charIndex: number): number => {
+    if (!editor) return -1
+    let charCount = 0
+    let foundPos = -1
+    editor.state.doc.descendants((node, pos) => {
+      if (foundPos !== -1) return false
+      if (node.isText && node.text) {
+        const nodeLen = node.text.length
+        if (charCount + nodeLen > charIndex) {
+          foundPos = pos + (charIndex - charCount)
+          return false
+        }
+        charCount += nodeLen
+      }
+      return true
+    })
+    return foundPos
+  }, [editor])
+
+  const replacePmRangePreserveMarks = useCallback((from: number, to: number, text: string) => {
+    if (!editor) return
+    const $from = editor.state.doc.resolve(from)
+    const marksAtPos = $from.marks()
+    const newNode = marksAtPos.length > 0
+      ? editor.state.schema.text(text, marksAtPos)
+      : editor.state.schema.text(text)
+    const tr = editor.state.tr.replaceWith(from, to, newNode)
+    editor.view.dispatch(tr)
+    editor.commands.focus()
+  }, [editor])
+
   // Focus input when opened
   useEffect(() => {
     if (isOpen && findInputRef.current) {
@@ -51,31 +82,28 @@ export const FindReplace = ({ editor, isOpen, onClose }: FindReplaceProps) => {
         searchPattern = new RegExp(escapedText, caseSensitive ? 'g' : 'gi')
       }
 
-      // Search directly in ProseMirror document to get correct positions
-      editor.state.doc.descendants((node, pos) => {
-        if (!node.isText || !node.text) return true
-        
-        const text = node.text
-        let match
-        
-        // Reset regex lastIndex for each node
-        searchPattern.lastIndex = 0
-        
-        while ((match = searchPattern.exec(text)) !== null) {
+      // Search on the full doc text, then map char offsets → ProseMirror positions.
+      // This finds matches that span multiple nodes (e.g., formatting marks).
+      const docText = editor.state.doc.textContent
+      let match: RegExpExecArray | null
+      searchPattern.lastIndex = 0
+      while ((match = searchPattern.exec(docText)) !== null) {
+        const charFrom = match.index
+        const charTo = match.index + match[0].length
+        const from = charToPmPos(charFrom)
+        const to = charToPmPos(charTo)
+        if (from !== -1 && to !== -1 && from < to) {
           searchResults.push({
-            from: pos + match.index,
-            to: pos + match.index + match[0].length,
+            from,
+            to,
             text: match[0],
           })
-          
-          // Prevent infinite loop for zero-length matches
-          if (match[0].length === 0) {
-            searchPattern.lastIndex++
-          }
         }
-        
-        return true
-      })
+        // Prevent infinite loop for zero-length matches
+        if (match[0].length === 0) {
+          searchPattern.lastIndex++
+        }
+      }
     } catch {
       // Invalid regex - silently ignore
     }
@@ -90,7 +118,7 @@ export const FindReplace = ({ editor, isOpen, onClose }: FindReplaceProps) => {
     if (searchResults.length > 0) {
       highlightResult(searchResults[0])
     }
-  }, [editor, findText, caseSensitive, useRegex])
+  }, [editor, findText, caseSensitive, useRegex, charToPmPos])
 
   // Debounced search
   useEffect(() => {
@@ -127,14 +155,8 @@ export const FindReplace = ({ editor, isOpen, onClose }: FindReplaceProps) => {
     if (!editor || currentIndex < 0 || currentIndex >= results.length) return
     
     const result = results[currentIndex]
-    
-    editor
-      .chain()
-      .focus()
-      .setTextSelection({ from: result.from, to: result.to })
-      .deleteSelection()
-      .insertContent(replaceText)
-      .run()
+
+    replacePmRangePreserveMarks(result.from, result.to, replaceText)
     
     toast.success('Текст заменён')
     
@@ -148,16 +170,22 @@ export const FindReplace = ({ editor, isOpen, onClose }: FindReplaceProps) => {
     // Replace from end to start to maintain positions
     const sortedResults = [...results].sort((a, b) => b.from - a.from)
     
+    const trBase = editor.state.tr
+    let tr = trBase
     let replacedCount = 0
-    sortedResults.forEach((result) => {
-      editor
-        .chain()
-        .setTextSelection({ from: result.from, to: result.to })
-        .deleteSelection()
-        .insertContent(replaceText)
-        .run()
+
+    for (const result of sortedResults) {
+      const $from = tr.doc.resolve(result.from)
+      const marksAtPos = $from.marks()
+      const newNode = marksAtPos.length > 0
+        ? editor.state.schema.text(replaceText, marksAtPos)
+        : editor.state.schema.text(replaceText)
+      tr = tr.replaceWith(result.from, result.to, newNode)
       replacedCount++
-    })
+    }
+
+    editor.view.dispatch(tr)
+    editor.commands.focus()
     
     toast.success(`Заменено: ${replacedCount} вхождений`)
     

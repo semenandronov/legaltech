@@ -1,11 +1,12 @@
 """Document Converter Service for Legal AI Vault"""
-from typing import Optional
+from typing import Optional, Any
 import logging
 import io
 import tempfile
 import os
 import re
 from io import BytesIO
+from app.config import config
 
 logger = logging.getLogger(__name__)
 
@@ -112,20 +113,77 @@ class DocumentConverterService:
             logger.warning("Docling PDF conversion failed, using pypdf fallback: %s", e)
             return self._convert_pdf_pypdf(file_content)
 
+    @staticmethod
+    def _build_docling_pdf_converter() -> Optional[Any]:
+        """
+        Build tuned Docling converter for PDF->HTML editor rendering.
+        Falls back to default converter if advanced options are unavailable.
+        """
+        try:
+            from docling.datamodel.base_models import InputFormat
+            from docling.datamodel.pipeline_options import PdfPipelineOptions, TableFormerMode
+            from docling.document_converter import DocumentConverter, PdfFormatOption
+        except Exception:
+            return None
+
+        pipeline_options = PdfPipelineOptions(
+            do_table_structure=bool(getattr(config, "DOCLING_PDF_TABLE_STRUCTURE", True)),
+            enable_remote_services=bool(
+                getattr(config, "DOCLING_ENABLE_REMOTE_SERVICES", False)
+            ),
+        )
+        table_opts = getattr(pipeline_options, "table_structure_options", None)
+        if table_opts is not None:
+            table_opts.do_cell_matching = bool(
+                getattr(config, "DOCLING_PDF_TABLE_CELL_MATCHING", True)
+            )
+            mode_name = str(getattr(config, "DOCLING_PDF_TABLE_MODE", "accurate")).upper()
+            if hasattr(TableFormerMode, mode_name):
+                table_opts.mode = getattr(TableFormerMode, mode_name)
+
+        ocr_opts = getattr(pipeline_options, "ocr_options", None)
+        if ocr_opts is not None:
+            ocr_opts.force_full_page_ocr = bool(
+                getattr(config, "DOCLING_OCR_FORCE_FULL_PAGE", False)
+            )
+            ocr_opts.bitmap_area_threshold = float(
+                getattr(config, "DOCLING_OCR_BITMAP_AREA_THRESHOLD", 0.05)
+            )
+            langs = list(getattr(config, "DOCLING_OCR_LANGUAGES", []) or [])
+            if langs:
+                ocr_opts.lang = langs
+
+        artifacts_path = str(getattr(config, "DOCLING_ARTIFACTS_PATH", "") or "").strip()
+        if artifacts_path:
+            pipeline_options.artifacts_path = artifacts_path
+
+        return DocumentConverter(
+            format_options={
+                InputFormat.PDF: PdfFormatOption(pipeline_options=pipeline_options)
+            }
+        )
+
     def _convert_pdf_docling(self, file_content: bytes) -> str:
         """Конвертация PDF через Docling (export_to_html или markdown → HTML)."""
+        from docling.datamodel.base_models import DocumentStream
         from docling.document_converter import DocumentConverter
 
         if not file_content:
             raise ValueError("File content is empty")
 
-        with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as tmp:
-            tmp.write(file_content)
-            tmp_path = tmp.name
-
+        converter = self._build_docling_pdf_converter() or DocumentConverter()
+        max_pages = max(1, int(getattr(config, "DOCLING_MAX_PAGES_PER_DOC", 300) or 300))
+        max_file_size = max(
+            1,
+            int(getattr(config, "DOCLING_MAX_FILE_SIZE_BYTES", 60 * 1024 * 1024) or 60 * 1024 * 1024),
+        )
+        source = DocumentStream(name="editor.pdf", stream=BytesIO(file_content))
+        result = converter.convert(
+            source=source,
+            max_num_pages=max_pages,
+            max_file_size=max_file_size,
+        )
         try:
-            converter = DocumentConverter()
-            result = converter.convert(tmp_path)
             doc = result.document
 
             html_body: Optional[str] = None
@@ -154,10 +212,7 @@ class DocumentConverterService:
             logger.info("Successfully converted PDF to HTML via Docling")
             return wrapped
         finally:
-            try:
-                os.unlink(tmp_path)
-            except OSError:
-                pass
+            source.stream.close()
 
     def _convert_pdf_pypdf(self, file_content: bytes) -> str:
         """

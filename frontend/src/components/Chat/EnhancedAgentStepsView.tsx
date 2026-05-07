@@ -70,7 +70,7 @@ export const EnhancedAgentStepsView: React.FC<EnhancedAgentStepsViewProps> = ({
       case 'completed':
         return <CheckCircle2 className="w-5 h-5 text-green-600" />
       case 'running':
-        return <Loader size={20} className="text-blue-600" />
+        return <Loader size={20} className="text-accent-muted" />
       case 'error':
         return <AlertCircle className="w-5 h-5 text-red-600" />
       case 'pending':
@@ -84,7 +84,7 @@ export const EnhancedAgentStepsView: React.FC<EnhancedAgentStepsViewProps> = ({
       case 'completed':
         return 'border-green-200 bg-green-50/50'
       case 'running':
-        return 'border-blue-200 bg-blue-50/50 animate-pulse'
+        return 'border-border bg-secondary/80 animate-pulse'
       case 'error':
         return 'border-red-200 bg-red-50/50'
       case 'pending':
@@ -120,7 +120,7 @@ export const EnhancedAgentStepsView: React.FC<EnhancedAgentStepsViewProps> = ({
         <Brain className="w-4 h-4 text-gray-600" />
         <h4 className="text-sm font-semibold text-gray-700">Цепочка рассуждений и действий:</h4>
         {isStreaming && (
-          <span className="text-xs text-blue-600 animate-pulse">Выполняется...</span>
+          <span className="text-xs text-accent-muted animate-pulse">Выполняется...</span>
         )}
       </div>
       
@@ -151,7 +151,7 @@ export const EnhancedAgentStepsView: React.FC<EnhancedAgentStepsViewProps> = ({
                       </span>
                       
                       <span className={`text-xs px-2 py-0.5 rounded-full ${
-                        step.status === 'running' ? 'bg-blue-100 text-blue-700' :
+                        step.status === 'running' ? 'bg-muted text-foreground' :
                         step.status === 'completed' ? 'bg-green-100 text-green-700' :
                         step.status === 'error' ? 'bg-red-100 text-red-700' :
                         'bg-gray-100 text-gray-700'

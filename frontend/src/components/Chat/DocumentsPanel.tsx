@@ -77,7 +77,7 @@ export const DocumentsPanel: React.FC<DocumentsPanelProps> = ({
         <h2 className="text-lg font-semibold text-gray-900">Документы</h2>
         <button
           onClick={onClose}
-          className="p-1.5 hover:bg-gray-100 rounded-lg transition-colors focus:outline-none focus:ring-2 focus:ring-blue-500"
+          className="p-1.5 hover:bg-gray-100 rounded-lg transition-colors focus:outline-none focus:ring-2 focus:ring-ring"
           aria-label="Закрыть панель документов"
         >
           <X className="w-5 h-5 text-gray-500" aria-hidden="true" />
@@ -131,9 +131,9 @@ export const DocumentsPanel: React.FC<DocumentsPanelProps> = ({
                   tabIndex={0}
                   aria-label={`Документ ${document.filename}, тип: ${document.file_type}. Перетащите в чат для добавления.`}
                   className={`
-                    flex items-center gap-3 p-3 rounded-lg cursor-pointer transition-colors focus:outline-none focus:ring-2 focus:ring-blue-500
+                    flex items-center gap-3 p-3 rounded-lg cursor-pointer transition-colors focus:outline-none focus:ring-2 focus:ring-ring
                     ${draggedDocument?.id === document.id 
-                      ? 'bg-blue-50 border-2 border-blue-300' 
+                      ? 'bg-secondary border-2 border-border-strong' 
                       : 'hover:bg-gray-50 border border-transparent'
                     }
                   `}

@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from "react"
-import { useParams, useNavigate } from "react-router-dom"
+import { useParams, useNavigate, useSearchParams } from "react-router-dom"
 import { MessageSquare, FileEdit, BookOpen, Workflow, FolderOpen } from "lucide-react"
 import UnifiedSidebar from "../components/Layout/UnifiedSidebar"
 import { TabularReviewTable } from "../components/TabularReview/TabularReviewTable"
@@ -33,6 +33,20 @@ import { Drawer } from "@mui/material"
 const TabularReviewPage: React.FC = () => {
   const { reviewId, caseId } = useParams<{ reviewId?: string; caseId: string }>()
   const navigate = useNavigate()
+  const [searchParams] = useSearchParams()
+  const returnTo = searchParams.get("returnTo")
+
+  const navigateBackToConversation = () => {
+    if (returnTo) {
+      try {
+        navigate(decodeURIComponent(returnTo))
+      } catch {
+        navigate(`/cases/${caseId}/chat`)
+      }
+    } else {
+      navigate(`/cases/${caseId}/chat`)
+    }
+  }
   
   const [caseName, setCaseName] = useState<string>("")
   const [tableData, setTableData] = useState<TableData | null>(null)
@@ -415,7 +429,7 @@ const TabularReviewPage: React.FC = () => {
               <h2 className="font-display text-h2 text-text-primary mb-2">Ошибка</h2>
               <p className="text-body text-text-secondary mb-4">{error}</p>
               <button
-                onClick={() => navigate(`/cases/${caseId}/chat`)}
+                onClick={navigateBackToConversation}
                 className="px-6 py-3 bg-accent text-bg-primary font-medium rounded-lg hover:bg-accent-hover transition-all duration-300"
               >
                 Вернуться к делу
@@ -458,11 +472,11 @@ const TabularReviewPage: React.FC = () => {
             <div className="flex items-center justify-between gap-4">
               <div className="flex items-center gap-4">
                 <button
-                  onClick={() => navigate(`/cases/${caseId}/chat`)}
+                  onClick={navigateBackToConversation}
                   className="p-2 rounded-lg hover:bg-bg-hover transition-colors duration-200 text-text-secondary hover:text-text-primary flex items-center gap-2"
                 >
                   <ArrowLeft className="w-4 h-4" />
-                  Назад к делу
+                  {returnTo ? "Назад в переписку" : "Назад к делу"}
                 </button>
                 <h1 className="font-display text-h1 text-text-primary">Tabular Review</h1>
               </div>
@@ -714,7 +728,7 @@ const TabularReviewPage: React.FC = () => {
                     Попробовать снова
                   </button>
                   <button
-                    onClick={() => navigate(`/cases/${caseId}/chat`)}
+                    onClick={navigateBackToConversation}
                     className="px-4 py-2 bg-bg-elevated border border-border text-text-secondary font-medium rounded-lg hover:bg-bg-hover transition-all duration-300"
                   >
                     Вернуться к делу
@@ -735,7 +749,7 @@ const TabularReviewPage: React.FC = () => {
             <div className="text-center">
               <p className="text-body text-text-secondary mb-4">Нет данных для отображения</p>
               <button
-                onClick={() => navigate(`/cases/${caseId}/chat`)}
+                onClick={navigateBackToConversation}
                 className="px-6 py-3 bg-accent text-bg-primary font-medium rounded-lg hover:bg-accent-hover transition-all duration-300"
               >
                 Вернуться к делу
@@ -902,6 +916,41 @@ const TabularReviewPage: React.FC = () => {
                     
                     // Open document with full highlighting data (no detail panel)
                     // Use details from API if available (more complete), otherwise use cellData from table
+                    const toBBoxRegions = (
+                      refs: Array<{ bbox?: any | null }> | undefined
+                    ): Array<{ x0?: number; y0?: number; x1?: number; y1?: number }> => {
+                      if (!refs || refs.length === 0) return []
+                      const out: Array<{ x0?: number; y0?: number; x1?: number; y1?: number }> = []
+                      for (const r of refs) {
+                        const b = r?.bbox
+                        if (!b || typeof b !== 'object') continue
+                        const x0 = (b as any).x0
+                        const y0 = (b as any).y0
+                        const x1 = (b as any).x1
+                        const y1 = (b as any).y1
+                        if (
+                          typeof x0 === 'number' &&
+                          typeof y0 === 'number' &&
+                          typeof x1 === 'number' &&
+                          typeof y1 === 'number' &&
+                          x1 > x0 &&
+                          y1 > y0
+                        ) {
+                          out.push({ x0, y0, x1, y1 })
+                        }
+                      }
+                      return out
+                    }
+
+                    const firstPageBBox =
+                      (details?.source_references?.[0] as any)?.page_bbox ||
+                      (cellData?.sourceReferences?.[0] as any)?.page_bbox ||
+                      undefined
+
+                    const bboxRegions = details
+                      ? toBBoxRegions(details.source_references as any)
+                      : toBBoxRegions(cellData?.sourceReferences as any)
+
                     const finalCellData = details ? {
                       verbatimExtract: details.verbatim_extract,
                       cellValue: details.cell_value,
@@ -910,6 +959,8 @@ const TabularReviewPage: React.FC = () => {
                       columnType: details.column_type,
                       highlightMode: details.highlight_mode || cellData.highlightMode || (details.verbatim_extract ? 'verbatim' : (details.source_page ? 'page' : 'none')),
                       sourceReferences: details.source_references || cellData.sourceReferences || [],
+                      highlightBBoxRegions: bboxRegions.length ? bboxRegions : undefined,
+                      highlightPageBBox: firstPageBBox,
                       // Phase 4: Deep link fields
                       docId: details.primary_source_doc_id || fileId,  // Use doc_id if available, fallback to fileId
                       charStart: details.primary_source_char_start || undefined,
@@ -919,6 +970,8 @@ const TabularReviewPage: React.FC = () => {
                       // Ensure highlightMode is set correctly
                       highlightMode: cellData.highlightMode || (cellData.verbatimExtract ? 'verbatim' : (cellData.sourcePage ? 'page' : 'none')),
                       sourceReferences: cellData.sourceReferences || [],
+                      highlightBBoxRegions: bboxRegions.length ? bboxRegions : undefined,
+                      highlightPageBBox: firstPageBBox,
                       // Phase 4: Deep link fields from cellData
                       docId: cellData.docId || fileId,
                       charStart: cellData.charStart,

@@ -74,16 +74,15 @@ class RAGTool(BaseTool):
                     "score": doc.metadata.get("score", 0)
                 })
             
-            # Get answer if it's a question
+            # Get synthesized answer for question-like queries
             answer = None
             if "?" in query or any(q in query.lower() for q in ["что", "как", "где", "когда", "почему", "кто"]):
                 try:
-                    # Use generate_answer method
-                    answer = rag_service.generate_answer(
-                        query=query,
-                        context_docs=docs,
+                    answer, _ = rag_service.generate_with_sources(
                         case_id=case_id,
-                        db=self.db
+                        query=query,
+                        k=min(top_k, 10),
+                        db=self.db,
                     )
                 except Exception as e:
                     logger.warning(f"Failed to generate answer: {e}")

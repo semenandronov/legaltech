@@ -71,6 +71,19 @@ const formatDocType = (docType?: string) => {
   return DOC_TYPE_LABELS[docType] ?? docType
 }
 
+const mapCaseDocuments = (documents: any[]): DocumentFile[] =>
+  documents.map((doc: any) => ({
+    id: doc.id,
+    filename: doc.filename,
+    file_type: doc.file_type,
+    folder_id: doc.folder_id ?? null,
+    created_at: doc.created_at,
+    doc_type: doc.doc_type || doc.classification?.doc_type,
+    classification: doc.classification,
+    size: doc.size,
+    pages: doc.pages ?? doc.page_count ?? doc.classification?.pages ?? doc.classification?.page_count,
+  }))
+
 const PRESETS = [
   {
     id: 'chat',
@@ -254,39 +267,28 @@ const CaseOverviewPage = () => {
     setLoadingCase(true)
     setLoadingFiles(true)
     setLoadingSessions(true)
-
-    getCase(caseId)
-      .then(d => setCaseData(d))
-      .finally(() => setLoadingCase(false))
-
-    getDocuments(caseId)
-      .then(d => setFiles(
-        d.documents.map((doc: any) => ({
-          id: doc.id,
-          filename: doc.filename,
-          file_type: doc.file_type,
-          folder_id: doc.folder_id ?? null,
-          created_at: doc.created_at,
-          doc_type: doc.doc_type || doc.classification?.doc_type,
-          classification: doc.classification,
-          size: doc.size,
-          pages: doc.pages ?? doc.page_count ?? doc.classification?.pages ?? doc.classification?.page_count,
-        }))
-      ))
-      .finally(() => setLoadingFiles(false))
-
-    getCaseFolders(caseId)
-      .then(d => setFolders(d || []))
-
-    getChatSessionsForCase(caseId)
-      .then(d => setSessions(d))
-      .catch(() => setSessions([]))
-      .finally(() => setLoadingSessions(false))
-
-    tabularReviewApi.listReviews(caseId, 0, 200)
-      .then(d => setReviews(d.reviews))
-      .catch(() => setReviews([]))
-      .finally(() => setLoadingReviews(false))
+    setLoadingReviews(true)
+    try {
+      const [caseRes, docsRes, foldersRes, sessionsRes, reviewsRes] = await Promise.allSettled([
+        getCase(caseId),
+        getDocuments(caseId),
+        getCaseFolders(caseId),
+        getChatSessionsForCase(caseId),
+        tabularReviewApi.listReviews(caseId, 0, 100),
+      ])
+      if (caseRes.status === 'fulfilled') setCaseData(caseRes.value)
+      if (docsRes.status === 'fulfilled') setFiles(mapCaseDocuments(docsRes.value.documents || []))
+      if (foldersRes.status === 'fulfilled') setFolders(foldersRes.value || [])
+      if (sessionsRes.status === 'fulfilled') setSessions(sessionsRes.value || [])
+      else setSessions([])
+      if (reviewsRes.status === 'fulfilled') setReviews(reviewsRes.value.reviews || [])
+      else setReviews([])
+    } finally {
+      setLoadingCase(false)
+      setLoadingFiles(false)
+      setLoadingSessions(false)
+      setLoadingReviews(false)
+    }
   }
 
   const [folderError, setFolderError] = useState<string | null>(null)
@@ -336,19 +338,7 @@ const CaseOverviewPage = () => {
 
   const reloadFiles = () => {
     if (!caseId) return
-    getDocuments(caseId).then(d => setFiles(
-      d.documents.map((doc: any) => ({
-        id: doc.id,
-        filename: doc.filename,
-        file_type: doc.file_type,
-        folder_id: doc.folder_id ?? null,
-        created_at: doc.created_at,
-        doc_type: doc.doc_type || doc.classification?.doc_type,
-        classification: doc.classification,
-        size: doc.size,
-        pages: doc.pages ?? doc.page_count ?? doc.classification?.pages ?? doc.classification?.page_count,
-      }))
-    ))
+    getDocuments(caseId).then(d => setFiles(mapCaseDocuments(d.documents || [])))
   }
 
   const handleMoveFiles = async () => {

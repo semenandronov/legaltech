@@ -87,6 +87,13 @@ class ChatMetrics:
     # Внешние сервисы
     external_calls: Dict[str, Dict[str, int]] = field(default_factory=dict)
     
+    # Обратная связь по ответам ассистента
+    feedback: Dict[str, int] = field(default_factory=dict)
+    # Mode-specific eval counters
+    mode_evals: Dict[str, Dict[str, int]] = field(default_factory=dict)
+    route_outcomes: Dict[str, Dict[str, int]] = field(default_factory=dict)
+    prompt_profiles: Dict[str, Dict[str, int]] = field(default_factory=dict)
+    
     def record_request(self, mode: str) -> None:
         """
         Записать запрос
@@ -169,6 +176,71 @@ class ChatMetrics:
                 self.external_calls[service][key] = self.external_calls[service].get(key, 0) + 1
         
         logger.debug(f"Recorded external call: service={service}, success={success}")
+
+    def record_feedback(self, rating: str) -> None:
+        """Записать пользовательскую оценку ответа ассистента."""
+        key = (rating or "unknown").strip().lower() or "unknown"
+        self.feedback[key] = self.feedback.get(key, 0) + 1
+        logger.debug("Recorded feedback: rating=%s", key)
+
+    def record_mode_eval(self, mode: str, metric: str, success: bool) -> None:
+        """Record lightweight mode-specific eval counters."""
+        mode_key = (mode or "unknown").strip().lower() or "unknown"
+        metric_key = (metric or "unknown").strip().lower() or "unknown"
+        if mode_key not in self.mode_evals:
+            self.mode_evals[mode_key] = {}
+        key = f"{metric_key}:{'pass' if success else 'fail'}"
+        self.mode_evals[mode_key][key] = self.mode_evals[mode_key].get(key, 0) + 1
+        logger.debug("Recorded mode eval: mode=%s metric=%s success=%s", mode_key, metric_key, success)
+
+    def record_route_outcome(self, predicted_route: str, actual_route: str) -> None:
+        pred = (predicted_route or "unknown").strip().lower() or "unknown"
+        act = (actual_route or "unknown").strip().lower() or "unknown"
+        if pred not in self.route_outcomes:
+            self.route_outcomes[pred] = {}
+        self.route_outcomes[pred][act] = self.route_outcomes[pred].get(act, 0) + 1
+        logger.debug("Recorded route outcome: predicted=%s actual=%s", pred, act)
+
+    def record_prompt_profile(self, profile_id: str, metric: str, success: bool) -> None:
+        profile = (profile_id or "legacy_default").strip().lower() or "legacy_default"
+        metric_key = (metric or "unknown").strip().lower() or "unknown"
+        if profile not in self.prompt_profiles:
+            self.prompt_profiles[profile] = {}
+        key = f"{metric_key}:{'pass' if success else 'fail'}"
+        self.prompt_profiles[profile][key] = self.prompt_profiles[profile].get(key, 0) + 1
+        logger.debug("Recorded prompt profile metric: profile=%s metric=%s success=%s", profile, metric_key, success)
+
+    def get_route_kpis(self) -> Dict[str, Any]:
+        labels = set(self.route_outcomes.keys())
+        for actuals in self.route_outcomes.values():
+            labels.update(actuals.keys())
+        metrics: Dict[str, Dict[str, float]] = {}
+        for label in sorted(labels):
+            tp = self.route_outcomes.get(label, {}).get(label, 0)
+            fp = sum(
+                count
+                for pred, actuals in self.route_outcomes.items()
+                if pred == label
+                for act, count in actuals.items()
+                if act != label
+            )
+            fn = sum(
+                actuals.get(label, 0)
+                for pred, actuals in self.route_outcomes.items()
+                if pred != label
+            )
+            precision = tp / (tp + fp) if (tp + fp) else 0.0
+            recall = tp / (tp + fn) if (tp + fn) else 0.0
+            f1 = (2 * precision * recall / (precision + recall)) if (precision + recall) else 0.0
+            metrics[label] = {
+                "tp": float(tp),
+                "fp": float(fp),
+                "fn": float(fn),
+                "precision": precision,
+                "recall": recall,
+                "f1": f1,
+            }
+        return {"confusion_matrix": self.route_outcomes, "per_label": metrics}
     
     def get_summary(self) -> Dict[str, Any]:
         """
@@ -183,7 +255,11 @@ class ChatMetrics:
             "errors": self.errors,
             "agent_executions": {k: v.to_dict() for k, v in self.agent_executions.items()},
             "classifications": self.classifications,
-            "external_calls": self.external_calls
+            "external_calls": self.external_calls,
+            "feedback": self.feedback,
+            "mode_evals": self.mode_evals,
+            "routing_kpis": self.get_route_kpis(),
+            "prompt_profiles": self.prompt_profiles,
         }
     
     def reset(self) -> None:
@@ -194,6 +270,10 @@ class ChatMetrics:
         self.agent_executions.clear()
         self.classifications.clear()
         self.external_calls.clear()
+        self.feedback.clear()
+        self.mode_evals.clear()
+        self.route_outcomes.clear()
+        self.prompt_profiles.clear()
 
 
 # =============================================================================

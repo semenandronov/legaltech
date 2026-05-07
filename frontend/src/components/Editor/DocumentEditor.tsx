@@ -10,10 +10,15 @@ import TableCell from '@tiptap/extension-table-cell'
 import TableHeader from '@tiptap/extension-table-header'
 import Typography from '@tiptap/extension-typography'
 import Highlight from '@tiptap/extension-highlight'
+import TextAlign from '@tiptap/extension-text-align'
+import TextStyle from '@tiptap/extension-text-style'
+import { FontFamily } from './extensions/FontFamily'
+import { FontSize } from './extensions/FontSize'
 import { EditorToolbar } from './EditorToolbar'
 import { SlashCommands } from './SlashCommands'
 import { TrackChanges } from './extensions/TrackChanges'
 import { Comment } from './extensions/Comment'
+import type { CommentItem } from './extensions/Comment'
 import { RiskHighlight } from './extensions/RiskHighlight'
 import { AIKeyboardShortcuts } from './extensions/AIKeyboardShortcuts'
 import { SelectionHighlight } from './extensions/SelectionHighlight'
@@ -29,6 +34,8 @@ interface DocumentEditorProps {
   caseId?: string
   documentId?: string
   onInsertText?: (text: string) => void
+  comments?: CommentItem[]
+  onCommentsChange?: (comments: CommentItem[]) => void
 }
 
 export interface DocumentEditorRef {
@@ -61,7 +68,9 @@ export const DocumentEditor = forwardRef<DocumentEditorRef, DocumentEditorProps>
   onSelectionRangeChange,
   caseId,
   documentId,
-  onInsertText
+  onInsertText,
+  comments,
+  onCommentsChange,
 }, ref) => {
   // Zoom level for document scaling (could be made configurable via props in future)
   const zoom = 100
@@ -87,6 +96,7 @@ export const DocumentEditor = forwardRef<DocumentEditorRef, DocumentEditorProps>
   
   // Track the last HTML that came FROM the editor (to avoid syncing it back via useEffect)
   const lastEditorContentRef = useRef<string>('')
+  const lastUserScrollAtRef = useRef<number>(0)
 
   // Debounced onChange to prevent excessive re-renders during typing
   const debouncedOnChange = useDebouncedCallback(
@@ -104,6 +114,10 @@ export const DocumentEditor = forwardRef<DocumentEditorRef, DocumentEditorProps>
           levels: [1, 2, 3, 4, 5, 6],
         },
       }),
+      // Typography controls (font family/size) rely on textStyle mark attributes.
+      TextStyle,
+      FontFamily,
+      FontSize,
       Placeholder.configure({
         placeholder: 'Начните писать или введите / для команд...',
       }),
@@ -125,6 +139,10 @@ export const DocumentEditor = forwardRef<DocumentEditorRef, DocumentEditorProps>
       Typography,
       Highlight.configure({
         multicolor: true,
+      }),
+      TextAlign.configure({
+        types: ['heading', 'paragraph'],
+        defaultAlignment: 'left',
       }),
       SlashCommands.configure({ 
         caseId, 
@@ -162,6 +180,11 @@ export const DocumentEditor = forwardRef<DocumentEditorRef, DocumentEditorProps>
       attributes: {
         class: 'prose prose-lg max-w-none focus:outline-none editor-content',
       },
+      handleScrollToSelection: () => {
+        // Do not auto-snap the document to the cursor/selection.
+        // This was causing the top of the sheet to stick to the toolbar after long edits.
+        return true
+      },
     },
     onUpdate: ({ editor }) => {
       const html = editor.getHTML()
@@ -186,6 +209,13 @@ export const DocumentEditor = forwardRef<DocumentEditorRef, DocumentEditorProps>
       lastEditorContentRef.current = content
     }
   }, [content, editor])
+
+  // Hydrate comments from props (persisted in document metadata).
+  useEffect(() => {
+    if (!editor) return
+    if (!comments) return
+    editor.commands.setComments(comments)
+  }, [editor, comments, documentId])
 
   // Expose insertText and setContent methods via ref
   useImperativeHandle(ref, () => ({
@@ -255,12 +285,18 @@ export const DocumentEditor = forwardRef<DocumentEditorRef, DocumentEditorProps>
     addComment: (from: number, to: number, text: string) => {
       if (editor) {
         editor.chain().focus().addComment(from, to, text).run()
+        const commentExtension: any = editor.extensionManager.extensions.find(ext => ext.name === 'comment')
+        const nextComments = (commentExtension?.options?.comments || []) as CommentItem[]
+        onCommentsChange?.(nextComments)
         onChange(editor.getHTML())
       }
     },
     removeComment: (id: string) => {
       if (editor) {
         editor.chain().focus().removeComment(id).run()
+        const commentExtension: any = editor.extensionManager.extensions.find(ext => ext.name === 'comment')
+        const nextComments = (commentExtension?.options?.comments || []) as CommentItem[]
+        onCommentsChange?.(nextComments)
         onChange(editor.getHTML())
       }
     },
@@ -599,12 +635,16 @@ export const DocumentEditor = forwardRef<DocumentEditorRef, DocumentEditorProps>
         editor={editor}
         hasRisks={hasRisks}
         onClearRisks={handleClearRisks}
+        onCommentsChanged={(next) => onCommentsChange?.(next as CommentItem[])}
       />
       <div
         className="flex-1 overflow-auto document-canvas"
         style={{ backgroundColor: '#f1f3f4' }}
+        onScroll={() => {
+          lastUserScrollAtRef.current = Date.now()
+        }}
       >
-        <div style={{ width: '100%', padding: '32px 24px', boxSizing: 'border-box' }}>
+        <div style={{ width: '100%', padding: '32px 24px 96px', boxSizing: 'border-box' }}>
           <div
             ref={editorContentRef}
             className="editor-content"
@@ -614,7 +654,7 @@ export const DocumentEditor = forwardRef<DocumentEditorRef, DocumentEditorProps>
               minHeight: `${scaledHeight}px`,
               margin: '0 auto',
               backgroundColor: 'white',
-              boxShadow: '0 1px 3px 0 rgba(60, 64, 67, 0.3), 0 4px 8px 3px rgba(60, 64, 67, 0.15)',
+              boxShadow: 'none',
               padding: `${scaledMargin}px`,
             }}
           >

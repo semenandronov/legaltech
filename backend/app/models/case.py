@@ -52,6 +52,7 @@ class ChatMessage(Base):
     role = Column(String(20), nullable=False)  # "user" or "assistant"
     content = Column(Text, nullable=False)
     source_references = Column(JSON, nullable=True)  # List of source file names
+    reasoning_steps = Column(JSON, nullable=True)  # [{phase, step, totalSteps, content}, ...]
     session_id = Column(String, name="sessionId", nullable=True)  # Session ID for chat (optional, defaults to case_id). DB column is "sessionId"
     created_at = Column(DateTime, default=datetime.utcnow)
     
@@ -84,6 +85,7 @@ class GlobalAssistantMessage(Base):
                         nullable=False, index=True)
     role = Column(String(20), nullable=False)   # "user" or "assistant"
     content = Column(Text, nullable=False)
+    reasoning_steps = Column(JSON, nullable=True)  # [{phase, step, totalSteps, content}, ...]
     created_at = Column(DateTime, default=datetime.utcnow)
 
     session = relationship("GlobalAssistantSession", back_populates="messages")
@@ -103,6 +105,20 @@ class GlobalAssistantFile(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
 
 
+class LegalCorpusFile(Base):
+    """Original file storage for global legal corpus (shared across users)."""
+    __tablename__ = "legal_corpus_files"
+
+    # Keep id equal to corpus_file_id for direct citation/source mapping
+    id = Column(String, primary_key=True)
+    filename = Column(String(255), nullable=False)
+    file_type = Column(String(50), nullable=False)
+    file_content = Column(LargeBinary, nullable=True)  # raw original bytes
+    html_content = Column(Text, nullable=True)  # cached HTML for DOCX preview
+    created_by_user_id = Column(String, ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+
 class File(Base):
     """File model - stores per-document data for a case"""
     __tablename__ = "files"
@@ -119,6 +135,10 @@ class File(Base):
     processing_status = Column(String(50), default="ready")  # pending, processing, ready, error, cancelled
     processing_error = Column(Text, nullable=True)
     processing_started_at = Column(DateTime, nullable=True)
+    doc_summary_short = Column(Text, nullable=True)
+    doc_key_points = Column(JSON, nullable=True)
+    summary_version = Column(String(32), nullable=True)
+    summary_content_hash = Column(String(64), nullable=True)
     # metadata удалено - не существует в БД, используем другие поля для хранения метаданных
     created_at = Column(DateTime, default=datetime.utcnow)
 

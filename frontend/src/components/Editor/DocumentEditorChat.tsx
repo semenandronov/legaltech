@@ -439,7 +439,7 @@ export const DocumentEditorChat: React.FC<DocumentEditorChatProps> = ({
                         <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium ${
                           msgType === 'edit' 
                             ? 'bg-amber-100 text-amber-700' 
-                            : 'bg-blue-100 text-blue-700'
+                            : 'bg-muted text-foreground'
                         }`}>
                           {msgType === 'edit' ? (
                             <>

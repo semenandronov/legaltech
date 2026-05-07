@@ -36,6 +36,63 @@ def test_uploaded_pdf_template_when_file_present():
     assert title
 
 
+def test_find_best_system_template_match_isk():
+    from app.services.bankruptcy_templates import find_best_system_template_match
+
+    tid = find_best_system_template_match(
+        "Пожалуйста составь исковое заявление о взыскании долга",
+        min_score=8,
+    )
+    assert tid == "lawyer_statement_of_claim"
+
+
+def test_find_best_system_template_match_rtk():
+    from app.services.bankruptcy_templates import find_best_system_template_match
+
+    tid = find_best_system_template_match(
+        "заявление о включении требования в реестр требований кредиторов, ст. 71",
+        min_score=8,
+    )
+    assert tid == "rtk_claim_st71"
+
+
+def test_resolve_draft_auto_template_from_question(monkeypatch):
+    from app.services import draft_template_context as dtc
+
+    monkeypatch.setattr(
+        dtc,
+        "auto_pick_system_template_id",
+        lambda q, db=None: "lawyer_statement_of_claim",
+    )
+
+    from app.services.draft_template_context import resolve_draft_template_context
+
+    class _Q:
+        def query(self, *a, **k):
+            return self
+
+        def filter(self, *a, **k):
+            return self
+
+        def first(self):
+            return None
+
+    class _Db:
+        def query(self, *a):
+            return _Q()
+
+    text, label = resolve_draft_template_context(
+        _Db(),
+        template_system_id=None,
+        template_file_content=None,
+        template_file_id=None,
+        user_question="Составь исковое заявление",
+    )
+    assert text
+    assert "ИСКОВОЕ ЗАЯВЛЕНИЕ" in text
+    assert label
+
+
 def test_resolve_priority_system_over_file_content():
     from app.services.draft_template_context import resolve_draft_template_context
 

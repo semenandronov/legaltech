@@ -63,6 +63,17 @@ backend/__pycache__/
 backend/*.pyc
 backend/.pytest_cache/
 backend/.coverage
+backend/_lc_unpacked/
+backend/_inspect_lc.whl
+backend/.lc-langchain-openai.whl
+backend/_wheels/
+backend/uploads/
+
+# Local tooling / Cursor
+.cursor/settings.json
+
+# Docling local venv
+.docling-venv/
 
 # Temporary files
 *.tmp

@@ -808,9 +808,14 @@ class TabularReviewService:
                 from app.services.tabular_review_models import TabularCellExtractionModel
                 from langchain_core.messages import SystemMessage, HumanMessage
                 
-                # Use structured output if LLM supports it
+                # Use structured output if LLM supports it.
+                # Prefer json_mode to avoid provider-specific JSON Schema validation issues
+                # (e.g. `additionalProperties must be false`).
                 if hasattr(self.llm, 'with_structured_output'):
-                    structured_llm = self.llm.with_structured_output(TabularCellExtractionModel)
+                    structured_llm = self.llm.with_structured_output(
+                        TabularCellExtractionModel,
+                        method="json_mode"
+                    )
                     messages = [
                         SystemMessage(content=system_prompt),
                         HumanMessage(content=user_prompt)
@@ -1244,24 +1249,23 @@ class TabularReviewService:
         Returns:
             Strategy name: 'simple', 'multi_query', 'compression', 'iterative', 'map_reduce'
         """
+        """
+        Strategy selection.
+
+        NOTE: For tabular extraction quality we default to retrieval-first (RAG / hybrid search)
+        and treat full-text local chunking as a fallback only (e.g., if the vector index is empty).
+        """
         doc_length = len(file.original_text or "")
         is_complex = self._is_complex_question(column.prompt)
-        
-        # Simple types (date, currency, number, yes_no, tag) - direct local chunking, no LLM retriever
-        if column.column_type in ['date', 'currency', 'number', 'yes_no', 'tag']:
-            return 'direct'
 
-        # Complex types (text, verbatim) - use advanced approach only for long/complex docs
-        elif column.column_type in ['text', 'verbatim']:
-            if is_complex and doc_length > 20000:
-                return 'iterative'
-            elif doc_length > 50000:
-                return 'compression'
-            else:
-                return 'direct'  # Fast path for short docs
+        # Always prefer RAG/hybrid retrieval as the default path.
+        # For very large/complex documents, allow stronger retrieval strategies.
+        if column.column_type in ['text', 'verbatim'] and is_complex and doc_length > 20000:
+            return 'iterative'
+        if column.column_type in ['text', 'verbatim'] and doc_length > 50000:
+            return 'compression'
 
-        # Default - direct local chunking (no extra LLM call)
-        return 'direct'
+        return 'hybrid'
     
     def _detect_conflicts(
         self,
@@ -1353,96 +1357,113 @@ class TabularReviewService:
             Dictionary with extraction results
         """
         try:
-            from app.services.document_processor import DocumentProcessor
+            from app.services.document_processor import get_document_processor
             from app.services.langchain_retrievers import AdvancedRetrieverService
             from app.services.iterative_rag_service import IterativeRAGService
             from app.services.rag_service import RAGService
-            from app.services.legal_splitter import LegalTextSplitter
+            from langchain_text_splitters import RecursiveCharacterTextSplitter
 
-            document_processor = DocumentProcessor()
+            # Retrieval-first: use indexed chunks (pgvector + FTS) scoped to this file.
+            document_processor = get_document_processor()
             retriever_service = AdvancedRetrieverService(document_processor)
-            
-            # Get document text
-            document_text = file.original_text or ""
-            if not document_text:
-                logger.warning(f"File {file.id} has no text content")
-                return {
-                    "file_id": file.id,
-                    "column_id": column.id,
-                    "cell_value": None,
-                    "error": "No text content"
-                }
-            
+
             # Build query for retrieval
-            query = f"{column.prompt} {column.column_label}"
-            
-            # Retrieve relevant chunks based on strategy
-            relevant_chunks = []
-            
-            if strategy == 'direct':
-                # Fast path: split document locally, no LLM retriever overhead
-                splitter = LegalTextSplitter(chunk_size=1200, chunk_overlap=200)
+            query = f"{column.prompt} {column.column_label}".strip()
+
+            # Prefer strict scoping by file_id via metadata_filter so we never mix documents.
+            # Also prefer docling-level chunks if present.
+            chunk_levels = ["docling"]
+            metadata_filter = {"file_id": file.id}
+
+            file_chunks: List[Document] = []
+            relevant_chunks: List[Document] = []
+
+            try:
+                if strategy in ("hybrid", "rag"):
+                    # Hybrid retrieval: dense (pgvector) + sparse (Postgres FTS / BM25), fused with RRF.
+                    file_chunks = document_processor.hybrid_search(
+                        case_id=file.case_id,
+                        query=query,
+                        k=15,
+                        alpha=0.7,
+                        chunk_levels=chunk_levels,
+                        metadata_filter=metadata_filter,
+                    )
+                elif strategy == "iterative":
+                    # Iterative RAG: adaptive retrieval with query reformulation (quality-first for complex questions).
+                    rag_service = RAGService()
+                    iterative_rag = IterativeRAGService(rag_service)
+                    relevant_chunks = iterative_rag.retrieve_iteratively(
+                        case_id=file.case_id,
+                        query=query,
+                        max_iterations=3,
+                        initial_k=10,
+                    )
+                elif strategy == "compression":
+                    # Compression retrieval (may use LLM) – fall back to hybrid if unsupported.
+                    relevant_chunks = retriever_service.retrieve_with_compression(
+                        case_id=file.case_id,
+                        query=query,
+                        k=10,
+                    )
+                else:
+                    # Multi-query retrieval (query expansion) – fall back to hybrid if unsupported.
+                    relevant_chunks = retriever_service.retrieve_with_multi_query(
+                        case_id=file.case_id,
+                        query=query,
+                        k=10,
+                    )
+            except Exception as e:
+                logger.warning(
+                    f"Retrieval failed (strategy={strategy}) for file {file.id}, column {column.id}: {e}",
+                    exc_info=True,
+                )
+                relevant_chunks = []
+                file_chunks = []
+
+            # If we used non-hybrid retrievers, we must re-scope results to this file.
+            # Prefer strict file_id match; keep filename heuristics as a last resort for legacy metadata.
+            if not file_chunks and relevant_chunks:
+                file_chunks = [
+                    chunk for chunk in relevant_chunks
+                    if (chunk.metadata.get('file_id') == file.id or
+                        chunk.metadata.get('doc_id') == file.id or
+                        chunk.metadata.get('source_file') == file.filename or
+                        chunk.metadata.get('source_file', '').endswith(file.filename))
+                ]
+
+            # Fallback: if retrieval returned nothing, do local chunking from full text.
+            # This is intentionally a last resort – quality-first path should be RAG.
+            if not file_chunks:
+                document_text = file.original_text or ""
+                if not document_text:
+                    logger.warning(f"File {file.id} has no text content")
+                    return {
+                        "file_id": file.id,
+                        "column_id": column.id,
+                        "cell_value": None,
+                        "error": "No text content"
+                    }
+                logger.warning(
+                    "RAG returned no chunks for file %s (case %s). Falling back to local chunking.",
+                    file.id,
+                    file.case_id,
+                )
+                splitter = RecursiveCharacterTextSplitter(
+                    chunk_size=1200,
+                    chunk_overlap=200,
+                    separators=["\n\n", "\n", ". ", " ", ""],
+                    length_function=len,
+                    is_separator_regex=False,
+                )
                 raw_chunks = splitter.split_text(document_text)
-                # Pick most relevant chunks by keyword overlap
-                query_words = set(query.lower().split())
-                def relevance(chunk_text: str) -> int:
-                    words = set(chunk_text.lower().split())
-                    return len(query_words & words)
-                ranked = sorted(enumerate(raw_chunks), key=lambda t: relevance(t[1]), reverse=True)
                 file_chunks = [
                     Document(
                         page_content=raw_chunks[i],
                         metadata={"chunk_index": i, "file_id": file.id, "source_file": file.filename}
                     )
-                    for i, _ in ranked[:3]
+                    for i in range(min(8, len(raw_chunks)))
                 ]
-            else:
-                try:
-                    if strategy == 'iterative':
-                        rag_service = RAGService()
-                        iterative_rag = IterativeRAGService(rag_service)
-                        relevant_chunks = iterative_rag.retrieve_iteratively(
-                            case_id=file.case_id,
-                            query=query,
-                            max_iterations=3,
-                            initial_k=5
-                        )
-                    elif strategy == 'compression':
-                        relevant_chunks = retriever_service.retrieve_with_compression(
-                            case_id=file.case_id,
-                            query=query,
-                            k=5
-                        )
-                    else:
-                        relevant_chunks = retriever_service.retrieve_with_multi_query(
-                            case_id=file.case_id,
-                            query=query,
-                            k=5
-                        )
-                except Exception as e:
-                    logger.warning(f"Error retrieving chunks with strategy '{strategy}': {e}, falling back to document chunking")
-                    relevant_chunks = []
-
-                # Filter chunks for this specific file
-                file_chunks = [
-                    chunk for chunk in relevant_chunks
-                    if (chunk.metadata.get('file_id') == file.id or
-                        chunk.metadata.get('source_file') == file.filename or
-                        chunk.metadata.get('source_file', '').endswith(file.filename))
-                ]
-
-                # If no chunks found through retriever, use document chunking as fallback
-                if not file_chunks:
-                    logger.debug(f"No chunks found via retriever for file {file.id}, using document chunking")
-                    splitter = LegalTextSplitter(chunk_size=1200, chunk_overlap=200)
-                    all_chunks = splitter.split_text(document_text)
-                    file_chunks = [
-                        Document(
-                            page_content=chunk,
-                            metadata={"chunk_index": i, "file_id": file.id, "source_file": file.filename}
-                        )
-                        for i, chunk in enumerate(all_chunks)
-                    ]
             
             if not file_chunks:
                 return {
@@ -1457,9 +1478,10 @@ class TabularReviewService:
             best_result = None
             best_confidence = 0.0
             
-            # Simple types need only 1 chunk; complex types up to 3
+            # Chunk budget for extraction: keep it small for cost/latency, but large enough for recall.
+            # Simple types still benefit from 2 chunks (avoid picking the wrong occurrence in long contracts).
             simple_types = {'date', 'currency', 'number', 'yes_no', 'tag'}
-            max_chunks = 1 if column.column_type in simple_types else 3
+            max_chunks = 2 if column.column_type in simple_types else 6
             # Process top chunks
             for chunk in file_chunks[:max_chunks]:
                 try:
@@ -1486,6 +1508,8 @@ class TabularReviewService:
                     
                     # Create prompt
                     prompt = ChatPromptTemplate.from_messages([
+                        # IMPORTANT: ChatPromptTemplate treats `{...}` as template variables.
+                        # Do NOT include JSON examples with braces in the prompt text here.
                         ("system", f"""Ты эксперт по извлечению информации из юридических документов.
 Тип ответа: {column.column_type}
 Описание: {type_desc}{tag_options_text}
@@ -1493,7 +1517,7 @@ class TabularReviewService:
 ВАЖНО:
 - Указывай source_page если возможно
 - Указывай source_section (например, "Раздел 3.1", "Статья 5")
-- Указывай source_references - список конкретных мест в документе с цитатами: [{{"page": 1, "section": "Раздел 3", "text": "цитата"}}]
+- Указывай source_references — список конкретных мест в документе с цитатами (НЕ в JSON-формате), например: [(page=1, section="Раздел 3", text="цитата")]
 - Указывай reasoning - подробное объяснение, почему именно такой ответ, с указанием конкретных мест в документе
 - Указывай confidence - насколько ты уверен (0.0-1.0)
 - Если информация не найдена, верни "N/A" для cell_value
@@ -1501,7 +1525,7 @@ class TabularReviewService:
                         ("human", f"""Вопрос: {column.prompt}
 
 Документ:
-{chunk.page_content}
+{(chunk.page_content or '')[:6000]}
 
 Извлеки информацию согласно типу {column.column_type}.
 Если это verbatim, приведи ТОЧНУЮ цитату из документа.
@@ -1510,9 +1534,10 @@ class TabularReviewService:
                     
                     # Try structured output first
                     try:
+                        # Prefer json_mode to avoid brittle JSON Schema enforcement on some providers.
                         structured_llm = self.llm.with_structured_output(
                             TabularCellExtractionModel,
-                            method="json_schema"
+                            method="json_mode"
                         )
                         chain = prompt | structured_llm
                         raw_result = await chain.ainvoke({})
@@ -1666,6 +1691,19 @@ class TabularReviewService:
             # Add any additional source_references from result
             if hasattr(best_result, 'source_references') and best_result.source_references:
                 source_references.extend(best_result.source_references)
+
+            # Quality gate: evidence must be present for any non-N/A value.
+            # If the model produced an answer without citations, force review instead of silently "completed".
+            if (
+                best_result.cell_value
+                and best_result.cell_value.strip().upper() != "N/A"
+                and len(source_references) == 0
+            ):
+                cell_status = "pending"
+
+            # Quality gate: low confidence is review-worthy even if verifier passed.
+            if best_result.confidence < 0.6 and cell_status == "completed":
+                cell_status = "pending"
             
             return {
                 "file_id": file.id,
@@ -1972,10 +2010,12 @@ class TabularReviewService:
             if existing_cell:
                 # Update existing cell with all new fields
                 existing_cell.cell_value = result.get("cell_value")
+                existing_cell.normalized_value = result.get("normalized_value")
                 existing_cell.verbatim_extract = result.get("verbatim_extract")
                 existing_cell.reasoning = result.get("reasoning")
                 existing_cell.source_references = result.get("source_references")
                 existing_cell.confidence_score = result.get("confidence_score")
+                existing_cell.candidates = result.get("candidates")
                 # Extract source_page from first source_reference if available
                 source_refs = result.get("source_references", [])
                 
@@ -2006,7 +2046,7 @@ class TabularReviewService:
                 existing_cell.primary_source_char_start = primary_source_char_start
                 existing_cell.primary_source_char_end = primary_source_char_end
                 existing_cell.verified_flag = verified_flag
-                existing_cell.status = "completed"
+                existing_cell.status = result.get("status", "completed")
                 existing_cell.updated_at = datetime.utcnow()
             else:
                 # Extract source_page from first source_reference if available
@@ -2041,13 +2081,15 @@ class TabularReviewService:
                     file_id=result["file_id"],
                     column_id=result["column_id"],
                     cell_value=result.get("cell_value"),
+                    normalized_value=result.get("normalized_value"),
                     verbatim_extract=result.get("verbatim_extract"),
                     reasoning=result.get("reasoning"),
                     source_references=result.get("source_references"),
                     confidence_score=result.get("confidence_score"),
                     source_page=source_page,
                     source_section=source_section,
-                    status="completed",
+                    status=result.get("status", "completed"),
+                    candidates=result.get("candidates"),
                     # Phase 4: Citation system fields
                     primary_source_doc_id=primary_source_doc_id,
                     primary_source_char_start=primary_source_char_start,
@@ -2380,10 +2422,12 @@ class TabularReviewService:
             if existing_cell:
                 # Update existing cell
                 existing_cell.cell_value = result.get("cell_value")
+                existing_cell.normalized_value = result.get("normalized_value")
                 existing_cell.verbatim_extract = result.get("verbatim_extract")
                 existing_cell.reasoning = result.get("reasoning")
                 existing_cell.source_references = result.get("source_references")
                 existing_cell.confidence_score = result.get("confidence_score")
+                existing_cell.candidates = result.get("candidates")
                 source_refs = result.get("source_references", [])
                 if source_refs and isinstance(source_refs, list) and len(source_refs) > 0:
                     first_ref = source_refs[0]
@@ -2393,7 +2437,7 @@ class TabularReviewService:
                 else:
                     existing_cell.source_page = result.get("source_page")
                     existing_cell.source_section = result.get("source_section")
-                existing_cell.status = "completed"
+                existing_cell.status = result.get("status", "completed")
                 existing_cell.updated_at = datetime.utcnow()
             else:
                 # Create new cell
@@ -2411,13 +2455,15 @@ class TabularReviewService:
                     file_id=result["file_id"],
                     column_id=result["column_id"],
                     cell_value=result.get("cell_value"),
+                    normalized_value=result.get("normalized_value"),
                     verbatim_extract=result.get("verbatim_extract"),
                     reasoning=result.get("reasoning"),
                     source_references=result.get("source_references"),
                     confidence_score=result.get("confidence_score"),
                     source_page=source_page,
                     source_section=source_section,
-                    status="completed"
+                    status=result.get("status", "completed"),
+                    candidates=result.get("candidates"),
                 )
                 self.db.add(cell)
             

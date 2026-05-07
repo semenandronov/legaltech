@@ -12,6 +12,7 @@ from app.models.case import Case, File as FileModel
 from app.models.user import User
 from app.config import config
 import uuid
+from app.services.langchain_loaders import DocumentLoaderService
 
 logger = logging.getLogger(__name__)
 
@@ -83,6 +84,82 @@ class CaseInfoRequest(BaseModel):
         if len(v) > 255:
             raise ValueError('Title must be at most 255 characters')
         return v
+
+
+@router.post("/chunk-preview")
+async def chunk_preview(
+    file: UploadFile = File(...),
+    max_chunks: int = Form(200),
+    engine: str = Form("docling"),
+    current_user: User = Depends(get_current_user),
+):
+    """
+    Preview how a single uploaded file is split into chunks by current ingestion pipeline.
+    Intended for testing/tuning only.
+    """
+    if not file.filename:
+        raise HTTPException(status_code=400, detail="Пустое имя файла недопустимо")
+
+    filename = file.filename.replace("..", "").replace("/", "").replace("\\", "")
+    _, ext = filename.rsplit(".", 1) if "." in filename else (filename, "")
+    allowed_extensions = [e.replace(".", "") for e in config.ALLOWED_EXTENSIONS]
+    if ext.lower() not in allowed_extensions:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Формат '{ext}' не поддерживается. Поддерживаются: {', '.join(allowed_extensions)}",
+        )
+
+    content = await file.read()
+    if not content:
+        raise HTTPException(status_code=400, detail="Файл пуст")
+
+    if len(content) > config.MAX_FILE_SIZE:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Файл слишком большой. Максимум: {config.MAX_FILE_SIZE / 1024 / 1024:.0f} МБ",
+        )
+
+    safe_limit = max(1, min(int(max_chunks or 200), 1000))
+    selected_engine = (engine or "docling").strip().lower()
+    if selected_engine not in {"docling", "yandex"}:
+        raise HTTPException(status_code=400, detail="engine должен быть 'docling' или 'yandex'")
+
+    try:
+        docs = DocumentLoaderService.load_document_for_preview(
+            content=content,
+            filename=filename,
+            engine=selected_engine,
+        )
+    except Exception as e:
+        logger.error("Chunk preview failed for %s by user %s: %s", filename, current_user.id, e, exc_info=True)
+        raise HTTPException(status_code=400, detail=f"Не удалось разобрать документ: {e}")
+
+    chunks = []
+    total_chars = 0
+    for idx, doc in enumerate(docs[:safe_limit]):
+        text = (doc.page_content or "").strip()
+        chars = len(text)
+        total_chars += chars
+        chunks.append(
+            {
+                "index": idx,
+                "chars": chars,
+                "preview": text[:600],
+                "text": text,
+                "metadata": dict(doc.metadata or {}),
+            }
+        )
+
+    return {
+        "filename": filename,
+        "engine": selected_engine,
+        "content_bytes": len(content),
+        "chunks_total": len(docs),
+        "chunks_returned": len(chunks),
+        "total_chars_returned": total_chars,
+        "truncated": len(docs) > safe_limit,
+        "chunks": chunks,
+    }
     
     @field_validator('description')
     @classmethod

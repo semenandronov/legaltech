@@ -3,6 +3,37 @@
  */
 import api from './api'
 
+type SharedGetCacheEntry<T> = { expiresAt: number; value: T }
+const workflowGetCache = new Map<string, SharedGetCacheEntry<unknown>>()
+const workflowGetInFlight = new Map<string, Promise<unknown>>()
+
+async function cachedWorkflowGet<T>(key: string, ttlMs: number, fetcher: () => Promise<T>): Promise<T> {
+  const now = Date.now()
+  const cached = workflowGetCache.get(key)
+  if (cached && cached.expiresAt > now) {
+    return cached.value as T
+  }
+  const inFlight = workflowGetInFlight.get(key)
+  if (inFlight) return inFlight as Promise<T>
+  const task = (async () => {
+    const value = await fetcher()
+    workflowGetCache.set(key, { expiresAt: Date.now() + ttlMs, value })
+    return value
+  })()
+  workflowGetInFlight.set(key, task)
+  try {
+    return await task
+  } finally {
+    workflowGetInFlight.delete(key)
+  }
+}
+
+function invalidateWorkflowCache(prefix: string): void {
+  for (const key of workflowGetCache.keys()) {
+    if (key.startsWith(prefix)) workflowGetCache.delete(key)
+  }
+}
+
 // Типы
 export interface WorkflowStep {
   id?: string
@@ -107,6 +138,7 @@ export type WorkflowStatus =
   | 'pending'
   | 'planning'
   | 'awaiting_approval'
+  | 'waiting_for_lawyer'
   | 'executing'
   | 'validating'
   | 'generating_report'
@@ -195,9 +227,11 @@ export const getDefinitions = async (params?: {
   limit?: number
   offset?: number
 }): Promise<WorkflowDefinition[]> => {
-  const response = await api.get('/api/workflow-agentic/definitions', { params })
-  // Ensure we always return an array
-  return Array.isArray(response.data) ? response.data : []
+  const key = `wf-definitions:${JSON.stringify(params || {})}`
+  return cachedWorkflowGet(key, 3000, async () => {
+    const response = await api.get('/api/workflow-agentic/definitions', { params })
+    return Array.isArray(response.data) ? response.data : []
+  })
 }
 
 export const getDefinition = async (definitionId: string): Promise<WorkflowDefinition> => {
@@ -265,6 +299,7 @@ export const executeWorkflow = async (data: {
   message: string
 }> => {
   const response = await api.post('/api/workflow-agentic/execute', data)
+  invalidateWorkflowCache('wf-executions:')
   return response.data
 }
 
@@ -274,18 +309,24 @@ export const getExecutions = async (params?: {
   limit?: number
   offset?: number
 }): Promise<WorkflowExecution[]> => {
-  const response = await api.get('/api/workflow-agentic/executions', { params })
-  // Ensure we always return an array
-  return Array.isArray(response.data) ? response.data : []
+  const key = `wf-executions:${JSON.stringify(params || {})}`
+  return cachedWorkflowGet(key, 3000, async () => {
+    const response = await api.get('/api/workflow-agentic/executions', { params })
+    return Array.isArray(response.data) ? response.data : []
+  })
 }
 
 export const getExecution = async (executionId: string): Promise<WorkflowExecution> => {
-  const response = await api.get(`/api/workflow-agentic/executions/${executionId}`)
-  return response.data
+  return cachedWorkflowGet(`wf-execution:${executionId}`, 1500, async () => {
+    const response = await api.get(`/api/workflow-agentic/executions/${executionId}`)
+    return response.data
+  })
 }
 
 export const cancelExecution = async (executionId: string): Promise<void> => {
   await api.post(`/api/workflow-agentic/executions/${executionId}/cancel`)
+  invalidateWorkflowCache(`wf-execution:${executionId}`)
+  invalidateWorkflowCache('wf-executions:')
 }
 
 export const getExecutionResults = async (executionId: string): Promise<{
@@ -319,6 +360,23 @@ export const validateExecution = async (executionId: string): Promise<{
   return response.data
 }
 
+/**
+ * URL SSE для workflow. В dev всегда относительный `/api/...` — тот же origin, что у Vite,
+ * прокси в vite.config.ts пересылает на бэкенд. Если подставлять `VITE_API_URL` с другим
+ * host/port, EventSource часто не получает события (зависание на «Подключение к потоку…»),
+ * хотя axios с CORS к тому же API работает.
+ */
+export function buildWorkflowSseUrl(executionId: string): string {
+  const token = localStorage.getItem('access_token')
+  const qs = token ? `?token=${encodeURIComponent(token)}` : ''
+  const path = `/api/workflow-agentic/executions/${executionId}/stream${qs}`
+  if (import.meta.env.DEV) {
+    return path
+  }
+  const base = (import.meta.env.VITE_API_URL || '').trim().replace(/\/$/, '')
+  return base ? `${base}${path}` : path
+}
+
 // SSE Stream for real-time updates
 // ВАЖНО: EventSource API не поддерживает кастомные headers,
 // поэтому токен передаётся через query параметр
@@ -327,10 +385,7 @@ export const streamExecution = (
   onEvent: (event: WorkflowEvent) => void,
   onError?: (error: Error) => void
 ): (() => void) => {
-  const baseUrl = import.meta.env.VITE_API_URL || ''
-  const token = localStorage.getItem('access_token')
-  // Передаём токен через query параметр, так как EventSource не поддерживает headers
-  const url = `${baseUrl}/api/workflow-agentic/executions/${executionId}/stream${token ? `?token=${encodeURIComponent(token)}` : ''}`
+  const url = buildWorkflowSseUrl(executionId)
 
   const eventSource = new EventSource(url)
 
@@ -391,55 +446,120 @@ export const executeWorkflowWithDocs = async (
   }
 }
 
-// Stream workflow events as async generator
+/** Закрывает активный EventSource для execution (два параллельных SSE ломают stream lock на бэкенде). */
+const workflowStreamReleaseByExecution = new Map<string, () => void>()
+
+export function releaseWorkflowEventStream(executionId: string): void {
+  workflowStreamReleaseByExecution.get(executionId)?.()
+  workflowStreamReleaseByExecution.delete(executionId)
+}
+
+/**
+ * Поток событий workflow по SSE.
+ *
+ * Раньше использовали fetch + ReadableStream: во многих окружениях тело ответа
+ * буферизуется до крупного чанка — пользователь не видел прогресс минутами, хотя
+ * workflow на сервере шёл. EventSource доставляет default message-события по мере прихода.
+ */
 export async function* streamWorkflowEvents(executionId: string): AsyncGenerator<WorkflowEvent> {
-  const baseUrl = import.meta.env.VITE_API_URL || ''
-  const token = localStorage.getItem('access_token')
-  // Передаём токен через query параметр для SSE совместимости
-  const url = `${baseUrl}/api/workflow-agentic/executions/${executionId}/stream${token ? `?token=${encodeURIComponent(token)}` : ''}`
-  
-  try {
-    const response = await fetch(url, {
-      headers: token ? { Authorization: `Bearer ${token}` } : {}
+  releaseWorkflowEventStream(executionId)
+
+  const url = buildWorkflowSseUrl(executionId)
+
+  const incoming: WorkflowEvent[] = []
+  let wake: (() => void) | null = null
+  let fatal = false
+  let silentClose = false
+  let lastErrorAt = 0
+
+  const notify = () => {
+    wake?.()
+    wake = null
+  }
+
+  const waitNext = () =>
+    new Promise<void>((resolve) => {
+      if (incoming.length > 0 || fatal) {
+        resolve()
+        return
+      }
+      wake = resolve
     })
-    
-    if (!response.ok) {
-      throw new Error(`HTTP error! status: ${response.status}`)
+
+  const es = new EventSource(url)
+
+  const hardRelease = () => {
+    if (silentClose) return
+    silentClose = true
+    fatal = true
+    notify()
+    try {
+      es.close()
+    } catch {
+      /* ignore */
     }
-    
-    const reader = response.body?.getReader()
-    if (!reader) return
-    
-    const decoder = new TextDecoder()
-    let buffer = ''
-    
-    while (true) {
-      const { done, value } = await reader.read()
-      if (done) break
-      
-      buffer += decoder.decode(value, { stream: true })
-      const lines = buffer.split('\n')
-      buffer = lines.pop() || ''
-      
-      for (const line of lines) {
-        if (line.startsWith('data: ')) {
-          try {
-            const data = JSON.parse(line.slice(6))
-            yield data as WorkflowEvent
-          } catch (e) {
-            console.error('Failed to parse SSE event:', e)
-          }
+  }
+
+  workflowStreamReleaseByExecution.set(executionId, hardRelease)
+
+  es.onmessage = (ev: MessageEvent) => {
+    try {
+      incoming.push(JSON.parse(ev.data) as WorkflowEvent)
+    } catch (e) {
+      console.error('Failed to parse SSE event:', e)
+    }
+    notify()
+  }
+
+  es.onerror = () => {
+    if (silentClose) {
+      try {
+        es.close()
+      } catch {
+        /* ignore */
+      }
+      return
+    }
+    // Do not close on transient SSE errors: EventSource auto-reconnects.
+    // Closing here forces frontend into aggressive polling and increases backend load.
+    const now = Date.now()
+    if (now - lastErrorAt > 15000) {
+      lastErrorAt = now
+      incoming.push({
+        type: 'status',
+        execution_id: executionId,
+        timestamp: new Date().toISOString(),
+        message: 'Переподключение к потоку workflow...',
+      } as WorkflowEvent)
+      notify()
+    }
+  }
+
+  try {
+    while (!fatal || incoming.length > 0) {
+      await waitNext()
+      while (incoming.length > 0) {
+        const ev = incoming.shift()!
+        yield ev
+        const t = String((ev as any).type || (ev as any).event_type || '').toLowerCase()
+        if (['completed', 'failed', 'cancelled', 'completed_with_errors', 'error'].includes(t)) {
+          fatal = true
+          es.close()
+          return
         }
       }
+      if (fatal) break
     }
-  } catch (error) {
-    console.error('Stream error:', error)
-    // Yield error event
-    yield {
-      type: 'error',
-      execution_id: executionId,
-      timestamp: new Date().toISOString(),
-      message: 'Connection error'
+  } finally {
+    if (workflowStreamReleaseByExecution.get(executionId) === hardRelease) {
+      workflowStreamReleaseByExecution.delete(executionId)
+    }
+    fatal = true
+    silentClose = true
+    try {
+      es.close()
+    } catch {
+      /* ignore */
     }
   }
 }
@@ -458,6 +578,7 @@ export const getStatusColor = (status: WorkflowStatus | string): string => {
     case 'generating_report':
       return 'var(--color-accent)'
     case 'awaiting_approval':
+    case 'waiting_for_lawyer':
       return 'var(--color-warning)'
     case 'pending':
     default:
@@ -473,6 +594,8 @@ export const getStatusLabel = (status: WorkflowStatus | string): string => {
       return 'Планирование'
     case 'awaiting_approval':
       return 'Ожидает одобрения'
+    case 'waiting_for_lawyer':
+      return 'Ожидает юриста'
     case 'executing':
       return 'Выполнение'
     case 'validating':

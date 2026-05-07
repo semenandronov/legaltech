@@ -1001,7 +1001,7 @@ export const DocumentEditorContextChat: React.FC<DocumentEditorContextChatProps>
     <div className="flex flex-col h-full bg-white">
 
       {/* ── Header ── */}
-      <div className="px-4 pt-4 pb-3 border-b shrink-0" style={{ borderColor: '#e5e7eb' }}>
+      <div className="px-4 pt-4 pb-3 border-b shrink-0" style={{ borderColor: '#e5e7eb', height: '54px' }}>
         <div className="flex items-center justify-between">
           <span className="text-xs font-semibold text-gray-400 uppercase tracking-wider">AI Ассистент</span>
           <span className="text-xs text-gray-400 truncate max-w-[160px]">{documentTitle}</span>
@@ -1094,7 +1094,7 @@ export const DocumentEditorContextChat: React.FC<DocumentEditorContextChatProps>
                 {message.citations && message.citations.length > 0 && (
                   <div className="flex flex-wrap gap-1 mt-1">
                     {message.citations.map((c) => (
-                      <span key={c.file_id} className="text-xs px-2 py-0.5 rounded-full bg-blue-50 text-blue-600 border border-blue-100">
+                      <span key={c.file_id} className="text-xs px-2 py-0.5 rounded-full bg-secondary text-accent-muted border border-border-subtle">
                         {c.file}
                       </span>
                     ))}

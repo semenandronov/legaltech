@@ -55,6 +55,41 @@ const apiClient = axios.create({
   baseURL: BASE_URL || undefined, // Use BASE_URL if set, otherwise undefined (relative paths)
 })
 
+type SharedGetCacheEntry<T> = { expiresAt: number; value: T }
+const sharedGetCache = new Map<string, SharedGetCacheEntry<unknown>>()
+const sharedGetInFlight = new Map<string, Promise<unknown>>()
+
+async function cachedGet<T>(key: string, ttlMs: number, fetcher: () => Promise<T>): Promise<T> {
+  const now = Date.now()
+  const cached = sharedGetCache.get(key)
+  if (cached && cached.expiresAt > now) {
+    return cached.value as T
+  }
+  const inFlight = sharedGetInFlight.get(key)
+  if (inFlight) {
+    return inFlight as Promise<T>
+  }
+  const task = (async () => {
+    const value = await fetcher()
+    sharedGetCache.set(key, { expiresAt: Date.now() + ttlMs, value })
+    return value
+  })()
+  sharedGetInFlight.set(key, task)
+  try {
+    return await task
+  } finally {
+    sharedGetInFlight.delete(key)
+  }
+}
+
+function invalidateCachedGet(prefix: string): void {
+  for (const key of sharedGetCache.keys()) {
+    if (key.startsWith(prefix)) {
+      sharedGetCache.delete(key)
+    }
+  }
+}
+
 // Request interceptor to add JWT token
 apiClient.interceptors.request.use(
   (config) => {
@@ -167,6 +202,7 @@ export interface SourceInfo {
   file: string
   title?: string  // Optional title (alternative to file)
   page?: number
+  citation_id?: string // Stable citation id (do not rely on array index)
   chunk_index?: number
   start_line?: number
   end_line?: number
@@ -177,9 +213,14 @@ export interface SourceInfo {
   char_end?: number    // EXACT end character position in document (from chunk)
   context_before?: string  // Context before quote (50 chars)
   context_after?: string   // Context after quote (50 chars)
-  quote?: string       // Text from chunk (for preview)
+  quote?: string       // Backward-compatible quote field
+  quote_anchor?: string // Stable anchor text for viewer highlighting
   source_id?: string   // Document ID (file_id) for reference
   chunk_id?: string    // Unique chunk ID for precise navigation - KEY for reliable highlighting!
+  bbox?: { x0?: number; y0?: number; x1?: number; y1?: number } // Bounding box on page
+  /** Все регионы prov из Docling для одного чанка (мульти-подсветка в PDF). */
+  bbox_regions?: Array<{ x0?: number; y0?: number; x1?: number; y1?: number }>
+  page_bbox?: { width?: number; height?: number } // Page dimensions used to normalize bbox
   url?: string         // External URL (for pravo.gov.ru and other external sources)
   source_type?: string // Source type: 'document' | 'external' | 'garant' | 'web'
   case_id?: string     // Case ID (for case files — enables full document preview)
@@ -292,8 +333,10 @@ export const getChatSessionsForCase = async (caseId: string): Promise<Array<{
   last_message_at: string | null
   message_count: number
 }>> => {
-  const response = await apiClient.get(getApiUrl(`/api/v2/assistant/chat/${caseId}/sessions`))
-  return response.data.sessions || []
+  return cachedGet(`chat-sessions:${caseId}`, 2000, async () => {
+    const response = await apiClient.get(getApiUrl(`/api/v2/assistant/chat/${caseId}/sessions`))
+    return response.data.sessions || []
+  })
 }
 
 export const getChatSessions = async (): Promise<Array<{
@@ -340,7 +383,11 @@ export const getGlobalAssistantSession = async (sessionId: string): Promise<{
   title: string
   draft_title?: string
   draft_content?: string
-  messages: Array<{ role: 'user' | 'assistant'; content: string }>
+  messages: Array<{
+    role: 'user' | 'assistant'
+    content: string
+    reasoning_steps?: Array<{ phase: string; step: number; totalSteps?: number; content: string }> | null
+  }>
 }> => {
   const response = await apiClient.get(getApiUrl(`/api/v2/assistant/global-sessions/${sessionId}`))
   return response.data
@@ -351,6 +398,25 @@ export const saveSessionDraft = async (sessionId: string, draftTitle: string, dr
     draft_title: draftTitle,
     draft_content: draftContent,
   })
+}
+
+export const improveAssistantPrompt = async (text: string): Promise<string> => {
+  const response = await apiClient.post<{ improved?: string }>(getApiUrl('/api/v2/assistant/improve-prompt'), {
+    text,
+  })
+  return (response.data.improved ?? '').trim()
+}
+
+export interface AssistantFeedbackPayload {
+  trace_id: string
+  rating: 'positive' | 'negative'
+  reason?: string
+  comment?: string
+}
+
+export const sendAssistantFeedback = async (payload: AssistantFeedbackPayload): Promise<{ ok: boolean; score_sent: boolean }> => {
+  const response = await apiClient.post(getApiUrl('/api/metrics/assistant-feedback'), payload)
+  return response.data
 }
 
 // Dashboard API
@@ -369,6 +435,7 @@ export interface CaseListItem {
   case_type: string | null
   status: string
   num_documents: number
+  tabular_reviews_count?: number
   created_at: string
   updated_at: string
 }
@@ -407,8 +474,10 @@ export const getCasesList = async (
 }
 
 export const getRecentCases = async (limit: number = 5): Promise<CaseListItem[]> => {
+  // API: GET /api/dashboard/recent — limit <= 20 (см. FastAPI Query)
+  const safeLimit = Math.min(20, Math.max(1, Math.trunc(limit)))
   const response = await apiClient.get(getApiUrl('/api/dashboard/recent'), {
-    params: { limit },
+    params: { limit: safeLimit },
   })
   return response.data
 }
@@ -427,8 +496,10 @@ export interface CaseResponse {
 }
 
 export const getCase = async (caseId: string): Promise<CaseResponse> => {
-  const response = await apiClient.get(getApiUrl(`/api/cases/${caseId}`))
-  return response.data
+  return cachedGet(`case:${caseId}`, 2000, async () => {
+    const response = await apiClient.get(getApiUrl(`/api/cases/${caseId}`))
+    return response.data
+  })
 }
 
 export const createCase = async (caseInfo: CaseInfo): Promise<CaseResponse> => {
@@ -478,6 +549,8 @@ export const addFilesToCase = async (
     }
   )
 
+  invalidateCachedGet(`case-files:${caseId}`)
+  invalidateCachedGet(`case-documents:${caseId}`)
   return response.data
 }
 
@@ -511,6 +584,8 @@ export const deleteFileFromCase = async (
   fileId: string
 ): Promise<FilesResponse> => {
   const response = await apiClient.delete(getApiUrl(`/api/cases/${caseId}/files/${fileId}`))
+  invalidateCachedGet(`case-files:${caseId}`)
+  invalidateCachedGet(`case-documents:${caseId}`)
   return response.data
 }
 
@@ -519,16 +594,18 @@ export const deleteCase = async (caseId: string): Promise<void> => {
 }
 
 export const getCaseFiles = async (caseId: string): Promise<FilesResponse> => {
-  const response = await apiClient.get(getApiUrl(`/api/cases/${caseId}/files`))
-  return {
-    files: response.data.documents?.map((doc: any) => ({
-      id: doc.id,
-      filename: doc.filename,
-      file_type: doc.file_type,
-      created_at: doc.created_at,
-    })) || [],
-    total: response.data.total || 0,
-  }
+  return cachedGet(`case-files:${caseId}`, 2000, async () => {
+    const response = await apiClient.get(getApiUrl(`/api/cases/${caseId}/files`))
+    return {
+      files: response.data.documents?.map((doc: any) => ({
+        id: doc.id,
+        filename: doc.filename,
+        file_type: doc.file_type,
+        created_at: doc.created_at,
+      })) || [],
+      total: response.data.total || 0,
+    }
+  })
 }
 
 // Folders (case-level folder tree)
@@ -543,12 +620,14 @@ export interface FolderItem {
 }
 
 export const getCaseFolders = async (caseId: string): Promise<FolderItem[]> => {
-  try {
-    const response = await apiClient.get(getApiUrl(`/api/cases/${caseId}/folders`))
-    return Array.isArray(response.data) ? response.data : (response.data?.folders ?? [])
-  } catch {
-    return []
-  }
+  return cachedGet(`case-folders:${caseId}`, 2000, async () => {
+    try {
+      const response = await apiClient.get(getApiUrl(`/api/cases/${caseId}/folders`))
+      return Array.isArray(response.data) ? response.data : (response.data?.folders ?? [])
+    } catch {
+      return []
+    }
+  })
 }
 
 export const createFolder = async (
@@ -560,6 +639,7 @@ export const createFolder = async (
     name,
     parent_id: parentId,
   })
+  invalidateCachedGet(`case-folders:${caseId}`)
 }
 
 export const renameFolder = async (
@@ -570,6 +650,7 @@ export const renameFolder = async (
   await apiClient.patch(getApiUrl(`/api/cases/${caseId}/folders/${folderId}`), {
     name: newName,
   })
+  invalidateCachedGet(`case-folders:${caseId}`)
 }
 
 export const deleteFolder = async (
@@ -577,6 +658,7 @@ export const deleteFolder = async (
   folderId: string
 ): Promise<void> => {
   await apiClient.delete(getApiUrl(`/api/cases/${caseId}/folders/${folderId}`))
+  invalidateCachedGet(`case-folders:${caseId}`)
 }
 
 export const moveFileToFolder = async (
@@ -587,6 +669,8 @@ export const moveFileToFolder = async (
   await apiClient.patch(getApiUrl(`/api/cases/${caseId}/files/${fileId}`), {
     folder_id: folderId,
   })
+  invalidateCachedGet(`case-files:${caseId}`)
+  invalidateCachedGet(`case-documents:${caseId}`)
 }
 
 export interface ProcessResponse {
@@ -868,8 +952,10 @@ export interface DocumentListResponse {
 }
 
 export const getDocuments = async (caseId: string): Promise<DocumentListResponse> => {
-  const response = await apiClient.get(getApiUrl(`/api/cases/${caseId}/files`))
-  return response.data
+  return cachedGet(`case-documents:${caseId}`, 2000, async () => {
+    const response = await apiClient.get(getApiUrl(`/api/cases/${caseId}/files`))
+    return response.data
+  })
 }
 
 // Classification API
@@ -1094,6 +1180,15 @@ export const getDocumentContent = async (caseId: string, fileId: string): Promis
   return response.data
 }
 
+/** Replace plain text for a case file (workflow drafts, .txt artifacts). */
+export const updateCaseFileText = async (
+  caseId: string,
+  fileId: string,
+  text: string
+): Promise<void> => {
+  await apiClient.put(getApiUrl(`/api/cases/${caseId}/files/${fileId}/text`), { text })
+}
+
 // Related Documents API
 export interface RelatedDocument {
   file_id: string
@@ -1140,14 +1235,47 @@ export interface LegalCorpusFileRow {
   chunk_count: number
 }
 
+const isTimeoutError = (error: unknown): boolean => {
+  return axios.isAxiosError(error) && (error.code === 'ECONNABORTED' || String(error.message || '').toLowerCase().includes('timeout'))
+}
+
 export const fetchLegalCorpusStatus = async (): Promise<LegalCorpusStatus> => {
-  const response = await apiClient.get<LegalCorpusStatus>(getApiUrl('/api/v2/legal-corpus/status'))
-  return response.data
+  return cachedGet('legal-corpus:status', 10000, async () => {
+    try {
+      const response = await apiClient.get<LegalCorpusStatus>(
+        getApiUrl('/api/v2/legal-corpus/status'),
+        { timeout: 30000 }
+      )
+      return response.data
+    } catch (err) {
+      if (!isTimeoutError(err)) throw err
+      // One retry for slow cold-start / DB wake-up
+      const retry = await apiClient.get<LegalCorpusStatus>(
+        getApiUrl('/api/v2/legal-corpus/status'),
+        { timeout: 45000 }
+      )
+      return retry.data
+    }
+  })
 }
 
 export const fetchLegalCorpusFiles = async (): Promise<{ files: LegalCorpusFileRow[] }> => {
-  const response = await apiClient.get<{ files: LegalCorpusFileRow[] }>(getApiUrl('/api/v2/legal-corpus/files'))
-  return response.data
+  return cachedGet('legal-corpus:files', 10000, async () => {
+    try {
+      const response = await apiClient.get<{ files: LegalCorpusFileRow[] }>(
+        getApiUrl('/api/v2/legal-corpus/files'),
+        { timeout: 30000 }
+      )
+      return response.data
+    } catch (err) {
+      if (!isTimeoutError(err)) throw err
+      const retry = await apiClient.get<{ files: LegalCorpusFileRow[] }>(
+        getApiUrl('/api/v2/legal-corpus/files'),
+        { timeout: 45000 }
+      )
+      return retry.data
+    }
+  })
 }
 
 export interface LegalCorpusUploadResult {
@@ -1166,11 +1294,117 @@ export const uploadLegalCorpusFiles = async (files: File[]): Promise<LegalCorpus
     formData,
     { headers: { 'Content-Type': 'multipart/form-data' } }
   )
+  invalidateCachedGet('legal-corpus:status')
+  invalidateCachedGet('legal-corpus:files')
   return response.data
+}
+
+export interface LegalCorpusJobStartResponse {
+  job_id: string
+  status: string
+  total_files: number
+}
+
+export interface LegalCorpusJobSnapshot {
+  job_id: string
+  status: 'queued' | 'running' | 'completed' | 'failed'
+  message: string
+  progress_percent: number
+  total_files: number
+  processed_files: number
+  indexed_chunks: number
+  errors: Array<{ filename: string; detail: string }>
+  results: Array<{ filename: string; corpus_file_id: string; chunks_indexed: number }>
+  created_at: number
+  finished_at: number | null
+}
+
+export const startLegalCorpusUploadJob = async (files: File[]): Promise<LegalCorpusJobStartResponse> => {
+  const formData = new FormData()
+  for (const f of files) formData.append('files', f)
+  const response = await apiClient.post<LegalCorpusJobStartResponse>(
+    getApiUrl('/api/v2/legal-corpus/upload-job'),
+    formData,
+    {
+      headers: { 'Content-Type': 'multipart/form-data' },
+      // Large DOCX/PDF uploads can exceed 120s on slow links; job runs after quick 202-style JSON.
+      timeout: 600_000,
+    }
+  )
+  invalidateCachedGet('legal-corpus:status')
+  invalidateCachedGet('legal-corpus:files')
+  return response.data
+}
+
+export function buildLegalCorpusJobSseUrl(jobId: string): string {
+  const token = localStorage.getItem('access_token')
+  const qs = token ? `?token=${encodeURIComponent(token)}` : ''
+  const path = `/api/v2/legal-corpus/jobs/${encodeURIComponent(jobId)}/events${qs}`
+  if (import.meta.env.DEV) return path
+  const base = (import.meta.env.VITE_API_URL || '').trim().replace(/\/$/, '')
+  return base ? `${base}${path}` : path
 }
 
 export const deleteLegalCorpusFile = async (corpusFileId: string): Promise<void> => {
   await apiClient.delete(getApiUrl(`/api/v2/legal-corpus/file/${encodeURIComponent(corpusFileId)}`))
+  invalidateCachedGet('legal-corpus:status')
+  invalidateCachedGet('legal-corpus:files')
+}
+
+export const deleteAllLegalCorpusFiles = async (): Promise<{
+  deleted_chunks: number
+  deleted_files: number
+  chunk_count_total: number
+}> => {
+  const response = await apiClient.delete<{
+    deleted_chunks: number
+    deleted_files: number
+    chunk_count_total: number
+  }>(getApiUrl('/api/v2/legal-corpus/files'))
+  invalidateCachedGet('legal-corpus:status')
+  invalidateCachedGet('legal-corpus:files')
+  return response.data
+}
+
+// ─── Публичные шаблоны Draft (загрузка любым авторизованным пользователем) ───
+
+export interface AdminDraftTemplateRow {
+  id: string
+  title: string
+  description: string
+  created_at: string | null
+  content_length: number
+}
+
+export const fetchAdminDraftTemplates = async (): Promise<{ templates: AdminDraftTemplateRow[] }> => {
+  const response = await apiClient.get<{ templates: AdminDraftTemplateRow[] }>(
+    getApiUrl('/api/v2/admin/draft-templates'),
+    { timeout: 45000 }
+  )
+  return response.data
+}
+
+export const uploadAdminDraftTemplate = async (
+  file: File,
+  title: string,
+  description: string
+): Promise<{ id: string; title: string; description: string; content_length: number }> => {
+  const formData = new FormData()
+  formData.append('file', file)
+  formData.append('title', title)
+  formData.append('description', description)
+  const response = await apiClient.post(getApiUrl('/api/v2/admin/draft-templates'), formData, {
+    headers: { 'Content-Type': 'multipart/form-data' },
+    timeout: 120000,
+  })
+  return response.data
+}
+
+export const deleteAdminDraftTemplate = async (templateId: string): Promise<void> => {
+  await apiClient.delete(
+    getApiUrl(`/api/v2/admin/draft-templates/${encodeURIComponent(templateId)}`),
+    { timeout: 45000 }
+  )
 }
 
 // Default export for convenience

@@ -429,8 +429,8 @@ const CommandList = ({ items, command }: any) => {
       {items.length ? (
         items.map((item: any, index: number) => (
           <button
-            className={`flex items-center gap-2 w-full px-3 py-2 rounded text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 ${
-              index === selectedIndex ? 'bg-blue-100 text-blue-700' : 'hover:bg-gray-100'
+            className={`flex items-center gap-2 w-full px-3 py-2 rounded text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${
+              index === selectedIndex ? 'bg-muted text-foreground' : 'hover:bg-gray-100'
             }`}
             key={index}
             onClick={() => selectItem(index)}

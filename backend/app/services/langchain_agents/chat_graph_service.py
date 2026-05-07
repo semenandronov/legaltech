@@ -50,12 +50,65 @@ from app.services.langchain_agents.utils.streaming import (
 )
 from app.models.user import User
 from app.models.case import Case, ChatMessage
+from app.services.chat.history_service import ChatHistoryService
+from app.config import config
+from app.services.observability.langfuse_service import (
+    get_active_trace_context,
+    get_langchain_callbacks,
+    langfuse_enabled,
+    trace_contract_event,
+    trace_span,
+    normalize_observability_metadata,
+)
 import logging
 import json
 import uuid
+import time
 from datetime import datetime, timedelta
 
 logger = logging.getLogger(__name__)
+
+_REASONING_PHASE_LABELS: Dict[str, str] = {
+    "generate_draft_plan": "Понимаю задачу и готовлю план документа…",
+    "draft": "Генерирую финальный документ по утверждённому плану…",
+    "rag_retrieval": "Изучаю материалы дела…",
+    "garant_retrieval": "Проверяю справочный правовой контекст…",
+    "generate_response": "Формирую ответ…",
+    "synthesizing": "Синтезирую ответ…",
+    "understanding": "Разбираю запрос…",
+    "planning": "Планирую шаги…",
+    "retrieval": "Ищу релевантные фрагменты…",
+    "tools": "Выполняю инструменты…",
+    "tool_calls": "Выполняю инструменты…",
+}
+
+
+def _reasoning_phase_content(phase: str) -> str:
+    """Подпись фазы для SSE reasoning: всегда по-русски, без сырого ключа узла в UI."""
+    key = str(phase).strip()
+    if key in _REASONING_PHASE_LABELS:
+        return _REASONING_PHASE_LABELS[key]
+    slug = key.replace("_", " ").strip()
+    if not slug:
+        return "Обрабатываю запрос…"
+    return f"Этап: {slug}"
+
+
+def _reasoning_delta_from_chunk(msg_chunk) -> str:
+    """Извлечь reasoning delta из AIMessageChunk (если провайдер отдаёт)."""
+    try:
+        msg = getattr(msg_chunk, "message", msg_chunk)
+        ak = getattr(msg, "additional_kwargs", None) or {}
+        parts: List[str] = []
+        for key in ("reasoning_content", "reasoning", "thinking"):
+            v = ak.get(key)
+            if isinstance(v, str) and v:
+                parts.append(v)
+            elif v is not None and not isinstance(v, str):
+                parts.append(str(v))
+        return "".join(parts)
+    except Exception:
+        return ""
 
 
 class ChatGraphService:
@@ -111,7 +164,7 @@ class ChatGraphService:
         
         Args:
             deep_think: Режим глубокого мышления
-            legal_research: Режим поиска в ГАРАНТ
+            legal_research: Режим справочного правового поиска
             draft_mode: Режим создания документа
         
         Returns:
@@ -165,6 +218,79 @@ class ChatGraphService:
         
         logger.debug(f"[ChatGraphService] Using thread_id: {thread_id} (from session_id: {session_id})")
         return thread_id
+
+    @staticmethod
+    def _reset_draft_hitl_for_turn(current_state: dict, mode: str) -> None:
+        """
+        Сброс устаревшего LangGraph-состояния черновика между запросами.
+
+        Если не ждём подтверждения плана — очищаем draft_plan/draft_approved, иначе
+        маршрут draft_execute + interrupt_before=['draft'] даёт пустой ответ без плана.
+        Если ждём «одобряю» — сохраняем план для уточнений в том же чате.
+        """
+        if mode == "draft":
+            if current_state.get("waiting_for_approval"):
+                # Новый ход в чате при показанном плане: уточнения/правки — не считаем документ одобренным,
+                # пока не пришёл resume или явная короткая команда (обрабатывается оркестратором).
+                current_state["draft_approved"] = False
+            elif not current_state.get("waiting_for_approval"):
+                current_state["draft_plan"] = None
+                current_state["draft_approved"] = False
+        else:
+            current_state["draft_plan"] = None
+            current_state["draft_approved"] = False
+            current_state["waiting_for_approval"] = False
+
+    async def warmup_case_graph(
+        self,
+        case_id: str,
+        user: User,
+        session_id: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """
+        Прогрев при открытии экрана чата по делу: компиляция/кэш графа + чтение чекпоинта.
+        Снижает задержку первого сообщения без изменения ответов.
+        """
+        case = self.db.query(Case).filter(
+            Case.id == case_id,
+            Case.user_id == user.id,
+        ).first()
+        if not case:
+            return {"ok": False, "error": "case_not_found"}
+
+        history = ChatHistoryService(self.db)
+        resolved_session = session_id or history.get_or_create_session(case_id)
+
+        t0 = time.monotonic()
+        graph = self._get_or_create_graph()
+        thread_id = self._get_or_create_thread_id(case_id, resolved_session)
+        graph_run_config: Dict[str, Any] = {
+            "configurable": {"thread_id": thread_id},
+            "recursion_limit": 25,
+        }
+        checkpoint_has_values = False
+        try:
+            st = await graph.aget_state(graph_run_config)
+            checkpoint_has_values = bool(st and st.values)
+        except Exception as exc:
+            logger.warning("[ChatGraphService] warmup aget_state failed: %s", exc, exc_info=True)
+
+        elapsed_ms = int((time.monotonic() - t0) * 1000)
+        logger.info(
+            "[ChatGraphService] warmup case=%s session=%s checkpoint=%s ms=%s",
+            case_id,
+            resolved_session,
+            checkpoint_has_values,
+            elapsed_ms,
+        )
+        return {
+            "ok": True,
+            "case_id": case_id,
+            "session_id": resolved_session,
+            "thread_id": thread_id,
+            "checkpoint_has_values": checkpoint_has_values,
+            "warmup_ms": elapsed_ms,
+        }
     
     def _save_user_message(
         self,
@@ -195,17 +321,23 @@ class ChatGraphService:
         case_id: str,
         content: str,
         session_id: str,
-        citations: List[Dict] = None
+        citations: List[Dict] = None,
+        answer_blocks: List[Dict] = None,
     ) -> str:
         """Сохранить ответ ассистента в БД."""
         message_id = str(uuid.uuid4())
         try:
+            refs_payload = None
+            if answer_blocks:
+                refs_payload = {"citations": citations or [], "answer_blocks": answer_blocks}
+            elif citations:
+                refs_payload = citations
             assistant_message = ChatMessage(
                 id=message_id,
                 case_id=case_id,
                 role="assistant",
                 content=content,
-                source_references=json.dumps(citations) if citations else None,
+                source_references=json.dumps(refs_payload, ensure_ascii=False) if refs_payload else None,
                 session_id=session_id
             )
             self.db.add(assistant_message)
@@ -234,6 +366,15 @@ class ChatGraphService:
         template_system_id: str = None,
         template_file_id: str = None,
         template_file_content: str = None,
+        session_id: str = None,
+        persist_history: bool = True,
+        attached_file_ids: Optional[List[str]] = None,
+        # Политика/бюджет выполнения (case assistant v2)
+        task_type: Optional[str] = None,
+        depth_tier: Optional[str] = None,
+        budget_profile: Optional[Dict[str, Any]] = None,
+        corpus_size: Optional[int] = None,
+        clarification_needed: Optional[bool] = None,
     ) -> AsyncGenerator[str, None]:
         """
         Streaming ответ через ChatGraph.
@@ -243,7 +384,7 @@ class ChatGraphService:
             question: Вопрос пользователя
             user: Текущий пользователь
             deep_think: Режим глубокого мышления
-            legal_research: Режим поиска в ГАРАНТ
+            legal_research: Режим справочного правового поиска
             draft_mode: Режим создания документа
             document_context: Контекст документа (для редактора)
             document_id: ID документа (для редактора)
@@ -251,6 +392,7 @@ class ChatGraphService:
             stream_mode: Режим streaming ("values", "updates", "messages")
             enable_token_streaming: Включить streaming токенов через astream_events
             existing_messages: Существующие сообщения для продолжения диалога
+            attached_file_ids: ID файлов дела для узкого RAG (draft и др.)
         
         Yields:
             JSON строки в формате assistant-ui SSE
@@ -274,31 +416,51 @@ class ChatGraphService:
             template_system_id=template_system_id,
             template_file_content=template_file_content,
             template_file_id=template_file_id,
+            user_question=question,
         )
         
         # Получаем session_id
-        session_id = self._get_or_create_session(case_id)
+        session_id = session_id or self._get_or_create_session(case_id)
         
-        # Сохраняем сообщение пользователя
-        self._save_user_message(case_id, question, session_id)
+        # Сохраняем сообщение пользователя (если не обрабатывается внешним оркестратором)
+        if persist_history:
+            self._save_user_message(case_id, question, session_id)
         
         # Определяем режим
         mode = self._determine_mode(deep_think, legal_research, draft_mode)
+
+        trace_ctx = get_active_trace_context()
+        prep_span = trace_span(
+            trace_ctx,
+            name="case_chat_graph_prepare",
+            metadata={"case_id": case_id, "graph_mode": mode, "persist_history": persist_history},
+        )
+        prep_started = time.monotonic()
+        checkpoint_dialog_continued = False
         
         # Получаем граф
         graph = self._get_or_create_graph()
         
         # Получаем или создаём thread_id для checkpointing (переиспользуем session_id)
         thread_id = self._get_or_create_thread_id(case_id, session_id)
-        config = {
+        graph_run_config: Dict[str, Any] = {
             "configurable": {"thread_id": thread_id},
-            "recursion_limit": 25
+            "recursion_limit": 25,
         }
+        if langfuse_enabled():
+            _lc = get_langchain_callbacks(
+                session_id=session_id,
+                user_id=str(user.id),
+                tags=["case_assistant", "chat_graph"],
+            )
+            if _lc:
+                graph_run_config["callbacks"] = _lc
         
         # Загружаем существующее состояние из checkpoint для продолжения диалога
         try:
-            existing_state = await graph.aget_state(config)
+            existing_state = await graph.aget_state(graph_run_config)
             if existing_state and existing_state.values:
+                checkpoint_dialog_continued = True
                 # Продолжаем диалог - используем существующее состояние
                 current_state = dict(existing_state.values)
                 # Инициализируем поля HITL если их нет (для совместимости со старыми checkpoint)
@@ -312,6 +474,10 @@ class ChatGraphService:
                     current_state["template_context"] = ""
                 if "template_label" not in current_state:
                     current_state["template_label"] = None
+                if attached_file_ids is not None:
+                    current_state["attached_file_ids"] = [str(x) for x in attached_file_ids if x] or None
+                elif "attached_file_ids" not in current_state:
+                    current_state["attached_file_ids"] = None
                 # Добавляем новое сообщение пользователя
                 current_messages = current_state.get("messages", [])
                 current_messages.append(HumanMessage(content=question))
@@ -320,6 +486,17 @@ class ChatGraphService:
                 current_state["question"] = question
                 current_state["mode"] = mode
                 current_state["enable_garant"] = legal_research or mode == "garant"
+                # Политика/бюджет выполнения (обновляем на каждый turn)
+                if task_type is not None:
+                    current_state["task_type"] = task_type
+                if depth_tier is not None:
+                    current_state["depth_tier"] = depth_tier
+                if budget_profile is not None:
+                    current_state["budget_profile"] = budget_profile
+                if corpus_size is not None:
+                    current_state["corpus_size"] = corpus_size
+                if clarification_needed is not None:
+                    current_state["clarification_needed"] = clarification_needed
                 if document_context:
                     current_state["document_context"] = document_context
                 if document_id:
@@ -335,11 +512,8 @@ class ChatGraphService:
                 current_state["rag_context"] = None
                 current_state["garant_context"] = None
                 current_state["thinking_steps"] = None
-                # Сбрасываем HITL флаги для нового запроса (кроме draft mode)
-                if mode != "draft":
-                    current_state["draft_plan"] = None
-                    current_state["draft_approved"] = False
-                    current_state["waiting_for_approval"] = False
+                current_state["answer_blocks"] = None
+                self._reset_draft_hitl_for_turn(current_state, mode)
                 initial_state = current_state
                 logger.info(f"[ChatGraphService] Continuing dialog from checkpoint, thread_id: {thread_id}")
             else:
@@ -358,6 +532,12 @@ class ChatGraphService:
                     editor_mode_hint=editor_mode_hint,
                     template_context=template_context or None,
                     template_label=template_label,
+                    attached_file_ids=attached_file_ids,
+                    task_type=task_type,
+                    depth_tier=depth_tier,
+                    budget_profile=budget_profile,
+                    corpus_size=corpus_size,
+                    clarification_needed=clarification_needed,
                 )
                 logger.info(f"[ChatGraphService] Starting new dialog, thread_id: {thread_id}")
         except Exception as e:
@@ -377,11 +557,50 @@ class ChatGraphService:
                 editor_mode_hint=editor_mode_hint,
                 template_context=template_context or None,
                 template_label=template_label,
+                attached_file_ids=attached_file_ids,
+                task_type=task_type,
+                depth_tier=depth_tier,
+                budget_profile=budget_profile,
+                corpus_size=corpus_size,
+                clarification_needed=clarification_needed,
             )
+
+        prep_ms = int((time.monotonic() - prep_started) * 1000)
+        if prep_span:
+            try:
+                prep_span.update(
+                    output={
+                        "prep_ms": prep_ms,
+                        "thread_id": thread_id,
+                        "checkpoint_dialog_continued": checkpoint_dialog_continued,
+                    }
+                )
+            except Exception:
+                logger.debug("case_chat_graph_prepare span update failed", exc_info=True)
+            try:
+                prep_span.end()
+            except Exception:
+                logger.debug("case_chat_graph_prepare span end failed", exc_info=True)
         
         full_response = ""
         citations = []
+        answer_blocks: Optional[List[Dict[str, Any]]] = None
         document_created = None
+        draft_plan_sent = False
+        model_reasoning_buf = ""
+        # Пока модель шлёт reasoning, не показываем ответ — затем одним блоком (корректный порядок UX).
+        answer_after_reasoning_buffer = ""
+        native_reasoning_phase = False
+        last_citations_json: Optional[str] = None
+        stream_reasoning_ui = bool(getattr(config, "CASE_ASSISTANT_STREAM_REASONING_UI", False))
+
+        astream_span = trace_span(
+            trace_ctx,
+            name="case_chat_graph_astream",
+            metadata={"case_id": case_id, "graph_mode": mode},
+        )
+        stream_t0 = time.monotonic()
+        last_graph_update_t = stream_t0
 
         try:
             # Token-level streaming: используем stream_mode=["messages", "updates"]
@@ -389,17 +608,42 @@ class ChatGraphService:
             # "updates" даёт метаданные (citations, structured_edits и т.д.)
             try:
                 async for stream_mode_type, chunk in graph.astream(
-                    initial_state, config=config,
+                    initial_state, config=graph_run_config,
                     stream_mode=["messages", "updates"]
                 ):
                     if stream_mode_type == "messages":
                         # Token-level streaming от LLM
                         msg_chunk, metadata = chunk
-                        if hasattr(msg_chunk, 'content') and msg_chunk.content:
+                        # Не транслируем в UI токены из внутренних LLM-вызовов (multi-query, подграфы и т.д.) —
+                        # только финальный ответ узла generate_response. Иначе в чат «течёт» служебный текст.
+                        _meta = metadata if isinstance(metadata, dict) else {}
+                        _lg_node = str(_meta.get("langgraph_node") or "").strip()
+                        if _lg_node and _lg_node != "generate_response":
+                            continue
+                        # Нативное reasoning в SSE — только если CASE_ASSISTANT_STREAM_REASONING_UI (иначе не буферизуем ответ и не «разводим» юриста)
+                        r_delta = _reasoning_delta_from_chunk(msg_chunk) if stream_reasoning_ui else ""
+                        if r_delta:
+                            native_reasoning_phase = True
+                            model_reasoning_buf += r_delta
+                            yield (
+                                f"data: {json.dumps({'type': 'reasoning', 'phase': 'model_reasoning', 'step': 1, 'totalSteps': 1, 'content': model_reasoning_buf}, ensure_ascii=False)}\n\n"
+                            )
+                        token = ""
+                        if hasattr(msg_chunk, "content") and msg_chunk.content:
                             token = msg_chunk.content
-                            if token:
+                        if token:
+                            # Пока идёт reasoning в том же потоке, ответ копим; первый чистый answer-chunk — отдаём весь накопленный текст сразу.
+                            if native_reasoning_phase and r_delta:
+                                answer_after_reasoning_buffer += token
+                            elif native_reasoning_phase and not r_delta:
+                                block = answer_after_reasoning_buffer + token
+                                answer_after_reasoning_buffer = ""
+                                native_reasoning_phase = False
+                                full_response += block
+                                yield f"data: {json.dumps({'type': 'text-delta', 'textDelta': block}, ensure_ascii=False)}\n\n"
+                            else:
                                 full_response += token
-                                yield f"data: {json.dumps({'type': 'text-delta', 'textDelta': token})}\n\n"
+                                yield f"data: {json.dumps({'type': 'text-delta', 'textDelta': token}, ensure_ascii=False)}\n\n"
 
                     elif stream_mode_type == "updates":
                         # Node-level updates для метаданных
@@ -407,19 +651,52 @@ class ChatGraphService:
                             for node_name, node_data in chunk.items():
                                 if not isinstance(node_data, dict):
                                     continue
+                                _now = time.monotonic()
+                                _tctx = get_active_trace_context()
+                                if _tctx:
+                                    trace_contract_event(
+                                        _tctx,
+                                        name="graph_node_completed",
+                                        metadata=normalize_observability_metadata(
+                                            {
+                                                "graph_node": str(node_name),
+                                                "since_stream_start_ms": int((_now - stream_t0) * 1000),
+                                                "since_prev_graph_update_ms": int(
+                                                    (_now - last_graph_update_t) * 1000
+                                                ),
+                                                "state_keys_preview": list(node_data.keys())[:25],
+                                            },
+                                            step_name="graph_node_completed",
+                                            status="success",
+                                        ),
+                                    )
+                                last_graph_update_t = _now
 
-                                # Обрабатываем response если текст не пришёл через messages
+                                if node_name == "generate_response" and node_data.get("response") is not None:
+                                    answer_after_reasoning_buffer = ""
+                                    native_reasoning_phase = False
+
+                                # Обрабатываем response: финальный текст узла — источник истины (после sanitize / цитат).
                                 response = node_data.get("response")
-                                if response and response != full_response:
-                                    if not full_response:
-                                        # Текст не стримился через messages — отправляем целиком
+                                if isinstance(response, str) and response != full_response:
+                                    if full_response:
+                                        yield f"data: {json.dumps({'type': 'content_sync', 'content': response}, ensure_ascii=False)}\n\n"
+                                    else:
                                         yield f"data: {json.dumps({'type': 'text-delta', 'textDelta': response})}\n\n"
                                     full_response = response
 
-                                # Обрабатываем citations
+                                # Citations сразу при появлении в графе (RAG → обогащение в generate_response), чтобы UI линковал сноски с первого символа ответа.
                                 node_citations = node_data.get("citations")
                                 if node_citations:
                                     citations = node_citations
+                                    _cj = json.dumps(citations, ensure_ascii=False, default=str)
+                                    if _cj != last_citations_json:
+                                        last_citations_json = _cj
+                                        yield f"data: {json.dumps({'type': 'citations', 'citations': citations}, ensure_ascii=False)}\n\n"
+
+                                node_ab = node_data.get("answer_blocks")
+                                if node_ab is not None:
+                                    answer_blocks = node_ab
 
                                 # Обрабатываем document_created (draft mode)
                                 doc_created = node_data.get("document_created")
@@ -427,11 +704,25 @@ class ChatGraphService:
                                     document_created = doc_created
                                     yield f"data: {json.dumps({'type': 'document-card', 'data': doc_created})}\n\n"
 
+                                # Обрабатываем draft_plan (HITL draft mode)
+                                draft_plan = node_data.get("draft_plan")
+                                waiting_for_approval = bool(node_data.get("waiting_for_approval"))
+                                if (
+                                    waiting_for_approval
+                                    and isinstance(draft_plan, dict)
+                                    and not draft_plan_sent
+                                ):
+                                    draft_plan_sent = True
+                                    yield (
+                                        f"data: {json.dumps({'type': 'draft_plan', 'plan': draft_plan, 'waiting_for_approval': True}, ensure_ascii=False)}\n\n"
+                                    )
+
                                 # Обрабатываем thinking_steps (deep_think mode)
-                                thinking_steps = node_data.get("thinking_steps")
-                                if thinking_steps:
-                                    for step in thinking_steps:
-                                        yield f"data: {json.dumps({'type': 'thinking-step', 'data': step})}\n\n"
+                                if stream_reasoning_ui:
+                                    thinking_steps = node_data.get("thinking_steps")
+                                    if thinking_steps:
+                                        for step in thinking_steps:
+                                            yield f"data: {json.dumps({'type': 'thinking-step', 'data': step})}\n\n"
 
                                 # Обрабатываем structured_edits (editor mode)
                                 structured_edits = node_data.get("structured_edits")
@@ -440,19 +731,43 @@ class ChatGraphService:
                                     yield SSESerializer.structured_edits(structured_edits)
                                     logger.info(f"[ChatGraphService] Sent {len(structured_edits)} structured edits")
 
-                                # Обрабатываем current_phase для прогресса
+                                # Обрабатываем current_phase для прогресса (в UI — только при stream_reasoning_ui)
                                 phase = node_data.get("current_phase")
                                 if phase:
+                                    if stream_reasoning_ui:
+                                        yield (
+                                            f"data: {json.dumps({'type': 'reasoning', 'phase': str(phase), 'step': 1, 'totalSteps': 1, 'content': _reasoning_phase_content(str(phase))}, ensure_ascii=False)}\n\n"
+                                        )
                                     yield f"data: {json.dumps({'type': 'status', 'phase': phase})}\n\n"
 
             except TypeError:
                 # Fallback: если LangGraph не поддерживает multi-mode streaming
                 logger.warning("[ChatGraphService] Multi-mode streaming not supported, falling back to updates mode")
-                async for chunk in graph.astream(initial_state, config=config):
+                async for chunk in graph.astream(initial_state, config=graph_run_config):
                     if isinstance(chunk, dict):
                         for node_name, node_data in chunk.items():
                             if not isinstance(node_data, dict):
                                 continue
+                            _now_fb = time.monotonic()
+                            _tctx_fb = get_active_trace_context()
+                            if _tctx_fb:
+                                trace_contract_event(
+                                    _tctx_fb,
+                                    name="graph_node_completed",
+                                    metadata=normalize_observability_metadata(
+                                        {
+                                            "graph_node": str(node_name),
+                                            "since_stream_start_ms": int((_now_fb - stream_t0) * 1000),
+                                            "since_prev_graph_update_ms": int(
+                                                (_now_fb - last_graph_update_t) * 1000
+                                            ),
+                                            "stream_fallback": "single_mode_updates",
+                                        },
+                                        step_name="graph_node_completed",
+                                        status="success",
+                                    ),
+                                )
+                            last_graph_update_t = _now_fb
 
                             # Обрабатываем messages
                             messages = node_data.get("messages", [])
@@ -481,16 +796,37 @@ class ChatGraphService:
                             node_citations = node_data.get("citations")
                             if node_citations:
                                 citations = node_citations
+                                _cj_fb = json.dumps(citations, ensure_ascii=False, default=str)
+                                if _cj_fb != last_citations_json:
+                                    last_citations_json = _cj_fb
+                                    yield f"data: {json.dumps({'type': 'citations', 'citations': citations}, ensure_ascii=False)}\n\n"
+
+                            node_ab = node_data.get("answer_blocks")
+                            if node_ab is not None:
+                                answer_blocks = node_ab
 
                             doc_created = node_data.get("document_created")
                             if doc_created:
                                 document_created = doc_created
                                 yield f"data: {json.dumps({'type': 'document-card', 'data': doc_created})}\n\n"
 
-                            thinking_steps = node_data.get("thinking_steps")
-                            if thinking_steps:
-                                for step in thinking_steps:
-                                    yield f"data: {json.dumps({'type': 'thinking-step', 'data': step})}\n\n"
+                            draft_plan = node_data.get("draft_plan")
+                            waiting_for_approval = bool(node_data.get("waiting_for_approval"))
+                            if (
+                                waiting_for_approval
+                                and isinstance(draft_plan, dict)
+                                and not draft_plan_sent
+                            ):
+                                draft_plan_sent = True
+                                yield (
+                                    f"data: {json.dumps({'type': 'draft_plan', 'plan': draft_plan, 'waiting_for_approval': True}, ensure_ascii=False)}\n\n"
+                                )
+
+                            if stream_reasoning_ui:
+                                thinking_steps = node_data.get("thinking_steps")
+                                if thinking_steps:
+                                    for step in thinking_steps:
+                                        yield f"data: {json.dumps({'type': 'thinking-step', 'data': step})}\n\n"
 
                             structured_edits = node_data.get("structured_edits")
                             if structured_edits:
@@ -499,19 +835,41 @@ class ChatGraphService:
 
                             phase = node_data.get("current_phase")
                             if phase:
+                                if stream_reasoning_ui:
+                                    yield (
+                                        f"data: {json.dumps({'type': 'reasoning', 'phase': str(phase), 'step': 1, 'totalSteps': 1, 'content': _reasoning_phase_content(str(phase))}, ensure_ascii=False)}\n\n"
+                                    )
                                 yield f"data: {json.dumps({'type': 'status', 'phase': phase})}\n\n"
+
+            if answer_after_reasoning_buffer:
+                full_response += answer_after_reasoning_buffer
+                yield f"data: {json.dumps({'type': 'text-delta', 'textDelta': answer_after_reasoning_buffer}, ensure_ascii=False)}\n\n"
+                answer_after_reasoning_buffer = ""
 
             # Если ответ пустой, отправляем fallback
             if not full_response:
                 full_response = "Не удалось получить ответ. Попробуйте переформулировать вопрос."
                 yield f"data: {json.dumps({'type': 'text-delta', 'textDelta': full_response})}\n\n"
 
-            # Отправляем citations если есть
+            # Догоняем citations, если граф не прислал diff по пути (редко)
             if citations:
-                yield f"data: {json.dumps({'type': 'citations', 'citations': citations})}\n\n"
+                _cj_end = json.dumps(citations, ensure_ascii=False, default=str)
+                if _cj_end != last_citations_json:
+                    last_citations_json = _cj_end
+                    yield f"data: {json.dumps({'type': 'citations', 'citations': citations}, ensure_ascii=False)}\n\n"
 
-            # Сохраняем ответ ассистента
-            self._save_assistant_message(case_id, full_response, session_id, citations)
+            if answer_blocks:
+                from app.services.chat.events import SSESerializer
+
+                sse_ab = SSESerializer.answer_blocks(answer_blocks)
+                if sse_ab:
+                    yield sse_ab
+
+            # Сохраняем ответ ассистента (если не обрабатывается внешним оркестратором)
+            if persist_history:
+                self._save_assistant_message(
+                    case_id, full_response, session_id, citations, answer_blocks=answer_blocks
+                )
 
             # Отправляем финальное событие
             yield f"data: {json.dumps({'type': 'finish', 'finishReason': 'stop'})}\n\n"
@@ -524,8 +882,25 @@ class ChatGraphService:
             yield f"data: {json.dumps({'type': 'text-delta', 'textDelta': error_msg})}\n\n"
             yield f"data: {json.dumps({'type': 'finish', 'finishReason': 'error', 'error': str(e)})}\n\n"
 
-            # Сохраняем ошибку как ответ
-            self._save_assistant_message(case_id, error_msg, session_id)
+            # Сохраняем ошибку как ответ (если не обрабатывается внешним оркестратором)
+            if persist_history:
+                self._save_assistant_message(case_id, error_msg, session_id)
+        finally:
+            if astream_span:
+                try:
+                    astream_span.update(
+                        output={
+                            "astream_wall_ms": int((time.monotonic() - stream_t0) * 1000),
+                            "response_chars": len(full_response or ""),
+                            "citations_count": len(citations or []),
+                        }
+                    )
+                except Exception:
+                    logger.debug("case_chat_graph_astream span update failed", exc_info=True)
+                try:
+                    astream_span.end()
+                except Exception:
+                    logger.debug("case_chat_graph_astream span end failed", exc_info=True)
     
     async def stream_response_with_tokens(
         self,
@@ -542,6 +917,7 @@ class ChatGraphService:
         template_system_id: str = None,
         template_file_id: str = None,
         template_file_content: str = None,
+        attached_file_ids: Optional[List[str]] = None,
     ) -> AsyncGenerator[str, None]:
         """
         Streaming ответ с токенами через astream_events.
@@ -554,7 +930,7 @@ class ChatGraphService:
             question: Вопрос пользователя
             user: Текущий пользователь
             deep_think: Режим глубокого мышления
-            legal_research: Режим поиска в ГАРАНТ
+            legal_research: Режим справочного правового поиска
             draft_mode: Режим создания документа
             document_context: Контекст документа
             document_id: ID документа
@@ -583,6 +959,7 @@ class ChatGraphService:
             template_system_id=template_system_id,
             template_file_content=template_file_content,
             template_file_id=template_file_id,
+            user_question=question,
         )
         
         # Получаем session_id
@@ -621,6 +998,10 @@ class ChatGraphService:
                     current_state["template_context"] = ""
                 if "template_label" not in current_state:
                     current_state["template_label"] = None
+                if attached_file_ids is not None:
+                    current_state["attached_file_ids"] = [str(x) for x in attached_file_ids if x] or None
+                elif "attached_file_ids" not in current_state:
+                    current_state["attached_file_ids"] = None
                 # Добавляем новое сообщение пользователя
                 current_messages = current_state.get("messages", [])
                 current_messages.append(HumanMessage(content=question))
@@ -644,11 +1025,8 @@ class ChatGraphService:
                 current_state["garant_context"] = None
                 current_state["thinking_steps"] = None
                 current_state["structured_edits"] = None
-                # Сбрасываем HITL флаги для нового запроса (кроме draft mode)
-                if mode != "draft":
-                    current_state["draft_plan"] = None
-                    current_state["draft_approved"] = False
-                    current_state["waiting_for_approval"] = False
+                current_state["answer_blocks"] = None
+                self._reset_draft_hitl_for_turn(current_state, mode)
                 initial_state = current_state
                 logger.info(f"[ChatGraphService] Continuing dialog from checkpoint (token stream), thread_id: {thread_id}")
             else:
@@ -666,6 +1044,7 @@ class ChatGraphService:
                     existing_messages=existing_messages,
                     template_context=template_context or None,
                     template_label=template_label,
+                    attached_file_ids=attached_file_ids,
                 )
                 logger.info(f"[ChatGraphService] Starting new dialog (token stream), thread_id: {thread_id}")
         except Exception as e:
@@ -684,11 +1063,13 @@ class ChatGraphService:
                 existing_messages=existing_messages,
                 template_context=template_context or None,
                 template_label=template_label,
+                attached_file_ids=attached_file_ids,
             )
         
         full_response = ""
         citations = []
-        
+        answer_blocks: Optional[List[Dict[str, Any]]] = None
+
         try:
             # Streaming токенов через astream_events
             async for event in stream_tokens(graph, initial_state, config):
@@ -711,7 +1092,8 @@ class ChatGraphService:
                 if final_state and final_state.values:
                     full_response = final_state.values.get("response", "")
                     citations = final_state.values.get("citations", [])
-                    
+                    answer_blocks = final_state.values.get("answer_blocks")
+
                     if full_response:
                         yield create_text_delta_event(full_response)
             
@@ -722,9 +1104,23 @@ class ChatGraphService:
             # Отправляем citations
             if citations:
                 yield f"data: {json.dumps({'type': 'citations', 'citations': citations})}\n\n"
+
+            if not answer_blocks:
+                final_state2 = await graph.aget_state(config)
+                if final_state2 and final_state2.values:
+                    answer_blocks = final_state2.values.get("answer_blocks")
+
+            if answer_blocks:
+                from app.services.chat.events import SSESerializer
+
+                sse_ab = SSESerializer.answer_blocks(answer_blocks)
+                if sse_ab:
+                    yield sse_ab
             
             # Сохраняем ответ
-            self._save_assistant_message(case_id, full_response, session_id, citations)
+            self._save_assistant_message(
+                case_id, full_response, session_id, citations, answer_blocks=answer_blocks
+            )
             
             yield create_finish_event("stop")
             
@@ -777,7 +1173,9 @@ class ChatGraphService:
             template_system_id=kwargs.get("template_system_id"),
             template_file_content=kwargs.get("template_file_content"),
             template_file_id=kwargs.get("template_file_id"),
+            user_question=question,
         )
+        attached_kw = kwargs.get("attached_file_ids")
         
         # Получаем session_id
         session_id = self._get_or_create_session(case_id)
@@ -812,6 +1210,10 @@ class ChatGraphService:
                     current_state["template_context"] = ""
                 if "template_label" not in current_state:
                     current_state["template_label"] = None
+                if attached_kw is not None:
+                    current_state["attached_file_ids"] = [str(x) for x in attached_kw if x] or None
+                elif "attached_file_ids" not in current_state:
+                    current_state["attached_file_ids"] = None
                 # Добавляем новое сообщение пользователя
                 current_messages = current_state.get("messages", [])
                 current_messages.append(HumanMessage(content=question))
@@ -835,11 +1237,8 @@ class ChatGraphService:
                 current_state["garant_context"] = None
                 current_state["thinking_steps"] = None
                 current_state["structured_edits"] = None
-                # Сбрасываем HITL флаги для нового запроса (кроме draft mode)
-                if mode != "draft":
-                    current_state["draft_plan"] = None
-                    current_state["draft_approved"] = False
-                    current_state["waiting_for_approval"] = False
+                current_state["answer_blocks"] = None
+                self._reset_draft_hitl_for_turn(current_state, mode)
                 initial_state = current_state
                 logger.info(f"[ChatGraphService] Continuing dialog from checkpoint (stream_with_mode), thread_id: {thread_id}")
             else:
@@ -857,6 +1256,7 @@ class ChatGraphService:
                     existing_messages=kwargs.get("existing_messages"),
                     template_context=template_context or None,
                     template_label=template_label,
+                    attached_file_ids=attached_kw,
                 )
                 logger.info(f"[ChatGraphService] Starting new dialog (stream_with_mode), thread_id: {thread_id}")
         except Exception as e:
@@ -875,11 +1275,13 @@ class ChatGraphService:
                 existing_messages=kwargs.get("existing_messages"),
                 template_context=template_context or None,
                 template_label=template_label,
+                attached_file_ids=attached_kw,
             )
         
         full_response = ""
         citations = []
-        
+        answer_blocks: Optional[List[Dict[str, Any]]] = None
+
         try:
             async for event in stream_graph_with_mode(graph, initial_state, config, stream_mode):
                 yield format_sse_event(event)
@@ -891,10 +1293,19 @@ class ChatGraphService:
                     full_response = event.message
                 elif event.type == "citations" and event.data:
                     citations = event.data.get("citations", [])
-            
+                elif event.type == "answer_blocks" and event.data:
+                    answer_blocks = event.data.get("blocks")
+
+            if not answer_blocks:
+                fs = await graph.aget_state(config)
+                if fs and fs.values:
+                    answer_blocks = fs.values.get("answer_blocks")
+
             # Сохраняем ответ
             if full_response:
-                self._save_assistant_message(case_id, full_response, session_id, citations)
+                self._save_assistant_message(
+                    case_id, full_response, session_id, citations, answer_blocks=answer_blocks
+                )
             
         except Exception as e:
             logger.error(f"[ChatGraphService] Stream error: {e}", exc_info=True)
@@ -943,9 +1354,34 @@ class ChatGraphService:
         }
         
         try:
-            # Обновляем состояние: устанавливаем draft_approved
             from app.services.langchain_agents.utils.state_editing import update_state
-            await update_state(graph, thread_id, {"draft_approved": approved})
+
+            # Жёстко фиксируем состояние перед resume:
+            # если есть draft_plan, считаем, что остаёмся в draft flow и продолжаем исполнение.
+            current_state = await graph.aget_state(config)
+            has_plan = bool(current_state and current_state.values and current_state.values.get("draft_plan"))
+            waiting_for_approval = bool(
+                current_state and current_state.values and current_state.values.get("waiting_for_approval")
+            )
+            if not (has_plan and waiting_for_approval):
+                # Нельзя «проскочить» этап плана: approval/resume только после plan_ready.
+                yield (
+                    f"data: {json.dumps({'type': 'error', 'error': 'plan_not_ready'}, ensure_ascii=False)}\n\n"
+                )
+                yield f"data: {json.dumps({'type': 'finish', 'finishReason': 'error'}, ensure_ascii=False)}\n\n"
+                return
+            if has_plan:
+                await update_state(
+                    graph,
+                    thread_id,
+                    {
+                        "mode": "draft",
+                        "draft_approved": approved,
+                        "waiting_for_approval": True,
+                    },
+                )
+            else:
+                await update_state(graph, thread_id, {"draft_approved": approved})
             
             # Создаём Command для resume
             resume_command = Command(resume={"draft_approved": approved})
