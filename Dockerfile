@@ -9,11 +9,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends curl fonts-deja
 
 WORKDIR /app
 
-# Python: только requirements-core (без Docling/PyTorch — быстрее сборка образа).
-# Полный стек: скопировать requirements.txt + requirements-heavy.txt и поставить -r requirements.txt
+# Python: полный стек как в локале (requirements.txt = core + heavy).
+# Включает Docling/PyTorch (CPU wheels) через extra-index-url внутри requirements.txt.
+COPY backend/requirements.txt /app/backend/requirements.txt
 COPY backend/requirements-core.txt /app/backend/requirements-core.txt
+COPY backend/requirements-heavy.txt /app/backend/requirements-heavy.txt
 RUN pip install --upgrade pip && \
-    pip install --no-cache-dir -r backend/requirements-core.txt
+    pip install --no-cache-dir -r backend/requirements.txt
 
 # Build frontend
 # --mount=type=cache keeps npm cache between builds → only changed packages are re-downloaded
