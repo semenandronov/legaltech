@@ -32,8 +32,8 @@ RUN npm run build
 WORKDIR /app
 COPY backend/ /app/backend/
 
-# Expose port
-EXPOSE $PORT
+# Expose port (App Platform port discovery needs a concrete number)
+EXPOSE 8000
 
 # Start backend server
 WORKDIR /app/backend
